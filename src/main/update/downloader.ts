@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { rm } from 'node:fs/promises'
 
-import type { PlatformDownload } from '../../shared/update'
+import type { DownloadProgress, PlatformDownload } from '../../shared/update'
 
 export type DownloadDeps = {
   fetchImpl?: typeof fetch
-  onProgress?: (percent: number) => void
+  onProgress?: (progress: DownloadProgress) => void
   // Aborts the request/stream when signalled; the reader rejects and the partial file is cleaned up.
   signal?: AbortSignal
 }
@@ -47,7 +47,13 @@ export const downloadInstaller = async (
       hash.update(chunk)
       await writeChunk(chunk)
       received += chunk.byteLength
-      if (download.size > 0) deps.onProgress?.(Math.round((received / download.size) * 100))
+      if (download.size > 0) {
+        deps.onProgress?.({
+          percent: Math.round((received / download.size) * 100),
+          transferred: received,
+          total: download.size
+        })
+      }
     }
     if (streamError) throw streamError
 
@@ -60,7 +66,7 @@ export const downloadInstaller = async (
       await rm(targetPath, { force: true })
       throw new Error('Checksum mismatch')
     }
-    deps.onProgress?.(100)
+    deps.onProgress?.({ percent: 100, transferred: download.size, total: download.size })
     return targetPath
   } catch (error) {
     // Wait for the underlying fd to actually close before unlinking: createWriteStream opens

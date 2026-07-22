@@ -30,7 +30,19 @@ import type {
   SaveManagedFileRequest,
   SaveManagedFileResult
 } from '../shared/file-save'
+import type {
+  ComputeApprovalDecision,
+  ComputeApprovalRequest,
+  ComputeHost,
+  CreateComputeHostRequest,
+  DeleteComputeHostRequest,
+  DetailsAuthor,
+  JobSummary,
+  ProbeResult
+} from '../shared/compute'
+import type { DirListing, DownloadDest, LocalFile } from '../shared/remote-fs'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
+import type { OpenSessionFromNotificationRequest } from '../shared/notifications'
 import type {
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
@@ -102,6 +114,7 @@ import type {
   SetActiveProviderRequest,
   SetPackageMirrorRequest,
   SetAgentFrameworkRequest,
+  SetNotificationsEnabledRequest,
   SetReasoningEffortRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
@@ -145,7 +158,7 @@ import type {
   StorageInfo
 } from '../shared/storage'
 import type { CliLauncherStatus } from '../shared/cli'
-import type { AppInfo, UpdateStatus } from '../shared/update'
+import type { AppInfo, DownloadProgress, UpdateStatus } from '../shared/update'
 import type {
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
@@ -237,6 +250,7 @@ type OpenScienceAPI = {
     setActiveProvider: (request: SetActiveProviderRequest) => Promise<SettingsSnapshot>
     setAgentFramework: (request: SetAgentFrameworkRequest) => Promise<SettingsSnapshot>
     setReasoningEffort: (request: SetReasoningEffortRequest) => Promise<SettingsSnapshot>
+    setNotificationsEnabled: (request: SetNotificationsEnabledRequest) => Promise<SettingsSnapshot>
     validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
     cancelCodexLogin: () => Promise<void>
     loginIsolatedCodex: () => Promise<ValidateProviderResult>
@@ -277,6 +291,13 @@ type OpenScienceAPI = {
     openFile: () => Promise<OpenLogFileResult>
     revealInFolder: () => Promise<RevealLogFileResult>
   }
+  notifications: {
+    // Fires when the user clicks a desktop notification. Payload-less nudge: the renderer then
+    // pulls the target via takePendingOpenSession (a push with payload could be lost mid-load).
+    onOpenSession: (listener: () => void) => RemoveListener
+    // Returns and clears the conversation a notification click should open, once sessions load.
+    takePendingOpenSession: () => Promise<OpenSessionFromNotificationRequest | null>
+  }
   github: {
     getStars: () => Promise<number | null>
   }
@@ -295,7 +316,7 @@ type OpenScienceAPI = {
     cancel: () => Promise<UpdateStatus>
     apply: () => Promise<UpdateStatus>
     onStatus: (listener: (status: UpdateStatus) => void) => RemoveListener
-    onProgress: (listener: (percent: number) => void) => RemoveListener
+    onProgress: (listener: (progress: DownloadProgress) => void) => RemoveListener
   }
   projects: {
     list: () => Promise<Project[]>
@@ -310,6 +331,56 @@ type OpenScienceAPI = {
     listArtifactGroups: (request: ListArtifactGroupsRequest) => Promise<ArtifactGroupPage>
     repairIndex: (request: { projectId: string }) => Promise<void>
     onChanged: (listener: AcpListener<ProjectFilesChangedEvent>) => RemoveListener
+  }
+  compute: {
+    // SSH compute host record CRUD (Compute settings tab). No credentials cross this boundary — only
+    // an alias + optional non-secret overrides. `sshConfigAliases` returns selectable Host aliases
+    // parsed from the user's ~/.ssh/config (patterns and Match blocks excluded).
+    list: () => Promise<ComputeHost[]>
+    get: (providerId: string) => Promise<ComputeHost | null>
+    create: (request: CreateComputeHostRequest) => Promise<ComputeHost>
+    delete: (request: DeleteComputeHostRequest) => Promise<void>
+    sshConfigAliases: () => Promise<string[]>
+    // Runs the probe bundle; persists probeResult + shape. SSH never leaves the main process.
+    probe: (providerId: string) => Promise<ProbeResult>
+    // Details document: get (with skeleton synthesis when empty) and save (old_text guard).
+    detailsGet: (providerId: string) => Promise<{ doc: string; isSkeleton: boolean }>
+    detailsSave: (
+      providerId: string,
+      text: string,
+      oldText: string,
+      author: DetailsAuthor
+    ) => Promise<void>
+    // Scratch root: set path and mark pinned.
+    scratchSet: (providerId: string, path: string) => Promise<void>
+    // Concurrent job limit: store 1..500 (not enforced in Phase 1).
+    concurrencySet: (providerId: string, limit: number) => Promise<void>
+    // Lists a remote directory (browse experience).
+    listDir: (providerId: string, path: string) => Promise<DirListing>
+    // Downloads a remote file to OS Downloads (os-downloads) or project artifact (artifact).
+    // Human-initiated downloads are NOT approval-gated — only the agent path (session-cache) is.
+    download: (providerId: string, remotePath: string, dest: DownloadDest) => Promise<LocalFile>
+    // Reveals a local file path in the OS file manager (Finder / Explorer).
+    revealInFolder: (filePath: string) => Promise<void>
+    // Bookmark folders for the file browser Go-to/Pin feature, persisted in settings JSON.
+    bookmarksGet: (providerId: string) => Promise<string[]>
+    bookmarksSet: (providerId: string, folders: string[]) => Promise<void>
+    // Fires when a compute call needs user approval (runs before any SSH is made).
+    onApprovalRequest: (listener: (request: ComputeApprovalRequest) => void) => () => void
+    // Renderer sends back the user's decision (once / conversation / project / deny).
+    respondApproval: (request: { id: string; decision: ComputeApprovalDecision }) => Promise<void>
+    // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
+    jobsList: (filter: { sessionId: string; status?: string[] }) => Promise<JobSummary[]>
+    // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
+    jobsPendingNotification: (sessionId: string) => Promise<JobSummary[]>
+    // Marks job ids as notification-consumed after a successful analysis turn (issue 05).
+    jobsMarkConsumed: (sessionId: string, jobIds: string[]) => Promise<void>
+    // Fires when a job's status or tail changes (broadcast from the main-process poller).
+    onJobUpdated: (listener: (job: JobSummary) => void) => () => void
+    // Per-session enabled compute hosts (issue 06). The renderer owns durable state (session JSON);
+    // the main-process registry is the runtime cache for list_compute RPC ops.
+    enabledHostsGet: (sessionId: string) => Promise<string[]>
+    enabledHostsSet: (sessionId: string, providerIds: string[]) => Promise<void>
   }
   preview: {
     load: (request: LoadPreviewStateRequest) => Promise<PersistedPreviewState | null>
@@ -557,6 +628,11 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('settings:set-agent-framework', request) as Promise<SettingsSnapshot>,
     setReasoningEffort: (request) =>
       ipcRenderer.invoke('settings:set-reasoning-effort', request) as Promise<SettingsSnapshot>,
+    setNotificationsEnabled: (request) =>
+      ipcRenderer.invoke(
+        'settings:set-notifications-enabled',
+        request
+      ) as Promise<SettingsSnapshot>,
     validateProvider: (request) =>
       ipcRenderer.invoke('settings:validate-provider', request) as Promise<ValidateProviderResult>,
     cancelCodexLogin: () => ipcRenderer.invoke('settings:cancel-codex-login') as Promise<void>,
@@ -641,6 +717,14 @@ const api: OpenScienceAPI = {
     revealInFolder: () =>
       ipcRenderer.invoke('logs:reveal-in-folder') as Promise<RevealLogFileResult>
   },
+  notifications: {
+    // Main-process task notifications route their click through this channel.
+    onOpenSession: (listener) => onIpcMessage('notifications:open-session', listener),
+    takePendingOpenSession: () =>
+      ipcRenderer.invoke(
+        'notifications:take-pending-open-session'
+      ) as Promise<OpenSessionFromNotificationRequest | null>
+  },
   github: {
     getStars: () => ipcRenderer.invoke('github:get-stars') as Promise<number | null>
   },
@@ -682,6 +766,65 @@ const api: OpenScienceAPI = {
     repairIndex: (request) =>
       ipcRenderer.invoke('project-files:repair-index', request) as Promise<void>,
     onChanged: (listener) => onIpcMessage('project-files:changed', listener)
+  },
+  compute: {
+    // SSH compute host record CRUD, backed by the same SQLite/Prisma layer as projects.
+    list: () => ipcRenderer.invoke('compute:list') as Promise<ComputeHost[]>,
+    get: (providerId) =>
+      ipcRenderer.invoke('compute:get', providerId) as Promise<ComputeHost | null>,
+    create: (request) => ipcRenderer.invoke('compute:create', request) as Promise<ComputeHost>,
+    delete: (request) => ipcRenderer.invoke('compute:delete', request) as Promise<void>,
+    sshConfigAliases: () => ipcRenderer.invoke('compute:ssh-config-aliases') as Promise<string[]>,
+    probe: (providerId) => ipcRenderer.invoke('compute:probe', providerId) as Promise<ProbeResult>,
+    detailsGet: (providerId) =>
+      ipcRenderer.invoke('compute:details:get', providerId) as Promise<{
+        doc: string
+        isSkeleton: boolean
+      }>,
+    detailsSave: (providerId, text, oldText, author) =>
+      ipcRenderer.invoke(
+        'compute:details:save',
+        providerId,
+        text,
+        oldText,
+        author
+      ) as Promise<void>,
+    scratchSet: (providerId, path) =>
+      ipcRenderer.invoke('compute:scratch:set', providerId, path) as Promise<void>,
+    concurrencySet: (providerId, limit) =>
+      ipcRenderer.invoke('compute:concurrency:set', providerId, limit) as Promise<void>,
+    download: (providerId, remotePath, dest) =>
+      ipcRenderer.invoke('compute:download', providerId, remotePath, dest) as Promise<LocalFile>,
+    revealInFolder: (filePath) =>
+      ipcRenderer.invoke('compute:reveal-in-folder', filePath) as Promise<void>,
+    // Fires when a compute call needs user approval (runs before any SSH is made).
+    onApprovalRequest: (listener: (request: ComputeApprovalRequest) => void) =>
+      onIpcMessage<ComputeApprovalRequest>('compute:approval-request', listener),
+    // Renderer sends back the user's decision (once / conversation / project / deny).
+    respondApproval: (request: { id: string; decision: ComputeApprovalDecision }) =>
+      ipcRenderer.invoke('compute:approval-respond', request) as Promise<void>,
+    listDir: (providerId, path) =>
+      ipcRenderer.invoke('compute:list-dir', providerId, path) as Promise<DirListing>,
+    bookmarksGet: (providerId) =>
+      ipcRenderer.invoke('compute:bookmarks:get', providerId) as Promise<string[]>,
+    bookmarksSet: (providerId, folders) =>
+      ipcRenderer.invoke('compute:bookmarks:set', providerId, folders) as Promise<void>,
+    // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
+    jobsList: (filter: { sessionId: string; status?: string[] }) =>
+      ipcRenderer.invoke('compute:jobs:list', filter) as Promise<JobSummary[]>,
+    // Returns jobs pending analysis turn (notifiedAt set, notificationConsumedAt null).
+    jobsPendingNotification: (sessionId) =>
+      ipcRenderer.invoke('compute:jobs:pending-notification', sessionId) as Promise<JobSummary[]>,
+    // Marks job ids as notification-consumed after a successful analysis turn (issue 05).
+    jobsMarkConsumed: (sessionId, jobIds) =>
+      ipcRenderer.invoke('compute:jobs:mark-consumed', sessionId, jobIds) as Promise<void>,
+    // Fires when a job's status or tail changes (broadcast from the main-process poller).
+    onJobUpdated: (listener: (job: JobSummary) => void) =>
+      onIpcMessage<JobSummary>('compute:job-updated', listener),
+    enabledHostsGet: (sessionId) =>
+      ipcRenderer.invoke('compute:enabled-hosts:get', sessionId) as Promise<string[]>,
+    enabledHostsSet: (sessionId, providerIds) =>
+      ipcRenderer.invoke('compute:enabled-hosts:set', sessionId, providerIds) as Promise<void>
   },
   preview: {
     // Per-project preview panel state, persisted alongside projects in SQLite.

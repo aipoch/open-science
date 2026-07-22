@@ -20,7 +20,7 @@ describe('downloadInstaller', () => {
     dir = await mkdtemp(join(tmpdir(), 'upd-'))
     const target = join(dir, 'open-science-0.3.0-mac-arm64.dmg')
     const body = Buffer.from('installer-bytes')
-    const percents: number[] = []
+    const progresses: { percent: number; transferred: number; total: number }[] = []
     const fetchImpl = (() =>
       Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
 
@@ -31,12 +31,16 @@ describe('downloadInstaller', () => {
         sha256: sha256(body)
       },
       target,
-      { fetchImpl, onProgress: (p) => percents.push(p) }
+      { fetchImpl, onProgress: (p) => progresses.push(p) }
     )
 
     expect(path).toBe(target)
     expect(await readFile(path)).toEqual(body)
-    expect(percents.at(-1)).toBe(100)
+    expect(progresses.at(-1)).toEqual({
+      percent: 100,
+      transferred: body.byteLength,
+      total: body.byteLength
+    })
   })
 
   it('deletes the file and throws on checksum mismatch', async () => {

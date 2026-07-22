@@ -27,6 +27,7 @@ import {
   type SetConnectorEnabledRequest,
   type SetNcbiCredentialsRequest,
   type SetPackageMirrorRequest,
+  type SetNotificationsEnabledRequest,
   type SetReasoningEffortRequest,
   type SetSkillEnabledRequest,
   type SetToolPermissionRequest,
@@ -185,6 +186,18 @@ const registerSettingsIpcHandlers = ({
       }
 
       return snapshot
+    }
+  )
+  ipcMain.handle(
+    'settings:set-notifications-enabled',
+    async (_event, request: SetNotificationsEnabledRequest) => {
+      // Renderer payloads are untyped at runtime: only a real boolean may persist.
+      if (typeof request?.enabled !== 'boolean') {
+        throw new Error(`Invalid notifications-enabled flag: ${String(request?.enabled)}`)
+      }
+
+      log.info('set notifications enabled requested', { enabled: request.enabled })
+      return service.setNotificationsEnabled(request.enabled)
     }
   )
   ipcMain.handle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>
@@ -353,6 +366,13 @@ const registerSettingsIpcHandlers = ({
       onConnectorsChanged?.()
       return snapshot
     }
+  )
+  // Compute file browser bookmarks: keyed by provider_id in settings.computeBookmarks.
+  ipcMain.handle('compute:bookmarks:get', (_event, providerId: string) =>
+    service.getComputeBookmarks(providerId)
+  )
+  ipcMain.handle('compute:bookmarks:set', (_event, providerId: string, folders: string[]) =>
+    service.setComputeBookmarks(providerId, folders)
   )
 }
 

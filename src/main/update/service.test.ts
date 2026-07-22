@@ -78,6 +78,19 @@ describe('UpdateService.check', () => {
     const status = await service.check()
     expect(status.applyKind).toBe('installer')
   })
+
+  it('stamps totalBytes on the available status from the manifest download size', async () => {
+    const service = new UpdateService({
+      fetchImpl: (() => Promise.resolve(jsonResponse(manifest))) as unknown as typeof fetch,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      broadcast: vi.fn()
+    })
+    const status = await service.check()
+    expect(status.state).toBe('available')
+    expect(status.totalBytes).toBe(5)
+  })
 })
 
 describe('UpdateService.download', () => {

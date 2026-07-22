@@ -35,6 +35,7 @@ type FakeSettingsService = Record<
   | 'uninstallCodex'
   | 'setAgentFramework'
   | 'setReasoningEffort'
+  | 'setNotificationsEnabled'
   | 'upsertProvider'
   | 'deleteProvider'
   | 'setActiveProvider'
@@ -83,6 +84,9 @@ const createFakeService = (): FakeSettingsService => ({
   setReasoningEffort: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], reasoningEffort: 'high' }),
+  setNotificationsEnabled: vi
+    .fn()
+    .mockResolvedValue({ claude: {}, providers: [], notificationsEnabled: false }),
   upsertProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   deleteProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   setActiveProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
@@ -573,6 +577,35 @@ describe('settings IPC handlers', () => {
     )
     expect(service.setReasoningEffort).not.toHaveBeenCalled()
     expect(onActiveProviderChanged).not.toHaveBeenCalled()
+  })
+
+  it('persists the notifications preference on set-notifications-enabled', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const snapshot = { claude: {}, providers: [], notificationsEnabled: false }
+    service.setNotificationsEnabled.mockResolvedValue(snapshot)
+    registerSettingsIpcHandlers({ service: asService(service) })
+
+    const result = await invoke('settings:set-notifications-enabled', { enabled: false })
+
+    // The handler unwraps the request to the bare boolean the service expects.
+    expect(service.setNotificationsEnabled).toHaveBeenCalledWith(false)
+    expect(result).toBe(snapshot)
+  })
+
+  it('rejects a non-boolean notifications flag without touching the service', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    registerSettingsIpcHandlers({ service: asService(service) })
+
+    // Renderer payloads are untyped at runtime: garbage must fail at the boundary, not persist.
+    await expect(invoke('settings:set-notifications-enabled', { enabled: 'yes' })).rejects.toThrow(
+      'Invalid notifications-enabled flag'
+    )
+    await expect(invoke('settings:set-notifications-enabled', {})).rejects.toThrow(
+      'Invalid notifications-enabled flag'
+    )
+    expect(service.setNotificationsEnabled).not.toHaveBeenCalled()
   })
 
   it('surfaces a service error thrown by install-opencode', async () => {

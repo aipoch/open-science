@@ -168,4 +168,32 @@ describe('useUpdateStore', () => {
     expect(useUpdateStore.getState().status.state).toBe('available')
     expect(useUpdateStore.getState().status.latest).toBe('0.3.0')
   })
+
+  it('onProgress callback maps DownloadProgress payload into status fields', async () => {
+    let progressListener: ((progress: unknown) => void) | undefined
+    ;(window as unknown as { api: unknown }).api = {
+      update: {
+        getAppInfo: () =>
+          Promise.resolve({ name: 'Open Science', version: '0.2.0', copyright: '' }),
+        getStatus: () => Promise.resolve({ state: 'idle', current: '0.2.0' }),
+        onStatus: vi.fn(),
+        onProgress: (listener: (progress: unknown) => void) => {
+          progressListener = listener
+        },
+        check: vi.fn(),
+        download: vi.fn(),
+        apply: vi.fn()
+      }
+    }
+
+    useUpdateStore.getState().init()
+    await Promise.resolve()
+
+    progressListener?.({ percent: 42, transferred: 4200, total: 10000 })
+
+    const status = useUpdateStore.getState().status
+    expect(status.progress).toBe(42)
+    expect(status.downloadedBytes).toBe(4200)
+    expect(status.totalBytes).toBe(10000)
+  })
 })

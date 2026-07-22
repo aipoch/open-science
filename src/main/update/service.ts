@@ -118,12 +118,14 @@ export class UpdateService implements UpdateStrategy {
         })
         return this.status
       }
+      const download = selectDownload(manifest, this.platform, this.arch) ?? undefined
       this.setStatus({
         state: 'available',
         current: this.currentVersion,
         latest: manifest.version,
         notes: manifest.notes,
-        download: selectDownload(manifest, this.platform, this.arch) ?? undefined
+        download,
+        totalBytes: download?.size
       })
     } catch (error) {
       this.setStatus({
@@ -178,13 +180,26 @@ export class UpdateService implements UpdateStrategy {
         const targetPath = await this.promptSavePath(installerFileName(download.url))
         if (!targetPath || abort.signal.aborted) return
 
-        this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
+        this.setStatus({
+          ...this.status,
+          state: 'downloading',
+          progress: 0,
+          downloadedBytes: 0,
+          totalBytes: download.size
+        })
         const localPath = await downloadInstaller(download, targetPath, {
           fetchImpl: this.fetchImpl,
-          onProgress: (percent) => this.broadcast('update:progress', percent),
+          onProgress: (progress) => this.broadcast('update:progress', progress),
           signal: abort.signal
         })
-        this.setStatus({ ...this.status, state: 'ready', progress: 100, localPath })
+        this.setStatus({
+          ...this.status,
+          state: 'ready',
+          progress: 100,
+          downloadedBytes: download.size,
+          totalBytes: download.size,
+          localPath
+        })
       } catch (error) {
         // A user cancel aborts the fetch (rejects here); cancel() already reset the status to
         // 'available', so leave it. Any other failure — including a save-dialog rejection — surfaces as

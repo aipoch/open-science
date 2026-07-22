@@ -36,7 +36,16 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
         set((s) => ({ appInfo: info, status: { ...s.status, current: info.version } }))
       )
     api.onStatus((status) => set({ status }))
-    api.onProgress((progress) => set((s) => ({ status: { ...s.status, progress } })))
+    api.onProgress((progress) =>
+      set((s) => ({
+        status: {
+          ...s.status,
+          progress: progress.percent,
+          downloadedBytes: progress.transferred,
+          totalBytes: progress.total
+        }
+      }))
+    )
     void api.getStatus().then((status) => {
       // Only apply the startup snapshot if no live broadcast has updated us yet.
       if (get().status.state === 'idle') set({ status })

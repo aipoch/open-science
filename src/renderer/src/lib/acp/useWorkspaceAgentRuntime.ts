@@ -422,14 +422,17 @@ const sendWorkspaceMessage = async (
     let resumeCwd: string | undefined
 
     if (shouldResumeSession) {
-      if (!targetCwd) {
+      // Empty string is treated as missing; fall back to runtime cwd
+      const effectiveCwd = targetCwd || runtime.state.cwd
+
+      if (!effectiveCwd) {
         useSessionStore
           .getState()
           .failRun(targetSessionId, 'Session workspace is missing; start a new conversation.')
         return undefined
       }
 
-      resumeCwd = targetCwd
+      resumeCwd = effectiveCwd
     }
 
     const appended = preAppendedMessageId
@@ -620,6 +623,7 @@ const resumeInterruptedWorkspaceSession = async (
     return
   }
 
+  // Empty string is treated as missing; fall back to runtime cwd
   const resumeCwd = session.cwd || runtime.state.cwd
 
   if (!resumeCwd) {
@@ -693,6 +697,7 @@ const recoverContextOverflowWorkspaceSession = async (
 
   if (!session) return false
 
+  // Empty string is treated as missing; fall back to runtime cwd
   const resumeCwd = session.cwd || runtime.state.cwd
 
   if (!resumeCwd) return false

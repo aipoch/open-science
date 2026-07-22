@@ -115,6 +115,30 @@ describe('settings repository', () => {
     expect(sanitizeSettings({}).reasoningEffort).toBeUndefined()
   })
 
+  it('persists the notifications preference across a sanitized read and a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.setNotificationsEnabled(false)
+
+    // sanitizeSettings must not strip the flag on read-back, or the toggle can never switch.
+    expect((await repository.getSettings()).notificationsEnabled).toBe(false)
+
+    // A fresh repository on the same storage dir models an app restart: the flag is read back.
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.notificationsEnabled).toBe(false)
+  })
+
+  it.each([true, false])('keeps the %s notifications preference on load', (enabled) => {
+    expect(sanitizeSettings({ notificationsEnabled: enabled }).notificationsEnabled).toBe(enabled)
+  })
+
+  it('drops a non-boolean notifications preference on load', () => {
+    expect(sanitizeSettings({ notificationsEnabled: 'yes' }).notificationsEnabled).toBeUndefined()
+    expect(sanitizeSettings({ notificationsEnabled: 1 }).notificationsEnabled).toBeUndefined()
+    expect(sanitizeSettings({}).notificationsEnabled).toBeUndefined()
+  })
+
   it('persists the Codex adapter and paired native runtime across a sanitized read', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 

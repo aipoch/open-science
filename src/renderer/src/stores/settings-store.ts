@@ -3,6 +3,7 @@ import { create, type StoreApi } from 'zustand'
 import type { OfficialVendorId } from '../../../shared/provider-registry'
 import {
   codexSubscriptionProviderIdentity,
+  DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
   isCodexSubscriptionProvider,
   providerValidationFailed
@@ -131,6 +132,10 @@ type SettingsStoreData = {
   packageMirror?: PackageMirror
   // Reasoning-effort preference applied to agent requests; 'default' leaves the agent's own default.
   reasoningEffort: ReasoningEffort
+  // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
+  notificationsEnabled: boolean
+  // When true, the settings dialog opens directly to the Compute panel.
+  pendingComputePanel?: boolean
 }
 
 type SettingsStore = SettingsStoreData & {
@@ -181,11 +186,15 @@ type SettingsStore = SettingsStoreData & {
   setAgentFramework: (id: AgentFrameworkId) => Promise<void>
   // Sets the reasoning-effort level (main reconnects so subsequent requests run at it).
   setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
+  // Toggles desktop notifications for finished/failed agent tasks; applies immediately.
+  setNotificationsEnabled: (enabled: boolean) => Promise<void>
   deleteProvider: (providerId: string) => Promise<void>
   openSettings: () => void
   closeSettings: () => void
   // Opens the dialog straight onto a skill's detail page (used by clickable skill mentions).
   openSettingsToSkill: (skillId: string) => void
+  // Opens the dialog straight to the Compute panel (used by Files panel "Add SSH host…" link).
+  openSettingsToCompute: () => void
   // Clears the pending skill once its detail view has been seeded, so a later open starts fresh.
   consumePendingSkill: () => void
   // Loads the bundled-skill list (enabled state included) from the main process.
@@ -309,7 +318,9 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   isSettingsOpen: false,
   pendingSkillId: undefined,
   packageMirror: undefined,
-  reasoningEffort: DEFAULT_REASONING_EFFORT
+  reasoningEffort: DEFAULT_REASONING_EFFORT,
+  notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
+  pendingComputePanel: undefined
 })
 
 // Applies a fresh main-process snapshot to the renderer cache.
@@ -321,6 +332,9 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   onboardingCompletedAt: snapshot.onboardingCompletedAt,
   packageMirror: isMirrorConfigured(snapshot.packageMirror) ? snapshot.packageMirror : undefined,
   reasoningEffort: snapshot.reasoningEffort,
+  // Defensive: main always fills this, but an untyped snapshot (tests, older backends) must not
+  // write undefined into the boolean preference.
+  notificationsEnabled: snapshot.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
   agentFrameworkId: snapshot.agentFrameworkId,
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,
@@ -820,6 +834,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
 
+  // Toggles desktop notifications. Optimistic like the other preference setters: apply the pick,
+  // reconcile from the returned snapshot, and revert if the write fails.
+  setNotificationsEnabled: async (enabled) => {
+    const previous = get().notificationsEnabled
+    set({ notificationsEnabled: enabled })
+
+    try {
+      set(applySnapshot(await window.api.settings.setNotificationsEnabled({ enabled })))
+    } catch (error) {
+      set({ notificationsEnabled: previous })
+      console.error('Failed to set notifications enabled', error)
+    }
+  },
+
   // Detects the opencode executable and refreshes its status card.
   detectOpencode: async () => {
     set({ isDetectingOpencode: true })
@@ -851,9 +879,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   openSettings: () => set({ isSettingsOpen: true }),
 
   // Clearing the pending skill on close stops a later normal open from jumping back to a stale skill.
-  closeSettings: () => set({ isSettingsOpen: false, pendingSkillId: undefined }),
+  closeSettings: () =>
+    set({ isSettingsOpen: false, pendingSkillId: undefined, pendingComputePanel: undefined }),
 
   openSettingsToSkill: (skillId) => set({ isSettingsOpen: true, pendingSkillId: skillId }),
+
+  // Opens the dialog directly to the Compute panel.
+  openSettingsToCompute: () => set({ isSettingsOpen: true, pendingComputePanel: true }),
 
   consumePendingSkill: () => set({ pendingSkillId: undefined }),
 

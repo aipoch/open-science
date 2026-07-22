@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { spawnSync } from 'node:child_process'
 import { autoUpdater, CancellationToken } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
@@ -32,6 +33,8 @@ export interface MinimalAutoUpdater {
 export type ElectronUpdaterDeps = {
   updater?: MinimalAutoUpdater
   currentVersion?: string
+  platform?: NodeJS.Platform
+  arch?: string
   broadcast?: (channel: string, payload: unknown) => void
   // Factory for the per-download cancellation token; defaults to electron-updater's CancellationToken.
   // Injectable so tests can drive cancel() without the real class.
@@ -44,6 +47,36 @@ export type ElectronUpdaterDeps = {
   installGate?: InstallGate
   // Diagnostics sink for the apply path; defaults to a no-op so unit tests stay quiet.
   log?: UpdaterLogger
+  // True when an x64 process is running under Rosetta 2 on Apple Silicon; false when definitively not;
+  // undefined when the probe could not determine it. Electron-updater detects this via
+  // sysctl.proc_translated and selects the arm64 artifact, so we must match that to show the correct
+  // pre-download size. When undefined, the strategy omits size rather than risking the wrong arch.
+  isRosetta?: () => boolean | undefined
+}
+
+// Detects whether an x64 process is running under Rosetta 2 on Apple Silicon. Electron-updater's
+// MacUpdater.filterFilesForArch uses the same sysctl key to pick the arm64 entry, so we must match
+// it to show the correct pre-download size. Prefers Electron's app.runningUnderARM64Translation — a
+// definitive boolean — when available; falls back to sysctl only when the Electron property is absent
+// (e.g. test without Electron). Returns undefined only when the sysctl fallback is inconclusive.
+const defaultIsRosetta = (): boolean | undefined => {
+  try {
+    // Electron's property is a definitive boolean — return it directly without falling through.
+    if (typeof app?.runningUnderARM64Translation === 'boolean') {
+      return app.runningUnderARM64Translation
+    }
+  } catch {
+    // app not available (test without Electron)
+  }
+  try {
+    const result = spawnSync('sysctl', ['-n', 'sysctl.proc_translated'], { encoding: 'utf8' })
+    const value = result.stdout?.trim()
+    if (value === '1') return true
+    if (value === '0') return false
+  } catch {
+    // sysctl failed — can't determine
+  }
+  return undefined
 }
 
 // Default broadcast pushes to every live window (mirrors service.ts). Never runs in unit tests, which
@@ -65,6 +98,55 @@ const notesToString = (notes: unknown): string => {
   return ''
 }
 
+// A file entry in electron-updater's UpdateInfo.files array.
+type UpdateFeedFile = { url?: string; size?: number }
+
+// The file extension electron-updater downloads for each platform (the auto-update artifact, not the
+// CDN manifest's installer entry): ZIP on macOS, NSIS .exe on Windows, AppImage on Linux.
+const PLATFORM_ARTIFACT_EXT: Record<string, string> = {
+  darwin: '.zip',
+  win32: '.exe',
+  linux: '.AppImage'
+}
+
+// Architecture tokens that appear in electron-updater artifact filenames for each platform.
+const PLATFORM_ARCH_TOKENS: Record<string, string[]> = {
+  darwin: ['arm64', 'x64'],
+  win32: ['x64', 'arm64'],
+  linux: ['x64', 'arm64']
+}
+
+// Extracts the auto-update artifact size from the updater feed's files list. Matches both the platform's
+// expected extension AND the current architecture token (e.g. `-arm64` or `-x64` in the URL), because
+// production feeds carry per-arch entries (macOS latest-mac.yml lists both arm64 and x64 ZIPs). When
+// multiple files match (ambiguous), returns undefined rather than risking the wrong size.
+const extractArtifactSize = (
+  files: UpdateFeedFile[] | undefined,
+  platform: NodeJS.Platform,
+  arch: string
+): number | undefined => {
+  if (!files || files.length === 0) return undefined
+  const targetExt = PLATFORM_ARTIFACT_EXT[platform]
+  if (!targetExt) return files.find((f) => f.size != null)?.size
+  const archToken = PLATFORM_ARCH_TOKENS[platform]?.find((token) => arch.includes(token))
+  if (archToken) {
+    // Match both extension and arch token — the exact artifact electron-updater will download.
+    const matches = files.filter(
+      (f) => f.size != null && f.url?.endsWith(targetExt) && f.url?.includes(archToken)
+    )
+    if (matches.length === 1) return matches[0].size
+    // Ambiguous (0 or 2+ matches) — don't risk showing the wrong size.
+    if (matches.length > 1) return undefined
+  }
+  // No arch token to disambiguate (or no matching file): fall back to a single unambiguous extension match.
+  const extMatches = files.filter((f) => f.size != null && f.url?.endsWith(targetExt))
+  if (extMatches.length === 1) return extMatches[0].size
+  // Still ambiguous or no extension match: try any file with a size, but only if there's exactly one.
+  const sized = files.filter((f) => f.size != null)
+  if (sized.length === 1) return sized[0].size
+  return undefined
+}
+
 // In-place auto-update strategy: wraps electron-updater for true download + restart on win/linux and
 // on signed stable macOS (Squirrel.Mac). Emits the same UpdateStatus shape as UpdateService, always
 // stamped applyKind:'restart'. Opt-in: autoDownload and autoInstallOnAppQuit are disabled so nothing
@@ -72,6 +154,8 @@ const notesToString = (notes: unknown): string => {
 export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly updater: MinimalAutoUpdater
   private readonly currentVersion: string
+  private readonly platform: NodeJS.Platform
+  private readonly arch: string
   private readonly broadcast: (channel: string, payload: unknown) => void
   private readonly fetchImpl?: typeof fetch
   private readonly manifestUrl: string
@@ -96,6 +180,22 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   constructor(deps: ElectronUpdaterDeps = {}) {
     this.updater = deps.updater ?? (autoUpdater as unknown as MinimalAutoUpdater)
     this.currentVersion = deps.currentVersion ?? app?.getVersion?.() ?? '0.0.0'
+    this.platform = deps.platform ?? process.platform
+    // Resolve the effective arch: an x64 app under Rosetta on Apple Silicon downloads the arm64
+    // artifact (electron-updater does the same), so promote x64 → arm64 to match the correct size.
+    const rawArch = deps.arch ?? process.arch
+    let arch = rawArch
+    if (this.platform === 'darwin' && rawArch === 'x64') {
+      const rosetta = (deps.isRosetta ?? defaultIsRosetta)()
+      if (rosetta === true) {
+        arch = 'arm64'
+      } else if (rosetta === undefined) {
+        // Can't determine Rosetta status — electron-updater might still pick arm64. Blank the arch
+        // token so extractArtifactSize sees a multi-arch feed as ambiguous and omits the size.
+        arch = ''
+      }
+    }
+    this.arch = arch
     this.broadcast = deps.broadcast ?? defaultBroadcast
     this.fetchImpl = deps.fetchImpl
     this.manifestUrl = deps.manifestUrl ?? APP.update.manifestUrl
@@ -116,11 +216,13 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private subscribe(): void {
     this.updater.on('checking-for-update', () => this.setStatus({ state: 'checking' }))
     this.updater.on('update-available', (info) => {
-      const i = info as { version?: string; releaseNotes?: unknown }
+      const i = info as { version?: string; releaseNotes?: unknown; files?: UpdateFeedFile[] }
+      const totalBytes = extractArtifactSize(i.files, this.platform, this.arch)
       this.setStatus({
         state: 'available',
         latest: i.version,
-        notes: notesToString(i.releaseNotes)
+        notes: notesToString(i.releaseNotes),
+        ...(totalBytes != null ? { totalBytes } : {})
       })
       // electron-updater's *.yml feed carries no release notes, so the dialog would only get a
       // GitHub link. Hydrate the notes from the CDN manifest (the same version.json the installer
@@ -132,9 +234,20 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       this.setStatus({ state: 'up-to-date', latest: i.version })
     })
     this.updater.on('download-progress', (p) => {
-      const percent = Math.round((p as { percent?: number }).percent ?? 0)
-      this.broadcast('update:progress', percent)
-      this.setStatus({ ...this.status, state: 'downloading', progress: percent })
+      const info = p as { percent?: number; transferred?: number; total?: number }
+      const percent = Math.round(info.percent ?? 0)
+      const transferred = info.transferred ?? this.status.downloadedBytes ?? 0
+      // Preserve the known artifact size when the event lacks a usable total, so a progress
+      // event omitting it can't clobber the size extracted at check time with 0.
+      const total = info.total || this.status.totalBytes || 0
+      this.broadcast('update:progress', { percent, transferred, total })
+      this.setStatus({
+        ...this.status,
+        state: 'downloading',
+        progress: percent,
+        downloadedBytes: transferred,
+        totalBytes: total
+      })
     })
     this.updater.on('update-downloaded', () => {
       this.setStatus({ ...this.status, state: 'ready', progress: 100 })
@@ -203,7 +316,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     const generation = ++this.downloadGeneration
     const token = this.createCancellationToken()
     this.downloadToken = token
-    this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
+    this.setStatus({ ...this.status, state: 'downloading', progress: 0, downloadedBytes: 0 })
 
     const lifecycle = (async () => {
       try {

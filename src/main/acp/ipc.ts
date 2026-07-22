@@ -25,6 +25,7 @@ import { installAgentShutdownGuard } from './shutdown-guard'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactRunRegistry } from '../artifacts/run-registry'
+import type { TaskNotificationService } from '../notifications/task-notifications'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import { NotebookRunRepository } from '../notebook/repository'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
@@ -48,6 +49,9 @@ type AcpIpcOptions = AcpIpcArtifacts & {
   notebookRpcServer: NotebookLocalRpcServer
   // Drives the agent spawn env from the active provider so switching takes effect on reconnect.
   settingsService: SettingsService
+  // Observes prompt starts and terminal turn events for desktop notifications. Optional so tests
+  // and headless setups can run without a notification surface.
+  taskNotifications?: TaskNotificationService
 }
 
 // Sends one runtime payload to every currently open renderer window.
@@ -71,7 +75,8 @@ const createRuntime = ({
   runRegistry,
   uploadRepository,
   notebookRpcServer,
-  settingsService
+  settingsService,
+  taskNotifications
 }: AcpIpcOptions): AcpRuntime => {
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
@@ -116,9 +121,16 @@ const createRuntime = ({
     },
     callbacks: {
       onStateChanged: (state: AcpStateSnapshot) => broadcast('acp:state', state),
-      onEvent: (event: AcpRuntimeEvent) => broadcast('acp:event', event),
-      onPermissionRequest: (request: AcpPermissionRequest) =>
+      onEvent: (event: AcpRuntimeEvent) => {
+        broadcast('acp:event', event)
+        // Fire-and-forget: a notification hiccup must never stall the renderer event stream.
+        void taskNotifications?.handleRuntimeEvent(event)
+      },
+      onPermissionRequest: (request: AcpPermissionRequest) => {
         broadcast('acp:permission-request', request)
+        // A pending approval parks the turn; an unfocused user gets a desktop nudge.
+        void taskNotifications?.handlePermissionRequest(request)
+      }
     }
   })
 }
@@ -169,7 +181,18 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
   )
   // Prompt calls wait for the turn to stop, then return the latest snapshot.
   ipcMain.handle('acp:send-prompt', async (_event, request: AcpPromptRequest) => {
-    await runtime.sendPrompt(request)
+    // Remember the prompt's first line so a completion/failure notification can name the task.
+    // If the runtime rejects before the turn starts (unknown session, another prompt in flight),
+    // revert so a still-running turn keeps its own prompt's name.
+    const tracked = options.taskNotifications?.trackPrompt(request)
+
+    try {
+      await runtime.sendPrompt(request)
+    } catch (error) {
+      if (tracked) options.taskNotifications?.untrackPrompt(request.sessionId, tracked)
+      throw error
+    }
+
     return runtime.getSnapshot()
   })
   ipcMain.handle('acp:cancel', (_event, request: AcpCancelPromptRequest) =>
