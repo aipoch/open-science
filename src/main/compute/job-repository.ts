@@ -158,6 +158,23 @@ export class ComputeJobRepository {
     return rows.map(toJob)
   }
 
+  // Returns error-state jobs that have not yet emitted a compute_done notification.
+  // 'error' is a terminal resting state written by the dispatcher (dispatch_failed / host_unreachable)
+  // and is excluded from both findNonTerminal and findTerminalUnharvested — so without this scan an
+  // error job would never reach the notify→analyze flow. The poller uses it as a recovery scan;
+  // emitJobNotification is idempotent (guards on notified_at), so re-scanning a row is a no-op.
+  async findErrorUnnotified(): Promise<ComputeJob[]> {
+    const client = await this.getClient()
+    const rows = await client.computeJob.findMany({
+      where: {
+        status: 'error',
+        notifiedAt: null
+      },
+      orderBy: { createdAt: 'asc' }
+    })
+    return rows.map(toJob)
+  }
+
   // Returns all non-terminal jobs for a given provider (used by per-host batch polling).
   async findNonTerminalByProvider(providerId: string): Promise<ComputeJob[]> {
     const client = await this.getClient()

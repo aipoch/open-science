@@ -9,10 +9,10 @@ security of that surface seriously and appreciate reports that help us keep it s
 This project is pre-1.0 and moving fast. Only the latest `0.x` release (and the
 `main` branch) receives security fixes.
 
-| Version | Supported |
-|---------|-----------|
-| latest `0.x` / `main` | ✅ |
-| older releases | ❌ |
+| Version               | Supported |
+| --------------------- | --------- |
+| latest `0.x` / `main` | ✅        |
+| older releases        | ❌        |
 
 The **Nightly (latest main)** pre-release tracks unreviewed commits and is provided
 as-is for testing — treat it as less hardened than tagged releases.
@@ -100,9 +100,19 @@ Some behavior is intentional by design and is **not** a vulnerability on its own
 - **The notebook kernel and the agent's tool calls execute code and shell commands
   by design.** Running local code is the product's purpose. A tool-call approval gate
   is the current control in front of higher-risk actions.
+- **Remote-compute downloads gate on approval by _initiator_, not by destination.**
+  A remote file pulled to the OS Downloads folder or published as a project artifact is
+  a **UI-initiated** action — the user clicked the button, and that click _is_ the
+  authorization, so no separate approval card is shown. Only **session-cache** downloads
+  (the agent pulling a remote file into the session workspace via its Python/tool API)
+  are agent-initiated and therefore go through the `ComputeApprovalBroker` before any
+  `scp` runs. This is intentional: prompting a user to approve the download they just
+  clicked would be noise, whereas an agent reaching for remote data is exactly what the
+  gate exists to surface. All destinations still validate the remote path (absolute, no
+  glob, no shell metacharacters) and enforce size caps regardless of initiator.
 - **Sandboxing is still on the roadmap.** Network allowlisting, a credential vault,
   directory-scoped file access, and per-scope permission tiers are **not implemented
-  yet** (tracked as 🟡 *Security & Permissions* in the [Roadmap](ROADMAP.md#capability-map)).
+  yet** (tracked as 🟡 _Security & Permissions_ in the [Roadmap](ROADMAP.md#capability-map)).
   The absence of these is a known limitation, not a defect to report — though ideas on
   how to build them are very welcome as Issues/Discussions.
 

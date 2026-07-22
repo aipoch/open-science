@@ -607,4 +607,69 @@ describe('ConcurrencyManager', () => {
       expect(dispatchStarted).toBe(1)
     })
   })
+
+  describe('admit - atomic status decision + row commit', () => {
+    it('calls commit with submitted when limits are clear', async () => {
+      vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 10 } as ComputeHost)
+      const commit = vi.fn().mockResolvedValue(undefined)
+
+      const result = await manager.admit({ sessionId: 's1', providerId: 'p1' }, commit)
+
+      expect(result).toBe('submitted')
+      expect(commit).toHaveBeenCalledWith('submitted')
+    })
+
+    it('calls commit with queued when session limit is reached', async () => {
+      manager.setSessionLimit('s1', 2)
+      vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(2)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 10 } as ComputeHost)
+      const commit = vi.fn().mockResolvedValue(undefined)
+
+      const result = await manager.admit({ sessionId: 's1', providerId: 'p1' }, commit)
+
+      expect(result).toBe('queued')
+      expect(commit).toHaveBeenCalledWith('queued')
+    })
+
+    it('returns queue_full and does NOT call commit when global queue is at capacity', async () => {
+      vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(100)
+      const commit = vi.fn().mockResolvedValue(undefined)
+
+      const result = await manager.admit({ sessionId: 's1', providerId: 'p1' }, commit)
+
+      expect(result).toBe('queue_full')
+      expect(commit).not.toHaveBeenCalled()
+    })
+
+    it('serializes concurrent admits so both cannot pass the same slot', async () => {
+      // Two concurrent calls see activeByProvider=0 individually, but admit serializes them so
+      // the second sees activeByProvider=1 (as committed by the first).
+      manager.setSessionLimit('s1', 10)
+      vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 1 } as ComputeHost)
+
+      // Simulate DB counts that reflect committed rows from the first admit
+      let committedCount = 0
+      vi.mocked(jobRepo.countActiveBySession).mockImplementation(async () => committedCount)
+      vi.mocked(jobRepo.countActiveByProvider).mockImplementation(async () => committedCount)
+
+      const commit = vi.fn().mockImplementation(async () => {
+        committedCount++
+      })
+
+      const [r1, r2] = await Promise.all([
+        manager.admit({ sessionId: 's1', providerId: 'p1' }, commit),
+        manager.admit({ sessionId: 's1', providerId: 'p1' }, commit)
+      ])
+
+      // First wins the slot, second sees the committed count and queues
+      expect([r1, r2].sort()).toEqual(['queued', 'submitted'])
+      expect(commit).toHaveBeenCalledTimes(2)
+    })
+  })
 })

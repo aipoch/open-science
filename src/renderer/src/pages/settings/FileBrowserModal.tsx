@@ -29,7 +29,11 @@ import { Dialog } from 'radix-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { DirListing, RemoteDirEntry } from '../../../../shared/remote-fs'
-import { decodeRemoteFsError, resolveRemotePath, validateRemotePath } from '../../../../shared/remote-fs'
+import {
+  decodeRemoteFsError,
+  resolveRemotePath,
+  validateRemotePath
+} from '../../../../shared/remote-fs'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
@@ -314,12 +318,17 @@ type FileBrowserModalProps = {
   open: boolean
   onClose: () => void
   initialProviderId?: string
+  // Directory to open at (e.g. a job's remote_workdir). When omitted, the host's scratchRoot is
+  // used. Applied on the open edge and once the requested provider is active; a later manual host
+  // switch navigates to that host's scratchRoot instead.
+  initialPath?: string
 }
 
 export function FileBrowserModal({
   open,
   onClose,
-  initialProviderId
+  initialProviderId,
+  initialPath
 }: FileBrowserModalProps): React.JSX.Element | null {
   const hosts = useComputeStore((s) => s.hosts)
   const probeHost = useComputeStore((s) => s.probeHost)
@@ -351,6 +360,16 @@ export function FileBrowserModal({
   // Go-to dropdown open state
   const [gotoOpen, setGotoOpen] = useState(false)
 
+  // Open-edge detection + one-shot target directory for the current open session (e.g. a job's
+  // remote_workdir). Tracked as state (not refs) so it works with the "adjust state during render"
+  // pattern below without touching refs mid-render. `pending` is null when nothing is queued, or
+  // `{ path }` on the closed→open edge (path may be undefined → fall back to scratchRoot). It is
+  // consumed by the navigation effect so a later manual host switch goes to that host's scratchRoot.
+  const [prevOpen, setPrevOpen] = useState(open)
+  const [pending, setPending] = useState<{ path?: string } | null>(
+    open ? { path: initialPath } : null
+  )
+
   const navigate = useCallback(
     async (path: string, pushHistory = true) => {
       if (!host) return
@@ -381,14 +400,33 @@ export function FileBrowserModal({
     [host, cwd, probeHost]
   )
 
-  // Initial navigation when modal opens or host changes.
-  // All state resets happen inside the async navigate() call via a dedicated "reset" flag.
+  // Adjust state during render on the open edge (React's "adjust state when a prop changes" pattern
+  // — https://react.dev/learn/you-might-not-need-an-effect). The modal stays mounted across opens in
+  // JobDetailModal, so without this re-sync activeProviderId would stay stale for a different job's
+  // provider. Setting state during render (not in an effect) lets React re-render immediately with
+  // the correct provider before committing, avoiding a stale-host flash.
+  if (open !== prevOpen) {
+    setPrevOpen(open)
+    setPending(open ? { path: initialPath } : null)
+    if (open && initialProviderId && initialProviderId !== activeProviderId) {
+      setActiveProviderId(initialProviderId)
+    }
+  }
+
+  // Initial navigation when modal opens or host changes. Consuming `pending` (setPending(null))
+  // happens inside the async IIFE — the same place the other nav-state resets already run — so this
+  // effect never sets state synchronously in its body. `pending` is intentionally NOT in the deps:
+  // it is read once per open/host change; consuming it must not itself re-fire the effect.
   useEffect(() => {
     if (!open || !host) return
-    const startPath = host.scratchRoot ?? '~'
-    // Synchronously reset navigation state before the async navigate starts.
-    // React batches these updates together in the same render cycle.
+    // While the open-edge sync switches to the requested provider, `host` may lag by one render.
+    // Skip navigating the stale host so we don't flash its scratchRoot; the effect re-fires once
+    // activeProviderId (and thus host) catches up.
+    if (initialProviderId && host.providerId !== initialProviderId && pending) return
+    // Consume the one-shot target: use it on the open edge, else fall back to scratchRoot.
+    const startPath = pending?.path ?? host.scratchRoot ?? '~'
     void (async () => {
+      if (pending) setPending(null)
       setCwd(startPath)
       setHistory([])
       setSelected(null)

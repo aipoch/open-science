@@ -781,8 +781,11 @@ export class ComputeService {
   //                    Requires approval from the ComputeApprovalBroker BEFORE scp.
   //                    Optional context enables grant-aware approval (conversation/project scope).
   //
-  // Human-initiated downloads (os-downloads, artifact) do NOT trigger the approval gate.
-  // Only session-cache (agent) downloads go through approval (design §5).
+  // Approval gates by INITIATOR, not destination (see SECURITY.md "Scope and trust boundaries").
+  // os-downloads and artifact are UI-initiated — the user's click IS the authorization, so no
+  // approval card is shown. Only session-cache is agent-initiated and goes through the
+  // ComputeApprovalBroker before scp (design §5). All destinations still validate the remote path
+  // and enforce size caps below regardless of initiator.
   //
   // Throws an Error with .remoteFsError on any failure (too_large / not_a_file / connection /
   // outside_roots / permission / other).
@@ -1185,30 +1188,24 @@ export class ComputeService {
     const jobId = randomUUID()
     const remoteWorkdir = computeRemoteWorkdir(host.scratchRoot, jobId)
 
-    // ── CONCURRENCY CHECK (before approval gate) ──────────────────────────────────
-    let initialStatus: 'queued' | 'submitted' = 'submitted'
+    // ── EARLY QUEUE-FULL CHECK (before approval gate) ─────────────────────────────
+    // Advisory only: reject obviously-unacceptable jobs before prompting the user. The
+    // authoritative decision (and slot reservation) happens atomically in admit() below, after
+    // approval, so two concurrent submissions cannot both pass the same slot.
+    const queueFullError = (): Error & { computeCallError: ComputeCallError } => {
+      const message =
+        'Job queue is full (100 queued jobs). Wait for queued jobs to start running before submitting more.'
+      const err = new Error(message) as Error & { computeCallError: ComputeCallError }
+      err.computeCallError = { error_code: 'queue_full', message, retry_after_user_action: false }
+      return err
+    }
     if (this.concurrencyManager) {
-      const enqueueResult = await this.concurrencyManager.enqueue({
+      const preview = await this.concurrencyManager.enqueue({
         jobId,
         sessionId: context.sessionId,
         providerId
       })
-
-      if (enqueueResult === 'queue_full') {
-        const err = new Error(
-          `Job queue is full (100 queued jobs). Wait for queued jobs to start running before submitting more.`
-        ) as Error & { computeCallError: ComputeCallError }
-        err.computeCallError = {
-          error_code: 'queue_full',
-          message: 'Job queue is full (100 queued jobs). Wait for queued jobs to start running before submitting more.',
-          retry_after_user_action: false
-        }
-        throw err
-      }
-
-      if (enqueueResult === 'should_queue') {
-        initialStatus = 'queued'
-      }
+      if (preview === 'queue_full') throw queueFullError()
     }
 
     // ── APPROVAL GATE (must fire before any DB write or SSH) ──────────────────────
@@ -1254,25 +1251,41 @@ export class ComputeService {
     // ── WRITE JOB ROW ──────────────────────────────────────────────────────────────
     const commandHash = hashCommand(command)
     const inputManifest = stagedEntries.length > 0 ? JSON.stringify(stagedEntries) : undefined
+    const jobRepository = this.jobRepository
+    const createRow = async (initialStatus: 'submitted' | 'queued'): Promise<void> => {
+      await jobRepository.create({
+        id: jobId,
+        providerId: host.providerId,
+        shape: host.shape,
+        sessionId: context.sessionId,
+        projectId: context.projectId,
+        intent,
+        command,
+        commandHash,
+        environment: options.environment,
+        resourceRequest: options.resourceRequest,
+        inputManifest,
+        outputManifest: options.outputManifest,
+        harvestConfig: options.harvestConfig,
+        timeoutSeconds,
+        remoteWorkdir,
+        initialStatus
+      })
+    }
 
-    await this.jobRepository.create({
-      id: jobId,
-      providerId: host.providerId,
-      shape: host.shape,
-      sessionId: context.sessionId,
-      projectId: context.projectId,
-      intent,
-      command,
-      commandHash,
-      environment: options.environment,
-      resourceRequest: options.resourceRequest,
-      inputManifest,
-      outputManifest: options.outputManifest,
-      harvestConfig: options.harvestConfig,
-      timeoutSeconds,
-      remoteWorkdir,
-      initialStatus
-    })
+    // With a ConcurrencyManager, decide the status and commit the row atomically so concurrent
+    // submissions cannot both pass one slot. Without one, submit immediately (tests / no-limit mode).
+    let initialStatus: 'submitted' | 'queued' = 'submitted'
+    if (this.concurrencyManager) {
+      const admitted = await this.concurrencyManager.admit(
+        { sessionId: context.sessionId, providerId },
+        createRow
+      )
+      if (admitted === 'queue_full') throw queueFullError()
+      initialStatus = admitted
+    } else {
+      await createRow('submitted')
+    }
 
     // ── BACKGROUND DISPATCH (non-blocking, only for submitted jobs) ────────────────
     // Fire-and-forget. Errors are persisted to the job row by the dispatcher.
@@ -1424,7 +1437,9 @@ export class ComputeService {
     }
 
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
-      throw new Error(`Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`)
+      throw new Error(
+        `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
+      )
     }
 
     this.concurrencyManager.setSessionLimit(sessionId, limit)

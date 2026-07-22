@@ -107,6 +107,33 @@ describe('FileBrowserModal', () => {
     expect(document.body.textContent).toContain('biowulf')
   })
 
+  it('navigates to initialPath on open instead of scratchRoot', async () => {
+    const listDir = vi.fn().mockResolvedValue({ ...mockListing, resolvedPath: '/jobs/job-42' })
+    setComputeApi({
+      listDir,
+      bookmarksGet: vi.fn().mockResolvedValue([]),
+      bookmarksSet: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await act(async () => {
+      root.render(
+        <FileBrowserModal
+          open={true}
+          onClose={vi.fn()}
+          initialProviderId="ssh:biowulf"
+          initialPath="/jobs/job-42"
+        />
+      )
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // listDir should have been called with the initialPath, not with /scratch/user (scratchRoot)
+    expect(listDir).toHaveBeenCalledWith('ssh:biowulf', '/jobs/job-42')
+    expect(listDir).not.toHaveBeenCalledWith('ssh:biowulf', '/scratch/user')
+  })
+
   it('shows directory listing after load', async () => {
     await act(async () => {
       root.render(

@@ -345,11 +345,19 @@ const registerIpcHandlers = async ({
   // wire the compute_done notification emitter for all three terminal outcomes (issue 06).
   const sshRunner = new SystemSshRunner()
   const scpRunner = new SystemScpRunner()
+  // Poller-observed terminal transitions (success/failed/timeout of originally-submitted jobs) must
+  // both broadcast to the renderer AND wake the ConcurrencyManager so the next queued job dispatches
+  // when a slot frees. Compose the broadcaster with computeService.notifyJobCompleted (a no-op for
+  // non-terminal states and when no ConcurrencyManager is wired).
+  const broadcastJobUpdatedHook = createJobUpdatedBroadcaster(hostRepository, storageRoot)
   const jobPoller = new JobPoller({
     runner: sshRunner,
     hostRepository,
     jobRepository,
-    onJobUpdated: createJobUpdatedBroadcaster(hostRepository, storageRoot),
+    onJobUpdated: (job) => {
+      broadcastJobUpdatedHook(job)
+      computeService.notifyJobCompleted(job)
+    },
     broadcast: broadcastJobUpdated,
     storageRoot,
     harvestFn: (job) =>
