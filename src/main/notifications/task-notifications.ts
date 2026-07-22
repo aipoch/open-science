@@ -1,6 +1,7 @@
 import type { AcpPermissionRequest, AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
+import type { ConnectorApprovalRequest } from '../../shared/settings'
 
 // What the user sees when a task reaches a terminal state while the app is unfocused.
 export type TaskNotification = {
@@ -88,11 +89,23 @@ export const describeTaskNotification = (
           title: 'Task needs attention',
           body: truncate(EARLY_STOP_BODY[stopReason](taskName), MAX_BODY_LENGTH)
         }
-      default:
+      case 'end_turn':
         return {
           title: 'Task completed',
           body: truncate(
             taskName ? `${taskName} finished.` : 'The agent finished your request.',
+            MAX_BODY_LENGTH
+          )
+        }
+      default:
+        // Unknown or future stop reasons must not be misreported as success; surface them as
+        // needing attention instead.
+        return {
+          title: 'Task needs attention',
+          body: truncate(
+            taskName
+              ? `${taskName} stopped: ${stopReason.replaceAll('_', ' ')}.`
+              : `The agent stopped: ${stopReason.replaceAll('_', ' ')}.`,
             MAX_BODY_LENGTH
           )
         }
@@ -134,6 +147,34 @@ export const describePermissionNotification = (
   }
 }
 
+// Maps a parked connector approval (the external data-egress gate) to the notification to show.
+// The tool call blocks for up to five minutes waiting on the user, so this is the same "requires
+// attention" case as an ACP permission request, over a separate mechanism.
+export const describeConnectorApprovalNotification = (
+  request: Pick<ConnectorApprovalRequest, 'connector' | 'method'>,
+  promptSnippet?: string
+): TaskNotification => {
+  const taskName = promptSnippet ? quoteSnippet(promptSnippet) : undefined
+  const call = `${request.connector} ${request.method.replaceAll('_', ' ')}`
+
+  return {
+    title: 'Approval needed',
+    body: truncate(
+      taskName
+        ? `${taskName} needs your approval: ${call}`
+        : `The agent needs your approval: ${call}`,
+      MAX_BODY_LENGTH
+    )
+  }
+}
+
+// What trackPrompt returns so a rejected send can restore the session's previous tracking: the
+// snippet just stored, plus the one it replaced (a still-running turn's prompt name).
+export type TrackedPrompt = {
+  snippet: string
+  previous?: string
+}
+
 // Watches agent-turn lifecycle events and posts an OS notification when a turn ends while the app
 // is unfocused. Kept free of Electron imports (delivery is injected) so the filtering rules are
 // unit-testable; wiring lives in main/ipc.ts.
@@ -170,11 +211,14 @@ export class TaskNotificationService {
   }
 
   // Remembers the prompt's first line so the terminal event can name the task. Called when a
-  // prompt is sent; the entry is dropped when the turn terminates.
-  trackPrompt(request: Pick<AcpPromptRequest, 'sessionId' | 'text'>): void {
+  // prompt is sent; the entry is dropped when the turn terminates. Returns the tracking record so
+  // a prompt the runtime rejects before the turn starts can be reverted via untrackPrompt.
+  trackPrompt(request: Pick<AcpPromptRequest, 'sessionId' | 'text'>): TrackedPrompt | undefined {
     const snippet = toPromptSnippet(request.text)
 
-    if (!snippet) return
+    if (!snippet) return undefined
+
+    const previous = this.promptSnippets.get(request.sessionId)
 
     // Map preserves insertion order: re-insert to refresh, evict the oldest beyond the cap.
     this.promptSnippets.delete(request.sessionId)
@@ -184,6 +228,21 @@ export class TaskNotificationService {
       const oldest = this.promptSnippets.keys().next().value
 
       if (oldest !== undefined) this.promptSnippets.delete(oldest)
+    }
+
+    return { snippet, previous }
+  }
+
+  // Reverts a trackPrompt whose send never became a turn (the runtime rejected it before the turn
+  // started). No-op when the snippet was already consumed by a terminal event or replaced by a
+  // newer track, so a still-running turn never loses its own prompt's name.
+  untrackPrompt(sessionId: string, tracked: TrackedPrompt): void {
+    if (this.promptSnippets.get(sessionId) !== tracked.snippet) return
+
+    if (tracked.previous) {
+      this.promptSnippets.set(sessionId, tracked.previous)
+    } else {
+      this.promptSnippets.delete(sessionId)
     }
   }
 
@@ -228,10 +287,25 @@ export class TaskNotificationService {
     await this.deliver(describePermissionNotification(request, snippet), request.sessionId)
   }
 
+  // Observes connector approvals (wired next to the 'connectors:approval-request' broadcast): the
+  // tool call blocks for up to five minutes waiting on the user. Unlike turn notifications there
+  // is no tracked-prompt eligibility gate — the approval blocks work regardless of which turn
+  // triggered it, and the modal needs an answer either way. The triggering turn's session (when
+  // one is in flight) names the task and targets the click.
+  handleConnectorApproval = async (
+    request: Pick<ConnectorApprovalRequest, 'connector' | 'method'>,
+    sessionId?: string
+  ): Promise<void> => {
+    const snippet = sessionId ? this.promptSnippets.get(sessionId) : undefined
+
+    await this.deliver(describeConnectorApprovalNotification(request, snippet), sessionId)
+  }
+
   // Shared gates and delivery: a focused app and a disabled preference stay silent (and a settings
   // read failure fails closed), and a throwing Notification can never surface as an unhandled
-  // rejection on the broadcast path that callers void.
-  private async deliver(notification: TaskNotification, sessionId: string): Promise<void> {
+  // rejection on the broadcast path that callers void. Clicks route through the activation handler
+  // only when the notification belongs to a known session.
+  private async deliver(notification: TaskNotification, sessionId?: string): Promise<void> {
     if (this.deps.isAppFocused()) return
 
     let enabled = false
@@ -250,7 +324,9 @@ export class TaskNotificationService {
     try {
       this.deps.show({
         ...notification,
-        onClick: () => this.activationHandler?.(sessionId)
+        onClick: () => {
+          if (sessionId) this.activationHandler?.(sessionId)
+        }
       })
     } catch (error) {
       this.deps.onDeliveryError?.(error)

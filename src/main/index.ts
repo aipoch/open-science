@@ -139,7 +139,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
       const { runtime, notebook, shutdownCoordinator, taskNotifications } =
         await registerIpcHandlers({
-          mainEntryPath
+          mainEntryPath,
+          headless: webMode.headless
         })
       const webController = createWebServiceController({
         rpc: rpcCapture,

@@ -78,6 +78,9 @@ import { broadcastToRenderers } from './renderer-broadcast'
 
 type IpcRegistrationOptions = {
   mainEntryPath: string
+  // Headless web-serve launches (--serve) have no local desktop user; task notifications are
+  // disabled there by contract, not just incidentally via Notification.isSupported().
+  headless?: boolean
 }
 
 // Builds a short, human-readable preview of a connector call's arguments for the approval card.
@@ -127,7 +130,8 @@ const refreshConnectorSkillDocs = async (
 // needs the configured package mirror, read from disk; callers await this before creating the main
 // window so every IPC channel (incl. notebook-env) is registered before the renderer can call it.
 const registerIpcHandlers = async ({
-  mainEntryPath
+  mainEntryPath,
+  headless = false
 }: IpcRegistrationOptions): Promise<{
   runtime: ReturnType<typeof registerAcpIpcHandlers>
   notebook: ReturnType<typeof createDefaultNotebookRuntimeService>
@@ -240,6 +244,48 @@ const registerIpcHandlers = async ({
   // Read fresh on every call so a future connectors-settings mutation (Plan 2 UI) only needs to call
   // refreshConnectorSkillDocs again to take effect, without reconstructing the connector service.
   let connectorsSnapshot: StoredConnectors | undefined
+  // Desktop notifications for finished/failed agent tasks and approval waits. Delivery is
+  // Electron's Notification (Notification Center on macOS, toasts on Windows, libnotify on Linux);
+  // the service itself stays Electron-free so its filtering rules are unit-testable. The click
+  // handler is bound later, in index.ts, where showMainWindow exists. Constructed before the
+  // connector approval broker, which nudges through it.
+  //
+  // Headless/web-serve launches never notify by contract: with no local desktop user a banner
+  // would surface on the server machine, so delivery is disabled outright (daemon-less Linux
+  // hosts degrade the same way via Notification.isSupported()), and click activation stays inert.
+  const liveNotifications = new Set<Notification>()
+  const notificationsLog = createLogger('notifications')
+  const taskNotifications = new TaskNotificationService({
+    isEnabled: () => settingsService.getNotificationsEnabled(),
+    isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
+    show: ({ title, body, onClick }) => {
+      if (headless) return
+      // Some Linux desktops lack a notification daemon; Electron reports support per platform.
+      if (!Notification.isSupported()) return
+
+      const notification = new Notification({ title, body })
+
+      // Logged so a silently-swallowed banner (OS permission, Focus mode) is distinguishable from
+      // a gate that stopped delivery upstream.
+      notificationsLog.info('delivering task notification', { title, supported: true })
+      // Retain the instance until the banner resolves; a GC before click would silently drop the
+      // handler on some platforms.
+      liveNotifications.add(notification)
+      notification.once('click', () => {
+        liveNotifications.delete(notification)
+        onClick()
+      })
+      notification.once('close', () => liveNotifications.delete(notification))
+      notification.show()
+    },
+    onDeliveryError: (error) =>
+      notificationsLog.warn('task notification delivery failed', errorLogFields(error))
+  })
+  // The renderer pulls the notification click target once its sessions are hydrated (a push sent
+  // before the listener exists would be lost); consume-once semantics live in the service.
+  ipcMain.handle('notifications:take-pending-open-session', () =>
+    taskNotifications.takePendingOpenSession()
+  )
   // One MCP client manager backs both dispatch (ConnectorService.call → custom server) and skill-doc
   // generation (listTools) for user-added custom MCP servers (stdio + remote). It lazily connects per
   // server, so constructing it here does not spawn anything until a custom server is actually used.
@@ -250,6 +296,10 @@ const registerIpcHandlers = async ({
     generateId: () => randomUUID(),
     broadcast: (request) => {
       broadcastToRenderers('connectors:approval-request', request)
+      // A connector approval parks the tool call for up to five minutes; an unfocused user gets a
+      // desktop nudge, targeted at the in-flight turn that triggered it when there is one.
+      const sessionId = runtimeRef.current?.getActivePromptSessions()[0]?.sessionId
+      void taskNotifications.handleConnectorApproval(request, sessionId)
     }
   })
   // Late-bound app runtime for connector tools that attach a generated file to the current turn. The
@@ -315,46 +365,6 @@ const registerIpcHandlers = async ({
   registerWindowIpcHandlers()
   const updateService = registerUpdateIpcHandlers()
   startUpdateScheduler(updateService)
-  // Desktop notifications for finished/failed agent tasks. Delivery is Electron's Notification
-  // (Notification Center on macOS, toasts on Windows, libnotify on Linux); the service itself
-  // stays Electron-free so its filtering rules are unit-testable. The click handler is bound
-  // later, in index.ts, where showMainWindow exists.
-  //
-  // Headless/web-serve deployments intentionally get no notifications: with no local desktop user,
-  // a banner would surface on the server machine, so Notification.isSupported() is the deliberate
-  // gate (daemon-less Linux hosts degrade the same way), and click activation stays inert.
-  const liveNotifications = new Set<Notification>()
-  const notificationsLog = createLogger('notifications')
-  const taskNotifications = new TaskNotificationService({
-    isEnabled: () => settingsService.getNotificationsEnabled(),
-    isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
-    show: ({ title, body, onClick }) => {
-      // Some Linux desktops lack a notification daemon; Electron reports support per platform.
-      if (!Notification.isSupported()) return
-
-      const notification = new Notification({ title, body })
-
-      // Logged so a silently-swallowed banner (OS permission, Focus mode) is distinguishable from
-      // a gate that stopped delivery upstream.
-      notificationsLog.info('delivering task notification', { title, supported: true })
-      // Retain the instance until the banner resolves; a GC before click would silently drop the
-      // handler on some platforms.
-      liveNotifications.add(notification)
-      notification.once('click', () => {
-        liveNotifications.delete(notification)
-        onClick()
-      })
-      notification.once('close', () => liveNotifications.delete(notification))
-      notification.show()
-    },
-    onDeliveryError: (error) =>
-      notificationsLog.warn('task notification delivery failed', errorLogFields(error))
-  })
-  // The renderer pulls the notification click target once its sessions are hydrated (a push sent
-  // before the listener exists would be lost); consume-once semantics live in the service.
-  ipcMain.handle('notifications:take-pending-open-session', () =>
-    taskNotifications.takePendingOpenSession()
-  )
   const runtime = registerAcpIpcHandlers({
     mcpEntryPath: mainEntryPath,
     repository: artifactRepository,

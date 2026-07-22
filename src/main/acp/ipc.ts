@@ -182,8 +182,17 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
   // Prompt calls wait for the turn to stop, then return the latest snapshot.
   ipcMain.handle('acp:send-prompt', async (_event, request: AcpPromptRequest) => {
     // Remember the prompt's first line so a completion/failure notification can name the task.
-    options.taskNotifications?.trackPrompt(request)
-    await runtime.sendPrompt(request)
+    // If the runtime rejects before the turn starts (unknown session, another prompt in flight),
+    // revert so a still-running turn keeps its own prompt's name.
+    const tracked = options.taskNotifications?.trackPrompt(request)
+
+    try {
+      await runtime.sendPrompt(request)
+    } catch (error) {
+      if (tracked) options.taskNotifications?.untrackPrompt(request.sessionId, tracked)
+      throw error
+    }
+
     return runtime.getSnapshot()
   })
   ipcMain.handle('acp:cancel', (_event, request: AcpCancelPromptRequest) =>

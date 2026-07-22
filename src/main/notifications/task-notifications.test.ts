@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AcpPermissionRequest, AcpRuntimeEvent } from '../../shared/acp'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import {
+  describeConnectorApprovalNotification,
   describePermissionNotification,
   describeTaskNotification,
   TaskNotificationService,
@@ -70,6 +71,27 @@ describe('describePermissionNotification', () => {
   })
 })
 
+describe('describeConnectorApprovalNotification', () => {
+  it('names the task and the connector call waiting for approval', () => {
+    expect(
+      describeConnectorApprovalNotification(
+        { connector: 'pubchem', method: 'search_compound' },
+        'Plot the curve'
+      )
+    ).toEqual({
+      title: 'Approval needed',
+      body: '"Plot the curve" needs your approval: pubchem search compound'
+    })
+  })
+
+  it('falls back to a generic body without a tracked prompt', () => {
+    expect(describeConnectorApprovalNotification({ connector: 'zinc', method: 'search' })).toEqual({
+      title: 'Approval needed',
+      body: 'The agent needs your approval: zinc search'
+    })
+  })
+})
+
 describe('describeTaskNotification', () => {
   it('names the task from the prompt snippet when a turn completes', () => {
     expect(describeTaskNotification(stopEvent('end_turn'), 'Plot the curve')).toEqual({
@@ -110,6 +132,16 @@ describe('describeTaskNotification', () => {
     })
     expect(describeTaskNotification(stopEvent('refusal'))?.body).toBe(
       'The agent declined the request.'
+    )
+  })
+
+  it('does not misreport an unknown stop reason as success', () => {
+    expect(describeTaskNotification(stopEvent('budget_exceeded'), 'Plot the curve')).toEqual({
+      title: 'Task needs attention',
+      body: '"Plot the curve" stopped: budget exceeded.'
+    })
+    expect(describeTaskNotification(stopEvent('budget_exceeded'))?.body).toBe(
+      'The agent stopped: budget exceeded.'
     )
   })
 
@@ -374,5 +406,77 @@ describe('TaskNotificationService', () => {
     await service.handlePermissionRequest(permissionRequest('Run command'))
 
     expect(shown).toHaveLength(0)
+  })
+
+  it('notifies for a connector approval even without a tracked prompt', async () => {
+    const { service, shown } = createService({})
+
+    // The data-egress gate blocks the call regardless of which turn triggered it.
+    await service.handleConnectorApproval({ connector: 'pubchem', method: 'search_compound' })
+
+    expect(shown).toHaveLength(1)
+    expect(shown[0]).toMatchObject({
+      title: 'Approval needed',
+      body: 'The agent needs your approval: pubchem search compound'
+    })
+  })
+
+  it('targets the triggering turn for a connector approval click', async () => {
+    const { service, shown } = createService({})
+    const onActivate = vi.fn()
+
+    service.setActivationHandler(onActivate)
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    await service.handleConnectorApproval(
+      { connector: 'pubchem', method: 'search_compound' },
+      'session-1'
+    )
+
+    expect(shown[0]?.body).toBe('"Plot the curve" needs your approval: pubchem search compound')
+    shown[0]?.onClick()
+    expect(onActivate).toHaveBeenCalledWith('session-1')
+  })
+
+  it('does not notify for connector approvals while the app is focused', async () => {
+    const { service, shown } = createService({ isAppFocused: () => true })
+
+    await service.handleConnectorApproval({ connector: 'pubchem', method: 'search_compound' })
+
+    expect(shown).toHaveLength(0)
+  })
+
+  it('restores the previous prompt when a send is rejected before the turn starts', async () => {
+    const { service, shown } = createService({})
+
+    // A turn is running for prompt A; prompt B is tracked, then rejected pre-turn (e.g. another
+    // prompt already in flight). A's completion must still name A, not B.
+    const trackedA = service.trackPrompt({ sessionId: 'session-1', text: 'Prompt A' })
+    const trackedB = service.trackPrompt({ sessionId: 'session-1', text: 'Prompt B' })
+
+    expect(trackedA).toEqual({ snippet: 'Prompt A', previous: undefined })
+    expect(trackedB).toEqual({ snippet: 'Prompt B', previous: 'Prompt A' })
+
+    service.untrackPrompt('session-1', trackedB as NonNullable<typeof trackedB>)
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    expect(shown[0]?.body).toBe('"Prompt A" finished.')
+  })
+
+  it('untrackPrompt is a no-op once a terminal event consumed the snippet', async () => {
+    const { service, shown } = createService({})
+
+    const tracked = service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+    service.untrackPrompt('session-1', tracked as NonNullable<typeof tracked>)
+
+    // The snippet was consumed by the stop event; a late untrack must not resurrect it.
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+    expect(shown).toHaveLength(1)
+  })
+
+  it('tracks nothing for a blank prompt', () => {
+    const { service } = createService({})
+
+    expect(service.trackPrompt({ sessionId: 'session-1', text: '  \n ' })).toBeUndefined()
   })
 })
