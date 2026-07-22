@@ -380,12 +380,12 @@ const ComposerAgentControlsMenu = ({
                         event.preventDefault()
                         handleHostToggle(host.providerId, isEnabled)
                       }}
-                      className="flex items-center justify-between gap-3 cursor-pointer"
+                      className="items-center gap-2 px-2 py-1.5"
                     >
                       <span
                         className={cn(
-                          'min-w-0 flex-1 truncate text-sm',
-                          isEnabled ? 'font-medium text-text-100' : 'text-text-200'
+                          'min-w-0 flex-1 truncate text-[13px] leading-5',
+                          isEnabled ? 'font-medium text-text-100' : 'font-normal text-text-200'
                         )}
                       >
                         {host.displayName}
@@ -393,6 +393,7 @@ const ComposerAgentControlsMenu = ({
                       {/* pointer-events-none: the Switch is a visual indicator only;
                           the row's onSelect is the single toggle entry point. */}
                       <Switch
+                        size="sm"
                         checked={isEnabled}
                         aria-hidden="true"
                         tabIndex={-1}
@@ -404,14 +405,14 @@ const ComposerAgentControlsMenu = ({
               </DropdownMenuGroup>
             </>
           ) : (
-            <DropdownMenuItem disabled className="text-text-300 text-sm">
+            <DropdownMenuItem disabled className="px-2 py-1.5 text-[13px] text-text-300">
               {isLoaded ? 'No SSH hosts registered' : 'Loading…'}
             </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onSelect={() => openSettingsToCompute()}
-            className="gap-2 text-sm text-text-200"
+            className="items-center gap-2 px-2 py-1.5 text-[13px] text-text-200"
           >
             <Settings className="size-4 shrink-0" aria-hidden="true" />
             Manage compute...
