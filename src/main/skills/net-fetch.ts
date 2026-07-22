@@ -10,5 +10,7 @@ export const netFetch: FetchLike = (url, init) =>
 
 // A `typeof fetch`-shaped view of net.fetch for callers that need the full Response API (`.text()`,
 // AbortSignal, arbitrary headers) rather than the narrow FetchLike shape — e.g. the provider-validation
-// probe, which reads the error body and aborts on timeout. Same proxy-honoring Chromium stack.
-export const netFetchStandard = net.fetch as unknown as typeof fetch
+// probe, which reads the error body and aborts on timeout. Same proxy-honoring Chromium stack. Bound to
+// `net` so the receiver is preserved (mirrors netFetch's method-call form) rather than shipping a
+// detached reference that could break if a future Electron makes net.fetch receiver-dependent.
+export const netFetchStandard = net.fetch.bind(net) as unknown as typeof fetch
