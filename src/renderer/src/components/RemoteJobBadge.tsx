@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Zap } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 
 import type { JobSummary } from '../../../shared/compute'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -22,10 +23,19 @@ export const RemoteJobBadge = ({
   sessionId,
   onOpenJobList
 }: RemoteJobBadgeProps): React.JSX.Element | null => {
-  // Subscribe to the raw job map (not the allJobsForSession selector fn, whose reference is stable)
-  // so the badge re-renders the instant a job is added or changes status — applyUpdate replaces the
-  // map on every broadcast. Without this the badge would only refresh on the 1s elapsed-time tick.
-  const jobsById = useSessionJobStore((state) => state.jobsById)
+  // Subscribe to THIS session's jobs only. applyUpdate replaces the whole jobsById map on every
+  // broadcast, so subscribing to the stable allJobsForSession fn ref (as before) never re-rendered.
+  // useShallow compares the filtered+sorted array element-by-element: a broadcast for ANOTHER session
+  // keeps this slice's object references unchanged → no re-render, while any add or status change in
+  // THIS session produces a different element and re-renders immediately. The 1s elapsed-time tick
+  // below drives fresh durations independently of this subscription.
+  const allJobs = useSessionJobStore(
+    useShallow((state) =>
+      Array.from(state.jobsById.values())
+        .filter((j) => j.session_id === sessionId)
+        .sort((a, b) => b.created_at - a.created_at)
+    )
+  )
   const [now, setNow] = useState(() => Date.now())
 
   // Tick every second to keep elapsed times fresh.
@@ -33,15 +43,6 @@ export const RemoteJobBadge = ({
     const id = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(id)
   }, [])
-
-  // Jobs for this session, newest first — recomputed whenever the job map changes.
-  const allJobs = useMemo(
-    () =>
-      Array.from(jobsById.values())
-        .filter((j) => j.session_id === sessionId)
-        .sort((a, b) => b.created_at - a.created_at),
-    [jobsById, sessionId]
-  )
 
   // Running jobs are dispatched to the remote host (running or submitted there);
   // queued jobs are waiting locally for a free concurrency slot. Both are in-flight and
