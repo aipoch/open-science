@@ -67,16 +67,21 @@ const AgentPanel = (): React.JSX.Element => {
   // Track whether an ACP prompt is currently running so the uninstall (a destructive teardown) can be
   // blocked while a task uses the runtime. Fail closed: default to true (treated as busy) until the
   // first snapshot arrives, so the button is never briefly enabled during the getState() round-trip.
-  // Subscribe FIRST, then load the initial snapshot, both gated by a mounted flag — mirrors
-  // useAcpRuntime so a broadcast arriving mid-load can't be overwritten by a stale initial read.
   const [promptInFlight, setPromptInFlight] = useState(true)
   useEffect(() => {
     let mounted = true
+    // A live onState broadcast is always fresher than the initial getState() read. Subscribing first
+    // is NOT enough — getState() is async, so a live event can arrive before the snapshot resolves and
+    // then be clobbered by the stale snapshot when it lands. Latch the first live event and drop any
+    // getState() result that arrives after it, so live state always wins the race.
+    let liveEventSeen = false
     const removeListener = window.api.acp.onState((s) => {
-      if (mounted) setPromptInFlight(s.promptInFlight)
+      if (!mounted) return
+      liveEventSeen = true
+      setPromptInFlight(s.promptInFlight)
     })
     void window.api.acp.getState().then((s) => {
-      if (mounted) setPromptInFlight(s.promptInFlight)
+      if (mounted && !liveEventSeen) setPromptInFlight(s.promptInFlight)
     })
     return () => {
       mounted = false

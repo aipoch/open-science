@@ -4280,6 +4280,90 @@ describe('ACP runtime session management', () => {
     disconnectSpy.mockRestore()
   })
 
+  it('broadcasts closed and releases the barrier when a failed deferred disconnect has no follow-up', async () => {
+    const process = new FakeAgentProcess()
+    const gate = createDeferred()
+    startFakeAgent(process, ['s1'], { onPrompt: () => gate.promise })
+    const states: string[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onStateChanged: (s) => states.push(s.status) }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+    await runtime.requestProviderReconnect()
+
+    const disconnectSpy = vi
+      .spyOn(runtime, 'disconnect')
+      .mockRejectedValueOnce(new Error('teardown failed'))
+
+    // Turn settles → deferred disconnect rejects → no createSession follows. The catch must still
+    // broadcast 'closed' so the renderer doesn't stay on the stale 'connected' snapshot.
+    states.length = 0
+    gate.resolve()
+    await prompt
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(states).toContain('closed')
+    expect(runtime.getSnapshot().status).toBe('closed')
+    disconnectSpy.mockRestore()
+  })
+
+  it('still releases the barrier when the closed broadcast on a failed disconnect throws', async () => {
+    const oldProcess = new FakeAgentProcess()
+    const newProcess = new FakeAgentProcess()
+    const gate = createDeferred()
+    startFakeAgent(oldProcess, ['s1'], { onPrompt: () => gate.promise })
+    startFakeAgent(newProcess, ['s2'])
+
+    let spawnCount = 0
+    // Throw from onStateChanged only on the post-failure broadcast (the one emitted while status is
+    // 'closed' with no connection), so the barrier must survive an emitState that itself throws.
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      callbacks: {
+        onStateChanged: (s) => {
+          if (s.status === 'closed') throw new Error('renderer broadcast blew up')
+        }
+      },
+      resolveBackend: async () => {
+        spawnCount += 1
+        return {
+          framework: {
+            ...claudeCodeFramework,
+            spawn: () => asAgentProcess(spawnCount === 1 ? oldProcess : newProcess)
+          },
+          executablePath: '/bin/agent',
+          env: {},
+          args: []
+        }
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+    await runtime.requestProviderReconnect()
+
+    const disconnectSpy = vi
+      .spyOn(runtime, 'disconnect')
+      .mockRejectedValueOnce(new Error('teardown failed'))
+
+    const secondSession = runtime.createSession({ cwd: '/workspace' })
+    gate.resolve()
+    await prompt
+
+    // The guarded emitState swallows its own throw, so the barrier still resolves and the blocked
+    // createSession reconnects on a fresh backend rather than hanging.
+    const result = await secondSession
+    expect(result.sessionId).toBe('s2')
+    expect(spawnCount).toBe(2)
+    disconnectSpy.mockRestore()
+  })
+
   it('reconnects immediately when a provider switch happens with no prompt in flight', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['s1'])
