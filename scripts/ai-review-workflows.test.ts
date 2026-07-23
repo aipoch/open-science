@@ -88,14 +88,17 @@ function git(cwd: string, ...args: string[]): void {
 
 function createMergeCommit(
   files: Record<string, string | Buffer>,
-  symlinks: Record<string, string> = {}
+  symlinks: Record<string, string> = {},
+  baseFiles: Record<string, string | Buffer> = {}
 ): string {
   const root = createFixtureRoot('ai-review-context-')
   git(root, 'init', '-b', 'main')
   git(root, 'config', 'user.name', 'Test')
   git(root, 'config', 'user.email', 'test@example.com')
   writeFileSync(join(root, 'README.md'), 'base\n')
-  git(root, 'add', 'README.md')
+  for (const [path, contents] of Object.entries(baseFiles))
+    writeFileSync(join(root, path), contents)
+  git(root, 'add', '.')
   git(root, 'commit', '-m', 'base')
   git(root, 'checkout', '-b', 'feature')
   for (const [path, contents] of Object.entries(files)) writeFileSync(join(root, path), contents)
@@ -205,7 +208,8 @@ async function runPostCodexFeedback(
   const core = { notice: vi.fn() }
   const processStub = {
     env: {
-      CODEX_FINAL_MESSAGE: '## Codex Correctness Review\n**Verdict: mergeable**',
+      CODEX_REVIEW_BODY:
+        '## Codex Correctness Review\n**Verdict: mergeable**\n\n**No actionable findings.**',
       PR_NUMBER: '349',
       REVIEW_HEAD_SHA: 'head-sha',
       REVIEW_RUN_ID: '1234',
@@ -258,6 +262,22 @@ async function runPostClaudeFeedback(currentHeadSha = 'head-sha'): Promise<strin
   )
   await run(github, context, core, processStub)
   return postedBodies
+}
+
+async function normalizeCodexReview(rawReview: string): Promise<string> {
+  const script = getNamedStep('codex_review', 'Normalize Codex review').with?.script
+  if (!script) throw new Error('Missing Codex review normalization script')
+
+  let reviewBody = ''
+  const core = {
+    setOutput: vi.fn((name: string, value: string) => {
+      if (name === 'review_body') reviewBody = value
+    })
+  }
+  const processStub = { env: { CODEX_FINAL_MESSAGE: rawReview } }
+  const run = new Function('core', 'process', `return (async () => {\n${script}\n})()`)
+  await run(core, processStub)
+  return reviewBody
 }
 
 describe('AI review workflow contract', () => {
@@ -352,6 +372,54 @@ describe('AI review workflow contract', () => {
     expect(step.run).toContain('Claude CLI failed: subtype=')
     expect(step.run).toContain('--json-schema "$CLAUDE_REVIEW_SCHEMA"')
     expect(step.env).not.toHaveProperty('ANTHROPIC_DEFAULT_SONNET_MODEL')
+  })
+
+  it('extracts a valid review when Claude exits nonzero after producing structured output', () => {
+    const root = createFixtureRoot('ai-review-claude-blocking-limit-')
+    const binDir = join(root, 'bin')
+    const promptFile = join(root, 'prompt.md')
+    const runOutput = join(root, 'run-output')
+    const extractOutput = join(root, 'extract-output')
+    mkdirSync(binDir)
+    writeFileSync(promptFile, 'Review this pull request.\n')
+    writeExecutable(
+      join(binDir, 'claude'),
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' '{"type":"system","subtype":"init","tools":["StructuredOutput"]}'
+printf '%s\\n' '{"type":"result","subtype":"success","terminal_reason":"blocking_limit","structured_output":{"review":"## Claude Architecture Review\\n**Verdict: mergeable**\\n\\n**No architectural or integration issues found.**"}}'
+exit 1
+`
+    )
+
+    const runResult = spawnSync('bash', ['-c', getRunStep('claude_review', 'run_claude')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH}`,
+        RUNNER_TEMP: root,
+        CLAUDE_PROMPT_FILE: promptFile,
+        CLAUDE_MODEL: 'claude-sonnet-5',
+        CLAUDE_REVIEW_SCHEMA: '{}',
+        GITHUB_OUTPUT: runOutput
+      }
+    })
+
+    expect(runResult.status, runResult.stderr).toBe(0)
+    const executionFile = readSimpleOutputs(runOutput).execution_file
+    const extractResult = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        EXECUTION_FILE: executionFile,
+        GITHUB_OUTPUT: extractOutput
+      }
+    })
+
+    expect(extractResult.status, extractResult.stderr).toBe(0)
+    expect(readFileSync(extractOutput, 'utf8')).toContain('**Verdict: mergeable**')
   })
 
   it('allows Codex non-write actors only for explicitly automatic fork reviews', () => {
@@ -506,10 +574,10 @@ describe('AI review workflow contract', () => {
     expect(result.stderr).toContain('exposed tools other than')
   })
 
-  it('reads changed file contents via git show (not cat) to prevent symlink traversal', () => {
-    expect(reviewWorkflow).toContain('git show "HEAD:${f}"')
+  it('builds Claude context from the diff without reading working-tree paths', () => {
+    expect(reviewWorkflow).toContain('git diff --unified=80')
     expect(reviewWorkflow).not.toMatch(/^\s+cat "\$f"$/m)
-    expect(reviewWorkflow).toContain('binary')
+    expect(reviewWorkflow).not.toContain('git show "HEAD:${f}"')
   })
 
   it('feeds the large Claude prompt through a file and stdin instead of an action input', () => {
@@ -522,7 +590,7 @@ describe('AI review workflow contract', () => {
     expect(reviewWorkflow).not.toContain('anthropics/claude-code-action')
   })
 
-  it('skips binary blobs when generating Claude review context', () => {
+  it('lets git represent binary blobs without embedding their contents', () => {
     const root = createMergeCommit({
       'payload.bin': Buffer.concat([Buffer.from([0]), Buffer.alloc(200_000, 65)])
     })
@@ -542,7 +610,7 @@ describe('AI review workflow contract', () => {
     expect(result.status, result.stderr).toBe(0)
     const prompt = readFileSync(join(root, 'claude-review-prompt.md'))
     expect(prompt.includes(0)).toBe(false)
-    expect(prompt.toString('utf8')).toContain('### payload.bin (skipped: binary)')
+    expect(prompt.toString('utf8')).toContain('Binary files')
   })
 
   it('does not follow changed symlinks when generating Claude review context', () => {
@@ -563,18 +631,46 @@ describe('AI review workflow contract', () => {
     })
 
     expect(result.status, result.stderr).toBe(0)
-    expect(readFileSync(join(root, 'claude-review-prompt.md'), 'utf8')).toContain(
-      '### outside-link (skipped: symlink)'
-    )
+    const prompt = readFileSync(join(root, 'claude-review-prompt.md'), 'utf8')
+    expect(prompt).toContain('outside-link')
+    expect(prompt).toContain('/etc/hosts')
+    expect(prompt).not.toContain('127.0.0.1')
   })
 
-  it('skips Claude without truncating review context when the size limit is exceeded', () => {
-    const contextStep = getNamedStep('claude_review', 'Generate review context')
-    const reviewStep = getNamedStep('claude_review', 'Run Claude architecture review')
+  it('reviews a small change in a large file instead of skipping on full-file size', () => {
+    const baseContents = Array.from(
+      { length: 20_000 },
+      (_, index) => `export const value${index} = ${index}\n`
+    ).join('')
+    const changedContents = baseContents.replace(
+      'export const value10000 = 10000',
+      'export const value10000 = 10001'
+    )
+    const root = createMergeCommit(
+      { 'large.ts': changedContents },
+      {},
+      { 'large.ts': baseContents }
+    )
+    const githubOutput = join(root, 'github-output')
+    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'context')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        RUNNER_TEMP: root,
+        PR_NUMBER: '376',
+        REPOSITORY: 'aipoch/open-science',
+        GITHUB_OUTPUT: githubOutput
+      }
+    })
 
-    expect(contextStep.run).toContain('should_run=false')
-    expect(contextStep.run).not.toContain('head -c 393216 review_context_raw.txt')
-    expect(reviewStep.if).toBe("${{ steps.context.outputs.should_run == 'true' }}")
+    expect(result.status, result.stderr).toBe(0)
+    const prompt = readFileSync(join(root, 'claude-review-prompt.md'), 'utf8')
+    expect(prompt).toContain('export const value10000 = 10001')
+    expect(Buffer.byteLength(prompt)).toBeLessThan(393_216)
+    expect(readFileSync(githubOutput, 'utf8')).not.toContain('should_run=false')
+    expect(getNamedStep('claude_review', 'Install Claude CLI').if).toBeUndefined()
+    expect(getNamedStep('claude_review', 'Run Claude architecture review').if).toBeUndefined()
   })
 
   it('runs built-in Codex review through the action proxy and read-only permission profile', () => {
@@ -624,6 +720,26 @@ describe('AI review workflow contract', () => {
     expect(instructions).toContain('Pull request title valid: true')
     expect(instructions).not.toContain('ci/reviewer-dispatch-selector')
     expect(instructions).not.toContain('allow selecting a dispatched reviewer')
+  })
+
+  it('turns an unstructured Codex approval into an explicit no-findings verdict', async () => {
+    const review = await normalizeCodexReview(
+      'The reconnect behavior is safe and the updated tests cover the failure paths.'
+    )
+
+    expect(review).toContain('## Codex Correctness Review')
+    expect(review).toContain('**Verdict: mergeable**')
+    expect(review).toContain('**No actionable findings.**')
+    expect(review).toContain('The reconnect behavior is safe')
+  })
+
+  it('turns Codex priority findings into a needs-changes verdict', async () => {
+    const review = await normalizeCodexReview(
+      '[P1] Reconnect can race with teardown — src/main/acp/runtime.ts:100'
+    )
+
+    expect(review).toContain('**Verdict: needs changes**')
+    expect(review).toContain('[P1] Reconnect can race with teardown')
   })
 
   it('allows the first Codex review for a pull request', () => {

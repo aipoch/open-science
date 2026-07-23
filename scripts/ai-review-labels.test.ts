@@ -154,6 +154,21 @@ describe('apply_review_outcome', () => {
     )
   })
 
+  it('labels ready-to-merge when every completed reviewer is mergeable', async () => {
+    const { github, added, removed } = makeGithub({
+      jobs: [claudeJob, { name: 'Codex correctness review', conclusion: 'success' }],
+      comments: [
+        verdictComment('## Claude Architecture Review', 'mergeable'),
+        verdictComment('## Codex Correctness Review', 'mergeable')
+      ]
+    })
+
+    await runJob('apply_review_outcome', reviewContext(), github)
+
+    expect(added).toEqual([['ready-to-merge']])
+    expect(removed).toEqual([])
+  })
+
   it('uses the associated PR head for pull_request_target workflow runs', async () => {
     const { github, added } = makeGithub({
       jobs: [{ name: 'Codex correctness review', conclusion: 'success' }],
