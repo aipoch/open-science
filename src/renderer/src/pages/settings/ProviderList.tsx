@@ -226,8 +226,8 @@ const ProviderList = ({
                       <div>Codex login stored separately by Open Science</div>
                     ) : provider.type === 'claude-isolated' ? (
                       // The Claude subscription card carries an OAuth token, so we surface the masked
-                      // hint the same way custom/official providers do (no Keychain leak). The signed
-                      // // in / signed out framing belongs to the card icon, not this line. The
+                      // hint the same way custom/official providers do (no Keychain leak). The
+                      // signed in / signed out framing belongs to the card icon, not this line. The
                       // "Expires" line is the issue #347 requirement to make the one-year
                       // setup-token lifetime visible on the card.
                       provider.maskedKey ? (
