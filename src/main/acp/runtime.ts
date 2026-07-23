@@ -159,7 +159,7 @@ type AcpRuntimeSkillsOptions = {
   setTurnForced: (ids: string[]) => void
   // Clears the turn-scoped force-load set so later spawns use the normal enabled set.
   clearTurnForced: () => void
-  // Resolves picked ids to display names for the steering nudge.
+  // Resolves picker ids to the names accepted by the agent's Skill tool.
   namesForIds: (ids: string[]) => Promise<string[]>
 }
 
@@ -2166,6 +2166,10 @@ class AcpRuntime {
 
   // Prepends a one-line steering nudge naming the picked skills to the prompt text. No-op when no skills
   // were picked or no hooks are wired. It is prompt text, not a system directive, per the design.
+  //
+  // Featured skill ids equal their frontmatter names, while personal/imported ids include an app-owned
+  // source prefix. Resolve the picker ids through settings so every nudge uses the name the agent's
+  // Skill tool accepts.
   private async applySkillNudge(text: string, forcedSkillIds: string[]): Promise<string> {
     if (!this.skillsHooks || forcedSkillIds.length === 0) return text
 
