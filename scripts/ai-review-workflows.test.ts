@@ -166,6 +166,53 @@ echo 'review result' > "$output_file"
   return { captureDir, githubOutput }
 }
 
+function readSimpleOutputs(path: string): Record<string, string> {
+  return Object.fromEntries(
+    readFileSync(path, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => line.split('=', 2) as [string, string])
+  )
+}
+
+function runCodexReviewGate(existingReviews: number): Record<string, string> {
+  const root = createFixtureRoot('ai-review-gate-')
+  const binDir = join(root, 'bin')
+  const githubOutput = join(root, 'github-output')
+  mkdirSync(binDir)
+
+  writeExecutable(
+    join(binDir, 'gh'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+for ((i = 0; i < REVIEW_COUNT; i++)); do
+  echo "review-$i"
+done
+`
+  )
+
+  const result = spawnSync('bash', ['-c', getRunStep('codex_review_gate', 'gate')], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH}`,
+      REVIEW_COUNT: String(existingReviews),
+      GH_TOKEN: 'test-token',
+      GH_REPO: 'aipoch/open-science',
+      DISPATCH_PR_NUMBER: '',
+      EVENT_PR_NUMBER: '349',
+      GITHUB_OUTPUT: githubOutput,
+      GITHUB_STEP_SUMMARY: join(root, 'summary')
+    }
+  })
+
+  if (result.status !== 0) {
+    throw new Error(`Codex review gate failed:\n${result.stdout}\n${result.stderr}`)
+  }
+  return readSimpleOutputs(githubOutput)
+}
+
 describe('AI review workflow contract', () => {
   it('is valid YAML', () => {
     expect(() => load(reviewWorkflow)).not.toThrow()
@@ -322,5 +369,17 @@ describe('AI review workflow contract', () => {
     expect(readFileSync(join(captureDir, 'stdin'), 'utf8')).toContain(
       'Pull request branch: ci/test-workflow'
     )
+  })
+
+  it('allows the first Codex review for a pull request', () => {
+    expect(runCodexReviewGate(0)).toMatchObject({ should_run: 'true', round: '1' })
+  })
+
+  it('allows the tenth Codex review for a pull request', () => {
+    expect(runCodexReviewGate(9)).toMatchObject({ should_run: 'true', round: '10' })
+  })
+
+  it('skips Codex review after ten successful reviews', () => {
+    expect(runCodexReviewGate(10)).toMatchObject({ should_run: 'false', round: '11' })
   })
 })

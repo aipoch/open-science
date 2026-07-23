@@ -232,15 +232,62 @@ jobs:
               body: process.env.REVIEW_BODY,
             });
 
-  codex_review:
-    # Keep this name in sync with ai-review-labels.yml, which recognizes successful reviewers.
-    name: Codex correctness review
+  codex_review_gate:
+    name: Check Codex review limit
     if: >-
       ${{ vars.ENABLE_CODEX_REVIEW != 'false' &&
           ( github.event_name == 'workflow_dispatch' ||
-            ( github.event.action == 'opened' &&
-              ( github.event.pull_request.head.repo.full_name == github.repository ||
-                vars.ENABLE_FORK_REVIEW == 'true' ) ) ) }}
+            github.event.pull_request.head.repo.full_name == github.repository ||
+            vars.ENABLE_FORK_REVIEW == 'true' ) }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: read
+      pull-requests: read
+    outputs:
+      should_run: ${{ steps.gate.outputs.should_run }}
+      round: ${{ steps.gate.outputs.round }}
+    steps:
+      - name: Check successful Codex review count
+        id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          DISPATCH_PR_NUMBER: ${{ github.event.inputs.pull_request_number }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          max_reviews=10
+          pr_number="${DISPATCH_PR_NUMBER:-$EVENT_PR_NUMBER}"
+          if [[ -z "$pr_number" ]]; then
+            echo "No pull request number available (workflow_dispatch input or pull_request event)." >&2
+            exit 1
+          fi
+
+          review_count="$(
+            gh api --paginate "repos/${GH_REPO}/issues/${pr_number}/comments?per_page=100" \
+              --jq '.[] | select(.user.login == "github-actions[bot]" and ((.body // "") | contains("## Codex Correctness Review"))) | .id' \
+              | wc -l \
+              | tr -d '[:space:]'
+          )"
+          round=$((review_count + 1))
+
+          echo "round=$round" >> "$GITHUB_OUTPUT"
+          if (( review_count >= max_reviews )); then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Codex review skipped: PR #${pr_number} already has ${review_count} successful reviews (limit ${max_reviews})." \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Codex review round ${round} of ${max_reviews} for PR #${pr_number}." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  codex_review:
+    # Keep this name in sync with ai-review-labels.yml, which recognizes successful reviewers.
+    name: Codex correctness review
+    if: ${{ needs.codex_review_gate.outputs.should_run == 'true' }}
+    needs: codex_review_gate
     runs-on: ubuntu-latest
     concurrency:
       group: codex-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}
@@ -369,18 +416,20 @@ jobs:
           # prompt argument adds only project-specific conventions the built-in review would not
           # know about, keeping the prompt-injection surface minimal.
           review_prompt_file="$CODEX_HOME/review-prompt.txt"
-          cat > "$review_prompt_file" <<'REVIEW_INSTRUCTIONS'
-          This repository follows Conventional Commits. Verify that the branch name uses
-          <type>/<short-description> with one of: feat, fix, docs, style, refactor, perf,
-          test, build, ci, chore, revert. Verify that the PR title uses
-          <type>(<scope>): <description> with an imperative description starting with a
-          lowercase letter (uppercase allowed inside for proper nouns and technical terms).
-
-          Begin the review with:
-          ## Codex Correctness Review
-          **Verdict: mergeable** or **Verdict: needs changes**
-          REVIEW_INSTRUCTIONS
-          printf '\nPull request branch: %s\n' "$PR_BRANCH" >> "$review_prompt_file"
+          {
+            echo 'This repository follows Conventional Commits. Verify that the branch name'
+            echo 'uses <type>/<short-description> with one of: feat, fix, docs, style,'
+            echo 'refactor, perf, test, build, ci, chore, revert. Verify that the PR title'
+            echo 'uses <type>(<scope>): <description> with an imperative description starting'
+            echo 'with a lowercase letter (uppercase allowed inside for proper nouns and'
+            echo 'technical terms).'
+            echo
+            echo 'Begin the review with:'
+            echo '## Codex Correctness Review'
+            echo '**Verdict: mergeable** or **Verdict: needs changes**'
+            echo
+            echo "Pull request branch: ${PR_BRANCH}"
+          } > "$review_prompt_file"
 
           output_file="$CODEX_HOME/review-output.md"
 
