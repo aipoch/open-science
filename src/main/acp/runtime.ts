@@ -3566,11 +3566,16 @@ class AcpRuntime {
     // skills too, so clear both pending flags to avoid a spurious later reconnect.
     this.pendingProviderReconnect = false
     this.pendingSkillsReload = false
-    this.pendingRetirement = false
     this.resolveReconnectBarrier()
     void this.closeMcpHttpHost()
     void this.releaseResponsesBridgeLease()
-    this.setStatus('closed')
+    try {
+      this.setStatus('closed')
+    } finally {
+      // An unexpected close satisfies any pending reconnect, but retirement remains terminal. Re-run
+      // its evaluator now and again when outstanding operation/activity leases drain.
+      this.maybeApplyPendingProviderReconnect()
+    }
   }
 
   // Updates connection status and broadcasts the new snapshot.
@@ -3644,7 +3649,7 @@ class AcpRuntime {
 
   private clearReviewerSessionState(): void {
     for (const [sessionId, reviewerCwd] of this.reviewerSessionDirectories) {
-      this.responsesBridgeLease?.unregisterReviewerSession(sessionId)
+      this.unregisterReviewerBridgeSession(sessionId)
       this.removeReviewerDirectory(reviewerCwd)
       this.codexMcpToolIdentities.delete(sessionId)
       this.sessionFrameworks.delete(sessionId)
@@ -3771,7 +3776,7 @@ class AcpRuntime {
   disposeReviewerSession(session: import('@agentclientprotocol/sdk').ActiveSession): number {
     const rejectedToolCalls = this.reviewerRejectedToolCalls.get(session.sessionId) ?? 0
     this.reviewerSessionIds.delete(session.sessionId)
-    this.responsesBridgeLease?.unregisterReviewerSession(session.sessionId)
+    this.unregisterReviewerBridgeSession(session.sessionId)
     this.sessionMcpServerNames.delete(session.sessionId)
     this.codexMcpToolIdentities.delete(session.sessionId)
     this.sessionFrameworks.delete(session.sessionId)
@@ -3782,6 +3787,13 @@ class AcpRuntime {
     if (reviewerCwd) this.removeReviewerDirectory(reviewerCwd)
     this.maybeApplyPendingProviderReconnect()
     return rejectedToolCalls
+  }
+
+  private unregisterReviewerBridgeSession(sessionId: string): void {
+    const scoped = this.responsesBridgeLease?.unregisterReviewerSession(sessionId)
+    if (scoped === false) {
+      log.error('reviewer bridge request was never scoped', { sessionId })
+    }
   }
 
   // Returns how many permission requests the strict reviewer gate rejected for a given reviewer

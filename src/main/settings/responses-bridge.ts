@@ -1044,6 +1044,7 @@ export class ResponsesBridge {
   // provider switch / disconnect). Keyed by call_id, which Codex round-trips, so lookups stay stable.
   private readonly reasoningByCallId = new Map<string, string>()
   private readonly reviewerSessionKeys = new Set<string>()
+  private readonly scopedReviewerSessionKeys = new Set<string>()
 
   constructor(
     target: ResponsesBridgeTarget,
@@ -1074,10 +1075,12 @@ export class ResponsesBridge {
 
   registerReviewerSession(promptCacheKey: string): void {
     this.reviewerSessionKeys.add(promptCacheKey)
+    this.scopedReviewerSessionKeys.delete(promptCacheKey)
   }
 
-  unregisterReviewerSession(promptCacheKey: string): void {
+  unregisterReviewerSession(promptCacheKey: string): boolean {
     this.reviewerSessionKeys.delete(promptCacheKey)
+    return this.scopedReviewerSessionKeys.delete(promptCacheKey)
   }
 
   async start(): Promise<ResponsesBridgeConnection> {
@@ -1118,6 +1121,7 @@ export class ResponsesBridge {
     this.connection = undefined
     this.reasoningByCallId.clear()
     this.reviewerSessionKeys.clear()
+    this.scopedReviewerSessionKeys.clear()
     if (!server) return
     const closing = new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
@@ -1156,9 +1160,11 @@ export class ResponsesBridge {
 
     try {
       const body = await readBody(request)
+      const promptCacheKey =
+        typeof body.prompt_cache_key === 'string' ? body.prompt_cache_key : undefined
       const reviewerScoped =
-        typeof body.prompt_cache_key === 'string' &&
-        this.reviewerSessionKeys.has(body.prompt_cache_key)
+        promptCacheKey !== undefined && this.reviewerSessionKeys.has(promptCacheKey)
+      if (reviewerScoped) this.scopedReviewerSessionKeys.add(promptCacheKey)
       const namespacedTools = reviewerScoped
         ? (this.target.reviewerScope?.namespacedTools ?? [])
         : (this.target.namespacedTools ?? [])

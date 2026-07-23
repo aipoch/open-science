@@ -1053,9 +1053,13 @@ describe('Responses-compatible bridge conversion', () => {
     }
 
     try {
+      bridge.registerReviewerSession('never-observed-reviewer-session')
+      expect(bridge.unregisterReviewerSession('never-observed-reviewer-session')).toBe(false)
+
       await post(`${legacyReviewerMarker} normal user content`, 'normal-session')
       bridge.registerReviewerSession('reviewer-session')
       await post('review this turn without a model-visible routing marker', 'reviewer-session')
+      expect(bridge.unregisterReviewerSession('reviewer-session')).toBe(true)
 
       const toolNames = upstreamRequests.map((request) =>
         ((request.tools ?? []) as Array<{ function?: { name?: string } }>).map(

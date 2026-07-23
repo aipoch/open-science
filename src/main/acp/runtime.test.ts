@@ -4279,10 +4279,35 @@ describe('ACP runtime session management', () => {
     expect(onRetired).toHaveBeenCalledOnce()
   })
 
+  it('completes retirement after an unexpected connection close drains the active operation', async () => {
+    const process = new FakeAgentProcess()
+    const gate = createDeferred()
+    const onRetired = vi.fn()
+    startFakeAgent(process, ['s1'], { onPrompt: () => gate.promise })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onRetired }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+    await runtime.requestRetirement()
+
+    process.stdout.end()
+    gate.resolve()
+    await prompt.catch(() => undefined)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(runtime.getSnapshot().status).toBe('closed')
+    expect(onRetired).toHaveBeenCalledOnce()
+  })
+
   it('keeps a reviewer session alive until it is disposed before retiring', async () => {
     const process = new FakeAgentProcess()
     const registerReviewerSession = vi.fn()
-    const unregisterReviewerSession = vi.fn()
+    const unregisterReviewerSession = vi.fn(() => false)
     const releaseBridge = vi.fn(async () => undefined)
     startFakeAgent(process, ['reviewer-session-1'], {
       modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
@@ -4329,6 +4354,9 @@ describe('ACP runtime session management', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(unregisterReviewerSession).toHaveBeenCalledWith('reviewer-session-1')
+    expect(errorLogSpy).toHaveBeenCalledWith('reviewer bridge request was never scoped', {
+      sessionId: 'reviewer-session-1'
+    })
     expect(process.killed).toBe(true)
     expect(releaseBridge).toHaveBeenCalledOnce()
   })

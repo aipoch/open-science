@@ -155,7 +155,7 @@ export type ResolvedAgentBackend = {
   // reviewer sessions register their Codex prompt_cache_key here so routing never depends on content.
   responsesBridgeLease?: {
     registerReviewerSession: (promptCacheKey: string) => void
-    unregisterReviewerSession: (promptCacheKey: string) => void
+    unregisterReviewerSession: (promptCacheKey: string) => boolean
     release: () => Promise<void>
   }
 }
