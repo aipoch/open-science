@@ -195,9 +195,10 @@ const failOrMarkDisconnected = async (
   // The rejection carries no structural tag (IPC strips the Error's data), so read THIS turn's error
   // event from the snapshot to learn whether it was a model-provider failure. The runtime pushes that
   // event (tagged providerError) synchronously before rejecting, so by the time this getState resolves
-  // it is already present. Deriving `reportable = !providerError` here converges with the event path
-  // (workspace-events), so whichever path writes last agrees. Undefined (no NEW event — should not
-  // happen, but a stale prior-turn event is ignored) leaves failRun to fall back to text classification.
+  // it is already present. Only a provider-tagged event forces reportable=false; everything else is left
+  // undefined so failRun's text tier decides — this converges with the event path (workspace-events) and
+  // keeps a non-recovered overflow (providerError=false) non-reportable via the text tier instead of
+  // being mislabeled reportable. Undefined also covers no NEW event (a stale prior-turn event is ignored).
   let reportable: boolean | undefined
   try {
     const snapshot = await window.api.acp.getState()
@@ -213,7 +214,7 @@ const failOrMarkDisconnected = async (
       .find((event) => event.kind === 'error' && event.sessionId === sessionId)
     // Only trust an event that is NEW for this turn, so a provider-error tag from an earlier turn can
     // neither hide this failure's report button nor mislabel it.
-    if (runError && runError.id !== priorErrorEventId) reportable = !runError.providerError
+    if (runError && runError.id !== priorErrorEventId && runError.providerError) reportable = false
   } catch {
     // Fall back to a plain error if the live status read fails.
   }

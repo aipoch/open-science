@@ -166,6 +166,9 @@ describe('workspace runtime events', () => {
       status: 'error',
       error: 'Network failed'
     })
+    // An opaque ACP-layer failure (no providerError tag, not app-crafted) stays reportable: the event
+    // path defers to the text tier rather than suppressing the button.
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(true)
   })
 
   const overflowEvent = (): AcpRuntimeEvent =>
@@ -210,6 +213,34 @@ describe('workspace runtime events', () => {
     expect(session.status).toBe('error')
     expect(session.compacting).toBeFalsy()
     expect(session.error).toContain('Request too large')
+    // A non-recovered overflow (providerError=false) is a client-side/size failure the text tier
+    // recognizes as expected — it must NOT be forced reportable by the event path.
+    expect(session.errorReportable).toBe(false)
+  })
+
+  it('hides the report button for a provider-tagged error even when its text looks reportable', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'run the analysis'
+    })
+
+    // providerError=true forces reportable=false regardless of the (opaque) message — the structural
+    // tag, not the text, decides for a model/provider failure.
+    const applied = await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-provider',
+        kind: 'error',
+        level: 'error',
+        providerError: true,
+        title: 'Prompt failed',
+        text: 'Internal error: upstream exploded'
+      })
+    )
+
+    expect(applied).toBe(true)
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('error')
+    expect(session.errorReportable).toBe(false)
   })
 
   it('surfaces a session-scoped agent warning as the waiting-indicator status, cleared on stop', async () => {
