@@ -217,17 +217,17 @@ const WorkspaceSidebar = ({
                               </span>
                             </button>
                           </DropdownMenuTrigger>
-                          {/* Dark-surface menu: bg-text-000/text-bg-000 matches the app's tooltip token. */}
+                          {/* Session action menu: uses shadcn default light-surface tokens. */}
                           <DropdownMenuContent
                             aria-label="Session actions"
-                            className="min-w-[9rem] border-transparent bg-text-000 p-1.5 text-bg-000"
+                            className="min-w-[9rem]"
                             side="right"
                             align="start"
                             sideOffset={6}
                           >
                             {/* Pin / Unpin toggles the conversation into or out of the pinned section. */}
                             <DropdownMenuItem
-                              className="gap-2 text-bg-000/80 data-[highlighted]:bg-white/10 data-[highlighted]:text-bg-000"
+                              className="gap-2"
                               onSelect={() => onTogglePin(session)}
                             >
                               <span className={sessionMenuIconClassName}>
@@ -240,7 +240,7 @@ const WorkspaceSidebar = ({
                               {session.pinned ? 'Unpin' : 'Pin'}
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              className="gap-2 text-bg-000/80 data-[highlighted]:bg-white/10 data-[highlighted]:text-bg-000"
+                              className="gap-2"
                               onSelect={() => onRenameSession(session)}
                             >
                               <span className={sessionMenuIconClassName}>
@@ -249,7 +249,7 @@ const WorkspaceSidebar = ({
                               Rename…
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              className="gap-2 text-bg-000/80 data-[highlighted]:bg-white/10 data-[highlighted]:text-bg-000"
+                              className="gap-2"
                               onSelect={() => onViewNotebook(session)}
                             >
                               <span className={sessionMenuIconClassName}>
@@ -257,9 +257,9 @@ const WorkspaceSidebar = ({
                               </span>
                               View notebook
                             </DropdownMenuItem>
-                            {/* Delete uses a red accent color suited for a dark surface. */}
+                            {/* Delete uses the project's danger token pair for light surfaces. */}
                             <DropdownMenuItem
-                              className="gap-2 text-red-400 data-[highlighted]:bg-red-500/15 data-[highlighted]:text-red-300"
+                              className="gap-2 text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000"
                               onSelect={() => onDeleteSession(session)}
                             >
                               <span className={sessionMenuIconClassName}>
