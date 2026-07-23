@@ -52,12 +52,31 @@ describe('isReportableRunFailure', () => {
     // Rate limit
     expect(isExpectedRunFailure('429 Too Many Requests')).toBe(true)
     expect(isExpectedRunFailure('rate_limit_error: slow down')).toBe(true)
-    // Quota / billing
+    // Quota / billing (structured slugs only — a bare "billing" word is not a provider signal)
     expect(isExpectedRunFailure('insufficient_quota')).toBe(true)
-    expect(isExpectedRunFailure('Your billing plan has no remaining credit')).toBe(true)
+    expect(isExpectedRunFailure('{"error":{"type":"billing_hard_limit"}}')).toBe(true)
     // Overloaded / unavailable
     expect(isExpectedRunFailure('overloaded_error')).toBe(true)
     expect(isExpectedRunFailure('503 Service Unavailable')).toBe(true)
+  })
+
+  it('recognizes every 5xx status with an HTTP/status marker (overloaded/unavailable family)', () => {
+    // The spec treats the whole overloaded/unavailable 5xx family as expected, not just 502/503/504.
+    expect(isExpectedRunFailure('HTTP 500 Internal Server Error')).toBe(true)
+    expect(isExpectedRunFailure('500 Internal Server Error')).toBe(true)
+    expect(isExpectedRunFailure('status code: 502')).toBe(true)
+    expect(isExpectedRunFailure('504 Gateway Timeout')).toBe(true)
+  })
+
+  it('does not swallow an ordinary app error that merely mentions a provider word', () => {
+    // Regression: the classifier keys on structured slugs / HTTP-marked statuses / reason phrases, so
+    // an internal failure that happens to contain "permission denied", "rate limit", or a bare number
+    // stays reportable instead of being hidden as a provider problem.
+    expect(isReportableRunFailure('EACCES: permission denied opening workspace')).toBe(true)
+    expect(isReportableRunFailure('Failed to parse rate limit configuration')).toBe(true)
+    expect(isReportableRunFailure('Record 503 could not be decoded')).toBe(true)
+    expect(isReportableRunFailure('Retrying after 429ms backoff')).toBe(true)
+    expect(isReportableRunFailure('Quota manager initialization failed')).toBe(true)
   })
 
   it('recognizes a request-size overflow (its own recovery path) as expected', () => {

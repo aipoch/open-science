@@ -49,17 +49,39 @@ const EXPECTED_RUN_FAILURE_MESSAGES = new Set<string>([
 
 // Recognizes provider-side API errors that are the user's or provider's to resolve, not app bugs:
 // bad/absent credentials, rate limits, exhausted quota or billing, and provider "overloaded/
-// unavailable" responses. The passed-through provider text carries an ASCII error-type slug
-// (`authentication_error`), an HTTP status label (`401`/`429`/`503`), or a plain-English phrase, so
-// matching stays language-agnostic without pattern-matching localized message bodies. Kept narrow so
-// a genuine app failure that merely mentions one of these words is not silently swallowed:
-//   - auth:      401/403, authentication_error, invalid_api_key, permission_denied, "invalid api key"
-//   - rate:      429, rate_limit(_error/_exceeded), "rate limit"
-//   - quota:     insufficient_quota, "quota", billing_(hard_limit|not_active), "billing"
-//   - overload:  overloaded_error, 502/503/504, "overloaded", "service unavailable"
+// unavailable" responses. Matching stays language-agnostic (no localized message bodies) but is
+// deliberately anchored to signals that DO NOT occur in ordinary app-error prose, so a genuine app
+// failure that merely mentions one of these words ("EACCES: permission denied", "Failed to parse rate
+// limit configuration", "Record 503 could not be decoded") is never swallowed:
+//   - Structured error-type slugs in their exact underscore form (a provider payload field, e.g.
+//     `authentication_error`) — a bare "permission denied"/"rate limit" with spaces is NOT a slug.
+//   - An HTTP status code that carries an explicit `HTTP`/`status` marker (covers every 3-digit code,
+//     so all 5xx qualify), or a status code immediately followed by its canonical reason phrase.
+//   - A few multi-word HTTP reason phrases that are unmistakable on their own.
 // Resource-not-found and request-size overflow are recognized separately (their own dedicated paths).
-const PROVIDER_ERROR_PATTERN =
-  /\b(?:401|403|429|502|503|504)\b|authentication[_\s-]?error|invalid[_\s-]?api[_\s-]?key|permission[_\s-]?denied|rate[_\s-]?limit|insufficient[_\s-]?quota|\bquota\b|billing|overloaded|service[_\s-]?unavailable/i
+const PROVIDER_ERROR_PATTERN = new RegExp(
+  [
+    // Structured provider error-type slugs (underscore form — absent from app-error prose).
+    'authentication_error',
+    'invalid_api_key',
+    'permission_denied',
+    'rate_limit(?:ed|_error|_exceeded)?',
+    'insufficient_quota',
+    'quota_exceeded',
+    'billing_(?:hard_limit|not_active)',
+    'overloaded_error',
+    // A 3-digit status code carrying an explicit HTTP/status marker (any code, so every 5xx matches).
+    '(?:\\bhttp\\b|\\bstatus(?:\\s*code)?\\b)[\\s:]*\\d{3}',
+    // A status code immediately followed by its canonical reason phrase.
+    '\\b(?:401|403|429|500|502|503|504)\\s+(?:unauthorized|forbidden|too\\s+many\\s+requests|internal\\s+server\\s+error|bad\\s+gateway|service\\s+unavailable|gateway\\s+time-?out)\\b',
+    // Unmistakable multi-word HTTP reason phrases on their own.
+    'too\\s+many\\s+requests',
+    'service\\s+unavailable',
+    'bad\\s+gateway',
+    'gateway\\s+time-?out'
+  ].join('|'),
+  'i'
+)
 
 // Whether a run failure is one the app already recognizes — either app-crafted actionable guidance or
 // a well-understood provider error. These keep their message but hide the "Report error" button.

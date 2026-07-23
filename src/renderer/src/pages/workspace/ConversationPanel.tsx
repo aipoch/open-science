@@ -5,6 +5,7 @@ import type {
   SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import { isReportableRunFailure } from '../../../../shared/run-error-classification'
 import {
   ArrowUp,
   BookOpen,
@@ -40,7 +41,6 @@ import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
-import { isReportableRunFailure } from '../../../../shared/run-error-classification'
 import { normalizeRunFailureError } from './error-report'
 import { ReportErrorDialog } from './ReportErrorDialog'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
