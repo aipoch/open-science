@@ -97,7 +97,7 @@ const createRuntime = ({
       needForceLoad: (ids) => settingsService.skillsNeedingForceLoad(ids),
       setTurnForced: (ids) => settingsService.setTurnForcedSkillIds(ids),
       clearTurnForced: () => settingsService.clearTurnForcedSkillIds(),
-      namesForIds: (ids) => settingsService.skillNamesForIds(ids)
+      namesForIds: (ids) => settingsService.skillNudgeNamesForIds(ids)
     },
     artifacts: {
       // Reuse the session persistence root so chat state and generated files move together.

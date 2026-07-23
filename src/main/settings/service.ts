@@ -775,10 +775,14 @@ class SettingsService {
     return forcedIds.filter((id) => disabled.has(id))
   }
 
-  // Maps skill ids to their display names in the given order, skipping unknown ids. Used for the nudge.
-  async skillNamesForIds(ids: string[]): Promise<string[]> {
+  // Resolves picker ids to the names the agent's Skill tool accepts. Bundled skills use their
+  // manifest id as frontmatter name, while personal/imported ids have an app-owned source prefix and
+  // must use the frontmatter name kept in the user skill catalog.
+  async skillNudgeNamesForIds(ids: string[]): Promise<string[]> {
     const skills = await this.skillCatalog()
-    const nameById = new Map(skills.map((skill) => [skill.id, skill.name]))
+    const nameById = new Map(
+      skills.map((skill) => [skill.id, skill.source === 'featured' ? skill.id : skill.name])
+    )
 
     return ids.map((id) => nameById.get(id)).filter((name): name is string => name !== undefined)
   }

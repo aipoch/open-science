@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID, type ClaudeDetectResult } from '../../shared/settings'
 import type { CodexAuthControllerPort } from './codex-auth'
 import type { ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
+import type { UserSkillRepository } from '../skills/user-skill-repository'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -2100,7 +2101,7 @@ describe('SettingsService: skills', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('reports only disabled picks as needing force-load and maps ids to names', async () => {
+  it('reports disabled picks and resolves agent-readable skill nudge names', async () => {
     const service = await createSkillService()
 
     await service.createSkill({ name: 'My Skill', description: 'Mine.', body: '# Mine' })
@@ -2110,10 +2111,35 @@ describe('SettingsService: skills', () => {
     expect(await service.skillsNeedingForceLoad(['demo', 'personal-my-skill'])).toEqual(['demo'])
     expect(await service.skillsNeedingForceLoad(['personal-my-skill'])).toEqual([])
 
-    // Names resolve in the given id order, skipping unknown ids.
-    expect(await service.skillNamesForIds(['personal-my-skill', 'demo', 'nope'])).toEqual([
-      'My Skill',
-      'Demo'
+    // Featured ids are the agent-facing frontmatter names, but user-skill ids carry an app prefix.
+    expect(await service.skillNudgeNamesForIds(['demo', 'personal-my-skill', 'nope'])).toEqual([
+      'demo',
+      'My Skill'
+    ])
+  })
+
+  it('uses the frontmatter name when nudging an imported skill', async () => {
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      skillRegistry: new SkillRegistry(await seedBundle()),
+      userSkills: {
+        list: () =>
+          Promise.resolve([
+            {
+              id: 'imported-data-explorer',
+              name: 'Data Explorer',
+              description: 'Explore imported data.',
+              source: 'imported' as const,
+              updatedAt: '2026-07-23T00:00:00.000Z',
+              sourceDir: join(storageRoot, 'skills', 'imported', 'data-explorer')
+            }
+          ])
+      } as unknown as UserSkillRepository
+    })
+
+    expect(await service.skillNudgeNamesForIds(['imported-data-explorer'])).toEqual([
+      'Data Explorer'
     ])
   })
 

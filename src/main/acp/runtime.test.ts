@@ -17,6 +17,7 @@ import { AcpRuntime } from './runtime'
 import type { ReasoningEffort } from '../../shared/settings'
 import { terminateProcessTree } from '../process-tree'
 import { AgentMcpHttpHost } from './mcp-http-host'
+import { SkillRegistry } from '../skills/registry'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
 import { ArtifactRepository } from '../artifacts/repository'
 import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
@@ -5279,7 +5280,7 @@ describe('ACP runtime skill force-load + nudge', () => {
   // A stub of the settings-service skill hooks with per-call spies for assertions.
   const createSkillsHooks = (options: {
     needForceLoad: string[]
-    names: Record<string, string>
+    nudgeNames?: Record<string, string>
   }): {
     needForceLoad: ReturnType<typeof vi.fn<(ids: string[]) => Promise<string[]>>>
     setTurnForced: ReturnType<typeof vi.fn<(ids: string[]) => void>>
@@ -5290,16 +5291,13 @@ describe('ACP runtime skill force-load + nudge', () => {
     setTurnForced: vi.fn<(ids: string[]) => void>(),
     clearTurnForced: vi.fn<() => void>(),
     namesForIds: vi.fn<(ids: string[]) => Promise<string[]>>(async (ids: string[]) =>
-      ids.map((id) => options.names[id]).filter((name): name is string => name !== undefined)
+      ids.map((id) => options.nudgeNames?.[id] ?? id)
     )
   })
 
   it('respawns and nudges when a picked skill is disabled, then restores after the turn', async () => {
     const spawner = createFreshAgentSpawner()
-    const hooks = createSkillsHooks({
-      needForceLoad: ['research'],
-      names: { research: 'Deep Research' }
-    })
+    const hooks = createSkillsHooks({ needForceLoad: ['research'] })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
@@ -5321,11 +5319,12 @@ describe('ACP runtime skill force-load + nudge', () => {
     expect(spawner.spawnCount()).toBe(2)
     expect(spawner.agents[1].resumedSessions).toHaveLength(1)
 
-    // The nudge is prepended to the text the agent receives (on the respawned agent).
+    // The nudge names the skill by its slug id (the identifier the agent's Skill tool resolves),
+    // NOT its human display name — a display name like "Deep Research" is unknown to the tool.
     expect(spawner.agents[1].prompts).toEqual([
       {
         sessionId: 'remote-session-1',
-        text: 'Use the following skill(s) for this task: Deep Research.\n\nsummarize the paper'
+        text: 'Use the following skill(s) for this task: research.\n\nsummarize the paper'
       }
     ])
 
@@ -5337,10 +5336,7 @@ describe('ACP runtime skill force-load + nudge', () => {
 
   it('nudges without any reconnect when every picked skill is already enabled', async () => {
     const spawner = createFreshAgentSpawner()
-    const hooks = createSkillsHooks({
-      needForceLoad: [],
-      names: { research: 'Deep Research' }
-    })
+    const hooks = createSkillsHooks({ needForceLoad: [] })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
@@ -5362,17 +5358,43 @@ describe('ACP runtime skill force-load + nudge', () => {
     expect(spawner.agents[0].prompts).toEqual([
       {
         sessionId: 'remote-session-1',
-        text: 'Use the following skill(s) for this task: Deep Research.\n\nsummarize the paper'
+        text: 'Use the following skill(s) for this task: research.\n\nsummarize the paper'
       }
     ])
   })
 
-  it('leaves the prompt untouched when no skills are picked', async () => {
+  it('nudges a personal skill by its agent-resolvable frontmatter name', async () => {
     const spawner = createFreshAgentSpawner()
     const hooks = createSkillsHooks({
-      needForceLoad: ['research'],
-      names: { research: 'Deep Research' }
+      needForceLoad: [],
+      nudgeNames: { 'personal-my-skill': 'My Skill' }
     })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: spawner.spawn,
+      skills: hooks
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: 'remote-session-1',
+      text: 'summarize the paper',
+      forcedSkillIds: ['personal-my-skill']
+    })
+
+    expect(spawner.agents[0].prompts).toEqual([
+      {
+        sessionId: 'remote-session-1',
+        text: 'Use the following skill(s) for this task: My Skill.\n\nsummarize the paper'
+      }
+    ])
+    expect(hooks.namesForIds).toHaveBeenCalledWith(['personal-my-skill'])
+  })
+
+  it('leaves the prompt untouched when no skills are picked', async () => {
+    const spawner = createFreshAgentSpawner()
+    const hooks = createSkillsHooks({ needForceLoad: ['research'] })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
@@ -5385,12 +5407,48 @@ describe('ACP runtime skill force-load + nudge', () => {
 
     // With no forcedSkillIds, none of the skill hooks run and the text is unchanged.
     expect(hooks.needForceLoad).not.toHaveBeenCalled()
-    expect(hooks.namesForIds).not.toHaveBeenCalled()
     expect(hooks.setTurnForced).not.toHaveBeenCalled()
     expect(spawner.spawnCount()).toBe(1)
     expect(spawner.agents[0].prompts).toEqual([
       { sessionId: 'remote-session-1', text: 'plain prompt' }
     ])
+  })
+
+  // End-to-end guard over the whole bundled set: for EVERY real bundled skill, the nudge the agent
+  // receives must name it by the exact id the agent's Skill tool resolves (its frontmatter name), and
+  // must NOT leak the human display name. This is the regression that "any / skill errors" reduces to.
+  it('nudges every bundled skill by its resolvable id, never its display name', async () => {
+    const bundled = await new SkillRegistry(
+      join(__dirname, '..', '..', '..', 'resources', 'skills')
+    ).list()
+    expect(bundled.length).toBeGreaterThan(0)
+
+    for (const skill of bundled) {
+      const spawner = createFreshAgentSpawner()
+      const hooks = createSkillsHooks({ needForceLoad: [] })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: spawner.spawn,
+        skills: hooks
+      })
+
+      await runtime.createSession({ cwd: '/workspace' })
+      await runtime.sendPrompt({
+        sessionId: 'remote-session-1',
+        text: 'do the task',
+        forcedSkillIds: [skill.id]
+      })
+
+      const prompt = spawner.agents[0].prompts[0]?.text ?? ''
+      expect(prompt, `nudge for "${skill.id}"`).toBe(
+        `Use the following skill(s) for this task: ${skill.id}.\n\ndo the task`
+      )
+      // A display name that differs from the id (16 of 18 bundled skills) must never reach the agent.
+      if (skill.name !== skill.id) {
+        expect(prompt, `display name for "${skill.id}"`).not.toContain(skill.name)
+      }
+    }
   })
 })
 
