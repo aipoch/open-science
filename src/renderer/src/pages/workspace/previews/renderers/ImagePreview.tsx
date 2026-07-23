@@ -16,16 +16,28 @@ import { useManagedPreviewResource } from '../useManagedPreviewResource'
 const ZOOM_MIN = 1
 const ZOOM_MAX = 8
 
+// Honour the OS "reduce motion" setting the same way the rest of the app does: matchMedia is
+// optional (absent under jsdom), so guard the call. Read at render time — the preview remounts
+// each time it opens, so there's no long-lived subscription to keep in sync.
+const prefersReducedMotion = (): boolean =>
+  window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+
 // Overlay giving zoom/pan its discoverable, keyboard- and touch-accessible surface: the wheel and
 // pinch gestures are invisible affordances, so these buttons expose the same zoom-in/out/reset
 // actions for users who never try the modifier gestures.
 // useControls reads the TransformWrapper context, so this must render inside <TransformWrapper>.
-const ImageZoomControls = (): React.JSX.Element => {
+// zoomIn/zoomOut honour the wrapper's zoomAnimation.disabled, but resetTransform takes its own
+// animationTime, so reduce-motion must be passed through here to keep the reset instant too.
+const ImageZoomControls = ({ reduceMotion }: { reduceMotion: boolean }): React.JSX.Element => {
   const { zoomIn, zoomOut, resetTransform } = useControls()
   const actions = [
     { label: 'Zoom in', icon: ZoomIn, onClick: () => zoomIn() },
     { label: 'Zoom out', icon: ZoomOut, onClick: () => zoomOut() },
-    { label: 'Reset zoom', icon: Maximize2, onClick: () => resetTransform() }
+    {
+      label: 'Reset zoom',
+      icon: Maximize2,
+      onClick: () => resetTransform(reduceMotion ? 0 : undefined)
+    }
   ]
 
   return (
@@ -66,35 +78,44 @@ const ZoomableImage = ({
   url: string
   name: string
   onError: () => void
-}): React.JSX.Element => (
-  <TransformWrapper
-    minScale={ZOOM_MIN}
-    maxScale={ZOOM_MAX}
-    centerOnInit
-    doubleClick={{ mode: 'reset' }}
-    // Function form gives Control-OR-Meta; the array form ANDs its keys, requiring both at once.
-    // Trackpad pinch arrives as a wheel event with ctrlKey set, so it passes without a real key.
-    wheel={{
-      step: 0.2,
-      activationKeys: (keys) => keys.includes('Control') || keys.includes('Meta')
-    }}
-    panning={{ velocityDisabled: true }}
-  >
-    <ImageZoomControls />
-    <TransformComponent
-      wrapperClass="!size-full cursor-grab active:cursor-grabbing"
-      contentClass="!size-full"
+}): React.JSX.Element => {
+  // Read once per mount and thread through every animated path (wheel is already instant; buttons
+  // read zoomAnimation.disabled; double-click and reset carry their own animationTime).
+  const reduceMotion = prefersReducedMotion()
+
+  return (
+    <TransformWrapper
+      minScale={ZOOM_MIN}
+      maxScale={ZOOM_MAX}
+      centerOnInit
+      zoomAnimation={{ disabled: reduceMotion }}
+      // Only override animationTime when reducing motion; passing undefined would clobber the
+      // library's 200ms default (createSetup copies undefined), leaving animate() with NaN timing.
+      doubleClick={reduceMotion ? { mode: 'reset', animationTime: 0 } : { mode: 'reset' }}
+      // Function form gives Control-OR-Meta; the array form ANDs its keys, requiring both at once.
+      // Trackpad pinch arrives as a wheel event with ctrlKey set, so it passes without a real key.
+      wheel={{
+        step: 0.2,
+        activationKeys: (keys) => keys.includes('Control') || keys.includes('Meta')
+      }}
+      panning={{ velocityDisabled: true }}
     >
-      <img
-        src={url}
-        alt={name}
-        className="size-full object-contain"
-        draggable={false}
-        onError={onError}
-      />
-    </TransformComponent>
-  </TransformWrapper>
-)
+      <ImageZoomControls reduceMotion={reduceMotion} />
+      <TransformComponent
+        wrapperClass="!size-full cursor-grab active:cursor-grabbing"
+        contentClass="!size-full"
+      >
+        <img
+          src={url}
+          alt={name}
+          className="size-full object-contain"
+          draggable={false}
+          onError={onError}
+        />
+      </TransformComponent>
+    </TransformWrapper>
+  )
+}
 
 export const PreviewImageContent = ({
   path,

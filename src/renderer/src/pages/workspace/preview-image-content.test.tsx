@@ -257,6 +257,43 @@ describe('PreviewImageContent', () => {
     expect(readScale()).toBeGreaterThan(1.2)
   })
 
+  it('applies zoom instantly when the user prefers reduced motion', async () => {
+    // Report "reduce" so zoomAnimation.disabled short-circuits the eased tween.
+    const matchMedia = vi.fn((query: string) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn()
+    }))
+    vi.stubGlobal('matchMedia', matchMedia)
+
+    try {
+      root = createRoot(container)
+      await act(async () => {
+        root.render(<PreviewImageContent path="/workspace/photo.png" name="photo.png" />)
+      })
+
+      const transformed = container.querySelector<HTMLElement>('.react-transform-component')
+      const readScale = (): number =>
+        Number.parseFloat(
+          /scale\(([\d.]+)\)/.exec(transformed?.style.transform ?? '')?.[1] ?? 'NaN'
+        )
+
+      await act(async () => {
+        container
+          .querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')
+          ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        // A single frame: with animation disabled the final scale lands at once, with no easing
+        // ramp (the eased path would still read ~1.0 here).
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      })
+
+      expect(readScale()).toBeGreaterThan(1.6)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('preserves the decode-failure fallback behind the zoom wrapper', async () => {
     root = createRoot(container)
     await act(async () => {
