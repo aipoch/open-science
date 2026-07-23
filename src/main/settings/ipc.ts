@@ -49,8 +49,11 @@ const SETTINGS_INSTALL_LOG_CHANNEL = 'settings:install-log'
 
 export type SettingsIpcOptions = {
   service?: SettingsService
-  // Called after the active provider changes so the ACP runtime can drop its stale connection.
+  // Called after the active provider changes so the current framework runtime reconnects with it.
   onActiveProviderChanged?: () => void
+  // Called after the agent framework changes. Active turns finish on their prior framework; every later
+  // turn resumes through the newly selected framework.
+  onAgentFrameworkChanged?: () => void
   // Called after the reasoning effort changes so the ACP runtime can live-apply it to open sessions.
   // Returns true when the level was applied over ACP (no reconnect needed); false means the active
   // framework only carries effort in its spawn config and onActiveProviderChanged must fire instead.
@@ -71,6 +74,7 @@ const broadcastInstallEvent = (event: ClaudeInstallEvent): void => {
 const registerSettingsIpcHandlers = ({
   service = createDefaultSettingsService(),
   onActiveProviderChanged,
+  onAgentFrameworkChanged,
   onReasoningEffortChanged,
   onSkillsChanged,
   onConnectorsChanged
@@ -159,9 +163,9 @@ const registerSettingsIpcHandlers = ({
       log.info('set agent framework requested', { id: request.id })
       const snapshot = await service.setAgentFramework(request.id)
 
-      // Switching frameworks needs a fresh agent process, exactly like a provider switch — the live
-      // process is a different backend binary, so the choice only takes effect on reconnect.
-      onActiveProviderChanged?.()
+      // A framework uses a different backend binary. Preserve active turns, then resume every later turn
+      // through a runtime for the newly selected framework.
+      onAgentFrameworkChanged?.()
 
       return snapshot
     }

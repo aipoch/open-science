@@ -103,6 +103,7 @@ import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
 import { isMediaOverflowError } from '../../shared/media-overflow'
+import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import { REVIEWER_MCP_SERVER_NAME, REVIEWER_MCP_TOOLS } from '../../shared/reviewer'
 import {
   buildImageContentData,
@@ -114,10 +115,11 @@ import {
   type InlineImageBudget
 } from '../uploads/attachment-media'
 
-type AcpRuntimeCallbacks = {
+export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
   onEvent?: (event: AcpRuntimeEvent) => void
   onPermissionRequest?: (request: AcpPermissionRequest) => void
+  onRetired?: () => void
 }
 
 type AcpRuntimeOptions = {
@@ -510,6 +512,10 @@ class AcpRuntime {
   // framework while moving to a different on-disk session store, where the old id is not resumable.
   private readonly sessionBackendIds = new Map<string, string>()
   private readonly promptInFlightSessionIds = new Set<string>()
+  // Workflow-scoped leases keep this generation alive across gaps between ephemeral sessions and main
+  // prompts (for example reviewer -> correction -> re-review). A framework switch can retire the runtime
+  // only after every lease and reviewer session has been released.
+  private activityLeaseCount = 0
   // Monotonic per-turn token and the token of the turn that currently owns each app session id. When an
   // overflow-recovery replay reuses a session id, its start bumps the token; the abandoned turn's finally
   // then sees a newer owner and leaves the replay's shared state (lock, artifact run) untouched.
@@ -519,6 +525,10 @@ class AcpRuntime {
   // A provider change requested while a prompt was running, applied when the session next goes idle.
   private pendingProviderReconnect = false
   private pendingSkillsReload = false
+  // A coordinator-owned framework generation retires after its last active turn or background workflow.
+  // Unlike a provider reconnect, it must never spawn again: future work uses the coordinator's current
+  // runtime.
+  private pendingRetirement = false
   // Barrier awaited by ensureConnected so a createSession called while a deferred reconnect is
   // queued blocks until the reconnect completes rather than reusing the stale connection.
   private reconnectBarrier: Promise<void> | undefined
@@ -532,8 +542,8 @@ class AcpRuntime {
   private framework: AgentFramework
   private backendId: string | undefined
   private readonly mcpHttpHost: AgentMcpHttpHost | undefined
-  // A Chat Completions provider uses the local Responses bridge. The app-owned notebook MCP has an
-  // explicit namespaced bridge mapping; other app MCP tools still require native Responses.
+  // A Chat Completions provider uses the local Responses bridge. App-owned notebook, artifact, and
+  // reviewer MCPs have explicit namespaced bridge mappings; other MCP tools still require Responses.
   private nativeMcpEnabled = true
   private bridgeMcpAliasesEnabled = false
   // Model to apply per session via the ACP model configOption (opencode); undefined for env-driven
@@ -1567,12 +1577,24 @@ class AcpRuntime {
     return { reaped: this.lastTreeKillReaped }
   }
 
+  // Retires this framework generation without interrupting active turns or background workflows. The
+  // coordinator stops routing new work here immediately; teardown waits for every prompt and lease.
+  async requestRetirement(): Promise<void> {
+    this.pendingRetirement = true
+    if (this.hasBlockingActivity()) return
+
+    this.pendingRetirement = false
+    this.pendingProviderReconnect = false
+    this.pendingSkillsReload = false
+    await this.disconnectForRetirement()
+  }
+
   // Applies an active-provider change without interrupting the user. The agent bakes its provider env in
   // at spawn, so a new provider needs a reconnect — but if a prompt is running we defer the reconnect
   // until the session goes idle. Because every provider shares one config dir, the reconnect resumes the
   // conversation on the new provider with full context. Called when the active provider changes.
   async requestProviderReconnect(): Promise<void> {
-    if (this.promptInFlightSessionIds.size > 0) {
+    if (this.hasBlockingActivity()) {
       this.pendingProviderReconnect = true
       // Arm the barrier so any concurrent createSession waits for the reconnect
       // rather than reusing the stale connection with the old backend.
@@ -1586,7 +1608,15 @@ class AcpRuntime {
 
   // If a provider reconnect was deferred while a prompt ran, apply it once nothing is in flight.
   private maybeApplyPendingProviderReconnect(): void {
-    if (this.promptInFlightSessionIds.size > 0) return
+    if (this.hasBlockingActivity()) return
+
+    if (this.pendingRetirement) {
+      this.pendingRetirement = false
+      this.pendingProviderReconnect = false
+      this.pendingSkillsReload = false
+      void this.disconnectForRetirement()
+      return
+    }
 
     // A single reconnect satisfies both a pending provider switch and a pending skills reload: the
     // fresh spawn picks up the new backend AND re-provisions the current skill set. So clear both
@@ -1630,12 +1660,31 @@ class AcpRuntime {
     }
   }
 
+  // Retirement is terminal for this runtime generation. Swallow teardown failures just like deferred
+  // reconnect cleanup so a late dispose error cannot become an unhandled rejection after a prompt ends.
+  private async disconnectForRetirement(): Promise<void> {
+    try {
+      // Retirement is an intentional handoff after all blocking activity has finished. Suppress the
+      // abnormal-drop status so the renderer does not mark the just-completed turn as interrupted.
+      await this.disconnect(false)
+    } catch (error) {
+      safeLogError('retired runtime disconnect failed', errorLogFields(error))
+    } finally {
+      this.resolveReconnectBarrier()
+      try {
+        this.callbacks.onRetired?.()
+      } catch (error) {
+        safeLogError('retired runtime callback failed', errorLogFields(error))
+      }
+    }
+  }
+
   // Re-materializes the agent's skills on the next reconnect: a disconnect makes the next prompt spawn a
   // fresh agent, whose provisioning copies the current enabled set into the config dir before the session
   // resumes with full context. Defers past an in-flight prompt exactly like a provider switch. Called
   // when a skill is toggled in settings.
   async requestSkillsReload(): Promise<void> {
-    if (this.promptInFlightSessionIds.size > 0) {
+    if (this.hasBlockingActivity()) {
       this.pendingSkillsReload = true
       this.armReconnectBarrier()
       return
@@ -1643,6 +1692,28 @@ class AcpRuntime {
 
     this.pendingSkillsReload = false
     await this.disconnect()
+  }
+
+  // Holds this generation across a multi-step background workflow, including gaps with no live session.
+  async withActivity<T>(
+    _options: AcpRuntimeActivityOptions,
+    work: (runtime: AcpRuntimeActivity) => Promise<T>
+  ): Promise<T> {
+    this.activityLeaseCount += 1
+    try {
+      return await work(this)
+    } finally {
+      this.activityLeaseCount = Math.max(0, this.activityLeaseCount - 1)
+      this.maybeApplyPendingProviderReconnect()
+    }
+  }
+
+  private hasBlockingActivity(): boolean {
+    return (
+      this.promptInFlightSessionIds.size > 0 ||
+      this.reviewerSessionIds.size > 0 ||
+      this.activityLeaseCount > 0
+    )
   }
 
   // Creates the reconnect barrier promise if one is not already pending.
@@ -3392,6 +3463,7 @@ class AcpRuntime {
     // skills too, so clear both pending flags to avoid a spurious later reconnect.
     this.pendingProviderReconnect = false
     this.pendingSkillsReload = false
+    this.pendingRetirement = false
     this.resolveReconnectBarrier()
     this.setStatus('closed')
   }
@@ -3602,6 +3674,7 @@ class AcpRuntime {
     this.reviewerSessionDirectories.delete(session.sessionId)
     session.dispose()
     if (reviewerCwd) this.removeReviewerDirectory(reviewerCwd)
+    this.maybeApplyPendingProviderReconnect()
     return rejectedToolCalls
   }
 

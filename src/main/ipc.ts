@@ -454,12 +454,12 @@ const registerIpcHandlers = async ({
   updateService.setInstallGate?.(() =>
     shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
   )
-  // Switching the active provider takes effect on the next reconnect. Defer that reconnect until any
-  // in-flight prompt finishes so switching never interrupts a running turn; the shared config dir keeps
-  // the conversation's context across the switch.
+  // Spawn-config changes rotate the coordinator's runtime for future sessions. Existing sessions retain
+  // their owning runtime, so a framework/provider switch cannot interrupt an in-flight turn.
   registerSettingsIpcHandlers({
     service: settingsService,
     onActiveProviderChanged: () => void runtime.requestProviderReconnect(),
+    onAgentFrameworkChanged: () => void runtime.requestAgentFrameworkSwitch(),
     onReasoningEffortChanged: (effort) => runtime.applyReasoningEffortChange(effort),
     onSkillsChanged: () => void runtime.requestSkillsReload(),
     // Re-sync bundled + custom skill docs and refresh the in-memory snapshot the connector

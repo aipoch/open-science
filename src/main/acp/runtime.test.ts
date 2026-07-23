@@ -4171,6 +4171,93 @@ describe('ACP runtime session management', () => {
     expect(process.killed).toBe(true)
   })
 
+  it('retires a framework runtime only after its in-flight prompt finishes', async () => {
+    const process = new FakeAgentProcess()
+    const gate = createDeferred()
+    const onRetired = vi.fn()
+    startFakeAgent(process, ['s1'], { onPrompt: () => gate.promise })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onRetired }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+
+    await runtime.requestRetirement()
+    expect(process.killed).toBe(false)
+    expect(onRetired).not.toHaveBeenCalled()
+    expect(runtime.getSnapshot().sessionIds).toEqual(['s1'])
+
+    gate.resolve()
+    await prompt
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(process.killed).toBe(true)
+    expect(runtime.getSnapshot().sessionIds).toEqual([])
+    expect(onRetired).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a reviewer session alive until it is disposed before retiring', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['reviewer-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
+
+    await runtime.requestRetirement()
+    expect(process.killed).toBe(false)
+
+    runtime.disposeReviewerSession(session)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(process.killed).toBe(true)
+  })
+
+  it('keeps a retiring runtime alive across gaps in an activity workflow', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    const activityStarted = createDeferred()
+    const releaseActivity = createDeferred()
+
+    const activity = runtime.withActivity({}, async () => {
+      activityStarted.resolve()
+      await releaseActivity.promise
+    })
+    await activityStarted.promise
+
+    await runtime.requestRetirement()
+    expect(process.killed).toBe(false)
+
+    releaseActivity.resolve()
+    await activity
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(process.killed).toBe(true)
+  })
+
   it('createSession waits for a pending provider reconnect before using the new connection', async () => {
     const oldProcess = new FakeAgentProcess()
     const newProcess = new FakeAgentProcess()

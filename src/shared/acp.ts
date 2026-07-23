@@ -190,6 +190,9 @@ export type AcpPermissionGrant = {
 
 export type AcpStateSnapshot = {
   status: AcpConnectionStatus
+  // A coordinator may keep multiple framework generations alive. Callers handling one session should
+  // prefer its owning runtime status over the active generation's top-level compatibility status.
+  sessionConnectionStatuses?: Partial<Record<string, AcpConnectionStatus>>
   cwd: string
   sessionId?: string
   sessionIds: string[]

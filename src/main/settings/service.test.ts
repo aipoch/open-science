@@ -1157,6 +1157,7 @@ describe('SettingsService: preflight & spawn config', () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
     const backend = await service.resolveActiveAgentBackend()
+    const selection = await service.captureActiveAgentBackendSelection()
 
     expect(backend.framework.id).toBe('codex')
     expect(backend.executablePath).toBe(adapterPath)
@@ -1169,6 +1170,20 @@ describe('SettingsService: preflight & spawn config', () => {
     })
     expect(backend.env.CODEX_API_KEY).toBeUndefined()
     expect(backend.authentication).toEqual({
+      methodId: 'api-key',
+      _meta: { 'api-key': { apiKey: 'test-key' } }
+    })
+
+    expect(selection).toEqual({ frameworkId: 'codex' })
+    expect(selection).not.toHaveProperty('key')
+
+    // The generation stays on Codex after global framework settings move elsewhere; credentials are
+    // decrypted again from the active provider only when another spawn is actually needed.
+    await repository.setAgentFramework('claude-code')
+    const pinnedBackend = await service.resolveAgentBackend(selection)
+    expect(pinnedBackend.framework.id).toBe('codex')
+    expect(pinnedBackend.backendId).toBe(`codex:${provider.id}`)
+    expect(pinnedBackend.authentication).toEqual({
       methodId: 'api-key',
       _meta: { 'api-key': { apiKey: 'test-key' } }
     })
@@ -1409,6 +1424,119 @@ describe('SettingsService: preflight & spawn config', () => {
       'utf8'
     )
     expect(pubmedSkill).toContain('host.mcp')
+  })
+
+  it('keeps bridged Codex backends pinned to the provider target they were created for', async () => {
+    const localFetch = globalThis.fetch
+    const upstreamRequests: Array<{ url: string; authorization: string; model: unknown }> = []
+    const upstreamToolNames: string[][] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        const tools = Array.isArray(body.tools) ? body.tools : []
+        upstreamToolNames.push(
+          tools.map((tool) =>
+            String((tool as { function?: { name?: unknown } }).function?.name ?? '')
+          )
+        )
+        upstreamRequests.push({
+          url: String(url),
+          authorization: String((init?.headers as Record<string, string>)?.authorization ?? ''),
+          model: body.model
+        })
+        return new Response(
+          [
+            `data: ${JSON.stringify({
+              id: `chat-${upstreamRequests.length}`,
+              model: body.model,
+              choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+            })}`,
+            '',
+            'data: [DONE]',
+            ''
+          ].join('\n'),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      })
+    )
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, '', 'utf8')
+    const service = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
+    })
+    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.1.4' })
+    await repository.setAgentFramework('codex')
+    const first = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'Provider One',
+        apiEndpoints: ['openai'],
+        baseUrl: 'https://one.example/v1',
+        model: 'model-one',
+        key: 'key-one'
+      })
+    ).providers[0]
+    const second = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'Provider Two',
+        apiEndpoints: ['openai'],
+        baseUrl: 'https://two.example/v1',
+        model: 'model-two',
+        key: 'key-two'
+      })
+    ).providers.find((provider) => provider.name === 'Provider Two')!
+    for (const provider of (await repository.getSettings()).providers) {
+      await repository.upsertProvider({ ...provider, lastValidatedAt: Date.now() })
+    }
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
+
+    await service.setActiveProvider(first.id)
+    const firstBackend = await service.resolveActiveAgentBackend()
+    await service.setActiveProvider(second.id)
+    const secondBackend = await service.resolveActiveAgentBackend()
+
+    expect(firstBackend.providerConfiguration?.baseUrl).not.toBe(
+      secondBackend.providerConfiguration?.baseUrl
+    )
+
+    const send = async (backend: typeof firstBackend): Promise<void> => {
+      const response = await localFetch(`${backend.providerConfiguration?.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: backend.providerConfiguration?.headers.authorization ?? '',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'gpt-5.5',
+          input: 'hello',
+          stream: true,
+          tools: [{ type: 'tool_search' }]
+        })
+      })
+      await response.text()
+    }
+    await send(firstBackend)
+    await send(secondBackend)
+
+    expect(upstreamRequests).toEqual([
+      {
+        url: 'https://one.example/v1/chat/completions',
+        authorization: 'Bearer key-one',
+        model: 'model-one'
+      },
+      {
+        url: 'https://two.example/v1/chat/completions',
+        authorization: 'Bearer key-two',
+        model: 'model-two'
+      }
+    ])
+    expect(upstreamToolNames).toEqual([
+      expect.arrayContaining(['mcp__open_science_reviewer__submit_findings']),
+      expect.arrayContaining(['mcp__open_science_reviewer__submit_findings'])
+    ])
   })
 
   it('drives a native-Responses official vendor directly, without starting the bridge', async () => {

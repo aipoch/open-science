@@ -505,20 +505,26 @@ describe('settings IPC handlers', () => {
     }
   })
 
-  it('persists the selected framework and respawns the agent on set-agent-framework', async () => {
+  it('persists the selected framework and rotates future sessions on set-agent-framework', async () => {
     handlers.clear()
     const service = createFakeService()
     const snapshot = { claude: {}, providers: [], agentFrameworkId: 'opencode' }
     service.setAgentFramework.mockResolvedValue(snapshot)
     const onActiveProviderChanged = vi.fn()
-    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+    const onAgentFrameworkChanged = vi.fn()
+    registerSettingsIpcHandlers({
+      service: asService(service),
+      onActiveProviderChanged,
+      onAgentFrameworkChanged
+    })
 
     const result = await invoke('settings:set-agent-framework', { id: 'opencode' })
 
     // The handler unwraps the request to the bare framework id the service expects.
     expect(service.setAgentFramework).toHaveBeenCalledWith('opencode')
-    // Switching frameworks swaps the backend binary, so the live agent must be dropped like a provider switch.
-    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+    // Existing sessions keep their owning runtime; only future sessions rotate to the new framework.
+    expect(onAgentFrameworkChanged).toHaveBeenCalledOnce()
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
     expect(result).toBe(snapshot)
   })
 

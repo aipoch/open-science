@@ -3,7 +3,7 @@ import { access, chmod, mkdir, readdir, realpath, writeFile } from 'node:fs/prom
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 
 import { z } from 'zod'
@@ -81,6 +81,7 @@ import {
 } from '../../shared/run-error-classification'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
+import { REVIEWER_MCP_SERVER_NAME, REVIEWER_MCP_TOOLS } from '../../shared/reviewer'
 import {
   defaultVendorModel,
   getOfficialVendor,
@@ -153,7 +154,8 @@ import { buildProviderEnv, getAppClaudeConfigDir, type ResolvedProvider } from '
 import {
   ResponsesBridge,
   type ResponsesBridgeConnection,
-  type ResponsesBridgeNamespacedTool
+  type ResponsesBridgeNamespacedTool,
+  type ResponsesBridgeTarget
 } from './responses-bridge'
 import { SettingsRepository } from './repository'
 import { sanitizeCustomMcpServer } from './repository'
@@ -168,6 +170,7 @@ import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limit
 import { readSkillFile } from '../skills/skill-files'
 import { NOTEBOOK_MCP_SERVER_NAME, NOTEBOOK_RPC_TOOLS } from '../notebook/mcp-server'
 import { ARTIFACT_MCP_SERVER_NAME, writeArtifactFileToolSchema } from '../artifacts/mcp-server'
+import { submitFindingsInputSchema } from '../reviewer/mcp-server'
 import type {
   StoredConnectors,
   StoredCodexInfo,
@@ -187,6 +190,10 @@ import {
   type ClaudeIsolatedAuthControllerPort,
   type ClaudeIsolatedAuthStatus
 } from './claude-isolated-auth'
+
+export type AgentBackendSelection = {
+  frameworkId: AgentFrameworkId
+}
 
 const execFileAsync = promisify(execFile)
 
@@ -234,6 +241,47 @@ const CODEX_BRIDGE_ARTIFACT_TOOLS: ResponsesBridgeNamespacedTool[] = [
     description:
       'Attach a generated image, chart, report, data export, or archive to the current Open Science response. The file must already exist before using a localPath source.',
     parameters: z.toJSONSchema(z.object(writeArtifactFileToolSchema), {
+      target: 'draft-7'
+    }) as ResponsesBridgeNamespacedTool['parameters']
+  }
+]
+const CODEX_REVIEWER_TOOL_NAMESPACE = `mcp__${REVIEWER_MCP_SERVER_NAME.replace(
+  /[^a-zA-Z0-9_]/g,
+  '_'
+)}`
+const CODEX_BRIDGE_REVIEWER_TOOLS: ResponsesBridgeNamespacedTool[] = [
+  {
+    namespace: CODEX_REVIEWER_TOOL_NAMESPACE,
+    name: REVIEWER_MCP_TOOLS.readTurn,
+    description: 'Return the ordered message and tool-activity blocks in the audited turn.',
+    parameters: z.toJSONSchema(z.object({}).strict(), { target: 'draft-7' })
+  },
+  {
+    namespace: CODEX_REVIEWER_TOOL_NAMESPACE,
+    name: REVIEWER_MCP_TOOLS.queryExecutionLog,
+    description: 'Return the execution log for the audited turn or one in-scope activity.',
+    parameters: z.toJSONSchema(
+      z
+        .object({ activityId: z.string().optional().describe('Optional in-scope activity id') })
+        .strict(),
+      { target: 'draft-7' }
+    )
+  },
+  {
+    namespace: CODEX_REVIEWER_TOOL_NAMESPACE,
+    name: REVIEWER_MCP_TOOLS.readArtifact,
+    description: 'Read one artifact attached to the audited turn.',
+    parameters: z.toJSONSchema(
+      z.object({ id: z.string().min(1).describe('In-scope artifact version id') }).strict(),
+      { target: 'draft-7' }
+    )
+  },
+  {
+    namespace: CODEX_REVIEWER_TOOL_NAMESPACE,
+    name: REVIEWER_MCP_TOOLS.submitFindings,
+    description:
+      'Submit structured review checks exactly once, then stop. Pass an empty checks array if no issues were found.',
+    parameters: z.toJSONSchema(submitFindingsInputSchema, {
       target: 'draft-7'
     }) as ResponsesBridgeNamespacedTool['parameters']
   }
@@ -392,7 +440,7 @@ class SettingsService {
   ) => Promise<ManagedCodexInstallOutcome>
   private readonly codexAuth: CodexAuthControllerPort
   private readonly claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort
-  private responsesBridge: ResponsesBridge | undefined
+  private readonly responsesBridges = new Map<string, ResponsesBridge>()
   private providerSequence = 0
   private readonly providerValidationGenerations = new Map<string, number>()
   // Skills force-loaded for the current turn: subtracted from the stored disabled set at spawn time so
@@ -685,7 +733,9 @@ class SettingsService {
     // A live bridge never sees resolveActiveAgentBackend again until the next provider switch, so its
     // forwarding policy must be updated in place: an explicit level forwards, 'default' restores
     // stripping so Codex's own default effort never leaks upstream.
-    this.responsesBridge?.setForwardReasoningEffort(effort !== DEFAULT_REASONING_EFFORT)
+    for (const bridge of this.responsesBridges.values()) {
+      bridge.setForwardReasoningEffort(effort !== DEFAULT_REASONING_EFFORT)
+    }
 
     return this.getSettingsView()
   }
@@ -2422,6 +2472,11 @@ class SettingsService {
   // Builds the spawn env for the active provider, read fresh so switching takes effect on reconnect.
   async resolveActiveSpawnConfig(): Promise<AgentSpawnConfig> {
     const settings = await this.repository.getSettings()
+
+    return this.resolveSpawnConfig(settings)
+  }
+
+  private async resolveSpawnConfig(settings: StoredSettings): Promise<AgentSpawnConfig> {
     let executablePath = settings.claude?.resolvedPath
 
     // Trust the stored path only if it still exists. A user who uninstalled Claude leaves a stale path
@@ -2480,6 +2535,37 @@ class SettingsService {
       forced === 'opencode' || forced === 'claude-code' || forced === 'codex'
         ? forced
         : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
+
+    return this.resolveAgentBackendFromSettings(settings, frameworkId)
+  }
+
+  // Captures only non-secret backend identity. Runtime generations resolve credentials again at spawn,
+  // so decrypted keys are not retained by the coordinator after AcpRuntime finishes authentication.
+  async captureActiveAgentBackendSelection(): Promise<AgentBackendSelection> {
+    const settings = await this.repository.getSettings()
+    const forced = process.env.OPEN_SCIENCE_AGENT_FRAMEWORK
+    const frameworkId: AgentFrameworkId =
+      forced === 'opencode' || forced === 'claude-code' || forced === 'codex'
+        ? forced
+        : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
+
+    return { frameworkId }
+  }
+
+  async resolveAgentBackend(selection: AgentBackendSelection): Promise<ResolvedAgentBackend> {
+    const stored = await this.repository.getSettings()
+    const settings: StoredSettings = {
+      ...stored,
+      agentFrameworkId: selection.frameworkId
+    }
+
+    return this.resolveAgentBackendFromSettings(settings, selection.frameworkId)
+  }
+
+  private async resolveAgentBackendFromSettings(
+    settings: StoredSettings,
+    frameworkId: AgentFrameworkId
+  ): Promise<ResolvedAgentBackend> {
     const framework = getAgentFramework(frameworkId)
     // 'default' means "don't override": nothing is sent over ACP or framework config, so the agent
     // keeps its own default effort. A concrete level is delivered through two channels deliberately
@@ -2528,9 +2614,8 @@ class SettingsService {
     }
 
     if (framework.id === 'claude-code') {
-      await this.disableResponsesBridge()
       // Unchanged Claude path: skills provisioning + Anthropic-shaped env + local-auth handling.
-      const { envOverrides, executablePath } = await this.resolveActiveSpawnConfig()
+      const { envOverrides, executablePath } = await this.resolveSpawnConfig(settings)
 
       return {
         framework,
@@ -2576,9 +2661,11 @@ class SettingsService {
       (provider.apiEndpoints?.includes('openai') ?? false) &&
       !(provider.apiEndpoints?.includes('responses') ?? false)
     const enabledConnectorIds = this.enabledConnectorIds(settings.connectors)
+    // A bridge may still serve a live Codex runtime from an earlier framework generation. Do not stop
+    // or retarget it merely because the newly selected framework/provider does not need one.
     const responsesBridge = needsResponsesBridge
       ? await this.ensureResponsesBridge(provider, enabledConnectorIds, sessionEffort !== undefined)
-      : await this.disableResponsesBridge()
+      : undefined
     const modelConfig = framework.prepareModelConfig(provider, {
       storageRoot: this.storageRoot,
       executablePath,
@@ -2629,7 +2716,11 @@ class SettingsService {
       key: provider.key,
       model: provider.model,
       forwardReasoningEffort,
-      namespacedTools: [...CODEX_BRIDGE_NOTEBOOK_TOOLS, ...CODEX_BRIDGE_ARTIFACT_TOOLS],
+      namespacedTools: [
+        ...CODEX_BRIDGE_NOTEBOOK_TOOLS,
+        ...CODEX_BRIDGE_ARTIFACT_TOOLS,
+        ...CODEX_BRIDGE_REVIEWER_TOOLS
+      ],
       connectorInstructions: enabledConnectorIds.map((id) => {
         const metadata = CONNECTOR_CATALOG.find((connector) => connector.id === id)
         return {
@@ -2641,19 +2732,28 @@ class SettingsService {
         }
       })
     }
-    if (!this.responsesBridge) {
-      this.responsesBridge = new ResponsesBridge(target)
+    const fingerprint = this.responsesBridgeFingerprint(target)
+    let bridge = this.responsesBridges.get(fingerprint)
+    if (!bridge) {
+      bridge = new ResponsesBridge(target)
+      this.responsesBridges.set(fingerprint, bridge)
     } else {
-      this.responsesBridge.setTarget(target)
+      // Reasoning effort is a live global preference, not part of the bridge's pinned routing target.
+      bridge.setForwardReasoningEffort(forwardReasoningEffort)
     }
 
-    return this.responsesBridge.start()
+    return bridge.start()
   }
 
-  private async disableResponsesBridge(): Promise<undefined> {
-    if (this.responsesBridge) await this.responsesBridge.close()
-    this.responsesBridge = undefined
-    return undefined
+  private responsesBridgeFingerprint(target: ResponsesBridgeTarget): string {
+    const pinnedTarget = {
+      baseUrl: target.baseUrl,
+      key: target.key,
+      model: target.model,
+      namespacedTools: target.namespacedTools,
+      connectorInstructions: target.connectorInstructions
+    }
+    return createHash('sha256').update(JSON.stringify(pinnedTarget)).digest('hex')
   }
 
   // Locates the opencode binary: an explicitly stored path wins, else a best-effort PATH lookup.
