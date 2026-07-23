@@ -345,6 +345,7 @@ describe('AI review workflow contract', () => {
     const installStep = getNamedStep('claude_review', 'Install Claude CLI')
 
     expect(installStep.run).toContain('@anthropic-ai/claude-code@2.1.218')
+    expect(installStep.run).not.toContain('--ignore-scripts')
     expect(step.env?.CLAUDE_MODEL).toBe("${{ vars.CLAUDE_REVIEW_MODEL || 'claude-sonnet-5' }}")
     expect(step.run).toContain('--output-format stream-json')
     expect(step.run).not.toContain('--json-schema')

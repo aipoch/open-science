@@ -249,7 +249,7 @@ jobs:
         run: |
           set -euo pipefail
           : > "$NPM_CONFIG_USERCONFIG"
-          npm install -g --ignore-scripts --registry=https://registry.npmjs.org/ \
+          npm install -g --registry=https://registry.npmjs.org/ \
             @anthropic-ai/claude-code@2.1.218
 
       - name: Run Claude architecture review
