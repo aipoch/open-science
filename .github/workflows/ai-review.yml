@@ -67,7 +67,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      review_body: ${{ steps.run_claude.outputs.structured_output != '' && fromJSON(steps.run_claude.outputs.structured_output).review || '' }}
+      review_body: ${{ steps.extract_claude.outputs.review_body }}
       pr_number: ${{ steps.pr.outputs.number }}
       head_sha: ${{ steps.pr.outputs.head_sha }}
     steps:
@@ -216,7 +216,7 @@ jobs:
             **Impact:** and **Recommendation:** labels. If no architectural or integration issues
             are found, write **No architectural or integration issues found.** Be concise.
 
-            Return your review as structured output matching the JSON schema.
+            Return only the review Markdown, without a JSON or code-fence wrapper.
           # --tools "" disables ALL built-in tools (Read, Bash, Grep, Glob, Edit, …). The
           # allowed-tools flag only controls the confirmation-free list, not tool availability.
           # --safe-mode disables all project customisations (CLAUDE.md, skills, plugins, hooks,
@@ -226,12 +226,43 @@ jobs:
           # spawn MCP servers while ANTHROPIC_AUTH_TOKEN is in the process environment.
           # --max-turns 3: without tools the agent reads the prompt and produces output in one turn.
           claude_args: >-
-            --model "${{ vars.CLAUDE_REVIEW_MODEL || 'claude-opus-4-8' }}"
+            --model "${{ vars.CLAUDE_REVIEW_MODEL || 'claude-sonnet-5' }}"
             --max-turns 3
             --safe-mode
             --strict-mcp-config
             --tools ""
-            --json-schema '{"type":"object","properties":{"review":{"type":"string"}},"required":["review"]}'
+
+      - name: Extract Claude review
+        id: extract_claude
+        if: ${{ steps.context.outputs.should_run == 'true' }}
+        env:
+          EXECUTION_FILE: ${{ steps.run_claude.outputs.execution_file }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$EXECUTION_FILE" || ! -f "$EXECUTION_FILE" ]]; then
+            echo "Claude execution output is unavailable." >&2
+            exit 1
+          fi
+
+          review="$(
+            jq -r '
+              [.[] | select(.type == "assistant")] | last
+              | [.message.content[]? | select(.type == "text") | .text]
+              | join("\n")
+            ' "$EXECUTION_FILE"
+          )"
+          if [[ -z "$review" ]]; then
+            echo "Claude produced no review text." >&2
+            exit 1
+          fi
+
+          delimiter="REVIEW_EOF_$(head -c 16 /dev/urandom | xxd -p)"
+          {
+            echo "review_body<<${delimiter}"
+            printf '%s\n' "$review"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
 
   post_claude_feedback:
     name: Post Claude feedback

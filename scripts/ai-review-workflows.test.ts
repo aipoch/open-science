@@ -281,7 +281,7 @@ describe('AI review workflow contract', () => {
   })
 
   it('externalizes review models to repository variables', () => {
-    expect(reviewWorkflow).toContain("vars.CLAUDE_REVIEW_MODEL || 'claude-opus-4-8'")
+    expect(reviewWorkflow).toContain("vars.CLAUDE_REVIEW_MODEL || 'claude-sonnet-5'")
     expect(reviewWorkflow).toContain("vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol'")
   })
 
@@ -322,16 +322,49 @@ describe('AI review workflow contract', () => {
     expect(reviewWorkflow).not.toContain('--allowedTools')
     expect(reviewWorkflow).toContain('Generate review context')
     expect(reviewWorkflow).toContain('post_claude_feedback')
-    expect(args).toContain('--json-schema')
   })
 
-  it('runs Claude with an explicit Opus model and action-compatible output framing', () => {
+  it('runs Claude with an explicit Sonnet model and endpoint-compatible output framing', () => {
     const step = getNamedStep('claude_review', 'Run Claude architecture review')
     const args = step.with?.claude_args
 
-    expect(args).toContain('--model "${{ vars.CLAUDE_REVIEW_MODEL || \'claude-opus-4-8\' }}"')
+    expect(args).toContain('--model "${{ vars.CLAUDE_REVIEW_MODEL || \'claude-sonnet-5\' }}"')
     expect(args).not.toContain('--output-format json')
+    expect(args).not.toContain('--json-schema')
     expect(step.env).not.toHaveProperty('ANTHROPIC_DEFAULT_SONNET_MODEL')
+  })
+
+  it('extracts the final Claude assistant message from the action execution file', () => {
+    const root = createFixtureRoot('ai-review-claude-output-')
+    const executionFile = join(root, 'execution.json')
+    const githubOutput = join(root, 'github-output')
+    writeFileSync(
+      executionFile,
+      JSON.stringify([
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'draft' }] } },
+        {
+          type: 'assistant',
+          message: {
+            content: [
+              { type: 'text', text: '## Claude Architecture Review' },
+              { type: 'text', text: '**Verdict: mergeable**' }
+            ]
+          }
+        },
+        { type: 'result', subtype: 'success' }
+      ])
+    )
+
+    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
+    })
+
+    expect(result.status, result.stderr).toBe(0)
+    const output = readFileSync(githubOutput, 'utf8')
+    expect(output).not.toContain('draft')
+    expect(output).toContain('## Claude Architecture Review\n**Verdict: mergeable**')
   })
 
   it('reads changed file contents via git show (not cat) to prevent symlink traversal', () => {
