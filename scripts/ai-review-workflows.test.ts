@@ -33,4 +33,9 @@ describe('AI review workflow contract', () => {
     expect(reviewWorkflow).toContain('**Verdict: mergeable**')
     expect(reviewWorkflow).toContain('**Verdict: needs changes**')
   })
+
+  it('gates both review jobs behind ENABLE_FORK_REVIEW for fork pull requests', () => {
+    const gates = reviewWorkflow.match(/vars\.ENABLE_FORK_REVIEW == 'true'/g)
+    expect(gates?.length).toBe(2)
+  })
 })
