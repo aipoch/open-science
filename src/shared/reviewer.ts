@@ -55,6 +55,10 @@ export type ReviewOutcome = 'pass' | 'flagged'
 // The only MCP server an unattended reviewer session may use. Keeping the name in shared code lets
 // the orchestrator and ACP permission gate enforce the same allowlist without importing each other.
 export const REVIEWER_MCP_SERVER_NAME = 'open-science-reviewer'
+// codex-acp does not forward session metadata to Responses requests. This marker lets the local
+// bridge recognize reviewer history and replace Codex's built-in tool declarations with the
+// reviewer-only schema set. It grants no access by itself; the ACP session still owns the MCP server.
+export const REVIEWER_BRIDGE_SESSION_MARKER = '<open_science_reviewer_session>'
 export const REVIEWER_MCP_TOOLS = {
   readTurn: 'read_turn',
   queryExecutionLog: 'query_execution_log',

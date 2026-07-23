@@ -1511,7 +1511,7 @@ describe('SettingsService: preflight & spawn config', () => {
         },
         body: JSON.stringify({
           model: 'gpt-5.5',
-          input: 'hello',
+          input: '<open_science_reviewer_session> hello',
           stream: true,
           tools: [{ type: 'tool_search' }]
         })

@@ -3605,7 +3605,8 @@ class AcpRuntime {
     })
     const reviewerMeta: Record<string, unknown> = {
       ...(setup.meta ?? {}),
-      // claude-agent-acp's framework-neutral legacy switch; harmless to agents that ignore it.
+      // claude-agent-acp honors this legacy switch. codex-acp currently ignores it, so bridged
+      // Codex turns are independently restricted to reviewer MCP schemas at the bridge boundary.
       disableBuiltInTools: true
     }
     if (this.framework.id === 'claude-code') {

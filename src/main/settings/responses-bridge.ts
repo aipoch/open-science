@@ -28,6 +28,10 @@ export type ResponsesBridgeTarget = {
   // unconditional forwarding would change what existing bridged users send to their gateway —
   // and gateways fronting non-OpenAI models often reject unknown parameters.
   forwardReasoningEffort?: boolean
+  reviewerScope?: {
+    marker: string
+    namespacedTools: ResponsesBridgeNamespacedTool[]
+  }
 }
 
 export type ResponsesBridgeNamespacedTool = {
@@ -341,6 +345,21 @@ const withConnectorInstructions = (
     body: { ...body, instructions },
     selectedIds: selected.map((connector) => connector.id)
   }
+}
+
+const containsTextMarker = (value: unknown, marker: string): boolean => {
+  if (typeof value === 'string') return value.includes(marker)
+  if (Array.isArray(value)) return value.some((item) => containsTextMarker(item, marker))
+  if (!value || typeof value !== 'object') return false
+  return Object.values(value).some((item) => containsTextMarker(item, marker))
+}
+
+const isReviewerScopedRequest = (body: JsonObject, target: ResponsesBridgeTarget): boolean => {
+  const marker = target.reviewerScope?.marker
+  return Boolean(
+    marker &&
+    (containsTextMarker(body.instructions, marker) || containsTextMarker(body.input, marker))
+  )
 }
 
 const namespacedToolAlias = (
@@ -1143,11 +1162,17 @@ export class ResponsesBridge {
 
     try {
       const body = await readBody(request)
-      const namespacedTools = this.target.namespacedTools ?? []
-      const connectorSelection = withConnectorInstructions(
-        body,
-        this.target.connectorInstructions ?? []
-      )
+      const reviewerScoped = isReviewerScopedRequest(body, this.target)
+      const namespacedTools = reviewerScoped
+        ? (this.target.reviewerScope?.namespacedTools ?? [])
+        : (this.target.namespacedTools ?? [])
+      // codex-acp ignores disableBuiltInTools metadata and still advertises shell/filesystem tools.
+      // For reviewer turns, replace the entire declaration set at the protocol boundary so the model
+      // can call only the scope-bounded reviewer HTTP MCP functions.
+      const scopedBody = reviewerScoped ? { ...body, tools: [], tool_choice: 'auto' } : body
+      const connectorSelection = reviewerScoped
+        ? { body: scopedBody, selectedIds: [] }
+        : withConnectorInstructions(scopedBody, this.target.connectorInstructions ?? [])
       const chatRequest = responsesToChatRequest(
         connectorSelection.body,
         this.target.model,
@@ -1176,6 +1201,7 @@ export class ResponsesBridge {
         incomingToolCount: incomingTools.length,
         outgoingToolNames,
         selectedConnectors: connectorSelection.selectedIds,
+        reviewerScoped,
         toolChoice: chatRequest.tool_choice ?? null
       })
 

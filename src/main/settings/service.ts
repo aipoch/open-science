@@ -81,7 +81,7 @@ import {
 } from '../../shared/run-error-classification'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
-import { REVIEWER_MCP_SERVER_NAME, REVIEWER_MCP_TOOLS } from '../../shared/reviewer'
+import { REVIEWER_BRIDGE_SESSION_MARKER } from '../../shared/reviewer'
 import {
   defaultVendorModel,
   getOfficialVendor,
@@ -170,7 +170,7 @@ import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limit
 import { readSkillFile } from '../skills/skill-files'
 import { NOTEBOOK_MCP_SERVER_NAME, NOTEBOOK_RPC_TOOLS } from '../notebook/mcp-server'
 import { ARTIFACT_MCP_SERVER_NAME, writeArtifactFileToolSchema } from '../artifacts/mcp-server'
-import { submitFindingsInputSchema } from '../reviewer/mcp-server'
+import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
 import type {
   StoredConnectors,
   StoredCodexInfo,
@@ -245,48 +245,6 @@ const CODEX_BRIDGE_ARTIFACT_TOOLS: ResponsesBridgeNamespacedTool[] = [
     }) as ResponsesBridgeNamespacedTool['parameters']
   }
 ]
-const CODEX_REVIEWER_TOOL_NAMESPACE = `mcp__${REVIEWER_MCP_SERVER_NAME.replace(
-  /[^a-zA-Z0-9_]/g,
-  '_'
-)}`
-const CODEX_BRIDGE_REVIEWER_TOOLS: ResponsesBridgeNamespacedTool[] = [
-  {
-    namespace: CODEX_REVIEWER_TOOL_NAMESPACE,
-    name: REVIEWER_MCP_TOOLS.readTurn,
-    description: 'Return the ordered message and tool-activity blocks in the audited turn.',
-    parameters: z.toJSONSchema(z.object({}).strict(), { target: 'draft-7' })
-  },
-  {
-    namespace: CODEX_REVIEWER_TOOL_NAMESPACE,
-    name: REVIEWER_MCP_TOOLS.queryExecutionLog,
-    description: 'Return the execution log for the audited turn or one in-scope activity.',
-    parameters: z.toJSONSchema(
-      z
-        .object({ activityId: z.string().optional().describe('Optional in-scope activity id') })
-        .strict(),
-      { target: 'draft-7' }
-    )
-  },
-  {
-    namespace: CODEX_REVIEWER_TOOL_NAMESPACE,
-    name: REVIEWER_MCP_TOOLS.readArtifact,
-    description: 'Read one artifact attached to the audited turn.',
-    parameters: z.toJSONSchema(
-      z.object({ id: z.string().min(1).describe('In-scope artifact version id') }).strict(),
-      { target: 'draft-7' }
-    )
-  },
-  {
-    namespace: CODEX_REVIEWER_TOOL_NAMESPACE,
-    name: REVIEWER_MCP_TOOLS.submitFindings,
-    description:
-      'Submit structured review checks exactly once, then stop. Pass an empty checks array if no issues were found.',
-    parameters: z.toJSONSchema(submitFindingsInputSchema, {
-      target: 'draft-7'
-    }) as ResponsesBridgeNamespacedTool['parameters']
-  }
-]
-
 const isManagedCodexPath = (adapterPath: string, storageRoot: string): boolean =>
   adapterPath === managedCodexAdapterEntry(storageRoot)
 
@@ -2716,11 +2674,11 @@ class SettingsService {
       key: provider.key,
       model: provider.model,
       forwardReasoningEffort,
-      namespacedTools: [
-        ...CODEX_BRIDGE_NOTEBOOK_TOOLS,
-        ...CODEX_BRIDGE_ARTIFACT_TOOLS,
-        ...CODEX_BRIDGE_REVIEWER_TOOLS
-      ],
+      namespacedTools: [...CODEX_BRIDGE_NOTEBOOK_TOOLS, ...CODEX_BRIDGE_ARTIFACT_TOOLS],
+      reviewerScope: {
+        marker: REVIEWER_BRIDGE_SESSION_MARKER,
+        namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS
+      },
       connectorInstructions: enabledConnectorIds.map((id) => {
         const metadata = CONNECTOR_CATALOG.find((connector) => connector.id === id)
         return {
@@ -2751,6 +2709,7 @@ class SettingsService {
       key: target.key,
       model: target.model,
       namespacedTools: target.namespacedTools,
+      reviewerScope: target.reviewerScope,
       connectorInstructions: target.connectorInstructions
     }
     return createHash('sha256').update(JSON.stringify(pinnedTarget)).digest('hex')
