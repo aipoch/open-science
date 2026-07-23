@@ -240,9 +240,11 @@ printf '%s' "$REVIEW_COMMENTS_JSON" | jq -r "$5"
   return readSimpleOutputs(githubOutput)
 }
 
-async function runPostCodexFeedback(existingReviews: number): Promise<string[]> {
-  const script = getNamedStep('post_codex_feedback', 'Post first-round Codex correctness review')
-    .with?.script
+async function runPostCodexFeedback(
+  existingReviews: number,
+  currentHeadSha = 'head-sha'
+): Promise<string[]> {
+  const script = getNamedStep('post_codex_feedback', 'Post Codex correctness review').with?.script
   if (!script) throw new Error('Missing post_codex_feedback script')
 
   const marker = '<!-- ai-review:codex -->'
@@ -253,6 +255,9 @@ async function runPostCodexFeedback(existingReviews: number): Promise<string[]> 
   const postedBodies: string[] = []
   const github = {
     rest: {
+      pulls: {
+        get: vi.fn(async () => ({ data: { head: { sha: currentHeadSha } } }))
+      },
       issues: {
         listComments: vi.fn(),
         createComment: vi.fn(async ({ body }: { body: string }) => postedBodies.push(body))
@@ -265,7 +270,46 @@ async function runPostCodexFeedback(existingReviews: number): Promise<string[]> 
   const processStub = {
     env: {
       CODEX_FINAL_MESSAGE: '## Codex Correctness Review\n**Verdict: mergeable**',
-      PR_NUMBER: '349'
+      PR_NUMBER: '349',
+      REVIEW_HEAD_SHA: 'head-sha',
+      REVIEW_RUN_ID: '1234'
+    }
+  }
+  const run = new Function(
+    'github',
+    'context',
+    'core',
+    'process',
+    `return (async () => {\n${script}\n})()`
+  )
+  await run(github, context, core, processStub)
+  return postedBodies
+}
+
+async function runPostClaudeFeedback(currentHeadSha = 'head-sha'): Promise<string[]> {
+  const script = getNamedStep('post_claude_feedback', 'Post Claude architecture review').with
+    ?.script
+  if (!script) throw new Error('Missing post_claude_feedback script')
+
+  const postedBodies: string[] = []
+  const github = {
+    rest: {
+      pulls: {
+        get: vi.fn(async () => ({ data: { head: { sha: currentHeadSha } } }))
+      },
+      issues: {
+        createComment: vi.fn(async ({ body }: { body: string }) => postedBodies.push(body))
+      }
+    }
+  }
+  const context = { repo: { owner: 'aipoch', repo: 'open-science' } }
+  const core = { notice: vi.fn() }
+  const processStub = {
+    env: {
+      REVIEW_BODY: '## Claude Architecture Review\n**Verdict: mergeable**',
+      PR_NUMBER: '349',
+      REVIEW_HEAD_SHA: 'head-sha',
+      REVIEW_RUN_ID: '1234'
     }
   }
   const run = new Function(
@@ -315,6 +359,10 @@ describe('AI review workflow contract', () => {
   it('exposes a workflow_dispatch trigger with a pull request number input', () => {
     expect(reviewWorkflow).toContain('workflow_dispatch:')
     expect(reviewWorkflow).toContain('pull_request_number')
+  })
+
+  it('runs again when a pull request receives new commits', () => {
+    expect(reviewWorkflow).toContain('types: [opened, synchronize, reopened]')
   })
 
   it('lets both review jobs run on manual dispatch by bypassing the fork gate', () => {
@@ -467,13 +515,37 @@ describe('AI review workflow contract', () => {
   })
 
   it('publishes the tenth Codex review with a trusted marker', async () => {
-    await expect(runPostCodexFeedback(9)).resolves.toEqual([
-      expect.stringContaining('<!-- ai-review:codex -->')
+    const [body] = await runPostCodexFeedback(9)
+
+    expect(body).toContain('<!-- ai-review:codex -->')
+    expect(body).toContain('<!-- ai-review-meta head=head-sha run=1234 -->')
+  })
+
+  it('publishes Claude reviews with trusted run and head provenance', async () => {
+    const step = getNamedStep('post_claude_feedback', 'Post Claude architecture review')
+
+    expect(step.env?.REVIEW_HEAD_SHA).toBe('${{ needs.claude_review.outputs.head_sha }}')
+    expect(step.env?.REVIEW_RUN_ID).toBe('${{ github.run_id }}')
+    await expect(runPostClaudeFeedback()).resolves.toEqual([
+      [
+        '<!-- ai-review:claude -->',
+        '<!-- ai-review-meta head=head-sha run=1234 -->',
+        '## Claude Architecture Review',
+        '**Verdict: mergeable**'
+      ].join('\n')
     ])
+  })
+
+  it('does not publish Claude feedback for a stale pull request head', async () => {
+    await expect(runPostClaudeFeedback('newer-head-sha')).resolves.toEqual([])
   })
 
   it('does not publish an eleventh Codex review', async () => {
     await expect(runPostCodexFeedback(10)).resolves.toEqual([])
+  })
+
+  it('does not publish or consume a review round for a stale pull request head', async () => {
+    await expect(runPostCodexFeedback(9, 'newer-head-sha')).resolves.toEqual([])
   })
 
   it('serializes the complete review workflow per pull request', () => {

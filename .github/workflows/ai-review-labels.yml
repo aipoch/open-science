@@ -164,16 +164,25 @@ jobs:
               run_id: context.payload.workflow_run.id,
             });
             // Contract with ai-review.yml: jobName must match the reviewer job's `name:` field,
-            // and header plus the '**Verdict: mergeable|needs changes**' line must match the
-            // format each reviewer's prompt requires for its pull request comment. A rename or
-            // prompt-format change on either side silently disables labeling. Verdicts are read
+            // and marker, header, provenance, plus the '**Verdict: mergeable|needs changes**'
+            // line must match the format each reviewer's prompt requires for its pull request
+            // comment. A rename or prompt-format change on either side silently disables
+            // labeling. Verdicts are read
             // via issues.listComments, so reviewers must post timeline comments (as `gh pr
             // comment` / issues.createComment does), not pull request reviews, and only comments
             // authored by github-actions[bot] are trusted as verdicts.
             // scripts/ai-review-workflows.test.ts asserts these strings do not drift apart.
             const reviewers = [
-              { jobName: 'Claude architecture review', header: '## Claude Architecture Review' },
-              { jobName: 'Codex correctness review', header: '## Codex Correctness Review' },
+              {
+                jobName: 'Claude architecture review',
+                header: '## Claude Architecture Review',
+                marker: '<!-- ai-review:claude -->',
+              },
+              {
+                jobName: 'Codex correctness review',
+                header: '## Codex Correctness Review',
+                marker: '<!-- ai-review:codex -->',
+              },
             ];
             // Skipped reviewer jobs (a disabled reviewer, or Codex after its review-round limit)
             // still appear in this list with conclusion 'skipped' and must be ignored; only a
@@ -219,6 +228,8 @@ jobs:
             // posted the comment after the run started, so stale comments from older commits —
             // and forged verdict comments from other authors — are ignored.
             const runStartedAt = new Date(context.payload.workflow_run.created_at);
+            const provenance =
+              `<!-- ai-review-meta head=${reviewedHeadSha} run=${context.payload.workflow_run.id} -->`;
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -227,11 +238,13 @@ jobs:
               per_page: 100,
             });
             const verdicts = [];
-            for (const { jobName, header } of present) {
+            for (const { jobName, header, marker } of present) {
               const comment = comments
                 .filter(
                   ({ body, created_at, user }) =>
                     body?.includes(header) &&
+                    body.includes(marker) &&
+                    body.includes(provenance) &&
                     new Date(created_at) >= runStartedAt &&
                     user?.login === 'github-actions[bot]',
                 )

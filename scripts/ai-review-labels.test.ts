@@ -123,9 +123,16 @@ const verdictComment = (
   header: string,
   verdict: string,
   login = BOT,
-  createdAt = AFTER_RUN
+  createdAt = AFTER_RUN,
+  headSha = 'sha1',
+  runId = 1
 ): MockComment => ({
-  body: `${header}\n**Verdict: ${verdict}**`,
+  body: [
+    header.includes('Claude') ? '<!-- ai-review:claude -->' : '<!-- ai-review:codex -->',
+    `<!-- ai-review-meta head=${headSha} run=${runId} -->`,
+    header,
+    `**Verdict: ${verdict}**`
+  ].join('\n'),
   created_at: createdAt,
   user: { login }
 })
@@ -150,7 +157,9 @@ describe('apply_review_outcome', () => {
   it('uses the associated PR head for pull_request_target workflow runs', async () => {
     const { github, added } = makeGithub({
       jobs: [{ name: 'Codex correctness review', conclusion: 'success' }],
-      comments: [verdictComment('## Codex Correctness Review', 'mergeable')],
+      comments: [
+        verdictComment('## Codex Correctness Review', 'mergeable', BOT, AFTER_RUN, 'pr-head-sha')
+      ],
       prHeadSha: 'pr-head-sha'
     })
     await runJob(
@@ -164,6 +173,50 @@ describe('apply_review_outcome', () => {
     )
 
     expect(added).toEqual([['ready-to-merge']])
+  })
+
+  it('ignores a late comment from an older workflow run', async () => {
+    const { github, added } = makeGithub({
+      jobs: [{ name: 'Codex correctness review', conclusion: 'success' }],
+      comments: [
+        {
+          body: [
+            '<!-- ai-review:codex -->',
+            '<!-- ai-review-meta head=old-head run=1 -->',
+            '## Codex Correctness Review',
+            '**Verdict: mergeable**'
+          ].join('\n'),
+          created_at: AFTER_RUN,
+          user: { login: BOT }
+        }
+      ],
+      prHeadSha: 'new-head'
+    })
+    await runJob(
+      'apply_review_outcome',
+      reviewContext({
+        id: 2,
+        event: 'pull_request_target',
+        head_sha: 'base-sha',
+        pull_requests: [{ number: 7, head: { sha: 'new-head' } }]
+      }),
+      github
+    )
+
+    expect(added).toEqual([])
+  })
+
+  it('requires the verdict comment to come from the completed workflow run', async () => {
+    const { github, added } = makeGithub({
+      jobs: [{ name: 'Codex correctness review', conclusion: 'success' }],
+      comments: [
+        verdictComment('## Codex Correctness Review', 'mergeable', BOT, AFTER_RUN, 'sha1', 1)
+      ]
+    })
+
+    await runJob('apply_review_outcome', reviewContext({ id: 2 }), github)
+
+    expect(added).toEqual([])
   })
 
   it('fails closed when a reviewer job ran but did not succeed', async () => {

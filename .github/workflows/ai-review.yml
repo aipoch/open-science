@@ -58,6 +58,7 @@ jobs:
     outputs:
       review_body: ${{ steps.run_claude.outputs.structured_output != '' && fromJSON(steps.run_claude.outputs.structured_output).review || '' }}
       pr_number: ${{ steps.pr.outputs.number }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
     steps:
       - name: Resolve pull request number
         id: pr
@@ -74,7 +75,11 @@ jobs:
             echo "No pull request number available (workflow_dispatch input or pull_request event)." >&2
             exit 1
           fi
-          echo "number=$pr_number" >> "$GITHUB_OUTPUT"
+          gh pr view "$pr_number" --repo "${{ github.repository }}" --json number,headRefOid > pr.json
+          {
+            echo "number=$(jq -r '.number' pr.json)"
+            echo "head_sha=$(jq -r '.headRefOid' pr.json)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Checkout pull request merge commit
         uses: actions/checkout@v7
@@ -229,14 +234,29 @@ jobs:
         env:
           REVIEW_BODY: ${{ needs.claude_review.outputs.review_body }}
           PR_NUMBER: ${{ needs.claude_review.outputs.pr_number }}
+          REVIEW_HEAD_SHA: ${{ needs.claude_review.outputs.head_sha }}
+          REVIEW_RUN_ID: ${{ github.run_id }}
         with:
           github-token: ${{ github.token }}
           script: |
+            const marker = '<!-- ai-review:claude -->';
+            const provenance =
+              `<!-- ai-review-meta head=${process.env.REVIEW_HEAD_SHA} run=${process.env.REVIEW_RUN_ID} -->`;
+            const issueNumber = Number(process.env.PR_NUMBER);
+            const { data: currentPullRequest } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: issueNumber,
+            });
+            if (currentPullRequest.head.sha !== process.env.REVIEW_HEAD_SHA) {
+              core.notice('Skipping Claude feedback: a newer pull request commit exists.');
+              return;
+            }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: Number(process.env.PR_NUMBER),
-              body: process.env.REVIEW_BODY,
+              issue_number: issueNumber,
+              body: `${marker}\n${provenance}\n${process.env.REVIEW_BODY}`,
             });
 
   codex_review_gate:
@@ -304,6 +324,7 @@ jobs:
     outputs:
       final_message: ${{ steps.run_codex.outputs.final-message }}
       pr_number: ${{ steps.pr.outputs.number }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
     steps:
       - name: Resolve pull request metadata
         id: pr
@@ -474,17 +495,30 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - name: Post first-round Codex correctness review
+      - name: Post Codex correctness review
         uses: actions/github-script@v8
         env:
           CODEX_FINAL_MESSAGE: ${{ needs.codex_review.outputs.final_message }}
           PR_NUMBER: ${{ needs.codex_review.outputs.pr_number }}
+          REVIEW_HEAD_SHA: ${{ needs.codex_review.outputs.head_sha }}
+          REVIEW_RUN_ID: ${{ github.run_id }}
         with:
           github-token: ${{ github.token }}
           script: |
             const marker = '<!-- ai-review:codex -->';
+            const provenance =
+              `<!-- ai-review-meta head=${process.env.REVIEW_HEAD_SHA} run=${process.env.REVIEW_RUN_ID} -->`;
             const maxReviews = 10;
             const issueNumber = Number(process.env.PR_NUMBER);
+            const { data: currentPullRequest } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: issueNumber,
+            });
+            if (currentPullRequest.head.sha !== process.env.REVIEW_HEAD_SHA) {
+              core.notice('Skipping Codex feedback: a newer pull request commit exists.');
+              return;
+            }
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -505,5 +539,5 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: issueNumber,
-              body: `${marker}\n${process.env.CODEX_FINAL_MESSAGE}`,
+              body: `${marker}\n${provenance}\n${process.env.CODEX_FINAL_MESSAGE}`,
             });
