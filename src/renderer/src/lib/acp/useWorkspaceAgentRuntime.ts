@@ -97,12 +97,24 @@ type WorkspaceRuntimeEventProcessor = {
 }
 
 // Strips the Electron IPC wrapper ("Error invoking remote method '…': Error: <cause>") and any
-// leading "Error:" so the underlying agent message can be shown to the user on its own.
-const unwrapResumeErrorDetail = (message: string): string =>
+// leading "Error:" so the underlying agent message can be shown to the user on its own. Used by both
+// the resume and createSession failure paths, since either crosses IPC and arrives wrapped.
+const unwrapIpcErrorDetail = (message: string): string =>
   message
     .replace(/^Error invoking remote method '[^']*':\s*/i, '')
     .replace(/^Error:\s*/i, '')
     .trim()
+
+// Turns a createSession (conversation-start) failure into the message persisted on the session. The
+// error crosses IPC wrapped, so it is unwrapped first — this keeps the app-authored setup guidance
+// (settings/service.ts: model-incompat, no provider, Codex bridge, missing Claude executable) matching
+// the classifier's prefixes/constants, so a wrong-config start failure hides the report button instead
+// of masquerading as a reportable bug behind the "Error invoking remote method" wrapper.
+const getCreateSessionFailureMessage = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : String(error)
+
+  return unwrapIpcErrorDetail(message) || message.trim() || 'Agent session could not be created.'
+}
 
 // Turns a resume failure into an actionable message. Each branch matches one distinct cause thrown
 // along the runtime resume path (runtime.ts): a deleted/moved workspace folder ("cwd does not exist"),
@@ -138,7 +150,7 @@ const getResumeFailureMessage = (error: unknown): string => {
     return RESUME_MODEL_INCOMPATIBLE_MESSAGE
   }
 
-  const detail = unwrapResumeErrorDetail(message)
+  const detail = unwrapIpcErrorDetail(message)
 
   return detail ? `Agent session resume failed: ${detail}` : 'Agent session resume failed'
 }
@@ -334,7 +346,9 @@ const startPendingSessionPrompt = (
     try {
       createdSession = await runtime.createSession(cwd, projectName, permissionProfile)
     } catch (error) {
-      useSessionStore.getState().failRun(pending.sessionId, getErrorMessage(error))
+      // Unwrap the IPC wrapper so an app-authored setup failure (model-incompat / no provider / Codex
+      // bridge / missing executable) is recognized by the classifier and hides the report button.
+      useSessionStore.getState().failRun(pending.sessionId, getCreateSessionFailureMessage(error))
       return
     }
 

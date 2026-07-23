@@ -73,6 +73,12 @@ import {
   providerEndpoints
 } from '../../shared/settings'
 import type { PackageMirror } from '../../shared/mirror'
+import {
+  buildActiveModelIncompatibleMessage,
+  CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
+  CLAUDE_EXECUTABLE_MISSING_MESSAGE,
+  NO_ACTIVE_PROVIDER_MESSAGE
+} from '../../shared/run-error-classification'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import {
@@ -2427,7 +2433,7 @@ class SettingsService {
     }
 
     if (!executablePath) {
-      throw new Error('Claude executable is not configured. Complete onboarding in settings.')
+      throw new Error(CLAUDE_EXECUTABLE_MISSING_MESSAGE)
     }
 
     const activeProvider = settings.activeProviderId
@@ -2435,7 +2441,7 @@ class SettingsService {
       : undefined
 
     if (!activeProvider) {
-      throw new Error('No active model provider is configured. Configure one in settings.')
+      throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
     }
 
     // Ensure the app-owned config dir exists (and app assets are injected) before the agent spawns. The
@@ -2496,7 +2502,7 @@ class SettingsService {
       : undefined
 
     if (!activeProvider) {
-      throw new Error('No active model provider is configured. Configure one in settings.')
+      throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
     }
 
     if (
@@ -2508,9 +2514,7 @@ class SettingsService {
         framework
       )
     ) {
-      throw new Error(
-        `The active model isn't compatible with ${framework.displayName}. Open Settings → Model to pick a compatible model or switch the agent framework.`
-      )
+      throw new Error(buildActiveModelIncompatibleMessage(framework.displayName))
     }
 
     if (
@@ -2520,9 +2524,7 @@ class SettingsService {
         this.resolveActiveModel(activeProvider, settings.activeModel)
       )
     ) {
-      throw new Error(
-        'The active model is not supported over the Codex Chat Completions bridge. Pick another model in Settings → Model.'
-      )
+      throw new Error(CODEX_BRIDGE_UNSUPPORTED_MESSAGE)
     }
 
     if (framework.id === 'claude-code') {

@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import { describePromptError } from '../main/acp/prompt-error'
 import {
+  buildActiveModelIncompatibleMessage,
+  CLAUDE_EXECUTABLE_MISSING_MESSAGE,
+  CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
   IMAGE_REPLAY_UNSUPPORTED_MESSAGE,
+  NO_ACTIVE_PROVIDER_MESSAGE,
   PROVIDER_RESOURCE_NOT_FOUND_PREFIX,
   RESUME_MODEL_INCOMPATIBLE_MESSAGE,
   RESUME_RECONNECT_FAILED_MESSAGE,
@@ -91,5 +95,24 @@ describe('isReportableRunFailure (text tier)', () => {
     const produced = describePromptError(error, { model: 'xyz' })
     expect(produced.startsWith(PROVIDER_RESOURCE_NOT_FOUND_PREFIX)).toBe(true)
     expect(isReportableRunFailure(produced)).toBe(false)
+  })
+
+  it('does not report app-authored agent-setup guidance (createSession spawn failures)', () => {
+    // These are thrown by settings/service.ts:resolveActiveAgentBackend when a conversation fails to
+    // START — wrong-config the user fixes in Settings → Model, not app bugs, so no report button.
+    expect(isReportableRunFailure(NO_ACTIVE_PROVIDER_MESSAGE)).toBe(false)
+    expect(isReportableRunFailure(CODEX_BRIDGE_UNSUPPORTED_MESSAGE)).toBe(false)
+    expect(isReportableRunFailure(CLAUDE_EXECUTABLE_MISSING_MESSAGE)).toBe(false)
+  })
+
+  it('recognizes the framework-specific model-incompat message built by service.ts (prefix)', () => {
+    // Drift guard: the classifier matches ACTIVE_MODEL_INCOMPATIBLE_PREFIX, and service.ts builds its
+    // throw from the SAME builder, so the framework name can vary and both stay in sync. This is the
+    // createSession wording ("…compatible with Codex."), distinct from the reworded resume constant.
+    const codex = buildActiveModelIncompatibleMessage('Codex')
+    const claude = buildActiveModelIncompatibleMessage('Claude Code')
+    expect(codex).not.toBe(RESUME_MODEL_INCOMPATIBLE_MESSAGE)
+    expect(isReportableRunFailure(codex)).toBe(false)
+    expect(isReportableRunFailure(claude)).toBe(false)
   })
 })

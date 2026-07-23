@@ -416,6 +416,41 @@ describe('workspace agent message sending', () => {
     })
   })
 
+  it('unwraps an IPC-wrapped config failure at session start and marks it non-reportable', async () => {
+    // resolveActiveAgentBackend throws app-authored setup guidance at spawn time; it crosses IPC wrapped
+    // as "Error invoking remote method '…': Error: <msg>". The createSession path must unwrap it so the
+    // persisted text matches the classifier's prefix and the report button is hidden (wrong-config, not
+    // a bug). Uses the framework-specific wording service.ts actually builds (not the resume rewording).
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            "Error invoking remote method 'acp:create-session': Error: The active model isn't compatible with Codex. Open Settings → Model to pick a compatible model or switch the agent framework."
+          )
+        ),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      text: 'Start a new analysis',
+      cwd: '/workspace/project',
+      agentFrameworkId: 'codex'
+    })
+    await flushRuntimeTasks()
+
+    const session = useSessionStore.getState().sessions[0]
+    // The IPC wrapper is stripped, leaving the app's own setup guidance verbatim.
+    expect(session.error).toBe(
+      "The active model isn't compatible with Codex. Open Settings → Model to pick a compatible model or switch the agent framework."
+    )
+    // A wrong-config start failure hides the report button.
+    expect(session.errorReportable).toBe(false)
+  })
+
   it('sends attachments when creating a new runtime session', async () => {
     const attachment = createAttachment()
     const finalizedAttachment = createAttachment({

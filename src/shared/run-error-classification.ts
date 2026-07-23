@@ -32,6 +32,24 @@ export const RESUME_MODEL_INCOMPATIBLE_MESSAGE =
 export const IMAGE_REPLAY_UNSUPPORTED_MESSAGE =
   'This conversation needs image replay, but the selected model does not support image input.'
 
+// App-authored agent-setup guidance thrown by settings/service.ts:resolveActiveAgentBackend at spawn
+// time — surfaced when a conversation FAILS TO START (createSession), which does not route through the
+// resume-path softener. All three are wrong-config the user fixes in Settings → Model, not app bugs, so
+// they must hide the report button. service.ts builds its throws from these SAME constants/builder so
+// the text can never drift from what the classifier recognizes.
+export const NO_ACTIVE_PROVIDER_MESSAGE =
+  'No active model provider is configured. Configure one in settings.'
+export const CLAUDE_EXECUTABLE_MISSING_MESSAGE =
+  'Claude executable is not configured. Complete onboarding in settings.'
+export const CODEX_BRIDGE_UNSUPPORTED_MESSAGE =
+  'The active model is not supported over the Codex Chat Completions bridge. Pick another model in Settings → Model.'
+// The model↔framework mismatch message interpolates the framework name, so the classifier matches on
+// this leading, framework-independent phrase. It also covers the resume-path RESUME_MODEL_INCOMPATIBLE
+// wording (both begin here), so either surfacing is recognized.
+export const ACTIVE_MODEL_INCOMPATIBLE_PREFIX = "The active model isn't compatible with"
+export const buildActiveModelIncompatibleMessage = (frameworkDisplayName: string): string =>
+  `${ACTIVE_MODEL_INCOMPATIBLE_PREFIX} ${frameworkDisplayName}. Open Settings → Model to pick a compatible model or switch the agent framework.`
+
 // Stable prefix of the provider "resource not found" message produced by main's describePromptError.
 // That message interpolates the model name and the provider's own response, so the classifier matches
 // on this leading, model-independent phrase. prompt-error.ts builds its message from the SAME constant
@@ -47,7 +65,10 @@ const EXPECTED_RUN_FAILURE_MESSAGES = new Set<string>([
   RESUME_UNSUPPORTED_MESSAGE,
   RESUME_RECONNECT_FAILED_MESSAGE,
   RESUME_MODEL_INCOMPATIBLE_MESSAGE,
-  IMAGE_REPLAY_UNSUPPORTED_MESSAGE
+  IMAGE_REPLAY_UNSUPPORTED_MESSAGE,
+  NO_ACTIVE_PROVIDER_MESSAGE,
+  CLAUDE_EXECUTABLE_MISSING_MESSAGE,
+  CODEX_BRIDGE_UNSUPPORTED_MESSAGE
 ])
 
 // Whether a run failure is one the app itself already surfaced with a purpose — an app-crafted
@@ -65,6 +86,11 @@ export const isExpectedRunFailure = (error: string | null | undefined): boolean 
   if (EXPECTED_RUN_FAILURE_MESSAGES.has(message)) return true
   // The reworded provider not-found (a model-config problem the user fixes in Settings, not a bug).
   if (message.startsWith(PROVIDER_RESOURCE_NOT_FOUND_PREFIX)) return true
+  // Model↔framework incompatibility raised at spawn/createSession. The main-side message names the
+  // framework (`…compatible with Codex.`) while the resume path rewords it to a generic form; both
+  // share this leading phrase, so one prefix covers the createSession path (which is not reworded) and
+  // any framework name. It is app-authored setup guidance ("Open Settings → Model"), not a bug.
+  if (message.startsWith(ACTIVE_MODEL_INCOMPATIBLE_PREFIX)) return true
   // A request-size overflow the app auto-recovers from — never a reportable bug.
   return isMediaOverflowError(message)
 }
