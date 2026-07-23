@@ -38,10 +38,20 @@ const buildAgentSpawnEnv = (
   envOverrides: Record<string, string>,
   executablePath: string
 ): NodeJS.ProcessEnv => {
+  if (!envOverrides.CLAUDE_CONFIG_DIR?.trim()) {
+    throw new Error(
+      'Claude config directory is not configured. Refusing to start outside app-owned isolation.'
+    )
+  }
+
   const base: NodeJS.ProcessEnv = {}
 
   for (const [key, value] of Object.entries(sourceEnv)) {
-    if (key.startsWith(ANTHROPIC_ENV_PREFIX) || key === CLAUDE_CODE_OAUTH_TOKEN) {
+    if (
+      key.startsWith(ANTHROPIC_ENV_PREFIX) ||
+      key === CLAUDE_CODE_OAUTH_TOKEN ||
+      key === 'CLAUDE_CONFIG_DIR'
+    ) {
       continue
     }
     base[key] = value
