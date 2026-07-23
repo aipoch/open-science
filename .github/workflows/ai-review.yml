@@ -159,8 +159,9 @@ jobs:
 
             ${{ steps.context.outputs.content }}
 
-            The Codex correctness job checks line-level correctness, security, tests, type safety,
-            branch naming, and PR title conventions. Complement that review by focusing on:
+            The Codex review job performs a comprehensive correctness, security, and
+            convention review using its built-in review capability. Complement that
+            review by focusing exclusively on architecture and integration:
             - whether responsibilities are placed in the right modules and abstractions;
             - main/preload/renderer boundaries, IPC ownership, state flow, and lifecycle cleanup;
             - maintainability, coupling, compatibility, and consistency with surrounding design;
@@ -341,39 +342,21 @@ jobs:
           } > "$CODEX_HOME/config.toml"
 
           # Use the built-in 'codex exec review' subcommand which understands git diffs
-          # natively (--base scopes the diff against the base branch). The prompt argument is
-          # forwarded as custom review instructions, not a prompt injection — codex exec review
-          # applies its own review framing and treats the prompt as additional guidance.
+          # natively (--base scopes the diff against the base branch) and performs a comprehensive
+          # review (correctness, security, tests, type safety, etc.) using its own framing. The
+          # prompt argument adds only project-specific conventions the built-in review would not
+          # know about, keeping the prompt-injection surface minimal.
           review_prompt_file="$CODEX_HOME/review-prompt.txt"
           cat > "$review_prompt_file" <<'REVIEW_INSTRUCTIONS'
-Apply the repository standards in CONTRIBUTING.md and the surrounding code. In
-particular, verify that the branch name uses <type>/<short-description>, with a
-lowercase hyphen-separated description and one of these allowed prefixes: feat,
-fix, docs, style, refactor, perf, test, build, ci, chore, or revert. Also verify
-that the PR title uses <type>(<scope>): <description>, with an allowed type, a
-hyphen-separated scope and an imperative description that both start with a
-lowercase letter (uppercase is allowed inside for proper nouns and technical
-terms).
+This repository follows Conventional Commits. Verify that the branch name uses
+<type>/<short-description> with one of: feat, fix, docs, style, refactor, perf,
+test, build, ci, chore, revert. Verify that the PR title uses
+<type>(<scope>): <description> with an imperative description starting with a
+lowercase letter (uppercase allowed inside for proper nouns and technical terms).
 
-The Claude architecture job checks module ownership, maintainability, packaging,
-and cross-platform integration. Complement that review by prioritizing
-high-confidence, actionable defects and regressions:
-- logic correctness, edge cases, error handling, and broken user-visible behavior;
-- unsafe IPC inputs, permission mistakes, injection risks, and secret exposure;
-- type safety, resource leaks, races, concurrency, and state consistency;
-- missing or inadequate tests for changed behavior and failure paths;
-- violations of the explicit branch and PR title rules above.
-
-Write the entire review in English and use GitHub-flavored Markdown. Begin with:
+Begin the review with:
 ## Codex Correctness Review
 **Verdict: mergeable** or **Verdict: needs changes**
-Then list findings in descending severity using [P0], [P1], [P2], or [P3]. Format
-each finding with a bold severity and title, a bold repository-relative file path
-and line number, then bold **Impact:** and **Suggested fix:** labels. Do not report
-broad architectural preferences assigned to the Claude review or style-only
-preferences unless they violate an explicit project standard. If there are no
-actionable findings, write **No actionable findings.** Be concise and do not
-include hidden reasoning or a summary of your review process.
 REVIEW_INSTRUCTIONS
 
           output_file="$CODEX_HOME/review-output.md"
