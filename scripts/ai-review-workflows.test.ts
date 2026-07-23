@@ -342,13 +342,13 @@ describe('AI review workflow contract', () => {
     expect(reviewWorkflow).toContain("needs.review_target.outputs.fork_mode != 'disabled'")
   })
 
-  it('checks out the resolved review commit for open and merged pull requests', () => {
-    const expectedRef = '${{ needs.review_target.outputs.review_sha }}'
-
+  it('keeps pull_request_target checkout on the GitHub merge ref', () => {
+    const expectedRef =
+      "${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', needs.review_target.outputs.number) || needs.review_target.outputs.review_sha }}"
     for (const job of ['claude_review', 'codex_review']) {
       expect(getNamedStep(job, 'Checkout pull request review commit').with?.ref).toBe(expectedRef)
       expect(getNamedStep(job, 'Resolve review comparison base').run).toContain(
-        'git rev-parse HEAD^'
+        'git rev-parse HEAD^1'
       )
     }
   })
@@ -546,6 +546,33 @@ exit 1
     expect(output).toContain('## Claude Architecture Review\n**Verdict: mergeable**')
   })
 
+  it('allows structured findings to quote review framing tags', () => {
+    const root = createFixtureRoot('ai-review-claude-literal-tags-')
+    const executionFile = join(root, 'execution.jsonl')
+    const githubOutput = join(root, 'github-output')
+    writeJsonLines(executionFile, [
+      { type: 'system', subtype: 'init', tools: claudeReviewTools },
+      {
+        type: 'result',
+        subtype: 'success',
+        structured_output: {
+          review:
+            '## Claude Architecture Review\n**Verdict: needs changes**\n\n' +
+            '**P1 - Do not reject literal `<review>` and `</review>` tags in findings.**'
+        }
+      }
+    ])
+
+    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
+    })
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(readFileSync(githubOutput, 'utf8')).toContain('literal `<review>` and `</review>` tags')
+  })
+
   it('fails closed if Claude attempts to use a tool outside the review tool set', () => {
     const root = createFixtureRoot('ai-review-claude-tool-use-')
     const executionFile = join(root, 'execution.json')
@@ -644,6 +671,7 @@ exit 1
   it('runs structured Codex exec through the action proxy and read-only permission profile', () => {
     const step = getNamedStep('codex_review', 'Run Codex correctness review')
 
+    expect(parsedWorkflow.jobs.codex_review['timeout-minutes']).toBe(30)
     expect(step.uses).toBe('openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56')
     expect(step.with).toMatchObject({
       'openai-api-key': '${{ secrets.OPENAI_API_KEY }}',

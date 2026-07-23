@@ -142,7 +142,7 @@ jobs:
       - name: Checkout pull request review commit
         uses: actions/checkout@v7
         with:
-          ref: ${{ needs.review_target.outputs.review_sha }}
+          ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', needs.review_target.outputs.number) || needs.review_target.outputs.review_sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -151,11 +151,14 @@ jobs:
         env:
           PR_BASE_SHA: ${{ needs.review_target.outputs.base_sha }}
           PR_STATE: ${{ needs.review_target.outputs.state }}
+          REVIEW_EVENT: ${{ github.event_name }}
         shell: bash
         run: |
           set -euo pipefail
           if [[ "$PR_STATE" == "MERGED" ]]; then
             base_sha="$(git rev-parse HEAD^)"
+          elif [[ "$REVIEW_EVENT" == "pull_request_target" ]]; then
+            base_sha="$(git rev-parse HEAD^1)"
           else
             base_sha="$(git merge-base HEAD "$PR_BASE_SHA")"
           fi
@@ -307,24 +310,25 @@ jobs:
             jq -s -r '
               ([.[] | select(.type == "result")] | last
                 | .structured_output.review // "") as $structured
-              |
-              ([.[] | select(.type == "assistant")] | last
-                | [.message.content[]? | select(.type == "text") | .text]
-                | join("\n")) as $assistant
-              | (if ($structured | length) > 0 then
+              | if ($structured | length) > 0 then
                   $structured
-                elif ($assistant | length) > 0 then
-                  $assistant
                 else
-                  ([.[] | select(.type == "result")] | last | .result // "")
-                end) as $raw
-              | ([$raw | capture("(?s)<review>(?<body>.*?)</review>").body] | first // "") as $tagged
-              | if ($tagged | length) > 0 then
-                  $tagged
-                else
-                  ($raw
-                    | gsub("(?s)<thinking>.*?</thinking>[[:space:]]*"; "")
-                    | gsub("(?s)<analysis>.*?</analysis>[[:space:]]*"; ""))
+                  ([.[] | select(.type == "assistant")] | last
+                    | [.message.content[]? | select(.type == "text") | .text]
+                    | join("\n")) as $assistant
+                  | (if ($assistant | length) > 0 then
+                      $assistant
+                    else
+                      ([.[] | select(.type == "result")] | last | .result // "")
+                    end) as $raw
+                  | ([$raw | capture("(?s)<review>(?<body>.*?)</review>").body] | first // "") as $tagged
+                  | if ($tagged | length) > 0 then
+                      $tagged
+                    else
+                      ($raw
+                        | gsub("(?s)<thinking>.*?</thinking>[[:space:]]*"; "")
+                        | gsub("(?s)<analysis>.*?</analysis>[[:space:]]*"; ""))
+                    end
                 end
             ' "$EXECUTION_FILE"
           )"
@@ -335,10 +339,6 @@ jobs:
           if [[ "$review" != '## Claude Architecture Review'* ]] ||
              ! grep -Eq '^\*\*Verdict: (mergeable|needs changes)\*\*$' <<< "$review"; then
             echo "Claude review did not match the required header and verdict format." >&2
-            exit 1
-          fi
-          if grep -Eq '<(/?)(thinking|analysis|review)>' <<< "$review"; then
-            echo "Claude review still contains internal framing tags." >&2
             exit 1
           fi
 
@@ -458,6 +458,7 @@ jobs:
     if: ${{ needs.codex_review_gate.outputs.should_run == 'true' }}
     needs: [review_target, codex_review_gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     concurrency:
       group: codex-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}
       cancel-in-progress: true
@@ -471,7 +472,7 @@ jobs:
       - name: Checkout pull request review commit
         uses: actions/checkout@v7
         with:
-          ref: ${{ needs.review_target.outputs.review_sha }}
+          ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', needs.review_target.outputs.number) || needs.review_target.outputs.review_sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -480,11 +481,14 @@ jobs:
         env:
           PR_BASE_SHA: ${{ needs.review_target.outputs.base_sha }}
           PR_STATE: ${{ needs.review_target.outputs.state }}
+          REVIEW_EVENT: ${{ github.event_name }}
         shell: bash
         run: |
           set -euo pipefail
           if [[ "$PR_STATE" == "MERGED" ]]; then
             base_sha="$(git rev-parse HEAD^)"
+          elif [[ "$REVIEW_EVENT" == "pull_request_target" ]]; then
+            base_sha="$(git rev-parse HEAD^1)"
           else
             base_sha="$(git merge-base HEAD "$PR_BASE_SHA")"
           fi
@@ -841,6 +845,11 @@ jobs:
               repo: context.repo.repo,
               pull_number: issueNumber,
             });
+            if (pullRequest.state !== 'open') {
+              core.notice('Removing ready-to-merge because the pull request is not open.');
+              await removeReadyLabel();
+              return;
+            }
             if (!reviewedHeadSha || pullRequest.head.sha !== reviewedHeadSha) {
               core.notice('Skipping labels because a newer pull request commit exists.');
               return;
