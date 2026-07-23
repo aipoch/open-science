@@ -19,6 +19,12 @@ export const uninstallDisabledHint = (
     return `${label} is the active agent framework and can't be uninstalled. Switch to another framework first, then uninstall.`
   }
 
+  // Intentionally keyed on the runtime-wide promptInFlight, not on `active`: during a deferred
+  // reconnect the framework serving the in-flight prompt is already non-active (the user switched
+  // away, but its process keeps running until the turn settles). Gating this on `active` would let
+  // that still-busy framework be uninstalled mid-task — exactly the hazard this guard exists to
+  // prevent. The cost is a conservative over-block: an unrelated idle managed framework also can't be
+  // uninstalled while a task runs elsewhere. That errs safe (blocks more, never less), so it stays.
   if (promptInFlight) {
     return 'A task is running — wait for it to finish before uninstalling.'
   }
