@@ -642,6 +642,61 @@ describe('ConcurrencyManager', () => {
       expect(jobRepo.update).not.toHaveBeenCalled()
       expect(dispatchJob).not.toHaveBeenCalled()
     })
+
+    it('drains every queued job up to the provider ceiling and leaves the rest queued', async () => {
+      // Drain must iterate the WHOLE queue (not stop after one promotion) while still respecting
+      // capacity: with a ceiling of 2 and 3 queued jobs, the first two are dispatched and the third
+      // stays queued. The active counter mirrors what a real DB read returns after each reservation.
+      const providerCeiling = 2
+      vi.mocked(hostRepo.get).mockResolvedValue({
+        concurrencyLimit: providerCeiling
+      } as ComputeHost)
+
+      const queuedJobs: ComputeJob[] = [
+        {
+          job_id: 'job-1',
+          session_id: 'session-1',
+          provider_id: 'ssh:cluster-a',
+          created_at: 1000,
+          status: 'queued'
+        } as ComputeJob,
+        {
+          job_id: 'job-2',
+          session_id: 'session-1',
+          provider_id: 'ssh:cluster-a',
+          created_at: 2000,
+          status: 'queued'
+        } as ComputeJob,
+        {
+          job_id: 'job-3',
+          session_id: 'session-1',
+          provider_id: 'ssh:cluster-a',
+          created_at: 3000,
+          status: 'queued'
+        } as ComputeJob
+      ]
+      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue(queuedJobs)
+
+      // Active count rises as each job is reserved (status → 'submitted'), mirroring a real DB read.
+      let active = 0
+      vi.mocked(jobRepo.countActiveBySession).mockImplementation(async () => active)
+      vi.mocked(jobRepo.countActiveByProvider).mockImplementation(async () => active)
+      vi.mocked(jobRepo.update).mockImplementation(async (_id, u) => {
+        if ((u as { status?: string }).status === 'submitted') active++
+        return {} as ComputeJob
+      })
+
+      await manager.drainOnStartup()
+
+      // job-1 and job-2 won slots; job-3 hit the ceiling and was left queued.
+      expect(jobRepo.update).toHaveBeenCalledWith('job-1', { status: 'submitted' })
+      expect(jobRepo.update).toHaveBeenCalledWith('job-2', { status: 'submitted' })
+      expect(jobRepo.update).not.toHaveBeenCalledWith('job-3', expect.anything())
+      expect(dispatchJob).toHaveBeenCalledWith('job-1')
+      expect(dispatchJob).toHaveBeenCalledWith('job-2')
+      expect(dispatchJob).not.toHaveBeenCalledWith('job-3')
+      expect(active).toBe(providerCeiling)
+    })
   })
 
   describe('admit - atomic status decision + row commit', () => {

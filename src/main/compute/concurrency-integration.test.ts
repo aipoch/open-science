@@ -16,6 +16,20 @@ import type { SshRunner } from './ssh-runner'
 import type { ScpRunner } from './scp-runner'
 import { computeProviderId, type ComputeJob } from '../../shared/compute'
 
+// Polls `predicate` until it returns true or `timeoutMs` elapses. Replaces fixed `setTimeout` waits
+// for async dispatch, which flake under CI load when the work outruns the hard-coded delay.
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 2000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  throw new Error(`waitFor timed out after ${timeoutMs}ms`)
+}
+
 // Mock the job-dispatcher module to prevent real SSH dispatches
 vi.mock('./job-dispatcher', async () => {
   const actual = await vi.importActual('./job-dispatcher')
@@ -449,8 +463,9 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     // No active jobs remain — call drainQueuedJobs to simulate startup drain
     await service.drainQueuedJobs()
 
-    // Wait for async dispatch to complete
-    await new Promise((resolve) => setTimeout(resolve, 200))
+    // Wait for async dispatch to promote job-2 to 'submitted' — poll rather than a fixed delay so the
+    // test does not flake if dispatch is slower under CI load.
+    await waitFor(async () => (await jobRepo.get(result2.job_id))?.status === 'submitted')
 
     // job-2 should now be submitted
     const job2Updated = await jobRepo.get(result2.job_id)
