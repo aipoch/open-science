@@ -335,6 +335,8 @@ jobs:
                 else
                   ([.[] | select(.type == "result")] | last | .result // "")
                 end
+              | gsub("(?s)<thinking>.*?</thinking>[[:space:]]*"; "")
+              | gsub("(?s)<analysis>.*?</analysis>[[:space:]]*"; "")
             ' "$EXECUTION_FILE"
           )"
           if [[ -z "$review" ]]; then

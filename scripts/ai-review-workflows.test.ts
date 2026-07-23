@@ -402,7 +402,9 @@ describe('AI review workflow contract', () => {
       {
         type: 'result',
         subtype: 'success',
-        result: '## Claude Architecture Review\n**Verdict: mergeable**'
+        result:
+          '<thinking>private reasoning\nthat must not be published</thinking>\n\n' +
+          '## Claude Architecture Review\n**Verdict: mergeable**'
       }
     ])
 
@@ -413,9 +415,10 @@ describe('AI review workflow contract', () => {
     })
 
     expect(result.status, result.stderr).toBe(0)
-    expect(readFileSync(githubOutput, 'utf8')).toContain(
-      '## Claude Architecture Review\n**Verdict: mergeable**'
-    )
+    const output = readFileSync(githubOutput, 'utf8')
+    expect(output).not.toContain('private reasoning')
+    expect(output).not.toContain('<thinking>')
+    expect(output).toContain('## Claude Architecture Review\n**Verdict: mergeable**')
   })
 
   it('fails closed if Claude attempts to use a tool', () => {
