@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { JSX, PropsWithChildren } from 'react'
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import type { JobSummary } from '../../../../shared/compute'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ToolActivityDetails } from './workspace-tool-activity-details'
@@ -88,6 +89,33 @@ vi.mock('@/components/ReviewerCard', () => ({
   ReviewerCard: () => null
 }))
 
+// Stub CompletedJobCard so we can detect renders by data-testid without Lucide imports.
+vi.mock('@/components/CompletedJobCard', () => ({
+  CompletedJobCard: ({ job }: { job: JobSummary }) => (
+    <div data-testid="completed-job-card" data-job-id={job.job_id}>
+      {job.intent}
+    </div>
+  )
+}))
+
+// Stub JobDetailModal — not relevant to timeline rendering tests.
+vi.mock('@/components/JobDetailModal', () => ({
+  JobDetailModal: () => null
+}))
+
+// Default session-job-store mock: no jobs. Override per-test with mockJobsById assignment.
+let mockJobsById: Map<string, JobSummary> = new Map()
+
+vi.mock('@/stores/session-job-store', () => ({
+  useSessionJobStore: (
+    selector: (s: { jobsById: Map<string, JobSummary>; hydrate: () => Promise<void> }) => unknown
+  ) =>
+    selector({
+      jobsById: mockJobsById,
+      hydrate: () => Promise.resolve()
+    })
+}))
+
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
   id: 'message-1',
   role: 'user',
@@ -138,7 +166,13 @@ const createUpload = (overrides: Partial<UploadedAttachment> = {}): UploadedAtta
 const renderScroller = async (session: ChatSession): Promise<string> => {
   const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
 
-  return renderToStaticMarkup(<WorkspaceMessageScroller activeSession={session} />)
+  return renderToStaticMarkup(
+    <WorkspaceMessageScroller
+      activeSession={session}
+      canEditMessage={false}
+      onSendEditedMessage={vi.fn()}
+    />
+  )
 }
 
 describe('WorkspaceMessageScroller loading render', () => {
@@ -189,7 +223,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).toContain('Answer text')
   })
 
-  it('does not render loading for permission waits or missing active runs', async () => {
+  it('keeps the loading row during permission waits and hides it without an active run', async () => {
     const runningSession = createSession({
       activeRun: {
         promptMessageId: 'prompt-1',
@@ -198,12 +232,59 @@ describe('WorkspaceMessageScroller loading render', () => {
       messages: [createMessage({ id: 'prompt-1' })]
     })
 
+    // A permission wait is still mid-run, so the transcript keeps the working indicator — even
+    // when the agent already streamed visible text before asking.
     await expect(
       renderScroller({ ...runningSession, status: 'waiting-permission' })
-    ).resolves.not.toContain('role="status"')
+    ).resolves.toContain('role="status"')
+    await expect(
+      renderScroller({
+        ...runningSession,
+        status: 'waiting-permission',
+        messages: [
+          createMessage({ id: 'prompt-1' }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: "I'll inspect the files",
+            status: 'streaming',
+            streamId: 'stream-1',
+            responseToMessageId: 'prompt-1'
+          })
+        ]
+      })
+    ).resolves.toContain('role="status"')
     await expect(
       renderScroller({ ...runningSession, activeRun: undefined })
     ).resolves.not.toContain('role="status"')
+  })
+
+  it('renders the loading row for a follow-up prompt after a tool-calling turn', async () => {
+    const html = await renderScroller(
+      createSession({
+        activeRun: {
+          promptMessageId: 'prompt-2',
+          startedAt: 1710000000200
+        },
+        messages: [
+          createMessage({ id: 'prompt-1', content: 'First prompt', sortIndex: 1 }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'First answer',
+            status: 'complete',
+            streamId: 'stream-1',
+            responseToMessageId: 'prompt-1',
+            sortIndex: 2
+          }),
+          createMessage({ id: 'prompt-2', content: 'Follow up', sortIndex: 4 })
+        ],
+        activities: [createActivity({ id: 'tool-1', sortIndex: 3 })]
+      })
+    )
+
+    expect(html).toContain('role="status"')
+    expect(html).toContain('Agent is responding')
   })
 
   it('renders generated artifact gallery cards under agent messages', async () => {
@@ -1089,5 +1170,61 @@ describe('WorkspaceToolDetailsRow expanded rendering', () => {
     expect(html).toContain('data-testid="tool-diff-block"')
     expect(html).toContain('const a = 1')
     expect(html).toContain('const a = 2')
+  })
+})
+
+// Helper to build a minimal JobSummary for tests.
+const createJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
+  job_id: 'job-1',
+  session_id: 'session-1',
+  provider_id: 'provider-1',
+  intent: 'run analysis',
+  status: 'success',
+  display_name: 'GPU Host',
+  shape: 'gpu-small',
+  created_at: 1710000000000,
+  started_at: undefined,
+  finished_at: undefined,
+  exit_code: undefined,
+  error_code: undefined,
+  remote_workdir: undefined,
+  stdout_tail: undefined,
+  stderr_tail: undefined,
+  notified_at: undefined,
+  notification_consumed_at: undefined,
+  featured_files: [],
+  ...overrides
+})
+
+describe('WorkspaceMessageScroller unbound completed job deduplication', () => {
+  it('renders an unbound completed job only once even when its created_at is before multiple messages', async () => {
+    // Job was created BEFORE both messages — the buggy filter re-includes it for every message.
+    const job = createJob({
+      job_id: 'job-early',
+      intent: 'run early analysis',
+      created_at: 999_999_999, // earlier than both messages below
+      status: 'success',
+      session_id: 'session-1'
+    })
+    mockJobsById = new Map([[job.job_id, job]])
+
+    const html = await renderScroller(
+      createSession({
+        id: 'session-1',
+        status: 'idle',
+        messages: [
+          createMessage({ id: 'msg-1', createdAt: 1_000_000_000, updatedAt: 1_000_000_000 }),
+          createMessage({ id: 'msg-2', createdAt: 1_000_000_001, updatedAt: 1_000_000_001 })
+        ]
+      })
+    )
+
+    // The card must appear exactly once in the timeline, not twice.
+    const matches = html.match(/data-testid="completed-job-card"/g)
+    expect(matches).not.toBeNull()
+    expect(matches!.length).toBe(1)
+
+    // Cleanup for isolation between tests.
+    mockJobsById = new Map()
   })
 })

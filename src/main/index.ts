@@ -37,7 +37,7 @@ if (shouldRunArtifactMcpServer) {
 async function startElectronApp(mainEntryPath: string): Promise<void> {
   const [
     { app, BrowserWindow, ipcMain, nativeImage, protocol },
-    { electronApp, optimizer },
+    { electronApp },
     { default: icon },
     { acquireSingleInstanceLock },
     { orchestrateAppStartup }
@@ -68,7 +68,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { installAppLifecycle },
         { installRpcCapture },
         { parseWebModeOptions, createWebServiceController, buildAuthenticatedWebUrl },
-        { routeSecondInstance }
+        { routeSecondInstance },
+        { detectActiveSessions: computeActiveSessions },
+        { createElectronCloseConfirm },
+        { installWindowShortcuts }
       ] = await Promise.all([
         import('./ipc'),
         import('./windows'),
@@ -78,7 +81,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./app-lifecycle'),
         import('./web-service/rpc-capture'),
         import('./web-service'),
-        import('./second-instance-router')
+        import('./second-instance-router'),
+        import('./storage/detect-active'),
+        import('./window-close-confirm'),
+        import('./window-shortcuts')
       ])
 
       // Dev runs get a "(DEV)" suffix so the app name, macOS menu, and per-app paths (logs, userData)
@@ -112,6 +118,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // Set app user model id for windows
       electronApp.setAppUserModelId(APP_USER_MODEL_ID)
 
+      // Forward F12 / Cmd-R blocking from `@electron-toolkit/utils`' `optimizer.watchWindowShortcuts`
+      // to every window (main + future preview windows). The helper is invoked with `zoom: true` so
+      // Cmd/Ctrl+=, Cmd/Ctrl+-, and Cmd/Ctrl+0 reach Electron's built-in zoomIn / zoomOut /
+      // resetZoom menu accelerators — without that, its before-input-event listener calls
+      // preventDefault() on Cmd+- and Cmd+= and silently disables zoom out / reset (issue #336).
+      installWindowShortcuts(app)
+
       // Dev builds use the app icon for the macOS dock.
       if (process.platform === 'darwin') {
         const dockIcon = nativeImage.createFromPath(icon)
@@ -120,20 +133,17 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         }
       }
 
-      // Default open or close DevTools by F12 in development
-      // and ignore CommandOrControl + R in production.
-      // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
-      app.on('browser-window-created', (_, window) => {
-        optimizer.watchWindowShortcuts(window)
-      })
-
       const webMode = parseWebModeOptions(process.argv)
       // Always install the capture layer BEFORE handlers register: it records ipcMain.handle handlers as
       // they are added, so an on-demand web service (started later for a second launch's --serve request)
       // can reach them. It only wraps ipcMain.handle — no server, no cost until something serves.
       const rpcCapture = installRpcCapture(ipcMain)
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
-      const { shutdownCoordinator } = await registerIpcHandlers({ mainEntryPath })
+      const { runtime, notebook, shutdownCoordinator, taskNotifications } =
+        await registerIpcHandlers({
+          mainEntryPath,
+          headless: webMode.headless
+        })
       const webController = createWebServiceController({
         rpc: rpcCapture,
         requestQuit: () => app.quit()
@@ -150,6 +160,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         buildAuthenticatedWebUrl,
         routeSecondInstance,
         shutdownCoordinator,
+        taskNotifications,
+        // Running-work snapshot + confirm coordinator, bound here where runtime/notebook are in scope.
+        detectActiveSessions: () => computeActiveSessions({ runtime, notebook }),
+        createConfirmClose: createElectronCloseConfirm,
         installAppLifecycle,
         log,
         webMode,
@@ -203,7 +217,22 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         isMigrationInProgress: ctx.isMigrationInProgress,
         quit: () => app.quit(),
         countWindows: () => BrowserWindow.getAllWindows().length,
-        createInitialWindow: !ctx.webMode.headless
+        createInitialWindow: !ctx.webMode.headless,
+        detectActiveSessions: ctx.detectActiveSessions,
+        createConfirmClose: ctx.createConfirmClose
+      })
+
+      // Clicking a task notification surfaces the app and records which conversation to open. The
+      // renderer pulls the target once its sessions are hydrated (take-pending-open-session), so a
+      // click that recreates the window cannot lose the navigation — the send below is only a
+      // nudge for an already-running renderer and may safely be lost otherwise.
+      ctx.taskNotifications.setActivationHandler((sessionId) => {
+        const window = showMainWindow()
+        if (!sessionId) return
+
+        // The renderer pulls the click target once its sessions are hydrated.
+        ctx.taskNotifications.setPendingOpenSession(sessionId)
+        window.webContents.send('notifications:open-session')
       })
 
       // Route each second launch by its forwarded argv (see second-instance-router): a CLI

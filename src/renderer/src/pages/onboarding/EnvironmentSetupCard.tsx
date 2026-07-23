@@ -24,7 +24,11 @@ import { describeInstallProgress } from '../settings/claude-install-progress'
 type EnvironmentSetupCardProps = {
   environment: EnvironmentCheckResult | undefined
   isChecking: boolean
+  // `isInstalling` drives this card's own progress/label (the selected runtime's install). `busy` locks
+  // the action buttons while ANY runtime installs — including one still finishing on the previously
+  // selected framework during an async switch — so a second install can't start. Defaults to isInstalling.
   isInstalling: boolean
+  installBusy?: boolean
   installLogs: string[]
   installProgress?: ClaudeInstallProgressEvent | null
   error?: string
@@ -148,12 +152,16 @@ const EnvironmentSetupCard = ({
   environment,
   isChecking,
   isInstalling,
+  installBusy,
   installLogs,
   installProgress,
   error,
   onCheck,
   onInstall
 }: EnvironmentSetupCardProps): React.JSX.Element => {
+  // Any install running (this runtime's or one finishing on a just-switched-away framework) locks the
+  // buttons; default to this card's own install when the caller doesn't pass a global signal.
+  const anyInstalling = installBusy ?? isInstalling
   const structuredProgress = installProgress ? describeInstallProgress(installProgress) : undefined
   const progress =
     structuredProgress?.fraction !== undefined
@@ -174,7 +182,7 @@ const EnvironmentSetupCard = ({
           variant="outline"
           size="sm"
           onClick={onCheck}
-          disabled={isChecking || isInstalling}
+          disabled={isChecking || anyInstalling}
         >
           <RefreshCw className={cn(isChecking && 'animate-spin')} aria-hidden="true" />
           {isChecking ? 'Checking…' : 'Check again'}
@@ -201,17 +209,42 @@ const EnvironmentSetupCard = ({
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-foreground">
-                  The agent runtime is the only missing item
+                  {(() => {
+                    // For Codex with component info, describe what's missing specifically
+                    if (
+                      environment.agentFrameworkId === 'codex' &&
+                      environment.runtime.codexComponents
+                    ) {
+                      const { nativeCliFound, adapterFound } = environment.runtime.codexComponents
+                      if (!nativeCliFound && !adapterFound) {
+                        return 'Both native Codex CLI and ACP adapter are missing'
+                      }
+                      if (!nativeCliFound) {
+                        return 'Native Codex CLI is the missing component'
+                      }
+                      if (!adapterFound) {
+                        return 'Codex ACP adapter is the missing component'
+                      }
+                    }
+                    return 'The agent runtime is the only missing item'
+                  })()}
                 </p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  Install it into Open Science using the {sourceLabel}, with the other trusted
-                  source as fallback; no Node.js, npm, or admin password is required.
+                  {environment.agentFrameworkId === 'codex' &&
+                  environment.runtime.codexComponents?.nativeCliFound &&
+                  !environment.runtime.codexComponents?.adapterFound
+                    ? `Install the Codex ACP adapter into Open Science using the ${sourceLabel}. The installer will set up a managed adapter paired with a bundled Codex CLI; no Node.js, npm, or admin password is required.`
+                    : `Install it into Open Science using the ${sourceLabel}, with the other trusted source as fallback; no Node.js, npm, or admin password is required.`}
                 </p>
               </div>
               <Button
                 type="button"
                 onClick={onInstall}
-                disabled={isInstalling || isChecking}
+                // Lock on anyInstalling (not just this runtime's isInstalling): while another runtime
+                // installs, clicking here would hit the store's single-install guard and surface its
+                // rejection as a phantom failure on this untouched runtime. Label still keys off
+                // isInstalling so only THIS runtime's install shows the "Installing…" state.
+                disabled={anyInstalling || isChecking}
                 className="shrink-0"
               >
                 {isInstalling ? (

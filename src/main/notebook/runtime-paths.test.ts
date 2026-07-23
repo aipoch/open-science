@@ -11,6 +11,10 @@ import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
   envPrefix,
+  envDirectoryName,
+  legacyDefaultEnvPrefix,
+  logicalEnvNameFromDirectory,
+  windowsDefaultEnvPrefixReserve,
   needsRepair,
   pkgsCache,
   pipBin,
@@ -21,6 +25,7 @@ import {
   rLibraryDir,
   resolveEnvName,
   rReady,
+  readRReadyMarker,
   readReadyMarker,
   readyMarkerPath,
   rScriptBin,
@@ -32,6 +37,7 @@ import {
   writeReadyMarker,
   addRepairRequired,
   clearRepairRequired,
+  condaActivatedPath,
   isRepairRequired,
   readRepairRequired
 } from './runtime-paths'
@@ -84,6 +90,71 @@ describe('runtime-paths layout', () => {
     expect(DEFAULT_ENV_VERSION).toBe(1)
     expect(DEFAULT_R_ENV).toBe('default-r')
   })
+
+  it('uses short reserved physical directories for Windows defaults', () => {
+    expect(envDirectoryName(DEFAULT_PY_ENV, 'win32')).toBe('.p')
+    expect(envDirectoryName(DEFAULT_R_ENV, 'win32')).toBe('.r')
+    expect(envDirectoryName('my-analysis', 'win32')).toBe('my-analysis')
+    expect(logicalEnvNameFromDirectory('.p')).toBe(DEFAULT_PY_ENV)
+    expect(logicalEnvNameFromDirectory('.R')).toBe(DEFAULT_R_ENV)
+    expect(logicalEnvNameFromDirectory('my-analysis')).toBe('my-analysis')
+    expect(envPrefix('/runtime', DEFAULT_PY_ENV, 'win32')).toBe(join('/runtime', 'envs', '.p'))
+    expect(envPrefix('/runtime', DEFAULT_R_ENV, 'win32')).toBe(join('/runtime', 'envs', '.r'))
+    expect(windowsDefaultEnvPrefixReserve()).toBe('runtime\\envs\\.p'.length + 1)
+  })
+
+  it('uses marker provenance to distinguish committed legacy and short Windows prefixes', () => {
+    const root = makeRoot()
+    const short = join(root, 'envs', '.p')
+    const legacy = legacyDefaultEnvPrefix(root, DEFAULT_PY_ENV)
+
+    expect(envPrefix(root, DEFAULT_PY_ENV, 'win32')).toBe(short)
+    mkdirSync(legacy, { recursive: true })
+    writeFileSync(join(legacy, 'python.exe'), 'partial')
+    expect(envPrefix(root, DEFAULT_PY_ENV, 'win32')).toBe(short)
+
+    writeReadyMarker(root, DEFAULT_ENV_VERSION, 'ready')
+    expect(envPrefix(root, DEFAULT_PY_ENV, 'win32')).toBe(legacy)
+
+    mkdirSync(short, { recursive: true })
+    expect(envPrefix(root, DEFAULT_PY_ENV, 'win32')).toBe(legacy)
+
+    writeReadyMarker(root, DEFAULT_ENV_VERSION, 'short-ready', '.p')
+    expect(envPrefix(root, DEFAULT_PY_ENV, 'win32')).toBe(short)
+  })
+
+  it('preserves a legacy R prefix beside a partial short directory until .r is committed', () => {
+    const root = makeRoot()
+    const short = join(root, 'envs', '.r')
+    const legacy = legacyDefaultEnvPrefix(root, DEFAULT_R_ENV)
+    touchBin(join(legacy, 'Lib', 'R', 'bin', 'R.exe'))
+    mkdirSync(short, { recursive: true })
+
+    expect(envPrefix(root, DEFAULT_R_ENV, 'win32')).toBe(legacy)
+
+    writeRReadyMarker(root, DEFAULT_ENV_VERSION, 'short-ready', '.r')
+    expect(envPrefix(root, DEFAULT_R_ENV, 'win32')).toBe(short)
+  })
+
+  it('builds the complete Windows conda DLL search path ahead of the inherited PATH', () => {
+    expect(condaActivatedPath('C:\\runtime\\envs\\default-r', 'C:\\Windows', 'win32')).toBe(
+      [
+        'C:\\runtime\\envs\\default-r',
+        'C:\\runtime\\envs\\default-r\\Library\\mingw-w64\\bin',
+        'C:\\runtime\\envs\\default-r\\Library\\usr\\bin',
+        'C:\\runtime\\envs\\default-r\\Library\\bin',
+        'C:\\runtime\\envs\\default-r\\Scripts',
+        'C:\\runtime\\envs\\default-r\\bin',
+        'C:\\Windows'
+      ].join(';')
+    )
+  })
+
+  it('keeps the existing POSIX env bin prefix behavior', () => {
+    expect(condaActivatedPath('/runtime/envs/default-r', '/usr/bin', 'darwin')).toBe(
+      '/runtime/envs/default-r/bin:/usr/bin'
+    )
+  })
 })
 
 describe('runtime CDN platform mapping', () => {
@@ -129,6 +200,23 @@ describe('.env-ready marker', () => {
     expect(body).toContain('"preparedAt"')
     const marker = readReadyMarker(root)
     expect(marker).toEqual({ defaultEnvVersion: 3, preparedAt: '1720000000000' })
+  })
+
+  it('roundtrips optional Windows prefix provenance', () => {
+    const root = makeRoot()
+    writeReadyMarker(root, 3, '1720000000000', '.p')
+    writeRReadyMarker(root, 3, '1720000000001', '.r')
+
+    expect(readReadyMarker(root)).toEqual({
+      defaultEnvVersion: 3,
+      preparedAt: '1720000000000',
+      prefixDirectory: '.p'
+    })
+    expect(readRReadyMarker(root)).toEqual({
+      defaultEnvVersion: 3,
+      preparedAt: '1720000000001',
+      prefixDirectory: '.r'
+    })
   })
 
   it('returns undefined when absent or corrupt', () => {

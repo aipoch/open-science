@@ -1,13 +1,12 @@
 // Prisma schema for the project data layer.
 //
-// Scope (per plan docs/project-session-storage-plan.md): the SQLite DB holds project-scoped relational
-// data — Project, its preview state, and reviewer results (Review/Finding). Sessions, messages, and
-// artifacts stay on disk (see src/shared/session-persistence.ts) and are NOT modeled here. At runtime
-// the datasource url is supplied programmatically (see prisma-client.ts) so the DB lives under the app
-// storage root; DATABASE_URL here only serves the Prisma CLI.
+// Sessions and messages stay on disk (see src/shared/session-persistence.ts). SQLite stores projects,
+// preview state, reviewer results, and a query projection of app-managed files; file bytes remain on
+// disk. At runtime the datasource url is supplied programmatically (see prisma-client.ts), so DATABASE_URL
+// is CLI-only.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   // Generate query engines for both macOS architectures so the x64 build can be cross-packaged on an
   // Apple Silicon CI runner (the scarce Intel `macos-13` runner is no longer needed). "native" is the
   // build host's engine (darwin-arm64 on mac CI, the distro engine on Linux); "darwin" adds x64 mac.
@@ -79,4 +78,126 @@ model Finding {
   sortIndex         Int     @default(0)
   reflagCount       Int     @default(0)
   review            Review  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+}
+
+model ProjectDeletionIntent {
+  projectId String   @id
+  createdAt DateTime @default(now())
+}
+
+model ManagedFile {
+  seq               Int       @id @default(autoincrement())
+  source            String
+  sourceFileId      String
+  projectId         String
+  sessionId         String
+  messageId         String?
+  displayName       String
+  storageKey        String
+  mimeType          String?
+  sizeBytes         BigInt
+  mtimeMs           BigInt?
+  sortAtMs          BigInt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+  deleteOperationId String?
+
+  @@unique([projectId, source, sourceFileId])
+  @@unique([projectId, source, storageKey])
+  @@index([projectId, deletedAt, sortAtMs, seq])
+  @@index([projectId, source, deletedAt, sortAtMs, seq])
+  @@index([projectId, sessionId, source, deletedAt, sortAtMs, seq])
+  @@index([sessionId, deletedAt])
+}
+
+model ManagedFileSessionSync {
+  projectId         String
+  sessionId         String
+  filesRevision     Int
+  groupSortAtMs     BigInt
+  artifactCount     Int       @default(0)
+  uploadCount       Int       @default(0)
+  syncedAt          DateTime  @default(now())
+  deletedAt         DateTime?
+  deleteOperationId String?
+
+  @@id([projectId, sessionId])
+  @@index([projectId, deletedAt, groupSortAtMs, sessionId])
+}
+
+// A remote compute job submitted via host.compute.create(id).submit_job(). Phase 3a (issue 01 of
+// compute-jobs) adds this table as a pure-additive migration — it references nothing, and nothing
+// references it, so adding it is safe against any pre-existing DB. The table tracks the full
+// lifecycle: submitted → running → success/failed/timeout/error.
+// Columns for harvest (harvestedAt, outputManifest) and concurrency (queued) are included now per
+// design.md §1 to avoid a schema change in 3b/3c — they are null until those phases fill them.
+// Security: no credentials are stored; command is stored for audit; commandHash for dedup.
+model ComputeJob {
+  id              String    @id @default(cuid())
+  providerId      String
+  shape           String
+  sessionId       String
+  projectId       String
+  status          String    @default("submitted")
+  intent          String
+  command         String
+  commandHash     String
+  environment     String?
+  resourceRequest String?
+  inputManifest   String?
+  outputManifest  String?
+  harvestConfig   String?
+  timeoutSeconds  Int?
+  remoteWorkdir   String?
+  remoteHandle    String?
+  exitCode        Int?
+  stdoutTail      String?
+  stderrTail      String?
+  errorCode       String?
+  // lastPollError: set when SSH connectivity fails during a poll tick (design.md §8 boundary 2).
+  // The job status is NOT changed — this field surfaces the transient error to the UI.
+  // Cleared on the next successful poll. retry_after_user_action is always true for this field.
+  lastPollError           String?
+  // 3b harvest columns (compute-harvest issue 01): pure-additive, null until Phase 3b fills them.
+  // harvestError: summary of a harvest_failed outcome; non-null means harvest completed with errors.
+  harvestError            String?
+  // leftOnRemote: JSON [{uri, size_mb, reason}] — files left on the remote side after harvest.
+  leftOnRemote            String?
+  // notifiedAt: set when the compute_done notification has been enqueued to the inbox.
+  notifiedAt              DateTime?
+  // notificationConsumedAt: set by wait_for_notification when the notification is consumed.
+  notificationConsumedAt  DateTime?
+  createdAt               DateTime  @default(now())
+  submittedAt             DateTime?
+  startedAt               DateTime?
+  finishedAt              DateTime?
+  harvestedAt             DateTime?
+
+  @@index([providerId])
+  @@index([sessionId])
+  @@index([status])
+}
+
+// A registered remote SSH compute host (Compute settings tab). Phase 1 (issue 01) manages the record
+// only — no SSH connection is made. Pure-additive table: it references nothing and nothing references
+// it, so adding it is byte-compatible with any pre-existing DB (see prisma-client.ts runtime DDL and
+// its compatibility tests). Security: only an ssh alias + optional non-secret overrides are stored;
+// no credentials or private keys ever land here (design.md §1/§3).
+model ComputeHost {
+  id               String    @id @default(cuid())
+  providerId       String    @unique // "ssh:<alias>"
+  displayName      String
+  shape            String    @default("direct_ssh") // direct_ssh | scheduler_cluster | bridge_runner
+  sshAlias         String
+  sshOverrides     String? // JSON: { user?, port?, identityFile? } — never credentials
+  scratchRoot      String?
+  scratchPinned    Boolean   @default(false)
+  concurrencyLimit Int? // stored but not enforced in Phase 1
+  probeResult      String? // JSON probe snapshot, written by a later issue
+  detailsDoc       String    @default("") // markdown notes, <= 32768 chars
+  detailsUpdatedAt DateTime?
+  detailsUpdatedBy String? // user | agent
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 }

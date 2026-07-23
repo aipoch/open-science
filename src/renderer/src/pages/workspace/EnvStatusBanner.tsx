@@ -1,8 +1,11 @@
 import type { ProvisionUiState } from './provisioning-view'
 
-// Thin top-of-app banner for the launch-time upgrade gate (spec §6.2). First-run python preparation
+// Floating top-of-app pill for the launch-time upgrade gate (spec §6.2). First-run python preparation
 // is surfaced by the onboarding step and the notebook pane gate instead, so this banner only shows for
 // an in-progress background upgrade or a blocking failure — never for the initial python bootstrap.
+// It overlays content instead of taking layout space: the pages below are h-screen with
+// overflow-hidden, so an in-flow banner would push their bottom edge (the composer toolbar) out of
+// the viewport and clip it (issue #244).
 const EnvStatusBanner = ({
   ui,
   onRetry
@@ -16,7 +19,7 @@ const EnvStatusBanner = ({
   return (
     <div
       data-testid="env-status-banner"
-      className="flex w-full items-center justify-center gap-3 bg-bg-200 px-4 py-1.5 text-center text-xs text-text-100"
+      className="fixed left-1/2 top-2 z-50 flex max-w-[min(90vw,640px)] -translate-x-1/2 items-center justify-center gap-2 rounded-full border border-border-100 bg-bg-200 px-3 py-1 text-center text-xs text-text-100 shadow-md"
     >
       {ui.kind === 'error' ? (
         <>

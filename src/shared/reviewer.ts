@@ -52,6 +52,16 @@ export type ReviewLifecycle = 'running' | 'complete' | 'error'
 // Result of a completed review: no warn/fail checks = pass, at least one warn/fail = flagged.
 export type ReviewOutcome = 'pass' | 'flagged'
 
+// The only MCP server an unattended reviewer session may use. Keeping the name in shared code lets
+// the orchestrator and ACP permission gate enforce the same allowlist without importing each other.
+export const REVIEWER_MCP_SERVER_NAME = 'open-science-reviewer'
+export const REVIEWER_MCP_TOOLS = {
+  readTurn: 'read_turn',
+  queryExecutionLog: 'query_execution_log',
+  readArtifact: 'read_artifact',
+  submitFindings: 'submit_findings'
+} as const
+
 // The check status: pass = verified and ok; warn = minor issue; fail = serious issue.
 // No 'inconclusive' — use 'warn' with appropriate evidence when verification is uncertain.
 export type CheckStatus = 'pass' | 'warn' | 'fail'
@@ -151,6 +161,9 @@ export type NewCheck = {
   status: CheckStatus
   claim: string
   evidence: string
+  // Stable identity of an original warn/fail finding being re-evaluated in the fix loop. Re-review
+  // submissions must disposition every tracked finding exactly once; prose is never used as identity.
+  sourceFindingId?: string
   locator?: FindingLocator // optional — pass checks may omit it
   artifactVersionId?: string
   resolution?: FindingResolution

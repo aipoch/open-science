@@ -210,8 +210,11 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const provisionUi = useNotebookEnvStore((s) => s.ui)
   const retryProvision = useNotebookEnvStore((s) => s.retry)
   const provision = useNotebookEnvStore((s) => s.provision)
-  const gated = notebookGated(envStatus, provisionUi)
-  const isPreparingR = provisionUi.kind === 'preparing' && provisionUi.scope === 'r'
+  const gated = notebookGated(envStatus, provisionUi, item.notebook.sessionId)
+  const isPreparingR =
+    provisionUi.kind === 'preparing' &&
+    provisionUi.scope === 'r' &&
+    (!provisionUi.sessionId || provisionUi.sessionId === item.notebook.sessionId)
 
   // First-time R selection kicks off the lazy ~1GB R download in the background; Python stays
   // usable throughout (D6 — see lazy-r.ts). R-kernel execution routing is wired later in E5.

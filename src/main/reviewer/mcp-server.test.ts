@@ -5,10 +5,11 @@
 // v2 (issue 12): submit_findings accepts checks[] (status pass|warn|fail) not findings[]+severity.
 // summary is no longer accepted (strict schema). Pass checks may omit their locator.
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 
 import { mapChecksToScope, submitFindingsInputSchema, ReviewerMcpServer } from './mcp-server'
 import type { TurnScope } from '../../shared/reviewer'
+import type { ArtifactContent, ExecRecord, OrderedBlock } from './host-sdk'
 
 const scope: TurnScope = {
   turnMessageId: 'msg-2',
@@ -300,6 +301,65 @@ describe('ReviewerMcpServer HTTP transport', () => {
     return json ? JSON.parse(json) : {}
   }
 
+  const initialize = async (
+    endpoint: string,
+    token: string
+  ): Promise<{ sessionId: string; headers: Record<string, string> }> => {
+    const headers = {
+      authorization: `Bearer ${token}`,
+      accept: MCP_ACCEPT,
+      'content-type': 'application/json'
+    }
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'test-client', version: '1.0' }
+        }
+      })
+    })
+    const sessionId = response.headers.get('mcp-session-id')
+    expect(response.status).toBe(200)
+    expect(sessionId).toBeTruthy()
+    await response.text()
+    await fetch(endpoint, {
+      method: 'POST',
+      headers: { ...headers, 'mcp-session-id': sessionId! },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })
+    })
+    return { sessionId: sessionId!, headers }
+  }
+
+  const callTool = async (
+    endpoint: string,
+    sessionId: string,
+    headers: Record<string, string>,
+    name: string,
+    args: Record<string, unknown>,
+    id = 2
+  ): Promise<{ result?: { content?: Array<{ text?: string }>; isError?: boolean } }> => {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { ...headers, 'mcp-session-id': sessionId },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id,
+        method: 'tools/call',
+        params: { name, arguments: args }
+      })
+    })
+    expect(response.status).toBe(200)
+    return parseSse(await response.text()) as {
+      result?: { content?: Array<{ text?: string }>; isError?: boolean }
+    }
+  }
+
   it('reuses the session transport for the GET SSE stream and still serves tool calls', async () => {
     const server = new ReviewerMcpServer(scope, async () => undefined)
     const { endpoint, token } = await server.start()
@@ -389,6 +449,250 @@ describe('ReviewerMcpServer HTTP transport', () => {
       })
       expect(response.status).toBe(400)
       await response.text()
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('exposes evidence only through the scope-bounded reviewer MCP tools', async () => {
+    const readTurn = vi.fn<() => OrderedBlock[]>().mockReturnValue([
+      {
+        blockIndex: 0,
+        id: 'message:msg-2',
+        kind: 'message',
+        sourceId: 'msg-2',
+        contentHash: 'real-hash-msg-2',
+        role: 'agent',
+        content: '42 results'
+      }
+    ])
+    const queryExecutionLog = vi
+      .fn<(activityId?: string) => ExecRecord[]>()
+      .mockReturnValue([
+        { activityId: 'act-9', title: 'analysis', status: 'completed', terminalExitCode: 0 }
+      ])
+    const readArtifact = vi.fn<(id: string) => Promise<ArtifactContent>>().mockResolvedValue({
+      id: 'artifact-csv',
+      kind: 'tabular',
+      columns: { value: ['42'] },
+      rowCount: 1
+    })
+    const server = new ReviewerMcpServer(scope, async () => undefined, {
+      readTurn,
+      queryExecutionLog,
+      readArtifact
+    })
+    const { endpoint, token } = await server.start()
+
+    try {
+      const { sessionId, headers } = await initialize(endpoint, token)
+      const turn = await callTool(endpoint, sessionId, headers, 'read_turn', {})
+      const execution = await callTool(
+        endpoint,
+        sessionId,
+        headers,
+        'query_execution_log',
+        { activityId: 'act-9' },
+        3
+      )
+      const artifact = await callTool(
+        endpoint,
+        sessionId,
+        headers,
+        'read_artifact',
+        { id: 'artifact-csv' },
+        4
+      )
+
+      expect(JSON.parse(turn.result?.content?.[0]?.text ?? 'null')).toEqual(
+        readTurn.mock.results[0]?.value
+      )
+      expect(JSON.parse(execution.result?.content?.[0]?.text ?? 'null')).toEqual(
+        queryExecutionLog.mock.results[0]?.value
+      )
+      expect(JSON.parse(artifact.result?.content?.[0]?.text ?? 'null')).toEqual(
+        await readArtifact.mock.results[0]?.value
+      )
+      expect(queryExecutionLog).toHaveBeenCalledWith('act-9')
+      expect(readArtifact).toHaveBeenCalledWith('artifact-csv')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('requires exactly one stable disposition per tracked finding and rejects duplicate submission', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    const server = new ReviewerMcpServer(scope, onSubmit, undefined, ['finding-1'])
+    const { endpoint, token } = await server.start()
+
+    try {
+      const { sessionId, headers } = await initialize(endpoint, token)
+      const missing = await callTool(endpoint, sessionId, headers, 'submit_findings', {
+        checks: []
+      })
+      expect(missing.result?.isError).toBe(true)
+      expect(missing.result?.content?.[0]?.text).toContain('Missing disposition')
+
+      const duplicatedDisposition = await callTool(
+        endpoint,
+        sessionId,
+        headers,
+        'submit_findings',
+        {
+          checks: [
+            {
+              sourceFindingId: 'finding-1',
+              status: 'pass',
+              claim: 'First disposition',
+              evidence: 'First verification'
+            },
+            {
+              sourceFindingId: 'finding-1',
+              status: 'pass',
+              claim: 'Second disposition',
+              evidence: 'Second verification'
+            }
+          ]
+        },
+        3
+      )
+      expect(duplicatedDisposition.result?.isError).toBe(true)
+      expect(duplicatedDisposition.result?.content?.[0]?.text).toContain('Duplicate disposition')
+
+      const unknown = await callTool(
+        endpoint,
+        sessionId,
+        headers,
+        'submit_findings',
+        {
+          checks: [
+            {
+              sourceFindingId: 'invented-finding',
+              status: 'pass',
+              claim: 'Invented identity',
+              evidence: 'Not a tracked finding'
+            }
+          ]
+        },
+        4
+      )
+      expect(unknown.result?.isError).toBe(true)
+      expect(unknown.result?.content?.[0]?.text).toContain('Unknown sourceFindingId')
+
+      const valid = await callTool(
+        endpoint,
+        sessionId,
+        headers,
+        'submit_findings',
+        {
+          checks: [
+            {
+              sourceFindingId: 'finding-1',
+              status: 'fail',
+              claim: 'Paraphrased description of the same unresolved defect',
+              evidence: 'The corrected output is still contradictory',
+              locator: { blockRef: { blockIndex: 0 }, contentHash: 'ignored' }
+            }
+          ]
+        },
+        5
+      )
+      expect(valid.result?.isError).not.toBe(true)
+      expect(onSubmit).toHaveBeenCalledTimes(1)
+      expect(onSubmit.mock.calls[0]?.[0]?.[0]).toMatchObject({
+        sourceFindingId: 'finding-1',
+        claim: 'Paraphrased description of the same unresolved defect'
+      })
+
+      const duplicate = await callTool(
+        endpoint,
+        sessionId,
+        headers,
+        'submit_findings',
+        {
+          checks: [
+            {
+              sourceFindingId: 'finding-1',
+              status: 'pass',
+              claim: 'Resolved',
+              evidence: 'Verified'
+            }
+          ]
+        },
+        6
+      )
+      expect(duplicate.result?.isError).toBe(true)
+      expect(duplicate.result?.content?.[0]?.text).toContain('already called')
+      expect(onSubmit).toHaveBeenCalledTimes(1)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('accepts exactly one of two concurrent submit_findings calls', async () => {
+    let submissionsStarted = 0
+    let releaseSubmission: (() => void) | undefined
+    const submissionGate = new Promise<void>((resolve) => {
+      releaseSubmission = resolve
+    })
+    const releaseTimer = setTimeout(() => releaseSubmission?.(), 100)
+    const onSubmit = vi.fn(async () => {
+      submissionsStarted++
+      if (submissionsStarted === 2) releaseSubmission?.()
+      await submissionGate
+    })
+    const server = new ReviewerMcpServer(scope, onSubmit)
+    const { endpoint, token } = await server.start()
+
+    try {
+      const { sessionId, headers } = await initialize(endpoint, token)
+      const calls = await Promise.all([
+        callTool(endpoint, sessionId, headers, 'submit_findings', { checks: [] }, 2),
+        callTool(endpoint, sessionId, headers, 'submit_findings', { checks: [] }, 3)
+      ])
+
+      expect(calls.map((call) => call.result?.isError === true).sort()).toEqual([false, true])
+      expect(calls.find((call) => call.result?.isError)?.result?.content?.[0]?.text).toContain(
+        'already called'
+      )
+      expect(onSubmit).toHaveBeenCalledTimes(1)
+    } finally {
+      clearTimeout(releaseTimer)
+      releaseSubmission?.()
+      await server.stop()
+    }
+  })
+
+  it('allows submit_findings to retry after the submission handler fails', async () => {
+    const onSubmit = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('persistence failed'))
+      .mockResolvedValueOnce(undefined)
+    const server = new ReviewerMcpServer(scope, onSubmit)
+    const { endpoint, token } = await server.start()
+
+    try {
+      const { sessionId, headers } = await initialize(endpoint, token)
+      const failed = await callTool(
+        endpoint,
+        sessionId,
+        headers,
+        'submit_findings',
+        { checks: [] },
+        2
+      )
+      expect(failed.result?.isError).toBe(true)
+
+      const retry = await callTool(
+        endpoint,
+        sessionId,
+        headers,
+        'submit_findings',
+        { checks: [] },
+        3
+      )
+      expect(retry.result?.isError).not.toBe(true)
+      expect(onSubmit).toHaveBeenCalledTimes(2)
     } finally {
       await server.stop()
     }

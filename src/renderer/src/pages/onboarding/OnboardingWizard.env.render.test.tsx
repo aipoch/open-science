@@ -13,10 +13,26 @@ vi.mock('../../stores/settings-store', () => {
     claude: {},
     preflight: { claudeReady: true, activeProviderReady: false },
     isDetectingClaude: false,
-    isInstalling: false,
-    installLogs: [] as string[],
-    installProgress: undefined,
-    installError: undefined,
+    installStates: {
+      'claude-code': {
+        isInstalling: false,
+        installLogs: [] as string[],
+        installProgress: null,
+        installError: undefined
+      },
+      opencode: {
+        isInstalling: false,
+        installLogs: [],
+        installProgress: null,
+        installError: undefined
+      },
+      codex: {
+        isInstalling: false,
+        installLogs: [],
+        installProgress: null,
+        installError: undefined
+      }
+    },
     npmAvailable: true,
     encryptionAvailable: true,
     onboardingCompletedAt: undefined,
@@ -52,7 +68,8 @@ vi.mock('../../stores/settings-store', () => {
   const useSettingsStore = (sel: (s: typeof state) => unknown): unknown => sel(state)
   // The wizard reads endpoints via this selector; return a stable default so a provider looks usable.
   const selectFrameworkApiEndpoints = (): string[] => ['anthropic']
-  return { useSettingsStore, selectFrameworkApiEndpoints }
+  const selectAnyInstalling = (): boolean => false
+  return { useSettingsStore, selectFrameworkApiEndpoints, selectAnyInstalling }
 })
 
 let container: HTMLDivElement
@@ -61,11 +78,12 @@ const provision = vi.fn(async () => {})
 const init = vi.fn(async () => {})
 const retry = vi.fn(async () => {})
 const cancel = vi.fn(async () => {})
+const reset = vi.fn(async () => {})
 
 beforeEach(() => {
   // Full replace (needs every action typed) so a stray real bridge call can never sneak in.
   useNotebookEnvStore.setState(
-    { ...createInitialNotebookEnvState(), init, provision, cancel, retry },
+    { ...createInitialNotebookEnvState(), init, provision, cancel, retry, reset },
     true
   )
   // The wizard reads storage info on mount (main's data-root step); stub it so the effect resolves.

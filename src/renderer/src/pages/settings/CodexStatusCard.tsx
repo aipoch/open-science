@@ -18,10 +18,13 @@ type CodexStatusCardProps = {
   codexReady: boolean
   isDetecting: boolean
   onDetect: () => void
+  // `isInstalling` is Codex's OWN install state (drives this card's progress/label); `installBusy` is
+  // true while ANY runtime installs and only locks the controls (one install at a time).
   isInstalling: boolean
   installLogs: string[]
   installProgress: ClaudeInstallProgressEvent | null
   installError: string | undefined
+  installBusy?: boolean
   npmAvailable: boolean
   onInstall: (source: CodexInstallSource) => void
   active?: boolean
@@ -41,6 +44,7 @@ const CodexStatusCard = ({
   installLogs,
   installProgress,
   installError,
+  installBusy,
   npmAvailable,
   onInstall,
   active = false,
@@ -50,6 +54,8 @@ const CodexStatusCard = ({
   isUninstalling = false,
   onUninstall
 }: CodexStatusCardProps): React.JSX.Element => {
+  // Any install (this runtime's or another's) locks the uninstall button; default to this card's own.
+  const anyInstalling = installBusy ?? isInstalling
   const found = Boolean(codex.resolvedPath)
   const installSources = useMemo(() => getCodexInstallSources(), [])
   const selectable = Boolean(onSelect) && codexReady
@@ -108,7 +114,7 @@ const CodexStatusCard = ({
                 variant="destructive"
                 size="sm"
                 onClick={onUninstall}
-                disabled={active || isUninstalling || isDetecting}
+                disabled={active || isUninstalling || isDetecting || anyInstalling}
                 title={
                   active ? 'Switch to the other framework before uninstalling Codex' : undefined
                 }
@@ -165,6 +171,7 @@ const CodexStatusCard = ({
               installLogs={installLogs}
               installProgress={installProgress}
               installError={installError}
+              installBusy={anyInstalling}
               npmAvailable={npmAvailable}
               onInstall={(source) => {
                 if (source !== 'official-script') onInstall(source)

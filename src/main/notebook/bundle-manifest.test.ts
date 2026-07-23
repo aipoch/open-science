@@ -11,8 +11,11 @@ import {
   packId,
   packUrl,
   parseManifest,
+  pathBudgetForPack,
   resolvePack,
   verifyPackChecksum,
+  DEFAULT_MAX_CACHE_RELATIVE_PATH,
+  DEFAULT_MAX_ENV_RELATIVE_PATH,
   type BundleManifest
 } from './bundle-manifest'
 
@@ -60,6 +63,38 @@ describe('parseManifest', () => {
     const parsed = parseManifest(JSON.stringify(validManifest()))
     expect(parsed).toEqual(validManifest())
   })
+
+  it('accepts exact path budgets and falls back only for the current managed pack', () => {
+    const raw = validManifest()
+    raw.packs['python-3.12'].maxCacheRelativePath = 207
+    raw.packs['python-3.12'].maxEnvRelativePath = 119
+    const parsed = parseManifest(JSON.stringify(raw))
+    expect(pathBudgetForPack(parsed.packs['python-3.12'])).toEqual({
+      maxCacheRelativePath: 207,
+      maxEnvRelativePath: 119
+    })
+    expect(pathBudgetForPack(parsed.packs['r-4.3'])).toBeUndefined()
+    expect(
+      pathBudgetForPack({
+        ...parsed.packs['python-3.12'],
+        maxCacheRelativePath: undefined,
+        maxEnvRelativePath: undefined
+      })
+    ).toEqual({
+      maxCacheRelativePath: DEFAULT_MAX_CACHE_RELATIVE_PATH,
+      maxEnvRelativePath: DEFAULT_MAX_ENV_RELATIVE_PATH
+    })
+  })
+
+  it.each(['maxCacheRelativePath', 'maxEnvRelativePath'] as const)(
+    'rejects a manifest with only %s',
+    (field) => {
+      const raw = validManifest()
+      raw.packs['python-3.12'][field] = 207
+      expect(() => parseManifest(JSON.stringify(raw))).toThrow(/path budget fields.*together/i)
+      expect(pathBudgetForPack(raw.packs['python-3.12'])).toBeUndefined()
+    }
+  )
 
   it('rejects non-JSON text', () => {
     expect(() => parseManifest('not json')).toThrow(/valid JSON/)

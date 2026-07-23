@@ -19,7 +19,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from '../acp/runtime'
 import { ReviewRepository } from './repository'
@@ -66,6 +66,7 @@ const callSubmitFindings = async (
     status: 'pass' | 'warn' | 'fail'
     claim: string
     evidence: string
+    sourceFindingId?: string
     locator?: {
       blockRef: { messageId?: string; activityId?: string; blockIndex: number }
       contentHash: string
@@ -144,6 +145,7 @@ type ReReviewChecks = Array<{
   status: 'pass' | 'warn' | 'fail'
   claim: string
   evidence: string
+  sourceFindingId?: string
   locator?: {
     blockRef: { messageId?: string; activityId?: string; blockIndex: number }
     contentHash: string
@@ -264,7 +266,15 @@ const startFixLoopFakeAgent = (
           } else {
             // Re-review round (roundIndex >= 1): use re-review checks for this round
             const reReviewRoundIndex = roundIndex - 1
-            const reReviewChecks = options.reReviewChecksByRound?.[reReviewRoundIndex] ?? []
+            const trackedFindingIds = [...text.matchAll(/"sourceFindingId":"([^"]+)"/g)].map(
+              (match) => match[1]!
+            )
+            const reReviewChecks = (options.reReviewChecksByRound?.[reReviewRoundIndex] ?? []).map(
+              (check, index) => ({
+                ...check,
+                sourceFindingId: check.sourceFindingId ?? trackedFindingIds[index]
+              })
+            )
             await callSubmitFindings(reviewerMcp.url, token, reReviewChecks)
           }
         }
@@ -479,6 +489,236 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
 
     await client.$disconnect()
   })
+
+  it('waits for a complete correction message before starting re-review', async () => {
+    const process = new FakeAgentProcess()
+    const shared = makeSharedSession(makeSession())
+    let correctionPolls = 0
+
+    startFixLoopFakeAgent(
+      process,
+      {
+        mainSessionId: 'main-session-1',
+        initialChecks: [
+          {
+            status: 'fail',
+            claim: 'Agent claimed 42 results',
+            evidence: 'Tool output shows 0 results',
+            locator: { blockRef: { blockIndex: 1 }, contentHash: 'abc123' }
+          }
+        ],
+        reReviewChecksByRound: [
+          [
+            {
+              status: 'pass',
+              claim: 'Agent claimed 42 results',
+              evidence: 'Correction confirmed: results now correct'
+            }
+          ]
+        ]
+      },
+      shared
+    )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const client = createProjectDbClient(temporaryRoot!)
+    await ensureProjectSchema(client)
+    const repository = new ReviewRepository(() => Promise.resolve(client))
+
+    await runReview({
+      sessionId: 'session-1',
+      turnMessageId: 'msg-2',
+      projectId: 'project-1',
+      getSession: () => {
+        const session = shared.getSession()
+        const correction = session.messages.find((message) => message.id === 'correction-msg-1')
+        if (!correction) return session
+
+        correctionPolls++
+        if (correctionPolls > 1) return session
+
+        return {
+          ...session,
+          messages: session.messages.map((message) =>
+            message.id === correction.id
+              ? { ...message, status: 'error', content: 'Partial correction was interrupted.' }
+              : message
+          )
+        }
+      },
+      reviewRepository: repository,
+      acpRuntime: runtime,
+      artifactStorageRoot: temporaryRoot!,
+      mainSessionId: 'main-session-1'
+    })
+
+    expect(correctionPolls).toBeGreaterThanOrEqual(2)
+    const reviews = await repository.getReviewsForSession('session-1')
+    expect(
+      reviews.some((review) =>
+        review.checks.some(
+          (check) => check.claim === 'Agent claimed 42 results' && check.resolution === 'resolved'
+        )
+      )
+    ).toBe(true)
+
+    await client.$disconnect()
+  })
+})
+
+describe('fix loop: cancellation', () => {
+  it('stops before the first correction round when cancelled as the loop starts', async () => {
+    const process = new FakeAgentProcess()
+    const shared = makeSharedSession(makeSession())
+    const correctionPrompts: string[] = []
+    const abortController = new AbortController()
+    const onFixLoopStart = vi.fn(() => abortController.abort())
+    const onFixLoopEnd = vi.fn()
+
+    const agentState = startFixLoopFakeAgent(
+      process,
+      {
+        mainSessionId: 'main-session-1',
+        initialChecks: [
+          {
+            status: 'fail',
+            claim: 'Agent claimed 42 results',
+            evidence: 'Tool output shows 0 results',
+            locator: { blockRef: { blockIndex: 1 }, contentHash: 'abc123' }
+          }
+        ],
+        onCorrectionPrompt: (text) => correctionPrompts.push(text)
+      },
+      shared
+    )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const client = createProjectDbClient(temporaryRoot!)
+    await ensureProjectSchema(client)
+    const repository = new ReviewRepository(() => Promise.resolve(client))
+
+    const review = await runReview({
+      sessionId: 'session-1',
+      turnMessageId: 'msg-2',
+      projectId: 'project-1',
+      getSession: () => shared.getSession(),
+      reviewRepository: repository,
+      acpRuntime: runtime,
+      artifactStorageRoot: temporaryRoot!,
+      mainSessionId: 'main-session-1',
+      onCorrectionPrompt: (text) => correctionPrompts.push(text),
+      onFixLoopStart,
+      onFixLoopEnd,
+      fixLoopAbortSignal: abortController.signal
+    })
+
+    expect(onFixLoopStart).toHaveBeenCalledTimes(1)
+    expect(onFixLoopEnd).toHaveBeenCalledTimes(1)
+    expect(correctionPrompts).toEqual([])
+    expect(
+      agentState.sessions.filter((session) => session.sessionId.startsWith('reviewer-session'))
+    ).toHaveLength(1)
+    expect(review.checks[0]?.resolution).toBe('open')
+
+    await client.$disconnect()
+  })
+})
+
+describe('fix loop: newly discovered issues remain in the automatic remediation loop', () => {
+  it('carries a new re-review finding into the next round and resolves it by its own id', async () => {
+    const process = new FakeAgentProcess()
+    const shared = makeSharedSession(makeSession())
+    const correctionPrompts: string[] = []
+
+    const agentState = startFixLoopFakeAgent(
+      process,
+      {
+        mainSessionId: 'main-session-1',
+        initialChecks: [
+          {
+            status: 'fail',
+            claim: 'Original incorrect result',
+            evidence: 'The first output is contradictory',
+            locator: { blockRef: { blockIndex: 1 }, contentHash: 'original' }
+          }
+        ],
+        reReviewChecksByRound: [
+          [
+            {
+              status: 'pass',
+              claim: 'Original result is fixed',
+              evidence: 'The correction now matches the record'
+            },
+            {
+              status: 'fail',
+              claim: 'Correction introduced a new unit error',
+              evidence: 'The corrected value is labeled with the wrong unit',
+              locator: { blockRef: { blockIndex: 1 }, contentHash: 'new-issue' }
+            }
+          ],
+          [
+            {
+              status: 'pass',
+              claim: 'The newly introduced unit error is fixed',
+              evidence: 'The value and unit now agree'
+            }
+          ]
+        ],
+        onCorrectionPrompt: (text) => correctionPrompts.push(text)
+      },
+      shared
+    )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const client = createProjectDbClient(temporaryRoot!)
+    await ensureProjectSchema(client)
+    const repository = new ReviewRepository(() => Promise.resolve(client))
+
+    await runReview({
+      sessionId: 'session-1',
+      turnMessageId: 'msg-2',
+      projectId: 'project-1',
+      getSession: () => shared.getSession(),
+      reviewRepository: repository,
+      acpRuntime: runtime,
+      artifactStorageRoot: temporaryRoot!,
+      mainSessionId: 'main-session-1'
+    })
+
+    expect(correctionPrompts).toHaveLength(2)
+    expect(
+      agentState.sessions.filter((session) => session.sessionId.startsWith('reviewer-session'))
+    ).toHaveLength(3)
+    const checks = (await repository.getReviewsForSession('session-1')).flatMap(
+      (review) => review.checks
+    )
+    expect(checks.find((check) => check.claim === 'Original incorrect result')?.resolution).toBe(
+      'resolved'
+    )
+    expect(
+      checks.find((check) => check.claim === 'Correction introduced a new unit error')?.resolution
+    ).toBe('resolved')
+
+    await client.$disconnect()
+  })
 })
 
 describe('fix loop: cap at 3 rounds → unaddressed', () => {
@@ -577,8 +817,8 @@ describe('fix loop: cap at 3 rounds → unaddressed', () => {
   })
 })
 
-describe('fix loop: over-correction increments reflagCount', () => {
-  it('increments reflagCount when the same claim fails again on re-review', async () => {
+describe('fix loop: stable finding identity survives reviewer paraphrases', () => {
+  it('increments reflagCount instead of resolving when the same issue is reworded', async () => {
     const process = new FakeAgentProcess()
     const shared = makeSharedSession(makeSession())
 
@@ -594,12 +834,12 @@ describe('fix loop: over-correction increments reflagCount', () => {
             locator: { blockRef: { blockIndex: 1 }, contentHash: 'abc' }
           }
         ],
-        // Round 1: over-correction — same claim fails again
+        // Round 1: the reviewer describes the same tracked issue with different wording.
         reReviewChecksByRound: [
           [
             {
               status: 'fail',
-              claim: 'Value should be 42',
+              claim: 'The corrected value is still not the expected forty-two',
               evidence: 'Now shows 100 — over-corrected',
               locator: { blockRef: { blockIndex: 1 }, contentHash: 'abc2' }
             }
@@ -608,7 +848,7 @@ describe('fix loop: over-correction increments reflagCount', () => {
           [
             {
               status: 'pass',
-              claim: 'Value should be 42',
+              claim: 'The value now matches the expected result',
               evidence: 'Now correct'
             }
           ]

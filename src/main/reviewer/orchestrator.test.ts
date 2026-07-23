@@ -12,7 +12,7 @@ import * as acp from '@agentclientprotocol/sdk'
 import type { ContentBlock } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
@@ -83,6 +83,9 @@ const startFakeReviewerAgent = (
   options: {
     // When set, the agent simulates the reviewer calling submit_findings via the MCP server URL.
     simulateFindingsViaHttp?: boolean
+    // When set, the agent requests a non-reviewer tool the strict gate rejects, then ends its turn
+    // without submit_findings — exercising the gate-rejection incomplete-review path.
+    emitRejectedToolCall?: boolean
     // v3: checks[] only — reasoning removed from submit_findings
     checksToSubmit?: Array<{
       status: 'pass' | 'warn' | 'fail'
@@ -128,6 +131,24 @@ const startFakeReviewerAgent = (
         .join('')
 
       prompts.push({ sessionId: ctx.params.sessionId, text })
+
+      // If requested, ask for a tool outside the reviewer allowlist; the runtime gate rejects it and
+      // increments the session's rejected-tool-call counter.
+      if (options.emitRejectedToolCall) {
+        await ctx.client.request(acp.methods.client.session.requestPermission, {
+          sessionId: ctx.params.sessionId,
+          toolCall: {
+            toolCallId: 'reviewer-blocked-bash',
+            title: 'Bash',
+            kind: 'execute',
+            status: 'pending'
+          },
+          options: [
+            { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+            { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+          ]
+        })
+      }
 
       // If requested, simulate the reviewer calling submit_findings via the HTTP MCP server.
       if (options.simulateFindingsViaHttp && newSessions.length > 0) {
@@ -297,7 +318,9 @@ afterEach(async () => {
 describe('reviewer orchestrator', () => {
   it('creates a reviewer session with the correct buildSession config', async () => {
     const process = new FakeAgentProcess()
-    const { newSessions } = startFakeReviewerAgent(process, 'reviewer-session-1')
+    const { newSessions } = startFakeReviewerAgent(process, 'reviewer-session-1', {
+      simulateFindingsViaHttp: true
+    })
 
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
@@ -321,9 +344,10 @@ describe('reviewer orchestrator', () => {
       artifactStorageRoot: temporaryRoot!
     })
 
-    // buildSession was called with the correct cwd.
+    // Reviewer execution is isolated from the audited workspace in an empty temporary directory.
     expect(newSessions).toHaveLength(1)
-    expect(newSessions[0]?.cwd).toBe('/workspace')
+    expect(newSessions[0]?.cwd).toContain('open-science-reviewer-')
+    expect(newSessions[0]?.cwd).not.toBe('/workspace')
 
     // The reviewer MCP server (HTTP type) was included.
     const mcpServers = (newSessions[0]?.mcpServers ?? []) as Array<{ type?: string; name?: string }>
@@ -333,6 +357,10 @@ describe('reviewer orchestrator', () => {
 
     // _meta includes a systemPrompt with append (rubric).
     const meta = newSessions[0]?._meta as Record<string, unknown> | undefined
+    expect(meta?.disableBuiltInTools).toBe(true)
+    expect(
+      (meta?.claudeCode as { options?: { tools?: unknown[] } } | undefined)?.options?.tools ?? null
+    ).toEqual([])
     const systemPrompt = meta?.systemPrompt as Record<string, unknown> | undefined
     expect(systemPrompt?.type).toBe('preset')
     expect(systemPrompt?.preset).toBe('claude_code')
@@ -342,11 +370,12 @@ describe('reviewer orchestrator', () => {
     // Review was persisted.
     expect(review.sessionId).toBe('session-1')
     expect(review.turnMessageId).toBe('msg-2')
+    await expect(access(newSessions[0]!.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
 
     await client.$disconnect()
   })
 
-  it('sets lifecycle=complete and outcome=pass when no findings are submitted', async () => {
+  it('fails closed when the reviewer stops without submitting findings', async () => {
     const process = new FakeAgentProcess()
     startFakeReviewerAgent(process, 'reviewer-session-1')
 
@@ -372,9 +401,42 @@ describe('reviewer orchestrator', () => {
       artifactStorageRoot: temporaryRoot!
     })
 
-    // No submit_findings was called (agent didn't simulate it), so it defaults to pass.
-    expect(review.lifecycle).toBe('complete')
-    expect(review.outcome).toBe('pass')
+    expect(review.lifecycle).toBe('error')
+    expect(review.outcome).toBeNull()
+    expect(review.errorMessage).toContain('without calling submit_findings')
+    expect(review.checks).toHaveLength(0)
+
+    await client.$disconnect()
+  })
+
+  it('notes permission-gate rejections as context on an incomplete review', async () => {
+    const process = new FakeAgentProcess()
+    startFakeReviewerAgent(process, 'reviewer-session-1', { emitRejectedToolCall: true })
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const client = createProjectDbClient(temporaryRoot!)
+    await ensureProjectSchema(client)
+    const repository = new ReviewRepository(() => Promise.resolve(client))
+
+    const review = await runReview({
+      sessionId: 'session-1',
+      turnMessageId: 'msg-2',
+      projectId: 'project-1',
+      getSession: () => makeSession(),
+      reviewRepository: repository,
+      acpRuntime: runtime,
+      artifactStorageRoot: temporaryRoot!
+    })
+
+    expect(review.lifecycle).toBe('error')
+    // The message reports the rejection count as context without claiming it blocked submit_findings.
+    expect(review.errorMessage).toContain('rejected by the permission gate')
+    expect(review.errorMessage).toContain('stopped without calling submit_findings')
     expect(review.checks).toHaveLength(0)
 
     await client.$disconnect()
@@ -533,7 +595,7 @@ describe('reviewer orchestrator', () => {
 
   it('calls onReviewUpdate on lifecycle transitions', async () => {
     const process = new FakeAgentProcess()
-    startFakeReviewerAgent(process, 'reviewer-session-1')
+    startFakeReviewerAgent(process, 'reviewer-session-1', { simulateFindingsViaHttp: true })
 
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',

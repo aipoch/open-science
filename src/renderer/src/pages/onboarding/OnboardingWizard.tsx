@@ -23,7 +23,11 @@ import type {
 } from '../../../../shared/settings'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
-import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
+import {
+  selectAnyInstalling,
+  selectFrameworkApiEndpoints,
+  useSettingsStore
+} from '@/stores/settings-store'
 import { DataRootWarning } from '@/components/DataRootWarning'
 import { ClaudeInstallCard } from '../settings/ClaudeInstallCard'
 import { ClaudeStatusCard } from '../settings/ClaudeStatusCard'
@@ -36,17 +40,12 @@ import {
   createEmptyProviderFormValue,
   getProviderFormErrors,
   hasProviderFormErrors,
+  providerKindPatch,
   type ProviderFormValue
 } from '../settings/provider-form-value'
 
 const createCodexProviderFormValue = (): ProviderFormValue =>
-  createEmptyProviderFormValue({
-    type: 'official',
-    name: 'OpenAI',
-    apiEndpoint: 'responses',
-    vendorId: 'openai',
-    model: ''
-  })
+  createEmptyProviderFormValue(providerKindPatch('codex-subscription'))
 import { describeValidation } from '../settings/validation-message'
 
 // Location is last: it doubles as the wizard's Finish step, so the confirm-restart dialog can
@@ -137,10 +136,15 @@ const OnboardingWizard = (): React.JSX.Element => {
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
   const preflight = useSettingsStore((state) => state.preflight)
   const isDetectingClaude = useSettingsStore((state) => state.isDetectingClaude)
-  const isInstalling = useSettingsStore((state) => state.isInstalling)
-  const installLogs = useSettingsStore((state) => state.installLogs)
-  const installProgress = useSettingsStore((state) => state.installProgress)
-  const storeInstallError = useSettingsStore((state) => state.installError)
+  // Onboarding shows one framework's card at a time, so read that framework's own install slice. Any
+  // install running still locks the framework switcher below (only one install runs at a time).
+  const installStates = useSettingsStore((state) => state.installStates)
+  const anyInstalling = useSettingsStore(selectAnyInstalling)
+  const activeInstall = installStates[agentFrameworkId]
+  const isInstalling = activeInstall.isInstalling
+  const installLogs = activeInstall.installLogs
+  const installProgress = activeInstall.installProgress
+  const storeInstallError = activeInstall.installError
   const npmAvailable = useSettingsStore((state) => state.npmAvailable)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const onboardingCompletedAt = useSettingsStore((state) => state.onboardingCompletedAt)
@@ -151,6 +155,10 @@ const OnboardingWizard = (): React.JSX.Element => {
   const closeEnvironmentRepair = useSettingsStore((state) => state.closeEnvironmentRepair)
   const installClaude = useSettingsStore((state) => state.installClaude)
   const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
+  const persistProvider = useSettingsStore((state) => state.persistProvider)
+  const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
+  const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
+  const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
   const completeOnboarding = useSettingsStore((state) => state.completeOnboarding)
 
   // A completed user re-opened only for a regressed required check: environment repair, no model step.
@@ -199,6 +207,17 @@ const OnboardingWizard = (): React.JSX.Element => {
   const [validationMessage, setValidationMessage] = useState<string | undefined>(undefined)
   const [validationOk, setValidationOk] = useState(false)
   const didRequestCheck = useRef(false)
+  // Mirrors the Settings teardown: a pending isolated sign-in lives in the main process for up to
+  // five minutes, and its guard rejects a second attempt as "already in progress". If the wizard
+  // unmounts mid-flow (app quit, relaunch, forced navigation), cancel it so the next attempt starts
+  // clean. The ref is written only from event handlers/effects, never during render.
+  const codexLoginPendingRef = useRef(false)
+  useEffect(
+    () => () => {
+      if (codexLoginPendingRef.current) void cancelCodexLogin()
+    },
+    [cancelCodexLogin]
+  )
   // Once the user manually picks an agent, stop auto-selecting; and only auto-select once per mount.
   const userPickedFramework = useRef(false)
   const autoSelectAttempted = useRef(false)
@@ -402,7 +421,50 @@ const OnboardingWizard = (): React.JSX.Element => {
     setValidationMessage(undefined)
 
     try {
+      if (formValue.type === 'codex-isolated') {
+        // Isolated sign-in is explicit: persist the provider first, then run the browser login.
+        // Persisting alone never pops a browser; a cancelled login keeps the provider saved but
+        // unverified, so the user can retry without re-entering anything.
+        const providerId = await persistProvider(toUpsertRequest(formValue))
+        // Arm the unmount teardown for exactly the duration of the main-process login.
+        codexLoginPendingRef.current = true
+        const validation = await loginIsolatedCodex().finally(() => {
+          codexLoginPendingRef.current = false
+        })
+
+        // A discarded sign-in (the provider was switched/edited while the browser flow was open) can
+        // report ok but was never recorded on the stored provider — advancing would finish onboarding
+        // on an unverified profile. Keep the user here to retry against the provider they now have.
+        if (validation.applied === false) {
+          setValidationOk(false)
+          setValidationMessage(
+            'The Codex provider changed during sign-in. Review the selection and try again.'
+          )
+          return
+        }
+
+        setValidationOk(validation.ok)
+        setValidationMessage(describeValidation(validation))
+
+        if (validation.ok) {
+          if (providerId) await setActiveProvider(providerId)
+          // Location is the last step now: it decides completeOnboarding vs. the relaunch, once the
+          // user confirms (or keeps) a location there.
+          setStep('location')
+        }
+        return
+      }
+
       const { validation } = await saveAndActivateProvider(toUpsertRequest(formValue))
+
+      // A validation superseded by a newer test (or a provider removed/edited mid-test) reports its
+      // outcome but was not recorded; do not finish onboarding on a result the stored provider never
+      // received.
+      if (validation.applied === false) {
+        setValidationOk(false)
+        setValidationMessage('The provider changed during testing. Try again.')
+        return
+      }
 
       setValidationOk(validation.ok)
       setValidationMessage(describeValidation(validation))
@@ -583,6 +645,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                           environment={environmentCheck}
                           isChecking={isCheckingEnvironment}
                           isInstalling={isInstalling}
+                          installBusy={anyInstalling}
                           installLogs={installLogs}
                           installProgress={installProgress}
                           error={
@@ -618,6 +681,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                             installLogs={installLogs}
                             installProgress={installProgress}
                             installError={storeInstallError}
+                            installBusy={anyInstalling}
                             npmAvailable={npmAvailable}
                             onInstall={(source) => void handleInstall(source, 'codex')}
                           />
@@ -631,6 +695,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                             installLogs={installLogs}
                             installProgress={installProgress}
                             installError={storeInstallError}
+                            installBusy={anyInstalling}
                             npmAvailable={npmAvailable}
                             onInstall={(source) => void handleInstall(source, 'opencode')}
                           />
@@ -652,6 +717,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                                   installLogs={installLogs}
                                   installProgress={installProgress}
                                   installError={storeInstallError}
+                                  installBusy={anyInstalling}
                                   npmAvailable={npmAvailable}
                                   onInstall={(source) => void handleInstall(source, 'claude-code')}
                                   embedded
@@ -709,7 +775,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                                   onClick={() => handlePickFramework(framework.id)}
                                   disabled={
                                     isCheckingEnvironment ||
-                                    isInstalling ||
+                                    anyInstalling ||
                                     isDetectingClaude ||
                                     isDetectingOpencode ||
                                     isDetectingCodex
@@ -794,6 +860,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                       errors={showProviderErrors ? formErrors : undefined}
                       disabled={isSaving}
                       encryptionAvailable={encryptionAvailable}
+                      showCodexSubscriptions={agentFrameworkId === 'codex'}
                     />
                     {validationMessage ? (
                       <p
@@ -806,16 +873,28 @@ const OnboardingWizard = (): React.JSX.Element => {
                   </section>
                 </CardContent>
                 <CardFooter className="mt-auto justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
-                  <Button type="button" variant="outline" onClick={() => setStep('claude')}>
-                    Back
-                  </Button>
+                  {isSaving && formValue.type === 'codex-isolated' ? (
+                    <Button type="button" variant="outline" onClick={() => void cancelCodexLogin()}>
+                      Cancel sign-in
+                    </Button>
+                  ) : (
+                    <Button type="button" variant="outline" onClick={() => setStep('claude')}>
+                      Back
+                    </Button>
+                  )}
                   <Button
                     type="button"
                     onClick={() => void handleSaveProvider()}
                     disabled={isSaving}
                     className="px-4"
                   >
-                    {isSaving ? 'Testing connection…' : 'Test & continue'}
+                    {isSaving
+                      ? formValue.type === 'codex-isolated'
+                        ? 'Waiting for sign-in…'
+                        : 'Testing connection…'
+                      : formValue.type === 'codex-isolated'
+                        ? 'Sign in & continue'
+                        : 'Test & continue'}
                   </Button>
                 </CardFooter>
               </>

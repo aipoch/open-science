@@ -98,4 +98,35 @@ describe('ApprovalBroker', () => {
     await expect(b).resolves.toBe('allow')
     expect(vi.isMockFunction(broker.request)).toBe(false)
   })
+
+  it('preserves sessionId from ApprovalInfo into the broadcast', async () => {
+    const timer = makeTimer()
+    let broadcast: ConnectorApprovalRequest | undefined
+    const broker = new ApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: (r) => {
+        broadcast = r
+      },
+      setTimer: timer.set,
+      clearTimer: timer.clear
+    })
+
+    const decision = broker.request({
+      connector: 'pubchem',
+      method: 'search_compound',
+      argsPreview: '{}',
+      sessionId: 'session-42'
+    })
+
+    expect(broadcast).toEqual({
+      id: 'id-1',
+      connector: 'pubchem',
+      method: 'search_compound',
+      argsPreview: '{}',
+      sessionId: 'session-42'
+    })
+
+    broker.respond('id-1', 'allow')
+    await expect(decision).resolves.toBe('allow')
+  })
 })

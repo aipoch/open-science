@@ -121,16 +121,25 @@ export type PersistedChatSession = {
   cwd: string
   status: PersistedSessionStatus
   agentFrameworkId?: AgentFrameworkId
+  // Identifies the provider/profile session store within a framework so a restored session is never
+  // resumed against an incompatible backend (for example Codex shared profile vs isolated login).
+  agentBackendId?: string
   // Per-conversation approval posture. Older session files omit it and safely restore to Ask.
   permissionProfile?: PermissionProfileId
   // Per-conversation auto-review toggle. Absent (older files) or non-true is treated as disabled;
   // only an explicit true enables it.
   autoReviewEnabled?: boolean
+  // Per-session enabled compute hosts (providerIds like "ssh:alias"). Stored as an array for JSON
+  // compatibility; semantically a set (single-select for now, multi-select-ready internally).
+  // Absent on older sessions — treated as empty (no host enabled).
+  enabledComputeHosts?: string[]
   messages: PersistedChatMessage[]
   activities?: PersistedToolActivity[]
   activeRun?: PersistedActiveRun
   error?: string
   artifacts?: PersistedArtifact[]
+  // Incremented only when finalized file metadata changes; text streaming leaves it untouched.
+  filesRevision?: number
   createdAt: number
   updatedAt: number
 }
@@ -659,14 +668,26 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
   const activeRun = sanitizeActiveRun(session.activeRun)
   const error = asString(session.error)
   const agentFrameworkId = asString(session.agentFrameworkId) as AgentFrameworkId | undefined
+  const agentBackendId = asString(session.agentBackendId)
+  const enabledComputeHosts = Array.isArray(session.enabledComputeHosts)
+    ? session.enabledComputeHosts.filter(
+        (item): item is string => typeof item === 'string' && item.startsWith('ssh:')
+      )
+    : []
 
   if (activeRun) sanitized.activeRun = activeRun
   if (error) sanitized.error = error
   if (agentFrameworkId && AGENT_FRAMEWORK_IDS.has(agentFrameworkId)) {
     sanitized.agentFrameworkId = agentFrameworkId
   }
+  if (agentBackendId) sanitized.agentBackendId = agentBackendId
   if (artifacts.length > 0) sanitized.artifacts = artifacts
+  const filesRevision = asNumber(session.filesRevision)
+  if (filesRevision !== undefined && Number.isInteger(filesRevision) && filesRevision >= 0) {
+    sanitized.filesRevision = filesRevision
+  }
   if (activities.length > 0) sanitized.activities = activities
+  if (enabledComputeHosts.length > 0) sanitized.enabledComputeHosts = enabledComputeHosts
 
   return sanitizeSessionMessageImages(normalizeSessionAfterRestore(sanitized))
 }
@@ -732,10 +753,6 @@ export type LoadAllSessionsResult = {
 export type DeleteSessionRequest = {
   projectId: string
   sessionId: string
-}
-
-export type DeleteProjectSessionsRequest = {
-  projectId: string
 }
 
 export type SaveSessionManifestRequest = {

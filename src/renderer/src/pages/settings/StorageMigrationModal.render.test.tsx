@@ -173,8 +173,8 @@ describe('StorageMigrationModal', () => {
   it('shows a confirm dialog listing active sessions; Cancel aborts without migrating', async () => {
     const api = installApi({
       detectActive: vi.fn().mockResolvedValue([
-        { projectName: 'proj-a', sessionId: 'sess-1', kind: 'agent' },
-        { projectName: 'proj-b', sessionId: 'sess-2', kind: 'notebook' }
+        { projectId: 'proj-a', sessionId: 'sess-1', kind: 'agent' },
+        { projectId: 'proj-b', sessionId: 'sess-2', kind: 'notebook' }
       ])
     })
     const onClose = vi.fn()
@@ -204,7 +204,7 @@ describe('StorageMigrationModal', () => {
     const api = installApi({
       detectActive: vi
         .fn()
-        .mockResolvedValue([{ projectName: 'proj-a', sessionId: 'sess-1', kind: 'agent' }])
+        .mockResolvedValue([{ projectId: 'proj-a', sessionId: 'sess-1', kind: 'agent' }])
     })
 
     await act(async () => {

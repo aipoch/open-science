@@ -30,13 +30,17 @@ class FakeUpdater extends EventEmitter {
   // The download body each call runs. Default: emit progress + downloaded and resolve. Tests override
   // it to hang, to inspect the token, or to count real starts.
   runDownload: (token?: FakeToken) => Promise<void> = async () => {
-    this.emit('download-progress', { percent: 42 })
+    this.emit('download-progress', { percent: 42, transferred: 4200, total: 10000 })
     this.emit('update-downloaded', { version: '0.3.0' })
   }
   private downloadPromise: Promise<void> | null = null
   checkForUpdates = vi.fn(async () => {
     this.emit('checking-for-update')
-    this.emit('update-available', { version: '0.3.0', releaseNotes: 'notes' })
+    this.emit('update-available', {
+      version: '0.3.0',
+      releaseNotes: 'notes',
+      files: [{ url: 'https://cdn/Open-Science-0.3.0.zip', size: 10000 }]
+    })
   })
   downloadUpdate = vi.fn((token?: FakeToken): Promise<void> => {
     if (this.downloadPromise != null) return this.downloadPromise
@@ -96,7 +100,11 @@ describe('ElectronUpdaterStrategy', () => {
     })
     await strategy.check()
     const status = await strategy.download()
-    expect(broadcast).toHaveBeenCalledWith('update:progress', 42)
+    expect(broadcast).toHaveBeenCalledWith('update:progress', {
+      percent: 42,
+      transferred: 4200,
+      total: 10000
+    })
     expect(status.state).toBe('ready')
   })
 
@@ -183,7 +191,7 @@ describe('ElectronUpdaterStrategy', () => {
         await new Promise<void>((resolve) => (release = resolve))
         if (token?.cancelled) throw new Error('cancelled')
       } else {
-        updater.emit('download-progress', { percent: 55 })
+        updater.emit('download-progress', { percent: 55, transferred: 5500, total: 10000 })
         updater.emit('update-downloaded', { version: '0.3.0' })
       }
     }
@@ -340,5 +348,235 @@ describe('ElectronUpdaterStrategy', () => {
     })
     const status = await strategy.check()
     expect(status.notes).toBe('')
+  })
+
+  it('extracts totalBytes from the updater feed artifact for the current platform', async () => {
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', {
+        version: '0.3.0',
+        files: [
+          { url: 'https://cdn/app-0.3.0-arm64.zip', size: 99000 },
+          { url: 'https://cdn/app-0.3.0.dmg', size: 12000 }
+        ]
+      })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'arm64',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    const status = await strategy.check()
+    // darwin/arm64 → the arm64 ZIP (99000), not the DMG (12000).
+    expect(status.totalBytes).toBe(99000)
+  })
+
+  it('matches the correct architecture in a multi-arch macOS feed', async () => {
+    // Real latest-mac.yml carries both arm64 and x64 ZIPs; x64 must not pick arm64's size.
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', {
+        version: '0.3.0',
+        files: [
+          { url: 'https://cdn/app-0.3.0-arm64.zip', size: 95000 },
+          { url: 'https://cdn/app-0.3.0-x64.zip', size: 105000 }
+        ]
+      })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'x64',
+      isRosetta: () => false,
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    const status = await strategy.check()
+    expect(status.totalBytes).toBe(105000)
+  })
+
+  it('omits totalBytes when multiple files match the platform and arch ambiguously', async () => {
+    // If two files somehow match the same platform+arch+extension, don't guess.
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', {
+        version: '0.3.0',
+        files: [
+          { url: 'https://cdn/app-0.3.0-arm64.zip', size: 95000 },
+          { url: 'https://cdn/app-0.3.0-arm64.zip', size: 105000 }
+        ]
+      })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'arm64',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    const status = await strategy.check()
+    expect(status.totalBytes).toBeUndefined()
+  })
+
+  it('resolves x64 under Rosetta to arm64 for artifact size selection', async () => {
+    // An x64 app running under Rosetta 2 on Apple Silicon downloads the arm64 ZIP (electron-updater's
+    // MacUpdater.filterFilesForArch does the same via sysctl.proc_translated). The pre-download size
+    // must match the arm64 entry, not the x64 one.
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', {
+        version: '0.3.0',
+        files: [
+          { url: 'https://cdn/app-0.3.0-arm64.zip', size: 95000 },
+          { url: 'https://cdn/app-0.3.0-x64.zip', size: 105000 }
+        ]
+      })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'x64',
+      isRosetta: () => true,
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    const status = await strategy.check()
+    // x64 + Rosetta → effective arm64 → picks 95000, not 105000.
+    expect(status.totalBytes).toBe(95000)
+  })
+
+  it('keeps x64 arch when not under Rosetta', async () => {
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', {
+        version: '0.3.0',
+        files: [
+          { url: 'https://cdn/app-0.3.0-arm64.zip', size: 95000 },
+          { url: 'https://cdn/app-0.3.0-x64.zip', size: 105000 }
+        ]
+      })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'x64',
+      isRosetta: () => false,
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    const status = await strategy.check()
+    // Native Intel x64 → picks 105000.
+    expect(status.totalBytes).toBe(105000)
+  })
+
+  it('omits totalBytes when Rosetta status is uncertain and feed has both arches', async () => {
+    // When the Rosetta probe returns undefined (e.g. sysctl failed), electron-updater might still
+    // pick arm64. Don't guess — omit the size so the user sees no pre-download size label.
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', {
+        version: '0.3.0',
+        files: [
+          { url: 'https://cdn/app-0.3.0-arm64.zip', size: 95000 },
+          { url: 'https://cdn/app-0.3.0-x64.zip', size: 105000 }
+        ]
+      })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'x64',
+      isRosetta: () => undefined,
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    const status = await strategy.check()
+    expect(status.totalBytes).toBeUndefined()
+  })
+
+  it('preserves check-time totalBytes when download-progress omits total', async () => {
+    // Artifacts published with a size in the feed should keep that size even if a progress event
+    // arrives without a total field.
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', { version: '0.3.0', files: [{ size: 50000 }] })
+    })
+    updater.runDownload = async () => {
+      // Progress event intentionally omits total — must not clobber the known 50000.
+      updater.emit('download-progress', { percent: 10, transferred: 5000 })
+      updater.emit('update-downloaded', { version: '0.3.0' })
+    }
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    await strategy.check()
+    expect(strategy.getStatus().totalBytes).toBe(50000)
+
+    const status = await strategy.download()
+    expect(status.totalBytes).toBe(50000)
+    expect(status.downloadedBytes).toBe(5000)
+  })
+
+  it('omits totalBytes when the updater feed has no artifact size', async () => {
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', { version: '0.3.0' })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    const status = await strategy.check()
+    expect(status.totalBytes).toBeUndefined()
+  })
+
+  it('resets downloadedBytes to 0 when starting a new download', async () => {
+    // A retry after cancel must not carry over the previous download's transferred bytes.
+    const updater = new FakeUpdater()
+    let starts = 0
+    let release: (() => void) | undefined
+    updater.runDownload = async (token) => {
+      starts += 1
+      if (starts === 1) {
+        await new Promise<void>((resolve) => (release = resolve))
+        if (token?.cancelled) throw new Error('cancelled')
+      } else {
+        updater.emit('download-progress', { percent: 55, transferred: 5500, total: 10000 })
+        updater.emit('update-downloaded', { version: '0.3.0' })
+      }
+    }
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    await strategy.check()
+
+    const first = strategy.download()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(strategy.getStatus().downloadedBytes).toBe(0)
+
+    await strategy.cancel()
+    release?.()
+    const retry = await strategy.download()
+    expect(retry.state).toBe('ready')
+    expect(starts).toBe(2)
+    // The retry's progress event should report fresh transferred, not stale bytes.
+    expect(retry.downloadedBytes).toBe(5500)
+    await first
   })
 })

@@ -48,6 +48,7 @@ import type {
   ImportSkillZipBatchRequest,
   ImportSkillZipBatchResult,
   PreviewSkillZipRequest,
+  ReasoningEffort,
   SkillBundlePreviewResult,
   ScanRepoRequest,
   ScanRepoResult,
@@ -56,10 +57,19 @@ import type {
   ValidateProviderRequest,
   ValidateProviderResult
 } from '../../shared/settings'
+import {
+  CODEX_ISOLATED_PROVIDER_ID,
+  CODEX_SHARED_PROVIDER_ID,
+  codexSubscriptionProviderIdentity,
+  DEFAULT_NOTIFICATIONS_ENABLED,
+  DEFAULT_REASONING_EFFORT,
+  isCodexSubscriptionProvider,
+  isProviderUsableByFramework,
+  providerEndpoints
+} from '../../shared/settings'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
-import { isProviderUsableByFramework } from '../../shared/settings'
 import {
   defaultVendorModel,
   getOfficialVendor,
@@ -100,7 +110,7 @@ import {
   type InstallManagedOpencodeOptions
 } from './managed-opencode'
 import { opencodeConfigDir } from '../agent-framework/opencode'
-import { codexStorageDir } from '../agent-framework/codex'
+import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import { detectNpmAvailable, runInstallWithFallback, type InstallTarget } from './claude-install'
@@ -141,7 +151,7 @@ import { renderConnectorInstructions, renderSkillDoc } from '../connectors/skill
 import { syncConnectorSkillDocs } from '../connectors/provision'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
-import { netFetch } from '../skills/net-fetch'
+import { netFetch, netFetchStandard } from '../skills/net-fetch'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
 import { readSkillFile } from '../skills/skill-files'
 import { NOTEBOOK_MCP_SERVER_NAME, NOTEBOOK_RPC_TOOLS } from '../notebook/mcp-server'
@@ -154,6 +164,12 @@ import type {
   StoredSettings
 } from './types'
 import { classifyStatus, validateProvider, type ClaudeProbeResult } from './validate'
+import {
+  CodexAuthController,
+  openCodexAuthSession,
+  type CodexAuthControllerPort,
+  type CodexAuthStatus
+} from './codex-auth'
 
 const execFileAsync = promisify(execFile)
 
@@ -286,6 +302,7 @@ export type SettingsServiceOptions = {
   installManagedCodexImpl?: (
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
+  codexAuth?: CodexAuthControllerPort
 }
 
 // Orchestrates the settings units (repository + crypto + detect/install + validate) behind one
@@ -310,6 +327,7 @@ class SettingsService {
   private readonly installManagedCodexImpl: (
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
+  private readonly codexAuth: CodexAuthControllerPort
   private responsesBridge: ResponsesBridge | undefined
   private providerSequence = 0
   private readonly providerValidationGenerations = new Map<string, number>()
@@ -356,6 +374,19 @@ class SettingsService {
     this.installManagedClaudeImpl = options.installManagedClaudeImpl ?? installManagedClaude
     this.installManagedOpencodeImpl = options.installManagedOpencodeImpl ?? installManagedOpencode
     this.installManagedCodexImpl = options.installManagedCodexImpl ?? installManagedCodex
+    this.codexAuth =
+      options.codexAuth ??
+      new CodexAuthController({
+        openSession: async (mode) => {
+          const settings = await this.repository.getSettings()
+          return openCodexAuthSession({
+            adapterPath: await this.resolveCodexExecutable(settings.codex?.resolvedPath),
+            nativePath: settings.codex?.nativePath,
+            mode,
+            storageRoot: this.storageRoot
+          })
+        }
+      })
   }
 
   // Returns the raw stored settings document (unmasked), for main-process bootstrap needs (e.g. priming
@@ -395,6 +426,8 @@ class SettingsService {
       ),
       onboardingCompletedAt: settings.onboardingCompletedAt,
       packageMirror: settings.packageMirror,
+      reasoningEffort: settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
+      notificationsEnabled: settings.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
       agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       agentFrameworks: listAgentFrameworks().map((framework) => ({
         id: framework.id,
@@ -531,6 +564,34 @@ class SettingsService {
   // Selects the agent backend to drive; the caller reconnects so the choice applies to the next spawn.
   async setAgentFramework(id: AgentFrameworkId): Promise<SettingsSnapshot> {
     await this.repository.setAgentFramework(id)
+
+    return this.getSettingsView()
+  }
+
+  // Sets the reasoning-effort preference. Where the framework supports it the caller applies the
+  // level live over ACP (otherwise it reconnects); the persisted value drives the next spawn.
+  async setReasoningEffort(effort: ReasoningEffort): Promise<SettingsSnapshot> {
+    await this.repository.setReasoningEffort(effort)
+
+    // A live bridge never sees resolveActiveAgentBackend again until the next provider switch, so its
+    // forwarding policy must be updated in place: an explicit level forwards, 'default' restores
+    // stripping so Codex's own default effort never leaks upstream.
+    this.responsesBridge?.setForwardReasoningEffort(effort !== DEFAULT_REASONING_EFFORT)
+
+    return this.getSettingsView()
+  }
+
+  // Whether desktop notifications for finished/failed agent tasks are on, read fresh so the
+  // notification path sees a toggle change immediately (no restart, no cached copy to go stale).
+  async getNotificationsEnabled(): Promise<boolean> {
+    return (
+      (await this.repository.getSettings()).notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED
+    )
+  }
+
+  // Sets the desktop-notification preference and returns the refreshed snapshot for the renderer.
+  async setNotificationsEnabled(enabled: boolean): Promise<SettingsSnapshot> {
+    await this.repository.setNotificationsEnabled(enabled)
 
     return this.getSettingsView()
   }
@@ -902,28 +963,130 @@ class SettingsService {
     const cachedVersions = await this.probeCodexRuntime(cached)
     if (cached?.resolvedPath && cachedVersions) {
       await this.repository.setCodexInfo({ ...cached, ...cachedVersions })
+
+      // Build codexComponents even for successful detection so onboarding shows separate rows.
+      let nativeCliFound = !!cached.nativePath
+      let nativeCliPath = cached.nativePath
+      let nativeCliVersion = cachedVersions.nativeVersion
+
+      if (!cached.nativePath) {
+        // A non-managed adapter only gets cached after passing the full smoke test, so a working
+        // native CLI exists. Trust that (mirroring the fresh-detect branch) rather than letting a
+        // narrow probe miss it and block Continue. The probe just enriches the path/version.
+        nativeCliFound = true
+        const { detectNativeCodex } = await import('./codex-detect')
+        const nativeCodex = await detectNativeCodex(this.codexDetectDeps)
+        if (nativeCodex) {
+          nativeCliPath = nativeCodex.path
+          nativeCliVersion = nativeCodex.version
+        }
+      }
+
+      const codexComponents: ClaudeDetectResult['codexComponents'] = {
+        adapterFound: true,
+        adapterPath: cached.resolvedPath,
+        adapterVersion: cachedVersions.version,
+        nativeCliFound,
+        nativeCliPath,
+        nativeCliVersion
+      }
+
       return {
         found: true,
         path: cached.resolvedPath,
-        version: cachedVersions.version
+        version: cachedVersions.version,
+        codexComponents
       }
     }
 
     const detected = await detectCodex(this.codexDetectDeps)
-    if (!detected) {
-      if (cached?.resolvedPath && !(await this.pathExists(cached.resolvedPath))) {
-        await this.repository.clearCodexInfo()
+    if (detected) {
+      await this.repository.setCodexInfo({
+        resolvedPath: detected.adapterPath,
+        version: detected.adapterVersion,
+        nativePath: detected.managedCodexPath,
+        nativeVersion: detected.managedCodexVersion
+      })
+
+      // Build codexComponents for successful detection. For managed adapters, use the bundled
+      // native CLI info. For PATH/npm adapters that passed smoke test, independently probe for
+      // native CLI so the UI can show both components.
+      let nativeCliFound = !!detected.managedCodexPath
+      let nativeCliPath = detected.managedCodexPath
+      let nativeCliVersion = detected.managedCodexVersion
+
+      if (!detected.managedCodexPath) {
+        // Non-managed adapter passed the ACP smoke test, which proves a working native CLI exists
+        // (the handshake spawns a real session). Trust that: mark native as found even if the
+        // independent probe below can't pinpoint the exact path, so a successful pairing never
+        // blocks Continue. The probe only enriches the display with a concrete path/version.
+        nativeCliFound = true
+        const { detectNativeCodex } = await import('./codex-detect')
+        const nativeCodex = await detectNativeCodex(this.codexDetectDeps)
+        if (nativeCodex) {
+          nativeCliPath = nativeCodex.path
+          nativeCliVersion = nativeCodex.version
+        }
       }
-      return { found: false }
+
+      const codexComponents: ClaudeDetectResult['codexComponents'] = {
+        adapterFound: true,
+        adapterPath: detected.adapterPath,
+        adapterVersion: detected.adapterVersion,
+        nativeCliFound,
+        nativeCliPath,
+        nativeCliVersion
+      }
+
+      return {
+        found: true,
+        path: detected.adapterPath,
+        version: detected.adapterVersion,
+        codexComponents
+      }
     }
 
-    await this.repository.setCodexInfo({
-      resolvedPath: detected.adapterPath,
-      version: detected.adapterVersion,
-      nativePath: detected.managedCodexPath,
-      nativeVersion: detected.managedCodexVersion
-    })
-    return { found: true, path: detected.adapterPath, version: detected.adapterVersion }
+    // Full detection failed. Perform detailed component-level detection to provide accurate
+    // diagnostic information distinguishing "adapter missing" from "native Codex missing" from
+    // "both present but incompatible".
+    if (cached?.resolvedPath && !(await this.pathExists(cached.resolvedPath))) {
+      await this.repository.clearCodexInfo()
+    }
+
+    const { detectCodexComponents } = await import('./codex-detect')
+    const components = await detectCodexComponents(this.codexDetectDeps)
+
+    // Build diagnostic message based on what was found
+    let diagnostic: string | undefined
+    if (components.nativeCliFound && !components.adapterFound) {
+      diagnostic = `Native Codex ${components.nativeCliVersion} is installed at ${components.nativeCliPath}, but the Codex ACP adapter required by Open Science is missing.`
+    } else if (!components.nativeCliFound && components.adapterFound) {
+      if (components.adapterFailureReason === 'smoke-test-failed') {
+        diagnostic = `Codex ACP adapter ${components.adapterVersion} is installed at ${components.adapterPath}, but it failed to initialize (native Codex CLI may be missing or incompatible).`
+      } else {
+        diagnostic = `Codex ACP adapter is installed at ${components.adapterPath}, but version detection failed.`
+      }
+    } else if (components.nativeCliFound && components.adapterFound) {
+      if (components.adapterFailureReason === 'smoke-test-failed') {
+        diagnostic = `Both native Codex ${components.nativeCliVersion} and ACP adapter ${components.adapterVersion} are installed, but the adapter failed to initialize with the native CLI.`
+      } else if (components.adapterFailureReason === 'version-probe-failed') {
+        diagnostic = `Native Codex ${components.nativeCliVersion} is installed, and an ACP adapter exists at ${components.adapterPath}, but the adapter's version could not be determined.`
+      }
+    }
+
+    return {
+      found: false,
+      diagnostic,
+      codexComponents: {
+        nativeCliFound: components.nativeCliFound,
+        nativeCliPath: components.nativeCliPath,
+        nativeCliVersion: components.nativeCliVersion,
+        adapterFound: components.adapterFound,
+        adapterPath: components.adapterPath,
+        adapterVersion: components.adapterVersion,
+        adapterFailureReason: components.adapterFailureReason
+      }
+    }
   }
 
   private async probeCodexRuntime(
@@ -1225,14 +1388,20 @@ class SettingsService {
   // Encrypts any new key, recomputes its mask, and inserts/updates the provider record.
   async upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot> {
     const settings = await this.repository.getSettings()
-    const existing = request.id
-      ? settings.providers.find((provider) => provider.id === request.id)
+    const subscriptionIdentity = isCodexSubscriptionProvider(request.type)
+      ? codexSubscriptionProviderIdentity()
+      : undefined
+    const requestedId = subscriptionIdentity?.id ?? request.id
+    const existing = requestedId
+      ? settings.providers.find((provider) => provider.id === requestedId)
       : undefined
 
     const provider: StoredProvider = {
-      id: existing?.id ?? this.createProviderId(),
+      id: subscriptionIdentity?.id ?? existing?.id ?? this.createProviderId(),
       type: request.type,
-      name: request.name?.trim() || existing?.name || 'Untitled provider'
+      name:
+        subscriptionIdentity?.name ??
+        (request.name?.trim() || existing?.name || 'Untitled provider')
     }
 
     // Both custom and official gateways authenticate with a bearer key; carry it (or keep the stored
@@ -1254,7 +1423,10 @@ class SettingsService {
     // Tracks whether credentials/endpoint changed, which invalidates a prior validation.
     let credentialsChanged = false
 
-    if (request.type === 'official') {
+    if (isCodexSubscriptionProvider(request.type)) {
+      provider.apiEndpoints = ['responses']
+      credentialsChanged = existing !== undefined && existing.type !== request.type
+    } else if (request.type === 'official') {
       // Base URL and model catalog come from the registry; the provider only stores which vendor
       // (and, for multi-region vendors, which endpoint) plus the key.
       const vendorId = isOfficialVendorId(request.vendorId) ? request.vendorId : existing?.vendorId
@@ -1330,6 +1502,81 @@ class SettingsService {
     return this.getSettingsView()
   }
 
+  cancelCodexLogin(): void {
+    this.codexAuth.cancelLogin()
+  }
+
+  // The explicit isolated sign-in — the only path that opens the browser login. Saving or testing a
+  // provider never does. The outcome is recorded like a validation result, so the provider card shows
+  // the verified check on success or the unverified warning (with the reason) on failure.
+  async loginIsolatedCodex(): Promise<ValidateProviderResult> {
+    const result = this.codexAuthValidationResult(await this.codexAuth.loginIsolated())
+
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === codexSubscriptionProviderIdentity().id
+    )
+    // The provider can be edited while the browser flow is open. Unless the stored record is still
+    // the isolated subscription the login was started for, the outcome is stale and discarded —
+    // recording it could stamp a switched-to-shared (and unauthenticated) profile as verified. Flag
+    // it as not-applied so a caller gating navigation on success (onboarding) does not advance on a
+    // result the stored provider never received.
+    if (provider?.type !== 'codex-isolated') return { ...result, applied: false }
+
+    await this.repository.upsertProvider(
+      result.ok
+        ? {
+            ...provider,
+            lastValidatedAt: Date.now(),
+            lastValidationFailure: undefined
+          }
+        : {
+            ...provider,
+            lastValidatedAt: undefined,
+            lastValidationFailure: {
+              at: Date.now(),
+              category: result.category,
+              status: result.status,
+              message: result.message
+            }
+          }
+    )
+
+    return { ...result, applied: true }
+  }
+
+  async logoutIsolatedCodex(): Promise<ValidateProviderResult> {
+    const status = await this.codexAuth.logoutIsolated()
+
+    // A sign-out is confirmed only when the adapter acknowledged it cleanly, which is the only path
+    // that sets no message. A timeout or capability failure leaves the status ambiguous — the
+    // credential may still be in the isolated home — so we preserve the verified markers and surface
+    // the failure rather than falsely reporting the account as signed out.
+    const succeeded = status.authenticated === false && status.message === undefined
+
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === codexSubscriptionProviderIdentity().id
+    )
+    if (provider && succeeded) {
+      await this.repository.upsertProvider({
+        ...provider,
+        lastValidatedAt: undefined,
+        lastValidationFailure: undefined
+      })
+    }
+
+    if (!succeeded) {
+      return {
+        ok: false,
+        category: status.message?.toLowerCase().includes('timed out') ? 'timeout' : 'unknown',
+        message: status.message ?? 'Codex sign-out did not complete.'
+      }
+    }
+
+    return { ok: true, category: 'ok' }
+  }
+
   // Activates a provider and the model to run within it. An omitted/unknown model falls back to the
   // provider's default (its stored model, or the vendor's first catalog entry).
   async setActiveProvider(id: string, model?: string): Promise<SettingsSnapshot> {
@@ -1358,28 +1605,62 @@ class SettingsService {
       this.providerValidationGenerations.set(resolved.storedId, validationGeneration)
     }
 
-    // A provider test is a connectivity/key check on the provider's first model — it confirms the key
-    // and endpoint work, nothing more. Per-model Codex bridge compatibility is a static registry mark
-    // (bridgeUnsupportedModels), not a runtime probe, so there is no per-model capability to stamp.
-    const result = await validateProvider(resolved.provider, {
-      runClaudeProbe:
-        resolved.provider.type === 'claude-default'
-          ? () => this.runClaudeProbe(resolved.provider, settings)
-          : undefined
-    })
+    // Test against the framework the agent will actually spawn with. An OpenAI-only gateway tested
+    // while Claude Code is active would otherwise fail a raw /v1/messages probe and be reported as an
+    // auth error, even though the key is valid — the pairing, not the credential, is the problem. Decide
+    // this before any network call so the card names the real reason (which route the framework needs).
+    // codex-subscription keeps its own login-status branch below; its usability is enforced elsewhere.
+    const framework = getAgentFramework(settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
+    const incompatibility = isCodexSubscriptionProvider(resolved.provider.type)
+      ? undefined
+      : this.frameworkIncompatibilityResult(resolved.provider, framework)
+
+    const result =
+      incompatibility ??
+      (isCodexSubscriptionProvider(resolved.provider.type)
+        ? this.codexAuthValidationResult(
+            // Validation is a read-only status check in both modes: signing in is a separate explicit
+            // action (loginIsolatedCodex), so testing or saving a provider never pops a browser the
+            // user didn't ask for.
+            await this.codexAuth.getStatus(
+              resolved.provider.type === 'codex-shared' ? 'shared' : 'isolated'
+            ),
+            'Not signed in. Use Sign in to connect your ChatGPT account.'
+          )
+        : await validateProvider(resolved.provider, {
+            // Probe over Electron's network stack, which honors the system/VPN proxy. Node's global
+            // fetch (undici) takes a direct path and ignores that proxy, so an official vendor reachable
+            // only through a proxy (e.g. api.openai.com) would fail the probe as a false `network` error
+            // even with a valid key. The local Responses-bridge loopback stays on the direct fetch.
+            fetchImpl: netFetchStandard,
+            runClaudeProbe:
+              resolved.provider.type === 'claude-default'
+                ? () => this.runClaudeProbe(resolved.provider, settings)
+                : undefined,
+            // For a multi-route provider, probe the route this framework actually drives so a passing
+            // test proves that route (e.g. Claude Code hits /v1/messages, not /v1/chat/completions).
+            // Codex is excluded: it bridges the provider's OpenAI route under its `responses` protocol,
+            // so its HTTP route is decided by the bridge, not by supportedApiTypes — keep it as-is.
+            frameworkEndpoints: framework.id === 'codex' ? undefined : framework.supportedApiTypes
+          }))
 
     if (resolved.storedId) {
+      // Each early return here means the tested target no longer matches what is stored (a newer test
+      // superseded this one, the provider was deleted, or it was edited mid-flight). The outcome is
+      // real but was not recorded, so `applied: false` tells a success-gated caller not to advance.
       if (this.providerValidationGenerations.get(resolved.storedId) !== validationGeneration) {
-        return result
+        return { ...result, applied: false }
       }
       const latestSettings = await this.repository.getSettings()
       const stored = latestSettings.providers.find((provider) => provider.id === resolved.storedId)
-      if (!stored) return result
+      if (!stored) return { ...result, applied: false }
       const latestResolved = this.resolveProvider(
         stored,
         latestSettings.activeProviderId === stored.id ? latestSettings.activeModel : undefined
       )
-      if (!this.sameValidationTarget(resolved.provider, latestResolved)) return result
+      if (!this.sameValidationTarget(resolved.provider, latestResolved)) {
+        return { ...result, applied: false }
+      }
 
       // Success stamps the validated time and clears any prior failure. A failure keeps the provider
       // but records why, so the list can flag it and the model pickers exclude it until it passes.
@@ -1401,9 +1682,32 @@ class SettingsService {
               }
             }
       )
+
+      return { ...result, applied: true }
     }
 
     return result
+  }
+
+  private codexAuthValidationResult(
+    status: CodexAuthStatus,
+    isolatedFallback = 'Codex sign-in did not complete.'
+  ): ValidateProviderResult {
+    if (status.authenticated) return { ok: true, category: 'ok' }
+
+    return {
+      ok: false,
+      category: status.message?.toLowerCase().includes('timed out')
+        ? 'timeout'
+        : status.supported
+          ? 'auth'
+          : 'unknown',
+      message:
+        status.message ??
+        (status.mode === 'shared'
+          ? 'No existing Codex login was found. Run `codex login` or use the isolated Open Science login.'
+          : isolatedFallback)
+    }
   }
 
   // Fetches a saved provider's live model list from the vendor and, on success, persists it as the
@@ -1743,6 +2047,19 @@ class SettingsService {
     return available
   }
 
+  // Returns the bookmark folders for a provider. Used by the remote file browser Go-to dropdown.
+  async getComputeBookmarks(providerId: string): Promise<string[]> {
+    const settings = await this.repository.getSettings()
+    const store = settings.computeBookmarks ?? {}
+    const folders = store[providerId]
+    return Array.isArray(folders) ? folders.filter((f): f is string => typeof f === 'string') : []
+  }
+
+  // Sets the bookmark folders for a provider. Replaces the full array for that provider.
+  async setComputeBookmarks(providerId: string, folders: string[]): Promise<void> {
+    await this.repository.setComputeBookmarks(providerId, folders)
+  }
+
   // Builds the spawn env for the active provider, read fresh so switching takes effect on reconnect.
   async resolveActiveSpawnConfig(): Promise<AgentSpawnConfig> {
     const settings = await this.repository.getSettings()
@@ -1815,6 +2132,18 @@ class SettingsService {
         ? forced
         : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
     const framework = getAgentFramework(frameworkId)
+    // 'default' means "don't override": nothing is sent over ACP or framework config, so the agent
+    // keeps its own default effort. A concrete level is delivered through two channels deliberately
+    // (defense-in-depth, mirroring how sessionModel reaches opencode): the framework's own config
+    // (Codex model_reasoning_effort, opencode model options) covers agents that ignore the protocol,
+    // while sessionEffort drives the ACP thought_level configOption — Claude Code's only channel —
+    // and, being applied per session after spawn, wins over the baked config when both fire. The
+    // channels clamp 'max' independently (Codex config → xhigh, opencode config → high, ACP → the
+    // nearest advertised rung), which is accepted: each stays within its own supported set.
+    const sessionEffort =
+      settings.reasoningEffort && settings.reasoningEffort !== DEFAULT_REASONING_EFFORT
+        ? settings.reasoningEffort
+        : undefined
 
     // Enforce provider↔framework compatibility up front so an incompatible pair fails with a clear
     // message instead of spawning an agent that can't use the credentials — e.g. OpenCode + a Local
@@ -1858,39 +2187,70 @@ class SettingsService {
       // Unchanged Claude path: skills provisioning + Anthropic-shaped env + local-auth handling.
       const { envOverrides, executablePath } = await this.resolveActiveSpawnConfig()
 
-      return { framework, executablePath, env: envOverrides }
+      return {
+        framework,
+        backendId: `${framework.id}:${activeProvider.id}`,
+        executablePath,
+        env: envOverrides,
+        sessionEffort
+      }
     }
 
     const executablePath =
       framework.id === 'codex'
         ? await this.resolveCodexExecutable(settings.codex?.resolvedPath)
         : await this.resolveOpencodeExecutable(settings.opencodePath)
+    const provider = this.resolveProvider(activeProvider, settings.activeModel)
+    // The settings UI intentionally stores one subscription card, but runtime sessions created
+    // under the shared and isolated profiles are not interchangeable. Preserve their legacy
+    // mode-specific backend ids so existing sessions still resume under the matching credentials,
+    // and switching the selector adopts a fresh session instead of crossing the auth boundary.
+    const backendProviderId =
+      framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)
+        ? provider.type === 'codex-shared'
+          ? CODEX_SHARED_PROVIDER_ID
+          : CODEX_ISOLATED_PROVIDER_ID
+        : activeProvider.id
     const skillsRoot =
       framework.id === 'codex'
-        ? codexStorageDir(this.storageRoot)
+        ? provider.type === 'codex-isolated'
+          ? codexSubscriptionStorageDir(this.storageRoot)
+          : codexStorageDir(this.storageRoot)
         : opencodeConfigDir(this.storageRoot)
-    await this.materializeAgentSkills(settings, skillsRoot)
-    const provider = this.resolveProvider(activeProvider, settings.activeModel)
+    // Shared mode exposes the user's normal Codex profile exactly as they own it. The app's skill
+    // synchronizer deliberately stays out of ~/.codex so same-named user skills are never replaced.
+    if (!(framework.id === 'codex' && provider.type === 'codex-shared')) {
+      await this.materializeAgentSkills(settings, skillsRoot)
+    }
+    // The Chat Completions bridge only exists to let Codex (a Responses-only client) drive an
+    // OpenAI Chat provider. A provider that also speaks native Responses is driven directly, so
+    // starting the bridge for it would be dead weight — and worse, Codex would post to the bridge's
+    // local URL with the provider key instead of the bridge token. Bridge openai-only providers.
     const needsResponsesBridge =
-      framework.id === 'codex' && (provider.apiEndpoints?.includes('openai') ?? false)
+      framework.id === 'codex' &&
+      (provider.apiEndpoints?.includes('openai') ?? false) &&
+      !(provider.apiEndpoints?.includes('responses') ?? false)
     const enabledConnectorIds = this.enabledConnectorIds(settings.connectors)
     const responsesBridge = needsResponsesBridge
-      ? await this.ensureResponsesBridge(provider, enabledConnectorIds)
+      ? await this.ensureResponsesBridge(provider, enabledConnectorIds, sessionEffort !== undefined)
       : await this.disableResponsesBridge()
     const modelConfig = framework.prepareModelConfig(provider, {
       storageRoot: this.storageRoot,
       executablePath,
       responsesBridge,
+      reasoningEffort: sessionEffort,
       // Connector conventions + tools, so opencode uses host.mcp instead of raw HTTP (it has no skill
       // docs like Claude). Enabled bundled connectors only.
       instructions: renderConnectorInstructions(enabledConnectorIds)
     })
     await this.writeAgentConfigFiles(modelConfig.configFiles)
 
-    // opencode picks the model from its own provider config; drive the app's active model over the ACP
-    // session model configOption (applied best-effort per session by the runtime).
+    // Protocol-driven frameworks apply an explicit model through the ACP session configOption. A Codex
+    // subscription with no explicit selection leaves this undefined so Codex uses the account default.
+    const sessionModel = modelConfig.sessionModel ?? provider.model
     return {
       framework,
+      backendId: `${framework.id}:${backendProviderId}`,
       executablePath,
       env: {
         ...(modelConfig.env ?? {}),
@@ -1899,7 +2259,11 @@ class SettingsService {
           : {})
       },
       args: modelConfig.args,
-      sessionModel: modelConfig.sessionModel ?? provider.model,
+      sessionModel,
+      ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type) && sessionModel
+        ? { sessionModelRequired: true }
+        : {}),
+      sessionEffort,
       authentication: modelConfig.authentication,
       providerConfiguration: modelConfig.providerConfiguration
     }
@@ -1907,7 +2271,8 @@ class SettingsService {
 
   private async ensureResponsesBridge(
     provider: ResolvedProvider,
-    enabledConnectorIds: string[]
+    enabledConnectorIds: string[],
+    forwardReasoningEffort: boolean
   ): Promise<ResponsesBridgeConnection> {
     // Resolve to the OpenAI base the bridge appends `/chat/completions` to: an official vendor's exact
     // versioned base, or a custom gateway root normalized to `<root>/v1`.
@@ -1918,6 +2283,7 @@ class SettingsService {
       baseUrl: targetBaseUrl,
       key: provider.key,
       model: provider.model,
+      forwardReasoningEffort,
       namespacedTools: [...CODEX_BRIDGE_NOTEBOOK_TOOLS, ...CODEX_BRIDGE_ARTIFACT_TOOLS],
       connectorInstructions: enabledConnectorIds.map((id) => {
         const metadata = CONNECTOR_CATALOG.find((connector) => connector.id === id)
@@ -2024,6 +2390,7 @@ class SettingsService {
   }
 
   private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
+    if (isCodexSubscriptionProvider(provider.type)) return true
     // claude-default always supports images (uses the user's Claude login, which has vision models)
     if (provider.type === 'claude-default') return true
 
@@ -2045,14 +2412,20 @@ class SettingsService {
 
   // Credentials usable: claude-default always; custom/official need a key that still decrypts.
   private isProviderKeyUsable(provider: StoredProvider): boolean {
+    if (isCodexSubscriptionProvider(provider.type)) return true
     if (provider.type === 'claude-default') return true
 
     return Boolean(provider.keyRef) && tryDecryptKey(provider.keyRef) !== undefined
   }
 
-  // Models selectable for a provider: the vendor catalog for official providers, else the single
-  // configured model (custom always has one; claude-default may carry an override).
+  // Models selectable for a provider: Codex subscriptions expose the app's curated candidate catalog,
+  // official providers use their vendor catalog, and custom/local providers expose their configured
+  // override. Codex validates an explicit candidate against the live session options before applying it.
   private availableModels(provider: StoredProvider): string[] {
+    if (isCodexSubscriptionProvider(provider.type)) {
+      return getOfficialVendor('openai')?.models ?? []
+    }
+
     if (provider.type === 'official' && provider.vendorId) {
       // Live-fetched models (via "refresh from vendor") take precedence over the bundled catalog.
       if (provider.fetchedModels && provider.fetchedModels.length > 0) return provider.fetchedModels
@@ -2063,8 +2436,8 @@ class SettingsService {
     return provider.model ? [provider.model] : []
   }
 
-  // Picks the model to activate: the requested one when the provider offers it, else the first
-  // available (falling back to a provider's own stored model).
+  // Picks the model to activate. Codex subscriptions keep an omitted/unknown selection undefined so the
+  // account default is used; other providers retain their catalog/default fallback behavior.
   private resolveActiveModel(
     provider: StoredProvider | undefined,
     requested?: string
@@ -2074,6 +2447,7 @@ class SettingsService {
     const available = this.availableModels(provider)
 
     if (requested && available.includes(requested)) return requested
+    if (isCodexSubscriptionProvider(provider.type)) return undefined
     // Prefer the provider's chosen default (custom's only model, or an official vendor's picked one).
     if (provider.model && available.includes(provider.model)) return provider.model
 
@@ -2130,6 +2504,53 @@ class SettingsService {
       key: draft.key,
       apiEndpoints: draft.apiEndpoints ?? ['anthropic']
     }
+  }
+
+  // A failed-validation result when the provider can't drive the active agent framework, or undefined
+  // when the pair is compatible. Mirrors the spawn-time guard in resolveActiveAgentBackend so the test
+  // reports the same mismatch here, instead of a misleading auth failure, before it blocks a session.
+  private frameworkIncompatibilityResult(
+    provider: ResolvedProvider,
+    framework: ReturnType<typeof getAgentFramework>
+  ): ValidateProviderResult | undefined {
+    if (
+      isProviderUsableByFramework(
+        { apiEndpoints: provider.apiEndpoints, type: provider.type },
+        framework
+      )
+    ) {
+      return undefined
+    }
+
+    return {
+      ok: false,
+      category: 'incompatible',
+      message: this.frameworkIncompatibilityMessage(provider, framework)
+    }
+  }
+
+  // The human reason a provider can't drive a framework: a Claude-only login, else a route mismatch
+  // (which endpoint the framework needs vs. which the provider speaks). Route paths, not vendor names,
+  // so it reads as "which API shape".
+  private frameworkIncompatibilityMessage(
+    provider: ResolvedProvider,
+    framework: { displayName: string; supportedApiTypes: readonly ChatApiEndpoint[] }
+  ): string {
+    if (provider.type === 'claude-default') {
+      return `Uses this machine's Claude sign-in, which only Claude Code can run. Switch to Claude Code or pick another provider.`
+    }
+
+    const routes: Record<ChatApiEndpoint, string> = {
+      anthropic: '/v1/messages',
+      openai: '/v1/chat/completions',
+      responses: '/v1/responses'
+    }
+    const needs = framework.supportedApiTypes.map((endpoint) => routes[endpoint]).join(' or ')
+    const speaks = providerEndpoints(provider)
+      .map((endpoint) => routes[endpoint])
+      .join(' or ')
+
+    return `Not compatible with ${framework.displayName}: it needs ${needs}, but this provider speaks ${speaks}. Change the API format or switch the agent framework.`
   }
 
   // Resolves what validateProvider should probe: a stored provider (by id) or an inline draft.

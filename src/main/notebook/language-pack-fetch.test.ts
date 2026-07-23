@@ -6,7 +6,12 @@ import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { packArchiveFile, type BundleManifest } from './bundle-manifest'
+import {
+  packArchiveFile,
+  PACK_PATH_BUDGET_FILE,
+  type BundleManifest,
+  type PackPathBudget
+} from './bundle-manifest'
 import {
   createFetchBundleAdapter,
   fetchLanguagePack,
@@ -131,6 +136,18 @@ describe('fetchLanguagePack', () => {
     expect(deps.download).not.toHaveBeenCalled()
   })
 
+  it('rejects partial path-budget metadata before downloading a pack', async () => {
+    const m = manifest()
+    m.subdir = 'win-64'
+    m.packs['python-3.12'].maxCacheRelativePath = 211
+    const deps = makeDeps({}, m)
+
+    await expect(
+      fetchLanguagePack(makeDestDir(), 'https://cdn/envs', 1, 'win-64', 'python', '3.12', deps)
+    ).rejects.toThrow(/path budget fields.*together/i)
+    expect(deps.download).not.toHaveBeenCalled()
+  })
+
   it('rejects an unsupported manifest schema', async () => {
     const m = manifest()
     m.schema = 999
@@ -213,4 +230,81 @@ describe('createFetchBundleAdapter', () => {
     ).rejects.toThrow('Managed runtime pack unavailable: manifest request failed')
     expect(progress.at(-1)).toContain('Managed runtime pack unavailable')
   })
+
+  it('rejects a win-64 pack whose manifest has no conservative or recorded path budget', async () => {
+    const root = makeDestDir()
+    const m = manifest()
+    m.subdir = 'win-64'
+    m.packs['python-3.11'] = {
+      ...m.packs['python-3.11'],
+      file: packArchiveFile('python', '3.11')
+    }
+    const deps = makeDeps({}, m)
+    const extract = vi.fn(async (_archivePath: string, destDir: string) => {
+      await mkdir(destDir, { recursive: true })
+      await writeFile(
+        join(destDir, 'python-3.11.lock'),
+        '@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/win-64/package-1.conda#0cc175b9c0f1b6a831c399e269772661\n'
+      )
+      await writeFile(join(destDir, 'package-1.conda'), 'a')
+    })
+    const adapter = createFetchBundleAdapter(root, 'https://cdn/envs', {
+      ...deps,
+      subdir: 'win-64',
+      extract
+    })
+
+    await expect(
+      adapter(
+        { name: 'default-python', language: 'python', version: '3.11', packages: [] },
+        1,
+        () => {}
+      )
+    ).resolves.toBeUndefined()
+  })
+
+  it.each(['fresh commit', 'verified rename-race winner'])(
+    'records the win-64 pack path budget on %s',
+    async (scenario) => {
+      const root = makeDestDir()
+      const budget: PackPathBudget = { maxCacheRelativePath: 211, maxEnvRelativePath: 133 }
+      const m = manifest()
+      m.subdir = 'win-64'
+      m.packs['python-3.12'] = { ...m.packs['python-3.12'], ...budget }
+      const deps = makeDeps({}, m)
+      const extract = vi.fn(async (_archivePath: string, destDir: string) => {
+        await mkdir(destDir, { recursive: true })
+        await writeFile(
+          join(destDir, 'python-3.12.lock'),
+          '@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/win-64/package-1.conda#0cc175b9c0f1b6a831c399e269772661\n'
+        )
+        await writeFile(join(destDir, 'package-1.conda'), 'a')
+      })
+      const finalDir = join(root, 'packs', '1', 'win-64', 'python-3.12')
+      if (scenario === 'verified rename-race winner') {
+        await mkdir(finalDir, { recursive: true })
+        await writeFile(
+          join(finalDir, 'python-3.12.lock'),
+          '@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/win-64/package-1.conda#0cc175b9c0f1b6a831c399e269772661\n'
+        )
+        await writeFile(join(finalDir, 'package-1.conda'), 'a')
+      }
+      const adapter = createFetchBundleAdapter(root, 'https://cdn/envs', {
+        ...deps,
+        subdir: 'win-64',
+        extract
+      })
+
+      const bundle = await adapter(
+        { name: 'default-python', language: 'python', version: '3.12', packages: [] },
+        1,
+        () => {}
+      )
+
+      expect(bundle?.pathBudget).toEqual(budget)
+      await expect(readFile(join(finalDir, PACK_PATH_BUDGET_FILE), 'utf8')).resolves.toBe(
+        `${JSON.stringify(budget)}\n`
+      )
+    }
+  )
 })

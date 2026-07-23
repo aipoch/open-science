@@ -15,6 +15,12 @@ export type PackLanguage = 'python' | 'r'
 // The manifest schema version this build understands. Bump when the manifest shape changes.
 export const SUPPORTED_SCHEMA = 1
 
+// Conservative values used only for old manifests that predate per-pack path metadata. New staged
+// win-64 manifests carry exact values derived from package contents.
+export const DEFAULT_MAX_CACHE_RELATIVE_PATH = 225
+export const DEFAULT_MAX_ENV_RELATIVE_PATH = 138
+export const PACK_PATH_BUDGET_FILE = 'path-budget.json'
+
 // A pack id is `<language>-<version>` (e.g. "python-3.11", "r-4.3"). It keys both the manifest.packs
 // map and (with the file extension) the on-CDN pack object. Single source of truth for the format so
 // staging, manifest parsing and the fetch helper cannot drift.
@@ -34,6 +40,13 @@ export type PackEntry = {
   file: string
   sha256: string
   size: number
+  maxCacheRelativePath?: number
+  maxEnvRelativePath?: number
+}
+
+export type PackPathBudget = {
+  maxCacheRelativePath: number
+  maxEnvRelativePath: number
 }
 
 // manifest.json, one per (envVersion, subdir). `schema` guards the shape, `envVersion` must equal the
@@ -72,6 +85,19 @@ const assertPackEntry = (id: string, entry: unknown): PackEntry => {
   if (typeof e.size !== 'number' || !Number.isFinite(e.size) || e.size < 0) {
     throw new Error(`manifest pack "${id}" has a malformed "size"`)
   }
+  for (const field of ['maxCacheRelativePath', 'maxEnvRelativePath'] as const) {
+    if (
+      e[field] !== undefined &&
+      (typeof e[field] !== 'number' || !Number.isSafeInteger(e[field]) || e[field] <= 0)
+    ) {
+      throw new Error(`manifest pack "${id}" has an invalid "${field}"`)
+    }
+  }
+  const hasCacheBudget = e.maxCacheRelativePath !== undefined
+  const hasEnvBudget = e.maxEnvRelativePath !== undefined
+  if (hasCacheBudget !== hasEnvBudget) {
+    throw new Error(`manifest pack "${id}" path budget fields must be provided together`)
+  }
   const language = e.language as PackLanguage
   if (packId(language, e.version) !== id) {
     throw new Error(
@@ -81,7 +107,43 @@ const assertPackEntry = (id: string, entry: unknown): PackEntry => {
   if (e.file !== packArchiveFile(language, e.version)) {
     throw new Error(`manifest pack "${id}" must use its canonical archive filename`)
   }
-  return { language, version: e.version, file: e.file, sha256: e.sha256, size: e.size }
+  const maxCacheRelativePath =
+    typeof e.maxCacheRelativePath === 'number' ? e.maxCacheRelativePath : undefined
+  const maxEnvRelativePath =
+    typeof e.maxEnvRelativePath === 'number' ? e.maxEnvRelativePath : undefined
+  return {
+    language,
+    version: e.version,
+    file: e.file,
+    sha256: e.sha256,
+    size: e.size,
+    ...(maxCacheRelativePath === undefined ? {} : { maxCacheRelativePath }),
+    ...(maxEnvRelativePath === undefined ? {} : { maxEnvRelativePath })
+  }
+}
+
+// Converts a manifest entry into a usable budget. Both fields are required together; for old
+// manifests, only the currently managed default packs receive a conservative known fallback.
+export const pathBudgetForPack = (entry: PackEntry): PackPathBudget | undefined => {
+  if ((entry.maxCacheRelativePath === undefined) !== (entry.maxEnvRelativePath === undefined)) {
+    return undefined
+  }
+  if (entry.maxCacheRelativePath !== undefined && entry.maxEnvRelativePath !== undefined) {
+    return {
+      maxCacheRelativePath: entry.maxCacheRelativePath,
+      maxEnvRelativePath: entry.maxEnvRelativePath
+    }
+  }
+  if (
+    (entry.language === 'python' && entry.version === '3.12') ||
+    (entry.language === 'r' && entry.version === '4.4')
+  ) {
+    return {
+      maxCacheRelativePath: DEFAULT_MAX_CACHE_RELATIVE_PATH,
+      maxEnvRelativePath: DEFAULT_MAX_ENV_RELATIVE_PATH
+    }
+  }
+  return undefined
 }
 
 // Parses + strictly validates manifest.json text. Throws on any missing/ill-typed field so the caller

@@ -1,8 +1,8 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
-import { rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
   NotebookCell,
@@ -11,11 +11,16 @@ import type {
   ExecuteNotebookCodeRequest,
   ExecuteNotebookControlRequest,
   ExecuteShellRequest,
+  ExportNotebookAllRequest,
+  ExportNotebookAllResult,
+  ExportNotebookKernelRequest,
+  ExportNotebookResult,
   FinishNotebookCodeCellRequest,
   NotebookEnvironmentStatus,
   NotebookKernelMetadata,
   NotebookLanguage,
   NotebookOutput,
+  NotebookRunDocument,
   NotebookRunRecord,
   NotebookRunSource,
   NotebookRunStatus,
@@ -27,6 +32,7 @@ import type {
   NotebookWorkingFile,
   NotebookWriteLock
 } from '../../shared/notebook'
+import { resolveDataKernelForTab } from '../../shared/notebook'
 import type {
   EnvironmentInfo,
   ManageEnvironmentsRequest,
@@ -34,7 +40,14 @@ import type {
   ProvisionProgress
 } from '../../shared/notebook-env'
 import type { PackageMirror } from '../../shared/mirror'
+import {
+  runDocumentToIpynbByKernel,
+  runDocumentToIpynbForKernel,
+  type NbformatOutput,
+  type ResolvedArtifact
+} from './ipynb-export'
 import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
+import { saveIpynbAll } from './save-ipynb-all'
 import type { KernelProcessKind } from './kernel-executor'
 import { effectiveMirrorAsync, type ProbeDeps } from './mirror-probe'
 import {
@@ -69,10 +82,28 @@ import type {
   RuntimeUsage
 } from '../../shared/notebook-runtime'
 import { isEnvEnabled } from '../../shared/notebook-runtime'
-import { discoverInterpreters, defaultDiscoveryDeps, rscriptFor } from './environment-discovery'
-import { operationJournalPath, RuntimeOperationJournal } from './operation-journal'
-import { reconcileInterruptedOperations, defaultOperationChildLiveness } from './operation-recovery'
+import {
+  discoverInterpreters,
+  defaultDiscoveryDeps,
+  rscriptFor,
+  windowsCondaPrefixForR
+} from './environment-discovery'
+import {
+  operationJournalPath,
+  readOperationChild,
+  recordOperationChildSync,
+  recordSpawnIntentSync,
+  removeOperationChildSync,
+  RuntimeOperationJournal
+} from './operation-journal'
+import {
+  reconcileInterruptedOperations,
+  defaultOperationChildLiveness,
+  readProcessStartToken
+} from './operation-recovery'
+import { isChildUnconfirmedError } from './provisioner-runtime'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
+import { terminateProcessTree } from '../process-tree'
 
 // Locale fallback when no explicit locale is injected (see shared/mirror.ts: non-CN locales resolve
 // to public hosts, so this default never silently forces a CN mirror).
@@ -121,6 +152,14 @@ const namedEnvProvenance = (name: string): EnvProvenance =>
     ? 'app-managed'
     : 'agent-created'
 
+type ResolvedInterpreter = {
+  command: string
+  args?: string[]
+  // Set only for an external Windows conda R. The prefix belongs to that interpreter and lets the
+  // executor activate its DLL search path without ever substituting the app-managed R prefix.
+  condaPrefix?: string
+}
+
 type NotebookExecutionRequest = {
   code: string
   cwd: string
@@ -139,13 +178,18 @@ type NotebookExecutionRequest = {
   // — this is the seam that removes the executor's hard-binding to the app conda prefix (foundation:
   // "avoid deep binding"). Absent -> the executor falls back to the env's own managed interpreter
   // (behavior unchanged). `args` are prepended before the loop script (e.g. a launcher's flags).
-  resolvedInterpreter?: { command: string; args?: string[] }
+  resolvedInterpreter?: ResolvedInterpreter
   // Selects the control-plane REPL kernel instead of the language-derived data kernel. Only the
   // control path sets this; data cells leave it unset and route by `language`.
   kind?: 'repl'
   // Connector RPC connection injected into the kernel spawn env for host.mcp().
   mcpRpcEndpoint?: string
   mcpRpcToken?: string
+  // Notebook session id / project name injected into the REPL kernel spawn env so host.compute can
+  // carry grant-scope identity (This conversation / This project) on its call_command payloads. Only
+  // the control path sets these; data cells have no host.compute and leave them unset.
+  sessionId?: string
+  projectName?: string
 }
 
 type NotebookExecutionResult = {
@@ -259,6 +303,9 @@ type NotebookRuntimeServiceOptions = {
   // Locale used to pick the default region mirror when nothing is configured (see shared/mirror.ts).
   // Defaults to a non-CN locale so an omitted value never silently forces a CN mirror.
   locale?: string
+  // Platform seam for path-layout decisions. Production uses process.platform; tests can verify that
+  // a Windows-shaped string alone never activates Windows conda behavior on another platform.
+  platform?: NodeJS.Platform
   // Latency-probe deps for the fastest-mirror auto-selection, injectable so tests stay hermetic (the
   // real probe does live HEAD requests). Undefined in production → effectiveMirrorAsync's real probe.
   mirrorProbe?: ProbeDeps
@@ -272,13 +319,27 @@ type NotebookRuntimeServiceOptions = {
   // fake; the production instance (the DefaultRuntimeProvisioner) is wired after construction in
   // main/ipc.ts via setEnvironmentManager, mirroring the mcp/mirror resolvers.
   environmentManager?: NotebookEnvironmentManager
+  // Included in exported notebook provenance. Tests may omit it.
+  appVersion?: string
+  // Save-dialog seam for notebook export tests. Production falls back to Electron's native dialog.
+  saveIpynb?: (suggestedName: string, data: string) => Promise<ExportNotebookResult>
+  // Save-directory seam for the "Download all" path. Production falls back to a directory picker
+  // dialog and writes one file per data kernel under the user's chosen directory.
+  saveIpynbAll?: (files: Array<{ kernel: 'python' | 'r'; name: string; data: string }>) => Promise<ExportNotebookAllResult>
+  // Resolves app-managed artifact paths with the artifact repository's canonical/symlink checks,
+  // bound to the artifact's declaring project/session subtree.
+  resolveArtifactPath?: (request: {
+    path: string
+    projectName: string
+    sessionId: string
+  }) => Promise<string>
 }
 
 // The wire binding plus the interpreter override the executor needs. `resolvedInterpreter` is set only
 // for an EXTERNAL binding (run the user's own interpreter directly); an app-managed binding leaves it
 // undefined so the executor keeps its managed-prefix lookup and ensureDefaultEnvReady provisions the env.
 type InternalRuntimeBinding = NotebookRuntimeBinding & {
-  resolvedInterpreter?: { command: string; args?: string[] }
+  resolvedInterpreter?: ResolvedInterpreter
   // The conda env NAME a MANAGED binding runs in (default-python / an agent-created named env like
   // "my-analysis"), so a run resolves its env + process key + Windows conda activation from the binding
   // rather than a per-call environment argument. Undefined for an EXTERNAL binding (runs a raw
@@ -326,6 +387,131 @@ type RuntimeSession = {
   forceStoppedKeys: Set<string>
 }
 
+const saveIpynbWithDialog = async (
+  suggestedName: string,
+  data: string
+): Promise<ExportNotebookResult> => {
+  const { app, dialog } = await import('electron')
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    defaultPath: join(app.getPath('downloads'), suggestedName),
+    title: 'Export notebook',
+    filters: [{ name: 'Jupyter Notebook', extensions: ['ipynb'] }]
+  })
+
+  if (canceled || !filePath) return { saved: false }
+  await writeFile(filePath, data, 'utf8')
+  return { saved: true, filePath }
+}
+
+// Writes one .ipynb per data kernel under a user-picked directory. Used by the "Download all" path;
+// the per-tab path (a single .ipynb) goes through `saveIpynbWithDialog` instead. The actual
+// orchestration (directory picker, conflict check, partial-write cleanup) lives in save-ipynb-all
+// so tests can exercise the real path with a mocked electron instead of bypassing via the seam.
+
+const isPathInside = (root: string, candidate: string): boolean => {
+  const relativePath = relative(resolve(root), resolve(candidate))
+  return (
+    relativePath !== '' &&
+    relativePath !== '..' &&
+    !relativePath.startsWith(`..${sep}`) &&
+    !isAbsolute(relativePath)
+  )
+}
+
+const artifactMimeData = async (
+  root: string,
+  artifact: NotebookRunRecord['artifacts'][number],
+  resolveManagedPath?: (request: {
+    path: string
+    projectName: string
+    sessionId: string
+  }) => Promise<string>
+): Promise<ResolvedArtifact | null> => {
+  const mimeType = artifact.mimeType
+  if (!mimeType) return null
+
+  let filePath: string | undefined
+  if (isPathInside(root, artifact.path)) {
+    // Lexical containment is not enough — a symlink inside the notebook root can point anywhere.
+    // Canonicalize both sides and require the real path to stay inside the real notebook root.
+    const [realRoot, realFilePath] = await Promise.all([realpath(root), realpath(artifact.path)])
+    if (!isPathInside(realRoot, realFilePath)) {
+      throw new Error(`Artifact escapes the notebook session root: ${artifact.name}`)
+    }
+    filePath = realFilePath
+  } else {
+    filePath = await resolveManagedPath?.({
+      path: artifact.path,
+      projectName: artifact.projectName,
+      sessionId: artifact.sessionId
+    })
+  }
+  if (!filePath) return null
+
+  const binary = await readFile(filePath)
+  // nbformat stores SVG as raw text; only binary images (png/jpeg/…) are base64-encoded.
+  if (mimeType === 'image/svg+xml') {
+    return { mimeType, data: binary.toString('utf8') }
+  }
+  if (mimeType.startsWith('image/')) {
+    return { mimeType, data: binary.toString('base64') }
+  }
+  if (mimeType === 'application/json') {
+    return { mimeType, data: JSON.parse(binary.toString('utf8')) as unknown }
+  }
+  if (mimeType.startsWith('text/')) {
+    return { mimeType, data: binary.toString('utf8') }
+  }
+  return null
+}
+
+// The IO phase of an ipynb export: resolves every run's artifacts into nbformat outputs up front,
+// so the projection itself (runDocumentToIpynb) is a pure function that never touches the
+// filesystem. Only artifacts belonging to this document are inlined; read/parse failures degrade
+// to a stderr marker output rather than aborting the export.
+const resolveNotebookArtifactOutputs = async (
+  document: NotebookRunDocument,
+  resolveManagedPath?: (request: {
+    path: string
+    projectName: string
+    sessionId: string
+  }) => Promise<string>
+): Promise<Map<string, NbformatOutput[]>> => {
+  const outputsByRun = new Map<string, NbformatOutput[]>()
+  const artifactSessionId = document.artifactSessionId ?? document.sessionId
+
+  for (const run of document.runs) {
+    if (run.artifacts.length === 0) continue
+
+    const outputs: NbformatOutput[] = []
+    for (const artifact of run.artifacts) {
+      try {
+        const belongsToDocument =
+          artifact.projectName === document.projectName && artifact.sessionId === artifactSessionId
+        const resolved = belongsToDocument
+          ? await artifactMimeData(document.notebookSessionRoot, artifact, resolveManagedPath)
+          : null
+        if (resolved) {
+          outputs.push({
+            output_type: 'display_data',
+            data: { [resolved.mimeType]: resolved.data },
+            metadata: {}
+          })
+        }
+      } catch {
+        outputs.push({
+          output_type: 'stream',
+          name: 'stderr',
+          text: [`[Open Science] Could not inline artifact: ${artifact.name}\n`]
+        })
+      }
+    }
+    outputsByRun.set(run.runId, outputs)
+  }
+
+  return outputsByRun
+}
+
 // Builds the compact plain text output list shown in the preview panel.
 const outputPlainText = (stdout: string, stderr: string): string[] =>
   [stdout, stderr].filter((text) => text.trim().length > 0)
@@ -363,7 +549,7 @@ const cancelledExecutionResult = (cwd: string): NotebookExecutionResult => ({
   outputs: [{ type: 'error', message: CANCELLED_MESSAGE, traceback: CANCELLED_MESSAGE }]
 })
 
-// Benign environment variables the bash kernel is allowed to inherit. Everything else from the host
+// Benign environment variables the stateless shell is allowed to inherit. Everything else from the host
 // process.env is dropped (default-deny) — see buildShellEnv.
 const SHELL_ENV_ALLOWLIST = [
   'PATH',
@@ -381,25 +567,104 @@ const SHELL_ENV_ALLOWLIST = [
   'TMP'
 ]
 
-// Builds a minimal, secret-free environment for the stateless bash kernel. bash runs arbitrary shell
+// PowerShell and child processes on Windows need these OS-location variables to locate built-in tools.
+// They contain paths rather than credentials, so they remain safe to inherit into the scrubbed shell env.
+const WINDOWS_SHELL_ENV_ALLOWLIST = ['ComSpec', 'PATHEXT', 'SystemRoot', 'WINDIR', 'USERPROFILE']
+
+// Builds a minimal, secret-free environment for the stateless shell. It runs arbitrary commands
 // and — unlike the python kernel's protected-dir audit hook — cannot enforce read restrictions in
 // process, so it previously inherited the FULL host process.env, including the connector RPC token and
-// any proxy/API credentials the app process holds; a bash command could read or exfiltrate those.
-// Pass only an allowlist of benign vars plus the shared workspace channel, so bash cannot reach the
+// any proxy/API credentials the app process holds; a shell command could read or exfiltrate those.
+// Pass only an allowlist of benign vars plus the shared workspace channel, so the shell cannot reach the
 // connector RPC or read host secrets from its environment. (Full filesystem/network egress isolation
-// for bash is a tracked follow-up; this closes the environment-based leak.)
-const buildShellEnv = (handoffDir: string): NodeJS.ProcessEnv => {
+// for shell commands is a tracked follow-up; this closes the environment-based leak.)
+const buildShellEnv = (
+  handoffDir: string,
+  platform: NodeJS.Platform = process.platform,
+  sourceEnv: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = {}
-  for (const key of SHELL_ENV_ALLOWLIST) {
-    const value = process.env[key]
+  const keys =
+    platform === 'win32'
+      ? [...SHELL_ENV_ALLOWLIST, ...WINDOWS_SHELL_ENV_ALLOWLIST]
+      : SHELL_ENV_ALLOWLIST
+  for (const key of keys) {
+    const value = sourceEnv[key]
     if (value !== undefined) env[key] = value
   }
   env.OPEN_SCIENCE_HANDOFF_DIR = handoffDir
   return env
 }
 
-// Runs one shell command in a brand-new `sh -c` process — no persistent proc, no kernel executor
-// involvement. cwd/env mirror where the data kernels start (session cwd + the handoff dir), so bash
+type ShellInvocation = {
+  executable: string
+  args: string[]
+}
+
+// Windows PowerShell expects -EncodedCommand payloads as UTF-16LE. The user command is separately
+// encoded as UTF-8 and parsed as a script block so trailing continuations, comments, and here-strings
+// cannot consume the wrapper's exit-code logic. The wrapper also normalizes output to UTF-8 and
+// converts PowerShell's two failure channels into a real process exit code: $? for cmdlets and
+// $LASTEXITCODE for native programs.
+const encodePowerShellCommand = (command: string): string => {
+  const encodedCommand = Buffer.from(command, 'utf8').toString('base64')
+  const script = [
+    '$openScienceUtf8 = [System.Text.UTF8Encoding]::new($false)',
+    '[Console]::OutputEncoding = $openScienceUtf8',
+    '$OutputEncoding = $openScienceUtf8',
+    `$openScienceCommandBase64 = '${encodedCommand}'`,
+    '$global:LASTEXITCODE = 0',
+    "$ErrorActionPreference = 'Stop'",
+    'try {',
+    '$openScienceCommandText = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($openScienceCommandBase64))',
+    '$openScienceCommand = [ScriptBlock]::Create($openScienceCommandText)',
+    '& $openScienceCommand',
+    '$openScienceSucceeded = $?',
+    '$openScienceNativeExitCode = $LASTEXITCODE',
+    'if ($openScienceNativeExitCode -is [int] -and $openScienceNativeExitCode -ne 0) { exit $openScienceNativeExitCode }',
+    'if ($openScienceSucceeded) { exit 0 }',
+    '} catch {',
+    '[Console]::Error.WriteLine($_.ToString())',
+    '}',
+    'exit 1'
+  ].join('\n')
+
+  return Buffer.from(script, 'utf16le').toString('base64')
+}
+
+// Resolve the command interpreter explicitly instead of using shell:true. Node's Windows default is
+// cmd.exe, whose command language cannot run the POSIX-style commands agents commonly emit.
+const resolveShellInvocation = (
+  command: string,
+  platform: NodeJS.Platform = process.platform
+): ShellInvocation =>
+  platform === 'win32'
+    ? {
+        executable: 'powershell.exe',
+        args: [
+          '-NoLogo',
+          '-NoProfile',
+          '-NonInteractive',
+          '-EncodedCommand',
+          encodePowerShellCommand(command)
+        ]
+      }
+    : { executable: 'sh', args: ['-c', command] }
+
+// Returns true when it delegated the tree teardown to the Windows-specific terminator. The dependency
+// is injectable to keep this platform boundary covered without needing a Windows host in unit tests.
+const terminateShellOnTimeout = (
+  child: ChildProcess,
+  platform: NodeJS.Platform = process.platform,
+  terminateTree: (process: ChildProcess) => Promise<unknown> = terminateProcessTree
+): boolean => {
+  if (platform !== 'win32') return false
+  void terminateTree(child)
+  return true
+}
+
+// Runs one shell command in a brand-new platform-native process — no persistent proc, no kernel executor
+// involvement. cwd/env mirror where the data kernels start (session cwd + the handoff dir), so the shell
 // can read/write files the same shared workspace channel the other kernels see. The env is scrubbed to
 // an allowlist (buildShellEnv) so host secrets never reach the shell. Never rejects: a spawn failure, a
 // non-zero exit, and a timeout are all resolved as ordinary results for the agent to inspect, matching
@@ -412,7 +677,8 @@ const runShellCommand = (options: {
 }): Promise<NotebookShellResult> =>
   new Promise((resolve) => {
     const timeoutMs = options.timeoutMs ?? DEFAULT_SHELL_TIMEOUT_MS
-    const child = spawn('sh', ['-c', options.command], {
+    const invocation = resolveShellInvocation(options.command)
+    const child = spawn(invocation.executable, invocation.args, {
       cwd: options.cwd,
       env: buildShellEnv(options.handoffDir)
     })
@@ -434,6 +700,19 @@ const runShellCommand = (options: {
     }
 
     const timeoutTimer = setTimeout(() => {
+      if (terminateShellOnTimeout(child)) {
+        // child.kill() only reaches the PowerShell parent on Windows; a command it launched may
+        // survive. taskkill /T /F reaps the full tree while this promise still settles immediately.
+        finish({
+          stdout,
+          stderr:
+            stderr +
+            `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command timed out after ${timeoutMs}ms and was killed.`,
+          exitCode: null
+        })
+        return
+      }
+
       // Escalate SIGTERM -> SIGKILL if the process ignores the polite signal; the promise itself
       // settles immediately so a wedged process can never hang the caller past the timeout.
       child.kill('SIGTERM')
@@ -451,11 +730,13 @@ const runShellCommand = (options: {
       })
     }, timeoutMs)
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf8')
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk
     })
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString('utf8')
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk
     })
     child.once('error', (error) => {
       finish({ stdout, stderr: stderr || error.message, exitCode: null })
@@ -636,6 +917,33 @@ class NotebookRuntimeService {
   // is not enough, since the op wasn't actually reconciled. A later restart re-runs recovery against the
   // retained journal entry: if the pid is gone/verifiable then, it reconciles and the prefix clears.
   private readonly blockedPrefixes = new Set<string>()
+  // Runtime IDs an interrupted INSTALL left possibly-live (recovery couldn't confirm the child died).
+  // Prefix-keyed blocking doesn't fit an install: an EXTERNAL install writes the user's OWN env (not a
+  // path under runtimeRoot) and a managed named install's identity is its runtimeId, so execute() and
+  // managePackages() refuse a BOUND runtime by its runtimeId here — while managed materialize/create/
+  // remove/startup maintenance keep refusing by real prefix (blockedPrefixes). Cleared the same way:
+  // a later restart re-runs recovery and, once the pid is gone/verifiable, reconciles the journal entry.
+  private readonly blockedRuntimeIds = new Set<string>()
+  // GLOBAL write barrier set when the operation journal itself is corrupt/unreadable. A corrupt journal
+  // means we CANNOT enumerate what was in flight, so we can't know which prefix (if any) an orphan might
+  // still be writing — blocking only the two managed defaults (the original fix) left a possibly-live
+  // NAMED env, or an external install, free to be rm -rf'd. This flag makes every recovery-blocked check
+  // below (prefix, default-env, runtimeId) refuse EVERYTHING until an explicit Reset moves the corrupt
+  // journal aside (clearCorruptRecoveryBlock).
+  private recoveryCorrupt = false
+  // Prefixes an explicit force Reset released from recoveryCorrupt (see clearCorruptRecoveryBlock). While
+  // recoveryCorrupt is set (a corrupt journal blocks all prefixes), a prefix listed here is exempt — its
+  // env was reset and its corrupt journal moved aside, so it can rebuild while every OTHER env stays
+  // blocked. Empty on the normal path (recoveryCorrupt false makes it moot). Cleared implicitly on the
+  // next boot, which reads the now-absent journal and never sets recoveryCorrupt again.
+  private readonly corruptResetAllowlist = new Set<string>()
+  // Prefixes a write in THIS process left with a child we could not confirm stopped (an orphan MAY still
+  // be writing). A subset of blockedPrefixes, but tracked separately because a force Reset must treat it
+  // DIFFERENTLY from an ordinary recovery block: an ordinary block came from a PRIOR boot (the spawning
+  // process is gone, so Reset may delete+rebuild), whereas a live-unconfirmed prefix's orphan could still
+  // be running NOW — Reset must refuse it until a restart. Read by the provisioner via the injected
+  // isPrefixLiveUnconfirmed dep (clearQuarantine). Per-process, so it is empty after a restart.
+  private readonly liveUnconfirmedPrefixes = new Set<string>()
   private readonly runtimeDiscoveryImpl: (
     language: NotebookLanguage
   ) => Promise<DiscoveredInterpreter[]>
@@ -716,7 +1024,8 @@ class NotebookRuntimeService {
   private async ensureDefaultEnvReady(
     language: NotebookLanguage,
     env: string,
-    runtimeRootDir: string
+    runtimeRootDir: string,
+    sessionId: string
   ): Promise<void> {
     const provisioner = this.defaultEnvProvisioner
     if (!provisioner) return
@@ -731,12 +1040,18 @@ class NotebookRuntimeService {
         ? rReady(runtimeRootDir, DEFAULT_ENV_VERSION)
         : pythonReady(runtimeRootDir, DEFAULT_ENV_VERSION)
     if (ready) return
+    const reportProgress = (progress: ProvisionProgress): void =>
+      this.defaultEnvProgress({ ...progress, scope: language, sessionId })
     try {
-      if (language === 'r') await provisioner.provisionR(this.defaultEnvProgress)
-      else await provisioner.provisionPython(this.defaultEnvProgress)
+      if (language === 'r') await provisioner.provisionR(reportProgress)
+      else await provisioner.provisionPython(reportProgress)
     } catch (error) {
       const message = `Could not prepare ${env}: ${error instanceof Error ? error.message : String(error)}`
-      this.defaultEnvProgress({ phase: 'error', message, progress: 0 })
+      // Tag the language so the Settings card for THIS runtime settles out of "preparing" — a first-use
+      // (auto) provision emits language-tagged progress, so an untagged error would leave the card
+      // spinning forever (the store only settles a slot on a language-tagged done/error). reportProgress
+      // also stamps scope + sessionId so the run stays attributed to this env.
+      reportProgress({ phase: 'error', message, progress: 0, language })
       throw new Error(message, { cause: error })
     }
   }
@@ -786,6 +1101,10 @@ class NotebookRuntimeService {
     // resolves it by env NAME (managed-prefix lookup + conda activation). Only the USER'S OWN
     // interpreter is 'external' — run its binary directly.
     const source = env.provenance === 'user-own' ? 'external' : 'managed'
+    const externalRCondaPrefix =
+      source === 'external' && env.language === 'r'
+        ? windowsCondaPrefixForR(env.interpreterPath, this.options.platform ?? process.platform)
+        : undefined
     return {
       language: env.language,
       runtimeId: env.envId,
@@ -801,7 +1120,8 @@ class NotebookRuntimeService {
       resolvedInterpreter:
         source === 'external'
           ? {
-              command: env.language === 'r' ? rscriptFor(env.interpreterPath) : env.interpreterPath
+              command: env.language === 'r' ? rscriptFor(env.interpreterPath) : env.interpreterPath,
+              ...(externalRCondaPrefix ? { condaPrefix: externalRCondaPrefix } : {})
             }
           : undefined,
       envName:
@@ -1254,14 +1574,40 @@ class NotebookRuntimeService {
     // managed-prefix lookup for `env` (resolved above from the binding). An EXTERNAL binding runs the
     // user's own interpreter directly. No binding -> the app-managed default. There is no implicit
     // external default and no per-call env override anymore.
-    let resolvedInterpreter: { command: string; args?: string[] } | undefined
+    let resolvedInterpreter: ResolvedInterpreter | undefined
     // Deferred so a first-use overlay-build failure (bad base interpreter, ensurepip failure, an
     // interpreter moved after selection) is normalized into a FAILED run record with a traceback below,
     // exactly like an executor spawn/crash — rather than throwing raw out of the run path and leaving no
     // run history for the agent to inspect.
     let interpreterResolveError: unknown
+    // Recovery starts before IPC registration but completes asynchronously. Wait before consulting its
+    // block sets so an external or named run cannot start while an unknown orphan is still being found.
+    await this.ensureRecovered()
     const binding = session.runtimeBindings.get(cell.language)
-    if (binding && (binding.status ?? 'active') !== 'active') {
+    // A managed/default run is gated by its real prefix via isPrefixRecoveryBlocked, which folds in the
+    // corrupt-journal barrier AND honours a force Reset's per-prefix allowlist — so a reset (allowlisted)
+    // env runs cells again without a restart. An EXTERNAL run has no managed prefix, so it keeps the raw
+    // corrupt catch-all (plus its runtimeId block). resolveRunEnv gave us the env name above.
+    const isExternal = binding?.source === 'external'
+    const prefixBlocked =
+      !isExternal &&
+      this.isPrefixRecoveryBlocked(envPrefix(getRuntimeRoot(this.options.dataRoot), env))
+    if (
+      (binding?.runtimeId && this.blockedRuntimeIds.has(binding.runtimeId)) ||
+      prefixBlocked ||
+      (isExternal && this.recoveryCorrupt)
+    ) {
+      // Recovery flagged this BOUND runtime possibly-live after an interrupted install (external or a
+      // managed named env) — OR its managed prefix is recovery-blocked (per-prefix block or a not-yet-
+      // reset corrupt journal) — OR an external run under a corrupt journal we can't enumerate.
+      // ensureDefaultEnvReady only guards the DEFAULT prefix, so without this check a named/external run
+      // would proceed over an env a survivor may still be writing. Fail with the actionable message.
+      interpreterResolveError = new Error(
+        `RUNTIME_RECOVERY_BLOCKED: the bound ${cell.language} runtime is recovering from an interrupted ` +
+          'operation whose worker process could not be confirmed stopped, so running it now could ' +
+          'corrupt it. Restart the app to re-check and recover it before running cells.'
+      )
+    } else if (binding && (binding.status ?? 'active') !== 'active') {
       // No silent fallback: a disabled/unavailable bound runtime FAILS the run with an actionable
       // message rather than quietly running a different interpreter (the user would wrongly assume
       // their vars/packages/interpreter are unchanged). The agent recovers via list → switch. See
@@ -1303,7 +1649,7 @@ class NotebookRuntimeService {
               'list_notebook_runtimes then notebook_bind_runtime, before running cells.'
           )
         }
-        await this.ensureDefaultEnvReady(cell.language, env, session.runtimeRoot)
+        await this.ensureDefaultEnvReady(cell.language, env, session.runtimeRoot, session.sessionId)
       } catch (error) {
         interpreterResolveError = error
       }
@@ -1502,7 +1848,11 @@ class NotebookRuntimeService {
           protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
           timeoutMs: request.timeoutMs,
           mcpRpcEndpoint: mcpRpc?.endpoint,
-          mcpRpcToken: mcpRpc?.token
+          mcpRpcToken: mcpRpc?.token,
+          // Grant-scope identity for host.compute (This conversation / This project). The executor
+          // forwards these into the repl kernel's spawn env; only the control path carries them.
+          sessionId: session.sessionId,
+          projectName: session.projectName
         })
         .catch((error: unknown) => {
           executedOnLiveKernel = false
@@ -1526,10 +1876,10 @@ class NotebookRuntimeService {
     }
   }
 
-  // Runs one bash command in a brand-new stateless process — distinct from every persistent kernel:
+  // Runs one shell command in a brand-new stateless process — distinct from every persistent kernel:
   // no proc map entry, no serialization queue (each call is independent and spawns immediately).
   // cwd matches where the data kernels start (the session's data dir); env carries the handoff dir so
-  // bash can read/write the same cross-kernel channel repl_execute uses. Each call still records its
+  // the shell can read/write the same cross-kernel channel repl_execute uses. Each call still records its
   // own run-history entry (kernelKind 'bash'); a fresh runId per call plus the repository's own
   // write-serialization (see NotebookRunRepository.writeDocument) keep overlapping calls from
   // colliding, even though there is no serialization queue here.
@@ -1679,6 +2029,82 @@ class NotebookRuntimeService {
       runtimeRoot: document.kernel.runtimeRoot,
       runJsonPath: getNotebookRunJsonPath(this.options.dataRoot, projectName, request.sessionId)
     }
+  }
+
+  // Exports the .ipynb for the kernel the caller is currently viewing (tab = choose language).
+  // Replaces the legacy "always use the dominant kernel" rule: a user on the R tab expects the
+  // file to come back as `kernelspec.name='ir'`, and a user on the repl tab gets the .ipynb
+  // scoped to whichever data kernel was most recently active when repl ran.
+  async exportIpynb(request: ExportNotebookKernelRequest): Promise<ExportNotebookResult> {
+    const projectName = request.projectName ?? this.options.projectName
+    const document = await this.repository.findExisting(projectName, request.sessionId)
+    if (!document) {
+      throw new Error(`Notebook session not found: ${request.sessionId}`)
+    }
+
+    const dataKernel = resolveDataKernelForTab(document.runs, request.kernel)
+    if (!dataKernel) {
+      // The session has no python/r runs at all — every run is a control-plane run, so there is no
+      // kernelspec we'd be honest about. Refuse rather than synthesize a phantom notebook.
+      throw new Error(
+        `No ${request.kernel === 'repl' || request.kernel === 'bash' ? 'data-kernel' : request.kernel} runs in this session. Run a Python or R cell first.`
+      )
+    }
+
+    const artifactOutputs = await resolveNotebookArtifactOutputs(
+      document,
+      this.options.resolveArtifactPath
+    )
+    const notebook = runDocumentToIpynbForKernel(
+      document,
+      dataKernel,
+      {
+        appVersion: this.options.appVersion,
+        artifactOutputs
+      }
+    )
+    const suggestedName = `session-${request.sessionId.slice(0, 8)}-${dataKernel}.ipynb`
+    const serialized = `${JSON.stringify(notebook, null, 2)}\n`
+
+    return (this.options.saveIpynb ?? saveIpynbWithDialog)(suggestedName, serialized)
+  }
+
+  // The "Download all" path: writes one .ipynb per data kernel that has runs to a directory the
+  // user picks. Triggered by the secondary footer button when the session actually spans multiple
+  // data kernels — a single-kernel session's "Download all" would be a confusing duplicate of the
+  // main button, so the renderer gates the secondary button on `kindsWithRuns.has('python') && has('r')`.
+  async exportIpynbAll(request: ExportNotebookAllRequest): Promise<ExportNotebookAllResult> {
+    const projectName = request.projectName ?? this.options.projectName
+    const document = await this.repository.findExisting(projectName, request.sessionId)
+    if (!document) {
+      throw new Error(`Notebook session not found: ${request.sessionId}`)
+    }
+
+    const artifactOutputs = await resolveNotebookArtifactOutputs(
+      document,
+      this.options.resolveArtifactPath
+    )
+    const notebooks = runDocumentToIpynbByKernel(document, {
+      appVersion: this.options.appVersion,
+      artifactOutputs
+    })
+
+    const prefix = `session-${request.sessionId.slice(0, 8)}`
+    const files: Array<{ kernel: 'python' | 'r'; name: string; data: string }> = (
+      ['python', 'r'] as const
+    )
+      .filter((kernel) => notebooks[kernel] !== undefined)
+      .map((kernel) => ({
+        kernel,
+        name: `${prefix}-${kernel}.ipynb`,
+        data: `${JSON.stringify(notebooks[kernel], null, 2)}\n`
+      }))
+
+    if (files.length === 0) {
+      throw new Error('No data-kernel runs in this session. Run a Python or R cell first.')
+    }
+
+    return (this.options.saveIpynbAll ?? saveIpynbAll)(files)
   }
 
   // Replaces the interpreter process while preserving cells and durable run history. Prefers the
@@ -1879,12 +2305,22 @@ class NotebookRuntimeService {
       }
     }
 
-    // Refuse if recovery left the install target prefix blocked (an unknown-liveness orphan may still be
-    // writing it) — installing into a possibly-live env could corrupt it. Checked for every binding
-    // kind, since even an external install journals this prefix as its target. Returned as a structured
-    // error (not thrown) to match managePackages' other refusals — a tool call shouldn't surface a raw
-    // exception.
-    if (this.blockedPrefixes.has(envPrefix(runtimeRoot, envName))) {
+    // Refuse if recovery left this install's target possibly-live (an unknown-liveness orphan may still
+    // be writing it). An EXTERNAL binding is keyed by runtimeId (its real target is the user's own env,
+    // not a path under runtimeRoot — so the app-managed default prefix must NOT gate it); a managed/
+    // default target is keyed by its real prefix, plus its runtimeId for a bound managed named env.
+    // Returned as a structured error (not thrown) to match managePackages' other refusals.
+    const isExternal = binding?.source === 'external'
+    const runtimeIdBlocked =
+      binding?.runtimeId !== undefined && this.blockedRuntimeIds.has(binding.runtimeId)
+    // A managed/default install is gated by its real prefix via isPrefixRecoveryBlocked, which already
+    // folds in the corrupt-journal barrier AND honours a force Reset's per-prefix allowlist — so a reset
+    // (allowlisted) default env can be installed into again while other envs stay blocked. An EXTERNAL
+    // install has no managed prefix to key that allowlist on, so it keeps the raw corrupt catch-all.
+    const prefixBlocked =
+      !isExternal && this.isPrefixRecoveryBlocked(envPrefix(runtimeRoot, envName))
+    const corruptBlockedExternal = isExternal && this.recoveryCorrupt
+    if (runtimeIdBlocked || prefixBlocked || corruptBlockedExternal) {
       return {
         ok: false,
         needsRestart: false,
@@ -1901,18 +2337,14 @@ class NotebookRuntimeService {
     // never silently assumed to have succeeded. runtimeId is the bound runtime's identity (its envId)
     // so recovery flags exactly this env. Best-effort journal I/O; cleared in the finally on completion.
     const repairRuntimeId = binding?.runtimeId ?? envName
+    // targetPath is the app-managed prefix ONLY for a managed/default install — an EXTERNAL install
+    // writes the user's own env (outside runtimeRoot), so recording the default prefix here would make
+    // recovery wrongly clean/block the unrelated managed default. Recovery then blocks an external
+    // install by its runtimeId (blockUnknownChildTarget) instead of a prefix.
+    const journalTarget =
+      binding?.source === 'external' ? undefined : envPrefix(runtimeRoot, envName)
     const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
     const operationId = randomUUID()
-    await journal
-      .begin({
-        operationId,
-        kind: 'install',
-        runtimeId: repairRuntimeId,
-        phase: `install-${request.language}`,
-        startedAt: Date.now(),
-        targetPath: envPrefix(runtimeRoot, envName)
-      })
-      .catch(() => undefined)
     // The install target is the binding-resolved envName — NOT request.environment. v4 dropped the
     // per-call environment argument, but the package manager still reads req.environment (and the local
     // RPC forwards the raw request), so an old/direct caller could otherwise install into a DIFFERENT
@@ -1920,25 +2352,91 @@ class NotebookRuntimeService {
     // four agree.
     const pinnedRequest = { ...request, environment: envName }
     let result: InstallResult
+    let retainForRecovery = false
+    let begun = false // did journal.begin() succeed? distinguishes a begin failure from an install error
     try {
-      result = await this.envLock.withInstall(envName, () =>
-        this.installPackagesImpl(pinnedRequest, {
+      // Record the install intent INSIDE the env lock, not before it. A concurrent Reset holds this same
+      // env lock while it clearQuarantine()s the prefix's journal records; recording before acquiring the
+      // lock let the Reset delete THIS record between our begin() and the install starting, after which
+      // journal.update() no-ops and a crash would strand a sidecar with no journal record recovery scans.
+      result = await this.envLock.withInstall(envName, async () => {
+        // Fail CLOSED, like the provisioner's prefix writes: if we can't record the intent (journal
+        // begin — also throws on a corrupt journal), do NOT spawn the installer; a crash would otherwise
+        // leave an unrecorded child recovery can't reap. The begun flag routes this to a structured
+        // refusal below. (The per-spawn intent sidecar is re-armed by onBeforeSpawn, before EACH spawn.)
+        await journal.begin({
+          operationId,
+          kind: 'install',
+          runtimeId: repairRuntimeId,
+          phase: `install-${request.language}`,
+          startedAt: Date.now(),
+          targetPath: journalTarget
+        })
+        begun = true
+        return this.installPackagesImpl(pinnedRequest, {
           storageRoot: this.options.dataRoot,
           condaChannel: mirror.condaChannel,
           pypiIndex: mirror.pypiIndex,
           cranMirror: mirror.cranMirror,
           caBundle: mirror.caBundle,
           interpreter,
-          // Record each installer child's PID so startup recovery can kill a surviving conda/pip/R
-          // install before flagging the env repair-required.
-          onChild: (childPid) =>
+          // Re-arm the per-spawn intent immediately before EACH installer spawn (conda then CRAN), so a
+          // second spawn whose PID isn't recorded yet blocks rather than trusting the first's PID.
+          onBeforeSpawn: () => recordSpawnIntentSync(runtimeRoot, operationId),
+          // Record each installer child's PID so startup recovery can block on a surviving conda/pip/R
+          // install (never reconcile the env under it) until it is provably gone. Recovery never signals
+          // the child. Persisted SYNCHRONOUSLY (crash-safe) so a spawned child is always probeable; the
+          // async journal update is the normal read path.
+          onChild: (childPid) => {
+            const childStartedAt = Date.now()
+            // Kernel-native identity token captured while the child is alive, so recovery can FALSIFY
+            // pid reuse (a changed token proves the pid is no longer ours); undefined off Linux — see
+            // readProcessStartToken. Never used to authorize a signal.
+            const childStartToken = readProcessStartToken(childPid)
+            recordOperationChildSync(runtimeRoot, operationId, {
+              childPid,
+              childStartedAt,
+              childStartToken
+            })
             void journal
-              .update(operationId, { childPid, childStartedAt: Date.now() })
+              .update(operationId, { childPid, childStartedAt, childStartToken })
               .catch(() => undefined)
+          }
         })
-      )
+      })
+    } catch (error) {
+      // begin() failed (nothing spawned) → structured fail-closed refusal, no cleanup needed.
+      if (!begun) {
+        return {
+          ok: false,
+          needsRestart: false,
+          log: '',
+          error:
+            'RUNTIME_JOURNAL_UNWRITABLE: could not record this install for crash recovery, so it was ' +
+            `not started (installing without a recovery record could strand a worker process). ${
+              error instanceof Error ? error.message : String(error)
+            }`
+        }
+      }
+      // A recording failure whose installer couldn't be confirmed stopped: keep the sidecar + journal
+      // record so recovery blocks (a worker may still be writing) instead of clearing the evidence.
+      if (isChildUnconfirmedError(error)) {
+        retainForRecovery = true
+        // Block IN THIS PROCESS now, not just via the retained journal entry (which only guards the next
+        // boot): otherwise an in-session retry would pass the guard above and begin() a SECOND install,
+        // spawning an installer that races the first's possibly-live orphan. Block the bound runtimeId
+        // (the install's identity — external or managed named) and, for a managed install, its prefix.
+        // blockPrefixRecovery ALSO marks the prefix live-unconfirmed, so a force Reset this session
+        // refuses to delete + rebuild it out from under the possibly-live installer (clearQuarantine).
+        this.blockedRuntimeIds.add(repairRuntimeId)
+        if (journalTarget) this.blockPrefixRecovery(journalTarget)
+      }
+      throw error
     } finally {
-      await journal.complete(operationId).catch(() => undefined)
+      if (begun && !retainForRecovery) {
+        removeOperationChildSync(runtimeRoot, operationId)
+        await journal.complete(operationId).catch(() => undefined)
+      }
     }
     // A completed install of this runtime clears any prior repair-required flag: re-running the install
     // to completion IS the repair, so the runtime returns to a known-good state. Clearing the disk flag
@@ -2016,6 +2514,11 @@ class NotebookRuntimeService {
         // Let startup recovery finish before rm -rf'ing a prefix, same barrier create uses: recovery's
         // verify/rebuild of an interrupted op could otherwise race this delete on the same prefix.
         await this.ensureRecovered()
+        // Refuse if recovery flagged this prefix possibly-live (an unknown-liveness orphan may still be
+        // writing it). After a restart there is no in-memory kernel state, so isEnvironmentLive() above
+        // can't see a surviving installer — without this, rm -rf could delete a named prefix a survivor
+        // is still writing. Mirrors the 'create' guard; keyed by the same real prefix.
+        this.assertPrefixRecoverable(envPrefix(getRuntimeRoot(this.options.dataRoot), name))
         // Serialize the rm -rf against a concurrent install into the same env (design D4 / review A).
         return this.envLock.withInstall(name, async () => ({
           environments: manager.removeEnvironment(name)
@@ -2053,11 +2556,12 @@ class NotebookRuntimeService {
   }
 
   // Crash recovery (WS13): reconcile any runtime operation the previous process left in flight. Run
-  // ONCE at app startup, before new fetches/installs. For each journalled op: kill a surviving orphan
-  // child, then clean its staging / verify its prefix / flag it repair-required, then clear the entry.
-  // Best-effort — a failure is logged and the entry retried next startup. The download (staging
-  // cleanup), materialize (verify/rebuild the env prefix), and install (flag repair-required) paths all
-  // populate the journal, so each reconcile action below is wired to a real effect.
+  // ONCE at app startup, before new fetches/installs. For each journalled op: if a surviving orphan child
+  // MIGHT still be running, BLOCK its target and leave the entry (recovery never signals the orphan);
+  // only once the child is provably gone does it clean staging / verify the prefix / flag repair-required,
+  // then clear the entry. Best-effort — a failure is logged and the entry retried next startup. The
+  // download (staging cleanup), materialize (verify/rebuild the env prefix), and install (flag
+  // repair-required) paths all populate the journal, so each reconcile action below is wired to a real effect.
   async recoverInterruptedOperations(): Promise<void> {
     // Publish the in-flight recovery so new prefix-touching operations (materialize/install) can await
     // it — otherwise an old op's cleanup/delete could race a fresh fetch/install on the same prefix.
@@ -2082,7 +2586,7 @@ class NotebookRuntimeService {
   // Called by every path that would WRITE an env prefix, so an unknown-liveness orphan actually blocks
   // the write this session instead of only leaving a journal entry for next boot.
   private assertPrefixRecoverable(prefix: string): void {
-    if (this.blockedPrefixes.has(prefix)) {
+    if (this.isPrefixRecoveryBlocked(prefix)) {
       throw new Error(
         `RUNTIME_RECOVERY_BLOCKED: a previous operation on "${prefix}" was interrupted and its worker ` +
           'process could not be confirmed stopped, so writing this environment now could corrupt it. ' +
@@ -2099,22 +2603,125 @@ class NotebookRuntimeService {
       getRuntimeRoot(this.options.dataRoot),
       language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
     )
-    return this.blockedPrefixes.has(prefix)
+    return this.isPrefixRecoveryBlocked(prefix)
+  }
+
+  // Whether an arbitrary env prefix is recovery-blocked. Injected into the provisioner (ipc.ts) so its
+  // startup restore/upgrade/repair and named create self-refuse a possibly-live prefix — the guarantee
+  // the barrier alone didn't give the startup gate. Keyed by real prefix, matching blockedPrefixes.
+  // recoveryCorrupt (a corrupt journal — see runRecovery) blocks EVERY prefix, not just a specific one:
+  // an unreadable journal means we can't rule out an orphan writing an arbitrary (including named) env.
+  // A force Reset can exempt ONE prefix from that global block (corruptResetAllowlist) so it rebuilds
+  // while the others stay blocked; the explicit per-prefix block (blockedPrefixes) still applies to it.
+  isPrefixRecoveryBlocked(prefix: string): boolean {
+    if (this.blockedPrefixes.has(prefix)) return true
+    return this.recoveryCorrupt && !this.corruptResetAllowlist.has(prefix)
+  }
+
+  // Drops the in-memory recovery block for a prefix. Called by an EXPLICIT user recovery (repair with
+  // force, wired via ipc.ts) so a quarantined runtime can be reset. The provisioner also clears the
+  // retained journal record + sidecar for the prefix, so the quarantine won't re-arm next startup.
+  clearRecoveryBlock(prefix: string): void {
+    this.blockedPrefixes.delete(prefix)
+  }
+
+  // Drops the in-memory recovery block for a runtime ID. An interrupted INSTALL blocks the bound
+  // runtimeId (not a prefix), so a prefix-only Reset would rebuild the env yet still leave bound
+  // sessions rejected by blockedRuntimeIds until the next restart. The provisioner's Reset collects the
+  // runtimeIds of the retained install records for the reset prefix and clears them here too.
+  clearRuntimeRecoveryBlock(runtimeId: string): void {
+    this.blockedRuntimeIds.delete(runtimeId)
+  }
+
+  // Releases ONE prefix from the global corrupt-journal write barrier. Called by a force Reset (via the
+  // provisioner's clearQuarantine) after it has moved that env's corrupt journal aside. A corrupt journal
+  // means we can't know which env had in-flight work, so resetting Python must NOT unblock R, named, and
+  // external targets — they stay blocked (recoveryCorrupt still true) until their own Reset or a restart
+  // (which re-reads the now-absent journal and clears the barrier entirely). The user accepted the risk
+  // for the prefix they explicitly reset, and only that prefix. Idempotent.
+  clearCorruptRecoveryBlock(prefix: string): void {
+    this.corruptResetAllowlist.add(prefix)
+  }
+
+  // Records, in THIS process, that a prefix write failed with a child we could not confirm stopped — a
+  // worker MAY still be writing it. Blocks it immediately so an in-session retry can't begin() a second
+  // concurrent op onto the same prefix (the retained journal record only guards the next boot), AND marks
+  // it live-unconfirmed so a force Reset this session refuses to delete it out from under that orphan.
+  // Injected into the provisioner as blockPrefix (ipc.ts), and called directly by the install path.
+  blockPrefixRecovery(prefix: string): void {
+    this.blockedPrefixes.add(prefix)
+    this.liveUnconfirmedPrefixes.add(prefix)
+  }
+
+  // True when a write in THIS process left `prefix` with a child that could not be confirmed stopped (see
+  // blockPrefixRecovery). The provisioner consults this (injected) in clearQuarantine to REFUSE a force
+  // Reset that would otherwise delete + rebuild the prefix while that orphan may still be writing it. It
+  // is only the PER-PROCESS view: it goes false after a restart, but that does NOT by itself authorize a
+  // Reset — an app restart does not prove a reparented orphan exited. On the next launch, recovery re-gates
+  // from the DURABLE journal/sidecar and clears the block only once the child is provably gone (pid ESRCH /
+  // reused) or, for a no-PID orphan, a Linux machine-reboot proof (boot_id changed).
+  isPrefixLiveUnconfirmed(prefix: string): boolean {
+    return this.liveUnconfirmedPrefixes.has(prefix)
+  }
+
+  // Runs fn under the SAME exclusive per-env lock that package installs use (envLock.withInstall), so a
+  // default-env materialize/repair/upgrade in the provisioner serializes with an install into that env
+  // instead of racing it on a separate lock. Injected into the provisioner as withPrefixLock (ipc.ts).
+  // Keyed by env NAME, matching managePackages/named-env create/remove. The provisioner only calls this
+  // from its top-level entries (never re-entrantly), so it cannot deadlock against itself.
+  withEnvLock<T>(envName: string, fn: () => Promise<T>): Promise<T> {
+    return this.envLock.withInstall(envName, fn)
   }
 
   private async runRecovery(): Promise<void> {
-    const journal = RuntimeOperationJournal.forPath(
-      operationJournalPath(getRuntimeRoot(this.options.dataRoot))
-    )
-    await reconcileInterruptedOperations(journal, {
+    const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    // Fail SAFE on a corrupt/unreadable journal: reconcileInterruptedOperations would read it as empty
+    // (nothing in flight) and open the recovery barrier, but a corrupt journal is NOT proof that no op
+    // was interrupted — an install/materialize may have been mid-write into ANY prefix (default, named,
+    // or an external install's runtimeId). We can't know which, so block EVERYTHING for this session
+    // (recoveryCorrupt — checked by every isPrefixRecoveryBlocked/isDefaultEnvRecoveryBlocked/
+    // assertPrefixRecoverable call, including named-env remove, which carries no journal record of its
+    // own and previously only checked the per-prefix set) and leave the journal untouched so a later
+    // boot — or an explicit Reset, which moves it aside — can recover.
+    if ((await journal.readState()) === 'corrupt') {
+      console.error(
+        '[notebook] operation journal is unreadable; blocking all runtime writes until recovery'
+      )
+      this.recoveryCorrupt = true
+      return
+    }
+    const reconciled = await reconcileInterruptedOperations(journal, {
       operationChildLiveness: defaultOperationChildLiveness,
-      terminateOperationChild: async (record) => {
-        if (record.childPid === undefined) return
-        try {
-          process.kill(record.childPid, 'SIGKILL')
-        } catch {
-          // Already gone — nothing to kill.
-        }
+      // Resolve the spawn lifecycle from the synchronous sidecar (see operation-journal): a recorded PID
+      // (recovering one the async journal update lost) is probed; a "spawning" intent with no PID means
+      // a child MAY be live so recovery must block (spawnAttempted); no sidecar means the op never
+      // reached the spawn stage and is safe to reconcile. Never a wall-clock guess.
+      hydrateInterruptedChild: (record) => {
+        // The synchronous sidecar is the AUTHORITATIVE record of the CURRENT spawn lifecycle: it is
+        // re-armed ({ spawning: true }) before EVERY spawn and converted to the PID on each spawn, so it
+        // always reflects the latest spawn. The journal's async childPid can be STALE — an op that
+        // spawns twice (materialize's cache-repair retry, or R's conda→CRAN) records spawn #1's PID in
+        // the journal; if it then crashed after spawn #2 started but before spawn #2's PID landed, the
+        // journal still names the (exited) first child. Trusting that would probe a dead pid, conclude
+        // 'dead', and clean the prefix while spawn #2 is still writing. So read the sidecar FIRST and let
+        // it override the journal.
+        const state = readOperationChild(runtimeRoot, record.operationId)
+        if (state === undefined) return record // no sidecar (legacy) -> fall back to the journal PID
+        // 'corrupt' (present but unreadable/invalid) or a bare spawn intent -> a child MAY be live but its
+        // PID is unknown. Block, and DROP any stale journal PID so recovery doesn't probe an earlier,
+        // already-exited child and wrongly conclude the target is free.
+        if (state === 'corrupt' || 'spawning' in state)
+          return {
+            ...record,
+            childPid: undefined,
+            childStartedAt: undefined,
+            childStartToken: undefined,
+            spawnAttempted: true
+          }
+        // Sidecar has the current PID -> probe it (overrides the journal). Its childStartToken (present
+        // only when the sidecar carried one) rides along in the spread as the authoritative identity.
+        return { ...record, ...state }
       },
       cleanStaging: async (record) => {
         if (record.targetPath) await rm(record.targetPath, { recursive: true, force: true })
@@ -2150,9 +2757,20 @@ class NotebookRuntimeService {
       // and commits by atomic rename, so an orphaned download can't corrupt a fresh fetch (a later
       // startup reaps the leftover). Its targetPath is that staging dir, which nothing else writes.
       blockUnknownChildTarget: async (record) => {
+        // An INSTALL is identified by its runtimeId, not a managed prefix: an external install's target
+        // is the user's own env (no path under runtimeRoot) and a managed named install's identity is
+        // its runtimeId. Block the runtimeId so execute()/managePackages() refuse the bound runtime.
+        if (record.kind === 'install') this.blockedRuntimeIds.add(record.runtimeId)
+        // materialize/upgrade name the real managed prefix they write — block it so managed materialize/
+        // create/remove/startup maintenance refuse it. (An external install carries no targetPath, so
+        // it never wrongly blocks the app-managed default here.)
         if (record.targetPath) this.blockedPrefixes.add(record.targetPath)
       }
     })
+    // Reconciled records are cleared from the journal, so their PID sidecars are now inert — remove them
+    // so they don't accumulate. A retained (unknown-blocked) record keeps its sidecar for the next
+    // startup's liveness probe.
+    for (const record of reconciled) removeOperationChildSync(runtimeRoot, record.operationId)
   }
 
   // Shuts down every live interpreter, used by app-level cleanup paths. Returns { reaped }: true only
@@ -2338,7 +2956,7 @@ class NotebookRuntimeService {
   }
 
   // Shared append-running -> execute -> update-completed -> notify sequence used by cell, repl, and
-  // bash runs so none of the three reimplements it. `execute` is expected to never reject (each caller
+  // shell runs so none of the three reimplements it. `execute` is expected to never reject (each caller
   // pre-catches its own executor/process failure into a normal result, matching every kernel's
   // "don't throw on failure" contract); `afterUpdate` lets the caller mutate session/cell state (e.g.
   // session.cwd, cell.status) from the result before the single trailing notify fires.
@@ -2495,7 +3113,14 @@ class NotebookRuntimeService {
   }
 }
 
-export { NotebookRuntimeService, resolveDefaultExecutorOptions, resolveLoopScriptPaths }
+export {
+  NotebookRuntimeService,
+  buildShellEnv,
+  resolveDefaultExecutorOptions,
+  resolveLoopScriptPaths,
+  resolveShellInvocation,
+  terminateShellOnTimeout
+}
 export type {
   NotebookExecutionRequest,
   NotebookExecutionResult,

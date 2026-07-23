@@ -24,6 +24,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync
 } from 'node:fs'
@@ -142,6 +143,61 @@ export const packageEntriesFromLock = (lockText) =>
       return { url, file: url.slice(url.lastIndexOf('/') + 1), md5: md5 ?? '' }
     })
 
+// Derives the two Windows path budgets from the exact URL-mirror layout and every file in each
+// package. Relative values include their leading separator so callers can add them directly to an
+// absolute cache/env prefix length.
+export const derivePackPathBudget = (lockText, packageContents) => {
+  let maxCacheRelativePath = 0
+  let maxEnvRelativePath = 0
+  for (const { url, file } of packageEntriesFromLock(lockText)) {
+    const contents = packageContents[file]
+    if (!contents) throw new Error(`missing package contents for ${file}`)
+    const parsed = new URL(url)
+    const urlSegments = parsed.pathname.split('/').filter(Boolean)
+    const packageName = file.replace(/\.conda$|\.tar\.bz2$/i, '')
+    const cachePrefix = ['https', parsed.host, ...urlSegments.slice(0, -1), packageName]
+      .join('\\')
+      .replace(/^/, '\\')
+    for (const internal of contents) {
+      const normalized = String(internal).replaceAll('/', '\\').replace(/^\\+/, '')
+      maxCacheRelativePath = Math.max(maxCacheRelativePath, `${cachePrefix}\\${normalized}`.length)
+      maxEnvRelativePath = Math.max(maxEnvRelativePath, `\\${normalized}`.length)
+    }
+  }
+  if (maxCacheRelativePath === 0 || maxEnvRelativePath === 0) {
+    throw new Error('cannot derive path budget from an empty package set')
+  }
+  return { maxCacheRelativePath, maxEnvRelativePath }
+}
+
+const listFiles = (root) => {
+  const files = []
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) walk(full)
+      else if (entry.isFile()) files.push(full.slice(root.length + 1).replaceAll('\\', '/'))
+    }
+  }
+  walk(root)
+  return files
+}
+
+// micromamba's package extractor understands both .conda and .tar.bz2. Staging runs this only once
+// per package in the release workflow; the resulting list is discarded after budget derivation.
+const inspectPackage = (mm, archive) => {
+  const destination = mkdtempSync(join(tmpdir(), 'os-pack-inspect-'))
+  try {
+    execFileSync(mm, ['package', 'extract', archive, destination], {
+      stdio: 'ignore',
+      maxBuffer: 16 * 1024 * 1024
+    })
+    return listFiles(destination)
+  } finally {
+    rmSync(destination, { recursive: true, force: true })
+  }
+}
+
 const md5FileSync = (path) => createHash('md5').update(readFileSync(path)).digest('hex')
 
 // Asserts every tarball a lock references exists in pkgsDir with a matching md5 (the per-pack
@@ -234,6 +290,10 @@ const stagePack = async (mm, stagingRoot, pack, platform) => {
   // Louder than the workflow's old "non-empty" check: fail the whole staging if any referenced tarball
   // is missing or md5-mismatched, so a broken pack can never be published.
   verifyBundleComplete(lock, PKGS)
+  const packageContents = Object.fromEntries(
+    packageEntriesFromLock(lock).map(({ file }) => [file, inspectPackage(mm, join(packDir, file))])
+  )
+  const pathBudget = derivePackPathBudget(lock, packageContents)
   const archivePath = join(OUT, packArchiveFile(language, version))
   await createPackArchive(packDir, archivePath)
   rmSync(packDir, { recursive: true, force: true })
@@ -243,7 +303,8 @@ const stagePack = async (mm, stagingRoot, pack, platform) => {
     version,
     file: packArchiveFile(language, version),
     sha256: createHash('sha256').update(bytes).digest('hex'),
-    size: bytes.length
+    size: bytes.length,
+    ...pathBudget
   }
 }
 

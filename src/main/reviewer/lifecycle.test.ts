@@ -175,8 +175,9 @@ type FakeAgentState = {
   promptsReceived: Map<string, string[]>
   closedSessions: string[]
   // Records the outcome of any permission request the reviewer session raised (regression coverage for
-  // background reviewer auto-approval — an un-tracked reviewer session must not be rejected as unknown).
+  // background reviewer permission handling, including the exact allow/reject option selected).
   reviewerPermissionOutcomes: string[]
+  reviewerPermissionOptionIds: Array<string | undefined>
 }
 
 const startFakeAgent = (
@@ -204,7 +205,8 @@ const startFakeAgent = (
     newSessions: [],
     promptsReceived: new Map(),
     closedSessions: [],
-    reviewerPermissionOutcomes: []
+    reviewerPermissionOutcomes: [],
+    reviewerPermissionOptionIds: []
   }
 
   acp
@@ -261,6 +263,9 @@ const startFakeAgent = (
           ]
         })
         state.reviewerPermissionOutcomes.push(permission.outcome.outcome)
+        state.reviewerPermissionOptionIds.push(
+          permission.outcome.outcome === 'selected' ? permission.outcome.optionId : undefined
+        )
       }
 
       // If this is the reviewer session, simulate submit_findings via HTTP.
@@ -336,8 +341,8 @@ describe('reviewer app lifecycle integration', () => {
       startFakeAgent(process, {
         reviewerSessionId: 'reviewer-session-1',
         mainSessionId: 'main-session-1',
-        // No checks submitted → pass
-        simulateFindingsViaHttp: false
+        // An explicit empty submission is a valid pass.
+        simulateFindingsViaHttp: true
       })
 
       const runtime = new AcpRuntime({
@@ -387,14 +392,14 @@ describe('reviewer app lifecycle integration', () => {
       await client.$disconnect()
     })
 
-    it('auto-approves the reviewer session tool calls instead of rejecting them as unknown', async () => {
+    it('rejects an out-of-scope reviewer execution request without breaking the review', async () => {
       const process = new FakeAgentProcess()
       const state = startFakeAgent(process, {
         reviewerSessionId: 'reviewer-session-1',
         mainSessionId: 'main-session-1',
-        // The reviewer raises a permission request (as it would when running Python in its REPL).
+        // The reviewer raises the legacy Python execution request that must now be denied.
         requestPermissionFromReviewer: true,
-        simulateFindingsViaHttp: false
+        simulateFindingsViaHttp: true
       })
 
       const runtime = new AcpRuntime({
@@ -420,10 +425,11 @@ describe('reviewer app lifecycle integration', () => {
         artifactStorageRoot: temporaryRoot!
       })
 
-      // The reviewer's permission request was auto-approved (selected), not rejected/thrown.
+      // The request is handled unattended, but the selected option is the explicit rejection.
       expect(state.reviewerPermissionOutcomes).toEqual(['selected'])
-      // The review still completed end-to-end.
+      expect(state.reviewerPermissionOptionIds).toEqual(['reject-once'])
       expect(review.lifecycle).toBe('complete')
+      expect(review.outcome).toBe('pass')
 
       await client.$disconnect()
     })
@@ -529,6 +535,7 @@ describe('reviewer app lifecycle integration', () => {
         reviewRepository: repository,
         acpRuntime: runtime,
         artifactStorageRoot: temporaryRoot!,
+        sessionRefreshTimeoutMs: 0,
         onCorrectionPrompt: (text) => correctionPrompts.push(text)
       })
 
@@ -640,6 +647,7 @@ describe('reviewer app lifecycle integration', () => {
         reviewRepository: repository,
         acpRuntime: runtime,
         artifactStorageRoot: temporaryRoot!,
+        sessionRefreshTimeoutMs: 0,
         onCorrectionPrompt: (text) => correctionPrompts.push(text),
         onRunReviewCalled: () => {
           runReviewCallCount++
@@ -650,14 +658,14 @@ describe('reviewer app lifecycle integration', () => {
       // The fix loop is driven by runFixLoop (internal), not by external runReview re-calls.
       expect(runReviewCallCount).toBe(0)
 
-      // Phase 3: the fix loop triggers internal re-reviews — multiple reviewer sessions spawn.
-      // The fake agent keeps returning the same findings for each reviewer session, so the loop
-      // runs 3 rounds (cap) and ends with unaddressed. At minimum 4 sessions: initial + 3 re-reviews.
+      // The fake persistence snapshot never gains a correction message. The loop must fail closed
+      // instead of re-reviewing the original stale turn and falsely resolving the issue.
       const reviewerSessions = agentState.newSessions.filter(
         (s) => s.sessionId === 'reviewer-session-1'
       )
-      // The key invariant: re-reviews are driven internally (not via external trigger).
-      expect(reviewerSessions.length).toBeGreaterThan(1)
+      expect(reviewerSessions).toHaveLength(1)
+      const stored = await repository.getReviewsForSession('session-1')
+      expect(stored[0]?.checks[0]?.resolution).toBe('unaddressed')
 
       await client.$disconnect()
     })

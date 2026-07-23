@@ -104,7 +104,8 @@ describe('WorkspacePage notebook entry hydration', () => {
         onFixLoopStart: vi.fn(() => vi.fn()),
         onFixLoopEnd: vi.fn(() => vi.fn()),
         abortFixLoop: vi.fn(() => Promise.resolve())
-      }
+      },
+      compute: { enabledHostsSet: vi.fn(() => Promise.resolve()) }
     } as never
     container = document.createElement('div')
     document.body.appendChild(container)

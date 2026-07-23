@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { envsLockDir, exportRuntimeLocks } from './runtime-relocation'
-import { envPrefix, pythonBin, rBin, runtimeRoot } from './runtime-paths'
+import { DEFAULT_PY_ENV, envPrefix, pythonBin, rBin, runtimeRoot } from './runtime-paths'
 
 const roots: string[] = []
 const makeRoot = async (): Promise<string> => {
@@ -53,12 +53,38 @@ describe('exportRuntimeLocks', () => {
     // Each env is exported against its own prefix.
     expect(capture).toHaveBeenCalledWith([
       '/mm',
+      '--no-rc',
       'list',
       '--prefix',
       envPrefix(runtimeRoot(from), 'default-python'),
       '--explicit',
       '--md5'
     ])
+  })
+
+  it('exports the short Windows default under its logical lock name and ignores a legacy duplicate', async () => {
+    const from = await makeRoot()
+    const to = await makeRoot()
+    const envsDir = join(runtimeRoot(from), 'envs')
+    const shortPrefix = join(envsDir, '.p')
+    const legacyPrefix = join(envsDir, DEFAULT_PY_ENV)
+    for (const prefix of [shortPrefix, legacyPrefix]) {
+      const bin = pythonBin(prefix)
+      await mkdir(dirname(bin), { recursive: true })
+      await writeFile(bin, '')
+    }
+
+    const capture = vi.fn().mockResolvedValue(LOCK_STDOUT)
+    const exported = await exportRuntimeLocks(from, to, {
+      mm: '/mm',
+      capture,
+      platform: 'win32'
+    })
+
+    expect(exported).toEqual([DEFAULT_PY_ENV])
+    expect(capture).toHaveBeenCalledOnce()
+    expect(capture.mock.calls[0]?.[0]).toContain(shortPrefix)
+    expect(await readdir(envsLockDir(runtimeRoot(to)))).toEqual([`${DEFAULT_PY_ENV}.lock`])
   })
 
   it('returns [] and writes nothing when micromamba is unavailable', async () => {

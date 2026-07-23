@@ -13,7 +13,8 @@
     "  for s in osx-arm64 osx-64 linux-64 linux-aarch64 win-64; do",
     "    curl -fsSL \"https://micro.mamba.pm/api/micromamba/$s/$ver\" | shasum -a 256 | awk -v s=$s '{print s, $1}'",
     "  done",
-    "The sha256 covers the downloaded .tar.bz2 archive (before extraction)."
+    "The sha256 covers the downloaded .tar.bz2 archive (before extraction).",
+    "Before accepting a micromamba bump, revalidate the Windows managed-runtime fixtures for multi-cache search, URL-derived cache layout, and flat-cache fallback with LongPathsEnabled=0."
   ],
   "version": "2.8.1",
   "sha256": {

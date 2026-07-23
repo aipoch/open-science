@@ -7,7 +7,14 @@ import {
   type PersistedChatSession
 } from '../../../shared/session-persistence'
 import type { UploadedAttachment } from '../../../shared/uploads'
-import { createInitialSessionState, toPersistedSession, useSessionStore } from './session-store'
+import {
+  createInitialSessionState,
+  toPersistedSession,
+  useSessionStore,
+  type ChatMessage,
+  type ChatSession,
+  type ToolActivity
+} from './session-store'
 
 const createArtifactFile = (overrides: Partial<ArtifactFile> = {}): ArtifactFile => ({
   id: 'artifact-session-1:run-1:result.txt',
@@ -161,6 +168,13 @@ describe('session store', () => {
       uploads: [finalizedUpload]
     })
 
+    const finalizedSession = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().replaceMessageUploads({
+      sessionId: 'transport-session-1',
+      messageId: pending?.messageId ?? '',
+      uploads: [finalizedUpload]
+    })
+
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       id: 'transport-session-1',
       title: 'Attached first.png',
@@ -178,6 +192,29 @@ describe('session store', () => {
         })
       ]
     })
+    expect(finalizedSession.filesRevision).toBe(1)
+    expect(useSessionStore.getState().sessions[0]).toBe(finalizedSession)
+  })
+
+  it('increments the file revision when removing a message with finalized uploads', () => {
+    const pending = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Analyze',
+      attachments: [createUploadAttachment()]
+    })
+    const finalizedUpload = createUploadAttachment({
+      sessionId: 'transport-session-1',
+      path: '/Users/example/.open-science/uploads/default-project/transport-session-1/first.png'
+    })
+    useSessionStore.getState().replaceMessageUploads({
+      sessionId: 'transport-session-1',
+      messageId: pending?.messageId ?? '',
+      uploads: [finalizedUpload]
+    })
+
+    useSessionStore.getState().removeMessage('transport-session-1', pending?.messageId ?? '')
+
+    expect(useSessionStore.getState().sessions[0].filesRevision).toBe(2)
   })
 
   it('binds a pending session to the runtime session id without rewriting the prompt', () => {
@@ -189,7 +226,9 @@ describe('session store', () => {
     const bound = useSessionStore.getState().bindPendingSession({
       pendingSessionId: pending?.sessionId ?? '',
       sessionId: 'transport-session-1',
-      cwd: '/workspace/project'
+      cwd: '/workspace/project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:codex-shared'
     })
 
     expect(bound).toEqual({
@@ -202,6 +241,8 @@ describe('session store', () => {
         id: 'transport-session-1',
         isPending: false,
         cwd: '/workspace/project',
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:codex-shared',
         status: 'running',
         activeRun: {
           promptMessageId: pending?.messageId,
@@ -968,20 +1009,21 @@ describe('session store', () => {
       artifacts: [createArtifactFile()]
     })
 
+    const finalizedArtifacts = [
+      createArtifactFile({
+        id: 'transport-session-1:message-1:result.txt',
+        sessionId: 'transport-session-1',
+        messageId: 'message-1',
+        runId: undefined,
+        path: '/Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/result.txt',
+        fileUrl:
+          'file:///Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/result.txt'
+      })
+    ]
     useSessionStore.getState().replaceMessageArtifacts({
       sessionId: 'transport-session-1',
       messageId: attached?.messageId ?? '',
-      artifacts: [
-        createArtifactFile({
-          id: 'transport-session-1:message-1:result.txt',
-          sessionId: 'transport-session-1',
-          messageId: 'message-1',
-          runId: undefined,
-          path: '/Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/result.txt',
-          fileUrl:
-            'file:///Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/result.txt'
-        })
-      ]
+      artifacts: finalizedArtifacts
     })
 
     const session = useSessionStore.getState().sessions[0]
@@ -991,6 +1033,14 @@ describe('session store', () => {
     expect(session.artifacts?.map((artifact) => artifact.id)).toEqual([
       'transport-session-1:message-1:result.txt'
     ])
+    expect(session.filesRevision).toBe(1)
+
+    useSessionStore.getState().replaceMessageArtifacts({
+      sessionId: 'transport-session-1',
+      messageId: attached?.messageId ?? '',
+      artifacts: finalizedArtifacts
+    })
+    expect(useSessionStore.getState().sessions[0]).toBe(session)
   })
 
   it('replaces pending artifact metadata with an empty finalized artifact list', () => {
@@ -1342,14 +1392,16 @@ describe('session store', () => {
     it('markResumed clears the interrupted state so the composer is usable', () => {
       hydrateInterrupted()
 
-      useSessionStore.getState().markResumed('resumable-session', 'codex')
+      useSessionStore.getState().markResumed('resumable-session', 'codex', 'codex:codex-isolated')
       const session = useSessionStore.getState().sessions[0]
 
       expect(session.interrupted).toBeUndefined()
       expect(session.error).toBeUndefined()
       expect(session.status).toBe('idle')
       expect(session.agentFrameworkId).toBe('codex')
+      expect(session.agentBackendId).toBe('codex:codex-isolated')
       expect(toPersistedSession(session).agentFrameworkId).toBe('codex')
+      expect(toPersistedSession(session).agentBackendId).toBe('codex:codex-isolated')
     })
 
     it('markDisconnected flags a live drop and settles the half-streamed reply, keeping the user turn', () => {
@@ -1377,5 +1429,160 @@ describe('session store', () => {
       expect(session.messages[0]).toMatchObject({ role: 'user', content: 'Read the files' })
       expect(session.messages[1]).toMatchObject({ content: 'I started', status: 'error' })
     })
+
+    it('markDisconnected preserves a specific reason in the Resume banner', () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'transport-session-1',
+        content: 'Read the files',
+        cwd: '/workspace/project'
+      })
+
+      useSessionStore.getState().markDisconnected('transport-session-1', 'Connection timeout')
+
+      const session = useSessionStore.getState().sessions[0]
+
+      expect(session.status).toBe('error')
+      expect(session.interrupted).toBe(true)
+      // The specific cause is kept while retaining the Resume affordance.
+      expect(session.error).toBe('Connection timeout — Resume to reconnect and continue.')
+    })
+
+    it('markDisconnected falls back to a generic message for a blank reason', () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'transport-session-1',
+        content: 'Read the files',
+        cwd: '/workspace/project'
+      })
+
+      useSessionStore.getState().markDisconnected('transport-session-1', '   ')
+
+      const session = useSessionStore.getState().sessions[0]
+
+      expect(session.error).toBe('Connection lost — Resume to reconnect and continue.')
+    })
+  })
+})
+
+describe('truncateSessionFromMessage', () => {
+  const baseTime = 1710000000000
+
+  const createMessage = (
+    id: string,
+    role: 'user' | 'agent',
+    createdAt: number,
+    overrides: Partial<ChatMessage> = {}
+  ): ChatMessage => ({
+    id,
+    role,
+    content: `${id} content`,
+    status: 'complete' as const,
+    eventIds: [],
+    createdAt,
+    updatedAt: createdAt,
+    ...overrides
+  })
+
+  const createActivity = (id: string, createdAt: number): ToolActivity => ({
+    id,
+    kind: 'tool' as const,
+    title: `activity ${id}`,
+    status: 'completed' as const,
+    eventIds: [`${id}-event`],
+    sortIndex: createdAt,
+    createdAt,
+    updatedAt: createdAt
+  })
+
+  const seedSession = (overrides: Partial<ChatSession> = {}): void => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'session-1',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            createMessage('user-1', 'user', baseTime),
+            createMessage('agent-1', 'agent', baseTime + 100),
+            createMessage('user-2', 'user', baseTime + 200),
+            createMessage('agent-2', 'agent', baseTime + 300)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 300,
+          ...overrides
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+  }
+
+  beforeEach(() => {
+    useSessionStore.setState(createInitialSessionState())
+  })
+
+  it('drops the cut message and every later turn, clearing run and banner state', () => {
+    seedSession({
+      status: 'error',
+      error: 'previous failure',
+      activeRun: { promptMessageId: 'user-2', startedAt: baseTime + 200 },
+      interrupted: true
+    })
+
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.messages.map((message) => message.id)).toEqual(['user-1', 'agent-1'])
+    expect(session.status).toBe('idle')
+    expect(session.activeRun).toBeUndefined()
+    expect(session.error).toBeUndefined()
+    expect(session.interrupted).toBeUndefined()
+  })
+
+  it('cuts later activities by creation time and keeps earlier ones', () => {
+    seedSession({
+      activities: [
+        createActivity('act-1', baseTime + 150),
+        createActivity('act-2', baseTime + 250),
+        createActivity('act-3', baseTime + 350)
+      ]
+    })
+
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+
+    expect(
+      useSessionStore.getState().sessions[0].activities?.map((activity) => activity.id)
+    ).toEqual(['act-1'])
+  })
+
+  it('advances filesRevision only when removed messages carry file references', () => {
+    seedSession({
+      filesRevision: 3,
+      messages: [
+        createMessage('user-1', 'user', baseTime),
+        createMessage('agent-1', 'agent', baseTime + 100),
+        createMessage('user-2', 'user', baseTime + 200, {
+          uploads: [createUploadAttachment()]
+        })
+      ]
+    })
+
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    expect(useSessionStore.getState().sessions[0].filesRevision).toBe(4)
+
+    seedSession({ filesRevision: 3 })
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    expect(useSessionStore.getState().sessions[0].filesRevision).toBe(3)
+  })
+
+  it('ignores unknown session or message ids', () => {
+    seedSession()
+    const before = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().truncateSessionFromMessage('session-unknown', 'user-2')
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'message-unknown')
+
+    expect(useSessionStore.getState().sessions[0]).toBe(before)
   })
 })

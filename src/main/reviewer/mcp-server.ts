@@ -1,4 +1,5 @@
-// In-process HTTP MCP server that exposes `submit_findings` to the reviewer ACP session.
+// In-process HTTP MCP server that exposes scope-bounded evidence reads and `submit_findings` to the
+// reviewer ACP session. It is the reviewer's only approved capability.
 // Uses the MCP Streamable HTTP transport so the agent connects via URL (McpServerHttp).
 // The server is created per review run and shut down after the reviewer session disposes.
 //
@@ -15,13 +16,21 @@ import { z } from 'zod'
 
 import type { McpServer } from '@agentclientprotocol/sdk'
 
-import type { NewCheck, TurnScope } from '../../shared/reviewer'
-import { assertBlockInScope } from './host-sdk'
+import {
+  REVIEWER_MCP_SERVER_NAME,
+  REVIEWER_MCP_TOOLS,
+  type NewCheck,
+  type TurnScope
+} from '../../shared/reviewer'
+import { assertBlockInScope, type ReviewerHostServer } from './host-sdk'
 import { createLogger } from '../logger'
 
-const REVIEWER_MCP_SERVER_NAME = 'open-science-reviewer'
-
 const log = createLogger('reviewer:mcp')
+
+type ReviewerEvidenceAccess = Pick<
+  ReviewerHostServer,
+  'readTurn' | 'queryExecutionLog' | 'readArtifact'
+>
 
 // Zod schema for the optional locator on a check submitted by the reviewer.
 const checkLocatorSchema = z.object({
@@ -53,6 +62,14 @@ const checkSchema = z.object({
       'Supporting evidence from the turn (cite block ids / exec-log entries / artifact content you read). ' +
         'For pass checks: describe what you verified and why it passed. ' +
         'For warn/fail: describe the contradiction found.'
+    ),
+  sourceFindingId: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Stable id of an original finding being re-evaluated. Required for every tracked finding ' +
+        'during a fix-loop re-review; never invent or rewrite this id.'
     ),
   locator: checkLocatorSchema
     .optional()
@@ -101,6 +118,7 @@ export const mapChecksToScope = (
         status: c.status,
         claim: c.claim,
         evidence: c.evidence,
+        sourceFindingId: c.sourceFindingId,
         locator: undefined,
         artifactVersionId: c.artifactVersionId,
         sortIndex: i
@@ -123,6 +141,7 @@ export const mapChecksToScope = (
       status: c.status,
       claim: c.claim,
       evidence: c.evidence,
+      sourceFindingId: c.sourceFindingId,
       locator: { blockRef, contentHash: block.contentHash },
       artifactVersionId: c.artifactVersionId,
       sortIndex: i
@@ -148,11 +167,16 @@ export class ReviewerMcpServer {
   private readonly token: string
   private _endpoint: string | undefined
   private readonly transports = new Map<string, StreamableHTTPServerTransport>()
+  private readonly trackedFindingIds: ReadonlySet<string>
+  private findingsSubmissionState: 'idle' | 'submitting' | 'submitted' = 'idle'
 
   constructor(
     private readonly scope: TurnScope,
-    private readonly onSubmitFindings: SubmitFindingsHandler
+    private readonly onSubmitFindings: SubmitFindingsHandler,
+    private readonly evidence?: ReviewerEvidenceAccess,
+    trackedFindingIds: readonly string[] = []
   ) {
+    this.trackedFindingIds = new Set(trackedFindingIds)
     this.token = randomUUID()
     this.mcpServer = this.buildMcpServer()
     this.httpServer = createServer((req, res) => {
@@ -205,8 +229,72 @@ export class ReviewerMcpServer {
       version: '1.0.0'
     })
 
+    const evidence = this.evidence
+    if (evidence) {
+      server.registerTool(
+        REVIEWER_MCP_TOOLS.readTurn,
+        {
+          title: 'Read audited turn',
+          description:
+            'Return the ordered message and tool-activity blocks in the audited turn. The server ' +
+            'enforces the turn scope; no other conversation data is available.',
+          inputSchema: {}
+        },
+        async () => ({
+          content: [{ type: 'text', text: JSON.stringify(evidence.readTurn()) }]
+        })
+      )
+
+      server.registerTool(
+        REVIEWER_MCP_TOOLS.queryExecutionLog,
+        {
+          title: 'Read audited execution log',
+          description:
+            'Return tool input, output, terminal output, and exit codes for activities in the ' +
+            'audited turn. An out-of-scope activity id is rejected.',
+          inputSchema: {
+            activityId: z.string().optional().describe('Optional in-scope activity id')
+          }
+        },
+        async ({ activityId }) => {
+          try {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(evidence.queryExecutionLog(activityId))
+                }
+              ]
+            }
+          } catch (error) {
+            return this.toolError(error)
+          }
+        }
+      )
+
+      server.registerTool(
+        REVIEWER_MCP_TOOLS.readArtifact,
+        {
+          title: 'Read audited artifact',
+          description:
+            'Read one artifact attached to the audited turn. CSV/TSV data is returned by column; ' +
+            'an out-of-scope artifact id is rejected.',
+          inputSchema: { id: z.string().min(1).describe('In-scope artifact version id') }
+        },
+        async ({ id }) => {
+          try {
+            return {
+              content: [{ type: 'text', text: JSON.stringify(await evidence.readArtifact(id)) }]
+            }
+          } catch (error) {
+            return this.toolError(error)
+          }
+        }
+      )
+    }
+
     server.registerTool(
-      'submit_findings',
+      REVIEWER_MCP_TOOLS.submitFindings,
       {
         title: 'Submit review checks',
         description:
@@ -217,6 +305,15 @@ export class ReviewerMcpServer {
         inputSchema: submitFindingsInputSchema.shape
       },
       async (input) => {
+        if (this.findingsSubmissionState !== 'idle') {
+          return {
+            content: [
+              { type: 'text', text: 'Validation error: submit_findings was already called.' }
+            ],
+            isError: true
+          }
+        }
+
         let parsed: SubmitFindingsInput
 
         try {
@@ -232,6 +329,15 @@ export class ReviewerMcpServer {
 
         log.info('submit_findings received', { count: parsed.checks.length })
 
+        const trackingError = this.validateTrackedDispositions(parsed.checks)
+        if (trackingError) {
+          log.warn('submit_findings tracking validation failed', { error: trackingError })
+          return {
+            content: [{ type: 'text', text: `Validation error: ${trackingError}` }],
+            isError: true
+          }
+        }
+
         // Back-fill each locator's contentHash from its scope block and reject out-of-scope
         // locators (design.md:114 single-sourcing contract). A bad locator is a validation error.
         let newChecks: NewCheck[]
@@ -246,7 +352,14 @@ export class ReviewerMcpServer {
           }
         }
 
-        await this.onSubmitFindings(newChecks, this.scope, {})
+        this.findingsSubmissionState = 'submitting'
+        try {
+          await this.onSubmitFindings(newChecks, this.scope, {})
+          this.findingsSubmissionState = 'submitted'
+        } catch (error) {
+          this.findingsSubmissionState = 'idle'
+          throw error
+        }
 
         return {
           content: [
@@ -260,6 +373,37 @@ export class ReviewerMcpServer {
     )
 
     return server
+  }
+
+  // A fix-loop re-review must disposition every original finding by stable database id exactly once.
+  // New issues may be submitted without sourceFindingId, but wording can never resolve or re-flag an
+  // existing finding. Initial reviews reject source ids because there is nothing to track yet.
+  private validateTrackedDispositions(checks: SubmitFindingsInput['checks']): string | undefined {
+    const supplied = new Set<string>()
+
+    for (const check of checks) {
+      const id = check.sourceFindingId
+      if (!id) continue
+      if (!this.trackedFindingIds.has(id)) return `Unknown sourceFindingId ${JSON.stringify(id)}.`
+      if (supplied.has(id))
+        return `Duplicate disposition for sourceFindingId ${JSON.stringify(id)}.`
+      supplied.add(id)
+    }
+
+    const missing = [...this.trackedFindingIds].filter((id) => !supplied.has(id))
+    if (missing.length > 0) {
+      return `Missing disposition for tracked finding id(s): ${missing.join(', ')}.`
+    }
+
+    return undefined
+  }
+
+  private toolError(error: unknown): {
+    content: Array<{ type: 'text'; text: string }>
+    isError: true
+  } {
+    const message = error instanceof Error ? error.message : String(error)
+    return { content: [{ type: 'text', text: message }], isError: true }
   }
 
   private async handleHttpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -277,11 +421,12 @@ export class ReviewerMcpServer {
 
     let transport: StreamableHTTPServerTransport
 
-    if (sessionId && this.transports.has(sessionId)) {
+    const existingTransport = sessionId ? this.transports.get(sessionId) : undefined
+    if (existingTransport) {
       // Established session: every follow-up request (POST messages, GET SSE stream, DELETE) carries
       // the mcp-session-id, so reuse its transport. Crucially the GET that opens the SSE stream lands
       // here — connecting a second transport to the shared McpServer would throw "Already connected".
-      transport = this.transports.get(sessionId)!
+      transport = existingTransport
     } else if (!sessionId && req.method === 'POST') {
       // The initialize request is the only one without a session id: create the transport, register it
       // as soon as the session id is assigned, and connect the McpServer to it exactly once.

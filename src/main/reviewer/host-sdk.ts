@@ -1,11 +1,7 @@
-// Host SDK for the reviewer REPL sandbox. Provides scope-narrowed read functions that the reviewer
-// calls from Python code to access the audited turn's data. All access is validated against the
-// TurnScope produced by resolveTurnScope; out-of-scope ids are rejected.
-//
-// The "host" module is injected into the reviewer Python sandbox via an HTTP RPC endpoint (mirroring
-// how the notebook MCP server's host.mcp() works). The reviewer REPL's Python bridge boots a _Host
-// object; calls to host.read_turn() / host.query_execution_log() / host.read_artifact() POST to this
-// server and get back JSON.
+// Turn-scoped evidence access for the reviewer. Production calls the public read methods through the
+// dedicated reviewer MCP server, which validates every activity/artifact id against TurnScope. The
+// authenticated HTTP adapter remains for compatibility tests and older callers, but the reviewer no
+// longer receives its endpoint/token or executes a Python bootstrap.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
@@ -73,8 +69,7 @@ export type ArtifactContent = TabularArtifactContent | RawArtifactContent
 // tell a guessing reviewer exactly what IS available (it likes to try e.g. `list_artifacts`).
 export const SUPPORTED_HOST_METHODS = ['read_turn', 'query_execution_log', 'read_artifact'] as const
 
-// The HTTP RPC server that backs the host.* Python functions in the reviewer sandbox.
-// It verifies every requested id against the TurnScope so the reviewer can only see this turn.
+// Scope-enforcing evidence reader with a legacy authenticated HTTP adapter.
 export class ReviewerHostServer {
   private server: Server
   readonly token: string
@@ -172,7 +167,7 @@ export class ReviewerHostServer {
   }
 
   // Returns the ordered blocks for this turn with their content and metadata.
-  private readTurn(): OrderedBlock[] {
+  readTurn(): OrderedBlock[] {
     const messageMap = new Map(this.session.messages.map((m) => [m.id, m]))
     const activityMap = new Map((this.session.activities ?? []).map((a) => [a.id, a]))
 
@@ -209,7 +204,7 @@ export class ReviewerHostServer {
   }
 
   // Returns execution records for this turn's activities, optionally filtered to one activity.
-  private queryExecutionLog(activityId?: string): ExecRecord[] {
+  queryExecutionLog(activityId?: string): ExecRecord[] {
     const activityIds = new Set(
       this.scope.blocks.filter((b) => b.kind === 'activity').map((b) => b.sourceId)
     )
@@ -240,7 +235,7 @@ export class ReviewerHostServer {
   // Tabular artifacts (CSV/TSV) are returned as { kind:'tabular'; columns; rowCount } so the
   // reviewer can address by column name without visual row alignment. Non-tabular artifacts
   // return { kind:'raw'; content; encoding }.
-  private async readArtifact(id: string): Promise<ArtifactContent> {
+  async readArtifact(id: string): Promise<ArtifactContent> {
     if (!this.scope.artifactVersionIds.includes(id)) {
       throw new Error(
         `Artifact id ${JSON.stringify(id)} is not in this turn's scope. ` +

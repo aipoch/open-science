@@ -73,3 +73,26 @@ export const withExclusiveCacheLock = async <T>(key: string, fn: () => Promise<T
     pump(state)
   }
 }
+
+const withCacheLocks = async <T>(
+  keys: string[],
+  acquireLock: <R>(key: string, operation: () => Promise<R>) => Promise<R>,
+  fn: () => Promise<T>
+): Promise<T> => {
+  const ordered = [...new Set(keys)].sort()
+  const acquire = (index: number): Promise<T> =>
+    index === ordered.length ? fn() : acquireLock(ordered[index], () => acquire(index + 1))
+  return acquire(0)
+}
+
+// Acquires multiple physical cache identities in stable order. Normal micromamba operations can
+// read the legacy root cache and write the selected short cache, so they share both identities.
+export const withSharedCacheLocks = async <T>(keys: string[], fn: () => Promise<T>): Promise<T> =>
+  withCacheLocks(keys, withSharedCacheLock, fn)
+
+// Recovery can inspect and delete from both cache locations, so it excludes users of either without
+// introducing a lock-order deadlock between concurrent recovery attempts.
+export const withExclusiveCacheLocks = async <T>(
+  keys: string[],
+  fn: () => Promise<T>
+): Promise<T> => withCacheLocks(keys, withExclusiveCacheLock, fn)

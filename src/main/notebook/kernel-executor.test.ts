@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { NotebookKernelExecutor } from './kernel-executor'
@@ -266,6 +266,38 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       const current = procFor(executor, 'python')?.child
       expect(current).toBeDefined()
       expect(current).not.toBe(managed) // a fresh process, not the reused managed kernel
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('replaces a resolved kernel when only its conda activation prefix changes', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-r-prefix-switch-'))
+    const executor = makeExecutor()
+    const request = {
+      ...baseRequest(cwdDir),
+      resolvedInterpreter: {
+        command: python3 as string,
+        condaPrefix: 'C:\\conda\\envs\\analysis-a'
+      }
+    }
+    try {
+      await executor.execute({ ...request, code: 'a' })
+      const first = procFor(executor, 'python')?.child
+      expect(first).toBeDefined()
+
+      await executor.execute({
+        ...request,
+        code: 'b',
+        resolvedInterpreter: {
+          ...request.resolvedInterpreter,
+          condaPrefix: 'C:\\conda\\envs\\analysis-b'
+        }
+      })
+
+      const procs = (executor as unknown as ExecutorInternals).procs
+      expect(procs.size).toBe(1)
+      expect(procFor(executor, 'python')?.child).not.toBe(first)
     } finally {
       await executor.shutdown()
     }
@@ -707,6 +739,65 @@ describe('NotebookKernelExecutor spawn env', () => {
       // Only the repl kernel runs the app binary as plain Node.
       expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined()
     }
+  })
+
+  it('activates the complete Windows conda PATH before spawning a named managed R kernel', () => {
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE, platform: 'win32' })
+    const request = {
+      ...baseRequest('/tmp/os-r-windows-path'),
+      code: 'x',
+      environment: 'r-stats'
+    }
+    const buildEnv = (executor as unknown as { buildEnv: BuildEnvFn }).buildEnv.bind(executor)
+    const prefix = envPrefix(request.runtimeRoot, 'r-stats')
+
+    expect(buildEnv('r', request, '/tmp/figs').PATH?.split(';').slice(0, 6)).toEqual([
+      win32.normalize(prefix),
+      win32.join(prefix, 'Library', 'mingw-w64', 'bin'),
+      win32.join(prefix, 'Library', 'usr', 'bin'),
+      win32.join(prefix, 'Library', 'bin'),
+      win32.join(prefix, 'Scripts'),
+      win32.join(prefix, 'bin')
+    ])
+  })
+
+  it('does not contaminate an external Windows R interpreter with managed conda DLL paths', () => {
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE, platform: 'win32' })
+    const request = {
+      ...baseRequest('/tmp/os-r-external-path'),
+      code: 'x',
+      resolvedInterpreter: { command: 'C:\\ExternalR\\bin\\Rscript.exe' }
+    }
+    const buildEnv = (executor as unknown as { buildEnv: BuildEnvFn }).buildEnv.bind(executor)
+    const env = buildEnv('r', request, '/tmp/figs')
+
+    expect(env.OPEN_SCIENCE_R_ENV_PREFIX).toBeUndefined()
+    expect(env.PATH).toBe(process.env.PATH)
+  })
+
+  it('activates an external Windows conda R interpreter with its own DLL paths', () => {
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE, platform: 'win32' })
+    const prefix = 'C:\\Users\\HM\\miniforge3\\envs\\analysis'
+    const request = {
+      ...baseRequest('/tmp/os-r-external-conda-path'),
+      code: 'x',
+      resolvedInterpreter: {
+        command: `${prefix}\\Lib\\R\\bin\\Rscript.exe`,
+        condaPrefix: prefix
+      }
+    }
+    const buildEnv = (executor as unknown as { buildEnv: BuildEnvFn }).buildEnv.bind(executor)
+    const env = buildEnv('r', request, '/tmp/figs')
+
+    expect(env.OPEN_SCIENCE_R_ENV_PREFIX).toBe(prefix)
+    expect(env.PATH?.split(';').slice(0, 6)).toEqual([
+      win32.normalize(prefix),
+      win32.join(prefix, 'Library', 'mingw-w64', 'bin'),
+      win32.join(prefix, 'Library', 'usr', 'bin'),
+      win32.join(prefix, 'Library', 'bin'),
+      win32.join(prefix, 'Scripts'),
+      win32.join(prefix, 'bin')
+    ])
   })
 })
 

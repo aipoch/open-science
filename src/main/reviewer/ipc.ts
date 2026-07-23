@@ -168,10 +168,17 @@ const registerReviewerIpcHandlers = (
       }
     }
 
+    // Direct, repeatable loader used both for the start gate and every fix-loop refresh. The previous
+    // closure returned the `session` variable below forever, so a correction turn could never appear.
+    const loadCurrentSession = async (): Promise<PersistedChatSession | undefined> => {
+      if (projectId) return sessionRepository.loadSession(projectId, sessionId)
+      const { sessions } = await sessionRepository.loadAll()
+      return sessions.find((candidate) => candidate.id === sessionId)
+    }
+
     let session: PersistedChatSession | undefined
     try {
-      const { sessions } = await sessionRepository.loadAll()
-      session = sessions.find((s) => s.id === sessionId)
+      session = await loadCurrentSession()
     } catch (error) {
       // No Review row exists to update, so surface the failure only as started:false — the renderer
       // keeps the (stale) card and its Re-run affordance so the user can try again.
@@ -224,7 +231,9 @@ const registerReviewerIpcHandlers = (
         projectId,
         mainSessionId,
         model: model ?? '',
-        getSession: () => session,
+        // Reload on every orchestrator request. In particular, the post-correction read must observe
+        // the newly persisted [Auditor] and agent messages instead of the review-start snapshot.
+        getSession: loadCurrentSession,
         reviewRepository,
         acpRuntime: options.acpRuntime,
         // Artifacts live under the relocatable data root; DB/sessions stay on the config root.

@@ -94,6 +94,79 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('flex flex-wrap items-center justify-end gap-1 w-full overflow-hidden')
   })
 
+  it('keeps multiple always-allow scopes distinguishable', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            ...permissionRequest,
+            options: [
+              {
+                optionId: 'allow-session',
+                name: 'Allow for This Session',
+                kind: 'allow_always'
+              },
+              {
+                optionId: 'allow-always',
+                name: "Allow and Don't Ask Again",
+                kind: 'allow_always'
+              },
+              { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+              { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
+            ]
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+
+    expect(html).toContain('Always - Allow for This Session</span>')
+    expect(html).toContain('Always - Allow and Don&#x27;t Ask Again</span>')
+    expect(html.match(/>Always<\/span>/g)).toBeNull()
+  })
+
+  it('keeps canonical semantics when provider scope names look like other actions', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            ...permissionRequest,
+            options: [
+              { optionId: 'malicious-always', name: 'Reject', kind: 'allow_always' },
+              { optionId: 'session-always', name: 'Allow once', kind: 'allow_always' }
+            ]
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+
+    expect(html).toContain('Always - Reject</span>')
+    expect(html).toContain('Always - Allow once</span>')
+    expect(html.match(/>Reject<\/span>/g)).toBeNull()
+    expect(html.match(/>Allow once<\/span>/g)).toBeNull()
+  })
+
+  it('labels non-notebook MCP approvals as MCP instead of command execution', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            ...permissionRequest,
+            title: 'mcp.open-science-artifacts.write_artifact_file',
+            providerToolName: 'write_artifact_file',
+            isMcp: true,
+            toolKind: 'execute'
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+
+    expect(html).toContain('MCP tool access</span>')
+    expect(html).not.toContain('Command execution</span>')
+  })
+
   it('serializes prompts by rendering only the first pending request', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls

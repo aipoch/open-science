@@ -112,6 +112,7 @@ type BindPendingSessionInput = {
   sessionId: string
   cwd?: string
   agentFrameworkId?: PersistedChatSession['agentFrameworkId']
+  agentBackendId?: PersistedChatSession['agentBackendId']
 }
 
 type AppendAgentMessageChunkInput = {
@@ -177,6 +178,7 @@ type SessionStore = SessionStoreData & {
   recordArtifactError: (sessionId: string, error: string) => void
   clearArtifactError: (sessionId: string) => void
   hydrateSessions: (sessions: PersistedChatSession[], manifest?: PersistedSessionManifest) => void
+  upsertPersistedSession: (session: PersistedChatSession) => void
   finishRun: (sessionId: string) => void
   failRun: (sessionId: string, error: string) => void
   // Sets the transient agent status line shown in the waiting indicator; only applies while running.
@@ -186,16 +188,20 @@ type SessionStore = SessionStoreData & {
   beginCompaction: (sessionId: string) => void
   markResumed: (
     sessionId: string,
-    agentFrameworkId?: PersistedChatSession['agentFrameworkId']
+    agentFrameworkId?: PersistedChatSession['agentFrameworkId'],
+    agentBackendId?: PersistedChatSession['agentBackendId']
   ) => void
-  markDisconnected: (sessionId: string) => void
+  markDisconnected: (sessionId: string, reason?: string) => void
   removeMessage: (sessionId: string, messageId: string) => void
+  truncateSessionFromMessage: (sessionId: string, messageId: string) => void
   upsertToolActivity: (input: UpsertToolActivityInput) => void
   setPermissionPending: (sessionId: string) => void
   clearPermissionPending: (sessionId: string) => void
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
   // Persists the per-session auto-review toggle. true = on; false = off (default).
   setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
+  // Sets the per-session enabled compute hosts (single-select, stored as array for extensibility).
+  setEnabledComputeHosts: (sessionId: string, providerIds: string[]) => void
   // Sets or clears the per-session fix loop active flag. When true, the composer send button is
   // disabled for this session; when false (loop ended or cancelled), send is re-enabled.
   setFixLoopActive: (sessionId: string, active: boolean) => void
@@ -209,6 +215,7 @@ let messageSequence = 0
 let pendingSessionSequence = 0
 let timelineSequence = 0
 const ARTIFACT_ERROR_PREFIX = 'Generated file finalization failed'
+const externallyHydratedSessions = new WeakSet<ChatSession>()
 
 // Builds the empty in-memory state used by the app and isolated tests.
 export const createInitialSessionState = (): SessionStoreData => ({
@@ -362,6 +369,57 @@ const createPersistedArtifact = (artifact: ArtifactFile): PersistedArtifact => (
   size: artifact.size,
   mtimeMs: artifact.mtimeMs
 })
+
+// Compare only persisted file metadata, in stable array order, before advancing filesRevision. This
+// keeps text/status-only session updates on the repository revision fast path.
+const arePersistedUploadsEqual = (
+  left: PersistedUploadedAttachment[] | undefined,
+  right: PersistedUploadedAttachment[]
+): boolean => {
+  const current = left ?? []
+  return (
+    current.length === right.length &&
+    current.every((item, index) => {
+      const next = right[index]
+      return (
+        item.id === next.id &&
+        item.sessionId === next.sessionId &&
+        item.name === next.name &&
+        item.originalName === next.originalName &&
+        item.path === next.path &&
+        item.mimeType === next.mimeType &&
+        item.size === next.size
+      )
+    })
+  )
+}
+
+const arePersistedArtifactsEqual = (
+  left: PersistedArtifact[] | undefined,
+  right: PersistedArtifact[]
+): boolean => {
+  const current = left ?? []
+  return (
+    current.length === right.length &&
+    current.every((item, index) => {
+      const next = right[index]
+      return (
+        item.id === next.id &&
+        item.kind === next.kind &&
+        item.path === next.path &&
+        item.fileUrl === next.fileUrl &&
+        item.name === next.name &&
+        item.mimeType === next.mimeType &&
+        item.size === next.size &&
+        item.mtimeMs === next.mtimeMs &&
+        item.sha256 === next.sha256
+      )
+    })
+  )
+}
+
+const areStringArraysEqual = (left: string[], right: string[]): boolean =>
+  left.length === right.length && left.every((item, index) => item === right[index])
 
 // Merges artifacts by id so replayed runtime events update paths without duplicating file cards.
 const upsertArtifacts = (
@@ -601,7 +659,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Replaces the temporary renderer id once ACP returns the real protocol session id.
-  bindPendingSession: ({ pendingSessionId, sessionId, cwd, agentFrameworkId }) => {
+  bindPendingSession: ({ pendingSessionId, sessionId, cwd, agentFrameworkId, agentBackendId }) => {
     if (!pendingSessionId || !sessionId) return undefined
 
     const state = get()
@@ -624,6 +682,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               isPending: false,
               cwd: cwd ?? session.cwd,
               agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
+              agentBackendId: agentBackendId ?? session.agentBackendId,
               updatedAt: now
             }
           : session
@@ -648,6 +707,24 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       : hydrated[0]?.id
 
     set({ sessions: hydrated, selectedSessionId })
+  },
+
+  // Applies a durable lifecycle event without letting this client's own save echo replace newer
+  // transient runtime state. Newer external snapshots remain authoritative.
+  upsertPersistedSession: (session) => {
+    set((state) => {
+      const existing = state.sessions.find((candidate) => candidate.id === session.id)
+      if (existing && existing.updatedAt >= session.updatedAt) return state
+
+      const hydratedSession = hydrateSession(session)
+      externallyHydratedSessions.add(hydratedSession)
+      const sessions = [
+        hydratedSession,
+        ...state.sessions.filter((candidate) => candidate.id !== session.id)
+      ].sort((left, right) => right.updatedAt - left.updatedAt)
+
+      return { sessions }
+    })
   },
 
   // Appends or extends a streamed agent message using a stable stream id.
@@ -849,26 +926,38 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         const preservedArtifacts = (session.artifacts ?? []).filter(
           (artifact) => !replacedArtifactIds.has(artifact.id)
         )
+        const nextArtifacts = upsertArtifacts(preservedArtifacts, incomingArtifacts)
+
+        if (
+          arePersistedArtifactsEqual(session.artifacts, nextArtifacts) &&
+          areStringArraysEqual(message.artifactIds ?? [], incomingArtifactIds)
+        ) {
+          return session
+        }
+
+        const now = Date.now()
 
         return {
           ...session,
-          artifacts: upsertArtifacts(preservedArtifacts, incomingArtifacts),
+          artifacts: nextArtifacts,
           messages: session.messages.map((item) =>
             item.id === messageId
               ? {
                   ...item,
                   artifactIds: incomingArtifactIds,
-                  updatedAt: Date.now()
+                  updatedAt: now
                 }
               : item
           ),
-          updatedAt: Date.now()
+          filesRevision: (session.filesRevision ?? 0) + 1,
+          updatedAt: now
         }
       })
     }))
   },
 
-  // Replaces upload references on the local user message after pending files move to the session dir.
+  // Replaces upload references after pending files move to the session directory. filesRevision is
+  // advanced only when persisted metadata actually changed, which schedules one index rescan.
   replaceMessageUploads: ({ sessionId, messageId, uploads }) => {
     if (!sessionId || !messageId) return
 
@@ -878,6 +967,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       sessions: state.sessions.map((session) => {
         if (session.id !== sessionId) return session
 
+        const targetMessage = session.messages.find((message) => message.id === messageId)
+        if (!targetMessage || arePersistedUploadsEqual(targetMessage.uploads, incomingUploads)) {
+          return session
+        }
+
+        const now = Date.now()
+
         return {
           ...session,
           messages: session.messages.map((message) =>
@@ -885,11 +981,12 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               ? {
                   ...message,
                   uploads: incomingUploads,
-                  updatedAt: Date.now()
+                  updatedAt: now
                 }
               : message
           ),
-          updatedAt: Date.now()
+          filesRevision: (session.filesRevision ?? 0) + 1,
+          updatedAt: now
         }
       })
     }))
@@ -1117,7 +1214,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Clears the interrupted/error state after a successful resume so the composer is usable again.
-  markResumed: (sessionId, agentFrameworkId) => {
+  markResumed: (sessionId, agentFrameworkId, agentBackendId) => {
     set((state) => ({
       sessions: state.sessions.map((session) =>
         session.id === sessionId
@@ -1127,6 +1224,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               error: undefined,
               interrupted: undefined,
               agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
+              agentBackendId: agentBackendId ?? session.agentBackendId,
               compacting: undefined,
               updatedAt: Date.now()
             }
@@ -1137,7 +1235,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
   // Flags a session dropped by a live connection loss so the Resume banner appears; like failRun it
   // settles any half-streamed message/open tool so nothing hangs in a perpetually-running state.
-  markDisconnected: (sessionId) => {
+  markDisconnected: (sessionId, reason) => {
+    // Preserve the specific failure cause (e.g. "Connection timeout") when the caller has one,
+    // while keeping the Resume affordance. Fall back to a generic message otherwise.
+    const trimmedReason = reason?.trim()
+    const error = trimmedReason
+      ? `${trimmedReason} — Resume to reconnect and continue.`
+      : 'Connection lost — Resume to reconnect and continue.'
     set((state) => ({
       sessions: state.sessions.map((session) =>
         session.id === sessionId
@@ -1147,7 +1251,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               activeRun: undefined,
               interrupted: true,
               compacting: undefined,
-              error: 'Connection lost — Resume to reconnect and continue.',
+              error,
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
               updatedAt: Date.now()
@@ -1157,20 +1261,62 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }))
   },
 
-  // Drops a single message by id (used to remove a stale interrupted user turn before it is re-sent).
+  // Drops a stale interrupted turn before re-send. Removing a message advances filesRevision only if
+  // it also removes upload/artifact references from the indexed projection.
   removeMessage: (sessionId, messageId) => {
     if (!sessionId || !messageId) return
 
     set((state) => ({
-      sessions: state.sessions.map((session) =>
-        session.id === sessionId
-          ? {
-              ...session,
-              messages: session.messages.filter((message) => message.id !== messageId),
-              updatedAt: Date.now()
-            }
-          : session
-      )
+      sessions: state.sessions.map((session) => {
+        if (session.id !== sessionId) return session
+        const removedMessage = session.messages.find((message) => message.id === messageId)
+        if (!removedMessage) return session
+        const hasFiles =
+          (removedMessage.uploads?.length ?? 0) > 0 || (removedMessage.artifactIds?.length ?? 0) > 0
+
+        return {
+          ...session,
+          messages: session.messages.filter((message) => message.id !== messageId),
+          filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
+          updatedAt: Date.now()
+        }
+      })
+    }))
+  },
+
+  // Drops a message and every turn after it for an edited resend. Activities are cut by timestamp
+  // because message sortIndex is transient (stripped on persist) while createdAt is durable on both
+  // sides of hydration. The kept turns are what the resend replays into the fresh agent context.
+  truncateSessionFromMessage: (sessionId, messageId) => {
+    if (!sessionId || !messageId) return
+
+    set((state) => ({
+      sessions: state.sessions.map((session) => {
+        if (session.id !== sessionId) return session
+        const cutIndex = session.messages.findIndex((message) => message.id === messageId)
+        if (cutIndex < 0) return session
+
+        const cutMessage = session.messages[cutIndex]
+        const removed = session.messages.slice(cutIndex)
+        const hasFiles = removed.some(
+          (message) => (message.uploads?.length ?? 0) > 0 || (message.artifactIds?.length ?? 0) > 0
+        )
+
+        return {
+          ...session,
+          status: 'idle',
+          messages: session.messages.slice(0, cutIndex),
+          activities: session.activities?.filter(
+            (activity) => activity.createdAt < cutMessage.createdAt
+          ),
+          activeRun: undefined,
+          agentStatus: undefined,
+          error: undefined,
+          interrupted: undefined,
+          filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
+          updatedAt: Date.now()
+        }
+      })
     }))
   },
 
@@ -1227,6 +1373,20 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           ? {
               ...session,
               autoReviewEnabled: enabled,
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  setEnabledComputeHosts: (sessionId, providerIds) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              enabledComputeHosts: providerIds.length > 0 ? providerIds : undefined,
               updatedAt: Date.now()
             }
           : session
@@ -1303,3 +1463,6 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     })
   }
 }))
+
+export const isExternallyHydratedSession = (session: ChatSession): boolean =>
+  externallyHydratedSessions.has(session)

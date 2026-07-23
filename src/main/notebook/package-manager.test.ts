@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 // Force the fallback micromamba resolver to "not found" so the "cannot be resolved" case is
@@ -9,7 +12,13 @@ vi.mock('./micromamba', async (importActual) => ({
   resolveMicromamba: () => undefined
 }))
 
-import { installPackages, type InstallSpawn, type SpawnResult } from './package-manager'
+import {
+  defaultSpawn,
+  installPackages,
+  type InstallSpawn,
+  type SpawnResult
+} from './package-manager'
+import { micromambaCacheLockKey, selectMicromambaCache } from './micromamba-cache'
 import { withExclusiveCacheLock } from './pkgs-cache-lock'
 import {
   envPrefix,
@@ -48,6 +57,53 @@ const base = {
   storageRoot: '/root',
   condaChannel: 'https://mirror.test/conda-forge'
 }
+
+describe('defaultSpawn (fail-closed spawn hooks)', () => {
+  it('calls onBeforeSpawn before spawning, and fails closed (no spawn) when it throws', async () => {
+    const order: string[] = []
+    await defaultSpawn(
+      process.execPath,
+      ['-e', 'process.exit(0)'],
+      undefined,
+      () => order.push('child'),
+      () => order.push('before')
+    )
+    expect(order[0]).toBe('before')
+
+    let childSpawned = false
+    const result = await defaultSpawn(
+      process.execPath,
+      ['-e', 'process.exit(0)'],
+      undefined,
+      () => {
+        childSpawned = true
+      },
+      () => {
+        throw new Error('intent write failed')
+      }
+    )
+    expect(result.code).toBe(1)
+    expect(result.stderr).toMatch(/spawn intent/)
+    expect(childSpawned).toBe(false) // never spawned
+  })
+
+  it('kills the child and reports failure when onChild (PID recording) throws', async () => {
+    let killedPid: number | undefined
+    const result = await defaultSpawn(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 60000)'],
+      undefined,
+      (pid) => {
+        killedPid = pid
+        throw new Error('sidecar write failed')
+      }
+    )
+    expect(result.code).toBe(1)
+    expect(result.stderr).toMatch(/Failed to record the installer worker/)
+    expect(killedPid).toBeGreaterThan(0)
+    await vi.waitFor(() => expect(() => process.kill(killedPid as number, 0)).toThrow())
+  })
+})
 
 describe('installPackages', () => {
   it('forwards the installer child PID through onChild (for crash-recovery journaling)', async () => {
@@ -250,6 +306,154 @@ describe('installPackages', () => {
     expect(env.CURL_CA_BUNDLE).toBeUndefined()
   })
 
+  it('uses the app-owned short cache only for Windows micromamba subprocesses', async () => {
+    const { spawn, calls } = scriptedSpawn([ok])
+    await installPackages(
+      { language: 'python', packages: ['numpy'] },
+      {
+        spawn,
+        ...base,
+        micromambaEnv: {
+          platform: 'win32',
+          env: {
+            PATH: 'C:\\Windows',
+            CONDA_PKGS_DIRS: 'Z:\\foreign',
+            MAMBA_ROOT_PREFIX: 'Z:\\foreign-root'
+          },
+          selectCache: () => ({
+            path: 'C:\\osp1234567890',
+            lockKey: 'c:\\osp1234567890'
+          })
+        }
+      }
+    )
+
+    const env = calls[0][2] ?? {}
+    expect(env.CONDA_PKGS_DIRS).toBe('C:\\osp1234567890')
+    expect(env.MAMBA_ROOT_PREFIX).toBeUndefined()
+  })
+
+  it('does not inject the package cache into a pip subprocess', async () => {
+    const { spawn, calls } = scriptedSpawn([ok])
+    await installPackages(
+      { language: 'python', packages: ['numpy'], usePip: true },
+      {
+        spawn,
+        ...base,
+        micromambaEnv: {
+          platform: 'win32',
+          env: { PATH: 'C:\\Windows' },
+          selectCache: () => ({
+            path: 'C:\\osp1234567890',
+            lockKey: 'c:\\osp1234567890'
+          })
+        }
+      }
+    )
+
+    expect(calls[0][0]).toContain('pip')
+    expect(calls[0][2]?.CONDA_PKGS_DIRS).toBeUndefined()
+  })
+
+  it('retries a conda install once after safe Windows MAX_PATH cache cleanup and preserves both logs', async () => {
+    const storageRoot = mkdtempSync(join(tmpdir(), 'os-pm-maxpath-'))
+    const cache = join(storageRoot, 'runtime', 'pkgs')
+    const leaf = 'broken-package-1.0-0'
+    const packageDir = join(cache, 'https', 'host', 'channel', 'noarch', leaf)
+    mkdirSync(packageDir, { recursive: true })
+    const missing = join(packageDir, 'Library', 'x'.repeat(280))
+    const results: SpawnResult[] = [
+      {
+        code: 1,
+        stdout: 'original install stdout',
+        stderr: `Invalid package cache, file '${missing}' is missing for '${leaf}.conda'; Package cache error`
+      },
+      { code: 1, stdout: 'retry install stdout', stderr: 'retry install failed' }
+    ]
+    let calls = 0
+    const spawn: InstallSpawn = async () => {
+      calls += 1
+      return results[calls - 1]
+    }
+
+    const result = await installPackages(
+      { language: 'python', packages: ['numpy'], environment: 'my-analysis' },
+      {
+        spawn,
+        ...base,
+        storageRoot,
+        pathExists: () => true,
+        micromambaEnv: {
+          platform: 'win32',
+          env: { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\alice' },
+          selectCache: () => ({ path: cache, lockKey: cache })
+        }
+      }
+    )
+
+    expect(calls).toBe(2)
+    expect(result.log).toContain('Original failure before MAX_PATH recovery')
+    expect(result.log).toContain('Retry failure after MAX_PATH recovery')
+    expect(result.log).toContain('original install stdout')
+    expect(result.log).toContain('retry install stdout')
+    expect(result.error).toMatch(/short Windows package cache[^]*shorter data location/i)
+    expect(result.error).not.toMatch(/LongPathsEnabled|administrator/i)
+  })
+
+  it('threads onBeforeSpawn through the conda path on BOTH the first spawn and the MAX_PATH retry', async () => {
+    // Regression: the conda runConda path used to call baseSpawn WITHOUT deps.onBeforeSpawn, so the
+    // {spawning} intent sidecar was never written before conda install/remove. A crash in the
+    // spawn→onChild window then left no sidecar and recovery misread it as "never spawned" — reconciling
+    // or retrying under a possibly-live installer. Both the first spawn and the fresh retry after MAX_PATH
+    // recovery must re-arm the intent, mirroring defaultSpawn's ordering (before, then child).
+    const storageRoot = mkdtempSync(join(tmpdir(), 'os-pm-conda-intent-'))
+    const cache = join(storageRoot, 'runtime', 'pkgs')
+    const leaf = 'broken-package-1.0-0'
+    const packageDir = join(cache, 'https', 'host', 'channel', 'noarch', leaf)
+    mkdirSync(packageDir, { recursive: true })
+    const missing = join(packageDir, 'Library', 'x'.repeat(280))
+    const results: SpawnResult[] = [
+      {
+        code: 1,
+        stdout: '',
+        stderr: `Invalid package cache, file '${missing}' is missing for '${leaf}.conda'; Package cache error`
+      },
+      { code: 0, stdout: 'ok', stderr: '' } // retry succeeds
+    ]
+    const order: string[] = []
+    let i = 0
+    // deps.onBeforeSpawn is threaded to baseSpawn as its 5th arg; a faithful stub invokes it (as the real
+    // defaultSpawn does) BEFORE reporting the child, so we can assert both that it ran and that it ran first.
+    const spawn: InstallSpawn = async (_command, _args, _env, onChild, onBeforeSpawn) => {
+      onBeforeSpawn?.()
+      order.push(`child#${i}`)
+      onChild?.(1000 + i)
+      return results[i++]
+    }
+
+    const result = await installPackages(
+      { language: 'python', packages: ['numpy'], environment: 'my-analysis' },
+      {
+        spawn,
+        ...base,
+        storageRoot,
+        pathExists: () => true,
+        onBeforeSpawn: () => order.push('intent'),
+        micromambaEnv: {
+          platform: 'win32',
+          env: { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\alice' },
+          selectCache: () => ({ path: cache, lockKey: cache })
+        }
+      }
+    )
+
+    expect(result.ok).toBe(true)
+    // The intent fired before the child on the FIRST spawn AND again on the RETRY (old bug: zero intents,
+    // since runConda dropped deps.onBeforeSpawn entirely).
+    expect(order).toEqual(['intent', 'child#0', 'intent', 'child#1'])
+    expect(i).toBe(2)
+  })
+
   it('rejects an empty package list without spawning', async () => {
     const spawn = vi.fn()
     const result = await installPackages(
@@ -375,6 +579,7 @@ describe('installPackages uninstall', () => {
     const [command, args] = calls[0]
     expect(command).toBe('/mm/bin/micromamba')
     expect(args).toEqual([
+      '--no-rc',
       'remove',
       '--root-prefix',
       runtimeRoot('/root'),
@@ -410,6 +615,7 @@ describe('installPackages uninstall', () => {
     // Same conda name-mangling as R install: r- prefix for CRAN-style names, already-namespaced
     // bioconductor-* left untouched.
     expect(args).toEqual([
+      '--no-rc',
       'remove',
       '--root-prefix',
       runtimeRoot('/root'),
@@ -608,6 +814,53 @@ describe('installPackages default-env additive-only policy', () => {
 })
 
 describe('installPackages shared pkgs cache lock', () => {
+  it.each(['legacy', 'selected'] as const)(
+    'holds the %s physical cache identity while micromamba runs',
+    async (heldCache) => {
+      const storageRoot = mkdtempSync(join(tmpdir(), 'os-package-lock-'))
+      const root = runtimeRoot(storageRoot)
+      const shortCache = { path: 'C:\\osp1234567890', lockKey: 'c:\\osp1234567890' }
+      const legacyKey = micromambaCacheLockKey(join(root, 'pkgs'), {
+        platform: 'win32',
+        canonicalize: (path) => path
+      })
+      const heldKey = heldCache === 'legacy' ? legacyKey : shortCache.lockKey
+      let releaseCache!: () => void
+      let cacheHeld!: () => void
+      const release = new Promise<void>((resolve) => {
+        releaseCache = resolve
+      })
+      const held = new Promise<void>((resolve) => {
+        cacheHeld = resolve
+      })
+      const reader = withExclusiveCacheLock(heldKey, async () => {
+        cacheHeld()
+        await release
+      })
+      await held
+      const spawn = vi.fn<InstallSpawn>(async () => ok)
+      const install = installPackages(
+        { language: 'python', packages: ['numpy'] },
+        {
+          ...base,
+          storageRoot,
+          spawn,
+          micromambaEnv: {
+            platform: 'win32',
+            canonicalize: (path) => path,
+            selectCache: () => shortCache
+          }
+        }
+      )
+
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(spawn).not.toHaveBeenCalled()
+      releaseCache()
+      await Promise.all([reader, install])
+      expect(spawn).toHaveBeenCalledOnce()
+    }
+  )
+
   // Regression: micromamba install/remove extract into and mutate the SHARED pkgs cache, so they must
   // hold the shared cache lock (keyed by runtimeRoot(storageRoot)) — otherwise a concurrent corrupt-cache
   // repair (cache-exclusive, deletes incomplete extractions) could delete a package dir mid-op. We prove
@@ -625,9 +878,12 @@ describe('installPackages shared pkgs cache lock', () => {
     // Kick off the conda install (holds the shared lock synchronously), then request the cache EXCLUSIVE
     // on the same key the source uses.
     const install = installPackages({ language: 'python', packages: ['numpy'] }, { spawn, ...base })
-    const exclusive = withExclusiveCacheLock(runtimeRoot('/root'), async () => {
-      order.push('repair')
-    })
+    const exclusive = withExclusiveCacheLock(
+      selectMicromambaCache(runtimeRoot('/root')).lockKey,
+      async () => {
+        order.push('repair')
+      }
+    )
     await Promise.all([install, exclusive])
 
     expect(order).toEqual(['install-start', 'install-end', 'repair'])
@@ -653,9 +909,12 @@ describe('installPackages shared pkgs cache lock', () => {
       },
       { spawn, ...base, pathExists: () => true }
     )
-    const exclusive = withExclusiveCacheLock(runtimeRoot('/root'), async () => {
-      order.push('repair')
-    })
+    const exclusive = withExclusiveCacheLock(
+      selectMicromambaCache(runtimeRoot('/root')).lockKey,
+      async () => {
+        order.push('repair')
+      }
+    )
     await Promise.all([remove, exclusive])
 
     expect(order).toEqual(['remove-start', 'remove-end', 'repair'])
@@ -677,9 +936,12 @@ describe('installPackages shared pkgs cache lock', () => {
       { language: 'python', packages: ['seaborn'], usePip: true, environment: 'my-analysis' },
       { spawn, ...base, pathExists: () => true }
     )
-    const exclusive = withExclusiveCacheLock(runtimeRoot('/root'), async () => {
-      order.push('repair')
-    })
+    const exclusive = withExclusiveCacheLock(
+      selectMicromambaCache(runtimeRoot('/root')).lockKey,
+      async () => {
+        order.push('repair')
+      }
+    )
     await Promise.all([install, exclusive])
 
     // The repair interleaved (ran before pip finished) because pip never held the shared lock.

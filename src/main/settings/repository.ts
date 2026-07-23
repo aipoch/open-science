@@ -7,15 +7,24 @@ import type {
   ClaudeInfo,
   ProviderType,
   ProviderValidationFailure,
+  ReasoningEffort,
   ValidationCategory
 } from '../../shared/settings'
-import { SETTINGS_FILE_VERSION } from '../../shared/settings'
+import {
+  CODEX_SUBSCRIPTION_PROVIDER_ID,
+  SETTINGS_FILE_VERSION,
+  codexSubscriptionProviderIdentity,
+  isCodexSubscriptionProvider,
+  isCodexSubscriptionProviderId,
+  isReasoningEffort
+} from '../../shared/settings'
 import { isOfficialVendorId } from '../../shared/provider-registry'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import {
   createEmptySettings,
+  type StoredComputeGrant,
   type StoredConnectors,
   type StoredCodexInfo,
   type StoredCustomMcpServer,
@@ -25,7 +34,13 @@ import {
 
 const SETTINGS_FILE = 'settings.json'
 
-const PROVIDER_TYPES = new Set<ProviderType>(['custom', 'claude-default', 'official'])
+const PROVIDER_TYPES = new Set<ProviderType>([
+  'custom',
+  'claude-default',
+  'official',
+  'codex-shared',
+  'codex-isolated'
+])
 
 const VALIDATION_CATEGORIES = new Set<ValidationCategory>([
   'ok',
@@ -34,6 +49,7 @@ const VALIDATION_CATEGORIES = new Set<ValidationCategory>([
   'model-not-found',
   'bad-url',
   'timeout',
+  'incompatible',
   'unknown'
 ])
 
@@ -249,6 +265,16 @@ export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer |
   return server
 }
 
+// Rebuilds one compute grant, dropping records with missing required string fields.
+const sanitizeComputeGrant = (value: unknown): StoredComputeGrant | undefined => {
+  if (!isRecord(value)) return undefined
+  const projectId = asString(value.projectId)
+  const operation = asString(value.operation)
+  const providerId = asString(value.providerId)
+  if (!projectId || !operation || !providerId) return undefined
+  return { projectId, operation, providerId }
+}
+
 // Rebuilds the connectors block from allowed fields only.
 export const sanitizeConnectors = (value: unknown): StoredConnectors | undefined => {
   if (!isRecord(value)) return undefined
@@ -299,18 +325,41 @@ export const sanitizePackageMirror = (value: unknown): PackageMirror | undefined
 const sanitizeSettings = (value: unknown): StoredSettings => {
   if (!isRecord(value)) return createEmptySettings()
 
-  const providers = Array.isArray(value.providers)
+  const sanitizedProviders = Array.isArray(value.providers)
     ? value.providers
         .map(sanitizeProvider)
         .filter((provider): provider is StoredProvider => !!provider)
     : []
+  const legacyActiveProviderId = asString(value.activeProviderId)
+  const codexProviders = sanitizedProviders.filter((provider) =>
+    isCodexSubscriptionProvider(provider.type)
+  )
+  const activeCodexProvider = codexProviders.find(
+    (provider) => provider.id === legacyActiveProviderId
+  )
+  const selectedCodexProvider = activeCodexProvider ?? codexProviders[0]
+  const providers = [
+    ...sanitizedProviders.filter((provider) => !isCodexSubscriptionProvider(provider.type)),
+    ...(selectedCodexProvider
+      ? [
+          {
+            ...selectedCodexProvider,
+            id: CODEX_SUBSCRIPTION_PROVIDER_ID,
+            name: codexSubscriptionProviderIdentity().name
+          }
+        ]
+      : [])
+  ]
   const settings: StoredSettings = {
     version: SETTINGS_FILE_VERSION,
     providers
   }
   const claude = sanitizeClaudeInfo(value.claude)
   const codex = sanitizeCodexInfo(value.codex)
-  const activeProviderId = asString(value.activeProviderId)
+  const activeProviderId =
+    legacyActiveProviderId && isCodexSubscriptionProviderId(legacyActiveProviderId)
+      ? CODEX_SUBSCRIPTION_PROVIDER_ID
+      : legacyActiveProviderId
 
   if (claude) settings.claude = claude
   if (codex) settings.codex = codex
@@ -392,6 +441,20 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     settings.agentFrameworkId = agentFrameworkId
   }
 
+  // Reasoning-effort preference; only the known levels survive so a bad value can't leak through.
+  const reasoningEffort = asString(value.reasoningEffort)
+
+  if (isReasoningEffort(reasoningEffort)) {
+    settings.reasoningEffort = reasoningEffort
+  }
+
+  // Desktop-notification preference; only a real boolean survives.
+  const notificationsEnabled = asBoolean(value.notificationsEnabled)
+
+  if (notificationsEnabled !== undefined) {
+    settings.notificationsEnabled = notificationsEnabled
+  }
+
   const opencodePath = asString(value.opencodePath)
 
   if (opencodePath) {
@@ -417,6 +480,18 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
 
   if (notebookManualInterpreters) {
     settings.notebookManualInterpreters = notebookManualInterpreters
+  }
+
+  // Persist project-scope compute grants. Unknown/corrupt entries are dropped; well-formed ones
+  // are preserved. Empty array is omitted (same as absent).
+  const computeGrants = Array.isArray(value.computeGrants)
+    ? value.computeGrants
+        .map(sanitizeComputeGrant)
+        .filter((g): g is StoredComputeGrant => g !== undefined)
+    : undefined
+
+  if (computeGrants && computeGrants.length > 0) {
+    settings.computeGrants = computeGrants
   }
 
   return settings
@@ -589,6 +664,17 @@ class SettingsRepository {
   // Persists the selected agent backend; applied on the next reconnect.
   async setAgentFramework(id: AgentFrameworkId): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, agentFrameworkId: id }))
+  }
+
+  // Persists the reasoning-effort preference; applied to sessions created after the next reconnect.
+  async setReasoningEffort(effort: ReasoningEffort): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, reasoningEffort: effort }))
+  }
+
+  // Persists the desktop-notification preference; read fresh at notification time so it applies
+  // immediately, without a restart.
+  async setNotificationsEnabled(enabled: boolean): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, notificationsEnabled: enabled }))
   }
 
   // Records the detected opencode executable path + version for later spawns + the settings status card.
@@ -855,6 +941,18 @@ class SettingsRepository {
     })
   }
 
+  // Sets the bookmark folders for a provider_id in settings.computeBookmarks. Replaces the full
+  // array for that provider; pass [] to clear. Used by the remote file browser Go-to/Pin feature.
+  async setComputeBookmarks(providerId: string, folders: string[]): Promise<StoredSettings> {
+    return this.mutate((settings) => ({
+      ...settings,
+      computeBookmarks: {
+        ...(settings.computeBookmarks ?? {}),
+        [providerId]: folders
+      }
+    }))
+  }
+
   // Read-modify-write over the connectors block, seeding an empty block on first mutation.
   private mutateConnectors(fn: (connectors: StoredConnectors) => void): Promise<StoredSettings> {
     return this.mutate((settings) => {
@@ -866,6 +964,33 @@ class SettingsRepository {
       fn(connectors)
       return { ...settings, connectors }
     })
+  }
+
+  // Adds a project-scope compute grant if one with the same key does not already exist.
+  // Deduplicates so repeated calls are idempotent. Grant key = (projectId, operation, providerId).
+  async addComputeGrant(grant: StoredComputeGrant): Promise<StoredSettings> {
+    return this.mutate((settings) => {
+      const existing = settings.computeGrants ?? []
+      const alreadyPresent = existing.some(
+        (g) =>
+          g.projectId === grant.projectId &&
+          g.operation === grant.operation &&
+          g.providerId === grant.providerId
+      )
+      if (alreadyPresent) return settings
+      return { ...settings, computeGrants: [...existing, grant] }
+    })
+  }
+
+  // Returns true when a project-scope grant matching (projectId, operation, providerId) exists.
+  async hasComputeGrant(grant: StoredComputeGrant): Promise<boolean> {
+    const settings = await this.getSettings()
+    return (settings.computeGrants ?? []).some(
+      (g) =>
+        g.projectId === grant.projectId &&
+        g.operation === grant.operation &&
+        g.providerId === grant.providerId
+    )
   }
 
   // Serializes a read-modify-write cycle so concurrent callers cannot clobber each other.

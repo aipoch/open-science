@@ -33,6 +33,7 @@ import { planComposerAttachmentIntake } from './composer-attachment-intake'
 import {
   docIsEmpty,
   docToArtifactRefs,
+  docToSkillIds,
   docToText,
   emptyDoc,
   type ComposerDoc
@@ -42,8 +43,10 @@ import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { PreviewPanel } from './PreviewPanel'
 import { RenameSessionDialog } from './RenameSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
+import { JobDetailModal } from '@/components/JobDetailModal'
 import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
+import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
 
 type WorkspacePageProps = {
   isSessionPersistenceReady: boolean
@@ -129,6 +132,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const renameSession = useSessionStore((state) => state.renameSession)
   const setAutoReviewEnabled = useSessionStore((state) => state.setAutoReviewEnabled)
+  const setEnabledComputeHosts = useSessionStore((state) => state.setEnabledComputeHosts)
   const setFixLoopActive = useSessionStore((state) => state.setFixLoopActive)
   // Only sessions belonging to the active project are shown in this workspace.
   const sessions = useMemo(
@@ -155,6 +159,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     permissionProfiles,
     permissionGrants,
     sendMessage,
+    resendEditedMessage,
     cancelRun,
     resumeInterruptedSession,
     deleteRuntimeSession,
@@ -162,6 +167,9 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     setPermissionProfile,
     revokePermissionGrant
   } = useWorkspaceAgentRuntime()
+
+  // Auto-trigger an analysis turn when a remote job finishes (design §11).
+  useJobAnalysisEffect({ sendMessage })
   const [draftDoc, setDraftDoc] = useState<ComposerDoc>(emptyDoc)
   const [newConversationPermissionProfile, setNewConversationPermissionProfile] =
     useState<PermissionProfileId>(DEFAULT_PERMISSION_PROFILE)
@@ -169,6 +177,11 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   // conversation starts disabled; the user can toggle it on before sending. On send it is stamped
   // onto the created session (see sendCurrentMessage).
   const [newConversationAutoReviewEnabled, setNewConversationAutoReviewEnabled] = useState(false)
+  // Draft compute hosts for a not-yet-created conversation. Cleared when a new conversation draft
+  // is started, and stamped onto the session when the first message is sent (see sendCurrentMessage).
+  const [newConversationEnabledComputeHosts, setNewConversationEnabledComputeHosts] = useState<
+    string[]
+  >([])
   // Unsent composer state (rich doc + staged attachments) is kept per session (and per new conversation)
   // so switching away and back restores it. The active key's state is live; this map holds inactive keys.
   const composerDraftsRef = useRef<
@@ -187,6 +200,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const [sessionToViewNotebook, setSessionToViewNotebook] = useState<ChatSession | undefined>(
     undefined
   )
+  const [jobListModalSessionId, setJobListModalSessionId] = useState<string | undefined>(undefined)
   // The selected session is the only conversation rendered in the center panel.
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId),
@@ -209,6 +223,11 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const activeAutoReviewEnabled = activeSession
     ? activeSession.autoReviewEnabled === true
     : newConversationAutoReviewEnabled
+  // Per-session enabled compute hosts (providerIds like "ssh:<alias>"). Empty when no host is selected.
+  // New conversations use the draft state, which is cleared when a new conversation draft is started.
+  const activeEnabledComputeHosts = activeSession
+    ? (activeSession.enabledComputeHosts ?? [])
+    : newConversationEnabledComputeHosts
   // True while any review for the active session is in the 'running' lifecycle.
   // Using a shallow comparison via reviewsBySession to avoid new array reference on every render.
   const activeSessionId = activeSession?.id
@@ -256,6 +275,14 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     !activeSession?.fixLoopActive &&
     // Auto-recovery drops the session to idle while it resets context and replays the transcript; block
     // sends in that window so a manual prompt can't race the recovery resend into the same session.
+    !activeSession?.compacting
+  // Re-editing a sent prompt is allowed under the same settled-run conditions as sending, so the
+  // resent prompt can never overlap an in-flight turn, permission wait, fix loop, or compaction.
+  const canEditMessage =
+    isSessionPersistenceReady &&
+    activeSession?.status !== 'running' &&
+    activeSession?.status !== 'waiting-permission' &&
+    !activeSession?.fixLoopActive &&
     !activeSession?.compacting
   const canChangePermissionProfile =
     isSessionPersistenceReady &&
@@ -478,6 +505,21 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     }
   }, [activeSessionId, activeSessionCwd, activeSessionProjectId])
 
+  // Sync the active session's enabled compute hosts to the main-process registry when switching
+  // sessions. The registry is the runtime source for list_compute RPC ops; the session JSON is the
+  // durable source. Toggle updates also sync directly in handleComputeHostToggle.
+  useEffect(() => {
+    if (!activeSessionId) return
+    // Read from store snapshot to avoid stale closure on activeEnabledComputeHosts.
+    const session = useSessionStore.getState().sessions.find((s) => s.id === activeSessionId)
+    void window.api.compute
+      .enabledHostsSet(activeSessionId, session?.enabledComputeHosts ?? [])
+      .catch((err: unknown) => {
+        console.warn('Failed to sync enabled compute hosts to registry', err)
+      })
+    // Only re-run when the active session changes (session switch). Toggle handler syncs directly.
+  }, [activeSessionId])
+
   // Resizable drag/collapse state is mirrored back into the transient preview workbench store.
   const syncPreviewPanelResize = (
     panelSize: PanelSize,
@@ -521,6 +563,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     setAttachmentError(null)
     setNewConversationPermissionProfile(DEFAULT_PERMISSION_PROFILE)
     setNewConversationAutoReviewEnabled(false)
+    setNewConversationEnabledComputeHosts([])
     clearSelection()
   }
 
@@ -579,6 +622,20 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     })
   }
 
+  // Resends an inline-edited prompt: the conversation is truncated at the edited message, the agent
+  // context resets, and the kept turns replay as a preamble on the resent prompt. The gate mirrors
+  // canEditMessage so a resend never overlaps an in-flight turn.
+  const sendEditedMessage = (messageId: string, doc: ComposerDoc): void => {
+    if (!canEditMessage || docIsEmpty(doc) || !activeSession) return
+
+    void resendEditedMessage(activeSession.id, messageId, {
+      text: docToText(doc),
+      parts: doc.nodes,
+      forcedSkillIds: docToSkillIds(doc),
+      referencedArtifacts: docToArtifactRefs(doc)
+    })
+  }
+
   // Sends the current draft only after hydration so restored selection cannot overwrite intent.
   // ConversationPanel owns preventDefault and passes the skills picked as inline chips.
   const sendCurrentMessage = (forcedSkillIds: string[]): void => {
@@ -597,6 +654,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     // "on" needs to be stamped onto the created session (absent = off downstream).
     const wasNewConversation = !activeSession
     const draftAutoReviewEnabled = newConversationAutoReviewEnabled
+    const draftEnabledComputeHosts = newConversationEnabledComputeHosts
 
     // Optimistically clear composer state; failed sends restore both doc and attachments below. Staged
     // files are consumed (moved into the session dir) by the runtime, so they are not deleted here.
@@ -633,7 +691,17 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
       if (wasNewConversation && draftAutoReviewEnabled) {
         setAutoReviewEnabled(result.sessionId, true)
       }
+      // Carry the draft compute host selection onto the newly created session.
+      if (wasNewConversation && draftEnabledComputeHosts.length > 0) {
+        setEnabledComputeHosts(result.sessionId, draftEnabledComputeHosts)
+        void window.api.compute
+          .enabledHostsSet(result.sessionId, draftEnabledComputeHosts)
+          .catch((err: unknown) => {
+            console.warn('Failed to sync draft compute hosts to registry for new session', err)
+          })
+      }
       setNewConversationAutoReviewEnabled(false)
+      setNewConversationEnabledComputeHosts([])
     })
   }
 
@@ -664,19 +732,20 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     if (!sessionToDelete) return
 
     const deletedSessionId = sessionToDelete.id
+    const isActiveSession = deletedSessionId === selectedSessionId
+    const storedDraft = composerDraftsRef.current[deletedSessionId]
+    const abandonedAttachments = storedDraft?.attachments ?? (isActiveSession ? attachments : [])
 
     setSessionToDelete(undefined)
-    // The session's unsent draft is abandoned, so drop it and delete its now-orphaned staged files.
-    const storedDraft = composerDraftsRef.current[deletedSessionId]
-    if (storedDraft) deleteAttachmentFiles(storedDraft.attachments)
-    delete composerDraftsRef.current[deletedSessionId]
-    // The active session's live draft is not in the map yet, so clear and delete its files directly.
-    if (deletedSessionId === selectedSessionId) {
-      deleteAttachmentFiles(attachments)
-      setAttachments([])
-      setDraftDoc(emptyDoc)
-    }
-    void deleteRuntimeSession(deletedSessionId)
+    // Staged bytes and local draft state are owned by the session until runtime and durable deletion
+    // both succeed. The store's successful deletion updates selection and lets the draft effect load
+    // the fallback session without clearing that replacement draft here.
+    void deleteRuntimeSession(deletedSessionId).then((deleted) => {
+      if (!deleted) return
+
+      delete composerDraftsRef.current[deletedSessionId]
+      deleteAttachmentFiles(abandonedAttachments)
+    })
   }
 
   // Closes the delete dialog without changing runtime or store state.
@@ -734,6 +803,26 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     }
 
     setAutoReviewEnabled(activeSession.id, enabled)
+  }
+
+  // Enables or disables a compute host for the active session (single-select semantics).
+  // Enabling one host replaces any existing selection; disabling clears the set.
+  // For a not-yet-created conversation, updates the draft state; sendCurrentMessage stamps it onto
+  // the new session. For an existing session, updates the session store and main-process registry.
+  const handleComputeHostToggle = (providerId: string, enabled: boolean): void => {
+    // Single-select: enable one host ↔ clear all others; disabling clears the selection entirely.
+    const newEnabledHosts = enabled ? [providerId] : []
+    if (!activeSession) {
+      setNewConversationEnabledComputeHosts(newEnabledHosts)
+      return
+    }
+    const sessionId = activeSession.id
+    setEnabledComputeHosts(sessionId, newEnabledHosts)
+    // Keep the main-process registry in sync immediately so list_compute() reflects the change
+    // without waiting for the next session-switch effect.
+    void window.api.compute.enabledHostsSet(sessionId, newEnabledHosts).catch((err: unknown) => {
+      console.warn('Failed to sync enabled compute hosts to registry', err)
+    })
   }
 
   // Manually triggers a review of the last completed turn, bypassing autoReviewEnabled and the
@@ -836,8 +925,13 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             onRevokePermissionGrant={revokeActivePermissionGrant}
             onClearPermissionGrants={clearActivePermissionGrants}
             onAutoReviewToggle={changeAutoReviewEnabled}
+            enabledComputeHosts={activeEnabledComputeHosts}
+            onComputeHostToggle={handleComputeHostToggle}
             onRequestReview={requestManualReview}
             isRequestReviewDisabled={isRequestReviewDisabled}
+            canEditMessage={canEditMessage}
+            onSendEditedMessage={sendEditedMessage}
+            onOpenJobList={setJobListModalSessionId}
           />
 
           <ResizableHandle
@@ -880,6 +974,14 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
         session={sessionToViewNotebook}
         onClose={() => setSessionToViewNotebook(undefined)}
       />
+
+      {jobListModalSessionId ? (
+        <JobDetailModal
+          open
+          sessionId={jobListModalSessionId}
+          onClose={() => setJobListModalSessionId(undefined)}
+        />
+      ) : null}
     </main>
   )
 }

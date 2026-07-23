@@ -2,18 +2,25 @@ import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../../../shared/acp'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
+import {
+  createInitialSessionState,
+  useSessionStore,
+  type ChatMessage
+} from '../../stores/session-store'
 import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '../../stores/preview-workbench-store'
+import { applyWorkspaceRuntimeEvent } from './workspace-events'
 import {
   createWorkspaceRuntimeEventProcessor,
+  deleteWorkspaceSession,
   getResumeFailureMessage,
   markRunningSessionsDisconnectedOnDrop,
   processContextOverflowRecovery,
   processVisibleWorkspaceRuntimeEvents,
   recoverContextOverflowWorkspaceSession,
+  resendEditedWorkspaceMessage,
   resumeInterruptedWorkspaceSession,
   sendWorkspaceMessage
 } from './useWorkspaceAgentRuntime'
@@ -224,6 +231,39 @@ describe('resume failure classification', () => {
     expect(message).toBe(
       'Agent session resume failed: ACP protocol version is not compatible with this client'
     )
+  })
+})
+
+describe('workspace session deletion', () => {
+  beforeEach(() => {
+    useSessionStore.setState(createInitialSessionState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Persist me',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+  })
+
+  it('removes the session only after runtime and durable deletion succeed', async () => {
+    const runtime = { deleteSession: vi.fn().mockResolvedValue(createSnapshot()) }
+    const persistDelete = vi.fn().mockResolvedValue(undefined)
+
+    await deleteWorkspaceSession(runtime, 'session-1', persistDelete)
+
+    expect(persistDelete).toHaveBeenCalledWith({ projectId: 'project-1', sessionId: 'session-1' })
+    expect(useSessionStore.getState().sessions).toEqual([])
+  })
+
+  it('keeps the session visible when durable deletion fails', async () => {
+    const runtime = { deleteSession: vi.fn().mockResolvedValue(createSnapshot()) }
+    const persistDelete = vi.fn().mockRejectedValue(new Error('disk locked'))
+
+    await expect(deleteWorkspaceSession(runtime, 'session-1', persistDelete)).rejects.toThrow(
+      'disk locked'
+    )
+
+    expect(useSessionStore.getState().sessions).toHaveLength(1)
   })
 })
 
@@ -590,7 +630,7 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn().mockResolvedValue(undefined)
+      sendPrompt: vi.fn().mockRejectedValue(new Error('Connection timeout'))
     }
 
     useSessionStore.getState().appendUserMessage({
@@ -608,10 +648,11 @@ describe('workspace agent message sending', () => {
     await flushRuntimeTasks()
     await flushRuntimeTasks()
 
+    // The specific failure cause is preserved in the Resume banner instead of a generic message.
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'error',
       interrupted: true,
-      error: 'Connection lost — Resume to reconnect and continue.'
+      error: 'Connection timeout — Resume to reconnect and continue.'
     })
   })
 
@@ -629,7 +670,45 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn().mockResolvedValue(undefined)
+      sendPrompt: vi.fn().mockRejectedValue(new Error('Invalid API key'))
+    }
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'earlier turn',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'hello',
+      cwd: '/workspace/project'
+    })
+    await flushRuntimeTasks()
+    await flushRuntimeTasks()
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('error')
+    expect(session.interrupted).toBeFalsy()
+    expect(session.error).toBe('Invalid API key')
+  })
+
+  it('uses fallback message when error is empty or whitespace-only', async () => {
+    vi.stubGlobal('window', {
+      api: {
+        acp: {
+          getState: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+        }
+      }
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockRejectedValue(new Error('  '))
     }
 
     useSessionStore.getState().appendUserMessage({
@@ -873,6 +952,8 @@ describe('resuming an interrupted session on demand', () => {
         cwd,
         status: 'error',
         error: 'Session was interrupted before the app closed.',
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:codex-isolated',
         permissionProfile: 'ask',
         messages: [],
         createdAt: 1,
@@ -900,7 +981,8 @@ describe('resuming an interrupted session on demand', () => {
       '/workspace/project',
       'default-project',
       expect.any(String),
-      undefined
+      'codex',
+      'codex:codex-isolated'
     )
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
@@ -1495,5 +1577,430 @@ describe('recovering from a request-size overflow', () => {
     )
 
     expect(recover).not.toHaveBeenCalled()
+  })
+})
+
+describe('resendEditedWorkspaceMessage', () => {
+  const baseTime = 1710000000000
+
+  const createMessage = (
+    id: string,
+    role: 'user' | 'agent',
+    content: string,
+    createdAt: number
+  ): ChatMessage => ({
+    id,
+    role,
+    content,
+    status: 'complete' as const,
+    eventIds: [],
+    createdAt,
+    updatedAt: createdAt
+  })
+
+  const seedConversation = (): void => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            createMessage('user-1', 'user', 'first prompt', baseTime),
+            createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
+            createMessage('user-2', 'user', 'second prompt', baseTime + 200),
+            createMessage('agent-2', 'agent', 'second answer', baseTime + 300),
+            createMessage('user-3', 'user', 'third prompt', baseTime + 400)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 400
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+  }
+
+  beforeEach(() => {
+    useSessionStore.setState(createInitialSessionState())
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('shows the resent bubble as a live run immediately, then replays the kept history', async () => {
+    seedConversation()
+
+    const resetGate = createDeferred<{ sessionId: string; cwd: string; contextReset: boolean }>()
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(() => resetGate.promise),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    const resentPromise = resendEditedWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      messageId: 'user-2',
+      text: 'second prompt, edited',
+      parts: [{ type: 'text', text: 'second prompt, edited' }],
+      forcedSkillIds: ['skill-forecast'],
+      referencedArtifacts: []
+    })
+    await flushRuntimeTasks()
+
+    // While the context reset is still in flight, the transcript already shows the adjusted prompt
+    // as a live run — the same immediate feedback as a composer send.
+    const duringReset = useSessionStore.getState().sessions[0]
+    expect(duringReset?.messages.map((message) => message.id)).toEqual([
+      'user-1',
+      'agent-1',
+      expect.any(String)
+    ])
+    expect(duringReset?.messages.at(-1)).toMatchObject({
+      role: 'user',
+      content: 'second prompt, edited'
+    })
+    expect(duringReset?.status).toBe('running')
+    expect(duringReset?.activeRun?.promptMessageId).toBe(duringReset?.messages.at(-1)?.id)
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+
+    resetGate.resolve({ sessionId: 'session-1', cwd: '/workspace/project', contextReset: true })
+    const resent = await resentPromise
+    await flushRuntimeTasks()
+
+    expect(resent).toBe(true)
+    expect(runtime.resetSessionContext).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace/project',
+      'default-project',
+      'ask'
+    )
+
+    // The kept turns replay as a text preamble (the edited turn is not duplicated into it), and the
+    // picked skill goes out as a forced skill on the resent prompt.
+    expect(runtime.sendPrompt.mock.calls[0]?.[1]).toBe('second prompt, edited')
+    const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
+    expect(preamble).toContain('first prompt')
+    expect(preamble).toContain('first answer')
+    expect(preamble).not.toContain('second prompt')
+    expect(preamble).not.toContain('third prompt')
+    expect(runtime.sendPrompt.mock.calls[0]?.[3]).toEqual(['skill-forecast'])
+  })
+
+  it('keeps the transcript intact when the context reset fails', async () => {
+    seedConversation()
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockRejectedValue(new Error('ACP connection failed')),
+      sendPrompt: vi.fn()
+    }
+
+    const resent = await resendEditedWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      messageId: 'user-2',
+      text: 'second prompt, edited'
+    })
+
+    expect(resent).toBe(false)
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]?.messages.map((message) => message.id)).toEqual([
+      'user-1',
+      'agent-1',
+      'user-2',
+      'agent-2',
+      'user-3'
+    ])
+    expect(useSessionStore.getState().sessions[0]?.status).toBe('error')
+  })
+
+  it('refuses the edit before truncating when the kept history needs image replay the model cannot take', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            {
+              ...createMessage('user-1', 'user', 'first prompt', baseTime),
+              images: [{ id: 'img-1', mimeType: 'image/png', data: 'AQID', byteLength: 3 }]
+            },
+            createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
+            createMessage('user-2', 'user', 'second prompt', baseTime + 200)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 200
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const resent = await resendEditedWorkspaceMessage(
+      runtime,
+      { sessionId: 'session-1', messageId: 'user-2', text: 'second prompt, edited' },
+      false
+    )
+
+    // The incompatible replay is rejected before the destructive cut: no reset, no prompt, and the
+    // transcript is untouched apart from the visible error.
+    expect(resent).toBe(false)
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    const session = useSessionStore.getState().sessions[0]
+    expect(session?.messages.map((message) => message.id)).toEqual(['user-1', 'agent-1', 'user-2'])
+    expect(session?.status).toBe('error')
+    expect(session?.error).toContain('image replay')
+  })
+
+  it('refuses the edit before truncating when the kept history has user-uploaded images', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            {
+              ...createMessage('user-1', 'user', 'first prompt', baseTime),
+              uploads: [createAttachment({ name: 'photo.png', mimeType: 'image/png' })]
+            },
+            createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
+            createMessage('user-2', 'user', 'second prompt', baseTime + 200)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 200
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const resent = await resendEditedWorkspaceMessage(
+      runtime,
+      { sessionId: 'session-1', messageId: 'user-2', text: 'second prompt, edited' },
+      false
+    )
+
+    // User uploads replay as image attachments, so they are gated exactly like agent-emitted images.
+    expect(resent).toBe(false)
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    const session = useSessionStore.getState().sessions[0]
+    expect(session?.messages.map((message) => message.id)).toEqual(['user-1', 'agent-1', 'user-2'])
+    expect(session?.status).toBe('error')
+    expect(session?.error).toContain('image replay')
+  })
+})
+
+describe('edit resend reply streaming', () => {
+  beforeEach(() => {
+    useSessionStore.setState(createInitialSessionState())
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('grows an agent bubble from streamed reply events after the truncate-and-resend', async () => {
+    const baseTime = 1710000000000
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            {
+              id: 'user-1',
+              role: 'user' as const,
+              content: 'first prompt',
+              status: 'complete' as const,
+              eventIds: [],
+              createdAt: baseTime,
+              updatedAt: baseTime
+            },
+            {
+              id: 'agent-1',
+              role: 'agent' as const,
+              content: 'first answer',
+              status: 'complete' as const,
+              eventIds: [],
+              createdAt: baseTime + 100,
+              updatedAt: baseTime + 100
+            },
+            {
+              id: 'user-2',
+              role: 'user' as const,
+              content: 'second prompt',
+              status: 'complete' as const,
+              eventIds: [],
+              createdAt: baseTime + 200,
+              updatedAt: baseTime + 200
+            }
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 200
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true
+      }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    const resent = await resendEditedWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      messageId: 'user-2',
+      text: 'second prompt, edited'
+    })
+    await flushRuntimeTasks()
+
+    expect(resent).toBe(true)
+    const afterResend = useSessionStore.getState().sessions[0]
+    // The adjusted prompt is appended as the latest user turn and the run is live.
+    expect(afterResend?.messages.at(-1)).toMatchObject({
+      role: 'user',
+      content: 'second prompt, edited'
+    })
+    expect(afterResend?.status).toBe('running')
+
+    // The agent's streamed reply lands as a new bubble answering the resent prompt.
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-reply-1',
+        sessionId: 'session-1',
+        role: 'assistant',
+        messageId: 'agent-reply-1',
+        text: 'edited answer'
+      })
+    )
+
+    const messages = useSessionStore.getState().sessions[0]?.messages ?? []
+    expect(messages.at(-1)).toMatchObject({
+      role: 'agent',
+      content: 'edited answer',
+      status: 'streaming',
+      responseToMessageId: afterResend?.activeRun?.promptMessageId
+    })
+  })
+})
+
+describe('sendWorkspaceMessage replay image gate', () => {
+  const baseTime = 1710000000000
+
+  const createMessage = (
+    id: string,
+    role: 'user' | 'agent',
+    content: string,
+    createdAt: number
+  ): ChatMessage => ({
+    id,
+    role,
+    content,
+    status: 'complete',
+    eventIds: [],
+    createdAt,
+    updatedAt: createdAt
+  })
+
+  beforeEach(() => {
+    useSessionStore.setState(createInitialSessionState())
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('blocks the replay before dispatch when the kept history has user-uploaded images', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            {
+              ...createMessage('user-1', 'user', 'first prompt', baseTime),
+              uploads: [createAttachment({ name: 'photo.png', mimeType: 'image/png' })]
+            },
+            createMessage('agent-1', 'agent', 'first answer', baseTime + 100)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 100
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    const sent = await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'follow up',
+      cwd: '/workspace/project',
+      forceHistoryReplay: true,
+      supportsImageInput: false
+    })
+
+    // The user turn is recorded, but the replayed upload would become an image block the model
+    // cannot take, so nothing is dispatched and the session carries the gate's error.
+    expect(sent).toBeDefined()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    const session = useSessionStore.getState().sessions[0]
+    expect(session?.status).toBe('error')
+    expect(session?.error).toContain('image replay')
   })
 })

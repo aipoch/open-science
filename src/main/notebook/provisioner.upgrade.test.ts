@@ -61,7 +61,7 @@ describe('upgradeIfNeeded', () => {
       baseDeps(root, { runArgv: async (a) => void argvs.push(a) })
     ).upgradeIfNeeded(() => {})
     // Additive install from the exact offline lock, not an online package solve.
-    expect(argvs[0][1]).toBe('install')
+    expect(argvs[0][2]).toBe('install')
     expect(argvs[0]).toContain(envPrefix(root, DEFAULT_PY_ENV))
     expect(argvs[0]).toContain('--offline')
     expect(argvs[0]).toContain(join(root, `${DEFAULT_PY_ENV}.lock`))
@@ -116,9 +116,79 @@ describe('upgradeIfNeeded', () => {
     ).upgradeIfNeeded(() => {})
 
     const rArgv = argvs.find((argv) => argv.includes(rPrefix))
-    expect(rArgv?.[1]).toBe('create')
+    expect(rArgv?.[2]).toBe('create')
     expect(existsSync(join(rPrefix, 'stale-file'))).toBe(false)
     expect(readRReadyMarker(root)?.defaultEnvVersion).toBe(DEFAULT_ENV_VERSION)
+  })
+
+  it('cleans an over-budget legacy URL-cache package before the Windows upgrade runs', async () => {
+    const root = makeRoot()
+    touchBin(pythonBin(envPrefix(root, DEFAULT_PY_ENV)))
+    writeReadyMarker(root, DEFAULT_ENV_VERSION - 1, 't1')
+    const legacyLeaf = join(
+      root,
+      'pkgs',
+      'https',
+      'host',
+      'channel',
+      'win-64',
+      'future-deep-package-1.0-0'
+    )
+    const deepFile = join(legacyLeaf, 'Library', 'a'.repeat(100), 'b'.repeat(100), 'file.hpp')
+    mkdirSync(join(deepFile, '..'), { recursive: true })
+    writeFileSync(deepFile, 'x')
+    mkdirSync(join(legacyLeaf, 'info'), { recursive: true })
+    writeFileSync(
+      join(legacyLeaf, 'info', 'repodata_record.json'),
+      JSON.stringify({ url: 'https://host/channel/win-64/future-deep-package-1.0-0.conda' })
+    )
+
+    await new DefaultRuntimeProvisioner(
+      baseDeps(root, {
+        platform: 'win32',
+        cache: { path: 'C:\\osp1234567890', lockKey: 'c:\\osp1234567890' },
+        runArgv: async () => {
+          expect(existsSync(legacyLeaf)).toBe(false)
+        }
+      })
+    ).upgradeIfNeeded(() => {})
+
+    expect(existsSync(legacyLeaf)).toBe(false)
+  })
+
+  it('also cleans the legacy cache when provisionR upgrades a materialized pre-marker R env', async () => {
+    const root = makeRoot()
+    const rPrefix = envPrefix(root, DEFAULT_R_ENV)
+    touchBin(rBin(rPrefix))
+    const legacyLeaf = join(
+      root,
+      'pkgs',
+      'https',
+      'host',
+      'channel',
+      'win-64',
+      'legacy-r-package-1.0-0'
+    )
+    const deepFile = join(legacyLeaf, 'Library', 'a'.repeat(100), 'b'.repeat(100), 'file.hpp')
+    mkdirSync(join(deepFile, '..'), { recursive: true })
+    writeFileSync(deepFile, 'x')
+    mkdirSync(join(legacyLeaf, 'info'), { recursive: true })
+    writeFileSync(
+      join(legacyLeaf, 'info', 'repodata_record.json'),
+      JSON.stringify({ url: 'https://host/channel/win-64/legacy-r-package-1.0-0.conda' })
+    )
+
+    await new DefaultRuntimeProvisioner(
+      baseDeps(root, {
+        platform: 'win32',
+        cache: { path: 'C:\\osp1234567890', lockKey: 'c:\\osp1234567890' },
+        runArgv: async () => {
+          expect(existsSync(legacyLeaf)).toBe(false)
+        }
+      })
+    ).provisionR(() => {})
+
+    expect(existsSync(legacyLeaf)).toBe(false)
   })
 })
 

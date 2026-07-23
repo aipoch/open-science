@@ -371,8 +371,8 @@ describe('review repository (integration)', () => {
     expect(stored.checks[1]!.reflagCount).toBe(0)
   })
 
-  // Phase 3 storage: incrementReflagCount raises by 1 for the matching claim only.
-  it('incrementReflagCount bumps reflagCount by 1 for the matching claim, leaves others untouched', async () => {
+  // Phase 3 storage: incrementReflagCount raises by 1 for the stable finding ID only.
+  it('incrementReflagCount bumps reflagCount by 1 for the targeted finding, leaves others untouched', async () => {
     const repository = await createRepository()
 
     const review = await repository.createReview({
@@ -399,7 +399,9 @@ describe('review repository (integration)', () => {
       }
     ])
 
-    await repository.incrementReflagCount(review.id, 'ran 33 rows')
+    const [before] = await repository.getReviewsForSession('session-reflag-increment')
+    const targetId = before.checks.find((check) => check.claim === 'ran 33 rows')!.id
+    await repository.incrementReflagCount(review.id, targetId)
 
     const [stored] = await repository.getReviewsForSession('session-reflag-increment')
     const findClaim = (claim: string): ReviewCheck => stored.checks.find((c) => c.claim === claim)!
@@ -409,7 +411,7 @@ describe('review repository (integration)', () => {
     expect(findClaim('axis label mismatch').reflagCount).toBe(0)
   })
 
-  // Calling incrementReflagCount twice on the same claim accumulates correctly.
+  // Calling incrementReflagCount twice on the same finding accumulates correctly.
   it('incrementReflagCount is cumulative across multiple calls', async () => {
     const repository = await createRepository()
 
@@ -430,8 +432,10 @@ describe('review repository (integration)', () => {
       }
     ])
 
-    await repository.incrementReflagCount(review.id, 'value mismatch')
-    await repository.incrementReflagCount(review.id, 'value mismatch')
+    const [before] = await repository.getReviewsForSession('session-reflag-cumulative')
+    const targetId = before.checks[0]!.id
+    await repository.incrementReflagCount(review.id, targetId)
+    await repository.incrementReflagCount(review.id, targetId)
 
     const [stored] = await repository.getReviewsForSession('session-reflag-cumulative')
     expect(stored.checks[0]!.reflagCount).toBe(2)
@@ -449,7 +453,9 @@ describe('review repository (integration)', () => {
     })
 
     await repository.addChecks(review.id, checks())
-    await repository.incrementReflagCount(review.id, 'ran 33 rows')
+    const [before] = await repository.getReviewsForSession('session-reflag-all')
+    const targetId = before.checks.find((check) => check.claim === 'ran 33 rows')!.id
+    await repository.incrementReflagCount(review.id, targetId)
 
     const [stored] = await repository.getReviewsForSession('session-reflag-all')
 
@@ -516,7 +522,8 @@ describe('review repository (integration)', () => {
 
     // The reflag increment + touchReview run in one transaction; the forced touch failure rejects it.
     failTouch = true
-    await expect(repository.incrementReflagCount(review.id, 'ran 33 rows')).rejects.toThrow(
+    const [before] = await repository.getReviewsForSession('session-rollback')
+    await expect(repository.incrementReflagCount(review.id, before.checks[0]!.id)).rejects.toThrow(
       /touch failed/
     )
     failTouch = false

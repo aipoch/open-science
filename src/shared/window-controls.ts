@@ -5,6 +5,8 @@
 // column) is open it closes that panel instead of the window. The main process intercepts the chord
 // and forwards it to the renderer, which decides whether to collapse the panel or close the window.
 
+import type { ActiveSessionInfo } from './storage'
+
 // Renderer -> main: close the focused window (the fallback when no pane is open).
 export const WINDOW_CLOSE_CHANNEL = 'window:close'
 
@@ -67,4 +69,35 @@ export const isCloseWindowChord = (input: KeyChordInput, platform: string): bool
   if (input.alt || input.shift) return false
 
   return platform === 'darwin' ? input.meta && !input.control : input.control && !input.meta
+}
+
+// --- Close/quit confirmation dialog (Windows X, and explicit quit when work is running) ---
+
+// Main -> renderer: show the close/quit confirmation modal for `variant`, listing `sessions`.
+export const WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL = 'window:close-confirm-request'
+
+// Renderer -> main: modal mounted (ack) or the user chose an action (choice), keyed by requestId.
+export const WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL = 'window:close-confirm-response'
+
+// How a titlebar close resolves synchronously at close time: 'close' lets the window close, 'hide'
+// minimizes to tray, 'confirm' asks the user via the confirmation modal.
+export type CloseClassification = 'close' | 'hide' | 'confirm'
+
+// 'close-to-tray' = Windows X (Minimize vs Quit); 'quit' = explicit quit (Quit vs Cancel).
+export type CloseConfirmVariant = 'close-to-tray' | 'quit'
+
+// 'minimize' only occurs for the 'close-to-tray' variant; 'cancel' keeps the app/window as-is.
+export type CloseConfirmChoice = 'quit' | 'minimize' | 'cancel'
+
+export type CloseConfirmRequest = {
+  requestId: string
+  variant: CloseConfirmVariant
+  sessions: ActiveSessionInfo[]
+}
+
+// ack:true when the modal mounts (proves the renderer is alive); choice set when the user decides.
+export type CloseConfirmResponse = {
+  requestId: string
+  ack?: boolean
+  choice?: CloseConfirmChoice
 }

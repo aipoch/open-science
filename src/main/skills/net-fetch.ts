@@ -7,3 +7,11 @@ import type { FetchLike } from './github-import'
 // path, so in proxied environments GitHub returns 403 for the direct requests while net.fetch succeeds.
 export const netFetch: FetchLike = (url, init) =>
   net.fetch(url, init) as unknown as ReturnType<FetchLike>
+
+// A `typeof fetch`-shaped view of net.fetch for callers that need the full Response API (`.text()`,
+// AbortSignal, arbitrary headers) rather than the narrow FetchLike shape — e.g. the provider-validation
+// probe, which reads the error body and aborts on timeout. Same proxy-honoring Chromium stack. A lazy
+// arrow wrapper (like netFetch) so `net.fetch` is only read at call time — reading it eagerly at module
+// load crashes any test whose electron mock omits `net` — while the method call preserves the receiver.
+export const netFetchStandard = ((input, init) =>
+  net.fetch(input as string, init)) as typeof fetch

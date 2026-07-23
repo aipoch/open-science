@@ -1,0 +1,6 @@
+# yamllint config. CI does not run yamllint; this only tunes local editor plugins.
+extends: default
+
+rules:
+  # Workflow files embed inline scripts and long comments; do not flag long lines.
+  line-length: disable

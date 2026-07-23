@@ -4,6 +4,10 @@ import type {
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
   ExecuteNotebookCodeRequest,
+  ExportNotebookAllRequest,
+  ExportNotebookAllResult,
+  ExportNotebookKernelRequest,
+  ExportNotebookResult,
   FinishNotebookCodeCellRequest,
   NotebookRunSummary,
   NotebookSessionReference,
@@ -25,8 +29,12 @@ type NotebookHandlers = {
   finishCodeCell: (
     request: FinishNotebookCodeCellRequest
   ) => ReturnType<NotebookRuntimeService['finishCodeCell']>
-  runCell: (request: RunNotebookCellRequest) => Promise<NotebookRunSummary>
+  runCell: (
+    request: RunNotebookCellRequest
+  ) => ReturnType<NotebookRuntimeService['runCell']>
   execute: (request: ExecuteNotebookCodeRequest) => Promise<NotebookRunSummary>
+  exportIpynb: (request: ExportNotebookKernelRequest) => Promise<ExportNotebookResult>
+  exportIpynbAll: (request: ExportNotebookAllRequest) => Promise<ExportNotebookAllResult>
   restart: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
   shutdown: (request: NotebookSessionRequest) => ReturnType<NotebookRuntimeService['shutdown']>
 }
@@ -40,6 +48,8 @@ const createNotebookHandlers = (service: NotebookRuntimeService): NotebookHandle
   finishCodeCell: (request) => service.finishCodeCell(request),
   runCell: (request) => service.runCell(request),
   execute: (request) => service.execute(request),
+  exportIpynb: (request) => service.exportIpynb(request),
+  exportIpynbAll: (request) => service.exportIpynbAll(request),
   restart: (request) => service.restart(request),
   shutdown: (request) => service.shutdown(request)
 })
@@ -68,6 +78,12 @@ const registerNotebookIpcHandlers = (service: NotebookRuntimeService): void => {
   )
   ipcMain.handle('notebook:execute', (_event, request: ExecuteNotebookCodeRequest) =>
     handlers.execute(request)
+  )
+  ipcMain.handle('notebook:export-ipynb', (_event, request: ExportNotebookKernelRequest) =>
+    handlers.exportIpynb(request)
+  )
+  ipcMain.handle('notebook:export-ipynb-all', (_event, request: ExportNotebookAllRequest) =>
+    handlers.exportIpynbAll(request)
   )
   ipcMain.handle('notebook:restart', (_event, request: NotebookSessionRequest) =>
     handlers.restart(request)

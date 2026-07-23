@@ -1,6 +1,5 @@
 import {
   Archive,
-  Building2,
   CircleAlert,
   Clock,
   MoreVertical,
@@ -188,8 +187,7 @@ const HomePage = (): React.JSX.Element => {
       })
   }
 
-  // Deletes the project, then cascades its sessions: memory is cleared (the persistence bridge removes
-  // each session file) and the now-empty project directory is removed on disk. Artifacts are kept.
+  // Main coordinates durable project/session/index cleanup; renderer state changes only after it succeeds.
   const confirmDeleteProject = (): void => {
     if (!projectToDelete) return
 
@@ -200,11 +198,9 @@ const HomePage = (): React.JSX.Element => {
     void deleteProject(projectId)
       .then(() => {
         useSessionStore.getState().removeSessionsForProject(projectId)
-        void window.api.sessions.deleteProjectSessions({ projectId })
-        void window.api.preview.delete({ projectId })
       })
       .catch(() => {
-        // Deletion failed in the DB; leave the project (and its sessions) untouched.
+        // Durable deletion failed; leave the project and in-memory sessions untouched.
       })
   }
 
@@ -256,13 +252,7 @@ const HomePage = (): React.JSX.Element => {
             >
               <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
             </button>
-            <button
-              type="button"
-              aria-label="Account"
-              className="inline-flex size-9 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000"
-            >
-              <Building2 className="size-4" strokeWidth={2} aria-hidden="true" />
-            </button>
+            {/* Account button hidden for now; restore when the account flow lands. */}
             <Button
               variant="outline"
               size="sm"

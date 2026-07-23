@@ -70,6 +70,29 @@ describe('computeStorageUsage', () => {
     })
   })
 
+  it('labels reserved short default directories by their logical environment', async () => {
+    await writeSized(join(dataRoot, 'runtime', 'envs', '.p', 'p.bin'), 200)
+    await writeSized(join(dataRoot, 'runtime', 'envs', '.r', 'r.bin'), 300)
+
+    const usage = await computeStorageUsage(dataRoot)
+    const runtime = usage.categories.find((category) => category.key === 'runtime')
+
+    expect(runtime?.children).toEqual([
+      { name: 'r', bytes: 300 },
+      { name: 'python', bytes: 200 }
+    ])
+  })
+
+  it('combines inert legacy residue with the active short default in one usage row', async () => {
+    await writeSized(join(dataRoot, 'runtime', 'envs', '.p', 'short.bin'), 200)
+    await writeSized(join(dataRoot, 'runtime', 'envs', 'default-python', 'legacy.bin'), 50)
+
+    const usage = await computeStorageUsage(dataRoot)
+    const runtime = usage.categories.find((category) => category.key === 'runtime')
+
+    expect(runtime?.children).toEqual([{ name: 'python', bytes: 250 }])
+  })
+
   it('counts envs.lock toward the runtime total but does not show it as its own row', async () => {
     await writeSized(join(dataRoot, 'runtime', 'envs', 'default-python', 'p.bin'), 200)
     await writeSized(join(dataRoot, 'runtime', 'envs.lock', 'default-r.lock'), 10)

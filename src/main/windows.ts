@@ -14,7 +14,9 @@ import {
   CLOSE_ACTIVE_PANE_CHANNEL,
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
   CLOSE_ACTIVE_PANE_UNREADY_CHANNEL,
-  isCloseWindowChord
+  isCloseWindowChord,
+  type CloseClassification,
+  type CloseConfirmChoice
 } from '../shared/window-controls'
 
 const rendererEntry = join(__dirname, '../renderer/index.html')
@@ -63,7 +65,16 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
   return window
 }
 
-const createMainWindow = (opts?: { shouldHideOnClose?: () => boolean }): BrowserWindow => {
+// How the main window resolves a close: classifyClose decides synchronously at close time
+// ('close' = let it close, 'hide' = minimize to tray, 'confirm' = ask via resolveCloseAction).
+// resolveCloseAction is awaited only for 'confirm'; requestQuit is called when the choice is quit.
+type MainWindowCloseOptions = {
+  classifyClose: () => CloseClassification
+  resolveCloseAction: () => Promise<CloseConfirmChoice>
+  requestQuit: () => void
+}
+
+const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
   const window = createAppWindow({
     width: 1280,
     // The first-run environment summary needs enough vertical space to keep its Continue action
@@ -139,20 +150,35 @@ const createMainWindow = (opts?: { shouldHideOnClose?: () => boolean }): Browser
     if (rendererListenerReady && rendererResponsive) {
       window.webContents.send(CLOSE_ACTIVE_PANE_CHANNEL)
     } else {
-      // The chord's window-close fallback still honors close-to-tray: window.close() fires the 'close'
-      // event handled below, which hides (stays resident) instead of closing when the tray is active.
+      // The chord's window-close fallback now routes through classifyClose below: Windows surfaces the
+      // confirm dialog, Linux hides to tray, and everyone else closes.
       window.close()
     }
   })
 
-  // Close-to-tray: when the tray keeps the app resident, hide the window instead of closing it. The
-  // predicate is evaluated at close time so the caller can flip a quitting flag to allow a real exit.
-  // This also backs the Cmd/Ctrl+W fallback above — its window.close() routes through here.
+  // Close handling. classifyClose decides synchronously so darwin / no-tray / mid-quit still close
+  // instantly; 'hide' minimizes to tray (Linux); 'confirm' (Windows X) asks the user. The
+  // Cmd/Ctrl+W fallback window.close() routes through here unchanged.
+  let awaitingChoice = false
   window.on('close', (event) => {
-    if (opts?.shouldHideOnClose?.()) {
-      event.preventDefault()
+    const action = opts?.classifyClose?.() ?? 'close'
+    if (action === 'close') return
+    event.preventDefault()
+    if (action === 'hide') {
       window.hide()
+      return
     }
+    if (awaitingChoice) return
+    awaitingChoice = true
+    void opts!
+      .resolveCloseAction()
+      .then((choice) => {
+        if (choice === 'minimize') window.hide()
+        else if (choice === 'quit') opts!.requestQuit()
+      })
+      .finally(() => {
+        awaitingChoice = false
+      })
   })
 
   // In dev, mirror the "(DEV)" app suffix in the title bar. The renderer's <title> overwrites the

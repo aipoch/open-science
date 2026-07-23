@@ -184,6 +184,7 @@ describe('statusCommand', () => {
     expect(deps.log).toHaveBeenCalledWith(
       expect.stringContaining('is running (PID 4242, port 44100)')
     )
+    expect(deps.log.mock.calls.flat().join('\n')).not.toContain('token-abc')
     expect(process.exitCode).toBeUndefined()
   })
 
@@ -199,7 +200,7 @@ describe('statusCommand', () => {
     await statusCommand({ json: true }, deps)
     const payload = JSON.parse(deps.log.mock.calls[0][0])
     expect(payload).toMatchObject({ running: true, pid: 4242, port: 44100 })
-    expect(payload.url).toContain('token=token-abc')
+    expect(payload.url).toBeUndefined()
   })
 })
 

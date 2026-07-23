@@ -1,6 +1,8 @@
 import { readdir, stat, statfs } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { logicalEnvNameFromDirectory } from '../notebook/runtime-paths'
+
 export type UsageCategoryKey = 'artifacts' | 'uploads' | 'runtime' | 'notebooks' | 'workspaces'
 export type UsageChild = { name: string; bytes: number }
 export type UsageCategory = { key: UsageCategoryKey; bytes: number; children?: UsageChild[] }
@@ -82,13 +84,15 @@ const runtimeUsage = async (dir: string): Promise<{ bytes: number; children: Usa
   } catch {
     envEntries = []
   }
+  const envBytes = new Map<string, number>()
   for (const entry of envEntries) {
     if (entry.isSymbolicLink() || !entry.isDirectory()) continue
-    children.push({
-      name: ENV_LABELS[entry.name] ?? entry.name,
-      bytes: await dirSize(join(dir, 'envs', entry.name), seen)
-    })
+    const logicalName = logicalEnvNameFromDirectory(entry.name)
+    const label = ENV_LABELS[logicalName] ?? logicalName
+    const bytes = await dirSize(join(dir, 'envs', entry.name), seen)
+    envBytes.set(label, (envBytes.get(label) ?? 0) + bytes)
   }
+  for (const [name, bytes] of envBytes) children.push({ name, bytes })
 
   // loose top-level files (e.g. .env-ready) and any other top-level dirs, so the total stays exact.
   let topEntries

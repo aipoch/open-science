@@ -1,4 +1,9 @@
-import type { ChatApiEndpoint, ProviderType } from '../../../../shared/settings'
+import {
+  codexSubscriptionProviderIdentity,
+  type AgentFrameworkId,
+  type ChatApiEndpoint,
+  type ProviderType
+} from '../../../../shared/settings'
 import {
   OFFICIAL_VENDORS,
   getOfficialVendor,
@@ -39,6 +44,31 @@ export const createEmptyProviderFormValue = (
   ...overrides
 })
 
+// The provider kind pre-selected when the Add provider form opens, matched to the active agent
+// framework's most common official vendor: Claude Code → Anthropic, Codex → OpenAI,
+// OpenCode → DeepSeek. Exhaustive over AgentFrameworkId so a new framework forces a deliberate
+// choice, and keyed off OfficialVendorId so a registry rename fails at compile time.
+export const defaultProviderKindKey = (
+  frameworkId: AgentFrameworkId
+): `official:${OfficialVendorId}` => {
+  switch (frameworkId) {
+    case 'claude-code':
+      return 'official:anthropic'
+    case 'codex':
+      return 'official:openai'
+    case 'opencode':
+      return 'official:deepseek'
+    default: {
+      // The never assignment keeps the switch exhaustive at compile time. Persisted state could
+      // still hold a stale value outside the union; this runs during render, so degrade to the
+      // Claude Code vendor instead of throwing.
+      const exhaustive: never = frameworkId
+      void exhaustive
+      return 'official:anthropic'
+    }
+  }
+}
+
 // Per-field validation errors. Custom needs base URL/model/key; official needs only a key (base URL
 // and model come from the registry); claude-default has no required fields.
 export type ProviderFormErrors = {
@@ -76,6 +106,14 @@ export const hasProviderFormErrors = (errors: ProviderFormErrors): boolean =>
 // for once those endpoints are wired up.)
 export type ProviderKindGroup = 'coding' | 'api' | 'other'
 
+// Group headers shown in the provider-type picker and dropdown, in display order. ('coding' is
+// reserved for subscription coding-plan endpoints once those are wired up.)
+export const PROVIDER_KIND_GROUPS: { id: ProviderKindGroup; label: string }[] = [
+  { id: 'coding', label: 'Codex subscription' },
+  { id: 'api', label: 'Official API' },
+  { id: 'other', label: 'Other' }
+]
+
 // A selectable option in the provider-type dropdown. Official vendors are keyed `official:<vendorId>`.
 export type ProviderKind = {
   key: string
@@ -85,6 +123,12 @@ export type ProviderKind = {
 }
 
 export const PROVIDER_KINDS: ProviderKind[] = [
+  {
+    key: 'codex-subscription',
+    label: codexSubscriptionProviderIdentity().name,
+    description: 'Use an existing Codex profile or sign in with a separate Open Science profile.',
+    group: 'coding'
+  },
   ...OFFICIAL_VENDORS.map((vendor): ProviderKind => ({
     key: `official:${vendor.id}`,
     label: vendor.label,
@@ -108,6 +152,20 @@ export const PROVIDER_KINDS: ProviderKind[] = [
 // The patch applied to the form value when a provider-kind is picked. Switching to an official vendor
 // seeds its default region + model; switching away clears vendor-only fields.
 export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
+  if (key === 'codex-subscription') {
+    const identity = codexSubscriptionProviderIdentity()
+    return {
+      type: 'codex-shared',
+      name: identity.name,
+      apiEndpoint: 'responses',
+      baseUrl: '',
+      model: '',
+      key: '',
+      vendorId: undefined,
+      region: undefined
+    }
+  }
+
   if (key === 'claude-default') {
     return { type: 'claude-default', vendorId: undefined, region: undefined, model: '' }
   }
@@ -135,10 +193,17 @@ export const selectedKindKey = (value: ProviderFormValue): string => {
     return 'custom'
   }
   if (value.type === 'claude-default') return 'claude-default'
+  if (value.type === 'codex-shared' || value.type === 'codex-isolated') {
+    return 'codex-subscription'
+  }
 
   return value.vendorId ? `official:${value.vendorId}` : 'custom'
 }
 
 // Maps a provider's type + vendor to its icon key ('custom' | 'claude-default' | 'official:<id>').
 export const providerKindKey = (type: ProviderType, vendorId?: OfficialVendorId): string =>
-  type === 'official' && vendorId ? `official:${vendorId}` : type
+  type === 'official' && vendorId
+    ? `official:${vendorId}`
+    : type === 'codex-shared' || type === 'codex-isolated'
+      ? 'codex-subscription'
+      : type

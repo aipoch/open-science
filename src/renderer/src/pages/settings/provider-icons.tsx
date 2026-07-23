@@ -10,11 +10,14 @@ import zhipuLogo from '@/assets/provider-icons/zhipu.svg'
 import kimiLogo from '@/assets/provider-icons/kimi.svg'
 import openrouterLogo from '@/assets/provider-icons/openrouter.svg'
 import xiaomimimoLogo from '@/assets/provider-icons/xiaomimimo.svg'
+import sensenovaLogo from '@/assets/provider-icons/sensenova.svg'
+import volcengineLogo from '@/assets/provider-icons/volcengine.svg'
 import type { OfficialVendorId } from '../../../../shared/provider-registry'
 
 // Official vendor brand marks, bundled as assets. Both Kimi providers (the general Moonshot platform
-// and Kimi For Coding) share the one Kimi mark. Any vendor without an entry falls back to a neutral
-// glyph rather than a made-up logo. Custom uses a plus-in-circle and local Claude a laptop.
+// and Kimi For Coding) share the one Kimi mark, and both GLM providers (pay-as-you-go Zhipu and the
+// GLM Coding Plan) share the one GLM mark. Any vendor without an entry falls back to a neutral glyph
+// rather than a made-up logo. Custom uses a plus-in-circle and local Claude a laptop.
 const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   openai: openaiLogo,
   anthropic: claudeLogo,
@@ -22,10 +25,13 @@ const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   minimax: minimaxLogo,
   stepfun: stepfunLogo,
   zhipu: zhipuLogo,
+  glmcodingplan: zhipuLogo,
   kimi: kimiLogo,
   kimiforcode: kimiLogo,
   openrouter: openrouterLogo,
-  xiaomimimo: xiaomimimoLogo
+  xiaomimimo: xiaomimimoLogo,
+  sensenova: sensenovaLogo,
+  volcengine: volcengineLogo
 }
 
 // Renders the icon for a provider-kind key ('custom', 'claude-default', or `official:<vendorId>`).
@@ -52,6 +58,14 @@ export const ProviderKindIcon = ({
         aria-hidden="true"
       />
     )
+  }
+
+  if (
+    kindKey === 'codex-subscription' ||
+    kindKey === 'codex-shared' ||
+    kindKey === 'codex-isolated'
+  ) {
+    return <img src={openaiLogo} alt="" className={cn('size-5 shrink-0', className)} />
   }
 
   const vendorId = kindKey.slice('official:'.length) as OfficialVendorId

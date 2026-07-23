@@ -34,18 +34,31 @@ vi.mock('node:fs/promises', () => ({ mkdir, rm }))
 
 // A fake runtime whose methods are spies; registration wires closures over these, so only the invoked
 // handler's method needs meaningful behavior. Hoisted so the (hoisted) vi.mock factory can reference it.
-const { createSession, resetSessionContext, resumeSession, AcpRuntimeMock } = vi.hoisted(() => {
-  const createSession = vi
-    .fn()
-    .mockImplementation(async (request) => ({ sessionId: 's-new', cwd: request.cwd }))
-  const resetSessionContext = vi
-    .fn()
-    .mockResolvedValue({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
-  const resumeSession = vi.fn().mockResolvedValue({ sessionId: 's-1', cwd: '/workspace' })
-  const AcpRuntimeMock = vi.fn().mockImplementation(function () {
-    return { createSession, resetSessionContext, resumeSession, getSnapshot: vi.fn() }
+const { createSession, resetSessionContext, resumeSession, sendPrompt, AcpRuntimeMock } =
+  vi.hoisted(() => {
+    const createSession = vi
+      .fn()
+      .mockImplementation(async (request) => ({ sessionId: 's-new', cwd: request.cwd }))
+    const resetSessionContext = vi
+      .fn()
+      .mockResolvedValue({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
+    const resumeSession = vi.fn().mockResolvedValue({ sessionId: 's-1', cwd: '/workspace' })
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    const AcpRuntimeMock = vi.fn().mockImplementation(function () {
+      return { createSession, resetSessionContext, resumeSession, sendPrompt, getSnapshot: vi.fn() }
+    })
+    return { createSession, resetSessionContext, resumeSession, sendPrompt, AcpRuntimeMock }
   })
-  return { createSession, resetSessionContext, resumeSession, AcpRuntimeMock }
+
+// Spy on the file logger so the create-session failure path can be asserted (routes to main.log, not a
+// bare console.error). errorLogFields stays real so the assertion also covers its output shape.
+const { errorLogSpy } = vi.hoisted(() => ({ errorLogSpy: vi.fn() }))
+vi.mock('../logger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../logger')>()
+  return {
+    ...actual,
+    createLogger: (scope: string) => ({ ...actual.createLogger(scope), error: errorLogSpy })
+  }
 })
 
 vi.mock('./runtime', () => ({ AcpRuntime: AcpRuntimeMock }))
@@ -59,24 +72,42 @@ vi.mock('../storage-root', () => ({
 const { registerAcpIpcHandlers } = await import('./ipc')
 
 // Minimal options — createRuntime just forwards them into the mocked AcpRuntime constructor.
-const registerWithFakes = (): void => {
+const registerWithFakes = (overrides?: {
+  taskNotifications?: {
+    trackPrompt: ReturnType<typeof vi.fn>
+    untrackPrompt: ReturnType<typeof vi.fn>
+  }
+}): void => {
+  const taskNotifications =
+    overrides?.taskNotifications ??
+    ({ trackPrompt: vi.fn(), untrackPrompt: vi.fn() } as unknown as {
+      trackPrompt: ReturnType<typeof vi.fn>
+      untrackPrompt: ReturnType<typeof vi.fn>
+    })
+
   registerAcpIpcHandlers({
     mcpEntryPath: '/app/out/main/index.js',
     repository: {} as never,
     runRegistry: {} as never,
     uploadRepository: {} as never,
     notebookRpcServer: {} as never,
-    settingsService: {} as never
-  } as Parameters<typeof registerAcpIpcHandlers>[0])
+    settingsService: {} as never,
+    taskNotifications: taskNotifications as never
+  })
 }
 
 afterEach(() => {
   clearMigrationPending()
   mkdir.mockClear()
   rm.mockClear()
-  createSession.mockClear()
+  // Restore the default managed-workspace implementation (a test may have overridden it once).
+  createSession.mockReset()
+  createSession.mockImplementation(async (request) => ({ sessionId: 's-new', cwd: request.cwd }))
   resetSessionContext.mockClear()
   resumeSession.mockClear()
+  sendPrompt.mockReset()
+  sendPrompt.mockResolvedValue(undefined)
+  errorLogSpy.mockClear()
 })
 
 describe('registerAcpIpcHandlers — managed session workspace', () => {
@@ -238,5 +269,84 @@ describe('registerAcpIpcHandlers — reset-session-context bridge', () => {
     // The distinct resume channel must not be driven by the reset call.
     expect(resumeSession).not.toHaveBeenCalled()
     expect(result).toEqual({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
+  })
+})
+
+describe('registerAcpIpcHandlers — create-session failure logging', () => {
+  it('logs the failure via the file logger and re-throws so the renderer still sees the error', async () => {
+    registerWithFakes()
+    const failure = Object.assign(new Error('Internal error'), { code: -32603 })
+    createSession.mockRejectedValueOnce(failure)
+
+    await expect(handlers.get('acp:create-session')?.({}, {})).rejects.toBe(failure)
+
+    expect(errorLogSpy).toHaveBeenCalledTimes(1)
+    const [message, data] = errorLogSpy.mock.calls[0] as [string, Record<string, unknown>]
+    expect(message).toBe('acp:create-session failed')
+    // Full error, not a bare "Internal error" string: message + JSON-RPC code both survive.
+    expect(data.error).toBe('Internal error')
+    expect(data.code).toBe(-32603)
+  })
+
+  it('does not log on the success path', async () => {
+    registerWithFakes()
+
+    await handlers.get('acp:create-session')?.({}, {})
+
+    expect(errorLogSpy).not.toHaveBeenCalled()
+  })
+
+  it('still re-throws the original error to the renderer when the logger itself throws', async () => {
+    registerWithFakes()
+    const failure = Object.assign(new Error('Internal error'), { code: -32603 })
+    createSession.mockRejectedValueOnce(failure)
+    // A hostile/broken logger must never mask the error the renderer needs to see.
+    errorLogSpy.mockImplementationOnce(() => {
+      throw new Error('logger boom')
+    })
+
+    await expect(handlers.get('acp:create-session')?.({}, {})).rejects.toBe(failure)
+  })
+})
+
+// Pins the IPC send-prompt → notification-tracking wire-up. TaskNotificationService has its own
+// unit tests for the token/untrack primitives, but the orchestration in `acp/ipc.ts` — calling
+// trackPrompt before sendPrompt and reverting via untrackPrompt if the runtime rejects before the
+// turn starts — is what protects a still-running turn's notification name from being overwritten
+// by a rejected prompt's tracking. An earlier spec review flagged exactly this kind of seam as the
+// gap that let a connector-sessionId regression slip through green.
+describe('registerAcpIpcHandlers — acp:send-prompt notification tracking', () => {
+  it('reverts the tracked prompt when the runtime rejects the send', async () => {
+    const trackPrompt = vi.fn().mockReturnValue({ token: 1, previousToken: undefined })
+    const untrackPrompt = vi.fn()
+    registerWithFakes({ taskNotifications: { trackPrompt, untrackPrompt } })
+
+    const failure = new Error('Active session disposed')
+    sendPrompt.mockRejectedValueOnce(failure)
+
+    await expect(
+      handlers.get('acp:send-prompt')?.({}, { sessionId: 'session-1', text: 'Plot the curve' })
+    ).rejects.toBe(failure)
+
+    expect(trackPrompt).toHaveBeenCalledTimes(1)
+    expect(trackPrompt).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      text: 'Plot the curve'
+    })
+    // The token the handler got back is the one it reverts, so a terminal event later cannot
+    // overwrite the still-running turn's snippet.
+    expect(untrackPrompt).toHaveBeenCalledTimes(1)
+    expect(untrackPrompt).toHaveBeenCalledWith('session-1', { token: 1, previousToken: undefined })
+  })
+
+  it('does not revert when the send succeeds (a terminal event will clean up)', async () => {
+    const trackPrompt = vi.fn().mockReturnValue({ token: 1, previousToken: undefined })
+    const untrackPrompt = vi.fn()
+    registerWithFakes({ taskNotifications: { trackPrompt, untrackPrompt } })
+
+    await handlers.get('acp:send-prompt')?.({}, { sessionId: 'session-1', text: 'Plot the curve' })
+
+    expect(trackPrompt).toHaveBeenCalledTimes(1)
+    expect(untrackPrompt).not.toHaveBeenCalled()
   })
 })

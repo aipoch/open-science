@@ -1,5 +1,12 @@
 import type { App, BrowserWindow, Tray } from 'electron'
 
+import type { ActiveSessionInfo } from '../shared/storage'
+import type {
+  CloseClassification,
+  CloseConfirmChoice,
+  CloseConfirmVariant
+} from '../shared/window-controls'
+
 // Menu action callbacks the tray is wired to.
 export type TrayHandlers = { onShow: () => void; onHide: () => void; onQuit: () => void }
 
@@ -9,8 +16,12 @@ export type TrayHandlers = { onShow: () => void; onHide: () => void; onQuit: () 
 export type AppLifecycleDeps = {
   // Only the event/exit surface is used; injectable so tests can drive the handlers directly.
   app: Pick<App, 'on' | 'exit'>
-  // Creates the main window; the lifecycle supplies the close-to-tray predicate it should honor.
-  createMainWindow: (opts: { shouldHideOnClose: () => boolean }) => BrowserWindow
+  // Creates the main window; the lifecycle supplies the close classification + confirm callbacks.
+  createMainWindow: (opts: {
+    classifyClose: () => CloseClassification
+    resolveCloseAction: () => Promise<CloseConfirmChoice>
+    requestQuit: () => void
+  }) => BrowserWindow
   // Builds the tray; returns undefined on hosts without a tray (e.g. some Linux desktops).
   createTray: (handlers: TrayHandlers) => Tray | undefined
   // Bounded, best-effort backend teardown (agent tree + notebook kernels); never throws.
@@ -25,39 +36,85 @@ export type AppLifecycleDeps = {
   createInitialWindow?: boolean
   // Overridable for tests; defaults to the host platform.
   platform?: NodeJS.Platform
+  // Snapshot of sessions with running work (in-flight agent prompt or a notebook cell mid-execution),
+  // used to populate the confirmation list and to skip the quit dialog when nothing is running.
+  detectActiveSessions: () => ActiveSessionInfo[]
+  // Builds the close-confirm coordinator bound to the current main window (recreated on demand).
+  createConfirmClose: (
+    getWindow: () => BrowserWindow | undefined
+  ) => (variant: CloseConfirmVariant, sessions: ActiveSessionInfo[]) => Promise<CloseConfirmChoice>
 }
 
 // Installs the tray, the first window, and the quit/activate/window-all-closed handlers. Returns
 // showMainWindow so the single-instance second-instance hook can surface the window (creating one when
-// none exists — e.g. macOS after the last window was closed but the app stayed resident).
-export const installAppLifecycle = (deps: AppLifecycleDeps): { showMainWindow: () => void } => {
+// none exists — e.g. macOS after the last window was closed but the app stayed resident). The returned
+// window reference lets callers (e.g. notification activation) target it without re-deriving it by
+// focus or window order.
+export const installAppLifecycle = (
+  deps: AppLifecycleDeps
+): { showMainWindow: () => BrowserWindow } => {
   const platform = deps.platform ?? process.platform
 
   let mainWindow: BrowserWindow | undefined
-  // Held in a box (not a plain `let`) so the close-to-tray predicate defined below can read it before
+  // Held in a box (not a plain `let`) so the close classification defined below can read it before
   // it is assigned — the tray, window, and predicate reference each other cyclically.
   const trayBox: { current: Tray | undefined } = { current: undefined }
   // Latches make the async quit cleanup idempotent: once started, further quits are held until exit.
   let shutdownStarted = false
   let shutdownFinished = false
+  // Set once the user has confirmed a quit (via the dialog or a prior 'confirm' close), so a re-issued
+  // before-quit skips straight to teardown instead of asking again.
+  let quitConfirmed = false
+  // Shared across both confirm-dispatching paths (titlebar X and tray/Ctrl+Q quit) so only one
+  // confirmation modal is ever open at a time. The renderer holds a single request slot; a second
+  // dispatch would silently overwrite the first and strand its promise forever (see app-lifecycle.test.ts).
+  let confirmInFlight = false
 
-  // Close-to-tray predicate, evaluated at close time: hide (stay resident) on Windows/Linux while the
-  // tray is active, unless a quit is already underway. macOS keeps its dock convention (real close).
-  const shouldHideOnClose = (): boolean =>
-    platform !== 'darwin' && Boolean(trayBox.current) && !shutdownStarted
+  const confirmClose = deps.createConfirmClose(() => mainWindow)
 
-  const openWindow = (): BrowserWindow => deps.createMainWindow({ shouldHideOnClose })
+  // Synchronous close classification, evaluated at close time. darwin keeps its dock convention (real
+  // close); a mid-quit or no-tray close proceeds; Windows asks (confirm); Linux keeps silent hide-to-tray.
+  const classifyClose = (): CloseClassification => {
+    if (platform === 'darwin') return 'close'
+    if (!trayBox.current || shutdownStarted || quitConfirmed) return 'close'
+    if (platform === 'win32') return 'confirm'
+    return 'hide'
+  }
+
+  // Only one confirmation modal at a time: if a quit-confirm (or another close-confirm) is already
+  // open, do nothing for this X press so the in-flight decision stays authoritative.
+  const resolveCloseAction = async (): Promise<CloseConfirmChoice> => {
+    if (confirmInFlight) return 'cancel'
+    confirmInFlight = true
+    try {
+      return await confirmClose('close-to-tray', deps.detectActiveSessions())
+    } finally {
+      confirmInFlight = false
+    }
+  }
+
+  const openWindow = (): BrowserWindow =>
+    deps.createMainWindow({
+      classifyClose,
+      resolveCloseAction,
+      requestQuit: () => {
+        quitConfirmed = true
+        deps.quit()
+      }
+    })
 
   // Surfaces the main window, creating a fresh one when none exists or the last was closed (macOS keeps
   // the app alive with no window; the tray Show item and a second launch must be able to bring it back).
-  const showMainWindow = (): void => {
+  // Returns the window so callers can target it directly instead of guessing by focus or window order.
+  const showMainWindow = (): BrowserWindow => {
     if (!mainWindow || mainWindow.isDestroyed()) {
       mainWindow = openWindow()
-      return
+      return mainWindow
     }
     if (mainWindow.isMinimized()) mainWindow.restore()
     if (!mainWindow.isVisible()) mainWindow.show()
     mainWindow.focus()
+    return mainWindow
   }
 
   const hideMainWindow = (): void => {
@@ -83,7 +140,43 @@ export const installAppLifecycle = (deps: AppLifecycleDeps): { showMainWindow: (
       event.preventDefault()
       return
     }
-    if (event.defaultPrevented || deps.isMigrationInProgress()) return
+    if (event.defaultPrevented || deps.isMigrationInProgress()) {
+      // This quit is being aborted (e.g. the migration guard cancelled it). Clear any prior
+      // confirmation so it doesn't leak into a later close: otherwise classifyClose would return
+      // 'close' and the next Windows X would bypass the dialog and destroy the window.
+      quitConfirmed = false
+      return
+    }
+
+    // Confirmation gate: unless the user already confirmed (e.g. Windows X -> Quit), confirm the
+    // quit. An empty active-session list makes confirmClose('quit', []) resolve 'quit' with no modal.
+    if (!quitConfirmed) {
+      event.preventDefault()
+      if (confirmInFlight) return
+      confirmInFlight = true
+      void confirmClose('quit', deps.detectActiveSessions())
+        .then((choice) => {
+          if (choice === 'quit') {
+            quitConfirmed = true
+            deps.quit()
+            return
+          }
+          // Cancel with no tray and no surviving window would strand the app with no UI (no-tray
+          // Windows/Linux: X destroys the window -> window-all-closed quit -> Cancel): recreate the
+          // window so the app the user chose to keep stays reachable. Gate on a window that existed
+          // and is now destroyed, NOT on platform+tray alone — headless web mode legitimately runs
+          // with no window (mainWindow never created) and must not have one fabricated here. macOS is
+          // exempt: window-closed-but-resident is its dock convention. The non-darwin/no-tray pair
+          // mirrors the window-all-closed quit path that produced this quit.
+          if (platform !== 'darwin' && !trayBox.current && mainWindow && mainWindow.isDestroyed()) {
+            showMainWindow()
+          }
+        })
+        .finally(() => {
+          confirmInFlight = false
+        })
+      return
+    }
 
     event.preventDefault()
     shutdownStarted = true

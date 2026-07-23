@@ -128,6 +128,27 @@ describe('renderer session persistence bridge', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
   })
 
+  it('does not hydrate a session snapshot after its startup effect is cancelled', async () => {
+    const deferred = createDeferred<LoadAllSessionsResult>()
+    const api = createApi({ loadAll: vi.fn().mockReturnValue(deferred.promise) })
+    const load = loadPersistedSessions(api, () => false)
+
+    deferred.resolve(createLoadResult())
+    await load
+
+    expect(useSessionStore.getState().sessions).toEqual([])
+  })
+
+  it('does not echo an externally hydrated session back to persistence', async () => {
+    const api = createApi()
+    const save = createStoreSaver(api)
+
+    useSessionStore.getState().upsertPersistedSession(createPersistedSession())
+    await save(useSessionStore.getState())
+
+    expect(api.saveSession).not.toHaveBeenCalled()
+  })
+
   it('saves only the session whose reference changed', async () => {
     const api = createApi()
     const save = createStoreSaver(api)
@@ -161,7 +182,7 @@ describe('renderer session persistence bridge', () => {
     expect(api.saveSession).not.toHaveBeenCalled()
   })
 
-  it('deletes sessions that were removed from the store', async () => {
+  it('does not infer durable deletion from sessions removed from the store', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'First',
@@ -177,10 +198,7 @@ describe('renderer session persistence bridge', () => {
 
     await save(useSessionStore.getState())
 
-    expect(api.deleteSession).toHaveBeenCalledWith({
-      projectId: 'project-a',
-      sessionId: 'session-1'
-    })
+    expect(api.deleteSession).not.toHaveBeenCalled()
   })
 
   it('writes the manifest when the selection changes to a persisted session', async () => {

@@ -43,6 +43,10 @@ type SendWorkspaceMessageInput = {
   // internal re-resume below runs against an already-attached session and can't report the reset
   // again, so this forces the prior turns to be replayed as a history preamble on the re-sent turn.
   forceHistoryReplay?: boolean
+  // Set by the edit-resend path, which appends the adjusted prompt optimistically (with its run
+  // already marked) so the bubble and waiting indicator show immediately. The duplicate-submit
+  // guard and the local append are skipped, and the replayed history stops before this message.
+  preAppendedMessageId?: string
   // Current Provider capability, injected by the hook so context replay cannot bypass image gating.
   supportsImageInput?: boolean
 }
@@ -52,10 +56,25 @@ type SendWorkspaceMessageResult = {
   messageId: string
 }
 
+// Payload of an inline edit resend: the adjusted prompt text plus the mentions it carries. The
+// session/message ids stay separate because they address the truncation point, not the prompt.
+type ResendEditedMessageInput = {
+  text: string
+  // Structured mention segments of the edited draft, persisted so the resent bubble renders pills.
+  parts?: MessagePart[]
+  // Skills picked in the inline editor; force-loaded and nudged for the resent turn only.
+  forcedSkillIds?: string[]
+  // Files referenced via `@` mentions in the inline editor; attached to the resent prompt.
+  referencedArtifacts?: ArtifactReference[]
+}
+
 type WorkspaceMessageRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'createSession' | 'resumeSession' | 'resetSessionContext' | 'sendPrompt'
 >
+
+type WorkspaceDeletionRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'deleteSession'>
+type PersistSessionDeletion = (request: { projectId: string; sessionId: string }) => Promise<void>
 
 type RuntimeEventApplier = (event: AcpRuntimeEvent) => Promise<boolean>
 
@@ -120,8 +139,8 @@ const getErrorMessage = (error: unknown): string =>
 // failure time avoids the race where failRun would flip the session out of 'running' first.
 const failOrMarkDisconnected = async (sessionId: string, message: string): Promise<void> => {
   // A conversation being auto-compacted after a request-size overflow owns its own outcome (reset +
-  // retry). Don't overwrite the neutral compacting state with a dead-end error from the prompt rejection
-  // the runtime swallowed into undefined.
+  // retry). Don't overwrite the neutral compacting state with a dead-end error from the rejected
+  // sendPrompt call.
   if (useSessionStore.getState().sessions.find((session) => session.id === sessionId)?.compacting) {
     return
   }
@@ -130,7 +149,8 @@ const failOrMarkDisconnected = async (sessionId: string, message: string): Promi
     const snapshot = await window.api.acp.getState()
 
     if (snapshot.status === 'closed' || snapshot.status === 'error') {
-      useSessionStore.getState().markDisconnected(sessionId)
+      // Keep the specific failure cause (e.g. "Connection timeout") in the Resume banner.
+      useSessionStore.getState().markDisconnected(sessionId, message)
       return
     }
   } catch {
@@ -288,7 +308,8 @@ const startPendingSessionPrompt = (
       pendingSessionId: pending.sessionId,
       sessionId: runtimeSessionId,
       cwd: sessionCwd,
-      agentFrameworkId: createdSession.frameworkId
+      agentFrameworkId: createdSession.frameworkId,
+      agentBackendId: createdSession.backendId
     })
 
     if (!bound) return
@@ -311,20 +332,22 @@ const startPendingSessionPrompt = (
 
     void runtime
       .sendPrompt(runtimeSessionId, content, promptAttachments, forcedSkillIds, referencedArtifacts)
-      .then((snapshot) => {
-        if (!snapshot) {
-          void failOrMarkDisconnected(runtimeSessionId, 'Agent run failed')
-        }
-      })
       .catch((error) => {
         // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
         // visible session error, instead of being swallowed as an unhandled rejection.
-        void failOrMarkDisconnected(runtimeSessionId, getErrorMessage(error))
+        // Ensure non-empty message to avoid being silently dropped by failRun's empty check.
+        const errorMessage = getErrorMessage(error).trim() || 'Agent run failed'
+        void failOrMarkDisconnected(runtimeSessionId, errorMessage)
       })
   })()
 }
 
 // Records the user's prompt before slow runtime work continues.
+// Shared by the send path and the edit-resend pre-check so both reject incompatible image replays
+// with the same wording.
+const IMAGE_REPLAY_UNSUPPORTED_MESSAGE =
+  'This conversation needs image replay, but the selected model does not support image input.'
+
 const sendWorkspaceMessage = async (
   runtime: WorkspaceMessageRuntime,
   {
@@ -339,6 +362,7 @@ const sendWorkspaceMessage = async (
     referencedArtifacts,
     parts,
     forceHistoryReplay,
+    preAppendedMessageId,
     supportsImageInput
   }: SendWorkspaceMessageInput
 ): Promise<SendWorkspaceMessageResult | undefined> => {
@@ -355,7 +379,12 @@ const sendWorkspaceMessage = async (
       .getState()
       .sessions.find((session) => session.id === targetSessionId)
 
-    if (currentSession?.status === 'running' || currentSession?.status === 'waiting-permission') {
+    // A pre-appended prompt already marked its own run, so the duplicate-submit guard must not
+    // reject the send that belongs to it.
+    if (
+      !preAppendedMessageId &&
+      (currentSession?.status === 'running' || currentSession?.status === 'waiting-permission')
+    ) {
       return undefined
     }
 
@@ -393,27 +422,43 @@ const sendWorkspaceMessage = async (
     let resumeCwd: string | undefined
 
     if (shouldResumeSession) {
-      if (!targetCwd) {
+      // Empty string is treated as missing; fall back to runtime cwd
+      const effectiveCwd = targetCwd || runtime.state.cwd
+
+      if (!effectiveCwd) {
         useSessionStore
           .getState()
           .failRun(targetSessionId, 'Session workspace is missing; start a new conversation.')
         return undefined
       }
 
-      resumeCwd = targetCwd
+      resumeCwd = effectiveCwd
     }
 
-    const appended = useSessionStore.getState().appendUserMessage({
-      sessionId: targetSessionId,
-      content,
-      attachments,
-      parts,
-      cwd: targetCwd,
-      projectId: projectId ?? currentSession?.projectId
-    })
+    const appended = preAppendedMessageId
+      ? { sessionId: targetSessionId, messageId: preAppendedMessageId }
+      : useSessionStore.getState().appendUserMessage({
+          sessionId: targetSessionId,
+          content,
+          attachments,
+          parts,
+          cwd: targetCwd,
+          projectId: projectId ?? currentSession?.projectId
+        })
 
     // appendUserMessage can reject stale session ids after local deletion or hydration changes.
     if (!appended) return undefined
+
+    // A pre-appended prompt replays only the turns that precede it, so the resent turn is not
+    // duplicated into its own preamble.
+    const preAppendedCutIndex =
+      preAppendedMessageId && currentSession
+        ? currentSession.messages.findIndex((message) => message.id === preAppendedMessageId)
+        : -1
+    const historyMessages =
+      currentSession && preAppendedCutIndex >= 0
+        ? currentSession.messages.slice(0, preAppendedCutIndex)
+        : currentSession?.messages
 
     // Persisted sessions are marked running locally before async resume closes duplicate submits.
     // A resume that lands on a freshly-adopted session (framework switch, or an unresumable restart)
@@ -430,11 +475,14 @@ const sendWorkspaceMessage = async (
           resumeCwd,
           sessionProjectName,
           currentSession?.permissionProfile ?? permissionProfile,
-          currentSession?.agentFrameworkId
+          currentSession?.agentFrameworkId,
+          currentSession?.agentBackendId
         )
 
         contextResetFromResume = Boolean(resumeResult?.contextReset)
-        useSessionStore.getState().markResumed(targetSessionId, resumeResult?.frameworkId)
+        useSessionStore
+          .getState()
+          .markResumed(targetSessionId, resumeResult?.frameworkId, resumeResult?.backendId)
       } catch (error) {
         useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
         return appended
@@ -443,18 +491,16 @@ const sendWorkspaceMessage = async (
 
     // Replay prior turns when this resume reset the agent's context, or the caller already knows a reset
     // happened (interrupted-resume path — its internal re-resume above hits an already-attached session
-    // and can't report the reset again). currentSession was captured before the new user message was
-    // appended, so this is the prior conversation only — the turn being sent is not duplicated in.
-    if ((contextResetFromResume || forceHistoryReplay) && currentSession) {
-      historyPreamble = buildHistoryPreamble(currentSession.messages)
-      const media = buildHistoryReplayMedia(currentSession.messages)
-      if (supportsImageInput === false && media.images.length > 0) {
-        useSessionStore
-          .getState()
-          .failRun(
-            targetSessionId,
-            'This conversation needs image replay, but the selected model does not support image input.'
-          )
+    // and can't report the reset again). historyMessages ends before the newly appended user message,
+    // so this is the prior conversation only — the turn being sent is not duplicated in.
+    if ((contextResetFromResume || forceHistoryReplay) && historyMessages) {
+      historyPreamble = buildHistoryPreamble(historyMessages)
+      const media = buildHistoryReplayMedia(historyMessages)
+      if (
+        supportsImageInput === false &&
+        (media.images.length > 0 || media.attachments.length > 0)
+      ) {
+        useSessionStore.getState().failRun(targetSessionId, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
         return appended
       }
       historyAttachments = media.attachments
@@ -462,11 +508,11 @@ const sendWorkspaceMessage = async (
     }
 
     const resumeFallback =
-      forcedSkillIds && forcedSkillIds.length > 0 && currentSession
+      forcedSkillIds && forcedSkillIds.length > 0 && historyMessages
         ? (() => {
-            const media = buildHistoryReplayMedia(currentSession.messages)
+            const media = buildHistoryReplayMedia(historyMessages)
             return {
-              historyPreamble: buildHistoryPreamble(currentSession.messages),
+              historyPreamble: buildHistoryPreamble(historyMessages),
               historyAttachments: media.attachments,
               historyImages: supportsImageInput === false ? undefined : media.images
             }
@@ -502,15 +548,12 @@ const sendWorkspaceMessage = async (
         historyImages,
         resumeFallback
       )
-      .then((snapshot) => {
-        if (!snapshot) {
-          void failOrMarkDisconnected(targetSessionId, 'Agent run failed')
-        }
-      })
       .catch((error) => {
         // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
         // visible session error, instead of being swallowed as an unhandled rejection.
-        void failOrMarkDisconnected(targetSessionId, getErrorMessage(error))
+        // Ensure non-empty message to avoid being silently dropped by failRun's empty check.
+        const errorMessage = getErrorMessage(error).trim() || 'Agent run failed'
+        void failOrMarkDisconnected(targetSessionId, errorMessage)
       })
 
     return appended
@@ -580,6 +623,7 @@ const resumeInterruptedWorkspaceSession = async (
     return
   }
 
+  // Empty string is treated as missing; fall back to runtime cwd
   const resumeCwd = session.cwd || runtime.state.cwd
 
   if (!resumeCwd) {
@@ -597,13 +641,16 @@ const resumeInterruptedWorkspaceSession = async (
       resumeCwd,
       session.projectId,
       session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-      session.agentFrameworkId
+      session.agentFrameworkId,
+      session.agentBackendId
     )
     // Adopting a fresh agent session (framework switch, or an unresumable restart) wipes the agent's
     // context; capture that so the re-sent turn below replays the transcript. The shared send path's
     // own re-resume can't observe this — by then the session is already attached.
     contextReset = Boolean(resumeResult?.contextReset)
-    useSessionStore.getState().markResumed(sessionId, resumeResult?.frameworkId)
+    useSessionStore
+      .getState()
+      .markResumed(sessionId, resumeResult?.frameworkId, resumeResult?.backendId)
   } catch (error) {
     useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
     return
@@ -650,6 +697,7 @@ const recoverContextOverflowWorkspaceSession = async (
 
   if (!session) return false
 
+  // Empty string is treated as missing; fall back to runtime cwd
   const resumeCwd = session.cwd || runtime.state.cwd
 
   if (!resumeCwd) return false
@@ -690,6 +738,91 @@ const recoverContextOverflowWorkspaceSession = async (
     permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
     // A fresh agent session lost the prior context, so replay the transcript on this first prompt.
     forceHistoryReplay: true
+  })
+
+  return true
+}
+
+// Resends an inline-edited prompt by truncating the conversation at the edited message. The cut and
+// the adjusted prompt's bubble are applied optimistically — the run is marked and the waiting
+// indicator shows immediately, like a composer send — then the agent session is reset (ACP has no
+// history truncation) and the kept turns are replayed as a text preamble on the resent prompt. A
+// failed reset rolls the transcript back so nothing is lost. Returns false when the flow cannot
+// start or the reset fails.
+const resendEditedWorkspaceMessage = async (
+  runtime: WorkspaceMessageRuntime,
+  input: ResendEditedMessageInput & { sessionId: string; messageId: string },
+  supportsImageInput?: boolean
+): Promise<boolean> => {
+  const session = useSessionStore.getState().sessions.find((item) => item.id === input.sessionId)
+
+  if (!session) return false
+
+  const resumeCwd = session.cwd || runtime.state.cwd
+  const content = input.text.trim()
+  const cutIndex = session.messages.findIndex((message) => message.id === input.messageId)
+
+  if (!resumeCwd || !content || cutIndex < 0) return false
+
+  // Validate replay compatibility before the destructive cut: a kept history with images — whether
+  // agent-emitted blocks or user uploads — cannot be replayed on a model without image input, and
+  // discovering that after the truncation would leave the later turns dropped with no prompt dispatched.
+  const replayMedia = buildHistoryReplayMedia(session.messages.slice(0, cutIndex))
+
+  if (
+    supportsImageInput === false &&
+    (replayMedia.images.length > 0 || replayMedia.attachments.length > 0)
+  ) {
+    useSessionStore.getState().failRun(input.sessionId, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
+    return false
+  }
+
+  // The optimistic cut + append: the edited message and every later turn drop out, and the adjusted
+  // prompt takes their place as a live run with its bubble and waiting indicator already visible.
+  const preEditSession = session
+  useSessionStore.getState().truncateSessionFromMessage(input.sessionId, input.messageId)
+  const appended = useSessionStore.getState().appendUserMessage({
+    sessionId: input.sessionId,
+    content,
+    attachments: [],
+    parts: input.parts,
+    cwd: resumeCwd,
+    projectId: session.projectId
+  })
+
+  if (!appended) return false
+
+  try {
+    await runtime.resetSessionContext(
+      input.sessionId,
+      resumeCwd,
+      session.projectId,
+      session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
+    )
+  } catch (error) {
+    // Roll the transcript back to the pre-edit state so a failed reset deletes nothing, then
+    // surface the failure on the restored conversation.
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((item) => (item.id === input.sessionId ? preEditSession : item))
+    }))
+    useSessionStore.getState().failRun(input.sessionId, getResumeFailureMessage(error))
+    return false
+  }
+
+  await sendWorkspaceMessage(runtime, {
+    sessionId: input.sessionId,
+    text: content,
+    attachments: [],
+    parts: input.parts,
+    cwd: resumeCwd,
+    projectId: session.projectId,
+    permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+    forcedSkillIds: input.forcedSkillIds,
+    referencedArtifacts: input.referencedArtifacts,
+    // The fresh agent session lost the prior context, so replay the truncated transcript.
+    forceHistoryReplay: true,
+    preAppendedMessageId: appended.messageId,
+    supportsImageInput
   })
 
   return true
@@ -769,6 +902,35 @@ const markRunningSessionsDisconnectedOnDrop = (
   }
 }
 
+// Deletes in three ordered ownership layers: agent runtime, durable JSON/DB coordinator, then renderer
+// state. A failure in either authoritative layer leaves the session visible with an actionable error.
+const deleteWorkspaceSession = async (
+  runtime: WorkspaceDeletionRuntime,
+  sessionId: string,
+  persistDeletion: PersistSessionDeletion = window.api.sessions.deleteSession
+): Promise<boolean> => {
+  const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
+  if (!session?.projectId) return false
+
+  const snapshot = await runtime.deleteSession(sessionId)
+  if (!snapshot || snapshot.sessionIds.includes(sessionId)) {
+    useSessionStore.getState().failRun(sessionId, 'Agent session deletion failed')
+    return false
+  }
+
+  try {
+    await persistDeletion({ projectId: session.projectId, sessionId })
+  } catch (error) {
+    useSessionStore
+      .getState()
+      .failRun(sessionId, `Session deletion failed: ${getErrorMessage(error)}`)
+    throw error
+  }
+
+  useSessionStore.getState().deleteSession(sessionId)
+  return true
+}
+
 const useWorkspaceAgentRuntime = (): {
   actionError: string | null
   isConnecting: boolean
@@ -776,9 +938,14 @@ const useWorkspaceAgentRuntime = (): {
   permissionProfiles: Record<string, SessionPermissionProfileState>
   permissionGrants: Record<string, AcpPermissionGrant[]>
   sendMessage: (input: SendWorkspaceMessageInput) => Promise<SendWorkspaceMessageResult | undefined>
+  resendEditedMessage: (
+    sessionId: string,
+    messageId: string,
+    input: ResendEditedMessageInput
+  ) => Promise<boolean>
   cancelRun: (sessionId: string) => Promise<void>
   resumeInterruptedSession: (sessionId: string) => Promise<void>
-  deleteRuntimeSession: (sessionId: string) => Promise<void>
+  deleteRuntimeSession: (sessionId: string) => Promise<boolean>
   respondToPermission: (requestId: string, optionId?: string) => Promise<void>
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => Promise<boolean>
   revokePermissionGrant: (sessionId: string, categoryKey: string) => Promise<void>
@@ -836,6 +1003,14 @@ const useWorkspaceAgentRuntime = (): {
     [runtime, supportsImageInput]
   )
 
+  // Truncates the conversation at the edited message, then resends the adjusted prompt with the
+  // kept history replayed into the reset agent context.
+  const resendEditedMessage = useCallback(
+    (sessionId: string, messageId: string, input: ResendEditedMessageInput): Promise<boolean> =>
+      resendEditedWorkspaceMessage(runtime, { sessionId, messageId, ...input }, supportsImageInput),
+    [runtime, supportsImageInput]
+  )
+
   // Explicitly re-attaches an interrupted session's ACP runtime so the user can keep chatting. On
   // success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
   const resumeInterruptedSession = useCallback(
@@ -858,18 +1033,8 @@ const useWorkspaceAgentRuntime = (): {
 
   // Deletes the local session only after runtime state confirms it was removed.
   const deleteRuntimeSession = useCallback(
-    async (sessionId: string): Promise<void> => {
-      const snapshot = await runtime.deleteSession(sessionId)
-
-      if (!snapshot) {
-        useSessionStore.getState().failRun(sessionId, 'Agent session deletion failed')
-        return
-      }
-
-      // Preview files intentionally outlive conversations, so only the chat session is removed.
-      if (!snapshot.sessionIds.includes(sessionId)) {
-        useSessionStore.getState().deleteSession(sessionId)
-      }
+    async (sessionId: string): Promise<boolean> => {
+      return deleteWorkspaceSession(runtime, sessionId).catch(() => false)
     },
     [runtime]
   )
@@ -922,6 +1087,7 @@ const useWorkspaceAgentRuntime = (): {
     permissionProfiles: runtime.state.permissionProfiles,
     permissionGrants: runtime.state.permissionGrants,
     sendMessage,
+    resendEditedMessage,
     cancelRun,
     resumeInterruptedSession,
     deleteRuntimeSession,
@@ -934,10 +1100,12 @@ const useWorkspaceAgentRuntime = (): {
 export {
   createWorkspaceRuntimeEventProcessor,
   getResumeFailureMessage,
+  deleteWorkspaceSession,
   markRunningSessionsDisconnectedOnDrop,
   processContextOverflowRecovery,
   processVisibleWorkspaceRuntimeEvents,
   recoverContextOverflowWorkspaceSession,
+  resendEditedWorkspaceMessage,
   resumeInterruptedWorkspaceSession,
   sendWorkspaceMessage,
   useWorkspaceAgentRuntime

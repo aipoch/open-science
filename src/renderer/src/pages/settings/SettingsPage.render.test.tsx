@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingsPage } from './SettingsPage'
+import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 let container: HTMLDivElement
@@ -116,6 +117,24 @@ afterEach(() => {
   delete (window as unknown as { api?: unknown }).api
 })
 
+// Opens the Agent sub-panel via the left nav (the agent framework lives there; the Model panel
+// itself shows providers).
+const openAgentPanel = async (): Promise<void> => {
+  const item = Array.from(
+    document.body.querySelectorAll<HTMLButtonElement>('nav[aria-label="Settings"] button')
+  ).find((candidate) => candidate.textContent?.trim() === 'Agent')
+  await act(async () => item?.click())
+}
+
+// Finds a left-nav button by its exact label.
+const navButton = (label: string): HTMLButtonElement | undefined =>
+  Array.from(
+    document.body.querySelectorAll<HTMLButtonElement>('nav[aria-label="Settings"] button')
+  ).find((candidate) => candidate.textContent?.trim() === label)
+
+// The Agent sub-item's <li> wrapper, whose grid-rows class drives the expand/collapse animation.
+const agentItem = (): HTMLElement | null => navButton('Agent')?.closest('li') ?? null
+
 describe('SettingsPage layout', () => {
   it('mounts the sidebar + content with grouped nav items and a close control', () => {
     useSettingsStore.setState({
@@ -148,8 +167,8 @@ describe('SettingsPage layout', () => {
     expect(dialog?.getAttribute('data-slot')).toBe('settings-surface')
     expect(dialog?.className).toContain('overscroll-contain')
 
-    // Left navigation grouped as Capabilities (Skills, Connectors, Network) and Workspace (Model,
-    // Runtimes, Storage, General).
+    // Left navigation grouped as Capabilities (Skills, Connectors, Compute, Network) and Workspace
+    // (Model with its Agent sub-item, Runtimes, Storage, General).
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
@@ -157,14 +176,16 @@ describe('SettingsPage layout', () => {
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
     const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(7)
+    expect(navItems).toHaveLength(9)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
-    expect(navItems[2]?.textContent).toContain('Network')
-    expect(navItems[3]?.textContent).toContain('Model')
-    expect(navItems[4]?.textContent).toContain('Runtimes')
-    expect(navItems[5]?.textContent).toContain('Storage')
-    expect(navItems[6]?.textContent).toContain('General')
+    expect(navItems[2]?.textContent).toContain('Compute')
+    expect(navItems[3]?.textContent).toContain('Network')
+    expect(navItems[4]?.textContent).toContain('Model')
+    expect(navItems[5]?.textContent).toContain('Agent')
+    expect(navItems[6]?.textContent).toContain('Runtimes')
+    expect(navItems[7]?.textContent).toContain('Storage')
+    expect(navItems[8]?.textContent).toContain('General')
     // Model is the default active panel.
     expect(nav?.querySelector('[aria-current="page"]')?.textContent).toContain('Model')
 
@@ -177,13 +198,72 @@ describe('SettingsPage layout', () => {
       'button'
     )
 
-    // The Model panel content is present (Claude + Providers sections).
-    expect(document.body.textContent).toContain('Claude')
+    // The Model panel splits Active model and Reasoning effort (their own sections) from provider
+    // management; the agent framework moved to the Agent sub-panel.
+    expect(document.body.textContent).toContain('Active model')
+    expect(document.body.textContent).toContain('Reasoning effort')
     expect(document.body.textContent).toContain('Providers')
+    expect(document.body.textContent).not.toContain('Agent framework')
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
+    // The add action lives with the list as a dashed ghost row, not a section-header button.
+    const addRow = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Add provider'
+    )
+    expect(addRow?.className).toContain('border-dashed')
+  })
+
+  it('shows the agent framework on the Agent sub-panel', async () => {
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    await openAgentPanel()
+
     expect(document.body.textContent).toContain('Agent framework')
-    // Agent framework (holds both selectable runtime cards) + Providers.
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(2)
-    expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
+    expect(document.body.textContent).not.toContain('Add provider')
+    expect(document.body.querySelector('nav [aria-current="page"]')?.textContent?.trim()).toBe(
+      'Agent'
+    )
+  })
+
+  it('keeps the Agent sub-item expanded once the Model branch is opened', async () => {
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    // Model is the default panel, so the branch starts expanded…
+    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
+
+    // …and switching to another top-level panel never collapses it.
+    await act(async () => navButton('General')?.click())
+    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
+    expect(navButton('Agent')?.tabIndex).toBe(0)
+  })
+
+  it('collapses the Agent sub-item when a skill mention deep-links in, until Model is clicked', async () => {
+    // Render the default (Model) landing first: the component stays mounted across opens, so a
+    // deep link arrives as a store update AFTER mount — the exact path the regression hit.
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
+
+    // A skill mention deep-links settings to the Skills panel (the seeding effect re-seeds history).
+    await act(async () => {
+      useSettingsStore.setState({ pendingSkillId: 'alpha' })
+    })
+    expect(agentItem()?.className).toContain('grid-rows-[0fr]')
+    expect(navButton('Agent')?.tabIndex).toBe(-1)
+
+    // Clicking Model expands it…
+    await act(async () => navButton('Model')?.click())
+    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
+    expect(navButton('Agent')?.tabIndex).toBe(0)
+
+    // …and it stays expanded after leaving the branch again.
+    await act(async () => navButton('General')?.click())
+    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
   })
 
   it('opens Add provider as a history-driven sub-page and returns via the back arrow', () => {
@@ -201,12 +281,15 @@ describe('SettingsPage layout', () => {
     clickByText('Add provider')
 
     // The sub-page shows a "Model › Add provider" breadcrumb and the provider-type dropdown, hiding
-    // the Claude section. There is no standalone in-content back arrow.
+    // the Claude section. There is no standalone in-content back arrow. With Claude Code as the
+    // active framework, the type defaults to Anthropic.
     const crumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')
     expect(crumb).not.toBeNull()
     expect(document.body.textContent).toContain('Add provider')
     expect(document.body.querySelector('[aria-label="Back to providers"]')).toBeNull()
-    expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
+    const typeTrigger = document.body.querySelector('[aria-label="Provider type"]')
+    expect(typeTrigger).not.toBeNull()
+    expect(typeTrigger?.textContent).toContain('Anthropic')
     expect(document.body.querySelector('section[aria-label="Claude"]')).toBeNull()
 
     // The shared top back arrow exits the form back to the provider list.
@@ -226,6 +309,43 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
   })
 
+  it('defaults the Add provider type to the framework vendor (Codex → OpenAI, OpenCode → DeepSeek)', async () => {
+    // Claude Code → Anthropic is covered by the history-navigation test above.
+    const scenarios = [
+      { framework: 'codex', runtime: { codex: { resolvedPath: '/x/codex' } }, label: 'OpenAI' },
+      {
+        framework: 'opencode',
+        runtime: { opencode: { resolvedPath: '/x/opencode' } },
+        label: 'DeepSeek'
+      }
+    ] as const
+
+    for (const { framework, runtime, label } of scenarios) {
+      await act(async () => {
+        root.render(<SettingsPage open onClose={vi.fn()} />)
+      })
+      // Set the framework after the initial load() settles, and give the runtime a resolved path
+      // so the detect-on-view effect doesn't overwrite it.
+      useSettingsStore.setState({ agentFrameworkId: framework, ...runtime })
+
+      const addProvider = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>('button')
+      ).find((button) => button.textContent?.trim() === 'Add provider')
+      act(() => addProvider?.click())
+
+      expect(document.body.querySelector('[aria-label="Provider type"]')?.textContent).toContain(
+        label
+      )
+
+      act(() => root.unmount())
+      container.remove()
+      document.body.innerHTML = ''
+      container = document.createElement('div')
+      document.body.appendChild(container)
+      root = createRoot(container)
+    }
+  })
+
   it('switches to the General panel and shows the diagnostic log file', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -240,8 +360,8 @@ describe('SettingsPage layout', () => {
       generalTab?.click()
     })
 
-    // AppVersion, Diagnostics, Command line tool, Community.
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(4)
+    // AppVersion, Notifications, Diagnostics, Command line tool, Community.
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(5)
     expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
 
     // The Diagnostics panel surfaces the log file path plus Open and Reveal controls.
@@ -536,6 +656,7 @@ describe('SettingsPage uninstall confirmation', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
+    await openAgentPanel()
 
     // The inactive managed Claude card exposes an Uninstall action, and no confirmation is open yet.
     const cardUninstall = findButton(document.body, 'Uninstall')
@@ -576,6 +697,7 @@ describe('SettingsPage uninstall confirmation', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
+    await openAgentPanel()
 
     const cardUninstall = findButton(document.body, 'Uninstall')
     expect(cardUninstall).toBeDefined()
@@ -613,6 +735,7 @@ describe('SettingsPage uninstall confirmation', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
+    await openAgentPanel()
 
     // Selecting the inactive OpenCode card opens the switch confirmation without switching yet.
     const opencodeRadio = document.body.querySelector<HTMLButtonElement>(
@@ -681,11 +804,13 @@ describe('SettingsPage Codex framework', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
+    await openAgentPanel()
 
     const codexRadio = document.body.querySelector<HTMLButtonElement>('[aria-label="Use Codex"]')
     expect(codexRadio).not.toBeNull()
-    expect(document.body.textContent).toContain('Adapter version')
-    expect(document.body.textContent).toContain('Native Codex version')
+    // The adapter version shows as a muted v-tag after the name; the repo link points at the ACP adapter.
+    expect(document.body.textContent).toContain('v1.1.4')
+    expect(document.body.textContent).toContain('agentclientprotocol/codex-acp')
 
     await act(async () => codexRadio?.click())
     const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
@@ -728,13 +853,296 @@ describe('SettingsPage Codex framework', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
+    await openAgentPanel()
 
-    const install = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Install with one click'
+    const installTrigger = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Install Codex"]'
     )
-    expect(install).toBeDefined()
-    await act(async () => install?.click())
+    expect(installTrigger).not.toBeNull()
+    openRadixMenu(installTrigger)
+
+    // The Install button opens a source menu; the app-managed source is the recommended default.
+    const managedItem = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('App-managed download (recommended)'))
+    expect(managedItem).toBeDefined()
+    clickRadixMenuItem(managedItem)
 
     expect(installCodex).toHaveBeenCalledWith({ source: 'managed' })
+  })
+
+  it('groups cards by install state and re-detects every framework from the section action', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const snapshot = {
+      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
+      codex: {},
+      providers: [],
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: frameworks,
+      claudeManaged: true,
+      opencodeManaged: false,
+      codexManaged: false
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      claudeReady: true,
+      opencodeReady: true,
+      codexReady: false,
+      agentFrameworkId: 'claude-code',
+      agentReady: true,
+      activeProviderReady: false
+    })
+    const detectClaude = vi.fn().mockResolvedValue(snapshot)
+    const detectOpencode = vi.fn().mockResolvedValue(snapshot)
+    const detectCodex = vi.fn().mockResolvedValue(snapshot)
+    api.settings.detectClaude = detectClaude
+    api.settings.detectOpencode = detectOpencode
+    api.settings.detectCodex = detectCodex
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await openAgentPanel()
+
+    // Two ready runtimes land in the Installed group; Codex (not ready) in Available.
+    expect(document.body.textContent).toContain('Installed · 2')
+    expect(document.body.textContent).toContain('Available · 1')
+    // Claude is renamed in this panel only.
+    expect(document.body.textContent).toContain('Claude Agent')
+
+    // The section-level Re-detect re-scans all three frameworks at once.
+    const redetect = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Re-detect'
+    )
+    expect(redetect).toBeDefined()
+    await act(async () => redetect?.click())
+
+    expect(detectClaude).toHaveBeenCalledTimes(1)
+    expect(detectOpencode).toHaveBeenCalledTimes(1)
+    expect(detectCodex).toHaveBeenCalledTimes(1)
+  })
+
+  it('routes isolated subscription sign-out from the provider list', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const provider = {
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      name: 'Codex subscription',
+      apiEndpoints: ['responses'],
+      models: ['gpt-5.6-sol'],
+      supportsImageInput: true,
+      hasKey: false,
+      needsKey: false,
+      lastValidatedAt: 1
+    }
+    const snapshot = {
+      claude: {},
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      providers: [provider],
+      activeProviderId: provider.id,
+      activeModel: 'gpt-5.6-sol',
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: true
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      codexReady: true,
+      agentFrameworkId: 'codex',
+      agentReady: true,
+      activeProviderReady: true
+    })
+    const logoutIsolatedCodex = vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
+    api.settings.logoutIsolatedCodex = logoutIsolatedCodex
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    const signOut = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign out"]')
+    await act(async () => signOut?.click())
+
+    expect(logoutIsolatedCodex).toHaveBeenCalledOnce()
+    const errorAlert = document.body.querySelector('[role="alert"]')
+    expect(errorAlert).toBeNull()
+  })
+
+  it('surfaces a Codex sign-out timeout through the provider error alert', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const provider = {
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      name: 'Codex subscription',
+      apiEndpoints: ['responses'],
+      models: ['gpt-5.6-sol'],
+      supportsImageInput: true,
+      hasKey: false,
+      needsKey: false,
+      verified: true,
+      lastValidatedAt: Date.now()
+    }
+    const snapshot = {
+      claude: {},
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      providers: [provider],
+      activeProviderId: provider.id,
+      activeModel: 'gpt-5.6-sol',
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: true
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      codexReady: true,
+      agentFrameworkId: 'codex',
+      agentReady: true,
+      activeProviderReady: true
+    })
+    const logoutIsolatedCodex = vi
+      .fn()
+      .mockResolvedValue({ ok: false, category: 'timeout', message: 'Codex sign-out timed out.' })
+    api.settings.logoutIsolatedCodex = logoutIsolatedCodex
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    const signOut = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign out"]')
+    await act(async () => signOut?.click())
+
+    expect(logoutIsolatedCodex).toHaveBeenCalledOnce()
+    const errorAlert = document.body.querySelector('[role="alert"]')
+    expect(errorAlert?.textContent).toBe('Codex sign-out timed out.')
+  })
+
+  it('shows Codex login-check IPC failures instead of leaving an unhandled rejection', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const provider = {
+      id: 'builtin-codex-subscription',
+      type: 'codex-shared',
+      name: 'Codex subscription',
+      apiEndpoints: ['responses'],
+      models: ['gpt-5.6-sol'],
+      supportsImageInput: true,
+      hasKey: false,
+      needsKey: false
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: {},
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      providers: [provider],
+      activeProviderId: provider.id,
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: true
+    })
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      codexReady: true,
+      agentFrameworkId: 'codex',
+      agentReady: true,
+      activeProviderReady: false
+    })
+    api.settings.validateProvider = vi
+      .fn()
+      .mockRejectedValue(new Error('The Codex adapter does not support authentication status.'))
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    const testLogin = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Check Codex login"]'
+    )
+    await act(async () => testLogin?.click())
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'The Codex adapter does not support authentication status.'
+    )
+  })
+
+  it('cancels a pending isolated sign-in when the dialog closes mid-flow', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const provider = {
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      name: 'Codex subscription',
+      apiEndpoints: ['responses'],
+      models: [],
+      supportsImageInput: true,
+      hasKey: false,
+      needsKey: false
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: {},
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      providers: [provider],
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: true
+    })
+    // The browser flow never settles on its own; closing the dialog is what cancels it.
+    api.settings.loginIsolatedCodex = vi.fn(() => new Promise(() => undefined))
+    api.settings.cancelCodexLogin = vi.fn().mockResolvedValue(undefined)
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    const signIn = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign in"]')
+    await act(async () => signIn?.click())
+    expect(document.body.querySelector('[aria-label="Cancel sign-in"]')).not.toBeNull()
+
+    await act(async () => {
+      root.render(<SettingsPage open={false} onClose={vi.fn()} />)
+    })
+
+    expect(api.settings.cancelCodexLogin).toHaveBeenCalledOnce()
+  })
+
+  it('surfaces isolated sign-in failures instead of leaving an unhandled rejection', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const provider = {
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      name: 'Codex subscription',
+      apiEndpoints: ['responses'],
+      models: [],
+      supportsImageInput: true,
+      hasKey: false,
+      needsKey: false
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: {},
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      providers: [provider],
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: true
+    })
+    api.settings.loginIsolatedCodex = vi
+      .fn()
+      .mockRejectedValue(new Error('The Codex adapter failed to spawn.'))
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    const signIn = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign in"]')
+    await act(async () => signIn?.click())
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'The Codex adapter failed to spawn.'
+    )
   })
 })

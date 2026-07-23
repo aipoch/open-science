@@ -85,6 +85,12 @@ export type AcpRuntimeEventKind =
 
 export type AcpRuntimeEventLevel = 'info' | 'warning' | 'error'
 
+// Title of the error event marking a genuinely failed prompt turn. Shared between the runtime
+// producer and consumers (e.g. desktop notifications) that must distinguish turn failures from
+// ancillary session-scoped errors (artifact cleanup, cancel timeout) — a copy edit here updates
+// both sides at once.
+export const ACP_PROMPT_FAILED_EVENT_TITLE = 'Prompt failed'
+
 // Marks a prompt failure the app can auto-recover from without user action. 'context-overflow' means
 // the conversation outgrew the provider's request-size limit (accumulated media); the renderer resets
 // the agent context and replays a text-only transcript. Absent on ordinary events.
@@ -157,6 +163,9 @@ export type AcpPermissionRequest = {
   title: string
   status?: string
   providerToolName?: string
+  // Set by the permission broker after framework-aware classification so the renderer never has to
+  // infer MCP origin from provider-specific titles or tool kinds.
+  isMcp?: boolean
   toolKind?: ToolKind
   toolLocations?: ToolCallLocation[]
   rawInput?: unknown
@@ -202,6 +211,7 @@ export type AcpCreateSessionResponse = {
   sessionId: string
   cwd?: string
   frameworkId?: AgentFrameworkId
+  backendId?: string
   // True when a resume could not reattach the agent's own session and a fresh one was adopted under the
   // same app id (framework switch, or a restart the agent could not resume). Agent-side context is gone,
   // so the caller may replay a transcript preamble into the next prompt to restore continuity.
@@ -214,6 +224,7 @@ export type AcpResumeSessionRequest = {
   projectName?: string
   permissionProfile?: PermissionProfileId
   previousFrameworkId?: AgentFrameworkId
+  previousBackendId?: string
 }
 
 export type AcpSetPermissionProfileRequest = {

@@ -17,6 +17,7 @@ import {
 } from './kernel-protocol'
 import { mapLoopOutputs, type MappedFigure } from './loop-output-mapper'
 import {
+  condaActivatedPath,
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
   envPrefix,
@@ -104,6 +105,8 @@ export type NotebookKernelExecutorOptions = {
   // intentional shutdown()/restart(). Parallels onIdleShutdown so the caller can persist a
   // 'terminated' kernel status for an involuntary loss too (see NotebookRuntimeService).
   onTerminated?: (kind: KernelProcessKind, env: string) => void
+  // Injectable only to exercise the Windows conda activation contract on non-Windows test hosts.
+  platform?: NodeJS.Platform
 }
 
 // One in-flight request awaiting a matching loop response line.
@@ -195,7 +198,7 @@ const resolveProcessKey = (request: NotebookExecutionRequest): ProcessKey => {
 // still exactly ONE proc per (kind, env), matching the (kind, env)-keyed status/lock tracking upstream.
 const interpreterIdentity = (request: NotebookExecutionRequest): string => {
   const ri = request.resolvedInterpreter
-  return ri ? [ri.command, ...(ri.args ?? [])].join('\n') : ''
+  return ri ? [ri.command, ...(ri.args ?? []), ri.condaPrefix ?? ''].join('\n') : ''
 }
 
 // Converts process, spawn, timeout, and loop errors into normal notebook execution results.
@@ -238,6 +241,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   private readonly cancelIdleTimer: CancelIdleTimer
   private readonly onIdleShutdown?: (kind: KernelProcessKind, env: string) => void
   private readonly onTerminated?: (kind: KernelProcessKind, env: string) => void
+  private readonly platform: NodeJS.Platform
 
   constructor(options: NotebookKernelExecutorOptions = {}) {
     this.pythonLoopPath = options.pythonLoopPath ?? defaultPythonLoopPath()
@@ -248,6 +252,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     this.cancelIdleTimer = options.cancelIdleTimer ?? defaultCancelIdleTimer
     this.onIdleShutdown = options.onIdleShutdown
     this.onTerminated = options.onTerminated
+    this.platform = options.platform ?? process.platform
   }
 
   // Sends one cell to the kind's loop and resolves with the mapped execution result.
@@ -506,8 +511,17 @@ class NotebookKernelExecutor implements NotebookExecutor {
     request: NotebookExecutionRequest,
     figuresDir: string
   ): NodeJS.ProcessEnv {
+    // A resolved interpreter is user-owned (BYO/overlay). Never put app-managed conda DLLs ahead of
+    // it: on Windows that can load an incompatible BLAS/compiler runtime into the external R process.
+    // An external Windows conda R instead carries its OWN verified prefix from runtime discovery.
     const rEnvPrefix =
-      kind === 'r' ? envPrefix(request.runtimeRoot, resolveRequestEnv(kind, request)) : undefined
+      kind !== 'r'
+        ? undefined
+        : request.resolvedInterpreter
+          ? this.platform === 'win32'
+            ? request.resolvedInterpreter.condaPrefix
+            : undefined
+          : envPrefix(request.runtimeRoot, resolveRequestEnv(kind, request))
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       // Force a non-interactive matplotlib backend so plt.show() never opens a GUI window in this
@@ -530,13 +544,23 @@ class NotebookKernelExecutor implements NotebookExecutor {
       ...(kind === 'repl' && request.mcpRpcToken
         ? { OPEN_SCIENCE_MCP_RPC_TOKEN: request.mcpRpcToken }
         : {}),
+      // Session/project identity reaches ONLY the repl kernel, alongside the RPC creds: host.compute
+      // carries it on call_command payloads for grant-scope approval memory (This conversation / This
+      // project). The data kernels have no host.compute, so they never need — and never receive — it.
+      ...(kind === 'repl' && request.sessionId
+        ? { OPEN_SCIENCE_NOTEBOOK_SESSION_ID: request.sessionId }
+        : {}),
+      ...(kind === 'repl' && request.projectName
+        ? { OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME: request.projectName }
+        : {}),
       ...(kind === 'repl' ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       ...(rEnvPrefix ? { OPEN_SCIENCE_R_ENV_PREFIX: rEnvPrefix } : {})
     }
 
-    // The R loop shells out to the env's own tools; putting its bin first keeps them consistent.
+    // The R interpreter and loop depend on the env's native libraries. Windows conda activation
+    // requires Library\bin (BLAS/LAPACK and compiler runtimes), not just <prefix>\bin.
     if (rEnvPrefix) {
-      env.PATH = `${join(rEnvPrefix, 'bin')}${delimiter}${process.env.PATH ?? ''}`
+      env.PATH = condaActivatedPath(rEnvPrefix, process.env.PATH, this.platform)
     }
     return env
   }

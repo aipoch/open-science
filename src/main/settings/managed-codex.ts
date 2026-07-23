@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
-import { createReadStream } from 'node:fs'
+import { createReadStream, type Dirent } from 'node:fs'
 import {
   chmod,
+  cp,
   mkdir,
   mkdtemp,
   open,
+  readdir,
   rename,
   rm,
   writeFile,
@@ -557,22 +559,79 @@ const errorCode = (error: unknown): string | undefined =>
     ? String((error as { code?: unknown }).code)
     : undefined
 
+// Move the backup back into place after a failed install step, then rethrow the original cause.
+// When even the restore fails, the previous install survives only at the random backup path —
+// log it and annotate the error so the caller can surface where to recover it manually.
+const restoreBackupOrThrow = async (
+  backup: string,
+  destination: string,
+  cause: unknown
+): Promise<never> => {
+  try {
+    await rename(backup, destination)
+  } catch (restoreError) {
+    log.error(`Failed to restore backup. Backup retained at: ${backup}`, restoreError)
+    const msg = cause instanceof Error ? cause.message : String(cause)
+    throw new Error(`${msg} (backup retained at ${backup})`)
+  }
+  throw cause
+}
+
 const replaceDirectory = async (staged: string, destination: string): Promise<void> => {
   const backup = `${destination}.backup-${randomUUID()}`
   let hasBackup = false
 
+  // Step 1: move the existing destination aside as a backup.
+  // On Windows, rename can fail with EPERM when antivirus holds a lock on files inside the
+  // existing install, or EXDEV on a cross-device move (defensive — same-volume layout makes
+  // EXDEV unreachable in practice, but guarded for completeness). Fall back to cp+rm.
   try {
     await rename(destination, backup)
     hasBackup = true
   } catch (error) {
-    if (errorCode(error) !== 'ENOENT') throw error
+    const code = errorCode(error)
+    if (code === 'ENOENT') {
+      // Nothing to back up — first install.
+    } else if (code === 'EPERM' || code === 'EXDEV') {
+      try {
+        await cp(destination, backup, { recursive: true })
+        await rm(destination, { recursive: true, force: true })
+        hasBackup = true
+      } catch (fallbackError) {
+        // The backup fallback failed partway: the existing install may be partially deleted and
+        // the backup may be incomplete. Surface the real cause (not the original EPERM) plus
+        // the backup path so the user can recover manually.
+        log.error(
+          `Failed to back up existing install before replacement. Backup may be incomplete at: ${backup}`,
+          fallbackError
+        )
+        const msg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+        throw new Error(`${msg} (backup may be incomplete at ${backup})`)
+      }
+    } else {
+      throw error
+    }
   }
 
+  // Step 2: move the staged runtime into the final destination.
   try {
     await rename(staged, destination)
-  } catch (error) {
-    if (hasBackup) await rename(backup, destination).catch(() => undefined)
-    throw error
+  } catch (renameError) {
+    const code = errorCode(renameError)
+    if (code === 'EPERM' || code === 'EXDEV') {
+      try {
+        await cp(staged, destination, { recursive: true })
+        await rm(staged, { recursive: true, force: true }).catch(() => undefined)
+      } catch (copyError) {
+        // Copy failed — try to restore the backup so the user's previous install survives.
+        await rm(destination, { recursive: true, force: true }).catch(() => undefined)
+        if (hasBackup) await restoreBackupOrThrow(backup, destination, copyError)
+        throw copyError
+      }
+    } else {
+      if (hasBackup) await restoreBackupOrThrow(backup, destination, renameError)
+      throw renameError
+    }
   }
 
   if (hasBackup) await rm(backup, { recursive: true, force: true }).catch(() => undefined)
@@ -612,6 +671,11 @@ export const installManagedCodex = async ({
     const adapterTgz = join(scratch, 'adapter.tgz')
     const codexTgz = join(scratch, 'codex.tgz')
 
+    // Tracks whether the install has left the registry-dependent phase: the staged bits are
+    // byte-identical across registries (pinned versions + integrities), so a replaceDirectory
+    // failure is a deterministic local filesystem error — retrying the next registry would
+    // re-download the same bits into the same error and overwrite the backup path it carries.
+    let reachedLocalInstall = false
     try {
       onEvent({ kind: 'progress', installId, phase: 'resolving' })
       const adapter = await resolvePinnedPackage(
@@ -675,6 +739,7 @@ export const installManagedCodex = async ({
       // the final runtime, so anything Codex might write here must not ride along into the install.
       await verifyPair(stagedAdapter, stagedCodex, join(scratch, 'smoke-home'))
 
+      reachedLocalInstall = true
       await replaceDirectory(stagedRoot, managedCodexRoot(dataRoot))
 
       return {
@@ -686,6 +751,16 @@ export const installManagedCodex = async ({
       }
     } catch (error) {
       lastError = describeError(error)
+      if (reachedLocalInstall) {
+        // Local install failure — do not attribute it to the registry or try the next one.
+        onEvent({
+          kind: 'log',
+          installId,
+          stream: 'system',
+          chunk: `install failed: ${lastError}\n`
+        })
+        return { result: { installId, ok: false, error: lastError } }
+      }
       onEvent({
         kind: 'log',
         installId,
@@ -700,6 +775,21 @@ export const installManagedCodex = async ({
   return { result: { installId, ok: false, error: lastError } }
 }
 
+// Backups are always directories named `codex-managed.backup-<uuid>` (see replaceDirectory) —
+// match that exact shape so uninstall never deletes look-alike entries sharing the prefix.
+const ORPHANED_BACKUP_PATTERN =
+  /^codex-managed\.backup-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
+
 export const uninstallManagedCodex = async (dataRoot: string): Promise<void> => {
   await rm(managedCodexRoot(dataRoot), { recursive: true, force: true }).catch(() => undefined)
+  // Failed installs can leave orphaned backups behind (retained for manual recovery) —
+  // uninstall removes them along with the managed tree.
+  const entries = await readdir(dataRoot, { withFileTypes: true }).catch(() => [] as Dirent[])
+  await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory() && ORPHANED_BACKUP_PATTERN.test(entry.name))
+      .map((entry) =>
+        rm(join(dataRoot, entry.name), { recursive: true, force: true }).catch(() => undefined)
+      )
+  )
 }

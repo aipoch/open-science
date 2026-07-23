@@ -29,11 +29,13 @@ vi.mock('electron', () => ({
 
 // The subset of the bridge these tests exercise. Args are unknown — forwarding, not shape, is asserted.
 type PreloadApi = {
+  lifecycle: {
+    getClientId: () => unknown
+  }
   sessions: {
     loadAll: () => unknown
     saveSession: (session: unknown) => unknown
     deleteSession: (request: unknown) => unknown
-    deleteProjectSessions: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
   }
   settings: {
@@ -42,13 +44,20 @@ type PreloadApi = {
     installOpencode: (request: unknown) => unknown
     installCodex: (request: unknown) => unknown
     setAgentFramework: (request: unknown) => unknown
+    setNotificationsEnabled: (request: unknown) => unknown
     uninstallClaude: () => unknown
     uninstallOpencode: () => unknown
     uninstallCodex: () => unknown
+    cancelCodexLogin: () => unknown
+    loginIsolatedCodex: () => unknown
+    logoutIsolatedCodex: () => unknown
   }
   acp: {
     resumeSession: (request: unknown) => unknown
     resetSessionContext: (request: unknown) => unknown
+  }
+  notifications: {
+    takePendingOpenSession: () => unknown
   }
   cli: {
     getStatus: () => unknown
@@ -90,13 +99,18 @@ type ForwardingCase = {
 
 const sampleSession = { id: 's-1', projectId: 'p-1', title: 't' }
 const sampleDeleteSession = { projectId: 'p-1', sessionId: 's-1' }
-const sampleDeleteProject = { projectId: 'p-1' }
 const sampleManifest = { projectId: 'p-1', sessionId: 's-1' }
 const sampleInstall = { executablePath: '/usr/local/bin/opencode' }
 const sampleFramework = { framework: 'opencode' }
 const sampleResumeRequest = { sessionId: 's-1', cwd: '/workspace/project' }
 
 const cases: ForwardingCase[] = [
+  {
+    name: 'lifecycle.getClientId → lifecycle:client-id (no args)',
+    invoke: (a) => a.lifecycle.getClientId(),
+    channel: 'lifecycle:client-id',
+    args: []
+  },
   // sessions block
   {
     name: 'sessions.loadAll → sessions:load-all (no args)',
@@ -115,12 +129,6 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.sessions.deleteSession(sampleDeleteSession),
     channel: 'sessions:delete-session',
     args: [sampleDeleteSession]
-  },
-  {
-    name: 'sessions.deleteProjectSessions → sessions:delete-project-sessions',
-    invoke: (a) => a.sessions.deleteProjectSessions(sampleDeleteProject),
-    channel: 'sessions:delete-project-sessions',
-    args: [sampleDeleteProject]
   },
   {
     name: 'sessions.saveManifest → sessions:save-manifest',
@@ -160,6 +168,12 @@ const cases: ForwardingCase[] = [
     args: [sampleFramework]
   },
   {
+    name: 'settings.setNotificationsEnabled → settings:set-notifications-enabled',
+    invoke: (a) => a.settings.setNotificationsEnabled({ enabled: false }),
+    channel: 'settings:set-notifications-enabled',
+    args: [{ enabled: false }]
+  },
+  {
     name: 'settings.uninstallClaude → settings:uninstall-claude (no args)',
     invoke: (a) => a.settings.uninstallClaude(),
     channel: 'settings:uninstall-claude',
@@ -175,6 +189,24 @@ const cases: ForwardingCase[] = [
     name: 'settings.uninstallCodex → settings:uninstall-codex (no args)',
     invoke: (a) => a.settings.uninstallCodex(),
     channel: 'settings:uninstall-codex',
+    args: []
+  },
+  {
+    name: 'settings.cancelCodexLogin → settings:cancel-codex-login (no args)',
+    invoke: (a) => a.settings.cancelCodexLogin(),
+    channel: 'settings:cancel-codex-login',
+    args: []
+  },
+  {
+    name: 'settings.loginIsolatedCodex → settings:login-isolated-codex (no args)',
+    invoke: (a) => a.settings.loginIsolatedCodex(),
+    channel: 'settings:login-isolated-codex',
+    args: []
+  },
+  {
+    name: 'settings.logoutIsolatedCodex → settings:logout-isolated-codex (no args)',
+    invoke: (a) => a.settings.logoutIsolatedCodex(),
+    channel: 'settings:logout-isolated-codex',
     args: []
   },
   // command-line launcher install/uninstall/status
@@ -208,10 +240,21 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.acp.resetSessionContext(sampleResumeRequest),
     channel: 'acp:reset-session-context',
     args: [sampleResumeRequest]
+  },
+  // Notification click target: the renderer pulls it once sessions are hydrated.
+  {
+    name: 'notifications.takePendingOpenSession → notifications:take-pending-open-session',
+    invoke: (a) => a.notifications.takePendingOpenSession(),
+    channel: 'notifications:take-pending-open-session',
+    args: []
   }
 ]
 
 describe('preload bridge — sessions + agent-framework IPC channels', () => {
+  it('does not expose the legacy half-delete project-session command', () => {
+    expect(api.sessions).not.toHaveProperty('deleteProjectSessions')
+  })
+
   it.each(cases)('$name', ({ invoke, channel, args }) => {
     invoke(api)
 

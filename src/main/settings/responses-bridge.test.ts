@@ -508,6 +508,66 @@ describe('Responses-compatible bridge conversion', () => {
     ).toMatchObject({ model: 'deepseek-v4-flash' })
   })
 
+  it('translates the reasoning effort into the Chat Completions parameter when explicitly chosen', () => {
+    expect(
+      responsesToChatRequest(
+        { model: 'model-a', input: 'hi', reasoning: { effort: 'high' } },
+        undefined,
+        undefined,
+        [],
+        { forwardReasoningEffort: true }
+      )
+    ).toMatchObject({ reasoning_effort: 'high' })
+    expect(
+      responsesToChatRequest(
+        { model: 'model-a', input: 'hi', reasoning: { effort: 'low' } },
+        undefined,
+        undefined,
+        [],
+        { forwardReasoningEffort: true }
+      )
+    ).toMatchObject({ reasoning_effort: 'low' })
+  })
+
+  it('clamps the Codex-only xhigh effort to high for Chat Completions', () => {
+    expect(
+      responsesToChatRequest(
+        { model: 'model-a', input: 'hi', reasoning: { effort: 'xhigh' } },
+        undefined,
+        undefined,
+        [],
+        { forwardReasoningEffort: true }
+      )
+    ).toMatchObject({ reasoning_effort: 'high' })
+  })
+
+  it('omits the reasoning effort when there is nothing portable to send', () => {
+    // 'none' has no Chat Completions equivalent — the upstream default stands. No reasoning block
+    // means nothing is sent either.
+    expect(
+      responsesToChatRequest(
+        { model: 'model-a', input: 'hi', reasoning: { effort: 'none' } },
+        undefined,
+        undefined,
+        [],
+        { forwardReasoningEffort: true }
+      )
+    ).not.toHaveProperty('reasoning_effort')
+    expect(
+      responsesToChatRequest({ model: 'model-a', input: 'hi' }, undefined, undefined, [], {
+        forwardReasoningEffort: true
+      })
+    ).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('strips the reasoning effort unless the user explicitly chose a level', () => {
+    // Codex emits its own default effort even when the app never configured one; forwarding that
+    // would change what existing bridged users send to gateways that may reject unknown params.
+    expect(
+      responsesToChatRequest({ model: 'model-a', input: 'hi', reasoning: { effort: 'high' } })
+    ).not.toHaveProperty('reasoning_effort')
+  })
+
   it('surfaces a nested upstream error instead of hiding it behind HTTP status', () => {
     expect(
       upstreamErrorMessage('{"error":{"message":"Model deepseek-v4-flash does not exist"}}', 400)
@@ -577,6 +637,168 @@ describe('Responses-compatible bridge conversion', () => {
       expect(output).toContain('response.output_text.delta')
       expect(output).toContain('bridge-ok')
       expect(output).toContain('response.completed')
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('forwards the reasoning effort to the upstream gateway when explicitly chosen', async () => {
+    let upstreamRequest: Record<string, unknown> | undefined
+    const upstreamFetch = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamRequest = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return new Response(
+          [
+            'data: ' +
+              JSON.stringify({
+                id: 'chat-effort-1',
+                model: 'model-a',
+                choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' } }]
+              }),
+            '',
+            'data: [DONE]',
+            ''
+          ].join('\n'),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      }
+    )
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', key: 'upstream-key', forwardReasoningEffort: true },
+      upstreamFetch
+    )
+    const connection = await bridge.start()
+
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          input: 'hi',
+          reasoning: { effort: 'xhigh' },
+          stream: true
+        })
+      })
+      await response.text()
+
+      // The Codex-only 'xhigh' reaches the gateway as 'high', not dropped.
+      expect(response.status).toBe(200)
+      expect(upstreamRequest).toMatchObject({ reasoning_effort: 'high' })
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('strips the reasoning effort when the user never chose a level', async () => {
+    let upstreamRequest: Record<string, unknown> | undefined
+    const upstreamFetch = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamRequest = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return new Response(
+          [
+            'data: ' +
+              JSON.stringify({
+                id: 'chat-effort-2',
+                model: 'model-a',
+                choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' } }]
+              }),
+            '',
+            'data: [DONE]',
+            ''
+          ].join('\n'),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      }
+    )
+    // No forwardReasoningEffort: Codex's own default effort must not change what existing bridged
+    // users send upstream.
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', key: 'upstream-key' },
+      upstreamFetch
+    )
+    const connection = await bridge.start()
+
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          input: 'hi',
+          reasoning: { effort: 'high' },
+          stream: true
+        })
+      })
+      await response.text()
+
+      expect(response.status).toBe(200)
+      expect(upstreamRequest).not.toHaveProperty('reasoning_effort')
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('flips effort forwarding on a live bridge without replacing its target', async () => {
+    let upstreamRequest: Record<string, unknown> | undefined
+    const upstreamFetch = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamRequest = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return new Response(
+          [
+            'data: ' +
+              JSON.stringify({
+                id: 'chat-effort-flip',
+                model: 'model-a',
+                choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' } }]
+              }),
+            '',
+            'data: [DONE]',
+            ''
+          ].join('\n'),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      }
+    )
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', key: 'upstream-key' },
+      upstreamFetch
+    )
+    const connection = await bridge.start()
+    const post = (): Promise<string> =>
+      fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          input: 'hi',
+          reasoning: { effort: 'high' },
+          stream: true
+        })
+      }).then((response) => response.text())
+
+    try {
+      await post()
+      expect(upstreamRequest).not.toHaveProperty('reasoning_effort')
+
+      // The user picks a level (Codex applies it live over ACP — the bridge never reconnects).
+      bridge.setForwardReasoningEffort(true)
+      await post()
+      expect(upstreamRequest).toMatchObject({ reasoning_effort: 'high' })
+
+      // Back to default: stripping restored on the same live bridge.
+      bridge.setForwardReasoningEffort(false)
+      await post()
+      expect(upstreamRequest).not.toHaveProperty('reasoning_effort')
     } finally {
       await bridge.close()
     }

@@ -41,6 +41,19 @@ describe('project prisma client (integration)', () => {
     await ensureProjectSchema(client)
     expect(await repository.list()).toEqual([])
 
+    const indexes = await client.$queryRawUnsafe<Array<{ name: string }>>(
+      `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name IN ('ManagedFile', 'ManagedFileSessionSync')`
+    )
+    expect(indexes.map((index) => index.name)).toEqual(
+      expect.arrayContaining([
+        'ManagedFile_projectId_source_sourceFileId_key',
+        'ManagedFile_projectId_source_storageKey_key',
+        'ManagedFile_projectId_source_deletedAt_sortAtMs_seq_idx',
+        'ManagedFile_projectId_sessionId_source_deletedAt_sortAtMs_seq_idx',
+        'ManagedFileSessionSync_projectId_deletedAt_groupSortAtMs_sessionId_idx'
+      ])
+    )
+
     // Create reads/writes every column type Prisma expects (TEXT, BOOLEAN, DATETIME defaults).
     const created = await repository.create({ name: 'Reproduction', description: 'demo' })
     expect(created.name).toBe('Reproduction')
@@ -90,7 +103,7 @@ describe('project prisma client (integration)', () => {
     expect(stored.checks[0]!.reflagCount).toBe(0)
 
     // Increment and verify the Prisma client can read the updated value.
-    await reviewRepo.incrementReflagCount(review.id, 'test claim')
+    await reviewRepo.incrementReflagCount(review.id, stored.checks[0]!.id)
     const [updated] = await reviewRepo.getReviewsForSession('s1')
     expect(updated.checks[0]!.reflagCount).toBe(1)
 

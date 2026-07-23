@@ -2,6 +2,12 @@ import { statSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 
 import { PROD_SESSION_DIR_NAME } from '../session-persistence/repository'
+import {
+  DEFAULT_MAX_CACHE_RELATIVE_PATH,
+  selectMicromambaCache,
+  type MicromambaCache,
+  type MicromambaCacheDeps
+} from './micromamba-cache'
 
 // Injected environment so resolution is unit-testable without touching the real process layout. All
 // fields optional; omitted ones fall back to process defaults.
@@ -67,6 +73,7 @@ export const createFromLockArgv = (
   lock: string
 ): string[] => [
   mm,
+  '--no-rc',
   'create',
   '-p',
   prefix,
@@ -87,6 +94,7 @@ export const installFromLockArgv = (
   lock: string
 ): string[] => [
   mm,
+  '--no-rc',
   'install',
   '-p',
   prefix,
@@ -119,6 +127,33 @@ export const caBundleEnv = (caBundle?: string): NodeJS.ProcessEnv =>
       }
     : {}
 
+export type MicromambaSpawnEnvDeps = MicromambaCacheDeps & {
+  selectCache?: (root: string, maxCacheRelativePath: number) => MicromambaCache
+}
+
+export const micromambaSpawnEnv = (
+  root: string,
+  caBundle?: string,
+  deps: MicromambaSpawnEnvDeps = {},
+  maxCacheRelativePath = DEFAULT_MAX_CACHE_RELATIVE_PATH
+): NodeJS.ProcessEnv => {
+  const platform = deps.platform ?? process.platform
+  const inherited = deps.env ?? process.env
+  if (platform !== 'win32') return { ...inherited, ...caBundleEnv(caBundle) }
+
+  const cleaned = Object.fromEntries(
+    Object.entries(inherited).filter(([key]) => !/^(CONDA|MAMBA)_/i.test(key))
+  )
+  const selected = deps.selectCache
+    ? deps.selectCache(root, maxCacheRelativePath)
+    : selectMicromambaCache(root, maxCacheRelativePath, deps)
+  return {
+    ...cleaned,
+    ...caBundleEnv(caBundle),
+    CONDA_PKGS_DIRS: selected.path
+  }
+}
+
 // micromamba create --root-prefix <root> --prefix <prefix> -y -c <ch...> <pkgs...>
 // Online fallback (dev / no bundle): solves against the channels and downloads packages.
 export const createFromPackagesArgv = (
@@ -129,6 +164,7 @@ export const createFromPackagesArgv = (
   pkgs: string[]
 ): string[] => [
   mm,
+  '--no-rc',
   'create',
   '--root-prefix',
   root,
@@ -152,6 +188,7 @@ export const installArgv = (
   freezeInstalled = false
 ): string[] => [
   mm,
+  '--no-rc',
   'install',
   '--root-prefix',
   root,

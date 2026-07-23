@@ -220,9 +220,8 @@ describe('conversation message scroller integration', () => {
     expect(conversationPanelSource).toContain(
       "import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'"
     )
-    expect(conversationPanelSource).toContain(
-      '<WorkspaceMessageScroller activeSession={activeSession} />'
-    )
+    expect(conversationPanelSource).toContain('<WorkspaceMessageScroller')
+    expect(conversationPanelSource).toContain('activeSession={activeSession}')
     expect(conversationPanelSource).not.toContain('@/components/ui/scroll-area')
     expect(conversationPanelSource).not.toContain('<ScrollArea')
   })
@@ -260,7 +259,9 @@ describe('conversation message scroller integration', () => {
     const workspaceMessageItemSource = readFileSync(workspaceMessageItemPath, 'utf8')
     const workspaceMessageScrollerSource = readFileSync(workspaceMessageScrollerPath, 'utf8')
 
-    expect(workspaceMessageItemSource).toContain('className="flex justify-end"')
+    expect(workspaceMessageItemSource).toContain(
+      'className="group flex items-center justify-end gap-1"'
+    )
     expect(workspaceMessageItemSource).toContain(
       "'max-w-[90%] break-words rounded-2xl bg-bg-300 px-3.5 py-2 text-sm text-message-user-text md:max-w-[min(85%,56rem)] md:px-4 md:py-2.5 md:text-[15px]'"
     )
@@ -349,7 +350,7 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageScrollerSource).not.toContain('createActivityToggleLabel(')
     expect(workspaceMessageScrollerSource).not.toContain('renderWebSearchDetails(')
     expect(workspaceMessageScrollerSource).not.toContain('formatActivityDetails(activity)')
-    expect(workspaceMessageScrollerSource).toContain('conversationItems.map((item)')
+    expect(workspaceMessageScrollerSource).toContain('conversationItems.map((item, itemIndex)')
     expect(workspaceMessageScrollerSource).toMatch(/import \{[^}]*\buseState\b[^}]*\} from 'react'/)
     expect(workspaceMessageScrollerSource).toContain('const currentSessionId = activeSession?.id')
     expect(workspaceMessageScrollerSource).toContain(

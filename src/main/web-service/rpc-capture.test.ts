@@ -47,4 +47,25 @@ describe('installRpcCapture', () => {
     await expect(capture.invoke('missing', 'client', [])).rejects.toThrow('Unknown RPC channel')
     capture.dispose()
   })
+
+  it('preserves lifecycle identity when a web client sender is recreated', async () => {
+    const ipcMain = { handle: vi.fn() }
+    const capture = installRpcCapture(ipcMain as never)
+    ipcMain.handle('example:identity', (event: unknown) => {
+      const sender = (event as { sender: { id: number; lifecycleClientId?: string } }).sender
+      return { senderId: sender.id, lifecycleClientId: sender.lifecycleClientId }
+    })
+
+    const first = (await capture.invoke('example:identity', 'browser-1', [])) as {
+      senderId: number
+      lifecycleClientId: string
+    }
+    capture.releaseClient('browser-1')
+    const reconnected = (await capture.invoke('example:identity', 'browser-1', [])) as typeof first
+
+    expect(reconnected.senderId).not.toBe(first.senderId)
+    expect(first.lifecycleClientId).toBe('web:browser-1')
+    expect(reconnected.lifecycleClientId).toBe(first.lifecycleClientId)
+    capture.dispose()
+  })
 })

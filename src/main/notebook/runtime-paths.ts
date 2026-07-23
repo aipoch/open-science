@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { delimiter, dirname, join, win32 } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 
@@ -42,6 +43,27 @@ export const resolveRuntimeCdnBase = (override?: string): string => {
 
 export const DEFAULT_PY_ENV = 'default-python'
 export const DEFAULT_R_ENV = 'default-r'
+
+const WINDOWS_DEFAULT_ENV_DIRECTORIES: Readonly<Record<string, string>> = {
+  [DEFAULT_PY_ENV]: '.p',
+  [DEFAULT_R_ENV]: '.r'
+}
+
+const windowsDefaultEnvNamesByDirectory = new Map(
+  Object.entries(WINDOWS_DEFAULT_ENV_DIRECTORIES).map(([name, directory]) => [directory, name])
+)
+
+// Logical environment names are part of notebook state and the tool interface. On Windows the two
+// app-managed defaults use short, reserved physical directory names so their descriptive logical
+// names do not consume the environment's MAX_PATH budget. User-created names cannot start with a
+// dot, so these directories cannot collide with a named environment.
+export const envDirectoryName = (
+  name: string,
+  platform: NodeJS.Platform = process.platform
+): string => (platform === 'win32' ? (WINDOWS_DEFAULT_ENV_DIRECTORIES[name] ?? name) : name)
+
+export const logicalEnvNameFromDirectory = (directory: string): string =>
+  windowsDefaultEnvNamesByDirectory.get(directory.toLowerCase()) ?? directory
 
 export const runtimePackDir = (
   root: string,
@@ -107,8 +129,64 @@ export const assertSafeEnvName = (name: string | undefined): string => {
 // <storageRoot>/runtime — the shared runtime root holding envs, the pkgs cache and the ready marker.
 export const runtimeRoot = (storageRoot: string): string => join(storageRoot, 'runtime')
 
-// <root>/envs/<name> — a single conda env prefix under the runtime root.
-export const envPrefix = (root: string, name: string): string => join(root, 'envs', name)
+// A conda environment prefix under the runtime root. Callers use logical names; this is the sole seam
+// that maps them to physical directories. The platform argument keeps the Windows mapping directly
+// testable on non-Windows hosts.
+export const envPrefix = (
+  root: string,
+  name: string,
+  platform: NodeJS.Platform = process.platform
+): string => {
+  const physical = join(root, 'envs', envDirectoryName(name, platform))
+  if (platform !== 'win32' || (name !== DEFAULT_PY_ENV && name !== DEFAULT_R_ENV)) return physical
+
+  const legacy = join(root, 'envs', name)
+  const marker = name === DEFAULT_PY_ENV ? readReadyMarker(root) : readRReadyMarker(root)
+  const committedDirectory = marker?.prefixDirectory?.toLowerCase()
+  const shortDirectory = envDirectoryName(name, 'win32')
+  // Marker provenance distinguishes a committed short prefix from a partial short directory left
+  // beside a committed legacy environment. Markers written before provenance was introduced belong
+  // to the legacy layout, because no released build could have committed the reserved short names.
+  if (existsSync(physical) && committedDirectory === shortDirectory) return physical
+
+  // Preserve a committed Python environment so an app update never drops pip/conda additions merely
+  // to shorten its path. A failed create has no marker and therefore retries at the short prefix. This
+  // function reads live filesystem state; callers must not cache its result across provisioning steps.
+  if (
+    name === DEFAULT_PY_ENV &&
+    marker !== undefined &&
+    (committedDirectory === undefined || committedDirectory === name) &&
+    existsSync(join(legacy, 'python.exe'))
+  )
+    return legacy
+  // Legacy R predates its dedicated marker. Keep any materialized prefix and let the existing
+  // activated verify/upgrade-or-rebuild path decide whether it is healthy.
+  if (
+    name === DEFAULT_R_ENV &&
+    (committedDirectory === undefined || committedDirectory === name) &&
+    existsSync(join(legacy, 'Lib', 'R', 'bin', 'R.exe'))
+  )
+    return legacy
+  // With no committed legacy environment, an existing partial short prefix remains authoritative so
+  // repair resumes in the new layout instead of creating a second prefix.
+  return physical
+}
+
+// The pre-shortening prefix is used only for best-effort migration cleanup/export. Never provision a
+// new default into this location.
+export const legacyDefaultEnvPrefix = (
+  root: string,
+  name: typeof DEFAULT_PY_ENV | typeof DEFAULT_R_ENV
+): string => join(root, 'envs', name)
+
+// Relative reserve from the data root through the deepest default prefix, including the separator
+// before a package-relative path. The picker and provisioner share envPrefix(), so this helper keeps
+// preflight arithmetic aligned with the physical Windows layout.
+export const windowsDefaultEnvPrefixReserve = (): number =>
+  Math.max(
+    win32.join('runtime', 'envs', envDirectoryName(DEFAULT_PY_ENV, 'win32')).length,
+    win32.join('runtime', 'envs', envDirectoryName(DEFAULT_R_ENV, 'win32')).length
+  ) + 1
 
 // <root>/pkgs — the shared micromamba package cache (offline seed target; $MAMBA_ROOT_PREFIX/pkgs).
 export const pkgsCache = (root: string): string => join(root, 'pkgs')
@@ -140,12 +218,41 @@ export const rScriptBin = (prefix: string): string =>
 export const rLibraryDir = (prefix: string): string =>
   isWindows() ? join(prefix, 'Lib', 'R', 'library') : join(prefix, 'lib', 'R', 'library')
 
+// Conda activation prepends more than <prefix>\bin on Windows. Native R links BLAS/LAPACK and other
+// runtime DLLs from Library\bin, so starting R.exe with the host PATH alone fails with 0xC0000135.
+// Keep the order aligned with conda's Windows activator; POSIX retains the existing <prefix>/bin
+// behavior. Platform is injectable so the exact Windows contract is testable on non-Windows hosts.
+export const condaActivatedPath = (
+  prefix: string,
+  inheritedPath = '',
+  platform: NodeJS.Platform = process.platform
+): string => {
+  const entries =
+    platform === 'win32'
+      ? [
+          win32.normalize(prefix),
+          win32.join(prefix, 'Library', 'mingw-w64', 'bin'),
+          win32.join(prefix, 'Library', 'usr', 'bin'),
+          win32.join(prefix, 'Library', 'bin'),
+          win32.join(prefix, 'Scripts'),
+          win32.join(prefix, 'bin')
+        ]
+      : [join(prefix, 'bin')]
+  if (inheritedPath) entries.push(inheritedPath)
+  return entries.join(platform === 'win32' ? ';' : delimiter)
+}
+
 // <root>/.env-ready — the JSON readiness marker written after a successful provision.
 export const readyMarkerPath = (root: string): string => join(root, '.env-ready')
 export const rReadyMarkerPath = (root: string): string => join(root, '.r-env-ready')
 
-// Readiness marker persisted as camelCase JSON (contract §2).
-export type EnvReadyMarker = { defaultEnvVersion: number; preparedAt: string }
+// Readiness marker persisted as camelCase JSON (contract §2). prefixDirectory is optional for backward
+// compatibility; on Windows, an absent value denotes a marker from the legacy default directory.
+export type EnvReadyMarker = {
+  defaultEnvVersion: number
+  preparedAt: string
+  prefixDirectory?: string
+}
 
 // Reads .env-ready; returns undefined when missing or corrupt (never throws).
 export const readReadyMarker = (root: string): EnvReadyMarker | undefined => {
@@ -156,18 +263,41 @@ export const readReadyMarker = (root: string): EnvReadyMarker | undefined => {
     if (typeof parsed.defaultEnvVersion !== 'number' || typeof parsed.preparedAt !== 'string') {
       return undefined
     }
-    return { defaultEnvVersion: parsed.defaultEnvVersion, preparedAt: parsed.preparedAt }
+    return {
+      defaultEnvVersion: parsed.defaultEnvVersion,
+      preparedAt: parsed.preparedAt,
+      ...(typeof parsed.prefixDirectory === 'string'
+        ? { prefixDirectory: parsed.prefixDirectory }
+        : {})
+    }
   } catch {
     return undefined
   }
 }
 
-// Writes .env-ready as pretty camelCase JSON, creating the runtime root if needed.
-export const writeReadyMarker = (root: string, version: number, preparedAt: string): void => {
-  const path = readyMarkerPath(root)
+// Atomically writes a ready marker (temp file + rename) so a crash mid-write can never leave a torn
+// marker that reads as neither present-and-valid nor absent — the restore path treats a marker write as
+// a commit point, so it must be all-or-nothing. Throws on failure (the caller decides whether that means
+// "keep the existing env" rather than rebuilding).
+const writeMarkerAtomic = (path: string, marker: EnvReadyMarker): void => {
   mkdirSync(dirname(path), { recursive: true })
-  const marker: EnvReadyMarker = { defaultEnvVersion: version, preparedAt }
-  writeFileSync(path, `${JSON.stringify(marker, null, 2)}\n`, 'utf8')
+  const temp = `${path}.${process.pid}-${randomUUID()}.tmp`
+  writeFileSync(temp, `${JSON.stringify(marker, null, 2)}\n`, 'utf8')
+  renameSync(temp, path)
+}
+
+// Writes .env-ready as pretty camelCase JSON, creating the runtime root if needed.
+export const writeReadyMarker = (
+  root: string,
+  version: number,
+  preparedAt: string,
+  prefixDirectory?: string
+): void => {
+  writeMarkerAtomic(readyMarkerPath(root), {
+    defaultEnvVersion: version,
+    preparedAt,
+    ...(prefixDirectory === undefined ? {} : { prefixDirectory })
+  })
 }
 
 export const readRReadyMarker = (root: string): EnvReadyMarker | undefined => {
@@ -178,17 +308,29 @@ export const readRReadyMarker = (root: string): EnvReadyMarker | undefined => {
     if (typeof parsed.defaultEnvVersion !== 'number' || typeof parsed.preparedAt !== 'string') {
       return undefined
     }
-    return { defaultEnvVersion: parsed.defaultEnvVersion, preparedAt: parsed.preparedAt }
+    return {
+      defaultEnvVersion: parsed.defaultEnvVersion,
+      preparedAt: parsed.preparedAt,
+      ...(typeof parsed.prefixDirectory === 'string'
+        ? { prefixDirectory: parsed.prefixDirectory }
+        : {})
+    }
   } catch {
     return undefined
   }
 }
 
-export const writeRReadyMarker = (root: string, version: number, preparedAt: string): void => {
-  const path = rReadyMarkerPath(root)
-  mkdirSync(dirname(path), { recursive: true })
-  const marker: EnvReadyMarker = { defaultEnvVersion: version, preparedAt }
-  writeFileSync(path, `${JSON.stringify(marker, null, 2)}\n`, 'utf8')
+export const writeRReadyMarker = (
+  root: string,
+  version: number,
+  preparedAt: string,
+  prefixDirectory?: string
+): void => {
+  writeMarkerAtomic(rReadyMarkerPath(root), {
+    defaultEnvVersion: version,
+    preparedAt,
+    ...(prefixDirectory === undefined ? {} : { prefixDirectory })
+  })
 }
 
 // True when a regular file exists at the path (mirrors Rust is_file()).

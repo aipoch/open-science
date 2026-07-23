@@ -3,6 +3,7 @@ import { z } from 'zod'
 
 import {
   BASH_EXECUTE_DOC,
+  buildShellExecuteDoc,
   MANAGE_ENVIRONMENTS_DOC,
   MANAGE_PACKAGES_DOC,
   NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT,
@@ -64,6 +65,12 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain(
       'for binary final outputs, read base64 content'
     )
+    // write_artifact_file now resolves a relative name against the notebook data dir, so the guidance
+    // must steer the model to the saved relative filename — not to a rebuilt absolute path. Guard the
+    // old "use an ABSOLUTE path" / "will not resolve a bare relative name" wording from regressing.
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('the SAME relative filename you saved with')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('use an ABSOLUTE path')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')
   })
 
   it('directs the agent to run code as one notebook_execute call per cell', () => {
@@ -178,6 +185,8 @@ describe('repl_execute tool', () => {
   it('describes the control-plane repl (host.mcp + handoff) distinctly from notebook_execute', () => {
     expect(tool?.description).toBe(REPL_EXECUTE_DOC)
     expect(tool?.description).toContain('host.mcp')
+    // host.compute (remote compute) is only reachable here too, same as host.mcp.
+    expect(tool?.description).toContain('host.compute')
     expect(tool?.description).toContain('./handoff/')
     expect(tool?.description.toLowerCase()).toContain('connector')
     expect(tool?.description).toContain('notebook_execute')
@@ -239,6 +248,25 @@ describe('bash_execute tool', () => {
     expect(tool?.description.toLowerCase()).toContain('stateless')
     expect(tool?.description).toContain('fresh process')
     expect(tool?.description.toLowerCase()).toContain('persist')
+  })
+
+  it('documents the actual Windows PowerShell dialect and keeps generated notebook files out of shell copies', () => {
+    const windowsDoc = buildShellExecuteDoc('win32')
+
+    expect(windowsDoc).toContain('Windows PowerShell')
+    expect(windowsDoc).not.toContain('`sh -c`')
+    expect(windowsDoc).toContain('$env:OPEN_SCIENCE_HANDOFF_DIR')
+    expect(windowsDoc).toContain('Windows PowerShell 5.1')
+    expect(windowsDoc).toContain('`&&` is unavailable')
+    expect(windowsDoc).toContain('cmdlet failure')
+    expect(windowsDoc).toContain('unhandled cmdlet failure')
+    expect(windowsDoc).toContain('native programs must emit UTF-8')
+    expect(windowsDoc).toContain('write_artifact_file')
+    expect(windowsDoc).toContain('Do NOT copy a generated notebook output into the workspace')
+    // Aligned with the relative-path artifact flow: point at the saved relative filename, not the
+    // old "generated file's absolute local path" wording.
+    expect(windowsDoc).toContain('same relative filename you saved with')
+    expect(windowsDoc).not.toContain("generated file's absolute local path")
   })
 
   it('forwards bash_execute input to the executeShell RPC method', async () => {

@@ -3,6 +3,7 @@ import { Check, RefreshCw, TriangleAlert } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { resolveActiveSessionDisplay, truncateLabel } from '@/lib/active-session-display'
 import { cn } from '@/lib/utils'
 import type {
   ActiveSessionInfo,
@@ -25,9 +26,12 @@ const PHASE_LABELS: Record<MigrationPhase, string> = {
   delete: 'Cleaning up…'
 }
 
-// One readable line per running session for the confirm-dialog list.
-const describeSession = (session: ActiveSessionInfo): string =>
-  `${session.kind}: ${session.projectName}/${session.sessionId}`
+// One readable line per running session: the human project name + title (resolved from the stores),
+// not the raw ids main sends.
+const describeSession = (session: ActiveSessionInfo): string => {
+  const display = resolveActiveSessionDisplay(session)
+  return `${session.kind}: ${truncateLabel(display.project)} / ${truncateLabel(display.title)}`
+}
 
 // m:ss elapsed clock for the migrating stage. A running timer (rather than a fabricated ETA) so
 // that if a move ever hangs, the user — and a bug report — can say exactly how long it has run.
@@ -237,7 +241,7 @@ const StorageMigrationModal = ({
               </Dialog.Description>
               <ul className="mt-3 max-h-40 space-y-1 overflow-auto rounded-lg border border-border bg-muted/40 p-2 font-mono text-xs text-foreground">
                 {active.map((session) => (
-                  <li key={`${session.kind}-${session.projectName}-${session.sessionId}`}>
+                  <li key={`${session.kind}-${session.projectId}-${session.sessionId}`}>
                     {describeSession(session)}
                   </li>
                 ))}

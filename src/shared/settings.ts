@@ -11,9 +11,29 @@ import type { PackageMirror } from './mirror'
 // providers (vendorId/region) and a per-selection activeModel alongside activeProviderId.
 export const SETTINGS_FILE_VERSION = 2
 
-// A provider targets a custom Anthropic-compatible gateway, a built-in official vendor (base URL +
-// model catalog from the registry), or reuses the local claude auth.
-export type ProviderType = 'custom' | 'claude-default' | 'official'
+// A provider targets a custom gateway, a built-in official vendor, a local Claude login, or one of
+// Codex's two subscription profiles. Codex shared uses the machine's normal CODEX_HOME; isolated uses
+// the app-owned profile.
+export type ProviderType =
+  'custom' | 'claude-default' | 'official' | 'codex-shared' | 'codex-isolated'
+
+export const CODEX_SHARED_PROVIDER_ID = 'builtin-codex-shared'
+export const CODEX_ISOLATED_PROVIDER_ID = 'builtin-codex-isolated'
+export const CODEX_SUBSCRIPTION_PROVIDER_ID = 'builtin-codex-subscription'
+
+export const isCodexSubscriptionProvider = (
+  type: ProviderType
+): type is 'codex-shared' | 'codex-isolated' => type === 'codex-shared' || type === 'codex-isolated'
+
+export const codexSubscriptionProviderIdentity = (): { id: string; name: string } => ({
+  id: CODEX_SUBSCRIPTION_PROVIDER_ID,
+  name: 'Codex subscription'
+})
+
+export const isCodexSubscriptionProviderId = (id: string): boolean =>
+  id === CODEX_SUBSCRIPTION_PROVIDER_ID ||
+  id === CODEX_SHARED_PROVIDER_ID ||
+  id === CODEX_ISOLATED_PROVIDER_ID
 
 // The chat API a model endpoint speaks: `anthropic` = /v1/messages, `openai` =
 // /v1/chat/completions, and `responses` = /v1/responses. Keep the two OpenAI-shaped protocols
@@ -46,6 +66,7 @@ export const isProviderUsableByFramework = (
   provider: { apiEndpoints?: readonly ChatApiEndpoint[]; type: ProviderType },
   framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
 ): boolean => {
+  if (isCodexSubscriptionProvider(provider.type)) return framework.id === 'codex'
   if (provider.type === 'claude-default' && framework.id !== 'claude-code') return false
 
   const endpoints = providerEndpoints(provider)
@@ -101,6 +122,24 @@ export type ClaudeDetectResult = {
   found: boolean
   path?: string
   version?: string
+  // Diagnostic detail for when detection fails but partial components are present. Used to provide
+  // more accurate error messages (e.g., "Codex ACP adapter missing" vs "Codex not installed").
+  diagnostic?: string
+  // For Codex: separate detection state of native CLI and ACP adapter components. When present,
+  // the environment check can display distinct status for each component rather than collapsing
+  // them into a single "runtime" row. Omitted for Claude/OpenCode (single-binary runtimes).
+  codexComponents?: {
+    nativeCliFound: boolean
+    nativeCliPath?: string
+    nativeCliVersion?: string
+    adapterFound: boolean
+    adapterPath?: string
+    adapterVersion?: string
+    // When adapter exists but is non-functional (version probe or smoke test failed), this
+    // explains why. Environment check uses this to mark the adapter row as failed even when
+    // adapterFound is true.
+    adapterFailureReason?: 'version-probe-failed' | 'smoke-test-failed'
+  }
 }
 
 // A recorded failed validation, kept so the list can flag a provider as unverified and say why
@@ -158,6 +197,24 @@ export const providerValidationFailed = (provider: {
 // the main-process AgentFramework registry is keyed by the same union.
 export type AgentFrameworkId = 'claude-code' | 'opencode' | 'codex'
 
+// How much reasoning effort the user asks the agent to spend. 'default' means "don't override": the
+// agent keeps its own default and nothing is sent. The concrete levels form a relative scale
+// (low < medium < high < max): each agent/model maps the level onto its own supported rungs, using
+// the closest one it has (e.g. 'max' becomes the model's top level).
+export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'max'
+
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'default'
+
+// Desktop notifications for finished/failed agent tasks are opt-out: they only fire while the app
+// is unfocused, so the default surprises no one staring at the window.
+export const DEFAULT_NOTIFICATIONS_ENABLED = true
+
+const REASONING_EFFORTS: readonly ReasoningEffort[] = ['default', 'low', 'medium', 'high', 'max']
+
+// Runtime guard for untrusted values (IPC payloads, settings.json): only the known levels pass.
+export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
+  typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
+
 // Renderer-facing descriptor for one selectable agent framework (built from the main registry).
 export type AgentFrameworkView = {
   id: AgentFrameworkId
@@ -194,6 +251,11 @@ export type SettingsSnapshot = {
   onboardingCompletedAt?: number
   // Non-secret package-mirror overrides (conda/pypi/cran). Absent means public hosts.
   packageMirror?: PackageMirror
+  // The user's reasoning-effort preference for agent requests. 'default' leaves the agent's own
+  // default untouched; concrete levels apply to subsequent requests when the agent supports them.
+  reasoningEffort: ReasoningEffort
+  // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
+  notificationsEnabled: boolean
 }
 
 // Request to set (or clear, via omitted fields) the package-mirror configuration.
@@ -201,6 +263,14 @@ export type SetPackageMirrorRequest = PackageMirror
 
 export type SetAgentFrameworkRequest = {
   id: AgentFrameworkId
+}
+
+export type SetReasoningEffortRequest = {
+  effort: ReasoningEffort
+}
+
+export type SetNotificationsEnabledRequest = {
+  enabled: boolean
 }
 
 // The hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.
@@ -258,14 +328,22 @@ export type ValidateProviderRequest = {
 }
 
 // Structured validation outcome so the renderer can render an actionable message per category.
+// 'incompatible' is decided before any network probe: the provider's API format can't drive the
+// active agent framework, so a raw auth probe would only mislead (the key is fine; the pairing isn't).
 export type ValidationCategory =
-  'ok' | 'network' | 'auth' | 'model-not-found' | 'bad-url' | 'timeout' | 'unknown'
+  'ok' | 'network' | 'auth' | 'model-not-found' | 'bad-url' | 'timeout' | 'incompatible' | 'unknown'
 
 export type ValidateProviderResult = {
   ok: boolean
   category: ValidationCategory
   status?: number
   message?: string
+  // Whether the outcome was actually recorded on the stored provider. A result can be authenticated
+  // (`ok: true`) yet discarded — the provider was switched, deleted, or superseded by a newer test
+  // while an async sign-in/probe was in flight. Callers that gate navigation on success (onboarding)
+  // must treat `applied === false` as "do not advance": the stored provider does not reflect it.
+  // Absent means applied (the ordinary synchronous path).
+  applied?: boolean
 }
 
 // Request to refresh a saved provider's model list from the vendor's live API (fills the bundled
@@ -777,6 +855,14 @@ export type ConnectorApprovalRequest = {
   connector: string // bundled connector id or custom server name
   method: string
   argsPreview: string // truncated JSON preview of the call arguments
+  // The session that triggered the connector call, so a desktop notification can surface and open
+  // that conversation. Absent for call paths that don't carry one.
+  sessionId?: string
 }
 export type ApprovalDecision = 'allow' | 'deny'
 export type RespondApprovalRequest = { id: string; decision: ApprovalDecision }
+
+// Minimal settings slice the remote-file-browser bookmark helpers depend on. Declared here in
+// src/shared (not src/main) so src/shared/remote-fs.ts stays within the shared layer — the full
+// StoredSettings in src/main structurally satisfies this shape.
+export type ComputeBookmarkStore = { computeBookmarks?: Record<string, string[]> }

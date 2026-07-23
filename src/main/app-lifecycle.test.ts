@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { installAppLifecycle, type AppLifecycleDeps, type TrayHandlers } from './app-lifecycle'
+import type { ActiveSessionInfo } from '../shared/storage'
+import type {
+  CloseClassification,
+  CloseConfirmChoice,
+  CloseConfirmVariant
+} from '../shared/window-controls'
 
 type QuitEvent = { preventDefault: () => void; defaultPrevented: boolean }
 type Handler = (event: QuitEvent) => void
@@ -83,6 +89,12 @@ const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 
 const asWindow = (w: FakeWindow): import('electron').BrowserWindow =>
   w as unknown as import('electron').BrowserWindow
 
+type CapturedCloseOpts = {
+  classifyClose: () => CloseClassification
+  resolveCloseAction: () => Promise<CloseConfirmChoice>
+  requestQuit: () => void
+}
+
 type Harness = {
   app: FakeApp
   windows: FakeWindow[]
@@ -91,6 +103,8 @@ type Harness = {
   shutdownBackends: () => Promise<void>
   quit: ReturnType<typeof vi.fn>
   showMainWindow: () => void
+  closeOpts: CapturedCloseOpts[]
+  confirmClose: ReturnType<typeof vi.fn>
 }
 
 const setup = (
@@ -101,6 +115,11 @@ const setup = (
     >
   > & {
     trayHost?: boolean
+    detectActiveSessions?: () => ActiveSessionInfo[]
+    confirmClose?: (
+      variant: CloseConfirmVariant,
+      sessions: ActiveSessionInfo[]
+    ) => Promise<CloseConfirmChoice>
   } = {}
 ): Harness => {
   const app = makeFakeApp()
@@ -110,10 +129,16 @@ const setup = (
   let trayHandlers: TrayHandlers | undefined
   const shutdownBackends = overrides.shutdownBackends ?? vi.fn(async () => undefined)
   const quit = vi.fn()
+  const closeOpts: CapturedCloseOpts[] = []
+  const confirmClose = vi.fn(
+    overrides.confirmClose ?? ((): Promise<CloseConfirmChoice> => Promise.resolve('quit'))
+  )
+  const detectActiveSessions = overrides.detectActiveSessions ?? ((): ActiveSessionInfo[] => [])
 
   const { showMainWindow } = installAppLifecycle({
     app: app as unknown as AppLifecycleDeps['app'],
-    createMainWindow: () => {
+    createMainWindow: (opts) => {
+      closeOpts.push(opts)
       const w = makeFakeWindow()
       windows.push(w)
       return asWindow(w)
@@ -127,10 +152,31 @@ const setup = (
     quit,
     countWindows: () => windows.filter((w) => !w.destroyed).length,
     createInitialWindow: overrides.createInitialWindow,
-    platform: overrides.platform ?? 'linux'
+    platform: overrides.platform ?? 'linux',
+    detectActiveSessions,
+    createConfirmClose: () => confirmClose
   })
 
-  return { app, windows, tray, trayHandlers, shutdownBackends, quit, showMainWindow }
+  return {
+    app,
+    windows,
+    tray,
+    trayHandlers,
+    shutdownBackends,
+    quit,
+    showMainWindow,
+    closeOpts,
+    confirmClose
+  }
+}
+
+// Sets up with a single captured createMainWindow opts, for classifyClose assertions.
+const installWithCapturedOpts = (opts: {
+  platform: NodeJS.Platform
+  hasTray: boolean
+}): CapturedCloseOpts => {
+  const { closeOpts } = setup({ platform: opts.platform, trayHost: opts.hasTray })
+  return closeOpts[0]
 }
 
 describe('installAppLifecycle', () => {
@@ -148,12 +194,19 @@ describe('installAppLifecycle', () => {
   })
 
   it('runs an awaited backend teardown then exits on a normal quit', async () => {
-    const { app, tray, shutdownBackends } = setup()
+    // Default confirmClose resolves 'quit'; a normal quit goes through the confirm gate first,
+    // then the real Electron re-issues before-quit once requestQuit's quit() lands.
+    const { app, tray, shutdownBackends, quit } = setup()
 
     const event = app.emit('before-quit')
     expect(event.defaultPrevented).toBe(true)
+    expect(app.exit).not.toHaveBeenCalled() // still awaiting confirmation
+
+    await flush()
+    expect(quit).toHaveBeenCalledTimes(1)
     expect(app.exit).not.toHaveBeenCalled() // still awaiting shutdown
 
+    app.emit('before-quit') // re-issued quit, now confirmed
     await flush()
     expect(shutdownBackends).toHaveBeenCalledTimes(1)
     expect(tray?.destroy).toHaveBeenCalledTimes(1)
@@ -184,7 +237,9 @@ describe('installAppLifecycle', () => {
       isMigrationInProgress: (): boolean => false,
       quit: vi.fn(),
       countWindows: (): number => 1,
-      platform: 'linux'
+      platform: 'linux',
+      detectActiveSessions: (): ActiveSessionInfo[] => [],
+      createConfirmClose: () => (): Promise<CloseConfirmChoice> => Promise.resolve('quit')
     })
 
     app.emit('before-quit')
@@ -201,7 +256,8 @@ describe('installAppLifecycle', () => {
           release = resolve
         })
     )
-    const { app } = setup({ shutdownBackends })
+    const { app, closeOpts } = setup({ shutdownBackends })
+    closeOpts[0].requestQuit() // pre-confirm, so the next before-quit goes straight to cleanup
 
     app.emit('before-quit') // starts cleanup (pending)
     const second = app.emit('before-quit') // re-issued while running
@@ -269,5 +325,276 @@ describe('installAppLifecycle', () => {
     windows[0].destroyed = true
     app.emit('activate')
     expect(windows).toHaveLength(2)
+  })
+
+  it('classifyClose returns "close" on darwin', () => {
+    const captured = installWithCapturedOpts({ platform: 'darwin', hasTray: true })
+    expect(captured.classifyClose()).toBe('close')
+  })
+
+  it('classifyClose returns "confirm" on win32 with a tray', () => {
+    const captured = installWithCapturedOpts({ platform: 'win32', hasTray: true })
+    expect(captured.classifyClose()).toBe('confirm')
+  })
+
+  it('classifyClose returns "hide" on linux with a tray', () => {
+    const captured = installWithCapturedOpts({ platform: 'linux', hasTray: true })
+    expect(captured.classifyClose()).toBe('hide')
+  })
+
+  it('classifyClose returns "close" when no tray', () => {
+    const captured = installWithCapturedOpts({ platform: 'win32', hasTray: false })
+    expect(captured.classifyClose()).toBe('close')
+  })
+
+  it('resolveCloseAction resolves via confirmClose("close-to-tray", sessions)', async () => {
+    const sessions: ActiveSessionInfo[] = [{ projectId: 'demo', sessionId: 's1', kind: 'agent' }]
+    const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'minimize')
+    const { closeOpts } = setup({ detectActiveSessions: () => sessions, confirmClose })
+
+    const choice = await closeOpts[0].resolveCloseAction()
+    expect(confirmClose).toHaveBeenCalledWith('close-to-tray', sessions)
+    expect(choice).toBe('minimize')
+  })
+
+  it('requestQuit sets quitConfirmed and calls quit', () => {
+    const { closeOpts, quit } = setup()
+    closeOpts[0].requestQuit()
+    expect(quit).toHaveBeenCalledTimes(1)
+  })
+
+  it('before-quit with no active work proceeds to shutdown (confirmClose resolves quit)', async () => {
+    const confirmClose = vi.fn(
+      (_variant: CloseConfirmVariant, sessions: ActiveSessionInfo[]): Promise<CloseConfirmChoice> =>
+        Promise.resolve(sessions.length === 0 ? 'quit' : 'cancel')
+    )
+    const { app, tray, shutdownBackends, quit } = setup({ confirmClose })
+
+    const event = app.emit('before-quit')
+    expect(event.defaultPrevented).toBe(true)
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledWith('quit', [])
+    expect(quit).toHaveBeenCalledTimes(1)
+
+    // requestQuit -> quit() drove by the app; simulate the resulting re-issued before-quit.
+    app.emit('before-quit')
+    await flush()
+
+    expect(shutdownBackends).toHaveBeenCalledTimes(1)
+    expect(tray?.destroy).toHaveBeenCalledTimes(1)
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it('before-quit with active work + cancel keeps the app alive (no shutdown, no exit)', async () => {
+    const sessions: ActiveSessionInfo[] = [{ projectId: 'demo', sessionId: 's1', kind: 'notebook' }]
+    const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'cancel')
+    const { app, shutdownBackends, quit } = setup({
+      detectActiveSessions: () => sessions,
+      confirmClose
+    })
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledWith('quit', sessions)
+    expect(quit).not.toHaveBeenCalled()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
+  const cancelSessions: ActiveSessionInfo[] = [
+    { projectId: 'demo', sessionId: 's1', kind: 'agent' }
+  ]
+
+  it.each(['win32', 'linux'] as const)(
+    'recreates the destroyed window on cancel when there is no tray (%s)',
+    async (platform) => {
+      // No-tray orphan guard: X destroyed the window, window-all-closed issued the quit, the user
+      // cancelled — without recreating, the kept app would have no tray and no window (no UI).
+      const { app, windows } = setup({
+        platform,
+        trayHost: false,
+        detectActiveSessions: () => cancelSessions,
+        confirmClose: async (): Promise<CloseConfirmChoice> => 'cancel'
+      })
+      expect(windows).toHaveLength(1)
+      windows[0].destroyed = true // X destroyed it before the window-all-closed quit
+
+      app.emit('before-quit')
+      await flush()
+
+      expect(windows).toHaveLength(2)
+      expect(windows[1].destroyed).toBe(false)
+    }
+  )
+
+  it('does not fabricate a window on cancel in headless mode (window never existed)', async () => {
+    // Regression: headless web mode runs with createInitialWindow:false and no tray; the orphan guard
+    // must key off a destroyed *existing* window, not platform+tray, or it would conjure a window here.
+    const { app, windows } = setup({
+      platform: 'win32',
+      trayHost: false,
+      createInitialWindow: false,
+      detectActiveSessions: () => cancelSessions,
+      confirmClose: async (): Promise<CloseConfirmChoice> => 'cancel'
+    })
+    expect(windows).toHaveLength(0)
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(windows).toHaveLength(0)
+  })
+
+  it('does not recreate the window on cancel when a tray is present', async () => {
+    const { app, windows } = setup({
+      platform: 'win32',
+      trayHost: true,
+      detectActiveSessions: () => cancelSessions,
+      confirmClose: async (): Promise<CloseConfirmChoice> => 'cancel'
+    })
+    windows[0].destroyed = true
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(windows).toHaveLength(1) // no new window created
+  })
+
+  it('does not recreate the window on cancel on macOS (resident is its convention)', async () => {
+    const { app, windows } = setup({
+      platform: 'darwin',
+      trayHost: false,
+      detectActiveSessions: () => cancelSessions,
+      confirmClose: async (): Promise<CloseConfirmChoice> => 'cancel'
+    })
+    windows[0].destroyed = true
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(windows).toHaveLength(1)
+  })
+
+  it('before-quit skips confirmation once quit is already confirmed (no double dialog)', async () => {
+    const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'quit')
+    const { app, closeOpts, shutdownBackends } = setup({ confirmClose })
+
+    closeOpts[0].requestQuit() // sets quitConfirmed then calls quit()
+    app.emit('before-quit') // the re-entered before-quit that quit() triggers
+
+    await flush()
+    expect(confirmClose).not.toHaveBeenCalled()
+    expect(shutdownBackends).toHaveBeenCalledTimes(1)
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it('migration in progress bypasses the confirm gate', async () => {
+    const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'quit')
+    const { app, quit, shutdownBackends } = setup({
+      isMigrationInProgress: (): boolean => true,
+      confirmClose
+    })
+
+    const event = app.emit('before-quit')
+    await flush()
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(confirmClose).not.toHaveBeenCalled()
+    expect(quit).not.toHaveBeenCalled()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+  })
+
+  it('re-confirms a later Windows X after a confirmed quit was aborted by migration', async () => {
+    // A confirmed quit (Windows X -> Quit sets quitConfirmed) that the migration guard then aborts must
+    // not leave quitConfirmed latched — otherwise classifyClose would return 'close' and the next X
+    // would destroy the window without asking. The abort resets it so the next X re-confirms.
+    let migrating = false
+    const { app, closeOpts } = setup({
+      platform: 'win32',
+      trayHost: true,
+      isMigrationInProgress: (): boolean => migrating
+    })
+    const opts = closeOpts[0]
+
+    opts.requestQuit() // quitConfirmed = true
+    migrating = true
+    app.emit('before-quit') // aborted by migration -> resets quitConfirmed
+    migrating = false
+
+    expect(opts.classifyClose()).toBe('confirm')
+  })
+
+  it('holds a re-issued quit while a confirm is already in flight', async () => {
+    let resolveConfirm: ((choice: CloseConfirmChoice) => void) | undefined
+    const confirmClose = vi.fn(
+      () =>
+        new Promise<CloseConfirmChoice>((resolve) => {
+          resolveConfirm = resolve
+        })
+    )
+    const { app, quit } = setup({ confirmClose })
+
+    app.emit('before-quit') // starts the confirm (pending)
+    app.emit('before-quit') // re-issued while the confirm is in flight
+    expect(confirmClose).toHaveBeenCalledTimes(1)
+
+    resolveConfirm?.('quit')
+    await flush()
+    expect(quit).toHaveBeenCalledTimes(1)
+  })
+
+  it('a titlebar X close-to-tray does not dispatch a second confirm while a quit-confirm is open', async () => {
+    // Cross-flow guard: tray/Ctrl+Q quit-confirm is already open (before-quit -> confirmClose('quit', ...)
+    // pending) when the user clicks the titlebar X. Without the shared confirmInFlight guard this would
+    // fire a second confirmClose('close-to-tray', ...) that overwrites the renderer's single request slot,
+    // stranding the quit-confirm promise and permanently pinning confirmInFlight.
+    let resolveConfirm: ((choice: CloseConfirmChoice) => void) | undefined
+    const sessions: ActiveSessionInfo[] = [{ projectId: 'demo', sessionId: 's1', kind: 'agent' }]
+    const confirmClose = vi.fn(
+      () =>
+        new Promise<CloseConfirmChoice>((resolve) => {
+          resolveConfirm = resolve
+        })
+    )
+    const { app, closeOpts } = setup({ detectActiveSessions: () => sessions, confirmClose })
+
+    app.emit('before-quit') // opens the quit-confirm modal, confirmClose('quit', ...) pending
+    expect(confirmClose).toHaveBeenCalledTimes(1)
+    expect(confirmClose).toHaveBeenCalledWith('quit', sessions)
+
+    const choice = await closeOpts[0].resolveCloseAction() // titlebar X pressed while quit-confirm is open
+    expect(choice).toBe('cancel')
+    expect(confirmClose).toHaveBeenCalledTimes(1) // no second (close-to-tray) dispatch
+
+    resolveConfirm?.('cancel')
+    await flush()
+  })
+
+  it('tray Quit is a no-op (preventDefault only) while a close-to-tray confirm is open', async () => {
+    // Mirror of the above: titlebar X close-to-tray confirm is open when the user hits tray Quit /
+    // Ctrl+Q. The before-quit handler must preventDefault and return without starting a second
+    // confirmClose('quit', ...) dispatch, leaving the open close-to-tray confirm authoritative.
+    let resolveConfirm: ((choice: CloseConfirmChoice) => void) | undefined
+    const confirmClose = vi.fn(
+      () =>
+        new Promise<CloseConfirmChoice>((resolve) => {
+          resolveConfirm = resolve
+        })
+    )
+    const { app, closeOpts } = setup({ confirmClose })
+
+    const resolveCloseActionPromise = closeOpts[0].resolveCloseAction() // titlebar X, confirm pending
+    expect(confirmClose).toHaveBeenCalledTimes(1)
+    expect(confirmClose).toHaveBeenCalledWith('close-to-tray', [])
+
+    const event = app.emit('before-quit') // tray Quit / Ctrl+Q while the X confirm is open
+    expect(event.defaultPrevented).toBe(true)
+    expect(confirmClose).toHaveBeenCalledTimes(1) // no second (quit) dispatch
+
+    resolveConfirm?.('minimize')
+    await expect(resolveCloseActionPromise).resolves.toBe('minimize')
+    await flush()
   })
 })

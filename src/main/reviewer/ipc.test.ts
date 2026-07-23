@@ -44,9 +44,11 @@ vi.mock('../projects/prisma-client', () => ({
 
 // Shared, controllable session loader so a test can make the pre-runReview session load fail.
 const sessionLoadAll = vi.fn().mockResolvedValue({ sessions: [] })
+const sessionLoadOne = vi.fn().mockResolvedValue({ id: 'session-1' })
 vi.mock('../session-persistence/repository', () => ({
   SessionRepository: class {
     loadAll = sessionLoadAll
+    loadSession = sessionLoadOne
   },
   // storage-root imports these names from the same module in production; keep them defined.
   DEV_SESSION_DIR_NAME: 'dev',
@@ -78,8 +80,10 @@ beforeEach(() => {
   })
   broadcastToRenderers.mockClear()
   sessionLoadAll.mockReset()
-  // Default: the requested session exists, so triggerReview proceeds to runReview.
   sessionLoadAll.mockResolvedValue({ sessions: [{ id: 'session-1' }] })
+  sessionLoadOne.mockReset()
+  // Default: the requested session exists, so triggerReview proceeds to runReview.
+  sessionLoadOne.mockResolvedValue({ id: 'session-1' })
   getReviewsForSession.mockReset()
   // Default: no prior review for the turn, so the auto-idempotency check lets the run proceed.
   getReviewsForSession.mockResolvedValue([])
@@ -140,6 +144,27 @@ describe('reviewer IPC handlers', () => {
     expect(passed.scopeTurnMessageId).toBe('correction')
   })
 
+  it('passes a live session loader to the orchestrator instead of a review-start snapshot', async () => {
+    sessionLoadOne
+      .mockResolvedValueOnce({ id: 'session-1', messages: [{ id: 'original-turn' }] })
+      .mockResolvedValueOnce({ id: 'session-1', messages: [{ id: 'correction-turn' }] })
+    registerReviewerIpcHandlers({ acpRuntime })
+
+    const runHandler = handlers.get(REVIEWER_IPC.RUN)
+    await runHandler?.({}, createRequest())
+    await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
+
+    const passed = runReview.mock.calls[0][0] as {
+      getSession: () => Promise<{ messages: Array<{ id: string }> } | undefined>
+    }
+    const refreshed = await passed.getSession()
+
+    expect(refreshed?.messages[0]?.id).toBe('correction-turn')
+    expect(sessionLoadOne).toHaveBeenCalledTimes(2)
+    expect(sessionLoadOne).toHaveBeenNthCalledWith(1, 'project-1', 'session-1')
+    expect(sessionLoadOne).toHaveBeenNthCalledWith(2, 'project-1', 'session-1')
+  })
+
   it('dedupes concurrent reviews of the same turn (double-click / multiple stale cards)', async () => {
     runReview.mockClear()
     // Hold runReview open so both synchronous triggers overlap in flight.
@@ -167,7 +192,7 @@ describe('reviewer IPC handlers', () => {
 
   it('returns started:false without a review row or broadcast when the session load fails', async () => {
     // The pre-runReview session load throws (e.g. DB/FS unavailable).
-    sessionLoadAll.mockRejectedValueOnce(new Error('session store unavailable'))
+    sessionLoadOne.mockRejectedValueOnce(new Error('session store unavailable'))
     registerReviewerIpcHandlers({ acpRuntime })
 
     const runHandler = handlers.get(REVIEWER_IPC.RUN)
@@ -180,11 +205,10 @@ describe('reviewer IPC handlers', () => {
   })
 
   it('returns started:false without calling runReview when the session id is gone', async () => {
-    // loadAll succeeds but the session was deleted between the card render and the click. Falling
+    // The direct session load succeeds but the session was deleted between card render and click. Falling
     // through to runReview would create a non-retriable error card that replaces the stale card the
     // user was re-running; instead we bail with started:false so the existing card + Re-run survive.
-    sessionLoadAll.mockReset()
-    sessionLoadAll.mockResolvedValue({ sessions: [{ id: 'a-different-session' }] })
+    sessionLoadOne.mockResolvedValueOnce(undefined)
     registerReviewerIpcHandlers({ acpRuntime })
 
     const runHandler = handlers.get(REVIEWER_IPC.RUN)
@@ -199,10 +223,8 @@ describe('reviewer IPC handlers', () => {
     // Models the persistence race: the first load misses the not-yet-flushed session (started:false),
     // the retry sees it. The retry starting proves the not-found bail released the dedup lock (a stuck
     // lock would drop the retry as "already in flight").
-    sessionLoadAll.mockReset()
-    sessionLoadAll
-      .mockResolvedValueOnce({ sessions: [] })
-      .mockResolvedValue({ sessions: [{ id: 'session-1' }] })
+    sessionLoadOne.mockReset()
+    sessionLoadOne.mockResolvedValueOnce(undefined).mockResolvedValue({ id: 'session-1' })
     registerReviewerIpcHandlers({ acpRuntime })
 
     const runHandler = handlers.get(REVIEWER_IPC.RUN)

@@ -397,10 +397,14 @@ describe('close chord interception', () => {
     expect(window.closeMock).not.toHaveBeenCalled()
   })
 
-  it('routes the Cmd/Ctrl+W direct-close fallback through the close-to-tray interceptor', () => {
+  it('routes the Cmd/Ctrl+W direct-close fallback through classifyClose', () => {
     // Renderer not ready, so the chord falls back to window.close(); with the tray resident that must
     // hide the window (via the 'close' interceptor) instead of actually closing it.
-    createMainWindow({ shouldHideOnClose: () => true })
+    createMainWindow({
+      classifyClose: () => 'hide',
+      resolveCloseAction: vi.fn(),
+      requestQuit: vi.fn()
+    })
     const window = currentWindow!
 
     fireInput(window, closeChord())
@@ -417,8 +421,12 @@ describe('createMainWindow close-to-tray interceptor', () => {
     lastWindow = undefined
   })
 
-  it('hides instead of closing when shouldHideOnClose returns true', () => {
-    createMainWindow({ shouldHideOnClose: () => true })
+  it('hides instead of closing when classifyClose returns "hide"', () => {
+    createMainWindow({
+      classifyClose: () => 'hide',
+      resolveCloseAction: vi.fn(),
+      requestQuit: vi.fn()
+    })
     const window = lastWindow!
     expect(window).toBeDefined()
 
@@ -430,9 +438,13 @@ describe('createMainWindow close-to-tray interceptor', () => {
     expect(window.isDestroyed()).toBe(false)
   })
 
-  it('evaluates the predicate at close time so a flipped flag allows a real quit', () => {
+  it('evaluates classifyClose at close time so a flipped flag allows a real quit', () => {
     let quitting = false
-    createMainWindow({ shouldHideOnClose: () => !quitting })
+    createMainWindow({
+      classifyClose: () => (quitting ? 'close' : 'hide'),
+      resolveCloseAction: vi.fn(),
+      requestQuit: vi.fn()
+    })
     const window = lastWindow!
 
     emitClose(window)
@@ -446,8 +458,12 @@ describe('createMainWindow close-to-tray interceptor', () => {
     expect(window.isDestroyed()).toBe(true)
   })
 
-  it('lets the window close when shouldHideOnClose returns false', () => {
-    createMainWindow({ shouldHideOnClose: () => false })
+  it('lets the window close when classifyClose returns "close"', () => {
+    createMainWindow({
+      classifyClose: () => 'close',
+      resolveCloseAction: vi.fn(),
+      requestQuit: vi.fn()
+    })
     const window = lastWindow!
 
     const event = emitClose(window)
@@ -466,5 +482,56 @@ describe('createMainWindow close-to-tray interceptor', () => {
     expect(event.defaultPrevented).toBe(false)
     expect(window.hideCalls).toBe(0)
     expect(window.isDestroyed()).toBe(true)
+  })
+})
+
+describe('createMainWindow close handling', () => {
+  it('lets the window close when classifyClose returns "close"', () => {
+    const requestQuit = vi.fn()
+    createMainWindow({ classifyClose: () => 'close', resolveCloseAction: vi.fn(), requestQuit })
+    const event = { preventDefault: vi.fn(), defaultPrevented: false }
+    currentWindow!.handlers.get('close')![0](event)
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(currentWindow!.hideCalls).toBe(0)
+  })
+
+  it('hides to tray when classifyClose returns "hide"', () => {
+    createMainWindow({
+      classifyClose: () => 'hide',
+      resolveCloseAction: vi.fn(),
+      requestQuit: vi.fn()
+    })
+    const event = { preventDefault: vi.fn(), defaultPrevented: false }
+    currentWindow!.handlers.get('close')![0](event)
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(currentWindow!.hideCalls).toBe(1)
+  })
+
+  it('confirm -> minimize hides the window', async () => {
+    const resolveCloseAction = vi.fn(async () => 'minimize' as const)
+    createMainWindow({ classifyClose: () => 'confirm', resolveCloseAction, requestQuit: vi.fn() })
+    const event = { preventDefault: vi.fn(), defaultPrevented: false }
+    currentWindow!.handlers.get('close')![0](event)
+    expect(event.preventDefault).toHaveBeenCalled()
+    await vi.waitFor(() => expect(currentWindow!.hideCalls).toBe(1))
+  })
+
+  it('confirm -> quit calls requestQuit', async () => {
+    const requestQuit = vi.fn()
+    const resolveCloseAction = vi.fn(async () => 'quit' as const)
+    createMainWindow({ classifyClose: () => 'confirm', resolveCloseAction, requestQuit })
+    currentWindow!.handlers.get('close')![0]({ preventDefault: vi.fn(), defaultPrevented: false })
+    await vi.waitFor(() => expect(requestQuit).toHaveBeenCalledTimes(1))
+  })
+
+  it('does not stack confirmations while one is in flight', () => {
+    let resolveFn: (c: 'cancel') => void = () => undefined
+    const resolveCloseAction = vi.fn(() => new Promise<'cancel'>((r) => (resolveFn = r)))
+    createMainWindow({ classifyClose: () => 'confirm', resolveCloseAction, requestQuit: vi.fn() })
+    const close = currentWindow!.handlers.get('close')![0]
+    close({ preventDefault: vi.fn(), defaultPrevented: false })
+    close({ preventDefault: vi.fn(), defaultPrevented: false })
+    expect(resolveCloseAction).toHaveBeenCalledTimes(1)
+    resolveFn('cancel')
   })
 })

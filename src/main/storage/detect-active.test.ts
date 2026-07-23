@@ -9,9 +9,10 @@ describe('detectActiveSessions', () => {
       notebook: { getActiveNotebookSessions: () => [{ projectName: 'p', sessionId: 's2' }] }
     })
 
+    // The runtime source calls the storage key projectName; detect-active exposes it as projectId.
     expect(result).toEqual([
-      { projectName: 'p', sessionId: 's1', kind: 'agent' },
-      { projectName: 'p', sessionId: 's2', kind: 'notebook' }
+      { projectId: 'p', sessionId: 's1', kind: 'agent' },
+      { projectId: 'p', sessionId: 's2', kind: 'notebook' }
     ])
   })
 

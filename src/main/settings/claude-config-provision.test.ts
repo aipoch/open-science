@@ -9,6 +9,7 @@ import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import {
   APP_ASSET_SUBDIRS,
   DENIED_BUILTIN_TOOLS,
+  MANAGED_BUILTIN_TOOLS,
   configDenyRules,
   provisionAppClaudeConfigDir
 } from './claude-config-provision'
@@ -51,6 +52,18 @@ afterEach(async () => {
   }
 })
 
+describe('built-in tool deny policy', () => {
+  // Pruning-on-removal only re-enables a tool if it is in the module-owned superset. A tool denied
+  // now but absent from MANAGED_BUILTIN_TOOLS would stay denied forever once later removed from
+  // DENIED_BUILTIN_TOOLS — the exact bug the prune step fixes. Guard the DENIED ⊆ MANAGED invariant.
+  it('keeps every denied built-in tool in the managed superset', () => {
+    const managed = new Set<string>(MANAGED_BUILTIN_TOOLS)
+    for (const tool of DENIED_BUILTIN_TOOLS) {
+      expect(managed.has(tool)).toBe(true)
+    }
+  })
+})
+
 describe('provisionAppClaudeConfigDir', () => {
   it('creates the config dir and its app-asset subdirs', async () => {
     root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
@@ -88,14 +101,34 @@ describe('provisionAppClaudeConfigDir', () => {
     }
   })
 
-  it('disables the built-in WebSearch tool in the app user scope', async () => {
+  it('leaves the built-in web tools enabled in the app user scope', async () => {
     root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
     const configDir = join(root, 'claude')
 
     await provisionAppClaudeConfigDir(configDir)
 
     const settings = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))
-    expect(settings.permissions.deny).toContain('WebSearch')
+    expect(settings.permissions.deny).not.toContain('WebSearch')
+    expect(settings.permissions.deny).not.toContain('WebFetch')
+  })
+
+  it('prunes a persisted managed built-in deny (WebSearch) on upgrade, keeping unrelated rules', async () => {
+    root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
+    const configDir = join(root, 'claude')
+    await mkdir(configDir, { recursive: true })
+    // Simulate an install provisioned before this change: WebSearch already persisted alongside an
+    // unrelated user deny rule.
+    await writeFile(
+      join(configDir, 'settings.json'),
+      JSON.stringify({ permissions: { deny: ['WebSearch', 'Bash(rm:*)'] } }),
+      'utf8'
+    )
+
+    await provisionAppClaudeConfigDir(configDir)
+
+    const settings = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))
+    expect(settings.permissions.deny).not.toContain('WebSearch')
+    expect(settings.permissions.deny).toContain('Bash(rm:*)')
   })
 
   it('disables Claude Code bundled skills in the app user scope', async () => {

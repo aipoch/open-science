@@ -12,7 +12,7 @@ import {
 import { useReviewStore } from '@/stores/review-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatSession } from '@/stores/session-store'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { shouldShowAgentLoadingMessage } from './agent-loading-message'
 import {
@@ -20,6 +20,11 @@ import {
   createPreviewFileItemFromMention,
   createPreviewFileItemFromUpload
 } from './preview-file-item'
+import type { JobSummary } from '../../../../shared/compute'
+import { CompletedJobCard } from '@/components/CompletedJobCard'
+import { JobDetailModal } from '@/components/JobDetailModal'
+import { extractJobIdFromActivity } from '@/components/job-binding-utils'
+import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { ReviewerCard } from '@/components/ReviewerCard'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'
@@ -28,10 +33,16 @@ import type { ArtifactMentionPart } from './WorkspaceMessageItem'
 import { createConversationItems } from './workspace-conversation-items'
 import { groupConversationItems } from './workspace-tool-activity-groups'
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
+import { useSessionJobStore } from '@/stores/session-job-store'
 import type { GoToTranscriptIntent, ReviewWithChecks } from '../../../../shared/reviewer'
+import type { ComposerDoc } from './composer/composer-doc'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
+  // Gates inline editing of sent user prompts; the handler truncates at the edited message and
+  // resends the adjusted doc as a fresh turn.
+  canEditMessage: boolean
+  onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
 }
 
 type SessionScopedActivityGroupState = {
@@ -94,11 +105,38 @@ const openSessionReviewer = (sessionId: string, intent: GoToTranscriptIntent): v
 
 // Owns transcript scrolling and session-scoped expansion state for activity groups.
 const WorkspaceMessageScroller = ({
-  activeSession
+  activeSession,
+  canEditMessage,
+  onSendEditedMessage
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const currentSessionId = activeSession?.id
   const getReviewForTurn = useReviewStore((state) => state.getReviewForTurn)
   const loadReviewsForSession = useReviewStore((state) => state.loadReviewsForSession)
+
+  // Job store for binding and CompletedJobCard rendering
+  const jobsById = useSessionJobStore((s) => s.jobsById)
+  const hydrateJobs = useSessionJobStore((s) => s.hydrate)
+
+  // Hydrate the job store when the active session changes
+  useEffect(() => {
+    // Guard against test environments where window.api.compute may not be available
+    if (currentSessionId && typeof window.api?.compute?.jobsList === 'function') {
+      void hydrateJobs(currentSessionId)
+    }
+  }, [currentSessionId, hydrateJobs])
+
+  // Job detail modal state
+  const [modalOpen, setModalOpen] = useState(false)
+  const [modalJob, setModalJob] = useState<JobSummary | undefined>(undefined)
+
+  const handleOpenJobDetail = useCallback((job: JobSummary) => {
+    setModalJob(job)
+    setModalOpen(true)
+  }, [])
+
+  const handleCloseModal = useCallback(() => {
+    setModalOpen(false)
+  }, [])
 
   // Load persisted reviews whenever the active session changes.
   useEffect(() => {
@@ -143,6 +181,83 @@ const WorkspaceMessageScroller = ({
       : {}
   const conversationItems = groupConversationItems(createConversationItems(activeSession))
   const showAgentLoadingMessage = shouldShowAgentLoadingMessage(activeSession)
+
+  // Counts the user turns after each message; the destructive-resend warning keys off turns, not
+  // raw message count, so a single follow-up turn stays warning-free.
+  const subsequentTurnCountByMessageId = new Map<string, number>()
+  if (activeSession) {
+    let subsequentTurns = 0
+    for (let index = activeSession.messages.length - 1; index >= 0; index -= 1) {
+      const message = activeSession.messages[index]
+      subsequentTurnCountByMessageId.set(message.id, subsequentTurns)
+      if (message.role === 'user') subsequentTurns += 1
+    }
+  }
+
+  // Build a map from job_id → JobSummary for all session jobs (used in binding)
+  const sessionJobs = useMemo((): JobSummary[] => {
+    if (!currentSessionId) return []
+    return Array.from(jobsById.values()).filter((j) => j.session_id === currentSessionId)
+  }, [jobsById, currentSessionId])
+
+  // Build a map from activity_id → JobSummary for quick lookup in WorkspaceActivityGroup
+  // Also track which job_ids are bound to activities so we know which are unbound (CompletedJobCard)
+  const { jobsByActivityId, boundJobIds } = useMemo(() => {
+    const byActivityId = new Map<string, JobSummary>()
+    const bound = new Set<string>()
+
+    const allActivities = activeSession?.activities ?? []
+    for (const job of sessionJobs) {
+      // Scan all activities for this job_id
+      for (const activity of allActivities) {
+        const extracted = extractJobIdFromActivity(activity)
+        if (extracted === job.job_id) {
+          byActivityId.set(job.job_id, job)
+          bound.add(job.job_id)
+          break // Found — no need to scan further activities for this job
+        }
+      }
+    }
+
+    return { jobsByActivityId: byActivityId, boundJobIds: bound }
+  }, [sessionJobs, activeSession?.activities])
+
+  // Unbound completed jobs: jobs not found in any activity rawOutput — go into timeline
+  const unboundCompletedJobs = useMemo((): JobSummary[] => {
+    const terminalStatuses = new Set(['success', 'failed', 'timeout', 'error'])
+    return sessionJobs.filter((j) => !boundJobIds.has(j.job_id) && terminalStatuses.has(j.status))
+  }, [sessionJobs, boundJobIds])
+
+  // Assign each unbound completed job to exactly one slot in the conversation timeline so
+  // it is rendered at most once.  A job is placed immediately before the first conversation
+  // item whose createdAt is GREATER than the job's created_at; if no such item exists the
+  // job falls into the "trailing" slot rendered after all conversation items.
+  //
+  // Using an index-keyed Map (item index → jobs[]) instead of per-render filter on the full
+  // array is the key correctness fix: every job is consumed by a single pass and never
+  // re-matched against later items.
+  const { jobSlotsByItemIndex, trailingJobs } = useMemo(() => {
+    const sorted = [...unboundCompletedJobs].sort((a, b) => a.created_at - b.created_at)
+    const byIndex = new Map<number, JobSummary[]>()
+    const trailing: JobSummary[] = []
+
+    for (const job of sorted) {
+      // Find the first conversation item strictly after this job's timestamp.
+      const insertBeforeIndex = conversationItems.findIndex(
+        (item) => item.createdAt > job.created_at
+      )
+      if (insertBeforeIndex === -1) {
+        // No later item — job goes in the trailing slot.
+        trailing.push(job)
+      } else {
+        const existing = byIndex.get(insertBeforeIndex) ?? []
+        existing.push(job)
+        byIndex.set(insertBeforeIndex, existing)
+      }
+    }
+
+    return { jobSlotsByItemIndex: byIndex, trailingJobs: trailing }
+  }, [unboundCompletedJobs, conversationItems])
 
   // Transient "no longer available" pill shown when a mention target can't be opened.
   const [mentionNotice, setMentionNotice] = useState<string | null>(null)
@@ -280,93 +395,142 @@ const WorkspaceMessageScroller = ({
   }
 
   return (
-    <MessageScrollerProvider
-      key={activeSession?.id ?? 'empty-conversation'}
-      autoScroll
-      defaultScrollPosition="last-anchor"
-      scrollPreviousItemPeek={64}
-    >
-      <MessageScroller className="relative min-h-0 flex-1 bg-bg-10">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-gradient-to-b from-bg-10 to-bg-10/0"
-        />
-        <MessageScrollerViewport aria-label="Conversation">
-          <MessageScrollerContent className="gap-0 px-4">
-            <div className={conversationContentClassName}>
-              {/* Messages and tool activities share one sorted transcript timeline. */}
-              {conversationItems.map((item) => {
-                if (item.type === 'message') {
-                  const artifacts =
-                    activeSession && item.message.role !== 'user'
-                      ? getMessageArtifacts(activeSession, item.message)
-                      : []
-                  // Look up any review for this agent message (its id is the turnMessageId).
-                  const review =
-                    currentSessionId && item.message.role === 'agent'
-                      ? getReviewForTurn(currentSessionId, item.message.id)
-                      : undefined
+    <>
+      <MessageScrollerProvider
+        key={activeSession?.id ?? 'empty-conversation'}
+        autoScroll
+        defaultScrollPosition="last-anchor"
+        scrollPreviousItemPeek={64}
+      >
+        <MessageScroller className="relative min-h-0 flex-1 bg-bg-10">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-gradient-to-b from-bg-10 to-bg-10/0"
+          />
+          <MessageScrollerViewport aria-label="Conversation">
+            <MessageScrollerContent className="gap-0 px-4">
+              <div className={conversationContentClassName}>
+                {/* Messages and tool activities share one sorted transcript timeline. */}
+                {conversationItems.map((item, itemIndex) => {
+                  if (item.type === 'message') {
+                    const artifacts =
+                      activeSession && item.message.role !== 'user'
+                        ? getMessageArtifacts(activeSession, item.message)
+                        : []
+                    // Look up any review for this agent message (its id is the turnMessageId).
+                    const review =
+                      currentSessionId && item.message.role === 'agent'
+                        ? getReviewForTurn(currentSessionId, item.message.id)
+                        : undefined
+
+                    // Jobs pre-assigned to this slot: each job appears in exactly one slot.
+                    const jobsBeforeMessage = jobSlotsByItemIndex.get(itemIndex) ?? []
+
+                    return (
+                      <div key={item.id}>
+                        {/* Unbound completed jobs that belong chronologically before this message */}
+                        {jobsBeforeMessage.map((job) => (
+                          <MessageScrollerItem
+                            key={`completed-job-${job.job_id}`}
+                            messageId={`completed-job-${job.job_id}`}
+                            className="min-w-0"
+                          >
+                            <div className="px-4 py-1 md:px-6">
+                              <div className="mx-auto w-full max-w-4xl">
+                                <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
+                              </div>
+                            </div>
+                          </MessageScrollerItem>
+                        ))}
+                        <WorkspaceMessageItem
+                          message={item.message}
+                          onPreviewArtifact={onPreviewArtifact}
+                          onPreviewUploadAttachment={onPreviewUploadAttachment}
+                          onOpenSkillMention={onOpenSkillMention}
+                          onPreviewMentionArtifact={onPreviewMentionArtifact}
+                          canEditMessage={canEditMessage}
+                          onSendEditedMessage={onSendEditedMessage}
+                          subsequentTurns={subsequentTurnCountByMessageId.get(item.message.id) ?? 0}
+                          artifacts={artifacts}
+                        />
+                        {review ? (
+                          <div className="px-4 pb-1 md:px-6">
+                            <div className="mx-auto w-full max-w-[56rem]">
+                              {/* Only "Go to transcript" navigates to the reviewer page; the card itself does not. */}
+                              <ReviewerCard
+                                review={review}
+                                onGoToTranscript={handleGoToTranscript}
+                                onRerun={handleRerunReview}
+                              />
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    )
+                  }
 
                   return (
-                    <div key={item.id}>
-                      <WorkspaceMessageItem
-                        message={item.message}
-                        onPreviewArtifact={onPreviewArtifact}
-                        onPreviewUploadAttachment={onPreviewUploadAttachment}
-                        onOpenSkillMention={onOpenSkillMention}
-                        onPreviewMentionArtifact={onPreviewMentionArtifact}
-                        artifacts={artifacts}
-                      />
-                      {review ? (
-                        <div className="px-4 pb-1 md:px-6">
-                          <div className="mx-auto w-full max-w-[56rem]">
-                            {/* Only "Go to transcript" navigates to the reviewer page; the card itself does not. */}
-                            <ReviewerCard
-                              review={review}
-                              onGoToTranscript={handleGoToTranscript}
-                              onRerun={handleRerunReview}
-                            />
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
+                    <WorkspaceActivityGroup
+                      key={item.id}
+                      group={item}
+                      isExpanded={!collapsedActivityGroups.has(item.id)}
+                      onToggleGroup={toggleActivityGroup}
+                      expansionOverrides={activityExpansionOverrides}
+                      onToggleRow={toggleActivityRow}
+                      jobsByActivityId={jobsByActivityId}
+                      onOpenJobDetail={handleOpenJobDetail}
+                    />
                   )
-                }
+                })}
 
-                return (
-                  <WorkspaceActivityGroup
-                    key={item.id}
-                    group={item}
-                    isExpanded={!collapsedActivityGroups.has(item.id)}
-                    onToggleGroup={toggleActivityGroup}
-                    expansionOverrides={activityExpansionOverrides}
-                    onToggleRow={toggleActivityRow}
-                  />
-                )
-              })}
+                {/* Render any remaining unbound completed jobs after all conversation items */}
+                {trailingJobs.map((job) => (
+                  <MessageScrollerItem
+                    key={`completed-job-${job.job_id}`}
+                    messageId={`completed-job-${job.job_id}`}
+                    className="min-w-0"
+                  >
+                    <div className="px-4 py-1 md:px-6">
+                      <div className="mx-auto w-full max-w-4xl">
+                        <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
+                      </div>
+                    </div>
+                  </MessageScrollerItem>
+                ))}
 
-              {showAgentLoadingMessage && activeSession ? (
-                <WorkspaceAgentLoadingRow sessionId={activeSession.id} />
-              ) : null}
+                {showAgentLoadingMessage && activeSession ? (
+                  <WorkspaceAgentLoadingRow sessionId={activeSession.id} />
+                ) : null}
+              </div>
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+
+          <MessageScrollerButton className="z-10 border-border-200 bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
+
+          {/* Transient warning shown when a mention target no longer resolves to a file or skill. */}
+          {mentionNotice ? (
+            <div
+              role="status"
+              className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex justify-center px-4"
+            >
+              <span className="rounded-full border border-border-200 bg-bg-000 px-3 py-1 text-[13px] text-text-100 shadow-card">
+                {mentionNotice}
+              </span>
             </div>
-          </MessageScrollerContent>
-        </MessageScrollerViewport>
+          ) : null}
+        </MessageScroller>
+      </MessageScrollerProvider>
 
-        <MessageScrollerButton className="z-10 border-border-200 bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
-
-        {/* Transient warning shown when a mention target no longer resolves to a file or skill. */}
-        {mentionNotice ? (
-          <div
-            role="status"
-            className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex justify-center px-4"
-          >
-            <span className="rounded-full border border-border-200 bg-bg-000 px-3 py-1 text-[13px] text-text-100 shadow-card">
-              {mentionNotice}
-            </span>
-          </div>
-        ) : null}
-      </MessageScroller>
-    </MessageScrollerProvider>
+      {/* Job detail modal — opened from RemoteJobRow or CompletedJobCard */}
+      {currentSessionId && (
+        <JobDetailModal
+          open={modalOpen}
+          sessionId={currentSessionId}
+          initialJob={modalJob}
+          onClose={handleCloseModal}
+        />
+      )}
+    </>
   )
 }
 

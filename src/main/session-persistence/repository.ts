@@ -15,7 +15,25 @@ import {
 import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
 
 const SESSIONS_DIR = 'sessions'
+const DELETED_SESSIONS_DIR = 'deleted-sessions'
 const MANIFEST_FILE = 'manifest.json'
+
+type SessionLoadDiagnostics = {
+  result: LoadAllSessionsResult
+  // False means at least one directory or session file could not be read or safely quarantined.
+  // Callers may hydrate the returned sessions but must not reconcile absent index rows as deletions.
+  isComplete: boolean
+}
+
+type SessionRepositoryDependencies = {
+  remove(path: string, options: { force: boolean; recursive: boolean }): Promise<void>
+  readSessionFile(path: string): Promise<string>
+}
+
+const DEFAULT_DEPENDENCIES: SessionRepositoryDependencies = {
+  remove: (path, options) => rm(path, options),
+  readSessionFile: (path) => readFile(path, 'utf8')
+}
 
 // Production storage lives under ~/.open-science; dev builds use an isolated sibling directory.
 export const PROD_SESSION_DIR_NAME = '.open-science'
@@ -47,13 +65,22 @@ const assertSafeSegment = (segment: string): string => {
 
 // Owns per-session durable reads/writes: one file per session under sessions/<projectId>/<id>.json,
 // plus a small manifest for the last-open selection. Writes are serialized and atomic (temp + rename),
-// and unreadable files are backed up rather than dropped.
+// while malformed JSON is backed up and I/O failures preserve the existing file for later recovery.
 class SessionRepository {
   private saveQueue: Promise<void> = Promise.resolve()
   private writeSequence = 0
   private backupSequence = 0
+  private readonly dependencies: SessionRepositoryDependencies
 
-  constructor(private readonly storageDir: string) {}
+  constructor(
+    private readonly storageDir: string,
+    dependencies: Partial<SessionRepositoryDependencies> = {}
+  ) {
+    this.dependencies = {
+      remove: dependencies.remove ?? DEFAULT_DEPENDENCIES.remove,
+      readSessionFile: dependencies.readSessionFile ?? DEFAULT_DEPENDENCIES.readSessionFile
+    }
+  }
 
   private get sessionsDir(): string {
     return join(this.storageDir, SESSIONS_DIR)
@@ -61,6 +88,10 @@ class SessionRepository {
 
   private get manifestPath(): string {
     return join(this.sessionsDir, MANIFEST_FILE)
+  }
+
+  private get deletedSessionsDir(): string {
+    return join(this.storageDir, DELETED_SESSIONS_DIR)
   }
 
   private projectDir(projectId: string): string {
@@ -71,12 +102,37 @@ class SessionRepository {
     return join(this.projectDir(projectId), `${assertSafeSegment(sessionId)}.json`)
   }
 
+  private deletedProjectDir(projectId: string): string {
+    return join(this.deletedSessionsDir, assertSafeSegment(projectId))
+  }
+
   // Loads every per-session file plus the manifest.
   async loadAll(): Promise<LoadAllSessionsResult> {
-    const sessions = await this.readAllSessions()
+    return (await this.loadAllWithDiagnostics()).result
+  }
+
+  // Loads one durable session directly instead of scanning every project/session file. Reviewer fix
+  // loops call this after each correction turn so every re-review sees newly persisted messages rather
+  // than retaining the snapshot that existed when the initial review started.
+  async loadSession(
+    projectId: string,
+    sessionId: string
+  ): Promise<PersistedChatSession | undefined> {
+    const read = await this.readSessionFile(
+      this.sessionFilePath(projectId, sessionId),
+      assertSafeSegment(projectId)
+    )
+    return read.session
+  }
+
+  // Reports whether the sessions tree was fully scanned so DB reconciliation never acts on a partial
+  // read. Cleanup of previously renamed project tombstones is best-effort and does not re-expose them.
+  async loadAllWithDiagnostics(): Promise<SessionLoadDiagnostics> {
+    await this.cleanupDeletedProjects()
+    const { sessions, isComplete } = await this.readAllSessions()
     const manifest = await this.readManifest()
 
-    return { sessions, manifest }
+    return { result: { sessions, manifest }, isComplete }
   }
 
   // Writes one session file (serialized through the save queue to preserve write order).
@@ -89,9 +145,21 @@ class SessionRepository {
     return this.enqueue(() => rm(this.sessionFilePath(projectId, sessionId), { force: true }))
   }
 
-  // Removes an entire project's session directory (used when a project is deleted).
+  // Atomically removes the project from the readable sessions tree before best-effort cleanup.
   async deleteProjectSessions(projectId: string): Promise<void> {
-    return this.enqueue(() => rm(this.projectDir(projectId), { recursive: true, force: true }))
+    return this.enqueue(async () => {
+      const deletedProjectDir = this.deletedProjectDir(projectId)
+      await mkdir(this.deletedSessionsDir, { recursive: true })
+
+      try {
+        await rename(this.projectDir(projectId), deletedProjectDir)
+      } catch (error) {
+        if (!isMissingFileError(error)) throw error
+      }
+
+      // Once renamed, the session JSON is logically deleted. Cleanup can safely retry on startup.
+      await this.removeDeletedProject(deletedProjectDir)
+    })
   }
 
   // Persists the last-open project/session pointer.
@@ -134,6 +202,19 @@ class SessionRepository {
     await rename(temporaryPath, filePath)
   }
 
+  private async cleanupDeletedProjects(): Promise<void> {
+    const deletedProjects = await this.listDirectoryNames(this.deletedSessionsDir)
+    for (const projectId of deletedProjects.names) {
+      await this.removeDeletedProject(join(this.deletedSessionsDir, projectId))
+    }
+  }
+
+  // Physical cleanup happens after the atomic rename removed the directory from the readable tree.
+  // Failures are intentionally swallowed because startup will retry the tombstone later.
+  private async removeDeletedProject(path: string): Promise<void> {
+    await this.dependencies.remove(path, { recursive: true, force: true }).catch(() => undefined)
+  }
+
   private async readManifest(): Promise<PersistedSessionManifest> {
     try {
       const raw = await readFile(this.manifestPath, 'utf8')
@@ -144,76 +225,101 @@ class SessionRepository {
     }
   }
 
-  // Reads every project directory's session files, backing up any that are unreadable.
-  private async readAllSessions(): Promise<PersistedChatSession[]> {
-    const projectIds = await this.listDirectoryNames(this.sessionsDir)
+  // Reads every project directory's session files and propagates completeness across every level.
+  // Invalid JSON is quarantined, while I/O errors keep reconciliation disabled until the next repair.
+  private async readAllSessions(): Promise<{
+    sessions: PersistedChatSession[]
+    isComplete: boolean
+  }> {
+    const projectDirectories = await this.listDirectoryNames(this.sessionsDir)
     const sessions: PersistedChatSession[] = []
+    let isComplete = projectDirectories.isComplete
 
-    for (const projectId of projectIds) {
+    for (const projectId of projectDirectories.names) {
       const projectDir = join(this.sessionsDir, projectId)
-      const fileNames = await this.listSessionFileNames(projectDir)
+      const sessionFiles = await this.listSessionFileNames(projectDir)
+      isComplete &&= sessionFiles.isComplete
 
-      for (const fileName of fileNames) {
+      for (const fileName of sessionFiles.names) {
         // The directory is the authoritative owning project, regardless of the file's stored projectId.
-        const session = await this.readSessionFile(join(projectDir, fileName), projectId)
+        const read = await this.readSessionFile(join(projectDir, fileName), projectId)
+        isComplete &&= read.isComplete
 
-        if (session) sessions.push(session)
+        if (read.session) sessions.push(read.session)
       }
     }
 
-    return sessions
+    return { sessions, isComplete }
   }
 
   private async readSessionFile(
     filePath: string,
     projectId: string
-  ): Promise<PersistedChatSession | undefined> {
+  ): Promise<{ session?: PersistedChatSession; isComplete: boolean }> {
+    let raw: string
     try {
-      const raw = await readFile(filePath, 'utf8')
-      const session = normalizeSessionFile(JSON.parse(raw) as unknown)
-
-      if (!session) {
-        await this.backupInvalidFile(filePath)
-
-        return undefined
-      }
-
-      return decodeSessionDataPaths({ ...session, projectId })
+      raw = await this.dependencies.readSessionFile(filePath)
     } catch (error) {
-      if (!isMissingFileError(error)) {
-        await this.backupInvalidFile(filePath).catch(() => undefined)
+      if (isMissingFileError(error)) return { isComplete: true }
+      return { isComplete: false }
+    }
+
+    try {
+      const session = normalizeSessionFile(JSON.parse(raw) as unknown)
+      if (!session) return { isComplete: await this.tryBackupInvalidFile(filePath) }
+
+      return { session: decodeSessionDataPaths({ ...session, projectId }), isComplete: true }
+    } catch {
+      return { isComplete: await this.tryBackupInvalidFile(filePath) }
+    }
+  }
+
+  // ENOENT is an authoritative empty directory; any other readdir failure is a partial scan.
+  private async listDirectoryNames(dir: string): Promise<{ names: string[]; isComplete: boolean }> {
+    try {
+      const entries = await readdir(dir, { withFileTypes: true })
+
+      return {
+        names: entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name),
+        isComplete: true
       }
-
-      return undefined
+    } catch (error) {
+      return { names: [], isComplete: isMissingFileError(error) }
     }
   }
 
-  private async listDirectoryNames(dir: string): Promise<string[]> {
+  // Lists only committed session JSON files. In-progress temp writes and quarantined invalid files are
+  // excluded, while non-ENOENT directory failures keep reconciliation disabled.
+  private async listSessionFileNames(
+    dir: string
+  ): Promise<{ names: string[]; isComplete: boolean }> {
     try {
       const entries = await readdir(dir, { withFileTypes: true })
 
-      return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
-    } catch {
-      return []
+      return {
+        names: entries
+          .filter(
+            (entry) =>
+              entry.isFile() &&
+              entry.name.endsWith('.json') &&
+              !entry.name.includes('.tmp') &&
+              !entry.name.includes('.invalid-')
+          )
+          .map((entry) => entry.name),
+        isComplete: true
+      }
+    } catch (error) {
+      return { names: [], isComplete: isMissingFileError(error) }
     }
   }
 
-  // Only committed session JSON files; skips in-progress temp writes and backed-up invalid files.
-  private async listSessionFileNames(dir: string): Promise<string[]> {
+  // Returning false preserves the partial-scan signal when even quarantine could not complete.
+  private async tryBackupInvalidFile(filePath: string): Promise<boolean> {
     try {
-      const entries = await readdir(dir, { withFileTypes: true })
-
-      return entries
-        .filter(
-          (entry) =>
-            entry.isFile() &&
-            entry.name.endsWith('.json') &&
-            !entry.name.includes('.tmp') &&
-            !entry.name.includes('.invalid-')
-        )
-        .map((entry) => entry.name)
+      await this.backupInvalidFile(filePath)
+      return true
     } catch {
-      return []
+      return false
     }
   }
 
@@ -231,3 +337,4 @@ const isMissingFileError = (error: unknown): boolean =>
   (error as { code?: unknown }).code === 'ENOENT'
 
 export { SessionRepository, getSessionPersistenceDir }
+export type { SessionLoadDiagnostics }

@@ -17,10 +17,18 @@ export default defineConfig({
         inline: ['@file-viewer/renderer-spreadsheet']
       }
     },
+    // Loads .env into process.env before tests run. Integration tests gated on RUN_COMPUTE_JOBS=1
+    // read their target alias from COMPUTE_TEST_SSH_ALIAS. The file is gitignored; .env.example
+    // documents the supported variables.
+    setupFiles: ['./test/setup-dotenv.ts'],
     // Keep vitest's defaults (node_modules, dist, .git, ...) and also ignore git worktrees created
     // under .claude/worktrees — those hold full source + node_modules copies that would otherwise be
     // discovered and run as duplicate (and often stale) suites during local runs.
     exclude: [...configDefaults.exclude, '**/.claude/**'],
+    // Lift the 5s default: the full coverage run instruments 4400+ tests across parallel workers on a
+    // shared CI runner, so a fast fully-mocked test can still be CPU-starved past 5s and time out
+    // spuriously. 15s absorbs that contention without masking a genuine hang (real work is far slower).
+    testTimeout: 15000,
     coverage: {
       provider: 'v8',
       // text for the CI log, lcov for upload/tooling, html for local inspection.
@@ -43,7 +51,21 @@ export default defineConfig({
         lines: 66,
         functions: 62,
         branches: 57,
-        statements: 64
+        statements: 64,
+        // Keep the now-covered update wiring from being masked by the global aggregate.
+        'src/main/update/**': {
+          lines: 85,
+          functions: 75,
+          branches: 70,
+          statements: 80
+        },
+        // CSV is a user-facing renderer with bounded-data and fallback behavior worth protecting.
+        'src/renderer/src/pages/workspace/previews/renderers/CsvPreview.tsx': {
+          lines: 95,
+          functions: 95,
+          branches: 80,
+          statements: 95
+        }
       }
     }
   }

@@ -76,6 +76,28 @@ describe('navigation store', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe('b')
   })
 
+  it('opens a session by id alone (desktop-notification click)', () => {
+    useSessionStore
+      .getState()
+      .hydrateSessions([createSession({ id: 'a', projectId: 'project-a' })], {
+        version: SESSION_MANIFEST_VERSION
+      })
+
+    useNavigationStore.getState().openSessionById('a')
+
+    expect(useNavigationStore.getState().view).toBe('workspace')
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-a')
+    expect(useSessionStore.getState().selectedSessionId).toBe('a')
+  })
+
+  it('stays put when a notification names a session that no longer exists', () => {
+    useNavigationStore.getState().openSessionById('gone')
+
+    expect(useNavigationStore.getState().view).toBe('home')
+    expect(useNavigationStore.getState().activeProjectId).toBeUndefined()
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+  })
+
   it('returns to the home screen without losing session state', () => {
     useNavigationStore.getState().openSession('project-a', 'session-1')
     useNavigationStore.getState().goHome()

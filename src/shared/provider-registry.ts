@@ -14,11 +14,14 @@ export type OfficialVendorId =
   | 'anthropic'
   | 'deepseek'
   | 'zhipu'
+  | 'glmcodingplan'
   | 'kimi'
   | 'kimiforcode'
   | 'minimax'
   | 'stepfun'
   | 'xiaomimimo'
+  | 'sensenova'
+  | 'volcengine'
   | 'openrouter'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
@@ -155,6 +158,34 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     multimodal: { multimodalModelPattern: /glm-\d+v/i }
   },
   {
+    id: 'glmcodingplan',
+    label: 'GLM Coding Plan',
+    // The GLM Coding Plan subscription (Z.AI's z.ai/subscribe, BigModel's glm-coding): a quota-based
+    // plan that reuses GLM's regions but routes the OpenAI path through `/api/coding/paas/v4` instead
+    // of `/api/paas/v4`. The Anthropic route (`/api/anthropic`) is unchanged from the pay-as-you-go
+    // GLM endpoint. Quota-based catalogs ship a fixed model list and expose no live model list.
+    apiEndpoints: ['anthropic', 'openai'],
+    regions: [
+      {
+        id: 'global',
+        label: 'Global (Z.AI)',
+        baseUrl: 'https://api.z.ai/api/anthropic',
+        openaiBaseUrl: 'https://api.z.ai/api/coding/paas/v4',
+        apiKeyUrl: 'https://z.ai/subscribe'
+      },
+      {
+        id: 'china',
+        label: 'China (BigModel)',
+        baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+        openaiBaseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+        apiKeyUrl: 'https://bigmodel.cn/glm-coding'
+      }
+    ],
+    // The coding plan does not serve GLM's vision variant, so glm-5v-turbo is omitted and there is no
+    // `multimodal` rule (image input stays disabled for this endpoint).
+    models: ['glm-5.2', 'glm-5.1', 'glm-5', 'glm-5-turbo']
+  },
+  {
     id: 'kimi',
     label: 'Kimi (Moonshot)',
     // Moonshot serves both routes on one host: Anthropic /v1/messages under `/anthropic` and the
@@ -187,17 +218,24 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'minimax',
     label: 'MiniMax',
+    // MiniMax serves the Anthropic /v1/messages route under `/anthropic`, plus the OpenAI-compatible
+    // /v1/chat/completions and OpenAI Responses /v1/responses under `/v1`, from a Global host (.io) and
+    // a mainland-China one (.com). `baseUrl` is the Anthropic route; `openaiBaseUrl` is the `/v1` base
+    // clients append `/chat/completions` to, and the Responses probe derives `/v1/responses` from it.
+    apiEndpoints: ['anthropic', 'openai', 'responses'],
     regions: [
       {
         id: 'global',
         label: 'Global',
         baseUrl: 'https://api.minimax.io/anthropic',
+        openaiBaseUrl: 'https://api.minimax.io/v1',
         apiKeyUrl: 'https://platform.minimax.io/user-center/basic-information/interface-key'
       },
       {
         id: 'china',
         label: 'China',
         baseUrl: 'https://api.minimaxi.com/anthropic',
+        openaiBaseUrl: 'https://api.minimaxi.com/v1',
         apiKeyUrl: 'https://platform.minimaxi.com/user-center/basic-information/interface-key'
       }
     ],
@@ -247,6 +285,52 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     modelsListUrl: 'https://api.xiaomimimo.com/v1/models',
     models: ['mimo-v2.5-pro', 'mimo-v2.5']
     // Xiaomi MiMo's chat models are text-only, so no `multimodal` rule (image input stays disabled).
+  },
+  {
+    id: 'sensenova',
+    label: 'SenseNova',
+    // SenseTime's SenseNova serves both routes on one host: the Anthropic-compatible /v1/messages
+    // at the bare root and the OpenAI-compatible /v1/chat/completions under /v1. The same model ids
+    // work on both. No modelsListUrl: the live /v1/models list also serves the image-generation-only
+    // sensenova-u1-fast (POST /v1/images/generations, not a chat model), and the refresh has no
+    // modality filter — so the catalog stays curated to the two chat ids.
+    apiEndpoints: ['anthropic', 'openai'],
+    baseUrl: 'https://token.sensenova.cn',
+    openaiBaseUrl: 'https://token.sensenova.cn/v1',
+    apiKeyUrl: 'https://platform.sensenova.cn/token-plan',
+    models: ['sensenova-6.7-flash-lite', 'deepseek-v4-flash'],
+    // Only sensenova-6.7-flash-lite accepts image input; deepseek-v4-flash is text-only.
+    multimodal: { multimodalModels: ['sensenova-6.7-flash-lite'] }
+  },
+  {
+    id: 'volcengine',
+    label: 'Volcengine Ark',
+    // ByteDance's Volcengine Ark serves all three routes on one host: the Anthropic-compatible
+    // /v1/messages under /api/compatible, the OpenAI-compatible /v1/chat/completions under /api/v3,
+    // and OpenAI Responses at /api/v3/responses (the probe derives it from `openaiBaseUrl`). The same
+    // model ids work on all three. No modelsListUrl: Ark's catalog also serves embedding, image
+    // (Seedream), and video (Seedance) models alongside the chat ids, and the refresh has no
+    // modality filter — so the Doubao Seed chat catalog stays curated.
+    apiEndpoints: ['anthropic', 'openai', 'responses'],
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
+    openaiBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    apiKeyUrl: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apikey',
+    models: [
+      'doubao-seed-2-1-pro-260628',
+      'doubao-seed-2-0-pro-260215',
+      'doubao-seed-2-0-lite-260215',
+      'doubao-seed-2-0-mini-260215',
+      'doubao-seed-2-0-code-preview-260215'
+    ],
+    // The Seed 2.x general models accept image input; the code-preview coding model is text-only.
+    multimodal: {
+      multimodalModels: [
+        'doubao-seed-2-1-pro-260628',
+        'doubao-seed-2-0-pro-260215',
+        'doubao-seed-2-0-lite-260215',
+        'doubao-seed-2-0-mini-260215'
+      ]
+    }
   },
   // OpenRouter is an aggregation gateway (many vendors behind one key), so it sits last in the picker.
   {
