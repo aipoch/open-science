@@ -79,8 +79,11 @@ export class ClaudeIsolatedAuthController {
   }
 
   // Persists a freshly-pasted setup-token. The token itself is opaque to Open Science — Claude Code
-  // validates it on first use — so the only validation done here is "non-empty / trimmed". A missing
-  // token is the only failure mode (encryption/credential-store problems bubble up from saveToken).
+  // validates it on first use — so we cannot decode it here. The status we return is "stored but
+  // unvalidated": the token roundtripped through the encrypted store (a corrupted save would surface
+  // as a half-state below), but Claude has not accepted it yet. The validation flow records the
+  // pass/fail result against the provider so the Settings card can show "verified" only after
+  // Claude has actually carried a request with this token.
   async loginIsolated(token: string): Promise<ClaudeIsolatedAuthStatus> {
     const trimmed = token.trim()
 
@@ -110,6 +113,38 @@ export class ClaudeIsolatedAuthController {
           error instanceof Error
             ? error.message
             : 'Could not save the Claude token.'
+      }
+    }
+
+    // Re-probe the store after save so a corrupted roundtrip (a save that does not survive a load)
+    // surfaces here as the malformed-token case instead of masquerading as authenticated and only
+    // failing on the next Claude spawn. Distinguishing valid / expired / malformed at login time
+    // keeps the Settings card truthful about the credential's actual state.
+    try {
+      const reloaded = await this.store.loadToken()
+
+      if (reloaded === undefined) {
+        return {
+          supported: true,
+          authenticated: false,
+          message: 'Saved token could not be re-read. Retry the paste.'
+        }
+      }
+      if (reloaded !== trimmed) {
+        return {
+          supported: true,
+          authenticated: false,
+          message: 'Saved token did not roundtrip cleanly. Retry the paste.'
+        }
+      }
+    } catch (error) {
+      return {
+        supported: true,
+        authenticated: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Stored token could not be re-read.'
       }
     }
 

@@ -8,14 +8,21 @@ type AgentHomeImportViewProps = {
   onImported: () => void
 }
 
-// Imports skills from the user's machine-level Claude config (~/.claude/skills/). Surfaced as a
-// separate sub-view rather than a card on the main list because the source is the user's own
-// filesystem, not a public repo — the affordance needs a clear "this reads from your machine"
-// framing so the user can give informed consent. Mirrors SkillImportView's structure (preview +
-// import-selected) so the two paths feel familiar.
+// Imports skills from the user's machine-level agent home. The source directory is the active
+// agent's global skills folder: `~/.claude/skills/` for claude-code and `~/.codex/skills/` for
+// codex. Surfaced as a separate sub-view rather than a card on the main list because the source
+// is the user's own filesystem, not a public repo — the affordance needs a clear "this reads from
+// your machine" framing so the user can give informed consent. Mirrors SkillImportView's
+// structure (preview + import-selected) so the two paths feel familiar.
 const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JSX.Element => {
   const listAgentHomeSkills = useSettingsStore((state) => state.listAgentHomeSkills)
   const importAgentHomeSkill = useSettingsStore((state) => state.importAgentHomeSkill)
+  // The path mirror follows the active framework — main resolves it the same way. Reading from
+  // the store here keeps the description in lockstep with what is actually scanned when the user
+  // clicks "Rescan" / "Import".
+  const activeFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const agentHomeRoot =
+    activeFrameworkId === 'codex' ? '~/.codex/skills/' : '~/.claude/skills/'
   const [busy, setBusy] = useState(true)
   const [message, setMessage] = useState<string | null>(null)
   const [skills, setSkills] = useState<AgentHomeSkillView[] | null>(null)
@@ -88,7 +95,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
     <div className="p-5">
       <h2 className="text-base font-semibold text-foreground">From your agent home</h2>
       <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
-        Skills under <code className="font-mono">~/.claude/skills/</code> on this machine. Import
+        Skills under <code className="font-mono">{agentHomeRoot}</code> on this machine. Import
         one to copy it into Open Science; the source file stays where it is.
       </p>
 
@@ -143,7 +150,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
         </ul>
       ) : !busy && skills && skills.length === 0 ? (
         <p className="mt-5 text-xs text-muted-foreground">
-          No skills found under <code className="font-mono">~/.claude/skills/</code>.
+          No skills found under <code className="font-mono">{agentHomeRoot}</code>.
         </p>
       ) : null}
     </div>

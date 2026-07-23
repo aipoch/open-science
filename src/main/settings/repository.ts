@@ -178,6 +178,7 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   const keyMask = asString(value.keyMask)
   const lastValidatedAt = asNumber(value.lastValidatedAt)
   const lastValidationFailure = sanitizeValidationFailure(value.lastValidationFailure)
+  const expiresAt = asNumber(value.expiresAt)
   // Keep only a clean list of non-empty string model ids.
   const fetchedModels = Array.isArray(value.fetchedModels)
     ? value.fetchedModels.filter(
@@ -215,6 +216,7 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   if (keyMask) provider.keyMask = keyMask
   if (lastValidatedAt !== undefined) provider.lastValidatedAt = lastValidatedAt
   if (lastValidationFailure) provider.lastValidationFailure = lastValidationFailure
+  if (expiresAt !== undefined) provider.expiresAt = expiresAt
 
   return provider
 }

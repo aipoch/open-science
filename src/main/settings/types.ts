@@ -40,6 +40,11 @@ export type StoredProvider = {
   keyMask?: string
   // Timestamp of the last successful connectivity/key check on the provider's first model.
   lastValidatedAt?: number
+  // Estimated expiry of a stored credential, used to surface "expires <date>" on the Settings card.
+  // Only set for credential types that have a known bounded lifetime: today that is the Claude
+  // `claude setup-token` (Anthropic documents a one-year lifetime) and a codex subscription sign-in
+  // (whose expiry Anthropic / OpenAI surface on the auth status). Stored in epoch ms.
+  expiresAt?: number
   // Recorded when a validation fails; cleared on the next success or a credential change. Kept so the
   // "unverified" warning survives a restart.
   lastValidationFailure?: ProviderValidationFailure

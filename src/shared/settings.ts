@@ -194,6 +194,10 @@ export type ProviderView = {
   // Present when the most recent validation failed and no later one has succeeded. Drives the
   // "unverified" warning in the provider list.
   lastValidationFailure?: ProviderValidationFailure
+  // Estimated credential expiry (epoch ms). Set for credential types that have a known bounded
+  // lifetime — today that is `claude setup-token` (Anthropic documents a one-year lifetime).
+  // The Settings card surfaces this as "Expires <date>".
+  expiresAt?: number
 }
 
 // True when a provider's most recent validation failed (and no later one succeeded). A failed

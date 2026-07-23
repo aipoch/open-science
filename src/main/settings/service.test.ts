@@ -3111,3 +3111,105 @@ describe('SettingsService: importAgentHomeSkill path containment', () => {
     )
   })
 })
+
+describe('SettingsService: claude-isolated login + status coordination', () => {
+  // Round 4 of the AI review: the controller's post-save roundtrip check + the service's
+  // "awaiting first Claude session" placeholder combine so the Settings card does not show a
+  // green verified check for a credential Claude has not actually accepted. These tests pin that
+  // contract end-to-end.
+
+  const successAuth = {
+    getStatus: vi.fn().mockResolvedValue({ supported: true, authenticated: true }),
+    loginIsolated: vi.fn(async (token: string) => {
+      if (token.trim() === 'sk-ant-valid') return { supported: true, authenticated: true }
+      return { supported: true, authenticated: false, message: 'invalid token' }
+    }),
+    cancelLogin: vi.fn(),
+    logoutIsolated: vi.fn().mockResolvedValue({ supported: true, authenticated: false })
+  }
+
+  it('records expiresAt + an awaiting-validation marker on a successful paste', async () => {
+    const service = createService(undefined, { claudeIsolatedAuth: successAuth })
+    // Seed the provider card. The loginIsolatedClaude path requires an existing record to find
+    // (the early-return for a missing card is the "applied: false" branch).
+    const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: encryptKey('test-token-seed'),
+      keyMask: maskKey('test-token-seed')
+    })
+
+    const before = Date.now()
+    const result = await service.loginIsolatedClaude('sk-ant-valid')
+    const after = Date.now()
+
+    expect(result.ok).toBe(true)
+    expect(result.applied).toBe(true)
+    const stored = (await repository.getSettings()).providers.find(
+      (p) => p.id === 'builtin-claude-isolated'
+    )
+    // Estimated one-year expiry: must be within the window the service set, not "now exactly".
+    expect(stored?.expiresAt).toBeGreaterThanOrEqual(before + 364 * 24 * 60 * 60 * 1000)
+    expect(stored?.expiresAt).toBeLessThanOrEqual(after + 366 * 24 * 60 * 60 * 1000)
+    // lastValidatedAt stays undefined; the placeholder message carries the awaiting state.
+    expect(stored?.lastValidatedAt).toBeUndefined()
+    expect(stored?.lastValidationFailure?.message).toMatch(/Token stored/i)
+  })
+
+  it('getClaudeIsolatedStatus reports "awaiting first session" for a stored-but-unvalidated token', async () => {
+    const service = createService(undefined, { claudeIsolatedAuth: successAuth })
+    const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: encryptKey('test-token-seed'),
+      keyMask: maskKey('test-token-seed')
+    })
+    // A successful login sets the awaiting marker.
+    await service.loginIsolatedClaude('sk-ant-valid')
+
+    const result = await service.getClaudeIsolatedStatus()
+
+    // Not "ok" — the token is stored, but Claude has not actually accepted it yet.
+    expect(result.ok).toBe(false)
+    expect(result.message).toMatch(/Token stored/i)
+  })
+
+  it('logoutIsolatedClaude on error does NOT clear the stored validation markers', async () => {
+    // A failed logout must leave lastValidationFailure / lastValidatedAt alone: a transient store
+    // error that flips the markers to "cleared" would lie to the next status check (the token is
+    // still in storage, and any pending failure marker is the truthful state to keep).
+    const failingLogout = {
+      ...successAuth,
+      logoutIsolated: vi.fn().mockResolvedValue({
+        supported: true,
+        authenticated: false,
+        message: 'keychain delete failed'
+      })
+    }
+    const service = createService(undefined, { claudeIsolatedAuth: failingLogout })
+    const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: encryptKey('test-token-seed'),
+      keyMask: maskKey('test-token-seed')
+    })
+    // Stamp a real failure marker on the record so we can verify it survives the failed logout.
+    const originalFailureMessage = 'Token stored. Open Science finishes the sign-in check on the first Claude session.'
+    await repository.upsertProvider({
+      id: 'builtin-claude-isolated',
+      type: 'claude-isolated',
+      name: 'Claude subscription',
+      lastValidationFailure: {
+        at: Date.now(),
+        category: 'unknown',
+        message: originalFailureMessage
+      }
+    })
+
+    const result = await service.logoutIsolatedClaude()
+
+    expect(result.ok).toBe(false)
+    const stored = (await repository.getSettings()).providers.find(
+      (p) => p.id === 'builtin-claude-isolated'
+    )
+    // Marker is the original — not cleared, not replaced with an "ok" record.
+    expect(stored?.lastValidationFailure?.message).toBe(originalFailureMessage)
+  })
+})

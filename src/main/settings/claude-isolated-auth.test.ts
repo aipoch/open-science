@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { ClaudeIsolatedAuthController, type ClaudeIsolatedTokenStore } from './claude-isolated-auth'
 
 // A controllable token store so each test can script load/save/clear outcomes without touching
-// safeStorage or the repository. Mirrors the shape the SettingsService passes in service.ts.
+// safeStorage or the repository. Mirrors the shape the SettingsService passes in service.ts. The
+// default saveToken also records the token so a follow-up loadToken (the post-save roundtrip the
+// controller uses to distinguish a successful save from a corrupted one) reads the same value back.
 const createStore = (
   overrides: Partial<ClaudeIsolatedTokenStore> = {}
 ): ClaudeIsolatedTokenStore & {
@@ -12,14 +14,17 @@ const createStore = (
 } => {
   const saveCalls: string[] = []
   const clearCalls = { count: 0 }
+  const stored: { current: string | undefined } = { current: undefined }
 
   const base: ClaudeIsolatedTokenStore = {
-    loadToken: async () => undefined,
+    loadToken: async () => stored.current,
     saveToken: async (token) => {
       saveCalls.push(token)
+      stored.current = token
     },
     clearToken: async () => {
       clearCalls.count += 1
+      stored.current = undefined
     },
     isEncryptionAvailable: () => true
   }
@@ -101,6 +106,49 @@ describe('ClaudeIsolatedAuthController', () => {
       authenticated: true
     })
     expect(store.saveCalls).toEqual(['sk-ant-pasted'])
+  })
+
+  it('rejects a save whose post-write load returns undefined (corrupted store)', async () => {
+    // Roundtrip check: even when saveToken "succeeds", a follow-up load that returns nothing means
+    // the encrypted store lost the entry between the two calls — masquerading as authenticated would
+    // leave the user looking at a green check for a credential Claude cannot carry. The malformed
+    // message is what the card surfaces.
+    const store = createStore({ loadToken: async () => undefined })
+    const controller = new ClaudeIsolatedAuthController({ store })
+
+    await expect(controller.loginIsolated('sk-ant-pasted')).resolves.toEqual({
+      supported: true,
+      authenticated: false,
+      message: 'Saved token could not be re-read. Retry the paste.'
+    })
+  })
+
+  it('rejects a save whose post-write load returns a different value (corrupted store)', async () => {
+    // A save that roundtrips to a *different* value indicates the encrypted store is no longer
+    // faithful — treat the same as no token rather than a successful paste.
+    const store = createStore({ loadToken: async () => 'something-else' })
+    const controller = new ClaudeIsolatedAuthController({ store })
+
+    await expect(controller.loginIsolated('sk-ant-pasted')).resolves.toEqual({
+      supported: true,
+      authenticated: false,
+      message: 'Saved token did not roundtrip cleanly. Retry the paste.'
+    })
+  })
+
+  it('surfaces a re-read failure (thrown load) as a dedicated error rather than authenticated', async () => {
+    const store = createStore({
+      loadToken: vi.fn(async () => {
+        throw new Error('keychain read failed')
+      })
+    })
+    const controller = new ClaudeIsolatedAuthController({ store })
+
+    await expect(controller.loginIsolated('sk-ant-pasted')).resolves.toEqual({
+      supported: true,
+      authenticated: false,
+      message: 'keychain read failed'
+    })
   })
 
   it('surfaces save failures without throwing', async () => {

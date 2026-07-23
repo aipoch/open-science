@@ -185,6 +185,12 @@ const execFileAsync = promisify(execFile)
 
 // Hard ceiling for the claude-default probe so a stuck local claude can never hang the wizard.
 const CLAUDE_PROBE_TIMEOUT_MS = 20_000
+// Anthropic documents `claude setup-token` as a one-year long-lived OAuth token. We surface
+// "expires <date>" on the Settings card using this estimate until the first Claude session returns
+// a real expiry. A one-year window is a coarse upper bound; a token that the underlying
+// subscription has already revoked surfaces as a validation failure on first use, so the worst case
+// is a card that says "expires in a year" for a credential that actually expires sooner.
+const SETUP_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000
 const CODEX_INSTALL_TARGET: InstallTarget = {
   npmPackage: '@agentclientprotocol/codex-acp',
   // Codex exposes no supported shell installer; InstallCodexRequest cannot select this branch.
@@ -1734,9 +1740,11 @@ class SettingsService {
   }
 
   // Pastes an OAuth token into the claude-isolated provider. The token is encrypted at rest via the
-  // same encryptKey pipeline other providers use; an invalid/missing token is recorded as a
-  // validation failure so the Settings card flips to the unverified warning with the reason. The
-  // stored provider is upserted on success too (record id is fixed at builtin-claude-isolated), so
+  // same encryptKey pipeline other providers use. We do NOT mark the record as verified on a
+  // successful paste: the token is opaque to Open Science, and the actual validation happens when
+  // Claude carries a request with it. Until then, the card shows the "awaiting first session"
+  // warning so the user is not told "verified" for a credential Claude has not actually accepted.
+  // The stored provider is upserted either way (record id is fixed at builtin-claude-isolated), so
   // this is the only path that adds the card to a fresh install.
   async loginIsolatedClaude(token: string): Promise<ValidateProviderResult> {
     const result = this.claudeIsolatedAuthValidationResult(
@@ -1753,10 +1761,23 @@ class SettingsService {
     if (!provider) return { ...result, applied: false }
 
     if (result.ok) {
+      // Stored but unvalidated. Keep `lastValidatedAt` undefined and record a benign failure
+      // marker so the Settings card shows "awaiting first Claude session" rather than a green
+      // verified check. The regular validation flow (validateProvider / the next Claude session)
+      // will replace this with a real pass/fail record. The estimated expiry mirrors Anthropic's
+      // documented one-year setup-token lifetime; the validation flow replaces it with a real value
+      // once Claude accepts the token.
       await this.repository.upsertProvider({
         ...provider,
-        lastValidatedAt: Date.now(),
-        lastValidationFailure: undefined
+        expiresAt: Date.now() + SETUP_TOKEN_LIFETIME_MS,
+        lastValidatedAt: undefined,
+        lastValidationFailure: {
+          at: Date.now(),
+          category: 'unknown',
+          // No HTTP status — the token hasn't been sent yet. The "awaiting-validation" state is
+          // recognised in the renderer by the absence of `lastValidatedAt`, not by this field.
+          message: 'Token stored. Open Science finishes the sign-in check on the first Claude session.'
+        }
       })
     } else {
       await this.repository.upsertProvider({
@@ -1776,9 +1797,22 @@ class SettingsService {
 
   // Drops the stored token. The provider card stays so the user can sign back in without a fresh
   // add; the verified markers are cleared so the next validation/test must succeed before it can
-  // re-gate onboarding.
+  // re-gate onboarding. When the controller reports an error (status.message set), the token may
+  // still be in storage — we leave the existing validation markers untouched so the next status
+  // check surfaces the real state instead of a misleading "cleared, please retest".
   async logoutIsolatedClaude(): Promise<ValidateProviderResult> {
     const status = await this.claudeIsolatedAuth.logoutIsolated()
+
+    // Propagate the controller's error independently of `authenticated`: a failed logout can leave
+    // the token in storage and still report `authenticated: false`, but the controller's `message`
+    // is what the user needs to see rather than a silent success.
+    if (status.message) {
+      return {
+        ok: false,
+        category: status.message.toLowerCase().includes('timed out') ? 'timeout' : 'unknown',
+        message: status.message
+      }
+    }
 
     const settings = await this.repository.getSettings()
     const provider = settings.providers.find(
@@ -1793,30 +1827,49 @@ class SettingsService {
       })
     }
 
-    // Propagate the controller's error independently of `authenticated`: a failed logout can leave
-    // the token in storage and still report `authenticated: false`, but the controller's `message`
-    // is what the user needs to see rather than a silent success.
-    if (status.message) {
-      return {
-        ok: false,
-        category: status.message.toLowerCase().includes('timed out') ? 'timeout' : 'unknown',
-        message: status.message
-      }
-    }
-
     return { ok: true, category: 'ok' }
   }
 
   // Read-only status check used by validateProvider for a saved claude-isolated provider. A
-  // decryptable token means authenticated; an empty/undefined token means "sign in to connect", so
-  // the UI can say the right thing before the user goes looking for `claude setup-token` output.
+  // decryptable token means the credential is present; "not signed in" means the store is empty.
+  // A stored token is NOT yet "verified" — the verification record lives on the provider
+  // (`lastValidatedAt` / `lastValidationFailure`) and is set by the validation flow that runs
+  // against a live Claude session. This status check consults both so the card surfaces a stored
+  // but unvalidated token as a benign "awaiting first session" state instead of a green check.
   async getClaudeIsolatedStatus(): Promise<ValidateProviderResult> {
     const status = await this.claudeIsolatedAuth.getStatus()
 
-    return this.claudeIsolatedAuthValidationResult(
-      status,
-      'Not signed in. Run `claude setup-token` and paste the token to connect your Claude subscription.'
+    if (!status.authenticated) {
+      return this.claudeIsolatedAuthValidationResult(
+        status,
+        'Not signed in. Run `claude setup-token` and paste the token to connect your Claude subscription.'
+      )
+    }
+
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
     )
+
+    // A stored token without a successful validation record is "awaiting first session", not ok.
+    // A failed last validation (expired / rejected) surfaces its message so the card shows the
+    // exact reason the token is no longer trusted.
+    if (provider?.lastValidationFailure) {
+      return {
+        ok: false,
+        category: 'unknown',
+        message: provider.lastValidationFailure.message
+      }
+    }
+    if (!provider?.lastValidatedAt) {
+      return {
+        ok: false,
+        category: 'unknown',
+        message: 'Token stored. Open Science finishes the sign-in check on the first Claude session.'
+      }
+    }
+
+    return { ok: true, category: 'ok' }
   }
 
   // The Claude-auth status does not have a 'timeout' or 'incompatible' category of its own; map it
@@ -2646,7 +2699,8 @@ class SettingsService {
       hasKey,
       needsKey,
       lastValidatedAt: provider.lastValidatedAt,
-      lastValidationFailure: provider.lastValidationFailure
+      lastValidationFailure: provider.lastValidationFailure,
+      ...(provider.expiresAt !== undefined ? { expiresAt: provider.expiresAt } : {})
     }
   }
 

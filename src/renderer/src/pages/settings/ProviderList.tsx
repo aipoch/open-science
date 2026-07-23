@@ -227,9 +227,21 @@ const ProviderList = ({
                     ) : provider.type === 'claude-isolated' ? (
                       // The Claude subscription card carries an OAuth token, so we surface the masked
                       // hint the same way custom/official providers do (no Keychain leak). The signed
-                      // // in / signed out framing belongs to the card icon, not this line.
+                      // // in / signed out framing belongs to the card icon, not this line. The
+                      // "Expires" line is the issue #347 requirement to make the one-year
+                      // setup-token lifetime visible on the card.
                       provider.maskedKey ? (
-                        <div className="font-mono">Token: {provider.maskedKey}</div>
+                        <>
+                          <div className="font-mono">Token: {provider.maskedKey}</div>
+                          {provider.expiresAt !== undefined ? (
+                            <div>
+                              Expires{' '}
+                              <time dateTime={new Date(provider.expiresAt).toISOString()}>
+                                {new Date(provider.expiresAt).toLocaleDateString()}
+                              </time>
+                            </div>
+                          ) : null}
+                        </>
                       ) : (
                         <div>Not signed in</div>
                       )
