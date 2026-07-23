@@ -113,6 +113,7 @@ jobs:
             ( github.event_name != 'workflow_dispatch' &&
               needs.review_target.outputs.fork_mode == 'automatic' ) ) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     concurrency:
       group: claude-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}
       cancel-in-progress: true
@@ -215,7 +216,6 @@ jobs:
             --verbose \
             --no-session-persistence \
             --model "$CLAUDE_MODEL" \
-            --max-turns 20 \
             --json-schema "$CLAUDE_REVIEW_SCHEMA" \
             --safe-mode \
             --strict-mcp-config \

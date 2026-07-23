@@ -26,6 +26,7 @@ type WorkflowJob = {
   if?: string
   needs?: string | string[]
   outputs?: Record<string, string>
+  'timeout-minutes'?: number
   concurrency?: { group: string; 'cancel-in-progress': boolean }
 }
 
@@ -360,7 +361,8 @@ describe('AI review workflow contract', () => {
     const command = step.run
 
     expect(command).toContain('--tools "Read,Glob,Grep,Bash"')
-    expect(command).toContain('--max-turns 20')
+    expect(command).not.toContain('--max-turns')
+    expect(parsedWorkflow.jobs.claude_review['timeout-minutes']).toBe(30)
     expect(command).toContain('--permission-mode bypassPermissions')
     // --safe-mode disables all project customisations (hooks, MCP servers, .claude/settings.json).
     expect(command).toContain('--safe-mode')
