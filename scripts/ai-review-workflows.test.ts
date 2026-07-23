@@ -6,17 +6,9 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { load } from 'js-yaml'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-// ai-review-labels.yml consumes reviewer job names and comment headers produced by ai-review.yml.
-// That contract is otherwise invisible: a rename on either side silently disables verdict-based
-// labeling, so assert the two workflow files stay in sync.
+// Contract and behavior tests for ai-review.yml. Inline github-script blocks are executed directly
+// so the tests exercise the code that ships instead of a reimplementation.
 const reviewWorkflow = readFileSync(join(process.cwd(), '.github/workflows/ai-review.yml'), 'utf8')
-const labelsWorkflow = readFileSync(
-  join(process.cwd(), '.github/workflows/ai-review-labels.yml'),
-  'utf8'
-)
-
-const jobNames = [...labelsWorkflow.matchAll(/jobName: '([^']+)'/g)].map(([, name]) => name)
-const headers = [...labelsWorkflow.matchAll(/header: '([^']+)'/g)].map(([, header]) => header)
 
 type WorkflowStep = {
   id?: string
@@ -32,6 +24,8 @@ type WorkflowStep = {
 type WorkflowJob = {
   steps: WorkflowStep[]
   if?: string
+  needs?: string | string[]
+  outputs?: Record<string, string>
   concurrency?: { group: string; 'cancel-in-progress': boolean }
 }
 
@@ -196,7 +190,7 @@ async function runPostCodexFeedback(
     paginate: vi.fn(async () => comments)
   }
   const context = { repo: { owner: 'aipoch', repo: 'open-science' } }
-  const core = { notice: vi.fn() }
+  const core = { notice: vi.fn(), setOutput: vi.fn() }
   const processStub = {
     env: {
       CODEX_REVIEW_BODY:
@@ -235,7 +229,7 @@ async function runPostClaudeFeedback(currentHeadSha = 'head-sha'): Promise<strin
     }
   }
   const context = { repo: { owner: 'aipoch', repo: 'open-science' } }
-  const core = { notice: vi.fn() }
+  const core = { notice: vi.fn(), setOutput: vi.fn() }
   const processStub = {
     env: {
       REVIEW_BODY: '## Claude Architecture Review\n**Verdict: mergeable**',
@@ -276,22 +270,36 @@ describe('AI review workflow contract', () => {
     expect(() => load(reviewWorkflow)).not.toThrow()
   })
 
-  it('declares at least one reviewer pairing in ai-review-labels.yml', () => {
-    expect(jobNames.length).toBeGreaterThan(0)
-    expect(headers.length).toBe(jobNames.length)
-  })
-
-  it.each(jobNames)('keeps reviewer job name "%s" in ai-review.yml', (jobName) => {
-    expect(reviewWorkflow).toContain(`name: ${jobName}`)
-  })
-
-  it.each(headers)('keeps comment header "%s" in an ai-review.yml prompt', (header) => {
-    expect(reviewWorkflow).toContain(header)
-  })
-
-  it('keeps the verdict format consumed by ai-review-labels.yml in the reviewer prompts', () => {
+  it('keeps the verdict format consumed by the outcome job in the reviewer prompts', () => {
     expect(reviewWorkflow).toContain('**Verdict: mergeable**')
     expect(reviewWorkflow).toContain('**Verdict: needs changes**')
+  })
+
+  it('applies labels only after both reviewer publish jobs have settled', () => {
+    const outcome = parsedWorkflow.jobs.apply_review_outcome
+    const step = getNamedStep(
+      'apply_review_outcome',
+      'Apply ready-to-merge from published review outputs'
+    )
+
+    expect(outcome.if).toContain('always()')
+    expect(outcome.needs).toEqual([
+      'review_target',
+      'claude_review',
+      'post_claude_feedback',
+      'codex_review',
+      'post_codex_feedback'
+    ])
+    expect(step.env).toMatchObject({
+      CLAUDE_POSTED: '${{ needs.post_claude_feedback.outputs.posted }}',
+      CODEX_POSTED: '${{ needs.post_codex_feedback.outputs.posted }}'
+    })
+    expect(parsedWorkflow.jobs.post_claude_feedback.outputs?.posted).toBe(
+      '${{ steps.post.outputs.posted }}'
+    )
+    expect(parsedWorkflow.jobs.post_codex_feedback.outputs?.posted).toBe(
+      '${{ steps.post.outputs.posted }}'
+    )
   })
 
   it('supports disabled, manual, and automatic fork review modes', () => {

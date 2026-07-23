@@ -100,7 +100,6 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   claude_review:
-    # Keep this name in sync with ai-review-labels.yml, which recognizes successful reviewers.
     name: Claude architecture review
     needs: review_target
     if: >-
@@ -323,11 +322,14 @@ jobs:
     if: ${{ needs.claude_review.result == 'success' && needs.claude_review.outputs.review_body != '' }}
     needs: claude_review
     runs-on: ubuntu-latest
+    outputs:
+      posted: ${{ steps.post.outputs.posted }}
     permissions:
       issues: write
       pull-requests: write
     steps:
       - name: Post Claude architecture review
+        id: post
         uses: actions/github-script@v8
         env:
           REVIEW_BODY: ${{ needs.claude_review.outputs.review_body }}
@@ -348,6 +350,7 @@ jobs:
             });
             if (currentPullRequest.head.sha !== process.env.REVIEW_HEAD_SHA) {
               core.notice('Skipping Claude feedback: a newer pull request commit exists.');
+              core.setOutput('posted', 'false');
               return;
             }
             await github.rest.issues.createComment({
@@ -356,6 +359,7 @@ jobs:
               issue_number: issueNumber,
               body: `${marker}\n${provenance}\n${process.env.REVIEW_BODY}`,
             });
+            core.setOutput('posted', 'true');
 
   codex_review_gate:
     name: Check Codex review limit
@@ -418,7 +422,6 @@ jobs:
           fi
 
   codex_review:
-    # Keep this name in sync with ai-review-labels.yml, which recognizes successful reviewers.
     name: Codex correctness review
     if: ${{ needs.codex_review_gate.outputs.should_run == 'true' }}
     needs: [review_target, codex_review_gate]
@@ -657,11 +660,14 @@ jobs:
     concurrency:
       group: codex-review-post-${{ needs.codex_review.outputs.pr_number }}
       cancel-in-progress: false
+    outputs:
+      posted: ${{ steps.post.outputs.posted }}
     permissions:
       issues: write
       pull-requests: write
     steps:
       - name: Post Codex correctness review
+        id: post
         uses: actions/github-script@v8
         env:
           CODEX_REVIEW_BODY: ${{ needs.codex_review.outputs.review_body }}
@@ -691,6 +697,7 @@ jobs:
             });
             if (currentPullRequest.head.sha !== process.env.REVIEW_HEAD_SHA) {
               core.notice('Skipping Codex feedback: a newer pull request commit exists.');
+              core.setOutput('posted', 'false');
               return;
             }
             const comments = await github.paginate(github.rest.issues.listComments, {
@@ -706,6 +713,7 @@ jobs:
             ).length;
             if (maxReviews > 0 && reviewCount >= maxReviews) {
               core.notice(`Skipping Codex feedback: review limit ${maxReviews} reached.`);
+              core.setOutput('posted', 'false');
               return;
             }
 
@@ -714,4 +722,136 @@ jobs:
               repo: context.repo.repo,
               issue_number: issueNumber,
               body: `${marker}\n${provenance}\n${process.env.CODEX_REVIEW_BODY}`,
+            });
+            core.setOutput('posted', 'true');
+
+  apply_review_outcome:
+    name: Apply review outcome label
+    if: ${{ always() && needs.review_target.result == 'success' }}
+    needs:
+      - review_target
+      - claude_review
+      - post_claude_feedback
+      - codex_review
+      - post_codex_feedback
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Apply ready-to-merge from published review outputs
+        uses: actions/github-script@v8
+        env:
+          PR_NUMBER: ${{ needs.review_target.outputs.number }}
+          REVIEW_HEAD_SHA: ${{ needs.review_target.outputs.head_sha }}
+          CLAUDE_RESULT: ${{ needs.claude_review.result }}
+          CLAUDE_POST_RESULT: ${{ needs.post_claude_feedback.result }}
+          CLAUDE_POSTED: ${{ needs.post_claude_feedback.outputs.posted }}
+          CLAUDE_REVIEW_BODY: ${{ needs.claude_review.outputs.review_body }}
+          CODEX_RESULT: ${{ needs.codex_review.result }}
+          CODEX_POST_RESULT: ${{ needs.post_codex_feedback.result }}
+          CODEX_POSTED: ${{ needs.post_codex_feedback.outputs.posted }}
+          CODEX_REVIEW_BODY: ${{ needs.codex_review.outputs.review_body }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const issueNumber = Number(process.env.PR_NUMBER);
+            const reviewedHeadSha = process.env.REVIEW_HEAD_SHA;
+            const labelName = 'ready-to-merge';
+            const reviewers = [
+              {
+                name: 'Claude architecture review',
+                header: '## Claude Architecture Review',
+                result: process.env.CLAUDE_RESULT,
+                postResult: process.env.CLAUDE_POST_RESULT,
+                posted: process.env.CLAUDE_POSTED,
+                body: process.env.CLAUDE_REVIEW_BODY,
+              },
+              {
+                name: 'Codex correctness review',
+                header: '## Codex Correctness Review',
+                result: process.env.CODEX_RESULT,
+                postResult: process.env.CODEX_POST_RESULT,
+                posted: process.env.CODEX_POSTED,
+                body: process.env.CODEX_REVIEW_BODY,
+              },
+            ];
+
+            const removeReadyLabel = async () => {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  name: labelName,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            };
+
+            const { data: pullRequest } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: issueNumber,
+            });
+            if (!reviewedHeadSha || pullRequest.head.sha !== reviewedHeadSha) {
+              core.notice('Skipping labels because a newer pull request commit exists.');
+              return;
+            }
+
+            const active = reviewers.filter(({ result }) => result !== 'skipped');
+            if (active.length === 0) {
+              core.warning('No AI reviewer ran; removing ready-to-merge.');
+              await removeReadyLabel();
+              return;
+            }
+
+            const unpublished = active.filter(
+              ({ result, postResult, posted }) =>
+                result !== 'success' || postResult !== 'success' || posted !== 'true',
+            );
+            if (unpublished.length > 0) {
+              const names = unpublished.map(({ name }) => name).join(', ');
+              core.warning(`Review output was not published for: ${names}; removing ${labelName}.`);
+              await removeReadyLabel();
+              return;
+            }
+
+            const verdicts = [];
+            for (const { name, header, body } of active) {
+              const matches = [...(body ?? '').matchAll(
+                /^\*\*Verdict:\s*(mergeable|needs changes)\*\*$/gm,
+              )];
+              if (!body?.startsWith(header) || matches.length !== 1) {
+                core.warning(`No unambiguous verdict output for "${name}"; removing ${labelName}.`);
+                await removeReadyLabel();
+                return;
+              }
+              verdicts.push(matches[0][1]);
+            }
+
+            if (verdicts.includes('needs changes')) {
+              core.notice('At least one reviewer requested changes; removing ready-to-merge.');
+              await removeReadyLabel();
+              return;
+            }
+
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: labelName,
+                color: '1f883d',
+                description: 'All completed AI reviewers found this pull request mergeable.',
+              });
+            } catch (error) {
+              if (error.status !== 422) throw error;
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              labels: [labelName],
             });
