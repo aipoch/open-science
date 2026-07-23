@@ -46,7 +46,7 @@ on:
           - codex
 
 concurrency:
-  group: ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}
+  group: ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.reviewer || 'both' }}
   cancel-in-progress: true
 
 jobs:
@@ -177,7 +177,7 @@ jobs:
       - name: Run Claude architecture review
         id: run_claude
         if: ${{ steps.context.outputs.should_run == 'true' }}
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@44423bdec74b97d67543eb16c110546762c110b2 # v1.0.181
         env:
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
@@ -255,8 +255,11 @@ jobs:
 
           review="$(
             jq -r '
-              [.[] | select(.type == "assistant")] | last
-              | [.message.content[]? | select(.type == "text") | .text]
+              [.[]
+                | select(.type == "assistant")
+                | .message.content[]?
+                | select(.type == "text")
+                | .text]
               | join("\n")
             ' "$EXECUTION_FILE"
           )"

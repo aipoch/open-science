@@ -298,7 +298,7 @@ describe('AI review workflow contract', () => {
 
   it('lets manual dispatch select either reviewer while bypassing the fork gate', () => {
     const dispatchGuards = reviewWorkflow.match(/github\.event_name == 'workflow_dispatch'/g)
-    expect(dispatchGuards?.length).toBe(2)
+    expect(dispatchGuards?.length).toBe(3)
     expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'both'/g)?.length).toBe(2)
     expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'claude'/g)?.length).toBe(1)
     expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'codex'/g)?.length).toBe(1)
@@ -328,13 +328,16 @@ describe('AI review workflow contract', () => {
     const step = getNamedStep('claude_review', 'Run Claude architecture review')
     const args = step.with?.claude_args
 
+    expect(step.uses).toBe(
+      'anthropics/claude-code-action@44423bdec74b97d67543eb16c110546762c110b2'
+    )
     expect(args).toContain('--model "${{ vars.CLAUDE_REVIEW_MODEL || \'claude-sonnet-5\' }}"')
     expect(args).not.toContain('--output-format json')
     expect(args).not.toContain('--json-schema')
     expect(step.env).not.toHaveProperty('ANTHROPIC_DEFAULT_SONNET_MODEL')
   })
 
-  it('extracts the final Claude assistant message from the action execution file', () => {
+  it('extracts all Claude assistant messages from the action execution file', () => {
     const root = createFixtureRoot('ai-review-claude-output-')
     const executionFile = join(root, 'execution.json')
     const githubOutput = join(root, 'github-output')
@@ -363,8 +366,9 @@ describe('AI review workflow contract', () => {
 
     expect(result.status, result.stderr).toBe(0)
     const output = readFileSync(githubOutput, 'utf8')
-    expect(output).not.toContain('draft')
-    expect(output).toContain('## Claude Architecture Review\n**Verdict: mergeable**')
+    expect(output).toContain(
+      'draft\n## Claude Architecture Review\n**Verdict: mergeable**'
+    )
   })
 
   it('fails closed if Claude attempts to use a tool', () => {
@@ -528,7 +532,7 @@ describe('AI review workflow contract', () => {
   it('serializes the complete review workflow per pull request', () => {
     expect(parsedWorkflow.concurrency).toEqual({
       group:
-        'ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}',
+        "ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.reviewer || 'both' }}",
       'cancel-in-progress': true
     })
   })
