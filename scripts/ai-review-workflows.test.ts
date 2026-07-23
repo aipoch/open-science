@@ -302,6 +302,7 @@ describe('AI review workflow contract', () => {
     expect(reviewWorkflow.match(/inputs\.reviewer == 'both'/g)?.length).toBe(2)
     expect(reviewWorkflow.match(/inputs\.reviewer == 'claude'/g)?.length).toBe(1)
     expect(reviewWorkflow.match(/inputs\.reviewer == 'codex'/g)?.length).toBe(1)
+    expect(reviewWorkflow.match(/github\.event_name != 'workflow_dispatch'/g)?.length).toBe(2)
   })
 
   it('passes --repo to gh pr view so it works before checkout on a clean runner', () => {

@@ -57,8 +57,9 @@ jobs:
       ${{ vars.ENABLE_CLAUDE_REVIEW != 'false' &&
           ( ( github.event_name == 'workflow_dispatch' &&
               ( inputs.reviewer == 'both' || inputs.reviewer == 'claude' ) ) ||
-            github.event.pull_request.head.repo.full_name == github.repository ||
-            vars.ENABLE_FORK_REVIEW == 'true' ) }}
+            ( github.event_name != 'workflow_dispatch' &&
+              ( github.event.pull_request.head.repo.full_name == github.repository ||
+                vars.ENABLE_FORK_REVIEW == 'true' ) ) ) }}
     runs-on: ubuntu-latest
     concurrency:
       group: claude-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}
@@ -277,8 +278,9 @@ jobs:
       ${{ vars.ENABLE_CODEX_REVIEW != 'false' &&
           ( ( github.event_name == 'workflow_dispatch' &&
               ( inputs.reviewer == 'both' || inputs.reviewer == 'codex' ) ) ||
-            github.event.pull_request.head.repo.full_name == github.repository ||
-            vars.ENABLE_FORK_REVIEW == 'true' ) }}
+            ( github.event_name != 'workflow_dispatch' &&
+              ( github.event.pull_request.head.repo.full_name == github.repository ||
+                vars.ENABLE_FORK_REVIEW == 'true' ) ) ) }}
     runs-on: ubuntu-latest
     permissions:
       issues: read
