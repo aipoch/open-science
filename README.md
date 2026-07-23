@@ -189,6 +189,10 @@ This section describes durable product capabilities rather than a version-specif
 | **Codex Subscription**       | Select the Codex agent framework first, then you can select Codex subscription in provider type   |
 | **Claude Subscription**      | Run `claude setup-token` in a terminal and paste the resulting long-lived token into the Open Science sign-in prompt. The token is stored encrypted in app data and Claude always runs under an app-owned `CLAUDE_CONFIG_DIR`, isolated from your `~/.claude/`. |
 
+The legacy **Local Claude** provider has been removed. Previously stored Local Claude entries are
+dropped during upgrade; add **Claude Subscription** and authenticate with `claude setup-token`
+instead.
+
 Built-in cloud vendors currently include OpenAI, Anthropic, DeepSeek, Zhipu AI (GLM) with a dedicated GLM Coding Plan endpoint, Kimi (Moonshot), MiniMax, StepFun, Xiaomi MIMO, SenseNova, Volcengine Ark, and the OpenRouter aggregation gateway, among others; some are region-specific.
 
 Provider vendors, available models, and regional endpoints can evolve independently of this README. Treat the provider picker and connection test in the installed app as the source of truth. Unless the app states otherwise, a Custom Gateway must expose an Anthropic-compatible messages endpoint.
