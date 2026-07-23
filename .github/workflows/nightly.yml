@@ -62,7 +62,7 @@ jobs:
         run: gh release delete nightly --cleanup-tag --yes || true
 
       - name: Publish nightly pre-release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228  # v3
         with:
           tag_name: nightly
           target_commitish: ${{ github.sha }}
