@@ -5,7 +5,9 @@ import {
   buildErrorReportText,
   buildGithubIssueUrl,
   formatProviderModel,
+  MAX_WHAT_HAPPENED_LENGTH,
   osLabelForPlatform,
+  resolveSessionSubject,
   type ErrorReportContext
 } from './error-report'
 
@@ -123,5 +125,105 @@ describe('buildGithubIssueUrl', () => {
     expect(url.searchParams.get('app-version')).toBeNull()
     expect(url.searchParams.get('provider-model')).toBeNull()
     expect(url.searchParams.get('what-happened')).toBe('boom')
+  })
+
+  it('bounds a very long error with a visible truncation marker so the URL cannot 414', () => {
+    const longError = 'x'.repeat(MAX_WHAT_HAPPENED_LENGTH + 5000)
+    const whatHappened =
+      new URL(buildGithubIssueUrl({ error: longError })).searchParams.get('what-happened') ?? ''
+    // Kept at/under the cap plus the short marker — never the full 11k+ characters.
+    expect(whatHappened.length).toBeLessThanOrEqual(MAX_WHAT_HAPPENED_LENGTH + 120)
+    expect(whatHappened).toContain('truncated')
+    expect(whatHappened).toContain('Copy details')
+  })
+
+  it('does not truncate an error at or below the cap', () => {
+    const exact = 'y'.repeat(MAX_WHAT_HAPPENED_LENGTH)
+    const whatHappened =
+      new URL(buildGithubIssueUrl({ error: exact })).searchParams.get('what-happened') ?? ''
+    expect(whatHappened).toBe(exact)
+  })
+})
+
+describe('buildErrorReportText (Copy details) fallback', () => {
+  it('always carries the full, untruncated error even when the URL is capped', () => {
+    const longError = 'z'.repeat(MAX_WHAT_HAPPENED_LENGTH + 5000)
+    const text = buildErrorReportText({ ...baseContext, error: longError })
+    // Copy details is the full-fidelity fallback: it must contain the entire error, untruncated.
+    expect(text).toContain(longError)
+  })
+})
+
+describe('resolveSessionSubject', () => {
+  const providers = [
+    { id: 'p1', name: 'Anthropic' },
+    { id: 'ssh:box', name: 'Remote Box' }
+  ]
+  const frameworks = [
+    { id: 'claude-code', displayName: 'Claude Code' },
+    { id: 'codex', displayName: 'Codex' }
+  ]
+
+  it('resolves framework and provider from the session ids, including the active model', () => {
+    const resolved = resolveSessionSubject(
+      { agentFrameworkId: 'claude-code', agentBackendId: 'claude-code:p1' },
+      providers,
+      'p1',
+      'claude-opus-4',
+      frameworks
+    )
+    expect(resolved).toEqual({
+      frameworkName: 'Claude Code',
+      providerName: 'Anthropic',
+      model: 'claude-opus-4'
+    })
+  })
+
+  it('splits backendId on the first colon so provider ids containing colons survive', () => {
+    const resolved = resolveSessionSubject(
+      { agentFrameworkId: 'codex', agentBackendId: 'codex:ssh:box' },
+      providers,
+      'ssh:box',
+      'gpt-x',
+      frameworks
+    )
+    expect(resolved.providerName).toBe('Remote Box')
+    expect(resolved.model).toBe('gpt-x')
+  })
+
+  it('omits the model when the active provider no longer matches the session provider', () => {
+    const resolved = resolveSessionSubject(
+      { agentFrameworkId: 'claude-code', agentBackendId: 'claude-code:p1' },
+      providers,
+      'p2-switched', // user switched provider after the failure
+      'a-newer-model',
+      frameworks
+    )
+    expect(resolved.providerName).toBe('Anthropic') // still the session's provider
+    expect(resolved.model).toBeUndefined() // but not the newer, unrelated model
+  })
+
+  it('falls back to the raw framework id when it is unknown, and tolerates missing ids', () => {
+    expect(
+      resolveSessionSubject({ agentFrameworkId: 'mystery' }, providers, undefined, undefined, [])
+    ).toEqual({
+      frameworkName: 'mystery'
+    })
+    expect(resolveSessionSubject({}, providers, undefined, undefined, frameworks)).toEqual({
+      frameworkName: undefined
+    })
+  })
+
+  it('yields no provider name when the session provider is gone from the list', () => {
+    const resolved = resolveSessionSubject(
+      { agentFrameworkId: 'claude-code', agentBackendId: 'claude-code:deleted' },
+      providers,
+      'deleted',
+      'm',
+      frameworks
+    )
+    expect(resolved.providerName).toBeUndefined()
+    // Provider matches active id, so model is still allowed even though the provider record is gone.
+    expect(resolved.model).toBe('m')
   })
 })

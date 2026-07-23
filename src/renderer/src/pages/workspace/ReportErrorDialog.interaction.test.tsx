@@ -52,9 +52,23 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-const renderDialog = (): void => {
+// Default subject matches the active config (framework claude-code, provider p1) so the environment
+// preview shows the same "Anthropic · claude-opus-4" the existing assertions expect.
+const renderDialog = (
+  subject: { agentFrameworkId?: string; agentBackendId?: string } = {
+    agentFrameworkId: 'claude-code',
+    agentBackendId: 'claude-code:p1'
+  }
+): void => {
   act(() => {
-    root.render(<ReportErrorDialog open error="Run failed: connection reset" onClose={() => {}} />)
+    root.render(
+      <ReportErrorDialog
+        open
+        error="Run failed: connection reset"
+        subject={subject}
+        onClose={() => {}}
+      />
+    )
   })
 }
 
@@ -207,5 +221,46 @@ describe('ReportErrorDialog', () => {
       consentCheckbox().click()
     })
     expect(issueLink()?.getAttribute('href') ?? '').toContain('app-version=0.5.1')
+  })
+
+  it('attributes framework/provider to the failed session, not the current active config', () => {
+    // The session failed under provider p1; the user has since switched the active provider away to a
+    // provider not even in the list. The report must still name the session's provider (Anthropic), and
+    // must omit the model because the active provider no longer matches the session's.
+    settingsState.activeProviderId = 'p2-switched-later'
+    settingsState.activeModel = 'some-other-model'
+    renderDialog({ agentFrameworkId: 'claude-code', agentBackendId: 'claude-code:p1' })
+
+    const env = environmentBlock()
+    expect(env).toContain('Agent framework: Claude Code')
+    // Provider from the session (p1 → Anthropic), model dropped (active provider differs now).
+    expect(env).toContain('Provider / model: Anthropic')
+    expect(env).not.toContain('some-other-model')
+
+    // Restore for later tests (beforeEach also resets, but keep the mutation local in spirit).
+    settingsState.activeProviderId = 'p1'
+  })
+
+  it('truncates a very long error so the GitHub URL cannot 414, keeping Copy details full', () => {
+    const longError = 'x'.repeat(20000)
+    act(() => {
+      root.render(
+        <ReportErrorDialog
+          open
+          error={longError}
+          subject={{ agentFrameworkId: 'claude-code', agentBackendId: 'claude-code:p1' }}
+          onClose={() => {}}
+        />
+      )
+    })
+    act(() => {
+      consentCheckbox().click()
+    })
+
+    const href = issueLink()?.getAttribute('href') ?? ''
+    // The what-happened param is bounded well under the raw 20k error length, with a visible marker.
+    const whatHappened = new URL(href).searchParams.get('what-happened') ?? ''
+    expect(whatHappened.length).toBeLessThan(20000)
+    expect(whatHappened).toContain('truncated')
   })
 })

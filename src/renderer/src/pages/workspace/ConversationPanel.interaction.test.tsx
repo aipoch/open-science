@@ -621,7 +621,9 @@ describe('ConversationPanel error box + report affordance', () => {
 
   it('renders the error box for a failed run even when it has no error text', () => {
     renderPanel({ activeSession: { ...errorSession, error: undefined } })
-    expect(errorBoxText()).toContain('The run failed.')
+    // The shown fallback equals the text seeded into the report (single RUN_FAILED_FALLBACK_ERROR),
+    // upholding the "shown == reported" invariant when a failed run carries no error message.
+    expect(errorBoxText()).toContain('The run failed with no error message.')
     // Still reportable — the affordance follows the failure status, not the presence of text.
     expect(reportButton()).not.toBeNull()
   })
@@ -655,5 +657,19 @@ describe('ConversationPanel error box + report affordance', () => {
       (el) => el.textContent === 'Report this error' && el.children.length === 0
     )
     expect(title).toBeTruthy()
+  })
+
+  it('seeds the dialog with the same fallback text the box shows when a run has no error', () => {
+    // shown == reported: the textarea the user reviews must carry the exact string shown in the box.
+    renderPanel({ activeSession: { ...errorSession, error: undefined } })
+    const shown = errorBoxText()
+    act(() => {
+      reportButton()?.click()
+    })
+    const textarea = document.body.querySelector(
+      'textarea[aria-label="Error details"]'
+    ) as HTMLTextAreaElement | null
+    expect(textarea?.value).toBe('The run failed with no error message.')
+    expect(shown).toContain(textarea?.value ?? ' ')
   })
 })

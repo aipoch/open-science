@@ -8,12 +8,17 @@ import {
   buildEnvironmentBlock,
   buildErrorReportText,
   buildGithubIssueUrl,
-  type ErrorReportContext
+  resolveSessionSubject,
+  type ErrorReportContext,
+  type SessionReportSubject
 } from './error-report'
 
 type ReportErrorDialogProps = {
   open: boolean
   error: string
+  // Session-level identifiers used to attribute the report to the configuration that was active when
+  // the run failed, rather than the current global settings.
+  subject: SessionReportSubject
   onClose: () => void
 }
 
@@ -21,29 +26,51 @@ type ReportErrorDialogProps = {
 // update stores plus the preload bridge, shows the user exactly what it contains, and only unlocks the
 // public "Open GitHub issue" action once they agree. Nothing is transmitted automatically; the local
 // runtime log is never inlined (the user attaches it themselves after reviewing it).
-const ReportErrorDialog = ({ open, error, onClose }: ReportErrorDialogProps): React.JSX.Element => {
+const ReportErrorDialog = ({
+  open,
+  error,
+  subject,
+  onClose
+}: ReportErrorDialogProps): React.JSX.Element => {
   const appVersion = useUpdateStore((state) => state.appInfo?.version)
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const activeModel = useSettingsStore((state) => state.activeModel)
-  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
 
-  // Derive the bundle live from the stores. The bridge is read defensively so the dialog renders where
+  // Derive the bundle live from the stores. Framework/provider/model come from the failed session's own
+  // identifiers (via resolveSessionSubject), not the current active selection, so switching config after
+  // a failure never misattributes the report. The bridge is read defensively so the dialog renders where
   // the preload surface is absent (tests, early boot); the helpers tolerate every missing field.
-  const context = useMemo<ErrorReportContext>(
-    () => ({
+  const context = useMemo<ErrorReportContext>(() => {
+    const resolved = resolveSessionSubject(
+      subject,
+      providers,
+      activeProviderId,
+      activeModel,
+      agentFrameworks
+    )
+    return {
       error,
       appVersion,
       platform: window.api?.platform,
-      frameworkName: agentFrameworks.find((framework) => framework.id === agentFrameworkId)
-        ?.displayName,
-      providerName: providers.find((candidate) => candidate.id === activeProviderId)?.name,
-      model: activeModel,
+      frameworkName: resolved.frameworkName,
+      providerName: resolved.providerName,
+      model: resolved.model,
       runtimeVersions: window.api?.getRuntimeVersions?.()
-    }),
-    [error, appVersion, providers, activeProviderId, activeModel, agentFrameworkId, agentFrameworks]
-  )
+    }
+    // Depend on the primitive subject fields, not the object identity (a fresh literal each render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    error,
+    appVersion,
+    providers,
+    activeProviderId,
+    activeModel,
+    agentFrameworks,
+    subject.agentFrameworkId,
+    subject.agentBackendId
+  ])
 
   const [copied, setCopied] = useState(false)
   const [revealMessage, setRevealMessage] = useState<string | null>(null)

@@ -40,6 +40,7 @@ import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
+import { RUN_FAILED_FALLBACK_ERROR } from './error-report'
 import { ReportErrorDialog } from './ReportErrorDialog'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
@@ -287,7 +288,7 @@ const ConversationPanel = ({
                     {activeSession?.status === 'error' ? (
                       <div className="flex items-start gap-2">
                         <span className="min-w-0 flex-1 break-words">
-                          {activeSession.error ?? 'The run failed.'}
+                          {activeSession.error ?? RUN_FAILED_FALLBACK_ERROR}
                         </span>
                         {/* The button sits on the failure row beside the run's own error, so the shown
                             text and the reported text are always the same error. */}
@@ -513,7 +514,11 @@ const ConversationPanel = ({
         {isReportOpen ? (
           <ReportErrorDialog
             open
-            error={activeSession?.error ?? 'The run failed with no error message.'}
+            error={activeSession?.error ?? RUN_FAILED_FALLBACK_ERROR}
+            subject={{
+              agentFrameworkId: activeSession?.agentFrameworkId,
+              agentBackendId: activeSession?.agentBackendId
+            }}
             onClose={() => setIsReportOpen(false)}
           />
         ) : null}
