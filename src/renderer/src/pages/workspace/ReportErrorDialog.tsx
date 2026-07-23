@@ -29,24 +29,22 @@ const ReportErrorDialog = ({ open, error, onClose }: ReportErrorDialogProps): Re
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
 
-  // Freeze the bundle at mount into a snapshot. These stores update asynchronously (e.g. getAppInfo()
-  // resolves after open), and re-deriving live would let new fields enter the reviewed preview and the
-  // GitHub URL *after* the user has consented — sharing data they never saw. The parent remounts this
-  // dialog on each open, so a lazy initializer captures a fresh, consistent snapshot every time and it
-  // stays stable for the lifetime of the open dialog. The bridge is read defensively so the dialog
-  // renders where the preload surface is absent (tests, early boot); the helpers tolerate missing fields.
-  const [context] = useState<ErrorReportContext>(() => ({
-    error,
-    appVersion,
-    platform: window.api?.platform,
-    frameworkName: agentFrameworks.find((framework) => framework.id === agentFrameworkId)
-      ?.displayName,
-    providerName: providers.find((candidate) => candidate.id === activeProviderId)?.name,
-    model: activeModel,
-    runtimeVersions: window.api?.getRuntimeVersions?.()
-  }))
+  // Derive the bundle live from the stores. The bridge is read defensively so the dialog renders where
+  // the preload surface is absent (tests, early boot); the helpers tolerate every missing field.
+  const context = useMemo<ErrorReportContext>(
+    () => ({
+      error,
+      appVersion,
+      platform: window.api?.platform,
+      frameworkName: agentFrameworks.find((framework) => framework.id === agentFrameworkId)
+        ?.displayName,
+      providerName: providers.find((candidate) => candidate.id === activeProviderId)?.name,
+      model: activeModel,
+      runtimeVersions: window.api?.getRuntimeVersions?.()
+    }),
+    [error, appVersion, providers, activeProviderId, activeModel, agentFrameworkId, agentFrameworks]
+  )
 
-  const [consented, setConsented] = useState(false)
   const [copied, setCopied] = useState(false)
   const [revealMessage, setRevealMessage] = useState<string | null>(null)
   // Only the error text is editable — it is the unpredictable, possibly-sensitive part users may need
@@ -61,6 +59,15 @@ const ReportErrorDialog = ({ open, error, onClose }: ReportErrorDialogProps): Re
   )
   const environmentBlock = useMemo(() => buildEnvironmentBlock(context), [context])
   const issueUrl = useMemo(() => buildGithubIssueUrl(editedContext), [editedContext])
+
+  // Consent is tied to the exact payload it was given for, not a bare flag. We record the URL the user
+  // consented to; consent holds only while that still equals the current URL. So if a store field lands
+  // late (e.g. getAppInfo() resolving after an early open) or the user edits the error, issueUrl changes
+  // and consent lapses in the SAME render — the user re-confirms the complete bundle, and a late field
+  // can never ride into an already-consented URL. Deriving (not an effect) closes the one-frame gap
+  // where the link could be clicked with stale consent.
+  const [consentedUrl, setConsentedUrl] = useState<string | null>(null)
+  const consented = consentedUrl === issueUrl
 
   // Copies the full bundle (error + environment) with the redacted error; the write stays local.
   const handleCopy = (): void => {
@@ -118,9 +125,8 @@ const ReportErrorDialog = ({ open, error, onClose }: ReportErrorDialogProps): Re
             aria-label="Error details"
             value={editedError}
             onChange={(event) => {
+              // Editing changes issueUrl, so consent lapses automatically via consentedUrl !== issueUrl.
               setEditedError(event.target.value)
-              // Require re-consent whenever the user edits the content being shared.
-              setConsented(false)
             }}
           />
 
@@ -139,7 +145,8 @@ const ReportErrorDialog = ({ open, error, onClose }: ReportErrorDialogProps): Re
               type="checkbox"
               className="mt-0.5 size-4 shrink-0 accent-primary"
               checked={consented}
-              onChange={(event) => setConsented(event.target.checked)}
+              // Consent is granted for the payload on screen now; bind it to that exact URL.
+              onChange={(event) => setConsentedUrl(event.target.checked ? issueUrl : null)}
             />
             <span>
               I&apos;ve reviewed the details above and agree to share them in a public GitHub issue,

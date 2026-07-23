@@ -20,17 +20,22 @@ vi.mock('@/stores/settings-store', () => ({
     selector(settingsState)
 }))
 
+// Mutable so tests can simulate getAppInfo() resolving after the dialog has opened (appInfo starts
+// undefined during early boot). Reset in beforeEach.
+const updateState: { appInfo: { version: string } | undefined } = { appInfo: { version: '0.5.1' } }
+
 vi.mock('@/stores/update-store', () => ({
-  useUpdateStore: (selector: (state: { appInfo: { version: string } }) => unknown): unknown =>
-    selector({ appInfo: { version: '0.5.1' } })
+  useUpdateStore: (selector: (state: typeof updateState) => unknown): unknown =>
+    selector(updateState)
 }))
 
 let container: HTMLElement
 let root: Root
 
 beforeEach(() => {
-  // Reset the mutable mock state so a test that mutates it (e.g. the snapshot-freeze test) can't leak.
+  // Reset the mutable mock state so a test that mutates it (e.g. the consent-lapse tests) can't leak.
   settingsState.activeModel = 'claude-opus-4'
+  updateState.appInfo = { version: '0.5.1' }
   ;(window as unknown as { api: unknown }).api = {
     platform: 'win32',
     getRuntimeVersions: () => ({ electron: '30.0.0', chrome: '124', node: '20.11' }),
@@ -163,25 +168,44 @@ describe('ReportErrorDialog', () => {
     expect(alert?.textContent).toContain('IPC channel closed')
   })
 
-  it('freezes the context at open so a later store change cannot alter the consented report', () => {
+  it('revokes consent when a store field changes after consent, and reflects the new field', () => {
     renderDialog()
     act(() => {
       consentCheckbox().click()
     })
-    const before = issueLink()?.getAttribute('href') ?? ''
-    expect(before).toContain('claude-opus-4')
+    expect(consentCheckbox().checked).toBe(true)
+    expect(issueLink()?.getAttribute('href') ?? '').toContain('claude-opus-4')
 
-    // Simulate an async store update landing after the user consented (e.g. getAppInfo resolving),
-    // then a re-render. The mounted dialog must keep its snapshot: no new field enters the shared
-    // URL, and consent is not silently carried onto content the user never reviewed.
+    // A store field changing after consent (async update, or a swap) must both surface in the URL and
+    // drop consent, so the user never shares a payload they didn't confirm.
     act(() => {
-      settingsState.activeModel = 'claude-sneaky-swap'
+      settingsState.activeModel = 'claude-model-2'
       renderDialog()
     })
 
-    const after = issueLink()?.getAttribute('href') ?? ''
-    expect(after).toBe(before)
-    expect(after).not.toContain('claude-sneaky-swap')
-    expect(consentCheckbox().checked).toBe(true)
+    expect(consentCheckbox().checked).toBe(false)
+    const href = issueLink()?.getAttribute('href')
+    expect(href === null || href === undefined).toBe(true) // link disabled again
+  })
+
+  it('picks up an app version that resolves after the dialog opened (no permanent Unknown)', () => {
+    // Simulate opening during early boot: getAppInfo() has not resolved yet.
+    updateState.appInfo = undefined
+    renderDialog()
+    expect(environmentBlock()).toContain('App version: Unknown')
+    expect(issueLink()?.getAttribute('href') ?? '').not.toContain('app-version')
+
+    // getAppInfo() resolves and the store updates while the dialog is still open.
+    act(() => {
+      updateState.appInfo = { version: '0.5.1' }
+      renderDialog()
+    })
+
+    // The live-derived context must reflect the now-known version, not a frozen Unknown.
+    expect(environmentBlock()).toContain('App version: 0.5.1')
+    act(() => {
+      consentCheckbox().click()
+    })
+    expect(issueLink()?.getAttribute('href') ?? '').toContain('app-version=0.5.1')
   })
 })
