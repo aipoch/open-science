@@ -1049,57 +1049,9 @@ class UserSkillRepository {
 
       await cp(sourcePath, destination, { recursive: true, force: false, errorOnExist: true })
 
-      const sourceSignature = await directorySignature(sourcePath)
-      const destinationSignature = await directorySignature(destination)
-
-      return sourceSignature === destinationSignature
-        ? { status: 'imported', id: `imported-${slug}` }
-        : { status: 'imported', id: `imported-${slug}` }
+      return { status: 'imported', id: `imported-${slug}` }
     })
   }
-}
-
-// Two skills are "the same" when every relative file path resolves to the same bytes — including
-// the SKILL.md frontmatter, so a re-import of an untouched source is a no-op. Hashing the entire
-// tree (rather than just SKILL.md) keeps references/ part of the signature: a skill whose body
-// didn't change but whose reference files did is a meaningful update the caller should see.
-const directorySignature = async (root: string): Promise<string> => {
-  const hash = createHash('sha256')
-  const stack = [root]
-
-  while (stack.length > 0) {
-    const current = stack.pop()
-    if (!current) break
-
-    let entries: import('node:fs').Dirent[] = []
-
-    try {
-      entries = await readdir(current, { withFileTypes: true })
-    } catch {
-      continue
-    }
-
-    for (const entry of entries) {
-      const entryPath = join(current, entry.name)
-      const relative = entryPath.slice(root.length + 1).replace(/\\/g, '/')
-      hash.update(relative)
-
-      if (entry.isDirectory()) {
-        stack.push(entryPath)
-      } else if (entry.isFile()) {
-        try {
-          const bytes = await readFile(entryPath)
-          hash.update('\0')
-          hash.update(bytes)
-        } catch {
-          // Unreadable file: skip rather than throw — a partial read should not break the
-          // comparison, it just means the signature will diverge from one taken on a clean read.
-        }
-      }
-    }
-  }
-
-  return hash.digest('hex')
 }
 
 export { UserSkillRepository, parseUserSkillId, toSlug, frontmatterBlock }

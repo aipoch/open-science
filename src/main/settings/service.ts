@@ -63,6 +63,7 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CODEX_ISOLATED_PROVIDER_ID,
   CODEX_SHARED_PROVIDER_ID,
+  claudeIsolatedProviderIdentity,
   codexSubscriptionProviderIdentity,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
@@ -1463,9 +1464,15 @@ class SettingsService {
   // Encrypts any new key, recomputes its mask, and inserts/updates the provider record.
   async upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot> {
     const settings = await this.repository.getSettings()
+    // Both Codex and Claude subscription providers use a fixed builtin id so the add path, the
+    // token-save path, and every id-keyed lookup in this service converge on a single record.
+    // Without this, a random id from `createProviderId()` would shadow the token-holding record
+    // and the active provider would spawn the agent unauthenticated.
     const subscriptionIdentity = isCodexSubscriptionProvider(request.type)
       ? codexSubscriptionProviderIdentity()
-      : undefined
+      : request.type === 'claude-isolated'
+        ? claudeIsolatedProviderIdentity()
+        : undefined
     const requestedId = subscriptionIdentity?.id ?? request.id
     const existing = requestedId
       ? settings.providers.find((provider) => provider.id === requestedId)

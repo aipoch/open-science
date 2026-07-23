@@ -55,6 +55,11 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
   const setSkillEnabled = useSettingsStore((state) => state.setSkillEnabled)
   const createSkill = useSettingsStore((state) => state.createSkill)
   const deleteSkill = useSettingsStore((state) => state.deleteSkill)
+  // The "From your agent home" entry currently only scans `~/.claude/skills/` on disk, so the
+  // affordance is hidden when the active framework is anything else (Codex, opencode, ...).
+  // When the agent-home source is extended to other frameworks, gate on those too.
+  const activeFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const showAgentHomeImport = activeFrameworkId === 'claude-code'
 
   const [filter, setFilter] = useState<SourceFilter>('all')
   const [query, setQuery] = useState('')
@@ -174,16 +179,18 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
                 <span className="text-xs text-muted-foreground">Add a skill from a repo</span>
               </span>
             </DropdownMenuItem>
-            <DropdownMenuItem
-              className="gap-2.5"
-              onSelect={() => onNavigate({ kind: 'import-agent-home' })}
-            >
-              <FolderInput className="size-4 shrink-0" aria-hidden="true" />
-              <span className="flex flex-col">
-                <span>From your agent home</span>
-                <span className="text-xs text-muted-foreground">~/.claude/skills/</span>
-              </span>
-            </DropdownMenuItem>
+            {showAgentHomeImport ? (
+              <DropdownMenuItem
+                className="gap-2.5"
+                onSelect={() => onNavigate({ kind: 'import-agent-home' })}
+              >
+                <FolderInput className="size-4 shrink-0" aria-hidden="true" />
+                <span className="flex flex-col">
+                  <span>From your agent home</span>
+                  <span className="text-xs text-muted-foreground">~/.claude/skills/</span>
+                </span>
+              </DropdownMenuItem>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
