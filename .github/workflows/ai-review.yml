@@ -56,7 +56,8 @@ jobs:
     if: >-
       ${{ vars.ENABLE_CLAUDE_REVIEW != 'false' &&
           ( ( github.event_name == 'workflow_dispatch' &&
-              ( inputs.reviewer == 'both' || inputs.reviewer == 'claude' ) ) ||
+              ( github.event.inputs.reviewer == 'both' ||
+                github.event.inputs.reviewer == 'claude' ) ) ||
             ( github.event_name != 'workflow_dispatch' &&
               ( github.event.pull_request.head.repo.full_name == github.repository ||
                 vars.ENABLE_FORK_REVIEW == 'true' ) ) ) }}
@@ -245,6 +246,12 @@ jobs:
             echo "Claude execution output is unavailable." >&2
             exit 1
           fi
+          if jq -e '
+            any(.[]; any(.message.content[]?; .type == "tool_use"))
+          ' "$EXECUTION_FILE" > /dev/null; then
+            echo "Claude attempted to use a tool in zero-tools review mode." >&2
+            exit 1
+          fi
 
           review="$(
             jq -r '
@@ -309,7 +316,8 @@ jobs:
     if: >-
       ${{ vars.ENABLE_CODEX_REVIEW != 'false' &&
           ( ( github.event_name == 'workflow_dispatch' &&
-              ( inputs.reviewer == 'both' || inputs.reviewer == 'codex' ) ) ||
+              ( github.event.inputs.reviewer == 'both' ||
+                github.event.inputs.reviewer == 'codex' ) ) ||
             ( github.event_name != 'workflow_dispatch' &&
               ( github.event.pull_request.head.repo.full_name == github.repository ||
                 vars.ENABLE_FORK_REVIEW == 'true' ) ) ) }}

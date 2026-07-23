@@ -299,9 +299,9 @@ describe('AI review workflow contract', () => {
   it('lets manual dispatch select either reviewer while bypassing the fork gate', () => {
     const dispatchGuards = reviewWorkflow.match(/github\.event_name == 'workflow_dispatch'/g)
     expect(dispatchGuards?.length).toBe(2)
-    expect(reviewWorkflow.match(/inputs\.reviewer == 'both'/g)?.length).toBe(2)
-    expect(reviewWorkflow.match(/inputs\.reviewer == 'claude'/g)?.length).toBe(1)
-    expect(reviewWorkflow.match(/inputs\.reviewer == 'codex'/g)?.length).toBe(1)
+    expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'both'/g)?.length).toBe(2)
+    expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'claude'/g)?.length).toBe(1)
+    expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'codex'/g)?.length).toBe(1)
     expect(reviewWorkflow.match(/github\.event_name != 'workflow_dispatch'/g)?.length).toBe(2)
   })
 
@@ -365,6 +365,35 @@ describe('AI review workflow contract', () => {
     const output = readFileSync(githubOutput, 'utf8')
     expect(output).not.toContain('draft')
     expect(output).toContain('## Claude Architecture Review\n**Verdict: mergeable**')
+  })
+
+  it('fails closed if Claude attempts to use a tool', () => {
+    const root = createFixtureRoot('ai-review-claude-tool-use-')
+    const executionFile = join(root, 'execution.json')
+    const githubOutput = join(root, 'github-output')
+    writeFileSync(
+      executionFile,
+      JSON.stringify([
+        {
+          type: 'assistant',
+          message: {
+            content: [
+              { type: 'tool_use', name: 'Read', input: { file_path: '/proc/self/environ' } },
+              { type: 'text', text: '## Claude Architecture Review' }
+            ]
+          }
+        }
+      ])
+    )
+
+    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
+    })
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('attempted to use a tool')
   })
 
   it('reads changed file contents via git show (not cat) to prevent symlink traversal', () => {
