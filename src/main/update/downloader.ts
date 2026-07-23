@@ -8,7 +8,8 @@ export { DownloadChecksumError } from '../net/resilient-download'
 export type DownloadDeps = {
   fetchImpl?: typeof fetch
   onProgress?: (progress: DownloadProgress) => void
-  // Aborts the request/stream when signalled; the partial file is kept for a later session resume.
+  // Aborts the request/stream when signalled; the partial file is kept for an in-session resume (a
+  // fresh session drops it first — see UpdateService.freshTargets — so a restart starts from scratch).
   signal?: AbortSignal
 }
 

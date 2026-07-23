@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
 import { app, BrowserWindow, dialog, shell } from 'electron'
@@ -24,6 +25,10 @@ export type UpdateServiceDeps = {
   fileExists?: (path: string) => boolean
   openPath?: (path: string) => Promise<string>
   openExternal?: (url: string) => Promise<void>
+  // Removes a stale partial file. Injected in tests; defaults to fs rm (best-effort). Used to drop a
+  // prior session's <target>.part the FIRST time a target path is downloaded this session, so a restart
+  // starts the installer download from scratch rather than resuming last session's fragment via Range.
+  removeFile?: (path: string) => Promise<void>
 }
 
 // Default broadcast pushes to every live window, mirroring the connector approval-broker pattern.
@@ -64,6 +69,12 @@ export class UpdateService implements UpdateStrategy {
   private readonly fileExists: (path: string) => boolean
   private readonly openPath: (path: string) => Promise<string>
   private readonly openExternal: (url: string) => Promise<void>
+  private readonly removeFile: (path: string) => Promise<void>
+  // Per-session set of target paths that have already been downloaded once this run. The first
+  // download to a given path removes any pre-existing <target>.part so a restart starts fresh
+  // (design: "app closes → start from scratch"). Within a session the path stays in the set and
+  // a cancel/retry resumes via Range instead of discarding the partially-downloaded bytes.
+  private readonly freshTargets = new Set<string>()
 
   constructor(deps: UpdateServiceDeps = {}) {
     this.fetchImpl = deps.fetchImpl
@@ -76,6 +87,7 @@ export class UpdateService implements UpdateStrategy {
     this.fileExists = deps.fileExists ?? existsSync
     this.openPath = deps.openPath ?? ((path) => shell.openPath(path))
     this.openExternal = deps.openExternal ?? ((url) => shell.openExternal(url))
+    this.removeFile = deps.removeFile ?? ((path) => rm(path, { force: true }))
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'installer' }
   }
 
@@ -179,6 +191,20 @@ export class UpdateService implements UpdateStrategy {
         // leaves the status untouched (stays 'available').
         const targetPath = await this.promptSavePath(installerFileName(download.url))
         if (!targetPath || abort.signal.aborted) return
+
+        // First time this session that we download to this exact path: drop any <target>.part left by
+        // a PRIOR session so the resilient core can't Range-resume a stale fragment (the user may
+        // re-pick the same Save location after a restart). Mark the path fresh ONLY after the removal
+        // succeeds — if it throws, we do NOT add it and let the error propagate to the catch below, so
+        // a retry re-attempts the cleanup instead of resuming a fragment we failed to delete (a
+        // same-version fragment would otherwise pass the final checksum and silently complete a
+        // cross-restart resume). Subsequent downloads to the same path this session are left alone so
+        // an in-session cancel/retry still resumes via Range.
+        if (!this.freshTargets.has(targetPath)) {
+          await this.removeFile(`${targetPath}.part`)
+          this.freshTargets.add(targetPath)
+          if (abort.signal.aborted) return
+        }
 
         this.setStatus({
           ...this.status,

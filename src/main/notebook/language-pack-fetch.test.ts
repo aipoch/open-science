@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -380,7 +380,7 @@ describe('createFetchBundleAdapter', () => {
       const deps = makeDeps()
       let dir = ''
       deps.download = vi.fn(async (_url: string, destPath: string) => {
-        dir = destPath.slice(0, destPath.lastIndexOf('/'))
+        dir = dirname(destPath) // dirname, not lastIndexOf('/'), so the dir is correct on Windows too
         throw new Error('stop after capturing the path')
       })
       return { deps, dirOf: () => dir }

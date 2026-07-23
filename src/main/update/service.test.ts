@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -138,6 +138,216 @@ describe('UpdateService.download', () => {
     expect(status.state).toBe('ready')
     expect(status.localPath).toBe(target)
     expect(existsSync(target)).toBe(true)
+  })
+
+  it('drops a prior-session <target>.part on the first download so a restart starts fresh', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target = join(dir, 'installer.dmg')
+    // A leftover fragment from a previous app session at the same Save location.
+    const partPath = `${target}.part`
+    await writeFile(partPath, Buffer.from('stale-fragment-from-last-session'))
+    const body = Buffer.from('fresh-installer-bytes')
+    const manifestForCheck = downloadManifest(
+      body.byteLength,
+      createHash('sha256').update(body).digest('hex')
+    )
+    const fetchImpl = ((input: unknown) =>
+      String(input).endsWith('version.json')
+        ? Promise.resolve(jsonResponse(manifestForCheck))
+        : Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+    const removeFile = vi.fn((path: string) => rm(path, { force: true }))
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target),
+      removeFile
+    })
+
+    await service.check()
+    const status = await service.download()
+
+    // The stale .part was removed before the download, and the result is the fresh body (a full
+    // fetch, not a Range-resumed stale fragment that would fail the manifest checksum).
+    expect(removeFile).toHaveBeenCalledWith(partPath)
+    expect(status.state).toBe('ready')
+    expect(await readFile(target)).toEqual(body)
+    expect(existsSync(partPath)).toBe(false)
+  })
+
+  it('removes the .part only on the first download to a path this session (in-session resume kept)', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target = join(dir, 'installer.dmg')
+    const body = Buffer.from('installer-bytes')
+    const manifestForCheck = downloadManifest(
+      body.byteLength,
+      createHash('sha256').update(body).digest('hex')
+    )
+    const fetchImpl = ((input: unknown) =>
+      String(input).endsWith('version.json')
+        ? Promise.resolve(jsonResponse(manifestForCheck))
+        : Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+    const removeFile = vi.fn(() => Promise.resolve())
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target),
+      removeFile
+    })
+
+    await service.check()
+    await service.download()
+    await service.download() // same path, same session
+
+    // Only the first download reset the .part; the second leaves it so an in-session retry resumes.
+    expect(removeFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not start the fetch and errors when the first .part cleanup fails', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target = join(dir, 'installer.dmg')
+    const manifestForCheck = downloadManifest(11, 'irrelevant')
+    let installerFetches = 0
+    const fetchImpl = ((input: unknown) => {
+      if (String(input).endsWith('version.json'))
+        return Promise.resolve(jsonResponse(manifestForCheck))
+      installerFetches += 1
+      return Promise.resolve(new Response(Buffer.from('installer-bytes'), { status: 200 }))
+    }) as unknown as typeof fetch
+    const removeFile = vi.fn(() => Promise.reject(new Error('EACCES: cannot delete .part')))
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target),
+      removeFile
+    })
+
+    await service.check()
+    const status = await service.download()
+
+    // A failed cleanup surfaces as an error and the installer fetch never starts — we never resume a
+    // fragment we could not delete.
+    expect(status.state).toBe('error')
+    expect(installerFetches).toBe(0)
+  })
+
+  it('re-attempts the .part cleanup on a retry after the first cleanup failed', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target = join(dir, 'installer.dmg')
+    const body = Buffer.from('installer-bytes')
+    const manifestForCheck = downloadManifest(
+      body.byteLength,
+      createHash('sha256').update(body).digest('hex')
+    )
+    const fetchImpl = ((input: unknown) =>
+      String(input).endsWith('version.json')
+        ? Promise.resolve(jsonResponse(manifestForCheck))
+        : Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+    // Fail the first cleanup, succeed on the retry.
+    const removeFile = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('EACCES: cannot delete .part'))
+      .mockResolvedValueOnce(undefined)
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target),
+      removeFile
+    })
+
+    await service.check()
+    const first = await service.download()
+    expect(first.state).toBe('error')
+    const retry = await service.download()
+
+    // The path was NOT marked fresh after the failure, so the retry cleans again and then succeeds.
+    expect(removeFile).toHaveBeenCalledTimes(2)
+    expect(retry.state).toBe('ready')
+  })
+
+  it('resumes via a Range request on a same-session retry after a cancel', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target = join(dir, 'installer.dmg')
+    const body = Buffer.from('installer-body-bytes')
+    const manifestForCheck = downloadManifest(
+      body.byteLength,
+      createHash('sha256').update(body).digest('hex')
+    )
+    const rangeHeaders: (string | null)[] = []
+    let installerFetches = 0
+    const fetchImpl = ((input: unknown, init?: { signal?: AbortSignal; headers?: HeadersInit }) => {
+      if (String(input).endsWith('version.json'))
+        return Promise.resolve(jsonResponse(manifestForCheck))
+      installerFetches += 1
+      rangeHeaders.push(new Headers(init?.headers).get('range'))
+      if (installerFetches === 1) {
+        // First attempt: emit two bytes, then hang until the user abort errors the stream — leaving a
+        // flushed two-byte .part on disk to resume from.
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(body.subarray(0, 2))
+            init?.signal?.addEventListener('abort', () =>
+              controller.error(new DOMException('aborted', 'AbortError'))
+            )
+          }
+        })
+        return Promise.resolve(new Response(stream, { status: 200 }))
+      }
+      // Retry: serve the remaining bytes as a 206 partial-content response.
+      return Promise.resolve(
+        new Response(body.subarray(2), {
+          status: 206,
+          headers: { 'content-range': `bytes 2-${body.byteLength - 1}/${body.byteLength}` }
+        })
+      )
+    }) as unknown as typeof fetch
+    // Cancel only once the core reports ≥2 bytes transferred — the write callback resolves after the
+    // bytes hit the .part, so this guarantees a non-empty .part to resume from (avoids racing the abort
+    // against the first chunk write).
+    let onTwoBytes: (() => void) | undefined
+    const twoBytes = new Promise<void>((resolve) => (onTwoBytes = resolve))
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn((_channel: string, payload: unknown) => {
+        const transferred = (payload as { transferred?: number } | undefined)?.transferred
+        if (typeof transferred === 'number' && transferred >= 2) onTwoBytes?.()
+      }),
+      promptSavePath: () => Promise.resolve(target)
+    })
+
+    await service.check()
+    const downloading = service.download()
+    await twoBytes
+    await service.cancel()
+    await downloading
+
+    const retry = await service.download()
+
+    // The cancel left a two-byte .part; the SAME-session retry did not re-clean it (freshTargets still
+    // holds the path) and resumed from byte 2 via a Range header, completing the download.
+    expect(rangeHeaders[0]).toBeNull()
+    expect(rangeHeaders[1]).toBe('bytes=2-')
+    expect(retry.state).toBe('ready')
+    expect(await readFile(target)).toEqual(body)
   })
 
   it('stays available and does not fetch the installer when the save dialog is canceled', async () => {
