@@ -96,24 +96,57 @@ describe('buildAgentSpawnEnv', () => {
     expect(env.CLAUDE_CODE_EXECUTABLE).toBe('/bin/claude')
   })
 
-  it('keeps inherited ANTHROPIC_* for a non-isolated (claude-default) provider', () => {
+  it('throws when envOverrides is missing CLAUDE_CONFIG_DIR (fail closed)', () => {
+    // The non-isolated fallback path used to inherit the parent's CLAUDE_CONFIG_DIR (or read the
+    // default `~/.claude` on the host). A future provider that forgot the override would silently
+    // fall back to the user's machine-level Claude Code login. Failing closed here means a broken
+    // provider produces a hard error at spawn time rather than leaking auth.
+    expect(() =>
+      buildAgentSpawnEnv(
+        { PATH: '/usr/bin' },
+        // Deliberately omit CLAUDE_CONFIG_DIR.
+        { ANTHROPIC_MODEL: 'claude-opus' },
+        '/bin/claude'
+      )
+    ).toThrow(/envOverrides must include CLAUDE_CONFIG_DIR/)
+  })
+
+  it('drops inherited CLAUDE_CODE_OAUTH_TOKEN so a custom gateway cannot carry a subscription', () => {
+    // The setup-token flow writes CLAUDE_CODE_OAUTH_TOKEN to the shell. A custom / official gateway
+    // that does not set this var would let the parent's subscription token bleed into the spawned
+    // agent and authenticate as the wrong account. The filter strips the var unconditionally so the
+    // override block is the only path that can carry auth forward.
     const env = buildAgentSpawnEnv(
       {
-        ANTHROPIC_BASE_URL: 'https://proxy.example',
-        CLAUDE_CONFIG_DIR: '/inherited/isolated-config',
+        CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-leaked-from-shell',
         PATH: '/usr/bin'
       },
-      // claude-default overrides carry no CLAUDE_CONFIG_DIR → not isolated.
-      { ANTHROPIC_MODEL: 'claude-opus' },
+      {
+        CLAUDE_CONFIG_DIR: '/provider/config',
+        ANTHROPIC_AUTH_TOKEN: 'provider-token'
+      },
       '/bin/claude'
     )
 
-    // Reuses the user's global environment (proxy, login, etc.).
-    expect(env.ANTHROPIC_BASE_URL).toBe('https://proxy.example')
-    expect(env.ANTHROPIC_MODEL).toBe('claude-opus')
-    // Native credential stores are keyed to Claude's implicit config context.
-    expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
-    expect(env.CLAUDE_CODE_EXECUTABLE).toBe('/bin/claude')
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('provider-token')
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/provider/config')
+  })
+
+  it('drops inherited CLAUDE_CONFIG_DIR even when envOverrides provides a different one', () => {
+    // The override block is the only path that can set CLAUDE_CONFIG_DIR for the child. The
+    // parent shell may have a different value (developer who happens to have a Claude Code login
+    // elsewhere); the override must always win.
+    const env = buildAgentSpawnEnv(
+      {
+        CLAUDE_CONFIG_DIR: '/parent/shell/claude',
+        PATH: '/usr/bin'
+      },
+      { CLAUDE_CONFIG_DIR: '/app/claude' },
+      '/bin/claude'
+    )
+
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/app/claude')
   })
 })
 
@@ -162,7 +195,10 @@ describe('spawnClaudeAgentAcp', () => {
     process.env.OPEN_SCIENCE_DEBUG_AGENT = '1'
     mocks.spawn.mockReturnValue({ on: vi.fn() })
 
-    spawnClaudeAgentAcp({ executablePath: '/bin/claude' })
+    spawnClaudeAgentAcp({
+      executablePath: '/bin/claude',
+      envOverrides: { CLAUDE_CONFIG_DIR: '/provider/config' }
+    })
 
     expect(mocks.spawn.mock.calls[0]?.[2]?.env).toEqual(
       expect.objectContaining({ DEBUG_CLAUDE_AGENT_SDK: '1' })

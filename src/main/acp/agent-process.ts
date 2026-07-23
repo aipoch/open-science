@@ -21,22 +21,38 @@ const toUnpackedAsarPath = (filePath: string): string =>
 // Env vars carrying an Anthropic endpoint/credentials/model that an isolated provider must not inherit.
 const ANTHROPIC_ENV_PREFIX = 'ANTHROPIC_'
 
-// Builds the environment for the ACP agent child process. Isolated providers carry CLAUDE_CONFIG_DIR,
-// so inherited ANTHROPIC_* variables are dropped before their own overrides are applied. A local provider
-// with OS-store-only OAuth deliberately omits CLAUDE_CONFIG_DIR and reuses Claude's default auth context.
+// Claude Code's setup-token-based subscription auth. Set by the shell when a user has run
+// `claude setup-token` (or otherwise has a long-lived OAuth token in the env). A custom/official
+// provider that doesn't set CLAUDE_CONFIG_DIR or strip this var would let the user's Anthropic
+// subscription token leak into the wrong account — so we drop it unconditionally.
+const CLAUDE_CODE_OAUTH_TOKEN = 'CLAUDE_CODE_OAUTH_TOKEN'
+
+// Builds the environment for the ACP agent child process. Every provider must set
+// CLAUDE_CONFIG_DIR (and the OAuth token, when relevant) on the override; the filter then drops
+// anything from the parent env that could carry auth into the wrong account. Failing closed here
+// means a future provider that forgets to set CLAUDE_CONFIG_DIR cannot silently fall back to the
+// host's `~/.claude`, where the user's machine-level Claude Code login lives.
 const buildAgentSpawnEnv = (
   sourceEnv: NodeJS.ProcessEnv,
   envOverrides: Record<string, string>,
   executablePath: string
 ): NodeJS.ProcessEnv => {
-  const isolated = 'CLAUDE_CONFIG_DIR' in envOverrides
+  if (!('CLAUDE_CONFIG_DIR' in envOverrides)) {
+    throw new Error(
+      'Cannot spawn the agent: envOverrides must include CLAUDE_CONFIG_DIR pointing at an app-owned config directory.'
+    )
+  }
+
   const base: NodeJS.ProcessEnv = {}
 
   for (const [key, value] of Object.entries(sourceEnv)) {
-    if (isolated && key.startsWith(ANTHROPIC_ENV_PREFIX)) continue
-    // A non-isolated local provider must use Claude's implicit default context. Inheriting an explicit
-    // CLAUDE_CONFIG_DIR would recreate the same native-credential lookup failure we are avoiding.
-    if (!isolated && key === 'CLAUDE_CONFIG_DIR') continue
+    // ANTHROPIC_* and the Claude Code subscription OAuth token are isolated by the override block;
+    // dropping them unconditionally prevents a custom/official gateway from accidentally carrying
+    // the parent's subscription into the wrong account. CLAUDE_CONFIG_DIR is always overridden
+    // by envOverrides, so dropping it from the parent env is safe.
+    if (key.startsWith(ANTHROPIC_ENV_PREFIX)) continue
+    if (key === CLAUDE_CODE_OAUTH_TOKEN) continue
+    if (key === 'CLAUDE_CONFIG_DIR') continue
     base[key] = value
   }
 
