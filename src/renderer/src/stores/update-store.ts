@@ -40,9 +40,12 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
       set((s) => ({
         status: {
           ...s.status,
-          progress: progress.percent,
+          // A `reconnecting` event omits percent/total (bytesPerSecond: 0); keep the last known
+          // values so the action button doesn't flip to "Downloading 0%" and drop the size label
+          // mid-reconnect. downloadProgress always carries the raw event for DownloadProgressLine.
+          progress: progress.percent ?? s.status.progress,
           downloadedBytes: progress.transferred,
-          totalBytes: progress.total,
+          totalBytes: progress.total ?? s.status.totalBytes,
           downloadProgress: progress
         }
       }))

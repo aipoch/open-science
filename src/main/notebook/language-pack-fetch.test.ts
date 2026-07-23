@@ -111,6 +111,18 @@ describe('fetchLanguagePack', () => {
     ).rejects.toThrow(/sha256 mismatch/)
   })
 
+  it('skips the post-download re-hash when the downloader verified inline', async () => {
+    // downloadVerifiesInline signals the pack was already sha256-verified by the resilient core, so
+    // verifyPackChecksum should NOT re-hash — a deliberately wrong sha256 hasher must not be consulted.
+    const sha256 = vi.fn(async () => 'f'.repeat(64))
+    const deps = makeDeps({ sha256, downloadVerifiesInline: true })
+    const result = await fetchLanguagePack(
+      makeDestDir(), 'https://cdn/envs', 1, 'osx-arm64', 'python', '3.11', deps
+    )
+    expect(result.id).toBe('python-3.11')
+    expect(sha256).not.toHaveBeenCalled()
+  })
+
   it('rejects a version that was not published', async () => {
     const deps = makeDeps()
     await expect(

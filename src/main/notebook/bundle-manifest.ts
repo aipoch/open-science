@@ -221,10 +221,17 @@ export const sha256File = (path: string): Promise<string> =>
 // `size` is given (a cheap pre-check that catches a truncated download without hashing), then streams
 // the whole file through sha256 and compares. Throws on any mismatch so the caller drops the partial
 // pack and reports an actionable provisioning error.
+//
+// `opts.skipHash` runs the size check only, skipping the full-file sha256 pass. Use it when the file
+// was just streamed and sha256-verified inline by the resilient download core (which renames into
+// place only after the digest matches) — re-hashing hundreds of MB a second time is pure waste on the
+// provisioning hot path. Local bundled packs (bundle-local) are NOT inline-verified, so they must keep
+// the full hash and leave skipHash unset.
 export const verifyPackChecksum = async (
   filePath: string,
   expected: { sha256: string; size?: number },
-  deps: VerifyDeps = {}
+  deps: VerifyDeps = {},
+  opts: { skipHash?: boolean } = {}
 ): Promise<void> => {
   if (typeof expected.size === 'number') {
     const actualSize = statSync(filePath).size
@@ -232,6 +239,7 @@ export const verifyPackChecksum = async (
       throw new Error(`size mismatch for ${filePath}: expected ${expected.size}, got ${actualSize}`)
     }
   }
+  if (opts.skipHash) return
   const sha256Of = deps.sha256 ?? sha256File
   const actual = await sha256Of(filePath)
   if (actual.toLowerCase() !== expected.sha256.toLowerCase()) {

@@ -195,5 +195,13 @@ describe('useUpdateStore', () => {
     expect(status.progress).toBe(42)
     expect(status.downloadedBytes).toBe(4200)
     expect(status.totalBytes).toBe(10000)
+
+    // A reconnecting event omits percent/total; the mirror must keep the last known size and
+    // percent so the action button doesn't flip to "Downloading 0%" mid-reconnect.
+    progressListener?.({ phase: 'reconnecting', transferred: 4200, bytesPerSecond: 0, attempt: 1 })
+    const reconnecting = useUpdateStore.getState().status
+    expect(reconnecting.progress).toBe(42)
+    expect(reconnecting.totalBytes).toBe(10000)
+    expect(reconnecting.downloadProgress?.phase).toBe('reconnecting')
   })
 })
