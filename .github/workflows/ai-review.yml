@@ -141,14 +141,17 @@ jobs:
             done
           } > review_context_raw.txt
 
-          # Fail closed if the context exceeds the limit — a silent byte truncation could hide
-          # later changes from the no-tools agent that has no way to re-read them.
+          # Skip Claude if the context exceeds the limit — a silent byte truncation could hide
+          # later changes from the no-tools agent that has no way to re-read them. The outcome
+          # label workflow still fails closed because no Claude verdict is posted.
           actual_bytes="$(wc -c < review_context_raw.txt)"
           if (( actual_bytes > max_bytes )); then
-            echo "::error::Review context is ${actual_bytes} bytes (limit ${max_bytes}). " \
-              "The PR diff is too large for the no-tools review mode. Reduce the diff size." >&2
-            exit 1
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping Claude review: context is ${actual_bytes} bytes " \
+              "(limit ${max_bytes}) for no-tools review mode."
+            exit 0
           fi
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
 
           # Use a random delimiter so a changed file cannot contain it as a line and break the
           # $GITHUB_OUTPUT heredoc.
@@ -161,6 +164,7 @@ jobs:
 
       - name: Run Claude architecture review
         id: run_claude
+        if: ${{ steps.context.outputs.should_run == 'true' }}
         uses: anthropics/claude-code-action@v1
         env:
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
@@ -441,8 +445,8 @@ jobs:
           # Use the built-in 'codex exec review' subcommand which understands git diffs
           # natively (--base scopes the diff against the base branch) and performs a comprehensive
           # review (correctness, security, tests, type safety, etc.) using its own framing. The
-          # prompt argument adds only project-specific conventions the built-in review would not
-          # know about, keeping the prompt-injection surface minimal.
+          # developer instructions add only project-specific conventions the built-in review
+          # would not know about, keeping the prompt-injection surface minimal.
           review_prompt_file="$CODEX_HOME/review-prompt.txt"
           {
             echo 'This repository follows Conventional Commits. Verify that the branch name'
@@ -458,18 +462,19 @@ jobs:
             echo
             echo "Pull request branch: ${PR_BRANCH}"
           } > "$review_prompt_file"
+          review_instructions="$(jq -Rs . < "$review_prompt_file")"
 
           output_file="$CODEX_HOME/review-output.md"
 
           codex exec \
             --sandbox read-only \
             review \
+            --config "developer_instructions=${review_instructions}" \
             --skip-git-repo-check \
             --model "$CODEX_MODEL" \
             --base "$PR_BASE_SHA" \
             --title "$PR_TITLE" \
-            -o "$output_file" \
-            - < "$review_prompt_file"
+            -o "$output_file"
 
           # Publish the review as a step output for the post job.
           if [[ -s "$output_file" ]]; then

@@ -28,6 +28,7 @@ const headers = [...labelsWorkflow.matchAll(/header: '([^']+)'/g)].map(([, heade
 
 type WorkflowStep = {
   id?: string
+  if?: string
   name?: string
   run?: string
   'working-directory'?: string
@@ -429,11 +430,13 @@ describe('AI review workflow contract', () => {
     expect(readFileSync(githubOutput, 'utf8')).toContain('### outside-link (skipped: symlink)')
   })
 
-  it('fails closed when review context exceeds the size limit', () => {
-    expect(reviewWorkflow).toContain('exit 1')
-    expect(reviewWorkflow).not.toContain(
-      'head -c 393216 review_context_raw.txt > review_context.txt'
-    )
+  it('skips Claude without truncating review context when the size limit is exceeded', () => {
+    const contextStep = getNamedStep('claude_review', 'Generate review context')
+    const reviewStep = getNamedStep('claude_review', 'Run Claude architecture review')
+
+    expect(contextStep.run).toContain('should_run=false')
+    expect(contextStep.run).not.toContain('head -c 393216 review_context_raw.txt')
+    expect(reviewStep.if).toBe("${{ steps.context.outputs.should_run == 'true' }}")
   })
 
   it('uses codex exec review (built-in) instead of openai/codex-action with prompt injection', () => {
@@ -468,6 +471,7 @@ describe('AI review workflow contract', () => {
 
     expect(args.slice(0, 4)).toEqual(['exec', '--sandbox', 'read-only', 'review'])
     expect(args).not.toContain('--ignore-user-config')
+    expect(args).not.toContain('-')
   })
 
   it('does not expose upstream secrets to the codex process', () => {
@@ -477,12 +481,14 @@ describe('AI review workflow contract', () => {
     expect(readFileSync(join(captureDir, 'codex-base-url'), 'utf8')).toBe('unset')
   })
 
-  it('includes the pull request branch in the supplementary review instructions', () => {
+  it('passes the pull request branch through developer instructions, not a prompt', () => {
     const { captureDir } = runCodexReviewStep()
+    const args = readFileSync(join(captureDir, 'args'), 'utf8').trim().split('\n')
+    const configIndex = args.indexOf('--config')
 
-    expect(readFileSync(join(captureDir, 'stdin'), 'utf8')).toContain(
-      'Pull request branch: ci/test-workflow'
-    )
+    expect(args[configIndex + 1]).toContain('developer_instructions=')
+    expect(args[configIndex + 1]).toContain('Pull request branch: ci/test-workflow')
+    expect(readFileSync(join(captureDir, 'stdin'), 'utf8')).toBe('')
   })
 
   it('allows the first Codex review for a pull request', () => {
