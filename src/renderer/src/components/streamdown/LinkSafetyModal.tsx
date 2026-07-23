@@ -1,9 +1,16 @@
 import type { LinkSafetyModalProps } from 'streamdown'
 import { Check, Copy, ExternalLink, X } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
-// Same portal chrome as table fullscreen: flat mask, header bar, white card body.
+import { Button } from '@/components/ui/button'
+import {
+  dialogCloseButtonClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName
+} from '@/components/ui/dialog-chrome'
+import { cn } from '@/lib/utils'
+
 const LinkSafetyModal = ({
   url,
   isOpen,
@@ -11,6 +18,8 @@ const LinkSafetyModal = ({
   onConfirm
 }: LinkSafetyModalProps): React.JSX.Element | null => {
   const [copied, setCopied] = useState(false)
+  const [isMounted, setIsMounted] = useState(isOpen)
+  const panelRef = useRef<HTMLDivElement | null>(null)
 
   const closeModal = useCallback((): void => {
     setCopied(false)
@@ -18,7 +27,47 @@ const LinkSafetyModal = ({
   }, [onClose])
 
   useEffect(() => {
-    if (!isOpen) {
+    if (isOpen) {
+      const timeout = window.setTimeout(() => {
+        setIsMounted(true)
+      }, 0)
+
+      return () => {
+        window.clearTimeout(timeout)
+      }
+    }
+
+    const timeout = window.setTimeout(() => {
+      setIsMounted(false)
+    }, 400)
+
+    return () => {
+      window.clearTimeout(timeout)
+    }
+  }, [isOpen])
+
+  useEffect(() => {
+    const panel = panelRef.current
+
+    if (!panel || isOpen || !isMounted) {
+      return
+    }
+
+    const onAnimationEnd = (event: AnimationEvent): void => {
+      if (event.target === panel) {
+        setIsMounted(false)
+      }
+    }
+
+    panel.addEventListener('animationend', onAnimationEnd)
+
+    return () => {
+      panel.removeEventListener('animationend', onAnimationEnd)
+    }
+  }, [isMounted, isOpen])
+
+  useEffect(() => {
+    if (!isMounted) {
       return
     }
 
@@ -37,7 +86,7 @@ const LinkSafetyModal = ({
       document.removeEventListener('keydown', onKeyDown)
       document.body.style.overflow = previousOverflow
     }
-  }, [closeModal, isOpen])
+  }, [closeModal, isMounted])
 
   const copyLink = useCallback(async (): Promise<void> => {
     if (!navigator.clipboard?.writeText) {
@@ -55,33 +104,45 @@ const LinkSafetyModal = ({
     }
   }, [url])
 
-  if (!isOpen) {
+  if (!isOpen && !isMounted) {
     return null
   }
 
   return createPortal(
-    <div
-      aria-label="Open external link?"
-      aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      data-streamdown="link-safety-modal"
-      onClick={closeModal}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') {
-          closeModal()
-        }
-      }}
-      role="dialog"
-    >
+    <Fragment>
       <div
-        role="presentation"
-        onClick={(event) => event.stopPropagation()}
-        onKeyDown={(event) => event.stopPropagation()}
+        aria-hidden="true"
+        className={cn(dialogOverlayClassName, 'break-normal')}
+        data-state={isOpen ? 'open' : 'closed'}
+        data-streamdown="link-safety-modal"
+      />
+      <div
+        className={dialogPanelClassName(
+          'flex h-auto max-h-[min(90vh,640px)] w-[min(420px,calc(100vw-3rem))] flex-col overflow-hidden p-0'
+        )}
+        data-state={isOpen ? 'open' : 'closed'}
+        data-streamdown="link-safety-panel"
+        ref={panelRef}
+        aria-label="Open external link?"
+        aria-modal="true"
+        role="dialog"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            closeModal()
+          }
+        }}
       >
         <div>
-          <button type="button" onClick={closeModal} aria-label="Close">
-            <X className="size-3.5" strokeWidth={2} aria-hidden />
-          </button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className={dialogCloseButtonClassName}
+            onClick={closeModal}
+            aria-label="Close"
+          >
+            <X className="size-4" strokeWidth={2} aria-hidden />
+          </Button>
         </div>
 
         <div className="sd-link-safety-body">
@@ -121,7 +182,7 @@ const LinkSafetyModal = ({
           </div>
         </div>
       </div>
-    </div>,
+    </Fragment>,
     document.body
   )
 }

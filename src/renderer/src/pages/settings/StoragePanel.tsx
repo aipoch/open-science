@@ -6,6 +6,12 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { DataRootWarning } from '@/components/DataRootWarning'
+import {
+  dialogDescriptionClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import type { DataRootKind, StorageInfo, UsageCategoryKey } from '../../../../shared/storage'
 import { SettingsSection } from './SettingsLayout'
 import { StorageMigrationModal } from './StorageMigrationModal'
@@ -411,12 +417,12 @@ const StoragePanel = (): React.JSX.Element => {
 
       <AlertDialog.Root open={warnOpen} onOpenChange={setWarnOpen}>
         <AlertDialog.Portal>
-          <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
-          <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog">
-            <AlertDialog.Title className="text-base font-semibold text-text-000">
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
+          <AlertDialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]')}>
+            <AlertDialog.Title className={dialogTitleClassName}>
               Change data location?
             </AlertDialog.Title>
-            <AlertDialog.Description className="mt-2 text-sm leading-relaxed text-text-100">
+            <AlertDialog.Description className={dialogDescriptionClassName}>
               You can move Open Science&apos;s data to another folder on this device.
             </AlertDialog.Description>
             <div className="mt-3">
@@ -446,13 +452,11 @@ const StoragePanel = (): React.JSX.Element => {
 
       <AlertDialog.Root open={adoptConfirmOpen} onOpenChange={setAdoptConfirmOpen}>
         <AlertDialog.Portal>
-          <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
-          <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog">
-            <AlertDialog.Title className="text-base font-semibold text-text-000">
-              Use this folder?
-            </AlertDialog.Title>
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
+          <AlertDialog.Content className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))]')}>
+            <AlertDialog.Title className={dialogTitleClassName}>Use this folder?</AlertDialog.Title>
             <pre className={cn('mt-3', PATH_PILL)}>{inspection?.dataRoot ?? trimmedNewPath}</pre>
-            <AlertDialog.Description className="mt-3 text-sm leading-relaxed text-text-100">
+            <AlertDialog.Description className={cn(dialogDescriptionClassName, 'mt-3')}>
               Open Science will restart and use this folder as-is —{' '}
               <strong className="font-semibold text-text-000">
                 its contents are not merged with your current data

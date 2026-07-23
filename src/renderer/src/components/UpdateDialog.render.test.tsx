@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -29,6 +32,32 @@ afterEach(() => {
 })
 
 describe('UpdateDialog', () => {
+  it('uses shared settings dialog chrome and prevents outside-click dismissal', () => {
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: { state: 'available', current: '0.1.0', latest: '0.2.0' }
+    })
+    act(() => root.render(<UpdateDialog />))
+
+    const overlay = Array.from(document.body.querySelectorAll<HTMLElement>('div')).find((element) =>
+      element.className.includes('bg-black/50')
+    )
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
+    const source = readFileSync(resolve(__dirname, 'UpdateDialog.tsx'), 'utf8')
+
+    expect(overlay?.className).toContain('data-[state=open]:fade-in-0')
+    expect(overlay?.className).toContain('data-[state=closed]:fill-mode-forwards')
+    expect(dialog?.className).toContain('rounded-xl')
+    expect(dialog?.className).toContain('border-border')
+    expect(dialog?.className).toContain('bg-card')
+    expect(dialog?.className).toContain('shadow-dialog')
+    expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
+    expect(dialog?.className).toContain('data-[state=closed]:fill-mode-forwards')
+    expect(source).toContain('dialogOverlayClassName')
+    expect(source).toContain('dialogPanelClassName')
+    expect(source).toContain('onInteractOutside={(event) => event.preventDefault()}')
+  })
+
   it('renders nothing when the dialog is closed', () => {
     useUpdateStore.setState({
       isDialogOpen: false,

@@ -1,6 +1,12 @@
 import { AlertDialog } from 'radix-ui'
 
 import { Button } from '@/components/ui/button'
+import {
+  dialogDescriptionClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 
 type SwitchFrameworkDialogProps = {
   // Display name of the framework being switched to; null keeps the dialog closed.
@@ -24,12 +30,14 @@ const SwitchFrameworkDialog = ({
     }}
   >
     <AlertDialog.Portal>
-      <AlertDialog.Overlay className="fixed inset-0 z-[60] bg-black/50" />
-      <AlertDialog.Content className="fixed left-1/2 top-1/2 z-[60] w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-popover p-6 text-foreground shadow-menu">
-        <AlertDialog.Title className="text-base font-semibold text-foreground">
+      <AlertDialog.Overlay className={dialogOverlayClassName} />
+      <AlertDialog.Content
+        className={dialogPanelClassName('z-[60] w-[min(440px,calc(100vw-2rem))]')}
+      >
+        <AlertDialog.Title className={dialogTitleClassName}>
           Switch to {targetName}?
         </AlertDialog.Title>
-        <AlertDialog.Description className="mt-2 text-sm leading-relaxed text-muted-foreground">
+        <AlertDialog.Description className={dialogDescriptionClassName}>
           A conversation can&apos;t be resumed on a different backend, so switching starts a fresh
           agent session. Open conversations keep their existing messages, and their transcript is
           replayed to {targetName} so it can pick up where you left off (tool state is not carried

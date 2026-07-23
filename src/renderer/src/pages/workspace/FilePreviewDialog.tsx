@@ -1,5 +1,6 @@
 import { Dialog } from 'radix-ui'
 
+import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { PreviewFileSurface } from './PreviewFileSurface'
@@ -22,11 +23,14 @@ const FilePreviewDialog = ({ item, onClose }: FilePreviewDialogProps): React.JSX
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/50" />
+        <Dialog.Overlay className={dialogOverlayClassName} />
         {/* Keep the modal large enough for document renderers while leaving workspace context visible. */}
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[60] flex h-[90vh] w-[90vw] max-w-none -translate-x-1/2 -translate-y-1/2 overflow-hidden overscroll-contain rounded-md bg-bg-000 text-text-000 shadow-dialog"
+          onInteractOutside={(event) => event.preventDefault()}
+          className={dialogPanelClassName(
+            'z-[60] flex h-[90vh] w-[90vw] max-w-none overflow-hidden overscroll-contain p-0'
+          )}
         >
           <Dialog.Title className="sr-only">Preview {item.title}</Dialog.Title>
           <PreviewFileSurface item={item} onClose={onClose} tooltipClassName="z-[70]" />

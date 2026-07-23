@@ -193,8 +193,19 @@ describe('RuntimesPanel', () => {
 
     // The impact dialog is shown and the disable is NOT applied yet.
     const dialog = document.querySelector('[data-testid="disable-impact-dialog"]')
+    const overlay = Array.from(document.body.querySelectorAll<HTMLElement>('div')).find((element) =>
+      element.className.includes('bg-black/50')
+    )
     expect(dialog).not.toBeNull()
     expect(dialog?.textContent).toContain('1 running')
+    expect(overlay?.className).toContain('data-[state=open]:fade-in-0')
+    expect(overlay?.className).toContain('data-[state=closed]:fill-mode-forwards')
+    expect(overlay?.className).not.toContain('backdrop-blur')
+    expect(dialog?.className).toContain('rounded-xl')
+    expect(dialog?.className).toContain('border-border')
+    expect(dialog?.className).toContain('bg-card')
+    expect(dialog?.className).toContain('shadow-dialog')
+    expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
     expect(setEnvironmentEnabled).not.toHaveBeenCalled()
 
     // Confirming applies the disable to the bound runtime.

@@ -1,6 +1,12 @@
 import { AlertDialog } from 'radix-ui'
 
 import { Button } from '@/components/ui/button'
+import {
+  dialogDescriptionClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 
 type UninstallRuntimeDialogProps = {
   // The framework whose app-managed runtime is being removed; null keeps the dialog closed.
@@ -41,12 +47,10 @@ const UninstallRuntimeDialog = ({
       }}
     >
       <AlertDialog.Portal>
-        <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
-        <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog">
-          <AlertDialog.Title className="text-base font-semibold text-text-000">
-            Uninstall {name}?
-          </AlertDialog.Title>
-          <AlertDialog.Description className="mt-2 text-sm leading-relaxed text-text-100">
+        <AlertDialog.Overlay className={dialogOverlayClassName} />
+        <AlertDialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]')}>
+          <AlertDialog.Title className={dialogTitleClassName}>Uninstall {name}?</AlertDialog.Title>
+          <AlertDialog.Description className={dialogDescriptionClassName}>
             This removes the {name} runtime this app downloaded and manages. A separate {name} you
             installed yourself is not affected. You can reinstall it here at any time.
           </AlertDialog.Description>

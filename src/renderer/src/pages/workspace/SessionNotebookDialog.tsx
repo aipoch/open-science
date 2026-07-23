@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Download, LoaderCircle, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
+import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
@@ -174,13 +175,13 @@ const SessionNotebookContent = ({
 
   return (
     <>
-      <div className="flex shrink-0 items-center justify-between border-b border-border-300/15 px-5 py-3.5">
-        <h2 className="flex min-w-0 items-center gap-3 text-lg font-semibold text-text-000">
+      <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3.5">
+        <h2 className="flex min-w-0 items-center gap-3 text-lg font-semibold text-foreground">
           <span>Session notebook</span>
-          <span className="rounded bg-bg-200 px-2 py-0.5 font-mono text-xs font-normal text-text-200">
+          <span className="rounded bg-muted px-2 py-0.5 font-mono text-xs font-normal text-muted-foreground">
             {shortId}
           </span>
-          <span className="truncate text-xs font-normal text-text-300">
+          <span className="truncate text-xs font-normal text-muted-foreground">
             {pluralize(agents, 'agent')} · {pluralize(cells, 'cell')}
             {extraCounts.length > 0 ? ` · ${extraCounts.join(' / ')}` : ''}
           </span>
@@ -188,7 +189,7 @@ const SessionNotebookContent = ({
         <button
           type="button"
           onClick={onClose}
-          className="-m-1 rounded p-1 text-text-300 hover:text-text-000"
+          className="-m-1 rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
           aria-label="Close"
         >
           <X className="size-4" aria-hidden="true" />
@@ -197,13 +198,13 @@ const SessionNotebookContent = ({
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {status === 'loading' ? (
-          <p className="px-5 py-16 text-center text-sm text-text-300">Loading notebook…</p>
+          <p className="px-5 py-16 text-center text-sm text-muted-foreground">Loading notebook…</p>
         ) : status === 'error' ? (
           <p className="px-5 py-16 text-center text-sm text-danger-000">
             {error ?? 'Failed to load notebook.'}
           </p>
         ) : runs.length === 0 ? (
-          <p className="px-5 py-16 text-center text-sm text-text-300">
+          <p className="px-5 py-16 text-center text-sm text-muted-foreground">
             No execution records for this session.
           </p>
         ) : (
@@ -211,7 +212,7 @@ const SessionNotebookContent = ({
             <div
               role="tablist"
               data-testid="session-kernel-switcher"
-              className="flex shrink-0 items-center gap-1 border-y border-border-100 bg-bg-200 px-3 py-1.5"
+              className="flex shrink-0 items-center gap-1 border-y border-border bg-muted px-3 py-1.5"
             >
               {visibleKinds.map((kind) => (
                 <button
@@ -227,12 +228,12 @@ const SessionNotebookContent = ({
                   className={cn(
                     'flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
                     effectiveActiveKind === kind
-                      ? 'bg-bg-300 text-text-000'
-                      : 'text-text-300 hover:bg-bg-300/60 hover:text-text-100'
+                      ? 'bg-card text-foreground'
+                      : 'text-muted-foreground hover:bg-card/70 hover:text-foreground'
                   )}
                 >
                   <span>{kernelKindLabel(kind)}</span>
-                  <span className="font-mono text-text-300">
+                  <span className="font-mono text-muted-foreground">
                     {runs.filter((run) => resolveRunKernelKind(run) === kind).length}
                   </span>
                 </button>
@@ -397,10 +398,13 @@ const SessionNotebookDialog = ({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
+        <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-[calc(100%-2rem)] max-w-5xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border-300/15 bg-bg-000 text-text-100 shadow-xl"
+          onInteractOutside={(event) => event.preventDefault()}
+          className={dialogPanelClassName(
+            'flex max-h-[85vh] w-[calc(100%-2rem)] max-w-5xl flex-col overflow-hidden p-0'
+          )}
         >
           <Dialog.Title className="sr-only">Session notebook</Dialog.Title>
           {session ? (

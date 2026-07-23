@@ -112,7 +112,10 @@
     @apply z-[10000]! min-w-32! w-max! max-w-[calc(100vw-1rem)]! transform-none!;
   }
 
-  body > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not([data-streamdown]) .relative > .absolute {
+  body
+    > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not([data-streamdown])
+    .relative
+    > .absolute {
     @apply absolute! right-0! left-auto! z-[200] m-0 min-w-[7.5rem] w-max overflow-hidden rounded-md border border-sd-border bg-white! shadow-sd-menu-lg break-normal;
     top: auto !important;
     bottom: calc(100% + 4px) !important;
@@ -122,7 +125,13 @@
     .agent-markdown-root [data-streamdown='table-wrapper'] .relative > .absolute button,
     [data-streamdown='table-fullscreen'] .relative > .absolute button,
     .agent-markdown-root [data-streamdown='mermaid-block-actions'] .relative > .absolute button,
-    body > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not([data-streamdown]) .relative > .absolute button
+    body
+      > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not(
+        [data-streamdown]
+      )
+      .relative
+      > .absolute
+      button
   ) {
     @apply block! box-border w-full! min-w-32! bg-white! px-3 py-2 text-left text-sm leading-5 text-sd-ink! whitespace-nowrap! break-normal! transition-colors duration-150;
     word-break: keep-all !important;
@@ -146,22 +155,23 @@
   }
 
   /* Toolbar icon buttons (not dropdown items). */
-  .agent-markdown-root :is(
-    [data-streamdown='table-wrapper'] > div:first-child:not(:has(table)) > button,
-    [data-streamdown='table-wrapper'] > div:first-child:not(:has(table)) > .relative > button,
-    [data-streamdown='code-block-actions'] > button,
-    [data-streamdown='code-block-actions'] .relative > button,
-    [data-streamdown='mermaid-block-actions'] > button,
-    [data-streamdown='mermaid-block-actions'] .relative > button,
-    [data-streamdown='code-block'] > div:first-child button
-  ) {
+  .agent-markdown-root
+    :is(
+      [data-streamdown='table-wrapper'] > div:first-child:not(:has(table)) > button,
+      [data-streamdown='table-wrapper'] > div:first-child:not(:has(table)) > .relative > button,
+      [data-streamdown='code-block-actions'] > button,
+      [data-streamdown='code-block-actions'] .relative > button,
+      [data-streamdown='mermaid-block-actions'] > button,
+      [data-streamdown='mermaid-block-actions'] .relative > button,
+      [data-streamdown='code-block'] > div:first-child button
+    ) {
     @apply inline-flex size-7 shrink-0 items-center justify-center p-0;
     transform: none;
     transition-property: color, background-color, opacity;
   }
 
   /* --- Streamdown modal overlays (link safety + table fullscreen) --- */
-  :is([data-streamdown='link-safety-modal'], [data-streamdown='table-fullscreen']) {
+  :is([data-streamdown='table-fullscreen'], [data-streamdown='link-safety-modal']) {
     @apply flex items-center justify-center p-6 break-normal;
     background: var(--sd-modal-mask) !important;
     backdrop-filter: none;
@@ -196,20 +206,42 @@
   }
 
   [data-streamdown='link-safety-modal'] {
-    & > div[role='presentation'] {
-      @apply h-auto max-h-[min(90vh,640px)] w-[min(420px,calc(100vw-3rem))];
+    background: rgb(0 0 0 / 50%) !important;
+  }
 
-      & > div:first-child::before {
+  [data-streamdown='link-safety-panel'] {
+    @apply h-auto max-h-[min(90vh,640px)] w-[min(420px,calc(100vw-3rem))] rounded-xl border-border bg-card text-foreground shadow-dialog;
+
+    & > div:first-child {
+      @apply relative z-40 flex shrink-0 items-center overflow-visible border-b border-border bg-card px-4 py-[0.7rem];
+      border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+
+      &::before {
+        @apply mr-auto text-[13px] font-semibold text-foreground;
         content: 'Open external link?';
+      }
+
+      & > button,
+      & > .relative > button {
+        @apply inline-flex size-7 shrink-0 cursor-pointer items-center justify-center p-0 text-muted-foreground hover:bg-muted hover:text-foreground;
+        transform: none;
+      }
+
+      & button svg {
+        @apply inline-block! size-4! shrink-0 overflow-visible border-0! bg-transparent! p-0! m-0! align-middle text-inherit;
       }
     }
 
+    & > div:last-child {
+      @apply relative z-[1] min-h-0 flex-1 overflow-auto bg-card p-4;
+    }
+
     & .sd-link-safety-description {
-      @apply m-0 mb-3 text-[13px] leading-[1.45] text-sd-muted;
+      @apply m-0 mb-3 text-[13px] leading-[1.45] text-muted-foreground;
     }
 
     & .sd-link-safety-url {
-      @apply break-words rounded-[10px] border border-sd-border bg-sd-surface-subtle p-3 font-mono text-xs leading-[1.45] text-sd-ink;
+      @apply break-words rounded-lg border border-border bg-muted p-3 font-mono text-xs leading-[1.45] text-foreground;
       overflow-wrap: anywhere;
 
       &.max-scroll {
@@ -221,10 +253,10 @@
       @apply mt-4 flex gap-2;
 
       & > button {
-        @apply inline-flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-[10px] border border-sd-border bg-white px-3 py-2 text-[13px] leading-tight text-sd-ink transition-colors duration-150;
+        @apply inline-flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-[13px] leading-tight text-foreground transition-colors duration-150;
 
         &:hover {
-          @apply bg-sd-hover-alt;
+          @apply bg-muted;
         }
 
         &.sd-link-safety-primary {
@@ -275,23 +307,27 @@
   }
 
   /* Mermaid fullscreen portal (role=button, no data-streamdown attribute). */
-  body > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not([data-streamdown]) {
-    @apply flex! items-center justify-center p-6;
-    background: var(--sd-modal-mask) !important;
-    backdrop-filter: blur(4px);
+  body
+    > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not(
+      [data-streamdown]
+    ) {
+    @apply flex! items-center justify-center p-6 break-normal;
+    animation: sd-fullscreen-overlay-in 150ms ease-out;
+    background: rgb(0 0 0 / 50%) !important;
+    backdrop-filter: none;
 
     & > button {
-      @apply fixed! top-5! right-5! left-auto! bottom-auto! z-[62]! m-0! inline-flex! size-8! cursor-pointer items-center justify-center rounded-md border-0 bg-white! p-0 text-sd-muted shadow-sd-close transition-colors duration-150;
+      @apply fixed! top-5! right-5! left-auto! bottom-auto! z-[62]! m-0! inline-flex! size-8! cursor-pointer items-center justify-center rounded-lg border border-border bg-card! p-0 text-muted-foreground shadow-dialog transition-colors duration-150;
       transform: none;
 
       &:hover {
-        @apply bg-sd-hover-alt text-sd-ink;
+        @apply bg-muted text-foreground;
       }
     }
 
     & > div[role='presentation'] {
-      @apply relative flex h-[min(90vh,880px)] max-h-[min(90vh,880px)] w-[min(960px,calc(100vw-3rem))] items-center justify-center overflow-auto border border-sd-border bg-white p-6 shadow-sd-panel;
-      border-radius: var(--sd-modal-panel-radius);
+      @apply relative flex h-[min(90vh,880px)] max-h-[min(90vh,880px)] w-[min(960px,calc(100vw-3rem))] items-center justify-center overflow-auto rounded-xl border border-border bg-card p-6 text-foreground shadow-dialog;
+      animation: sd-fullscreen-panel-in 150ms ease-out;
 
       & [data-streamdown='mermaid'] {
         @apply flex size-full items-center justify-center;
@@ -301,6 +337,42 @@
         @apply m-0! block! size-auto! min-w-0! max-h-[min(78vh,760px)]! max-w-[min(900px,calc(100vw-5rem))]! rounded-none! border-0! bg-transparent! p-0!;
       }
     }
+  }
+}
+
+@keyframes sd-fullscreen-overlay-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sd-fullscreen-panel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body
+    > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not(
+      [data-streamdown]
+    ),
+  body
+    > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not(
+      [data-streamdown]
+    )
+    > div[role='presentation'] {
+    animation: none;
   }
 }
 
@@ -435,7 +507,12 @@
   }
 
   :where(:not([class~='not-prose'], [class~='not-prose'] *)) {
-    &:where(h1, h2, h3, h4, p) + :is([data-streamdown='code-block'], [data-streamdown='mermaid-block'], [data-streamdown='table-wrapper']) {
+    &:where(h1, h2, h3, h4, p)
+      + :is(
+        [data-streamdown='code-block'],
+        [data-streamdown='mermaid-block'],
+        [data-streamdown='table-wrapper']
+      ) {
       @apply mt-[0.65em];
     }
   }

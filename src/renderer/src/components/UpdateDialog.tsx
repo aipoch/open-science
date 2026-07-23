@@ -4,6 +4,11 @@ import { Dialog } from 'radix-ui'
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
+import {
+  dialogCloseButtonClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName
+} from '@/components/ui/dialog-chrome'
 import { useUpdateStore } from '@/stores/update-store'
 import { APP } from '../../../shared/app-config'
 import { formatBytes } from '../../../shared/update'
@@ -32,8 +37,11 @@ const UpdateDialog = (): React.JSX.Element | null => {
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/50" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-[60] w-[min(560px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 text-foreground shadow-dialog">
+        <Dialog.Overlay className={dialogOverlayClassName} />
+        <Dialog.Content
+          onInteractOutside={(event) => event.preventDefault()}
+          className={dialogPanelClassName('z-[60] w-[min(560px,calc(100vw-2rem))]')}
+        >
           <div className="flex items-start justify-between gap-3">
             <div>
               <Dialog.Title className="text-base font-semibold">Update available</Dialog.Title>
@@ -41,10 +49,7 @@ const UpdateDialog = (): React.JSX.Element | null => {
                 v{status.current} → v{status.latest}
               </Dialog.Description>
             </div>
-            <Dialog.Close
-              aria-label="Close"
-              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-bg-300 hover:text-foreground"
-            >
+            <Dialog.Close aria-label="Close" className={dialogCloseButtonClassName}>
               <X className="size-4" aria-hidden="true" />
             </Dialog.Close>
           </div>

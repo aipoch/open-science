@@ -2,6 +2,7 @@ import { AlertDialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { resolveActiveSessionDisplay, truncateLabel } from '@/lib/active-session-display'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { ActiveSessionInfo } from '../../../shared/storage'
@@ -63,8 +64,10 @@ export const CloseConfirmModal = (): React.JSX.Element | null => {
       }}
     >
       <AlertDialog.Portal>
-        <AlertDialog.Overlay className="fixed inset-0 z-[60] bg-black/50" />
-        <AlertDialog.Content className="fixed left-1/2 top-1/2 z-[60] w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 text-foreground shadow-dialog">
+        <AlertDialog.Overlay className={dialogOverlayClassName} />
+        <AlertDialog.Content
+          className={dialogPanelClassName('z-[60] w-[min(420px,calc(100vw-2rem))]')}
+        >
           <AlertDialog.Title className="text-sm font-semibold">{title}</AlertDialog.Title>
           <AlertDialog.Description className="mt-1 text-xs text-muted-foreground">
             {description}
