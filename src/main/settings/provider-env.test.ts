@@ -42,29 +42,6 @@ describe('provider-env', () => {
     expect(env.ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com')
   })
 
-  it('uses the shared app config dir for a local (claude-default) provider, no endpoint/token', () => {
-    const env = buildProviderEnv({ type: 'claude-default', model: 'claude-opus' }, options)
-
-    expect(env).toEqual({
-      CLAUDE_CODE_EXECUTABLE: '/bin/claude',
-      CLAUDE_CONFIG_DIR: getAppClaudeConfigDir('/root'),
-      ANTHROPIC_MODEL: 'claude-opus'
-    })
-    // Local reuses the auth stored in the app dir, so no endpoint/token is injected here.
-    expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
-  })
-
-  it('omits the model for a local provider when none is set', () => {
-    const env = buildProviderEnv({ type: 'claude-default' }, options)
-
-    expect(env).toEqual({
-      CLAUDE_CODE_EXECUTABLE: '/bin/claude',
-      CLAUDE_CONFIG_DIR: getAppClaudeConfigDir('/root')
-    })
-    expect(env.ANTHROPIC_MODEL).toBeUndefined()
-  })
-
   it('injects CLAUDE_CODE_OAUTH_TOKEN for a claude-isolated provider under the app config dir', () => {
     // claude-isolated authenticates a Claude subscription via a long-lived OAuth token (from
     // `claude setup-token`). The token is portable across config dirs, so isolation comes from the

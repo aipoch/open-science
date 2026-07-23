@@ -82,6 +82,8 @@ const createService = (
     codexSmokeOk?: boolean
     codexAuth?: CodexAuthControllerPort
     claudeIsolatedAuth?: ClaudeIsolatedAuthControllerPort
+    executeClaudeProbe?: (executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>
+    userClaudeDir?: string
     userCodexDir?: string
   } = {}
 ): InstanceType<typeof SettingsService> =>

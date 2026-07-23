@@ -186,8 +186,11 @@ const execFileAsync = promisify(execFile)
 
 // Hard ceiling for a Claude credential probe so a stuck process can never hang the wizard.
 const CLAUDE_PROBE_TIMEOUT_MS = 20_000
-// Anthropic documents `claude setup-token` as a one-year long-lived OAuth token. The token carries
-// no locally readable expiry, so the Settings card surfaces this estimate from the successful paste.
+// Anthropic documents `claude setup-token` as a one-year long-lived OAuth token. We surface
+// "expires <date>" on the Settings card using this estimate until the first Claude session returns
+// a real expiry. A one-year window is a coarse upper bound; a token that the underlying
+// subscription has already revoked surfaces as a validation failure on first use, so the worst case
+// is a card that says "expires in a year" for a credential that actually expires sooner.
 const SETUP_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000
 const CODEX_INSTALL_TARGET: InstallTarget = {
   npmPackage: '@agentclientprotocol/codex-acp',
@@ -232,6 +235,19 @@ const CODEX_BRIDGE_ARTIFACT_TOOLS: ResponsesBridgeNamespacedTool[] = [
 
 const isManagedCodexPath = (adapterPath: string, storageRoot: string): boolean =>
   adapterPath === managedCodexAdapterEntry(storageRoot)
+
+type ExecuteClaudeProbe = (executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>
+
+const executeClaudeProbe: ExecuteClaudeProbe = async (executablePath, env) => {
+  await execFileAsync(executablePath, ['-p', 'ok'], {
+    env,
+    timeout: CLAUDE_PROBE_TIMEOUT_MS,
+    // On Windows the detected claude is a `claude.cmd` shim, which execFile can't launch without a
+    // shell (spawn EINVAL); route the probe through the shell there.
+    shell: process.platform === 'win32',
+    windowsHide: true
+  })
+}
 
 const runCodexAdapterVersion = async (
   adapterPath: string,
@@ -325,6 +341,8 @@ export type SettingsServiceOptions = {
   skillRegistry?: SkillRegistry
   // Writable personal/imported skill store, injectable so tests can use a temp storage root.
   userSkills?: UserSkillRepository
+  // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
+  executeClaudeProbe?: ExecuteClaudeProbe
   // One-shot managed Claude installer, injectable so tests avoid real network/fs.
   installManagedClaudeImpl?: (
     options: InstallManagedClaudeOptions
@@ -356,6 +374,7 @@ class SettingsService {
   private readonly userCodexDir: string
   private readonly skillRegistry: SkillRegistry
   private readonly userSkills: UserSkillRepository
+  private readonly executeClaudeProbe: ExecuteClaudeProbe
   private readonly installManagedClaudeImpl: (
     options: InstallManagedClaudeOptions
   ) => Promise<ManagedInstallOutcome>
@@ -410,6 +429,7 @@ class SettingsService {
     this.userCodexDir = options.userCodexDir ?? join(homedir(), '.codex')
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
     this.userSkills = options.userSkills ?? new UserSkillRepository(this.storageRoot)
+    this.executeClaudeProbe = options.executeClaudeProbe ?? executeClaudeProbe
     this.installManagedClaudeImpl = options.installManagedClaudeImpl ?? installManagedClaude
     this.installManagedOpencodeImpl = options.installManagedOpencodeImpl ?? installManagedOpencode
     this.installManagedCodexImpl = options.installManagedCodexImpl ?? installManagedCodex
