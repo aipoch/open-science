@@ -335,21 +335,29 @@ describe('AI review workflow contract', () => {
 
   it('lets manual dispatch select either reviewer subject to the configured fork mode', () => {
     const dispatchGuards = reviewWorkflow.match(/github\.event_name == 'workflow_dispatch'/g)
-    expect(dispatchGuards?.length).toBe(3)
+    expect(dispatchGuards?.length).toBe(5)
     expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'both'/g)?.length).toBe(2)
     expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'claude'/g)?.length).toBe(1)
     expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'codex'/g)?.length).toBe(1)
     expect(reviewWorkflow).toContain("needs.review_target.outputs.fork_mode != 'disabled'")
   })
 
-  it('checks out the resolved head SHA so merged pull requests can be dispatched', () => {
+  it('checks out the resolved head SHA only for trusted historical dispatches', () => {
     const expectedRef = '${{ needs.review_target.outputs.head_sha }}'
+    const expectedDispatchGuard = "${{ github.event_name == 'workflow_dispatch' }}"
+    const expectedTargetGuard = "${{ github.event_name != 'workflow_dispatch' }}"
 
-    expect(getNamedStep('claude_review', 'Checkout pull request head').with?.ref).toBe(expectedRef)
-    expect(getNamedStep('codex_review', 'Checkout pull request head').with?.ref).toBe(expectedRef)
-    expect(reviewWorkflow).not.toContain(
-      'refs/pull/${{ needs.review_target.outputs.number }}/merge'
-    )
+    for (const job of ['claude_review', 'codex_review']) {
+      const dispatchCheckout = getNamedStep(job, 'Checkout dispatched pull request head')
+      const targetCheckout = getNamedStep(job, 'Checkout pull request merge commit')
+
+      expect(dispatchCheckout.if).toBe(expectedDispatchGuard)
+      expect(dispatchCheckout.with?.ref).toBe(expectedRef)
+      expect(targetCheckout.if).toBe(expectedTargetGuard)
+      expect(targetCheckout.with?.ref).toBe(
+        'refs/pull/${{ needs.review_target.outputs.number }}/merge'
+      )
+    }
   })
 
   it('passes --repo to gh pr view so it works before checkout on a clean runner', () => {

@@ -124,10 +124,19 @@ jobs:
       pr_number: ${{ needs.review_target.outputs.number }}
       head_sha: ${{ needs.review_target.outputs.head_sha }}
     steps:
-      - name: Checkout pull request head
+      - name: Checkout dispatched pull request head
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         uses: actions/checkout@v7
         with:
           ref: ${{ needs.review_target.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout pull request merge commit
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        uses: actions/checkout@v7
+        with:
+          ref: refs/pull/${{ needs.review_target.outputs.number }}/merge
           fetch-depth: 0
           persist-credentials: false
 
@@ -438,10 +447,19 @@ jobs:
       pr_number: ${{ needs.review_target.outputs.number }}
       head_sha: ${{ needs.review_target.outputs.head_sha }}
     steps:
-      - name: Checkout pull request head
+      - name: Checkout dispatched pull request head
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         uses: actions/checkout@v7
         with:
           ref: ${{ needs.review_target.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout pull request merge commit
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        uses: actions/checkout@v7
+        with:
+          ref: refs/pull/${{ needs.review_target.outputs.number }}/merge
           fetch-depth: 0
           persist-credentials: false
 
