@@ -65,7 +65,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
     setImporting(skill.slug)
     setMessage(null)
     try {
-      const result = await importAgentHomeSkill(skill.path)
+      const result = await importAgentHomeSkill(skill.slug)
       setMessage(
         result.status === 'imported'
           ? `Imported "${skill.name}".`

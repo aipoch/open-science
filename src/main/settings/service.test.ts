@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CODEX_SUBSCRIPTION_PROVIDER_ID, type ClaudeDetectResult } from '../../shared/settings'
 import type { CodexAuthControllerPort } from './codex-auth'
+import type { ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -82,6 +83,7 @@ const createService = (
     // When false, the ACP smoke test fails (adapter present but can't initialize).
     codexSmokeOk?: boolean
     codexAuth?: CodexAuthControllerPort
+    claudeIsolatedAuth?: ClaudeIsolatedAuthControllerPort
     userCodexDir?: string
   } = {}
 ): InstanceType<typeof SettingsService> =>
@@ -143,7 +145,9 @@ const createService = (
         : undefined,
       managedCodexPath: options.codexDetected?.nativePath
     },
-    codexAuth: options.codexAuth
+    codexAuth: options.codexAuth,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    claudeIsolatedAuth: options.claudeIsolatedAuth as any
   })
 
 beforeEach(async () => {
@@ -2972,5 +2976,138 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
 
     await repository.setAgentFramework('codex')
     expect((await service.listAgentHomeSkills()).map((i) => i.slug)).toEqual(['codex-only'])
+  })
+})
+
+describe('SettingsService: claude-isolated edit preserves the stored token', () => {
+  // P1 from the Codex correctness review: editing the provider must carry the encrypted token
+  // through. Before the fix, the claude-isolated branch of upsertProvider did not propagate
+  // existing.keyRef / existing.keyMask, so a model edit silently invalidated the stored credential
+  // while the verified-marker stayed.
+
+  it('keeps keyRef + keyMask on a model edit', async () => {
+    const service = createService()
+    // Seed the encrypted token directly via the repository — the only path that writes keyRef
+    // onto the fixed builtin record, and it sidesteps the controller contract so the test stays
+    // focused on the upsert branch under test.
+    const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: encryptKey('test-token-xyz'),
+      keyMask: maskKey('test-token-xyz')
+    })
+
+    const before = (await repository.getSettings()).providers.find(
+      (p) => p.id === 'builtin-claude-isolated'
+    )
+    expect(before?.keyRef).toBeTruthy()
+    expect(before?.keyMask).toBeTruthy()
+
+    await service.upsertProvider({ type: 'claude-isolated', model: 'claude-sonnet-4-5' })
+
+    const after = (await repository.getSettings()).providers.find(
+      (p) => p.id === 'builtin-claude-isolated'
+    )
+    expect(after?.keyRef).toBe(before?.keyRef)
+    expect(after?.keyMask).toBe(before?.keyMask)
+    expect(after?.model).toBe('claude-sonnet-4-5')
+  })
+})
+
+describe('SettingsService: logoutIsolatedClaude error propagation', () => {
+  // P1 from the Codex correctness review: a controller-level error must surface as a failed
+  // result regardless of `authenticated`. Before the fix the `status.message` branch was gated on
+  // `authenticated !== false`, so a failed logout that left the token in storage still
+  // returned `{ ok: true }` and the UI reconnected as if sign-out had succeeded.
+
+  it('surfaces the controller message even when authenticated stays false', async () => {
+    const claudeIsolatedAuth = {
+      getStatus: vi.fn(),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: false,
+        message: 'Codex sign-out timed out.'
+      })
+    }
+    const service = createService(undefined, { claudeIsolatedAuth })
+
+    const result = await service.logoutIsolatedClaude()
+
+    expect(result).toMatchObject({ ok: false, message: 'Codex sign-out timed out.' })
+  })
+
+  it('returns ok when the controller reports no error', async () => {
+    const claudeIsolatedAuth = {
+      getStatus: vi.fn(),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: false
+      })
+    }
+    const service = createService(undefined, { claudeIsolatedAuth })
+
+    const result = await service.logoutIsolatedClaude()
+
+    expect(result).toEqual({ ok: true, category: 'ok' })
+  })
+})
+
+describe('SettingsService: importAgentHomeSkill path containment', () => {
+  // P1 / Medium from the Codex + Claude reviews: path authority lives in main. The renderer
+  // supplies a slug; the service resolves it against the active agent's skills dir and refuses
+  // any slug that escapes the configured home directory.
+
+  const seedSkill = async (agentHome: string, slug: string): Promise<string> => {
+    const skillDir = join(agentHome, 'skills', slug)
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(
+      join(skillDir, 'SKILL.md'),
+      `---\nname: ${slug}\ndescription: Test\n---\nBody.\n`
+    )
+    return skillDir
+  }
+
+  it('imports the skill that lives under the active agent home', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-agent-ok-'))
+    await seedSkill(userClaudeDir, 'alpha')
+    const service = createService(undefined, { userClaudeDir })
+    await repository.setAgentFramework('claude-code')
+
+    const result = await service.importAgentHomeSkill({ slug: 'alpha' })
+
+    expect(result.status).toBe('imported')
+    expect(result.id).toBe('imported-alpha')
+  })
+
+  it('rejects slugs that fail the SAFE_SLUG check before reaching the path resolver', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-agent-escape-'))
+    const service = createService(undefined, { userClaudeDir })
+    await repository.setAgentFramework('claude-code')
+
+    // Path-traversal payloads are caught by the SAFE_SLUG regex (no '/', '.', etc.), so the
+    // containment check downstream is defense-in-depth and is not exercised by valid slugs.
+    await expect(service.importAgentHomeSkill({ slug: '../../etc' })).rejects.toThrow(
+      /unsafe slug/
+    )
+    await expect(service.importAgentHomeSkill({ slug: '../sibling' })).rejects.toThrow(
+      /unsafe slug/
+    )
+    await expect(service.importAgentHomeSkill({ slug: 'has spaces' })).rejects.toThrow(
+      /unsafe slug/
+    )
+  })
+
+  it('rejects when the active framework has no global skills directory', async () => {
+    const service = createService()
+    await repository.setAgentFramework('opencode')
+
+    await expect(service.importAgentHomeSkill({ slug: 'alpha' })).rejects.toThrow(
+      /no global skills directory/
+    )
   })
 })

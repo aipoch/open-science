@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { access, chmod, mkdir, readdir, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 
@@ -155,7 +155,7 @@ import { getConnectorTools } from '../connectors/registry'
 import { renderConnectorInstructions, renderSkillDoc } from '../connectors/skill-doc'
 import { syncConnectorSkillDocs } from '../connectors/provision'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
-import { UserSkillRepository } from '../skills/user-skill-repository'
+import { SAFE_SLUG, UserSkillRepository } from '../skills/user-skill-repository'
 import { netFetch, netFetchStandard } from '../skills/net-fetch'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
 import { readSkillFile } from '../skills/skill-files'
@@ -893,13 +893,45 @@ class SettingsService {
     }
   }
 
-  // Imports a single agent-home skill by copying its directory into the imported-skill store.
+  // Imports a single agent-home skill by re-deriving its path against the active agent's home
+  // dir and copying the directory into the imported-skill store. Path authority stays in main: the
+  // renderer only supplies the slug returned by listAgentHomeSkills, and the service rejects any
+  // slug that escapes the resolved home (no .. traversal, no symlink-to-elsewhere).
   // Returns the same shape importSkill returns so the renderer can apply the same post-import
   // refresh (refresh skill list, mark skills-changed so the agent reloads).
   async importAgentHomeSkill(request: ImportAgentHomeSkillRequest): Promise<ImportSkillResult> {
-    const outcome = await this.userSkills.importAgentHomeSkill(request.sourcePath)
+    const sourcePath = await this.resolveAgentHomeSkillPath(request.slug)
+    const outcome = await this.userSkills.importAgentHomeSkill(sourcePath)
 
     return { status: outcome.status, id: outcome.id, skills: await this.listSkills() }
+  }
+
+  // Resolves a renderer-supplied slug to an absolute path under the active agent's skills dir,
+  // refusing escapes. Centralises the containment check so the IPC and the import path agree on
+  // which directory is "the agent home" and a malicious slug cannot reach arbitrary host files.
+  private async resolveAgentHomeSkillPath(slug: string): Promise<string> {
+    const settings = await this.repository.getSettings()
+    const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+    const homeSkillsDir = this.resolveAgentHomeSkillsDir(framework)
+
+    if (!homeSkillsDir) {
+      throw new Error(
+        `The active agent framework (${framework}) has no global skills directory to import from.`
+      )
+    }
+    if (!SAFE_SLUG.test(slug)) {
+      throw new Error(`Refusing to import agent-home skill with unsafe slug: ${slug}`)
+    }
+
+    const homeRoot = resolve(homeSkillsDir)
+    const candidate = resolve(homeRoot, slug)
+    const homeWithSep = homeRoot.endsWith(sep) ? homeRoot : homeRoot + sep
+
+    if (candidate !== homeRoot && !candidate.startsWith(homeWithSep)) {
+      throw new Error(`Refusing to import agent-home skill outside its home: ${slug}`)
+    }
+
+    return candidate
   }
 
   // Projects a catalog skill into its renderer-safe view given the disabled set.
@@ -1538,8 +1570,14 @@ class SettingsService {
     } else if (request.type === 'claude-isolated') {
       // claude-isolated has no fields of its own: the type tells the renderer/env-builder what to do
       // with the encrypted token (stored separately on login). A model override is allowed and follows
-      // the same rule as claude-default; sign-in is handled by loginIsolatedClaude, not by upsert.
+      // the same rule as claude-default. The encrypted token must carry over an edit so a model
+      // change does not silently invalidate the stored credential; sign-in itself is handled by
+      // loginIsolatedClaude, not by upsert.
       provider.apiEndpoints = ['anthropic']
+      if (existing?.keyRef) {
+        provider.keyRef = existing.keyRef
+        provider.keyMask = existing.keyMask
+      }
       credentialsChanged = false
       const model = request.model?.trim() || existing?.model
 
@@ -1755,7 +1793,10 @@ class SettingsService {
       })
     }
 
-    if (status.message && status.authenticated !== false) {
+    // Propagate the controller's error independently of `authenticated`: a failed logout can leave
+    // the token in storage and still report `authenticated: false`, but the controller's `message`
+    // is what the user needs to see rather than a silent success.
+    if (status.message) {
       return {
         ok: false,
         category: status.message.toLowerCase().includes('timed out') ? 'timeout' : 'unknown',
@@ -2758,8 +2799,11 @@ class SettingsService {
     provider: ResolvedProvider,
     framework: { displayName: string; supportedApiTypes: readonly ChatApiEndpoint[] }
   ): string {
-    if (provider.type === 'claude-default' || provider.type === 'claude-isolated') {
+    if (provider.type === 'claude-default') {
       return `Uses this machine's Claude sign-in, which only Claude Code can run. Switch to Claude Code or pick another provider.`
+    }
+    if (provider.type === 'claude-isolated') {
+      return `Carries an Anthropic OAuth token (setup-token) in app-owned storage, which only Claude Code can carry. Switch to Claude Code or pick another provider.`
     }
 
     const routes: Record<ChatApiEndpoint, string> = {

@@ -765,11 +765,12 @@ export type AgentHomeSkillView = {
   alreadyImported: boolean
 }
 
-// Request to import a single skill from the user's agent home into Open Science. `sourcePath` is
-// the absolute path returned by listAgentHomeSkills; the controller copies its contents under the
-// imported-skill storage root and returns the standard ImportOutcome shape.
+// Request to import a single skill from the user's agent home into Open Science. `slug` is the
+// top-level directory name returned by listAgentHomeSkills; the main-process service re-derives
+// the absolute path against the active agent's home so a renderer-supplied path cannot reach
+// outside the configured skills directory.
 export type ImportAgentHomeSkillRequest = {
-  sourcePath: string
+  slug: string
 }
 
 // One skill directory found by a repo scan, with an importable URL and whether it's already imported.

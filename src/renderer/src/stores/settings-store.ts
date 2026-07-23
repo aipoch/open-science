@@ -238,7 +238,7 @@ type SettingsStore = SettingsStoreData & {
   // "From your agent home" import source. Read-only; the import action lives below.
   listAgentHomeSkills: () => Promise<AgentHomeSkillView[]>
   // Copies one agent-home skill into the imported-skill store, refreshing the catalog on success.
-  importAgentHomeSkill: (sourcePath: string) => Promise<ImportSkillResult>
+  importAgentHomeSkill: (slug: string) => Promise<ImportSkillResult>
   // Loads the bundled-connector list (enabled/auto-allow + NCBI credential state) from main.
   loadConnectors: () => Promise<void>
   // Toggles one connector; optimistic, then reconciled with the authoritative snapshot from main.
@@ -980,8 +980,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // The agent-home import surface: list is read-only, import copies one skill into the imported
   // store and refreshes the catalog so the row can disappear (already-imported badge) immediately.
   listAgentHomeSkills: async () => window.api.settings.listAgentHomeSkills(),
-  importAgentHomeSkill: async (sourcePath) => {
-    const result = await window.api.settings.importAgentHomeSkill({ sourcePath })
+  importAgentHomeSkill: async (slug) => {
+    const result = await window.api.settings.importAgentHomeSkill({ slug })
 
     set(applySnapshot(await window.api.settings.getSettings()))
 

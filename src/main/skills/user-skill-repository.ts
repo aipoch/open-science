@@ -37,7 +37,9 @@ const USER_SOURCES: ReadonlyArray<Extract<SkillSource, 'imported' | 'personal'>>
 ]
 
 // Only lowercase slugs so a skill id maps 1:1 to a safe directory name.
-const SAFE_SLUG = /^[a-z0-9-]+$/
+// Exported so the settings service can validate renderer-supplied slugs before resolving them
+// against the active agent's skills dir; the import path is the only trust boundary.
+export const SAFE_SLUG = /^[a-z0-9-]+$/
 
 // A transaction directory left by an in-progress replace (see writeImported): `.<slug>.import-<id>`
 // holds the staged new copy, `.<slug>.backup-<id>` the previous copy moved aside during the swap.
