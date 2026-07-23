@@ -1287,6 +1287,18 @@ export class ComputeService {
       await createRow('submitted')
     }
 
+    // ── BROADCAST THE NEW ROW ──────────────────────────────────────────────────────
+    // The renderer job store hydrates once then stays live purely off job-updated broadcasts, so
+    // the badge/feed only ever sees a job that was broadcast at least once. The dispatcher broadcasts
+    // submitted→running→terminal transitions, but a QUEUED job is never dispatched (it waits for a
+    // slot) and would otherwise never reach the renderer. Broadcast the freshly created row here so
+    // queued jobs appear on the notebook bar immediately; this also closes the brief invisible window
+    // for submitted jobs before the async dispatcher emits its first transition.
+    if (this.onJobUpdated) {
+      const createdJob = await this.jobRepository.get(jobId)
+      if (createdJob) this.onJobUpdated(createdJob)
+    }
+
     // ── BACKGROUND DISPATCH (non-blocking, only for submitted jobs) ────────────────
     // Fire-and-forget. Errors are persisted to the job row by the dispatcher.
     // Queued jobs are NOT dispatched here — they wait for ConcurrencyManager.tryDispatchNext().

@@ -157,6 +157,39 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     expect(job2?.status).toBe('queued')
   })
 
+  it('broadcasts a job-updated event when a job is created in queued status', async () => {
+    const providerId = computeProviderId('test-host')
+    await service.setSessionConcurrencyLimit('session-1', 1)
+
+    // First job is submitted (dispatch broadcasts happen via the dispatcher, mocked here).
+    await service.submitJob(
+      providerId,
+      'job 1',
+      'echo one',
+      {},
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+
+    onJobUpdatedSpy.mockClear()
+
+    // Second job queues — the renderer store only learns about jobs via job-updated broadcasts,
+    // so a queued job MUST broadcast on creation or it never appears on the notebook bar.
+    const result2 = await service.submitJob(
+      providerId,
+      'job 2',
+      'echo two',
+      {},
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+    expect(result2.status).toBe('queued')
+
+    const broadcastForQueued = onJobUpdatedSpy.mock.calls.find(
+      ([job]) => job?.job_id === result2.job_id
+    )
+    expect(broadcastForQueued).toBeDefined()
+    expect(broadcastForQueued?.[0].status).toBe('queued')
+  })
+
   it('should submit job with status=queued when provider ceiling reached', async () => {
     const providerId = computeProviderId('test-host')
 
