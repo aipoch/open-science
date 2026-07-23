@@ -37,6 +37,8 @@ const createFakeRuntime = (options: {
   disconnect: ReturnType<typeof vi.fn>
   requestRetirement: ReturnType<typeof vi.fn>
   requestProviderReconnect: ReturnType<typeof vi.fn>
+  requestSkillsReload: ReturnType<typeof vi.fn>
+  applyReasoningEffortChange: ReturnType<typeof vi.fn>
   respondToPermission: ReturnType<typeof vi.fn>
   emitEvent: (event: AcpRuntimeEvent) => void
   emitPermission: (request: AcpPermissionRequest) => void
@@ -47,6 +49,8 @@ const createFakeRuntime = (options: {
   const disconnect = vi.fn(async () => snapshot)
   const requestRetirement = vi.fn(async () => undefined)
   const requestProviderReconnect = vi.fn(async () => undefined)
+  const requestSkillsReload = vi.fn(async () => undefined)
+  const applyReasoningEffortChange = vi.fn(async () => true)
   const respondToPermission = vi.fn(() => snapshot)
   const sendPrompt = vi.fn(async ({ sessionId }: { sessionId: string }) => {
     snapshot = {
@@ -105,6 +109,8 @@ const createFakeRuntime = (options: {
     disconnect,
     requestRetirement,
     requestProviderReconnect,
+    requestSkillsReload,
+    applyReasoningEffortChange,
     respondToPermission
   } as unknown as AcpRuntime
 
@@ -113,6 +119,8 @@ const createFakeRuntime = (options: {
     disconnect,
     requestRetirement,
     requestProviderReconnect,
+    requestSkillsReload,
+    applyReasoningEffortChange,
     respondToPermission,
     emitEvent: (event) => {
       snapshot = { ...snapshot, events: [...snapshot.events, event] }
@@ -132,6 +140,33 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it('applies live settings changes only to the active runtime generation', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+        sessionIds: [`session-${created.length + 1}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    await coordinator.createSession()
+    await coordinator.requestAgentFrameworkSwitch()
+    await coordinator.requestProviderReconnect()
+    await coordinator.requestSkillsReload()
+    await expect(coordinator.applyReasoningEffortChange('high')).resolves.toBe(true)
+
+    expect(created).toHaveLength(2)
+    expect(created[0].requestProviderReconnect).not.toHaveBeenCalled()
+    expect(created[0].requestSkillsReload).not.toHaveBeenCalled()
+    expect(created[0].applyReasoningEffortChange).not.toHaveBeenCalled()
+    expect(created[1].requestProviderReconnect).toHaveBeenCalledOnce()
+    expect(created[1].requestSkillsReload).toHaveBeenCalledOnce()
+    expect(created[1].applyReasoningEffortChange).toHaveBeenCalledWith('high')
+  })
+
   it('runs new sessions immediately and moves the old session after its active turn', async () => {
     const oldPrompt = createDeferred<{ stopReason: string }>()
     const created: ReturnType<typeof createFakeRuntime>[] = []

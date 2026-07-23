@@ -2016,6 +2016,7 @@ describe('ACP runtime session management', () => {
   it('serves artifact/notebook MCP over the http host for an http-only framework', async () => {
     const root = await createTemporaryRoot()
     const httpHost = new AgentMcpHttpHost()
+    const closeHttpHost = vi.spyOn(httpHost, 'close')
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['oc-session'])
     const runtime = new AcpRuntime({
@@ -2057,6 +2058,9 @@ describe('ACP runtime session management', () => {
       const artifactServer = servers.find((server) => server.name === 'open-science-artifacts')
       expect(artifactServer?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp\/artifact\//)
       expect(artifactServer?.headers?.[0]).toMatchObject({ name: 'authorization' })
+
+      await runtime.requestRetirement()
+      expect(closeHttpHost).toHaveBeenCalledOnce()
     } finally {
       await httpHost.close()
     }

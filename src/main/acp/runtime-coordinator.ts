@@ -204,6 +204,9 @@ class AcpRuntimeCoordinator {
     await retiring.requestRetirement()
   }
 
+  // Settings changes target the generation that owns future turns. Retiring generations stay pinned
+  // to the configuration of the workflow they are finishing; reconnecting or mutating them here would
+  // break the framework-switch guarantee that an in-progress turn/reviewer loop completes atomically.
   requestProviderReconnect(): Promise<void> {
     return this.getActiveRuntime().requestProviderReconnect()
   }

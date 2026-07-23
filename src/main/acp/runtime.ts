@@ -1562,7 +1562,11 @@ class AcpRuntime {
     this.nextConnectionGeneration()
     this.connectInFlight = undefined
 
-    return this.disconnectCurrent(emitClosedStatus)
+    try {
+      return await this.disconnectCurrent(emitClosedStatus)
+    } finally {
+      await this.closeMcpHttpHost()
+    }
   }
 
   // Synchronously terminates the agent child for app shutdown. Electron's `will-quit` cannot await, so
@@ -1576,6 +1580,7 @@ class AcpRuntime {
     this.connection?.close()
     this.connection = undefined
     this.killAgentProcess()
+    void this.closeMcpHttpHost()
     void this.releaseResponsesBridgeLease()
   }
 
@@ -1962,6 +1967,14 @@ class AcpRuntime {
     const lease = this.responsesBridgeLease
     this.responsesBridgeLease = undefined
     await lease?.release()
+  }
+
+  private async closeMcpHttpHost(): Promise<void> {
+    try {
+      await this.mcpHttpHost?.close()
+    } catch (error) {
+      safeLogError('MCP HTTP host close failed', errorLogFields(error))
+    }
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
@@ -3555,6 +3568,7 @@ class AcpRuntime {
     this.pendingSkillsReload = false
     this.pendingRetirement = false
     this.resolveReconnectBarrier()
+    void this.closeMcpHttpHost()
     void this.releaseResponsesBridgeLease()
     this.setStatus('closed')
   }
