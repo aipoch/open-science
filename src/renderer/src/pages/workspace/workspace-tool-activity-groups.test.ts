@@ -135,6 +135,8 @@ describe('formatActivityGroupTitle', () => {
     const cases: Array<[Partial<ToolActivity>, string]> = [
       [{ providerToolName: 'websearch' }, 'Ran a search'],
       [{ providerToolName: 'mcp__open-science-notebook__notebook_execute' }, 'Ran a notebook cell'],
+      // Codex/gpt bridge underscore-sanitizes the server name; still categorized as a notebook cell.
+      [{ providerToolName: 'mcp__open_science_notebook__notebook_execute' }, 'Ran a notebook cell'],
       [{ providerToolName: 'skill' }, 'Loaded a skill'],
       [{ providerToolName: 'save_artifacts' }, 'Saved a file'],
       [{ providerToolName: 'manage_packages' }, 'Managed an environment'],

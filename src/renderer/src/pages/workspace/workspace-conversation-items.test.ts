@@ -147,6 +147,20 @@ describe('workspace conversation items', () => {
     ).toBe('Using tool: Notebook restart')
   })
 
+  it('detects notebook tools whose server name was underscore-sanitized (Codex/gpt bridge)', () => {
+    // The gpt/codex bridge rewrites the hyphenated server name to underscores; still a notebook cell.
+    expect(
+      formatActivityTitle(
+        createActivity({
+          id: 'tool-notebook-underscore',
+          status: 'completed',
+          providerToolName: 'mcp__open_science_notebook__notebook_execute',
+          toolKind: 'other'
+        })
+      )
+    ).toBe('Used tool: Notebook cell')
+  })
+
   it('falls back to readable tool kind names for unnamed tools', () => {
     expect(
       formatActivityTitle(

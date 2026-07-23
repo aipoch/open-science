@@ -5,8 +5,7 @@ import type { ToolActivity } from '@/stores/session-store'
 import {
   buildToolActivityDetails,
   getToolDisplayName,
-  isEditActivity,
-  isNotebookExecuteActivity
+  isEditActivity
 } from './workspace-tool-activity-details'
 
 const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
@@ -163,20 +162,6 @@ describe('workspace tool activity details', () => {
     expect(details?.sections[1]).toMatchObject({ label: 'Output', text: '5 rows returned' })
   })
 
-  it('detects the notebook execute tool so its row can default to expanded', () => {
-    expect(
-      isNotebookExecuteActivity(
-        createActivity({ providerToolName: 'mcp__open-science-notebook__notebook_execute' })
-      )
-    ).toBe(true)
-    expect(
-      isNotebookExecuteActivity(
-        createActivity({ providerToolName: 'mcp__open-science-notebook__notebook_state' })
-      )
-    ).toBe(false)
-    expect(isNotebookExecuteActivity(createActivity({ providerToolName: 'Bash' }))).toBe(false)
-  })
-
   it('renders a notebook cell as Python code plus output, not the raw run summary', () => {
     const runSummary = {
       runId: 'notebook-run-1',
@@ -210,6 +195,27 @@ describe('workspace tool activity details', () => {
     // The code section stays open; only the output collapses.
     expect(details?.sections[0]).toMatchObject({ label: 'Code' })
     expect((details?.sections[0] as { collapsible?: boolean }).collapsible).toBeFalsy()
+  })
+
+  it('labels a notebook cell with its clean kernel name, never the raw tool id', () => {
+    const runSummary = {
+      status: 'completed',
+      script: 'x = 1',
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: []
+    }
+    const activity = createActivity({
+      // The runtime may backfill an untitled call with the raw tool id; the row label ignores it.
+      title: 'mcp__open-science-notebook__notebook_execute',
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      rawInput: { code: 'x = 1' },
+      toolContent: [
+        { type: 'content', content: { type: 'text', text: JSON.stringify(runSummary) } }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Notebook cell')
   })
 
   it('falls back to the run summary script when notebook input code is unavailable', () => {

@@ -1,7 +1,7 @@
 import type { ToolActivity } from '@/stores/session-store'
 
 import {
-  NOTEBOOK_PROVIDER_TOOL_PREFIX,
+  getNotebookToolSuffix,
   isActivityActive,
   type ConversationItem
 } from './workspace-conversation-items'
@@ -168,7 +168,7 @@ const categorizeActivity = (
   const providerName = getNormalizedProviderName(activity)
 
   // A notebook_execute call is one cell run; summarize it as such instead of a generic tool.
-  if (providerName === `${NOTEBOOK_PROVIDER_TOOL_PREFIX}notebook_execute`) return 'notebook'
+  if (getNotebookToolSuffix(providerName) === 'notebook_execute') return 'notebook'
   if (providerName === 'skill') return 'skill'
   if (providerName === 'save_artifacts' || providerName.includes('artifact')) return 'artifact'
   if (providerName === 'manage_packages' || providerName.includes('package')) return 'environment'

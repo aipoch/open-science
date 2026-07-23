@@ -474,13 +474,6 @@ const buildArtifactDetails = (activity: ToolActivity): ToolActivityDetails | und
   }
 }
 
-// Detects the notebook execute MCP tool so its cell can render as code plus output.
-const isNotebookExecuteActivity = (activity: ToolActivity): boolean => {
-  const providerName = trimDetail(activity.providerToolName)?.toLowerCase() ?? ''
-
-  return providerName.includes('open-science-notebook') && providerName.endsWith('notebook_execute')
-}
-
 // The kernel kinds a notebook run tool can produce; drives language, label, and display name.
 type NotebookKernelKindLike = 'python' | 'r' | 'repl' | 'bash'
 
@@ -508,9 +501,11 @@ const NOTEBOOK_KERNEL_DISPLAY: Record<NotebookKernelKindLike, string> = {
 // Detects any notebook kernel run (python/r cell, repl control-plane, or bash) so all three render
 // as code plus output rather than the raw run-summary JSON envelope.
 const isNotebookKernelRunActivity = (activity: ToolActivity): boolean => {
+  // Match both server-name forms: Claude Code's hyphenated open-science-notebook and the Codex/gpt
+  // bridge's underscore-sanitized open_science_notebook.
   const providerName = trimDetail(activity.providerToolName)?.toLowerCase() ?? ''
 
-  if (!providerName.includes('open-science-notebook')) return false
+  if (!/open[-_]science[-_]notebook/u.test(providerName)) return false
 
   return NOTEBOOK_RUN_TOOL_SUFFIXES.some((suffix) => providerName.endsWith(suffix))
 }
@@ -898,7 +893,7 @@ const buildToolActivityDetails = (activity: ToolActivity): ToolActivityDetails |
   return buildGenericDetails(activity)
 }
 
-export { buildToolActivityDetails, getToolDisplayName, isEditActivity, isNotebookExecuteActivity }
+export { buildToolActivityDetails, getToolDisplayName, isEditActivity }
 export type {
   ToolActivityDetails,
   ToolCodeSection,

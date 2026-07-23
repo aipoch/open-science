@@ -8,10 +8,7 @@ import { extractJobIdFromActivity } from '@/components/job-binding-utils'
 import { WorkspaceToolActivityRow } from './WorkspaceToolActivityRow'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
 import { WorkspaceWebSearchActivityRow } from './WorkspaceWebSearchActivityRow'
-import {
-  buildToolActivityDetails,
-  isNotebookExecuteActivity
-} from './workspace-tool-activity-details'
+import { buildToolActivityDetails } from './workspace-tool-activity-details'
 import {
   formatActivityGroupTitle,
   formatStepCount,
@@ -86,9 +83,9 @@ const WorkspaceActivityGroup = ({
                   const isSearch = isSearchActivity(activity, group.activities, activityIndex)
                   const searchDetails = isSearch ? formatWebSearchDetails(activity) : undefined
                   const toolDetails = isSearch ? undefined : buildToolActivityDetails(activity)
-                  // Notebook cells lead with their code, so show it unfolded unless the user collapsed it.
-                  const isRowExpanded =
-                    expansionOverrides[activity.id] ?? isNotebookExecuteActivity(activity)
+                  // All tool rows — notebook cells included — default collapsed (meaningful title
+                  // only); clicking the title reveals the code and output. A user toggle still wins.
+                  const isRowExpanded = expansionOverrides[activity.id] ?? false
 
                   return (
                     <div key={activity.id} className="w-full overflow-hidden">
