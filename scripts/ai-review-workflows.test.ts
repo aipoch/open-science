@@ -78,6 +78,10 @@ function writeExecutable(path: string, contents: string): void {
   chmodSync(path, 0o755)
 }
 
+function writeJsonLines(path: string, events: unknown[]): void {
+  writeFileSync(path, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`)
+}
+
 function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: 'ignore' })
 }
@@ -324,13 +328,12 @@ describe('AI review workflow contract', () => {
 
   it('runs the Claude agent with zero tools so it cannot read runner secrets', () => {
     const step = getNamedStep('claude_review', 'Run Claude architecture review')
-    const args = step.with?.claude_args
+    const command = step.run
 
-    // A single space survives the action parser and is trimmed by Claude into an empty tool list.
-    expect(args).toContain('--tools " "')
+    expect(command).toContain('--tools ""')
     // --safe-mode disables all project customisations (hooks, MCP servers, .claude/settings.json).
-    expect(args).toContain('--safe-mode')
-    expect(args).toContain('--strict-mcp-config')
+    expect(command).toContain('--safe-mode')
+    expect(command).toContain('--strict-mcp-config')
     // Must NOT use the old --allowedTools approach which does not actually disable tools.
     expect(reviewWorkflow).not.toContain('--allowedTools')
     expect(reviewWorkflow).toContain('Generate review context')
@@ -339,46 +342,41 @@ describe('AI review workflow contract', () => {
 
   it('runs Claude with an explicit Sonnet model and endpoint-compatible output framing', () => {
     const step = getNamedStep('claude_review', 'Run Claude architecture review')
-    const args = step.with?.claude_args
+    const installStep = getNamedStep('claude_review', 'Install Claude CLI')
 
-    expect(step.uses).toBe('anthropics/claude-code-action@44423bdec74b97d67543eb16c110546762c110b2')
-    expect(args).toContain('--model "${{ vars.CLAUDE_REVIEW_MODEL || \'claude-sonnet-5\' }}"')
-    expect(args).not.toContain('--output-format json')
-    expect(args).not.toContain('--json-schema')
+    expect(installStep.run).toContain('@anthropic-ai/claude-code@2.1.218')
+    expect(step.env?.CLAUDE_MODEL).toBe("${{ vars.CLAUDE_REVIEW_MODEL || 'claude-sonnet-5' }}")
+    expect(step.run).toContain('--output-format stream-json')
+    expect(step.run).not.toContain('--json-schema')
     expect(step.env).not.toHaveProperty('ANTHROPIC_DEFAULT_SONNET_MODEL')
   })
 
-  it('allows non-write actors only for explicitly automatic fork reviews', () => {
-    const claudeStep = getNamedStep('claude_review', 'Run Claude architecture review')
+  it('allows Codex non-write actors only for explicitly automatic fork reviews', () => {
     const codexStep = getNamedStep('codex_review', 'Run Codex correctness review')
     const automaticForkExpression =
       "${{ needs.review_target.outputs.is_fork == 'true' && needs.review_target.outputs.fork_mode == 'automatic' && '*' || '' }}"
 
-    expect(claudeStep.with?.allowed_non_write_users).toBe(automaticForkExpression)
     expect(codexStep.with?.['allow-users']).toBe(automaticForkExpression)
   })
 
-  it('extracts only the final Claude assistant message from the action execution file', () => {
+  it('extracts only the final Claude assistant message from the CLI JSONL stream', () => {
     const root = createFixtureRoot('ai-review-claude-output-')
     const executionFile = join(root, 'execution.json')
     const githubOutput = join(root, 'github-output')
-    writeFileSync(
-      executionFile,
-      JSON.stringify([
-        { type: 'system', subtype: 'init', tools: [] },
-        { type: 'assistant', message: { content: [{ type: 'text', text: 'draft' }] } },
-        {
-          type: 'assistant',
-          message: {
-            content: [
-              { type: 'text', text: '## Claude Architecture Review' },
-              { type: 'text', text: '**Verdict: mergeable**' }
-            ]
-          }
-        },
-        { type: 'result', subtype: 'success' }
-      ])
-    )
+    writeJsonLines(executionFile, [
+      { type: 'system', subtype: 'init', tools: [] },
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'draft' }] } },
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: '## Claude Architecture Review' },
+            { type: 'text', text: '**Verdict: mergeable**' }
+          ]
+        }
+      },
+      { type: 'result', subtype: 'success' }
+    ])
 
     const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
       cwd: root,
@@ -396,21 +394,18 @@ describe('AI review workflow contract', () => {
     const root = createFixtureRoot('ai-review-claude-tool-use-')
     const executionFile = join(root, 'execution.json')
     const githubOutput = join(root, 'github-output')
-    writeFileSync(
-      executionFile,
-      JSON.stringify([
-        { type: 'system', subtype: 'init', tools: [] },
-        {
-          type: 'assistant',
-          message: {
-            content: [
-              { type: 'tool_use', name: 'Read', input: { file_path: '/proc/self/environ' } },
-              { type: 'text', text: '## Claude Architecture Review' }
-            ]
-          }
+    writeJsonLines(executionFile, [
+      { type: 'system', subtype: 'init', tools: [] },
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', name: 'Read', input: { file_path: '/proc/self/environ' } },
+            { type: 'text', text: '## Claude Architecture Review' }
+          ]
         }
-      ])
-    )
+      }
+    ])
 
     const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
       cwd: root,
@@ -426,16 +421,13 @@ describe('AI review workflow contract', () => {
     const root = createFixtureRoot('ai-review-claude-tools-available-')
     const executionFile = join(root, 'execution.json')
     const githubOutput = join(root, 'github-output')
-    writeFileSync(
-      executionFile,
-      JSON.stringify([
-        { type: 'system', subtype: 'init', tools: ['Read'] },
-        {
-          type: 'assistant',
-          message: { content: [{ type: 'text', text: '## Claude Architecture Review' }] }
-        }
-      ])
-    )
+    writeJsonLines(executionFile, [
+      { type: 'system', subtype: 'init', tools: ['Read'] },
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: '## Claude Architecture Review' }] }
+      }
+    ])
 
     const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
       cwd: root,
@@ -453,8 +445,14 @@ describe('AI review workflow contract', () => {
     expect(reviewWorkflow).toContain('binary')
   })
 
-  it('uses a random delimiter for $GITHUB_OUTPUT context', () => {
-    expect(reviewWorkflow).toMatch(/head -c 16 \/dev\/urandom/)
+  it('feeds the large Claude prompt through a file and stdin instead of an action input', () => {
+    const contextStep = getNamedStep('claude_review', 'Generate review context')
+    const reviewStep = getNamedStep('claude_review', 'Run Claude architecture review')
+
+    expect(contextStep.run).toContain('prompt_file="$RUNNER_TEMP/claude-review-prompt.md"')
+    expect(reviewStep.run).toContain('< "$CLAUDE_PROMPT_FILE"')
+    expect(reviewWorkflow).not.toContain('steps.context.outputs.content')
+    expect(reviewWorkflow).not.toContain('anthropics/claude-code-action')
   })
 
   it('skips binary blobs when generating Claude review context', () => {
@@ -465,13 +463,19 @@ describe('AI review workflow contract', () => {
     const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'context')], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...process.env, GITHUB_OUTPUT: githubOutput }
+      env: {
+        ...process.env,
+        RUNNER_TEMP: root,
+        PR_NUMBER: '349',
+        REPOSITORY: 'aipoch/open-science',
+        GITHUB_OUTPUT: githubOutput
+      }
     })
 
     expect(result.status, result.stderr).toBe(0)
-    const output = readFileSync(githubOutput)
-    expect(output.includes(0)).toBe(false)
-    expect(output.toString('utf8')).toContain('### payload.bin (skipped: binary)')
+    const prompt = readFileSync(join(root, 'claude-review-prompt.md'))
+    expect(prompt.includes(0)).toBe(false)
+    expect(prompt.toString('utf8')).toContain('### payload.bin (skipped: binary)')
   })
 
   it('does not follow changed symlinks when generating Claude review context', () => {
@@ -482,11 +486,19 @@ describe('AI review workflow contract', () => {
     const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'context')], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...process.env, GITHUB_OUTPUT: githubOutput }
+      env: {
+        ...process.env,
+        RUNNER_TEMP: root,
+        PR_NUMBER: '349',
+        REPOSITORY: 'aipoch/open-science',
+        GITHUB_OUTPUT: githubOutput
+      }
     })
 
     expect(result.status, result.stderr).toBe(0)
-    expect(readFileSync(githubOutput, 'utf8')).toContain('### outside-link (skipped: symlink)')
+    expect(readFileSync(join(root, 'claude-review-prompt.md'), 'utf8')).toContain(
+      '### outside-link (skipped: symlink)'
+    )
   })
 
   it('skips Claude without truncating review context when the size limit is exceeded', () => {
