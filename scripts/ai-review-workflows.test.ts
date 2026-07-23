@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 
 import { load } from 'js-yaml'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // ai-review-labels.yml consumes reviewer job names and comment headers produced by ai-review.yml.
 // That contract is otherwise invisible: a rename on either side silently disables verdict-based
@@ -32,10 +32,17 @@ type WorkflowStep = {
   run?: string
   'working-directory'?: string
   env?: Record<string, string>
+  with?: { script?: string }
+}
+
+type WorkflowJob = {
+  steps: WorkflowStep[]
+  concurrency?: { group: string; 'cancel-in-progress': boolean }
 }
 
 type Workflow = {
-  jobs: Record<string, { steps: WorkflowStep[] }>
+  concurrency?: { group: string; 'cancel-in-progress': boolean }
+  jobs: Record<string, WorkflowJob>
 }
 
 const parsedWorkflow = load(reviewWorkflow) as Workflow
@@ -175,7 +182,16 @@ function readSimpleOutputs(path: string): Record<string, string> {
   )
 }
 
-function runCodexReviewGate(existingReviews: number): Record<string, string> {
+type ReviewComment = {
+  id: number
+  body: string | null
+  user: { login: string }
+}
+
+function runCodexReviewGate(
+  existingReviews: number,
+  additionalComments: ReviewComment[] = []
+): Record<string, string> {
   const root = createFixtureRoot('ai-review-gate-')
   const binDir = join(root, 'bin')
   const githubOutput = join(root, 'github-output')
@@ -185,11 +201,22 @@ function runCodexReviewGate(existingReviews: number): Record<string, string> {
     join(binDir, 'gh'),
     `#!/usr/bin/env bash
 set -euo pipefail
-for ((i = 0; i < REVIEW_COUNT; i++)); do
-  echo "review-$i"
-done
+[[ "$1" == "api" ]]
+[[ "$2" == "--paginate" ]]
+[[ "$3" == "repos/$GH_REPO/issues/349/comments?per_page=100" ]]
+[[ "$4" == "--jq" ]]
+printf '%s' "$REVIEW_COMMENTS_JSON" | jq -r "$5"
 `
   )
+
+  const comments: ReviewComment[] = [
+    ...Array.from({ length: existingReviews }, (_, id) => ({
+      id,
+      body: '<!-- ai-review:codex -->\nreview body',
+      user: { login: 'github-actions[bot]' }
+    })),
+    ...additionalComments
+  ]
 
   const result = spawnSync('bash', ['-c', getRunStep('codex_review_gate', 'gate')], {
     cwd: root,
@@ -197,7 +224,7 @@ done
     env: {
       ...process.env,
       PATH: `${binDir}:${process.env.PATH}`,
-      REVIEW_COUNT: String(existingReviews),
+      REVIEW_COMMENTS_JSON: JSON.stringify(comments),
       GH_TOKEN: 'test-token',
       GH_REPO: 'aipoch/open-science',
       DISPATCH_PR_NUMBER: '',
@@ -211,6 +238,45 @@ done
     throw new Error(`Codex review gate failed:\n${result.stdout}\n${result.stderr}`)
   }
   return readSimpleOutputs(githubOutput)
+}
+
+async function runPostCodexFeedback(existingReviews: number): Promise<string[]> {
+  const script = getNamedStep('post_codex_feedback', 'Post first-round Codex correctness review')
+    .with?.script
+  if (!script) throw new Error('Missing post_codex_feedback script')
+
+  const marker = '<!-- ai-review:codex -->'
+  const comments = Array.from({ length: existingReviews }, () => ({
+    body: marker,
+    user: { login: 'github-actions[bot]' }
+  }))
+  const postedBodies: string[] = []
+  const github = {
+    rest: {
+      issues: {
+        listComments: vi.fn(),
+        createComment: vi.fn(async ({ body }: { body: string }) => postedBodies.push(body))
+      }
+    },
+    paginate: vi.fn(async () => comments)
+  }
+  const context = { repo: { owner: 'aipoch', repo: 'open-science' } }
+  const core = { notice: vi.fn() }
+  const processStub = {
+    env: {
+      CODEX_FINAL_MESSAGE: '## Codex Correctness Review\n**Verdict: mergeable**',
+      PR_NUMBER: '349'
+    }
+  }
+  const run = new Function(
+    'github',
+    'context',
+    'core',
+    'process',
+    `return (async () => {\n${script}\n})()`
+  )
+  await run(github, context, core, processStub)
+  return postedBodies
 }
 
 describe('AI review workflow contract', () => {
@@ -381,5 +447,40 @@ describe('AI review workflow contract', () => {
 
   it('skips Codex review after ten successful reviews', () => {
     expect(runCodexReviewGate(10)).toMatchObject({ should_run: 'false', round: '11' })
+  })
+
+  it('ignores untrusted or unrelated pull request comments when counting reviews', () => {
+    const unrelatedComments: ReviewComment[] = [
+      {
+        id: 100,
+        body: '## Codex Correctness Review\n**Verdict: mergeable**',
+        user: { login: 'contributor' }
+      },
+      { id: 101, body: 'ordinary bot comment', user: { login: 'github-actions[bot]' } },
+      { id: 102, body: null, user: { login: 'github-actions[bot]' } }
+    ]
+
+    expect(runCodexReviewGate(9, unrelatedComments)).toMatchObject({
+      should_run: 'true',
+      round: '10'
+    })
+  })
+
+  it('publishes the tenth Codex review with a trusted marker', async () => {
+    await expect(runPostCodexFeedback(9)).resolves.toEqual([
+      expect.stringContaining('<!-- ai-review:codex -->')
+    ])
+  })
+
+  it('does not publish an eleventh Codex review', async () => {
+    await expect(runPostCodexFeedback(10)).resolves.toEqual([])
+  })
+
+  it('serializes the complete review workflow per pull request', () => {
+    expect(parsedWorkflow.concurrency).toEqual({
+      group:
+        'ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}',
+      'cancel-in-progress': true
+    })
   })
 })

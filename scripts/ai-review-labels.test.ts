@@ -147,6 +147,25 @@ describe('apply_review_outcome', () => {
     )
   })
 
+  it('uses the associated PR head for pull_request_target workflow runs', async () => {
+    const { github, added } = makeGithub({
+      jobs: [{ name: 'Codex correctness review', conclusion: 'success' }],
+      comments: [verdictComment('## Codex Correctness Review', 'mergeable')],
+      prHeadSha: 'pr-head-sha'
+    })
+    await runJob(
+      'apply_review_outcome',
+      reviewContext({
+        event: 'pull_request_target',
+        head_sha: 'base-sha',
+        pull_requests: [{ number: 7, head: { sha: 'pr-head-sha' } }]
+      }),
+      github
+    )
+
+    expect(added).toEqual([['ready-to-merge']])
+  })
+
   it('fails closed when a reviewer job ran but did not succeed', async () => {
     const { github, added, removed } = makeGithub({
       jobs: [claudeJob, { name: 'Codex correctness review', conclusion: 'failure' }],

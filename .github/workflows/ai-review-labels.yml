@@ -127,7 +127,8 @@ jobs:
     name: Apply review outcome labels
     if: >-
       ${{ github.event_name == 'workflow_run' &&
-          github.event.workflow_run.event == 'pull_request' &&
+          ( github.event.workflow_run.event == 'pull_request' ||
+            github.event.workflow_run.event == 'pull_request_target' ) &&
           github.event.workflow_run.conclusion != 'cancelled' &&
           github.event.workflow_run.pull_requests[0].number != null }}
     runs-on: ubuntu-latest
@@ -148,7 +149,11 @@ jobs:
               pull_number: pullRequest.number,
             });
 
-            if (currentPullRequest.head.sha !== context.payload.workflow_run.head_sha) {
+            const reviewedHeadSha =
+              context.payload.workflow_run.event === 'pull_request_target'
+                ? pullRequest.head?.sha
+                : context.payload.workflow_run.head_sha;
+            if (!reviewedHeadSha || currentPullRequest.head.sha !== reviewedHeadSha) {
               core.notice('Skipping labels because a newer pull request commit exists.');
               return;
             }
@@ -170,9 +175,9 @@ jobs:
               { jobName: 'Claude architecture review', header: '## Claude Architecture Review' },
               { jobName: 'Codex correctness review', header: '## Codex Correctness Review' },
             ];
-            // Skipped reviewer jobs (a disabled reviewer, or Codex on a non-'opened' event) still
-            // appear in this list with conclusion 'skipped' and must be ignored; only a reviewer
-            // that actually ran but did not succeed may block the ready label.
+            // Skipped reviewer jobs (a disabled reviewer, or Codex after its review-round limit)
+            // still appear in this list with conclusion 'skipped' and must be ignored; only a
+            // reviewer that actually ran but did not succeed may block the ready label.
             const present = reviewers
               .map((reviewer) => ({
                 ...reviewer,

@@ -36,6 +36,10 @@ on:
         description: Pull request number to review
         required: true
 
+concurrency:
+  group: ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   claude_review:
     # Keep this name in sync with ai-review-labels.yml, which recognizes successful reviewers.
@@ -269,7 +273,7 @@ jobs:
 
           review_count="$(
             gh api --paginate "repos/${GH_REPO}/issues/${pr_number}/comments?per_page=100" \
-              --jq '.[] | select(.user.login == "github-actions[bot]" and ((.body // "") | contains("## Codex Correctness Review"))) | .id' \
+              --jq '.[] | select(.user.login == "github-actions[bot]" and ((.body // "") | (contains("<!-- ai-review:codex -->") or contains("## Codex Correctness Review")))) | .id' \
               | wc -l \
               | tr -d '[:space:]'
           )"
@@ -463,6 +467,9 @@ jobs:
     if: ${{ needs.codex_review.result == 'success' && needs.codex_review.outputs.final_message != '' }}
     needs: codex_review
     runs-on: ubuntu-latest
+    concurrency:
+      group: codex-review-post-${{ needs.codex_review.outputs.pr_number }}
+      cancel-in-progress: false
     permissions:
       issues: write
       pull-requests: write
@@ -475,9 +482,28 @@ jobs:
         with:
           github-token: ${{ github.token }}
           script: |
+            const marker = '<!-- ai-review:codex -->';
+            const maxReviews = 10;
+            const issueNumber = Number(process.env.PR_NUMBER);
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const reviewCount = comments.filter(
+              ({ body, user }) =>
+                user?.login === 'github-actions[bot]' &&
+                (body?.includes(marker) || body?.includes('## Codex Correctness Review')),
+            ).length;
+            if (reviewCount >= maxReviews) {
+              core.notice(`Skipping Codex feedback: review limit ${maxReviews} reached.`);
+              return;
+            }
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: Number(process.env.PR_NUMBER),
-              body: process.env.CODEX_FINAL_MESSAGE,
+              issue_number: issueNumber,
+              body: `${marker}\n${process.env.CODEX_FINAL_MESSAGE}`,
             });
