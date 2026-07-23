@@ -337,7 +337,7 @@ describe('AI review workflow contract', () => {
     expect(step.env).not.toHaveProperty('ANTHROPIC_DEFAULT_SONNET_MODEL')
   })
 
-  it('extracts all Claude assistant messages from the action execution file', () => {
+  it('extracts only the final Claude assistant message from the action execution file', () => {
     const root = createFixtureRoot('ai-review-claude-output-')
     const executionFile = join(root, 'execution.json')
     const githubOutput = join(root, 'github-output')
@@ -367,9 +367,8 @@ describe('AI review workflow contract', () => {
 
     expect(result.status, result.stderr).toBe(0)
     const output = readFileSync(githubOutput, 'utf8')
-    expect(output).toContain(
-      'draft\n## Claude Architecture Review\n**Verdict: mergeable**'
-    )
+    expect(output).not.toContain('draft')
+    expect(output).toContain('## Claude Architecture Review\n**Verdict: mergeable**')
   })
 
   it('fails closed if Claude attempts to use a tool', () => {
