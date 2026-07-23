@@ -393,6 +393,31 @@ describe('AI review workflow contract', () => {
     expect(output).toContain('## Claude Architecture Review\n**Verdict: mergeable**')
   })
 
+  it('falls back to the CLI result event when no assistant event is emitted', () => {
+    const root = createFixtureRoot('ai-review-claude-result-')
+    const executionFile = join(root, 'execution.jsonl')
+    const githubOutput = join(root, 'github-output')
+    writeJsonLines(executionFile, [
+      { type: 'system', subtype: 'init', tools: [] },
+      {
+        type: 'result',
+        subtype: 'success',
+        result: '## Claude Architecture Review\n**Verdict: mergeable**'
+      }
+    ])
+
+    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
+    })
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(readFileSync(githubOutput, 'utf8')).toContain(
+      '## Claude Architecture Review\n**Verdict: mergeable**'
+    )
+  })
+
   it('fails closed if Claude attempts to use a tool', () => {
     const root = createFixtureRoot('ai-review-claude-tool-use-')
     const executionFile = join(root, 'execution.json')

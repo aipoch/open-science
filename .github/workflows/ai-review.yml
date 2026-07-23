@@ -327,9 +327,14 @@ jobs:
 
           review="$(
             jq -s -r '
-              [.[] | select(.type == "assistant")] | last
-              | [.message.content[]? | select(.type == "text") | .text]
-              | join("\n")
+              ([.[] | select(.type == "assistant")] | last
+                | [.message.content[]? | select(.type == "text") | .text]
+                | join("\n")) as $assistant
+              | if ($assistant | length) > 0 then
+                  $assistant
+                else
+                  ([.[] | select(.type == "result")] | last | .result // "")
+                end
             ' "$EXECUTION_FILE"
           )"
           if [[ -z "$review" ]]; then
