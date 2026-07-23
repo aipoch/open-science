@@ -189,7 +189,6 @@ export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
     }
   }
 
-
   if (key.startsWith('official:')) {
     const vendorId = key.slice('official:'.length) as OfficialVendorId
     const vendor = getOfficialVendor(vendorId)

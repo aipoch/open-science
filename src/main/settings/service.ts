@@ -2881,7 +2881,6 @@ class SettingsService {
       return `Carries an Anthropic OAuth token (setup-token) in app-owned storage, which only Claude Code can carry. Switch to Claude Code or pick another provider.`
     }
 
-
     const routes: Record<ChatApiEndpoint, string> = {
       anthropic: '/v1/messages',
       openai: '/v1/chat/completions',

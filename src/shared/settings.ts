@@ -15,7 +15,7 @@ export const SETTINGS_FILE_VERSION = 2
 // subscription, or one of Codex's two subscription profiles. Codex shared uses the machine's
 // normal CODEX_HOME; isolated uses the app-owned profile. claude-isolated authenticates a Claude
 // subscription via a setup-token paste under an app-owned CLAUDE_CONFIG_DIR (no ~/.claude touch).
-export type ProviderType = 'custom' | 'claude-isolated' | 'official' | 'codex-shared' | 'codex-isolated' 
+export type ProviderType = 'custom' | 'claude-isolated' | 'official' | 'codex-shared' | 'codex-isolated'
 
 export const CODEX_SHARED_PROVIDER_ID = 'builtin-codex-shared'
 export const CODEX_ISOLATED_PROVIDER_ID = 'builtin-codex-isolated'

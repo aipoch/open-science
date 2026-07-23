@@ -1891,7 +1891,6 @@ describe('SettingsService: skills', () => {
     new SettingsService({
       repository,
       storageRoot,
-      
       skillRegistry: new SkillRegistry(await seedBundle())
     })
 
@@ -2023,7 +2022,6 @@ describe('SettingsService: skills', () => {
     const service = new SettingsService({
       repository,
       storageRoot,
-      
       skillRegistry: new SkillRegistry(await seedBundle()),
       codexDetectDeps: {
         env: { PATH: dirname(adapterPath) },
@@ -2072,7 +2070,6 @@ describe('SettingsService: skills', () => {
     const service = new SettingsService({
       repository,
       storageRoot,
-      
       skillRegistry: new SkillRegistry(await seedBundle()),
       codexDetectDeps: {
         env: {},
@@ -2128,7 +2125,6 @@ describe('SettingsService: skills', () => {
     const service = new SettingsService({
       repository,
       storageRoot,
-      
       skillRegistry: new SkillRegistry(await seedBundle()),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { importFromGitHub, list: () => Promise.resolve([]) } as any
@@ -2147,7 +2143,6 @@ describe('SettingsService: skills', () => {
     const service = new SettingsService({
       repository,
       storageRoot,
-      
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { scanRepo } as any
     })
@@ -2364,7 +2359,6 @@ describe('checkEnvironment', () => {
     const service = new SettingsService({
       repository,
       storageRoot,
-      
       detectDeps: {
         env: {},
         homePath: '/home',
@@ -2390,7 +2384,6 @@ describe('checkEnvironment', () => {
     const service = new SettingsService({
       repository,
       storageRoot,
-      
       detectDeps: {
         env: { PATH: '/other-bin' },
         homePath: '/home',
@@ -2418,7 +2411,6 @@ describe('checkEnvironment', () => {
     const service = new SettingsService({
       repository,
       storageRoot,
-      
       detectDeps: {
         env: { PATH: '/found-bin' },
         homePath: '/home',
