@@ -326,7 +326,7 @@ describe('AI review workflow contract', () => {
     expect(reviewWorkflow).toContain('--repo "${{ github.repository }}"')
   })
 
-  it('runs the Claude agent with zero tools so it cannot read runner secrets', () => {
+  it('runs Claude with only the schema output tool so it cannot read runner secrets', () => {
     const step = getNamedStep('claude_review', 'Run Claude architecture review')
     const command = step.run
 
@@ -367,7 +367,7 @@ describe('AI review workflow contract', () => {
     const executionFile = join(root, 'execution.json')
     const githubOutput = join(root, 'github-output')
     writeJsonLines(executionFile, [
-      { type: 'system', subtype: 'init', tools: [] },
+      { type: 'system', subtype: 'init', tools: ['StructuredOutput'] },
       { type: 'assistant', message: { content: [{ type: 'text', text: 'draft' }] } },
       {
         type: 'assistant',
@@ -398,7 +398,13 @@ describe('AI review workflow contract', () => {
     const executionFile = join(root, 'execution.jsonl')
     const githubOutput = join(root, 'github-output')
     writeJsonLines(executionFile, [
-      { type: 'system', subtype: 'init', tools: [] },
+      { type: 'system', subtype: 'init', tools: ['StructuredOutput'] },
+      {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'tool_use', name: 'StructuredOutput', input: { review: 'submitted' } }]
+        }
+      },
       {
         type: 'result',
         subtype: 'success',
@@ -428,7 +434,7 @@ describe('AI review workflow contract', () => {
     const executionFile = join(root, 'execution.jsonl')
     const githubOutput = join(root, 'github-output')
     writeJsonLines(executionFile, [
-      { type: 'system', subtype: 'init', tools: [] },
+      { type: 'system', subtype: 'init', tools: ['StructuredOutput'] },
       {
         type: 'result',
         subtype: 'success',
@@ -456,7 +462,7 @@ describe('AI review workflow contract', () => {
     const executionFile = join(root, 'execution.json')
     const githubOutput = join(root, 'github-output')
     writeJsonLines(executionFile, [
-      { type: 'system', subtype: 'init', tools: [] },
+      { type: 'system', subtype: 'init', tools: ['StructuredOutput'] },
       {
         type: 'assistant',
         message: {
@@ -475,7 +481,7 @@ describe('AI review workflow contract', () => {
     })
 
     expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('attempted to use a tool')
+    expect(result.stderr).toContain('attempted to use a data-access tool')
   })
 
   it('fails closed if Claude advertises any available tool', () => {
@@ -483,7 +489,7 @@ describe('AI review workflow contract', () => {
     const executionFile = join(root, 'execution.json')
     const githubOutput = join(root, 'github-output')
     writeJsonLines(executionFile, [
-      { type: 'system', subtype: 'init', tools: ['Read'] },
+      { type: 'system', subtype: 'init', tools: ['StructuredOutput', 'Read'] },
       {
         type: 'assistant',
         message: { content: [{ type: 'text', text: '## Claude Architecture Review' }] }
@@ -497,7 +503,7 @@ describe('AI review workflow contract', () => {
     })
 
     expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('did not report an empty available-tools list')
+    expect(result.stderr).toContain('exposed tools other than')
   })
 
   it('reads changed file contents via git show (not cat) to prevent symlink traversal', () => {
