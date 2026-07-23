@@ -124,6 +124,9 @@ export type PersistedChatSession = {
   // Identifies the provider/profile session store within a framework so a restored session is never
   // resumed against an incompatible backend (for example Codex shared profile vs isolated login).
   agentBackendId?: string
+  // Model selected when the latest run started. Kept with the session so a later settings change
+  // cannot misattribute a failed run's diagnostic report.
+  agentModel?: string
   // Per-conversation approval posture. Older session files omit it and safely restore to Ask.
   permissionProfile?: PermissionProfileId
   // Per-conversation auto-review toggle. Absent (older files) or non-true is treated as disabled;
@@ -669,6 +672,7 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
   const error = asString(session.error)
   const agentFrameworkId = asString(session.agentFrameworkId) as AgentFrameworkId | undefined
   const agentBackendId = asString(session.agentBackendId)
+  const agentModel = asString(session.agentModel)
   const enabledComputeHosts = Array.isArray(session.enabledComputeHosts)
     ? session.enabledComputeHosts.filter(
         (item): item is string => typeof item === 'string' && item.startsWith('ssh:')
@@ -681,6 +685,7 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
     sanitized.agentFrameworkId = agentFrameworkId
   }
   if (agentBackendId) sanitized.agentBackendId = agentBackendId
+  if (agentModel) sanitized.agentModel = agentModel
   if (artifacts.length > 0) sanitized.artifacts = artifacts
   const filesRevision = asNumber(session.filesRevision)
   if (filesRevision !== undefined && Number.isInteger(filesRevision) && filesRevision >= 0) {

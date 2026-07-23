@@ -7,7 +7,7 @@ import { useUpdateStore } from '@/stores/update-store'
 import {
   buildEnvironmentBlock,
   buildErrorReportText,
-  buildGithubIssueUrl,
+  buildGithubIssuePrefill,
   resolveSessionSubject,
   type ErrorReportContext,
   type SessionReportSubject
@@ -16,8 +16,8 @@ import {
 type ReportErrorDialogProps = {
   open: boolean
   error: string
-  // Session-level identifiers used to attribute the report to the configuration that was active when
-  // the run failed, rather than the current global settings.
+  // Session-level identifiers and run model snapshot used to attribute the report to the configuration
+  // that was active when the run failed, rather than the current global settings.
   subject: SessionReportSubject
   onClose: () => void
 }
@@ -34,22 +34,13 @@ const ReportErrorDialog = ({
 }: ReportErrorDialogProps): React.JSX.Element => {
   const appVersion = useUpdateStore((state) => state.appInfo?.version)
   const providers = useSettingsStore((state) => state.providers)
-  const activeProviderId = useSettingsStore((state) => state.activeProviderId)
-  const activeModel = useSettingsStore((state) => state.activeModel)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
 
-  // Derive the bundle live from the stores. Framework/provider/model come from the failed session's own
-  // identifiers (via resolveSessionSubject), not the current active selection, so switching config after
-  // a failure never misattributes the report. The bridge is read defensively so the dialog renders where
-  // the preload surface is absent (tests, early boot); the helpers tolerate every missing field.
+  // Derive environment facts live, while the failed session supplies framework/backend identifiers and
+  // its run model snapshot. The bridge is read defensively so the dialog renders where the preload
+  // surface is absent (tests, early boot); the helpers tolerate every missing field.
   const context = useMemo<ErrorReportContext>(() => {
-    const resolved = resolveSessionSubject(
-      subject,
-      providers,
-      activeProviderId,
-      activeModel,
-      agentFrameworks
-    )
+    const resolved = resolveSessionSubject(subject, providers, agentFrameworks)
     return {
       error,
       appVersion,
@@ -65,11 +56,10 @@ const ReportErrorDialog = ({
     error,
     appVersion,
     providers,
-    activeProviderId,
-    activeModel,
     agentFrameworks,
     subject.agentFrameworkId,
-    subject.agentBackendId
+    subject.agentBackendId,
+    subject.model
   ])
 
   const [copied, setCopied] = useState(false)
@@ -85,7 +75,25 @@ const ReportErrorDialog = ({
     [context, editedError]
   )
   const environmentBlock = useMemo(() => buildEnvironmentBlock(context), [context])
-  const issueUrl = useMemo(() => buildGithubIssueUrl(editedContext), [editedContext])
+  const issuePrefill = useMemo(() => buildGithubIssuePrefill(editedContext), [editedContext])
+  const issueUrl = issuePrefill.url
+  const issuePrefillPreview = useMemo(
+    () =>
+      [
+        'What happened',
+        issuePrefill.fields['what-happened'] ?? '(not prefilled)',
+        '',
+        'App version',
+        issuePrefill.fields['app-version'] ?? '(not prefilled)',
+        '',
+        'Provider / model',
+        issuePrefill.fields['provider-model'] ?? '(not prefilled)',
+        '',
+        'Relevant logs',
+        issuePrefill.fields.logs ?? '(not prefilled)'
+      ].join('\n'),
+    [issuePrefill]
+  )
 
   // Consent is tied to the exact payload it was given for, not a bare flag. We record the URL the user
   // consented to; consent holds only while that still equals the current URL. So if a store field lands
@@ -166,6 +174,20 @@ const ReportErrorDialog = ({
           >
             {environmentBlock}
           </pre>
+
+          {issuePrefill.truncatedFields.length > 0 ? (
+            <>
+              <p className="mt-3 text-[11px] font-medium uppercase tracking-wide text-text-300">
+                GitHub issue prefill
+              </p>
+              <pre
+                className="mt-1 max-h-28 shrink-0 overflow-auto whitespace-pre-wrap rounded-lg border border-border-200 bg-bg-100 px-3 py-2 font-mono text-[11px] leading-5 text-text-200"
+                aria-label="GitHub issue prefill"
+              >
+                {issuePrefillPreview}
+              </pre>
+            </>
+          ) : null}
 
           <label className="mt-4 flex items-start gap-2 text-[13px] leading-5 text-text-100">
             <input

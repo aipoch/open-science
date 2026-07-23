@@ -55,9 +55,10 @@ afterEach(() => {
 // Default subject matches the active config (framework claude-code, provider p1) so the environment
 // preview shows the same "Anthropic · claude-opus-4" the existing assertions expect.
 const renderDialog = (
-  subject: { agentFrameworkId?: string; agentBackendId?: string } = {
+  subject: { agentFrameworkId?: string; agentBackendId?: string; model?: string } = {
     agentFrameworkId: 'claude-code',
-    agentBackendId: 'claude-code:p1'
+    agentBackendId: 'claude-code:p1',
+    model: 'claude-opus-4'
   }
 ): void => {
   act(() => {
@@ -182,24 +183,34 @@ describe('ReportErrorDialog', () => {
     expect(alert?.textContent).toContain('IPC channel closed')
   })
 
-  it('revokes consent when a store field changes after consent, and reflects the new field', () => {
+  it('revokes consent when a payload store field changes after consent', () => {
     renderDialog()
     act(() => {
       consentCheckbox().click()
     })
     expect(consentCheckbox().checked).toBe(true)
-    expect(issueLink()?.getAttribute('href') ?? '').toContain('claude-opus-4')
+    expect(issueLink()?.getAttribute('href') ?? '').toContain('app-version=0.5.1')
 
-    // A store field changing after consent (async update, or a swap) must both surface in the URL and
-    // drop consent, so the user never shares a payload they didn't confirm.
+    // A payload field changing after consent must drop consent so the user never shares data they did
+    // not confirm. The model is session-scoped and intentionally unaffected by active-model changes.
     act(() => {
-      settingsState.activeModel = 'claude-model-2'
+      updateState.appInfo = { version: '0.5.2' }
       renderDialog()
     })
 
     expect(consentCheckbox().checked).toBe(false)
     const href = issueLink()?.getAttribute('href')
     expect(href === null || href === undefined).toBe(true) // link disabled again
+  })
+
+  it('keeps the failed session model when the active model changes later', () => {
+    renderDialog()
+    settingsState.activeModel = 'model-selected-after-failure'
+
+    act(() => renderDialog())
+
+    expect(environmentBlock()).toContain('Provider / model: Anthropic · claude-opus-4')
+    expect(environmentBlock()).not.toContain('model-selected-after-failure')
   })
 
   it('picks up an app version that resolves after the dialog opened (no permanent Unknown)', () => {
@@ -262,5 +273,11 @@ describe('ReportErrorDialog', () => {
     const whatHappened = new URL(href).searchParams.get('what-happened') ?? ''
     expect(whatHappened.length).toBeLessThan(20000)
     expect(whatHappened).toContain('truncated')
+
+    const submittedPreview = document.body.querySelector(
+      '[aria-label="GitHub issue prefill"]'
+    )?.textContent
+    expect(submittedPreview).toContain(whatHappened)
+    expect(submittedPreview).toContain('Copy details')
   })
 })

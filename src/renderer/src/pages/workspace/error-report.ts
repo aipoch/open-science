@@ -1,4 +1,8 @@
 import { APP } from '../../../../shared/app-config'
+import {
+  CODEX_SUBSCRIPTION_PROVIDER_ID,
+  isCodexSubscriptionProviderId
+} from '../../../../shared/settings'
 
 // Assembles a failed-run diagnostic report locally. Nothing here transmits anything: the helpers only
 // build human-readable text and a pre-filled GitHub "new issue" URL, so the user reviews every field
@@ -7,16 +11,29 @@ import { APP } from '../../../../shared/app-config'
 // Shown in the failure row AND seeded into the report when a failed run carries no error text. Defined
 // once so the text the user sees always equals the text they report ("shown == reported").
 export const RUN_FAILED_FALLBACK_ERROR = 'The run failed with no error message.'
+export const normalizeRunFailureError = (error: string | null | undefined): string =>
+  error?.trim() || RUN_FAILED_FALLBACK_ERROR
 
-// Upper bound for the error text placed in the `what-happened` query param. GitHub's issue-form prefill
-// (and browsers) reject over-long request URIs with a 414, which would drop the user on an error page
-// instead of the prefilled form — a regression in the very failure-reporting path this feature adds. A
-// long stack trace is truncated with a visible marker; the full text is always available via Copy
-// details (buildErrorReportText is never truncated). Chosen conservatively: query values are percent-
-// encoded, so a char of stack trace can cost ~3 bytes in the URL.
-export const MAX_WHAT_HAPPENED_LENGTH = 6000
-const TRUNCATION_MARKER =
+// Bound the serialized request URI, not decoded field lengths: URLSearchParams can expand one Unicode
+// code point into several percent-encoded bytes. Copy details remains full-fidelity when prefill fields
+// must be shortened to stay within this conservative request-line budget.
+export const MAX_GITHUB_ISSUE_URL_LENGTH = 7000
+const ERROR_TRUNCATION_MARKER =
   '\n\n…(truncated — use “Copy details” for the full error and attach the log)'
+const FIELD_TRUNCATION_MARKER = '…(truncated; full value is in Copy details)'
+const ENCODED_FIELD_BUDGETS = {
+  'app-version': 128,
+  'provider-model': 512,
+  logs: 1500
+} as const
+
+type GithubIssueFieldId = 'what-happened' | 'app-version' | 'provider-model' | 'logs'
+
+export type GithubIssuePrefill = {
+  url: string
+  fields: Partial<Record<GithubIssueFieldId, string>>
+  truncatedFields: GithubIssueFieldId[]
+}
 
 // Runtime versions the preload bridge exposes; kept loose so callers can pass a partial snapshot.
 export type ReportRuntimeVersions = {
@@ -62,26 +79,34 @@ export const osLabelForPlatform = (platform: string | undefined): string | undef
 export type SessionReportSubject = {
   agentFrameworkId?: string
   agentBackendId?: string
+  model?: string
 }
 
 // The framework/provider/model the report should attribute the failure to, resolved from the session's
-// own stored identifiers so a config change after the failure doesn't misattribute it.
+// stored subject and run-time model snapshot so later settings changes cannot misattribute it.
 export type ResolvedSubject = {
   frameworkName?: string
   providerName?: string
   model?: string
 }
 
+const normalizeSessionProviderId = (providerId: string | undefined): string | undefined => {
+  if (!providerId) return undefined
+
+  return isCodexSubscriptionProviderId(providerId) ||
+    providerId === 'codex-shared' ||
+    providerId === 'codex-isolated'
+    ? CODEX_SUBSCRIPTION_PROVIDER_ID
+    : providerId
+}
+
 // Resolves the framework name and provider from the session's own stored identifiers. backendId is
 // encoded as "${frameworkId}:${providerId}" (see service.ts) — we split on the first colon because
-// provider ids can themselves contain colons (e.g. "ssh:alias"). The model is included only when the
-// session's provider still matches the currently active one; otherwise omitting it avoids reporting a
-// model that belonged to a later config switch.
+// provider ids can themselves contain colons (e.g. "ssh:alias"). Codex subscription sessions retain
+// mode-specific backend ids, which normalize to the single provider card exposed in renderer settings.
 export const resolveSessionSubject = (
   subject: SessionReportSubject,
   providers: Array<{ id: string; name: string }>,
-  activeProviderId: string | undefined,
-  activeModel: string | undefined,
   agentFrameworks: Array<{ id: string; displayName: string }>
 ): ResolvedSubject => {
   const frameworkName = subject.agentFrameworkId
@@ -89,21 +114,18 @@ export const resolveSessionSubject = (
       subject.agentFrameworkId)
     : undefined
 
-  if (!subject.agentBackendId) return { frameworkName }
+  if (!subject.agentBackendId) return { frameworkName, model: subject.model }
 
   // backendId format: "{frameworkId}:{providerId}" — split on first colon only.
   const colonIdx = subject.agentBackendId.indexOf(':')
-  const providerId = colonIdx !== -1 ? subject.agentBackendId.slice(colonIdx + 1) : undefined
+  const providerId = normalizeSessionProviderId(
+    colonIdx !== -1 ? subject.agentBackendId.slice(colonIdx + 1) : undefined
+  )
 
   const provider = providerId ? providers.find((p) => p.id === providerId) : undefined
   const providerName = provider?.name
 
-  // Only include the active model when the session's provider is still the active one; a config
-  // switch after the failure would make the model misleading.
-  const model =
-    providerId && activeProviderId === providerId && activeModel ? activeModel : undefined
-
-  return { frameworkName, providerName, model }
+  return { frameworkName, providerName, model: subject.model }
 }
 export const formatProviderModel = (context: ErrorReportContext): string => {
   if (context.providerName && context.model) return `${context.providerName} · ${context.model}`
@@ -180,6 +202,64 @@ const buildLogsFieldText = (context: ErrorReportContext): string => {
   ].join('\n')
 }
 
+const issueUrlFromParams = (params: URLSearchParams): string =>
+  `${APP.links.githubRepo}/issues/new?${params.toString()}`
+
+const encodedParamValueLength = (key: string, value: string): number => {
+  const serialized = new URLSearchParams([[key, value]]).toString()
+  return serialized.length - key.length - 1
+}
+
+const truncateToEncodedBudget = (
+  key: string,
+  value: string,
+  budget: number,
+  marker: string
+): { value: string; truncated: boolean } => {
+  if (encodedParamValueLength(key, value) <= budget) return { value, truncated: false }
+
+  const characters = Array.from(value)
+  let low = 0
+  let high = characters.length
+
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2)
+    const candidate = `${characters.slice(0, mid).join('')}${marker}`
+
+    if (encodedParamValueLength(key, candidate) <= budget) low = mid
+    else high = mid - 1
+  }
+
+  return { value: `${characters.slice(0, low).join('')}${marker}`, truncated: true }
+}
+
+const fitErrorToUrlBudget = (
+  params: URLSearchParams,
+  value: string
+): { value: string; truncated: boolean } => {
+  params.set('what-happened', value)
+  if (issueUrlFromParams(params).length <= MAX_GITHUB_ISSUE_URL_LENGTH) {
+    return { value, truncated: false }
+  }
+
+  const characters = Array.from(value)
+  let low = 0
+  let high = characters.length
+
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2)
+    const candidate = `${characters.slice(0, mid).join('')}${ERROR_TRUNCATION_MARKER}`
+    params.set('what-happened', candidate)
+
+    if (issueUrlFromParams(params).length <= MAX_GITHUB_ISSUE_URL_LENGTH) low = mid
+    else high = mid - 1
+  }
+
+  const bounded = `${characters.slice(0, low).join('')}${ERROR_TRUNCATION_MARKER}`
+  params.set('what-happened', bounded)
+  return { value: bounded, truncated: true }
+}
+
 // Builds a pre-filled "new issue" URL against the Bug report form. GitHub's issue-form prefill reads
 // query params keyed by each field's `id` in bug_report.yml, but ONLY for `input`/`textarea` fields —
 // `dropdown` and `checkboxes` fields ignore query values. So we prefill what-happened / app-version /
@@ -189,18 +269,12 @@ const buildLogsFieldText = (context: ErrorReportContext): string => {
 // `what-happened` carries only the error/description (from `context.error`); the caller redacts it by
 // passing an edited context. Structured fields and `logs` carry the environment, so nothing is
 // duplicated across fields.
-export const buildGithubIssueUrl = (context: ErrorReportContext): string => {
+export const buildGithubIssuePrefill = (context: ErrorReportContext): GithubIssuePrefill => {
   const params = new URLSearchParams({ template: 'bug_report.yml' })
+  const truncatedFields: GithubIssueFieldId[] = []
 
   const whatHappened = context.error.trim()
-  if (whatHappened) {
-    // Bound the error text so a long stack trace can't push the URL past GitHub's URI limit (414).
-    const bounded =
-      whatHappened.length > MAX_WHAT_HAPPENED_LENGTH
-        ? whatHappened.slice(0, MAX_WHAT_HAPPENED_LENGTH) + TRUNCATION_MARKER
-        : whatHappened
-    params.set('what-happened', bounded)
-  }
+  if (whatHappened) params.set('what-happened', whatHappened)
 
   if (context.appVersion) params.set('app-version', context.appVersion)
 
@@ -209,5 +283,32 @@ export const buildGithubIssueUrl = (context: ErrorReportContext): string => {
 
   params.set('logs', buildLogsFieldText(context))
 
-  return `${APP.links.githubRepo}/issues/new?${params.toString()}`
+  if (issueUrlFromParams(params).length > MAX_GITHUB_ISSUE_URL_LENGTH) {
+    for (const [field, budget] of Object.entries(ENCODED_FIELD_BUDGETS) as Array<
+      [keyof typeof ENCODED_FIELD_BUDGETS, number]
+    >) {
+      const value = params.get(field)
+      if (!value) continue
+
+      const bounded = truncateToEncodedBudget(field, value, budget, FIELD_TRUNCATION_MARKER)
+      params.set(field, bounded.value)
+      if (bounded.truncated) truncatedFields.push(field)
+    }
+
+    if (whatHappened) {
+      const bounded = fitErrorToUrlBudget(params, whatHappened)
+      if (bounded.truncated) truncatedFields.push('what-happened')
+    }
+  }
+
+  const fields: GithubIssuePrefill['fields'] = {}
+  for (const field of ['what-happened', 'app-version', 'provider-model', 'logs'] as const) {
+    const value = params.get(field)
+    if (value !== null) fields[field] = value
+  }
+
+  return { url: issueUrlFromParams(params), fields, truncatedFields }
 }
+
+export const buildGithubIssueUrl = (context: ErrorReportContext): string =>
+  buildGithubIssuePrefill(context).url

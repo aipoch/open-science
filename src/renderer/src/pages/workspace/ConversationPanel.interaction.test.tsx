@@ -670,6 +670,20 @@ describe('ConversationPanel error box + report affordance', () => {
       'textarea[aria-label="Error details"]'
     ) as HTMLTextAreaElement | null
     expect(textarea?.value).toBe('The run failed with no error message.')
-    expect(shown).toContain(textarea?.value ?? ' ')
+    expect(shown).toContain(textarea?.value ?? '')
+  })
+
+  it('uses the shared fallback for a whitespace-only persisted error', () => {
+    renderPanel({ activeSession: { ...errorSession, error: '   ' } })
+    expect(errorBoxText()).toContain('The run failed with no error message.')
+
+    act(() => {
+      reportButton()?.click()
+    })
+
+    const textarea = document.body.querySelector(
+      'textarea[aria-label="Error details"]'
+    ) as HTMLTextAreaElement | null
+    expect(textarea?.value).toBe('The run failed with no error message.')
   })
 })

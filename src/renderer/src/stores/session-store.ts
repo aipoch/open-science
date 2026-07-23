@@ -95,6 +95,9 @@ type AppendUserMessageInput = {
   cwd?: string
   projectId?: string
   permissionProfile?: PermissionProfileId
+  agentFrameworkId?: PersistedChatSession['agentFrameworkId']
+  agentBackendId?: PersistedChatSession['agentBackendId']
+  agentModel?: string
   isPending?: boolean
 }
 
@@ -105,6 +108,9 @@ type AppendPendingUserMessageInput = {
   cwd?: string
   projectId?: string
   permissionProfile?: PermissionProfileId
+  agentFrameworkId?: PersistedChatSession['agentFrameworkId']
+  agentBackendId?: PersistedChatSession['agentBackendId']
+  agentModel?: string
 }
 
 type BindPendingSessionInput = {
@@ -567,9 +573,14 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     cwd,
     projectId,
     permissionProfile,
+    agentFrameworkId,
+    agentBackendId,
+    agentModel,
     isPending
   }) => {
     const trimmedContent = content.trim()
+    const normalizedAgentBackendId = agentBackendId?.trim() || undefined
+    const normalizedAgentModel = agentModel?.trim() || undefined
     const uploads = attachments.map(createPersistedUpload)
 
     if (!sessionId || (!trimmedContent && uploads.length === 0)) return undefined
@@ -601,6 +612,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                 ...session,
                 status: 'running',
                 activeRun,
+                ...(session.isPending
+                  ? {
+                      agentFrameworkId,
+                      agentBackendId: normalizedAgentBackendId
+                    }
+                  : {}),
+                agentModel: normalizedAgentModel,
                 agentStatus: undefined,
                 error: undefined,
                 compacting: undefined,
@@ -620,6 +638,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         cwd: cwd ?? '',
         status: 'running',
         permissionProfile: permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+        agentFrameworkId,
+        agentBackendId: normalizedAgentBackendId,
+        agentModel: normalizedAgentModel,
         messages: [userMessage],
         activeRun,
         createdAt: now,
@@ -642,7 +663,10 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     parts,
     cwd,
     projectId,
-    permissionProfile
+    permissionProfile,
+    agentFrameworkId,
+    agentBackendId,
+    agentModel
   }) => {
     return get().appendUserMessage({
       sessionId: createPendingSessionId(),
@@ -652,6 +676,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       cwd,
       projectId,
       permissionProfile,
+      agentFrameworkId,
+      agentBackendId,
+      agentModel,
       isPending: true
     })
   },

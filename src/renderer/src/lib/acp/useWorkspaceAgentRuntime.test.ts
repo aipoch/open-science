@@ -292,7 +292,8 @@ describe('workspace agent message sending', () => {
 
     const sent = await sendWorkspaceMessage(runtime, {
       text: 'Help me inspect this notebook',
-      cwd: '/workspace/project'
+      cwd: '/workspace/project',
+      agentModel: 'model-used-by-run'
     })
 
     expect(runtime.createSession).toHaveBeenCalledWith('/workspace/project', undefined, 'ask')
@@ -300,6 +301,7 @@ describe('workspace agent message sending', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       id: sent?.sessionId,
       isPending: true,
+      agentModel: 'model-used-by-run',
       status: 'running',
       messages: [
         expect.objectContaining({
@@ -321,6 +323,7 @@ describe('workspace agent message sending', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       id: 'transport-session-1',
       isPending: false,
+      agentModel: 'model-used-by-run',
       messages: [
         expect.objectContaining({
           id: sent?.messageId,
@@ -381,6 +384,35 @@ describe('workspace agent message sending', () => {
       cwd: '',
       status: 'error',
       error: 'Agent session did not return a workspace.'
+    })
+  })
+
+  it('keeps the selected run subject when initial session creation rejects', async () => {
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn().mockRejectedValue(new Error('Authentication failed')),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const sent = await sendWorkspaceMessage(runtime, {
+      text: 'Start a new analysis',
+      cwd: '/workspace/project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:builtin-codex-subscription',
+      agentModel: 'gpt-5.6-sol'
+    })
+    await flushRuntimeTasks()
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      id: sent?.sessionId,
+      isPending: true,
+      status: 'error',
+      error: 'Authentication failed',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:builtin-codex-subscription',
+      agentModel: 'gpt-5.6-sol'
     })
   })
 
@@ -560,6 +592,68 @@ describe('workspace agent message sending', () => {
         })
       ]
     })
+  })
+
+  it('refreshes the run subject when a pending session retry also fails', async () => {
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('First provider failed'))
+        .mockRejectedValueOnce(new Error('Second provider failed'))
+        .mockRejectedValueOnce(new Error('No provider selected')),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const first = await sendWorkspaceMessage(runtime, {
+      text: 'Start with Claude',
+      cwd: '/workspace/project',
+      agentFrameworkId: 'claude-code',
+      agentBackendId: 'claude-code:anthropic',
+      agentModel: 'claude-opus-4'
+    })
+    await flushRuntimeTasks()
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: first?.sessionId,
+      text: 'Retry with Codex',
+      cwd: '/workspace/project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:builtin-codex-subscription',
+      agentModel: 'gpt-5.6-sol'
+    })
+    await flushRuntimeTasks()
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      id: first?.sessionId,
+      isPending: true,
+      status: 'error',
+      error: 'Second provider failed',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:builtin-codex-subscription',
+      agentModel: 'gpt-5.6-sol'
+    })
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: first?.sessionId,
+      text: 'Retry without a provider',
+      cwd: '/workspace/project',
+      agentFrameworkId: 'codex'
+    })
+    await flushRuntimeTasks()
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session).toMatchObject({
+      id: first?.sessionId,
+      isPending: true,
+      status: 'error',
+      error: 'No provider selected',
+      agentFrameworkId: 'codex'
+    })
+    expect(session.agentBackendId).toBeUndefined()
+    expect(session.agentModel).toBeUndefined()
   })
 
   it('does not fall back to the runtime home directory when retrying managed workspace creation', async () => {

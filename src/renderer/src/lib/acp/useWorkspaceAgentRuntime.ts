@@ -15,6 +15,7 @@ import {
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { ArtifactReference } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
+import type { AgentFrameworkId } from '../../../../shared/settings'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { useSessionStore, type ChatMessage } from '../../stores/session-store'
@@ -33,6 +34,11 @@ type SendWorkspaceMessageInput = {
   // Storage project the artifact/notebook MCP servers write under (usually the same value).
   projectName?: string
   permissionProfile?: PermissionProfileId
+  // Snapshot of the selected agent configuration for this run; persisted for failure diagnostics
+  // even when the initial ACP session handshake never completes.
+  agentFrameworkId?: AgentFrameworkId
+  agentBackendId?: string
+  agentModel?: string
   // Skills the user picked in the composer; force-loaded and nudged for this turn only.
   forcedSkillIds?: string[]
   // Existing files referenced via `@` mentions; attached to the prompt as content blocks.
@@ -358,6 +364,9 @@ const sendWorkspaceMessage = async (
     projectId,
     projectName,
     permissionProfile,
+    agentFrameworkId,
+    agentBackendId,
+    agentModel,
     forcedSkillIds,
     referencedArtifacts,
     parts,
@@ -399,7 +408,10 @@ const sendWorkspaceMessage = async (
         attachments,
         parts,
         cwd: retryCwd,
-        projectId: projectId ?? currentSession.projectId
+        projectId: projectId ?? currentSession.projectId,
+        agentFrameworkId,
+        agentBackendId,
+        agentModel
       })
 
       if (!appended) return undefined
@@ -443,7 +455,8 @@ const sendWorkspaceMessage = async (
           attachments,
           parts,
           cwd: targetCwd,
-          projectId: projectId ?? currentSession?.projectId
+          projectId: projectId ?? currentSession?.projectId,
+          agentModel
         })
 
     // appendUserMessage can reject stale session ids after local deletion or hydration changes.
@@ -565,7 +578,10 @@ const sendWorkspaceMessage = async (
     parts,
     cwd: targetCwd,
     projectId,
-    permissionProfile
+    permissionProfile,
+    agentFrameworkId,
+    agentBackendId,
+    agentModel
   })
 
   if (!pending) return undefined
@@ -611,7 +627,8 @@ const findInterruptedUserTurn = (messages: ChatMessage[]): ChatMessage | undefin
 const resumeInterruptedWorkspaceSession = async (
   runtime: WorkspaceMessageRuntime,
   sessionId: string,
-  supportsImageInput?: boolean
+  supportsImageInput?: boolean,
+  agentModel?: string
 ): Promise<void> => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
 
@@ -674,7 +691,8 @@ const resumeInterruptedWorkspaceSession = async (
     permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
     // Replay the prior conversation when this resume adopted a fresh agent session.
     forceHistoryReplay: contextReset,
-    supportsImageInput
+    supportsImageInput,
+    agentModel
   })
 }
 
@@ -737,7 +755,8 @@ const recoverContextOverflowWorkspaceSession = async (
     projectId: session.projectId,
     permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
     // A fresh agent session lost the prior context, so replay the transcript on this first prompt.
-    forceHistoryReplay: true
+    forceHistoryReplay: true,
+    agentModel: session.agentModel
   })
 
   return true
@@ -752,7 +771,8 @@ const recoverContextOverflowWorkspaceSession = async (
 const resendEditedWorkspaceMessage = async (
   runtime: WorkspaceMessageRuntime,
   input: ResendEditedMessageInput & { sessionId: string; messageId: string },
-  supportsImageInput?: boolean
+  supportsImageInput?: boolean,
+  agentModel?: string
 ): Promise<boolean> => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === input.sessionId)
 
@@ -787,7 +807,8 @@ const resendEditedWorkspaceMessage = async (
     attachments: [],
     parts: input.parts,
     cwd: resumeCwd,
-    projectId: session.projectId
+    projectId: session.projectId,
+    agentModel
   })
 
   if (!appended) return false
@@ -822,7 +843,8 @@ const resendEditedWorkspaceMessage = async (
     // The fresh agent session lost the prior context, so replay the truncated transcript.
     forceHistoryReplay: true,
     preAppendedMessageId: appended.messageId,
-    supportsImageInput
+    supportsImageInput,
+    agentModel
   })
 
   return true
@@ -955,6 +977,9 @@ const useWorkspaceAgentRuntime = (): {
     const provider = state.providers.find((candidate) => candidate.id === state.activeProviderId)
     return provider?.supportsImageInput ?? false
   })
+  const activeModel = useSettingsStore((state) => state.activeModel)
+  const activeProviderId = useSettingsStore((state) => state.activeProviderId)
+  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const eventProcessor = useRef(createWorkspaceRuntimeEventProcessor())
   // Tracks the last connection status so the disconnect effect fires only on a transition, not on
   // every unrelated snapshot re-render.
@@ -999,24 +1024,35 @@ const useWorkspaceAgentRuntime = (): {
   // Creates a session if needed, records the user message, then starts the prompt in the background.
   const sendMessage = useCallback(
     (input: SendWorkspaceMessageInput): Promise<SendWorkspaceMessageResult | undefined> =>
-      sendWorkspaceMessage(runtime, { ...input, supportsImageInput }),
-    [runtime, supportsImageInput]
+      sendWorkspaceMessage(runtime, {
+        ...input,
+        supportsImageInput,
+        agentFrameworkId,
+        agentBackendId: activeProviderId ? `${agentFrameworkId}:${activeProviderId}` : undefined,
+        agentModel: activeModel
+      }),
+    [runtime, supportsImageInput, agentFrameworkId, activeProviderId, activeModel]
   )
 
   // Truncates the conversation at the edited message, then resends the adjusted prompt with the
   // kept history replayed into the reset agent context.
   const resendEditedMessage = useCallback(
     (sessionId: string, messageId: string, input: ResendEditedMessageInput): Promise<boolean> =>
-      resendEditedWorkspaceMessage(runtime, { sessionId, messageId, ...input }, supportsImageInput),
-    [runtime, supportsImageInput]
+      resendEditedWorkspaceMessage(
+        runtime,
+        { sessionId, messageId, ...input },
+        supportsImageInput,
+        activeModel
+      ),
+    [runtime, supportsImageInput, activeModel]
   )
 
   // Explicitly re-attaches an interrupted session's ACP runtime so the user can keep chatting. On
   // success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
   const resumeInterruptedSession = useCallback(
     (sessionId: string): Promise<void> =>
-      resumeInterruptedWorkspaceSession(runtime, sessionId, supportsImageInput),
-    [runtime, supportsImageInput]
+      resumeInterruptedWorkspaceSession(runtime, sessionId, supportsImageInput, activeModel),
+    [runtime, supportsImageInput, activeModel]
   )
 
   // Sends a cancellation request while the runtime waits for the eventual stop event.

@@ -249,16 +249,18 @@ describe('normalizeSessionFile with activities', () => {
     expect(malformed?.filesRevision).toBeUndefined()
   })
 
-  it('round-trips the agent backend identity used to resume a session', () => {
+  it('round-trips the agent backend identity and run model used for diagnostics', () => {
     const session = normalizeSessionFile({
       ...createSessionWithActivity(undefined),
       activities: undefined,
       agentFrameworkId: 'codex',
-      agentBackendId: 'codex:codex-isolated'
+      agentBackendId: 'codex:codex-isolated',
+      agentModel: 'gpt-5.6-sol'
     })
 
     expect(session?.agentFrameworkId).toBe('codex')
     expect(session?.agentBackendId).toBe('codex:codex-isolated')
+    expect(session?.agentModel).toBe('gpt-5.6-sol')
   })
 
   it('keeps known approval profiles and safely defaults unknown values', () => {

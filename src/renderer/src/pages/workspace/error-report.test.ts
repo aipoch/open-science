@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  CODEX_SHARED_PROVIDER_ID,
+  CODEX_SUBSCRIPTION_PROVIDER_ID
+} from '../../../../shared/settings'
+import {
   buildEnvironmentBlock,
   buildErrorReportText,
+  buildGithubIssuePrefill,
   buildGithubIssueUrl,
   formatProviderModel,
-  MAX_WHAT_HAPPENED_LENGTH,
+  MAX_GITHUB_ISSUE_URL_LENGTH,
   osLabelForPlatform,
   resolveSessionSubject,
   type ErrorReportContext
@@ -128,26 +133,57 @@ describe('buildGithubIssueUrl', () => {
   })
 
   it('bounds a very long error with a visible truncation marker so the URL cannot 414', () => {
-    const longError = 'x'.repeat(MAX_WHAT_HAPPENED_LENGTH + 5000)
+    const longError = 'x'.repeat(MAX_GITHUB_ISSUE_URL_LENGTH + 5000)
     const whatHappened =
       new URL(buildGithubIssueUrl({ error: longError })).searchParams.get('what-happened') ?? ''
     // Kept at/under the cap plus the short marker — never the full 11k+ characters.
-    expect(whatHappened.length).toBeLessThanOrEqual(MAX_WHAT_HAPPENED_LENGTH + 120)
+    expect(whatHappened.length).toBeLessThanOrEqual(MAX_GITHUB_ISSUE_URL_LENGTH)
     expect(whatHappened).toContain('truncated')
     expect(whatHappened).toContain('Copy details')
   })
 
-  it('does not truncate an error at or below the cap', () => {
-    const exact = 'y'.repeat(MAX_WHAT_HAPPENED_LENGTH)
+  it('does not truncate an error when the serialized issue URL fits', () => {
+    const exact = 'y'.repeat(1000)
     const whatHappened =
       new URL(buildGithubIssueUrl({ error: exact })).searchParams.get('what-happened') ?? ''
     expect(whatHappened).toBe(exact)
+  })
+
+  it('bounds the final serialized URL after non-ASCII percent encoding', () => {
+    const url = buildGithubIssueUrl({
+      ...baseContext,
+      error: '中'.repeat(MAX_GITHUB_ISSUE_URL_LENGTH)
+    })
+
+    expect(url.length).toBeLessThanOrEqual(MAX_GITHUB_ISSUE_URL_LENGTH)
+  })
+
+  it('bounds every dynamic field and exposes the exact outgoing values', () => {
+    const oversized = '界'.repeat(4000)
+    const prefill = buildGithubIssuePrefill({
+      error: oversized,
+      appVersion: oversized,
+      platform: 'darwin',
+      frameworkName: oversized,
+      providerName: oversized,
+      model: oversized,
+      runtimeVersions: { electron: oversized, chrome: oversized, node: oversized }
+    })
+    const params = new URL(prefill.url).searchParams
+
+    expect(prefill.url.length).toBeLessThanOrEqual(MAX_GITHUB_ISSUE_URL_LENGTH)
+    expect(prefill.truncatedFields).toEqual(
+      expect.arrayContaining(['what-happened', 'app-version', 'provider-model', 'logs'])
+    )
+    for (const field of ['what-happened', 'app-version', 'provider-model', 'logs'] as const) {
+      expect(prefill.fields[field]).toBe(params.get(field))
+    }
   })
 })
 
 describe('buildErrorReportText (Copy details) fallback', () => {
   it('always carries the full, untruncated error even when the URL is capped', () => {
-    const longError = 'z'.repeat(MAX_WHAT_HAPPENED_LENGTH + 5000)
+    const longError = 'z'.repeat(MAX_GITHUB_ISSUE_URL_LENGTH + 5000)
     const text = buildErrorReportText({ ...baseContext, error: longError })
     // Copy details is the full-fidelity fallback: it must contain the entire error, untruncated.
     expect(text).toContain(longError)
@@ -164,12 +200,14 @@ describe('resolveSessionSubject', () => {
     { id: 'codex', displayName: 'Codex' }
   ]
 
-  it('resolves framework and provider from the session ids, including the active model', () => {
+  it('resolves framework, provider, and model from the failed session', () => {
     const resolved = resolveSessionSubject(
-      { agentFrameworkId: 'claude-code', agentBackendId: 'claude-code:p1' },
+      {
+        agentFrameworkId: 'claude-code',
+        agentBackendId: 'claude-code:p1',
+        model: 'claude-opus-4'
+      },
       providers,
-      'p1',
-      'claude-opus-4',
       frameworks
     )
     expect(resolved).toEqual({
@@ -181,49 +219,87 @@ describe('resolveSessionSubject', () => {
 
   it('splits backendId on the first colon so provider ids containing colons survive', () => {
     const resolved = resolveSessionSubject(
-      { agentFrameworkId: 'codex', agentBackendId: 'codex:ssh:box' },
+      { agentFrameworkId: 'codex', agentBackendId: 'codex:ssh:box', model: 'gpt-x' },
       providers,
-      'ssh:box',
-      'gpt-x',
       frameworks
     )
     expect(resolved.providerName).toBe('Remote Box')
     expect(resolved.model).toBe('gpt-x')
   })
 
-  it('omits the model when the active provider no longer matches the session provider', () => {
+  it('maps a Codex subscription backend id to the consolidated renderer provider', () => {
+    const resolved = resolveSessionSubject(
+      {
+        agentFrameworkId: 'codex',
+        agentBackendId: `codex:${CODEX_SHARED_PROVIDER_ID}`,
+        model: 'gpt-5.6-sol'
+      },
+      [{ id: CODEX_SUBSCRIPTION_PROVIDER_ID, name: 'Codex subscription' }],
+      frameworks
+    )
+
+    expect(resolved).toEqual({
+      frameworkName: 'Codex',
+      providerName: 'Codex subscription',
+      model: 'gpt-5.6-sol'
+    })
+  })
+
+  it('omits the model when the failed session has no model snapshot', () => {
     const resolved = resolveSessionSubject(
       { agentFrameworkId: 'claude-code', agentBackendId: 'claude-code:p1' },
       providers,
-      'p2-switched', // user switched provider after the failure
-      'a-newer-model',
       frameworks
     )
-    expect(resolved.providerName).toBe('Anthropic') // still the session's provider
-    expect(resolved.model).toBeUndefined() // but not the newer, unrelated model
+    expect(resolved.providerName).toBe('Anthropic')
+    expect(resolved.model).toBeUndefined()
+  })
+
+  it('keeps the run model when the backend snapshot is unavailable', () => {
+    const resolved = resolveSessionSubject(
+      { agentFrameworkId: 'codex', model: 'gpt-5.6-sol' },
+      providers,
+      frameworks
+    )
+
+    expect(resolved).toEqual({ frameworkName: 'Codex', model: 'gpt-5.6-sol' })
+  })
+
+  it('uses the failed session model instead of the current model selection', () => {
+    const resolved = resolveSessionSubject(
+      {
+        agentFrameworkId: 'claude-code',
+        agentBackendId: 'claude-code:p1',
+        model: 'model-used-by-failed-run'
+      },
+      providers,
+      frameworks
+    )
+
+    expect(resolved.model).toBe('model-used-by-failed-run')
   })
 
   it('falls back to the raw framework id when it is unknown, and tolerates missing ids', () => {
-    expect(
-      resolveSessionSubject({ agentFrameworkId: 'mystery' }, providers, undefined, undefined, [])
-    ).toEqual({
+    expect(resolveSessionSubject({ agentFrameworkId: 'mystery' }, providers, [])).toEqual({
       frameworkName: 'mystery'
     })
-    expect(resolveSessionSubject({}, providers, undefined, undefined, frameworks)).toEqual({
+    expect(resolveSessionSubject({}, providers, frameworks)).toEqual({
       frameworkName: undefined
     })
   })
 
   it('yields no provider name when the session provider is gone from the list', () => {
     const resolved = resolveSessionSubject(
-      { agentFrameworkId: 'claude-code', agentBackendId: 'claude-code:deleted' },
+      {
+        agentFrameworkId: 'claude-code',
+        agentBackendId: 'claude-code:deleted',
+        model: 'm'
+      },
       providers,
-      'deleted',
-      'm',
       frameworks
     )
     expect(resolved.providerName).toBeUndefined()
-    // Provider matches active id, so model is still allowed even though the provider record is gone.
+    // The session's model remains accurate even when its provider record was later deleted.
     expect(resolved.model).toBe('m')
   })
 })

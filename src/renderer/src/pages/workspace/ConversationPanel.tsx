@@ -40,7 +40,7 @@ import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
-import { RUN_FAILED_FALLBACK_ERROR } from './error-report'
+import { normalizeRunFailureError } from './error-report'
 import { ReportErrorDialog } from './ReportErrorDialog'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
@@ -172,6 +172,7 @@ const ConversationPanel = ({
   // Unconditional hook: check if the active session has any jobs (running or finished).
   const allJobsForSession = useSessionJobStore((s) => s.allJobsForSession)
   const hasAnyJobs = activeSession !== undefined && allJobsForSession(activeSession.id).length > 0
+  const resolvedRunError = normalizeRunFailureError(activeSession?.error)
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
@@ -287,9 +288,7 @@ const ConversationPanel = ({
                     ) : null}
                     {activeSession?.status === 'error' ? (
                       <div className="flex items-start gap-2">
-                        <span className="min-w-0 flex-1 break-words">
-                          {activeSession.error ?? RUN_FAILED_FALLBACK_ERROR}
-                        </span>
+                        <span className="min-w-0 flex-1 break-words">{resolvedRunError}</span>
                         {/* The button sits on the failure row beside the run's own error, so the shown
                             text and the reported text are always the same error. */}
                         <button
@@ -514,10 +513,11 @@ const ConversationPanel = ({
         {isReportOpen ? (
           <ReportErrorDialog
             open
-            error={activeSession?.error ?? RUN_FAILED_FALLBACK_ERROR}
+            error={resolvedRunError}
             subject={{
               agentFrameworkId: activeSession?.agentFrameworkId,
-              agentBackendId: activeSession?.agentBackendId
+              agentBackendId: activeSession?.agentBackendId,
+              model: activeSession?.agentModel
             }}
             onClose={() => setIsReportOpen(false)}
           />

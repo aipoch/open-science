@@ -285,6 +285,25 @@ describe('session store', () => {
     ])
   })
 
+  it('persists the model selected when each run starts', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'First run',
+      agentModel: 'model-a'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Second run',
+      agentModel: 'model-b'
+    })
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.agentModel).toBe('model-b')
+    expect(toPersistedSession(session).agentModel).toBe('model-b')
+  })
+
   it('merges streamed agent chunks by stream id and completes them when the run stops', () => {
     const result = useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
