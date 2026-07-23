@@ -28,7 +28,7 @@ type MockGithub = {
 type MockCore = { notice: MockFn; warning: MockFn; setFailed: MockFn }
 type Context = { repo: { owner: string; repo: string }; payload: Record<string, unknown> }
 
-function makeGithub({ prHeadSha = 'sha1', labels = [] as string[] } = {}): {
+function makeGithub({ prHeadSha = 'sha1', prState = 'open', labels = [] as string[] } = {}): {
   github: MockGithub
   added: string[][]
   removed: string[]
@@ -39,7 +39,9 @@ function makeGithub({ prHeadSha = 'sha1', labels = [] as string[] } = {}): {
   const created: string[] = []
   const github = {
     rest: {
-      pulls: { get: vi.fn(async () => ({ data: { head: { sha: prHeadSha } } })) },
+      pulls: {
+        get: vi.fn(async () => ({ data: { head: { sha: prHeadSha }, state: prState } }))
+      },
       issues: {
         // The label always exists in these tests; the workflow tolerates the 422 either way.
         createLabel: vi.fn(async ({ name }: { name: string }) => {
@@ -212,6 +214,16 @@ describe('apply_review_outcome', () => {
     await runJob('apply_review_outcome', reviewContext(), github, reviewEnv())
     expect(added).toEqual([])
     expect(removed).toEqual([])
+  })
+
+  it('removes ready-to-merge from a closed pull request', async () => {
+    const { github, added, removed } = makeGithub({
+      prState: 'closed',
+      labels: ['ready-to-merge']
+    })
+    await runJob('apply_review_outcome', reviewContext(), github, reviewEnv())
+    expect(added).toEqual([])
+    expect(removed).toEqual(['ready-to-merge'])
   })
 })
 
