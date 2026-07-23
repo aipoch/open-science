@@ -133,9 +133,8 @@ const buildCodexConfig = (provider: {
         ...(provider.key ? { requires_openai_auth: true } : {})
       }
     }
-    // Tool-search configuration is intentionally left at Codex defaults. The Chat bridge exposes the
-    // app-owned notebook tools through explicit namespaced aliases and does not depend on deferred
-    // tool_search behavior.
+    // Tool-search configuration is intentionally left at Codex defaults. The Chat bridge exposes its
+    // app-owned tools through explicit namespaced aliases and does not depend on deferred tool_search.
   }
 }
 

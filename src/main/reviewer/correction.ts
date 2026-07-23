@@ -4,7 +4,7 @@
 // Phase 3: correction.ts no longer hardcodes unaddressed resolutions.
 // The fix loop in orchestrator.ts drives re-review and sets resolutions from those results.
 
-import type { AcpRuntime } from '../acp/runtime'
+import type { ReviewerAcpRuntime } from './acp-runtime'
 import { createLogger } from '../logger'
 import type { ReviewCheck } from '../../shared/reviewer'
 
@@ -41,7 +41,7 @@ export const injectAuditorMessage = async (options: {
   sessionId: string
   mainSessionId: string
   findings: ReviewCheck[] // the full checks list; only warn/fail are injected
-  acpRuntime: AcpRuntime
+  acpRuntime: ReviewerAcpRuntime
   // Optional hook for tests to capture the injected message text.
   onCorrectionPrompt?: (text: string) => void
   // Called if the correction sendPrompt fails, so the caller can undo pre-emptive suppression.

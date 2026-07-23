@@ -823,6 +823,76 @@ describe('workspace agent message sending', () => {
     expect(session.error).toBe('Invalid API key')
   })
 
+  it('uses the session owner status when a prompt fails on an old runtime', async () => {
+    vi.stubGlobal('window', {
+      api: {
+        acp: {
+          getState: vi.fn().mockResolvedValue({
+            ...createSnapshot(['session-1']),
+            status: 'connected',
+            sessionConnectionStatuses: { 'session-1': 'closed' }
+          })
+        }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockRejectedValue(new Error('Old runtime exited'))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'continue',
+      cwd: '/workspace/project'
+    })
+    await flushRuntimeTasks()
+    await flushRuntimeTasks()
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      interrupted: true,
+      error: 'Old runtime exited — Resume to reconnect and continue.'
+    })
+  })
+
+  it('does not treat a healthy old runtime failure as an active runtime disconnect', async () => {
+    vi.stubGlobal('window', {
+      api: {
+        acp: {
+          getState: vi.fn().mockResolvedValue({
+            ...createSnapshot(['session-1']),
+            status: 'closed',
+            sessionConnectionStatuses: { 'session-1': 'connected' }
+          })
+        }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockRejectedValue(new Error('Invalid API key'))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'continue',
+      cwd: '/workspace/project'
+    })
+    await flushRuntimeTasks()
+    await flushRuntimeTasks()
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error: 'Invalid API key'
+    })
+    expect(useSessionStore.getState().sessions[0].interrupted).toBeFalsy()
+  })
+
   it('marks a model-provider prompt failure non-reportable from the run error event', async () => {
     // The runtime pushes a providerError-tagged error event before rejecting; the rejection path reads
     // it from the snapshot so the failure is recorded non-reportable (no "Report error" button) without
@@ -1291,6 +1361,45 @@ describe('resuming an interrupted session on demand', () => {
     expect(session.error).toBe('Connection lost — Resume to reconnect and continue.')
   })
 
+  it('uses the owning runtime status instead of another generation global status', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Keep working',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+
+    markRunningSessionsDisconnectedOnDrop(
+      'connected',
+      'connected',
+      { 'session-1': 'connected' },
+      { 'session-1': 'closed' }
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      interrupted: true
+    })
+  })
+
+  it('does not disconnect a running old-generation session when only the active runtime drops', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Keep working',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+
+    markRunningSessionsDisconnectedOnDrop(
+      'connected',
+      'closed',
+      { 'session-1': 'connected' },
+      { 'session-1': 'connected' }
+    )
+
+    expect(useSessionStore.getState().sessions[0].status).toBe('running')
+  })
+
   it('does not flag an idle session on drop so provider/skills reconnects stay silent', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
@@ -1491,6 +1600,65 @@ describe('resuming an interrupted session on demand', () => {
     expect(preamble).toContain('Done, saved chart.png')
     // The preamble carries prior turns only; the turn being sent is not folded into it.
     expect(preamble).not.toContain('now add a trend line')
+  })
+
+  it('moves the next turn to the selected framework after the prior framework turn ends', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Analyze the data with Claude',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'claude-code',
+      agentBackendId: 'claude-code:anthropic'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'Claude finished the analysis'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    const runtime = {
+      // The retiring Claude runtime may still report the session until its deferred teardown finishes.
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true,
+        frameworkId: 'codex',
+        backendId: 'codex:builtin-codex-subscription'
+      }),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'continue with Codex',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:builtin-codex-subscription'
+    })
+    await flushRuntimeTasks()
+
+    expect(runtime.resumeSession).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace/project',
+      'default-project',
+      'ask',
+      'claude-code',
+      'claude-code:anthropic'
+    )
+    const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
+    expect(preamble).toContain('Analyze the data with Claude')
+    expect(preamble).toContain('Claude finished the analysis')
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:builtin-codex-subscription'
+    })
   })
 
   it('does not replay a history preamble when the resume kept agent context', async () => {

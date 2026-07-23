@@ -28,6 +28,9 @@ export type ResponsesBridgeTarget = {
   // unconditional forwarding would change what existing bridged users send to their gateway —
   // and gateways fronting non-OpenAI models often reject unknown parameters.
   forwardReasoningEffort?: boolean
+  reviewerScope?: {
+    namespacedTools: ResponsesBridgeNamespacedTool[]
+  }
 }
 
 export type ResponsesBridgeNamespacedTool = {
@@ -1040,6 +1043,8 @@ export class ResponsesBridge {
   // it back to thinking-mode providers that require it. Grows within a session; cleared on close (a
   // provider switch / disconnect). Keyed by call_id, which Codex round-trips, so lookups stay stable.
   private readonly reasoningByCallId = new Map<string, string>()
+  private readonly reviewerSessionKeys = new Set<string>()
+  private readonly scopedReviewerSessionKeys = new Set<string>()
 
   constructor(
     target: ResponsesBridgeTarget,
@@ -1068,6 +1073,16 @@ export class ResponsesBridge {
     this.target = { ...this.target, forwardReasoningEffort: forward }
   }
 
+  registerReviewerSession(promptCacheKey: string): void {
+    this.reviewerSessionKeys.add(promptCacheKey)
+    this.scopedReviewerSessionKeys.delete(promptCacheKey)
+  }
+
+  unregisterReviewerSession(promptCacheKey: string): boolean {
+    this.reviewerSessionKeys.delete(promptCacheKey)
+    return this.scopedReviewerSessionKeys.delete(promptCacheKey)
+  }
+
   async start(): Promise<ResponsesBridgeConnection> {
     if (this.connection) return this.connection
     const token = randomBytes(24).toString('hex')
@@ -1087,17 +1102,23 @@ export class ResponsesBridge {
         }
       })
     })
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject)
-      server.listen(0, '127.0.0.1', resolve)
-    })
-    server.unref()
-    const address = server.address()
-    if (!address || typeof address === 'string')
-      throw new Error('Responses bridge did not bind a port')
+    // Own the server before listen resolves so every partial-start failure remains closeable.
     this.server = server
-    this.connection = { baseUrl: `http://127.0.0.1:${address.port}/v1`, token }
-    return this.connection
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(0, '127.0.0.1', resolve)
+      })
+      server.unref()
+      const address = server.address()
+      if (!address || typeof address === 'string')
+        throw new Error('Responses bridge did not bind a port')
+      this.connection = { baseUrl: `http://127.0.0.1:${address.port}/v1`, token }
+      return this.connection
+    } catch (error) {
+      await this.close().catch(() => undefined)
+      throw error
+    }
   }
 
   async close(): Promise<void> {
@@ -1105,6 +1126,8 @@ export class ResponsesBridge {
     this.server = undefined
     this.connection = undefined
     this.reasoningByCallId.clear()
+    this.reviewerSessionKeys.clear()
+    this.scopedReviewerSessionKeys.clear()
     if (!server) return
     const closing = new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
@@ -1143,11 +1166,21 @@ export class ResponsesBridge {
 
     try {
       const body = await readBody(request)
-      const namespacedTools = this.target.namespacedTools ?? []
-      const connectorSelection = withConnectorInstructions(
-        body,
-        this.target.connectorInstructions ?? []
-      )
+      const promptCacheKey =
+        typeof body.prompt_cache_key === 'string' ? body.prompt_cache_key : undefined
+      const reviewerScoped =
+        promptCacheKey !== undefined && this.reviewerSessionKeys.has(promptCacheKey)
+      if (reviewerScoped) this.scopedReviewerSessionKeys.add(promptCacheKey)
+      const namespacedTools = reviewerScoped
+        ? (this.target.reviewerScope?.namespacedTools ?? [])
+        : (this.target.namespacedTools ?? [])
+      // codex-acp ignores disableBuiltInTools metadata and still advertises shell/filesystem tools.
+      // For reviewer turns, replace the entire declaration set at the protocol boundary so the model
+      // can call only the scope-bounded reviewer HTTP MCP functions.
+      const scopedBody = reviewerScoped ? { ...body, tools: [], tool_choice: 'auto' } : body
+      const connectorSelection = reviewerScoped
+        ? { body: scopedBody, selectedIds: [] }
+        : withConnectorInstructions(scopedBody, this.target.connectorInstructions ?? [])
       const chatRequest = responsesToChatRequest(
         connectorSelection.body,
         this.target.model,
@@ -1176,6 +1209,7 @@ export class ResponsesBridge {
         incomingToolCount: incomingTools.length,
         outgoingToolNames,
         selectedConnectors: connectorSelection.selectedIds,
+        reviewerScoped,
         toolChoice: chatRequest.tool_choice ?? null
       })
 

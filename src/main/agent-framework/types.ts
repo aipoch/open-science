@@ -151,4 +151,11 @@ export type ResolvedAgentBackend = {
   sessionEffort?: ReasoningEffort
   authentication?: AgentAuthentication
   providerConfiguration?: AgentProviderConfiguration
+  // A bridged backend owns one reference to its local loopback bridge. Runtime teardown releases it;
+  // reviewer sessions register their Codex prompt_cache_key here so routing never depends on content.
+  responsesBridgeLease?: {
+    registerReviewerSession: (promptCacheKey: string) => void
+    unregisterReviewerSession: (promptCacheKey: string) => boolean
+    release: () => Promise<void>
+  }
 }

@@ -203,7 +203,8 @@ const failOrMarkDisconnected = async (
   try {
     const snapshot = await window.api.acp.getState()
 
-    if (snapshot.status === 'closed' || snapshot.status === 'error') {
+    const status = snapshot.sessionConnectionStatuses?.[sessionId] ?? snapshot.status
+    if (status === 'closed' || status === 'error') {
       // Keep the specific failure cause (e.g. "Connection timeout") in the Resume banner.
       useSessionStore.getState().markDisconnected(sessionId, message)
       return
@@ -485,7 +486,15 @@ const sendWorkspaceMessage = async (
       return appended
     }
 
-    const shouldResumeSession = !runtime.state.sessionIds.includes(targetSessionId)
+    // A framework switch applies at the next turn boundary. The retiring runtime may still expose the
+    // old session for a brief teardown window, so compare persisted ownership as well as the snapshot.
+    const frameworkChanged = Boolean(
+      agentFrameworkId &&
+      currentSession?.agentFrameworkId &&
+      agentFrameworkId !== currentSession.agentFrameworkId
+    )
+    const shouldResumeSession =
+      frameworkChanged || !runtime.state.sessionIds.includes(targetSessionId)
     let resumeCwd: string | undefined
 
     if (shouldResumeSession) {
@@ -961,21 +970,29 @@ const processContextOverflowRecovery = (
 // reconnects have no running session, so neither reaches markDisconnected here.
 const markRunningSessionsDisconnectedOnDrop = (
   previousStatus: AcpConnectionStatus,
-  currentStatus: AcpConnectionStatus
+  currentStatus: AcpConnectionStatus,
+  previousSessionStatuses: Partial<Record<string, AcpConnectionStatus>> = {},
+  currentSessionStatuses: Partial<Record<string, AcpConnectionStatus>> = {}
 ): void => {
-  const droppedNow =
-    (currentStatus === 'closed' || currentStatus === 'error') &&
-    previousStatus !== 'closed' &&
-    previousStatus !== 'error'
-
-  if (!droppedNow) return
-
   const { sessions, markDisconnected } = useSessionStore.getState()
 
   for (const session of sessions) {
-    if (session.status === 'running' || session.status === 'waiting-permission') {
-      markDisconnected(session.id)
-    }
+    if (session.status !== 'running' && session.status !== 'waiting-permission') continue
+
+    const previousOwnedStatus = previousSessionStatuses[session.id]
+    const currentOwnedStatus = currentSessionStatuses[session.id]
+    const hasOwningRuntimeStatus =
+      previousOwnedStatus !== undefined || currentOwnedStatus !== undefined
+    const previous = hasOwningRuntimeStatus
+      ? (previousOwnedStatus ?? currentOwnedStatus ?? previousStatus)
+      : previousStatus
+    const current = hasOwningRuntimeStatus
+      ? (currentOwnedStatus ?? previousOwnedStatus ?? currentStatus)
+      : currentStatus
+    const droppedNow =
+      (current === 'closed' || current === 'error') && previous !== 'closed' && previous !== 'error'
+
+    if (droppedNow) markDisconnected(session.id)
   }
 }
 
@@ -1039,6 +1056,7 @@ const useWorkspaceAgentRuntime = (): {
   // Tracks the last connection status so the disconnect effect fires only on a transition, not on
   // every unrelated snapshot re-render.
   const previousStatusRef = useRef(runtime.state.status)
+  const previousSessionStatusesRef = useRef(runtime.state.sessionConnectionStatuses)
   // Dedup + cooldown state for the request-size overflow auto-recovery, kept across re-renders.
   const handledOverflowEventIds = useRef(new Set<string>())
   const recoveringOverflowSessionIds = useRef(new Set<string>())
@@ -1072,9 +1090,16 @@ const useWorkspaceAgentRuntime = (): {
   // while a session is still running. Flag those sessions so the Resume banner appears.
   useEffect(() => {
     const previousStatus = previousStatusRef.current
+    const previousSessionStatuses = previousSessionStatusesRef.current
     previousStatusRef.current = runtime.state.status
-    markRunningSessionsDisconnectedOnDrop(previousStatus, runtime.state.status)
-  }, [runtime.state.status])
+    previousSessionStatusesRef.current = runtime.state.sessionConnectionStatuses
+    markRunningSessionsDisconnectedOnDrop(
+      previousStatus,
+      runtime.state.status,
+      previousSessionStatuses,
+      runtime.state.sessionConnectionStatuses
+    )
+  }, [runtime.state.status, runtime.state.sessionConnectionStatuses])
 
   // Creates a session if needed, records the user message, then starts the prompt in the background.
   const sendMessage = useCallback(

@@ -134,6 +134,8 @@ const startFakeAgent = (
     // the session/cancel notification on delete instead of a close request.
     supportsClose?: boolean
     rejectModeChange?: boolean
+    onSetMode?: (context: { sessionId: string; modeId: string }) => Promise<void> | void
+    onClose?: (sessionId: string) => Promise<void> | void
     onPrompt?: (context: {
       sessionId: string
       text: string
@@ -241,9 +243,16 @@ const startFakeAgent = (
     })
     .onRequest(acp.methods.agent.session.setMode, (ctx) => {
       if (options.rejectModeChange) throw new Error('set mode failed')
-      modeChanges.push({ sessionId: ctx.params.sessionId, modeId: ctx.params.modeId })
-      actions.push(`mode:${ctx.params.modeId}`)
-      return {}
+      const recordModeChange = (): Record<string, never> => {
+        modeChanges.push({ sessionId: ctx.params.sessionId, modeId: ctx.params.modeId })
+        actions.push(`mode:${ctx.params.modeId}`)
+        return {}
+      }
+      const pending = options.onSetMode?.({
+        sessionId: ctx.params.sessionId,
+        modeId: ctx.params.modeId
+      })
+      return pending ? pending.then(recordModeChange) : recordModeChange()
     })
     .onRequest(acp.methods.agent.session.setConfigOption, (ctx) => {
       if (options.rejectSetConfigOption) throw acp.RequestError.internalError()
@@ -285,8 +294,12 @@ const startFakeAgent = (
       return undefined
     })
     .onRequest(acp.methods.agent.session.close, (ctx) => {
-      closedSessions.push(ctx.params.sessionId)
-      return {}
+      const recordClose = (): Record<string, never> => {
+        closedSessions.push(ctx.params.sessionId)
+        return {}
+      }
+      const pending = options.onClose?.(ctx.params.sessionId)
+      return pending ? pending.then(recordClose) : recordClose()
     })
     .connect(
       acp.ndJsonStream(
@@ -2016,6 +2029,7 @@ describe('ACP runtime session management', () => {
   it('serves artifact/notebook MCP over the http host for an http-only framework', async () => {
     const root = await createTemporaryRoot()
     const httpHost = new AgentMcpHttpHost()
+    const closeHttpHost = vi.spyOn(httpHost, 'close')
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['oc-session'])
     const runtime = new AcpRuntime({
@@ -2057,6 +2071,9 @@ describe('ACP runtime session management', () => {
       const artifactServer = servers.find((server) => server.name === 'open-science-artifacts')
       expect(artifactServer?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp\/artifact\//)
       expect(artifactServer?.headers?.[0]).toMatchObject({ name: 'authorization' })
+
+      await runtime.requestRetirement()
+      expect(closeHttpHost).toHaveBeenCalledOnce()
     } finally {
       await httpHost.close()
     }
@@ -3302,7 +3319,10 @@ describe('ACP runtime session management', () => {
 
     expect(runtime.reviewerRejectedToolCallCount(session.sessionId)).toBe(1)
     // dispose returns the final count and clears it atomically — the orchestrator relies on this.
-    expect(runtime.disposeReviewerSession(session)).toBe(1)
+    expect(runtime.disposeReviewerSession(session)).toEqual({
+      rejectedToolCalls: 1,
+      reviewerBridgeScoped: undefined
+    })
     expect(runtime.reviewerRejectedToolCallCount('reviewer-session-1')).toBe(0)
   })
 
@@ -4168,6 +4188,317 @@ describe('ACP runtime session management', () => {
     gate.resolve()
     await prompt
     await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(process.killed).toBe(true)
+  })
+
+  it('retires a framework runtime only after its in-flight prompt finishes', async () => {
+    const process = new FakeAgentProcess()
+    const gate = createDeferred()
+    const onRetired = vi.fn()
+    startFakeAgent(process, ['s1'], { onPrompt: () => gate.promise })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onRetired }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+
+    await runtime.requestRetirement()
+    expect(process.killed).toBe(false)
+    expect(onRetired).not.toHaveBeenCalled()
+    expect(runtime.getSnapshot().sessionIds).toEqual(['s1'])
+
+    gate.resolve()
+    await prompt
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(process.killed).toBe(true)
+    expect(runtime.getSnapshot().sessionIds).toEqual([])
+    expect(onRetired).toHaveBeenCalledOnce()
+  })
+
+  it('does not retire while createSession is resolving its backend', async () => {
+    const process = new FakeAgentProcess()
+    const backendEntered = createDeferred()
+    const releaseBackend = createDeferred()
+    const onRetired = vi.fn()
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      callbacks: { onRetired },
+      resolveBackend: async () => {
+        backendEntered.resolve()
+        await releaseBackend.promise
+        return {
+          framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+          executablePath: '/bin/agent',
+          env: {}
+        }
+      }
+    })
+
+    const creating = runtime.createSession({ cwd: '/workspace' })
+    await backendEntered.promise
+    await runtime.requestRetirement()
+
+    expect(process.killed).toBe(false)
+    expect(onRetired).not.toHaveBeenCalled()
+
+    releaseBackend.resolve()
+    await expect(creating).resolves.toMatchObject({ sessionId: 's1' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(process.killed).toBe(true)
+    expect(onRetired).toHaveBeenCalledOnce()
+  })
+
+  it('does not retire while a prompt checks whether disabled skills need force-loading', async () => {
+    const process = new FakeAgentProcess()
+    const skillCheckEntered = createDeferred()
+    const releaseSkillCheck = createDeferred()
+    const onRetired = vi.fn()
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onRetired },
+      skills: {
+        needForceLoad: async () => {
+          skillCheckEntered.resolve()
+          await releaseSkillCheck.promise
+          return []
+        },
+        namesForIds: async (ids) => ids
+      }
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const prompting = runtime.sendPrompt({
+      sessionId: 's1',
+      text: 'use the selected skill',
+      forcedSkillIds: ['research']
+    })
+    await skillCheckEntered.promise
+    await runtime.requestRetirement()
+
+    expect(process.killed).toBe(false)
+    expect(onRetired).not.toHaveBeenCalled()
+
+    releaseSkillCheck.resolve()
+    await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(process.killed).toBe(true)
+    expect(onRetired).toHaveBeenCalledOnce()
+  })
+
+  it('does not retire while deleteSession awaits the agent close request', async () => {
+    const process = new FakeAgentProcess()
+    const closeEntered = createDeferred()
+    const releaseClose = createDeferred()
+    const onRetired = vi.fn()
+    startFakeAgent(process, ['s1'], {
+      onClose: async () => {
+        closeEntered.resolve()
+        await releaseClose.promise
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onRetired }
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const deleting = runtime.deleteSession({ sessionId: 's1' })
+    await closeEntered.promise
+    await runtime.requestRetirement()
+
+    expect(process.killed).toBe(false)
+    expect(onRetired).not.toHaveBeenCalled()
+
+    releaseClose.resolve()
+    await deleting
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(process.killed).toBe(true)
+    expect(onRetired).toHaveBeenCalledOnce()
+  })
+
+  it('does not retire while setPermissionProfile awaits the agent mode request', async () => {
+    const process = new FakeAgentProcess()
+    const modeEntered = createDeferred()
+    const releaseMode = createDeferred()
+    const onRetired = vi.fn()
+    startFakeAgent(process, ['s1'], {
+      modes: createModes(['default', 'bypassPermissions']),
+      onSetMode: async () => {
+        modeEntered.resolve()
+        await releaseMode.promise
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onRetired }
+    })
+    await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    const changingProfile = runtime.setPermissionProfile({ sessionId: 's1', profile: 'full' })
+    await modeEntered.promise
+    await runtime.requestRetirement()
+
+    expect(process.killed).toBe(false)
+    expect(onRetired).not.toHaveBeenCalled()
+
+    releaseMode.resolve()
+    await changingProfile
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(process.killed).toBe(true)
+    expect(onRetired).toHaveBeenCalledOnce()
+  })
+
+  it('completes retirement after an unexpected connection close drains the active operation', async () => {
+    const process = new FakeAgentProcess()
+    const gate = createDeferred()
+    const onRetired = vi.fn()
+    startFakeAgent(process, ['s1'], { onPrompt: () => gate.promise })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onRetired }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+    await runtime.requestRetirement()
+
+    process.stdout.end()
+    gate.resolve()
+    await prompt.catch(() => undefined)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(runtime.getSnapshot().status).toBe('closed')
+    expect(onRetired).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a reviewer session alive until it is disposed before retiring', async () => {
+    const process = new FakeAgentProcess()
+    const registerReviewerSession = vi.fn()
+    const unregisterReviewerSession = vi.fn(() => false)
+    const releaseBridge = vi.fn(async () => undefined)
+    startFakeAgent(process, ['reviewer-session-1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {},
+        providerConfiguration: {
+          providerId: 'custom-gateway',
+          apiType: 'openai',
+          baseUrl: 'http://127.0.0.1:1/v1',
+          headers: { authorization: 'Bearer bridge' }
+        },
+        responsesBridgeLease: {
+          registerReviewerSession,
+          unregisterReviewerSession,
+          release: releaseBridge
+        }
+      })
+    })
+
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
+    expect(registerReviewerSession).toHaveBeenCalledWith('reviewer-session-1')
+
+    await runtime.requestRetirement()
+    expect(process.killed).toBe(false)
+    expect(releaseBridge).not.toHaveBeenCalled()
+
+    runtime.disposeReviewerSession(session)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(unregisterReviewerSession).toHaveBeenCalledWith('reviewer-session-1')
+    expect(errorLogSpy).toHaveBeenCalledWith('reviewer bridge request was never scoped', {
+      sessionId: 'reviewer-session-1'
+    })
+    expect(process.killed).toBe(true)
+    expect(releaseBridge).toHaveBeenCalledOnce()
+  })
+
+  it('finishes disconnect state cleanup when the responses bridge lease rejects release', async () => {
+    const process = new FakeAgentProcess()
+    const releaseBridge = vi.fn().mockRejectedValue(new Error('bridge close failed'))
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/agent',
+        env: {},
+        responsesBridgeLease: {
+          registerReviewerSession: vi.fn(),
+          unregisterReviewerSession: vi.fn(() => true),
+          release: releaseBridge
+        }
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    await expect(runtime.disconnect()).resolves.toMatchObject({ status: 'closed' })
+
+    expect(releaseBridge).toHaveBeenCalledOnce()
+    expect(runtime.getSnapshot().status).toBe('closed')
+    expect(errorLogSpy).toHaveBeenCalledWith(
+      'responses bridge lease release failed',
+      expect.objectContaining({ error: 'bridge close failed' })
+    )
+  })
+
+  it('keeps a retiring runtime alive across gaps in an activity workflow', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    const activityStarted = createDeferred()
+    const releaseActivity = createDeferred()
+
+    const activity = runtime.withActivity({}, async () => {
+      activityStarted.resolve()
+      await releaseActivity.promise
+    })
+    await activityStarted.promise
+
+    await runtime.requestRetirement()
+    expect(process.killed).toBe(false)
+
+    releaseActivity.resolve()
+    await activity
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
     expect(process.killed).toBe(true)
   })
 
@@ -5340,16 +5671,63 @@ describe('ACP runtime skill force-load + nudge', () => {
     nudgeNames?: Record<string, string>
   }): {
     needForceLoad: ReturnType<typeof vi.fn<(ids: string[]) => Promise<string[]>>>
-    setTurnForced: ReturnType<typeof vi.fn<(ids: string[]) => void>>
-    clearTurnForced: ReturnType<typeof vi.fn<() => void>>
     namesForIds: ReturnType<typeof vi.fn<(ids: string[]) => Promise<string[]>>>
   } => ({
     needForceLoad: vi.fn<(ids: string[]) => Promise<string[]>>(async () => options.needForceLoad),
-    setTurnForced: vi.fn<(ids: string[]) => void>(),
-    clearTurnForced: vi.fn<() => void>(),
     namesForIds: vi.fn<(ids: string[]) => Promise<string[]>>(async (ids: string[]) =>
       ids.map((id) => options.nudgeNames?.[id] ?? id)
     )
+  })
+
+  it('passes turn-forced skill ids to backend resolution per runtime instance', async () => {
+    const firstSpawner = createFreshAgentSpawner()
+    const secondSpawner = createFreshAgentSpawner()
+    const firstContexts: Array<{ forcedSkillIds: string[] } | undefined> = []
+    const secondContexts: Array<{ forcedSkillIds: string[] } | undefined> = []
+    const createRuntime = (
+      spawner: ReturnType<typeof createFreshAgentSpawner>,
+      contexts: Array<{ forcedSkillIds: string[] } | undefined>
+    ): AcpRuntime =>
+      new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: (context?: { forcedSkillIds: string[] }) => {
+          contexts.push(context)
+          return {
+            framework: { ...claudeCodeFramework, spawn: spawner.spawn },
+            executablePath: '/bin/agent',
+            env: {}
+          }
+        },
+        skills: {
+          needForceLoad: async (ids) => ids,
+          namesForIds: async (ids) => ids
+        }
+      })
+
+    const first = createRuntime(firstSpawner, firstContexts)
+    const second = createRuntime(secondSpawner, secondContexts)
+    await Promise.all([
+      first.createSession({ cwd: '/workspace' }),
+      second.createSession({ cwd: '/workspace' })
+    ])
+    await Promise.all([
+      first.sendPrompt({
+        sessionId: 'remote-session-1',
+        text: 'first',
+        forcedSkillIds: ['skill-a']
+      }),
+      second.sendPrompt({
+        sessionId: 'remote-session-1',
+        text: 'second',
+        forcedSkillIds: ['skill-b']
+      })
+    ])
+
+    expect(firstContexts).toContainEqual({ forcedSkillIds: ['skill-a'] })
+    expect(secondContexts).toContainEqual({ forcedSkillIds: ['skill-b'] })
+    expect(firstContexts).not.toContainEqual({ forcedSkillIds: ['skill-b'] })
+    expect(secondContexts).not.toContainEqual({ forcedSkillIds: ['skill-a'] })
   })
 
   it('respawns and nudges when a picked skill is disabled, then restores after the turn', async () => {
@@ -5371,8 +5749,7 @@ describe('ACP runtime skill force-load + nudge', () => {
       forcedSkillIds: ['research']
     })
 
-    // The picked skill was marked forced and the agent respawned before the prompt (resume path).
-    expect(hooks.setTurnForced).toHaveBeenCalledWith(['research'])
+    // The picked skill was scoped to this runtime and the agent respawned before the prompt.
     expect(spawner.spawnCount()).toBe(2)
     expect(spawner.agents[1].resumedSessions).toHaveLength(1)
 
@@ -5386,7 +5763,6 @@ describe('ACP runtime skill force-load + nudge', () => {
     ])
 
     // After the turn the force set is cleared and a restore reconnect is scheduled (agent torn down).
-    expect(hooks.clearTurnForced).toHaveBeenCalledTimes(1)
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(runtime.getSnapshot().status).toBe('closed')
   })
@@ -5409,8 +5785,6 @@ describe('ACP runtime skill force-load + nudge', () => {
     })
 
     // No disabled picks → no respawn and no force set toggling, but the nudge is still prepended.
-    expect(hooks.setTurnForced).not.toHaveBeenCalled()
-    expect(hooks.clearTurnForced).not.toHaveBeenCalled()
     expect(spawner.spawnCount()).toBe(1)
     expect(spawner.agents[0].prompts).toEqual([
       {
@@ -5464,7 +5838,6 @@ describe('ACP runtime skill force-load + nudge', () => {
 
     // With no forcedSkillIds, none of the skill hooks run and the text is unchanged.
     expect(hooks.needForceLoad).not.toHaveBeenCalled()
-    expect(hooks.setTurnForced).not.toHaveBeenCalled()
     expect(spawner.spawnCount()).toBe(1)
     expect(spawner.agents[0].prompts).toEqual([
       { sessionId: 'remote-session-1', text: 'plain prompt' }

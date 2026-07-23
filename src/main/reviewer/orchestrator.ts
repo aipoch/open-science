@@ -11,7 +11,7 @@ import { homedir } from 'node:os'
 
 import type { ActiveSession } from '@agentclientprotocol/sdk'
 
-import type { AcpRuntime } from '../acp/runtime'
+import { withReviewerRuntimeActivity, type ReviewerAcpRuntime } from './acp-runtime'
 import { createLogger } from '../logger'
 import { extractProviderToolName, extractTerminalMeta } from '../acp/runtime-events'
 import type {
@@ -29,6 +29,7 @@ import { ReviewerMcpServer } from './mcp-server'
 import { ReviewerHostServer } from './host-sdk'
 import { REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND } from './rubric'
 import { injectAuditorMessage } from './correction'
+import { buildHistoryPreamble } from '../../shared/history-preamble'
 
 const log = createLogger('reviewer:orchestrator')
 
@@ -57,7 +58,7 @@ export type RunReviewOptions = {
   // Repository for persisting review rows + checks.
   reviewRepository: ReviewRepository
   // The ACP runtime that owns the agent connection (used to spawn the reviewer session).
-  acpRuntime: AcpRuntime
+  acpRuntime: ReviewerAcpRuntime
   // Storage root for artifact reads (used by the scope-bounded evidence reader).
   artifactStorageRoot: string
   // The model/provider tag to record on the Review row.
@@ -114,6 +115,9 @@ const incompleteReviewMessage = (rejectedToolCalls: number): string =>
     ? 'Reviewer stopped without calling submit_findings; ' +
       `${rejectedToolCalls} tool call(s) were also rejected by the permission gate.`
     : 'Reviewer stopped without calling submit_findings.'
+
+const REVIEWER_BRIDGE_SCOPE_ERROR =
+  'Reviewer request was not constrained to the reviewer-only tool scope.'
 
 // Streaming content deltas are emitted one-per-chunk as the reviewer writes its message/thinking, so
 // their count tracks how much it *says*, not how much it *does*. Counting them toward the loop cap
@@ -363,7 +367,7 @@ type FixLoopOptions = {
   mainSessionId: string
   getSession: SessionProvider
   reviewRepository: ReviewRepository
-  acpRuntime: AcpRuntime
+  acpRuntime: ReviewerAcpRuntime
   artifactStorageRoot: string
   model: string
   onReviewUpdate?: (review: ReviewWithChecks) => void
@@ -674,7 +678,7 @@ const runScopedReview = async (options: {
   projectId: string
   getSession: SessionProvider
   reviewRepository: ReviewRepository
-  acpRuntime: AcpRuntime
+  acpRuntime: ReviewerAcpRuntime
   artifactStorageRoot: string
   model: string
   onReviewUpdate?: (review: ReviewWithChecks) => void
@@ -747,6 +751,7 @@ const runScopedReview = async (options: {
   let checksReceived: NewCheck[] = []
   let checksSubmitted = false
   let rejectedToolCalls = 0
+  let reviewerBridgeScoped: boolean | undefined
   const capturedLog: ReviewerLogEntry[] = []
 
   try {
@@ -800,8 +805,24 @@ const runScopedReview = async (options: {
     return { review: errorWithChecks, submittedChecks: [] }
   } finally {
     // dispose returns the gate's rejection count and clears it atomically — no ordering hazard.
-    if (reviewerSession) rejectedToolCalls = acpRuntime.disposeReviewerSession(reviewerSession)
+    if (reviewerSession) {
+      const disposition = acpRuntime.disposeReviewerSession(reviewerSession)
+      rejectedToolCalls = disposition.rejectedToolCalls
+      reviewerBridgeScoped = disposition.reviewerBridgeScoped
+    }
     await mcpServer?.stop().catch(() => undefined)
+  }
+
+  if (reviewerBridgeScoped === false) {
+    log.error('scoped re-review bridge isolation failed', { reviewId: review.id })
+    review = await reviewRepository.updateReview(review.id, {
+      lifecycle: 'error',
+      errorMessage: REVIEWER_BRIDGE_SCOPE_ERROR,
+      reviewerLog: capturedLog
+    })
+    const errorWithChecks: ReviewWithChecks = { ...review, checks: [] }
+    onReviewUpdate?.(errorWithChecks)
+    return { review: errorWithChecks, submittedChecks: [] }
   }
 
   if (!checksSubmitted) {
@@ -868,7 +889,10 @@ const runScopedReview = async (options: {
 // Drives one complete auto-review cycle: scope resolution → DB record → reviewer session →
 // submit_findings → lifecycle update. Returns the final review (with checks) for the caller
 // to broadcast. Never throws — errors are captured as lifecycle='error'.
-export const runReview = async (options: RunReviewOptions): Promise<ReviewWithChecks> => {
+const runReviewWithSession = async (
+  options: RunReviewOptions,
+  session: PersistedChatSession
+): Promise<ReviewWithChecks> => {
   const {
     sessionId,
     turnMessageId,
@@ -892,27 +916,6 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
     fixLoopAbortSignal,
     sessionRefreshTimeoutMs = DEFAULT_SESSION_REFRESH_TIMEOUT_MS
   } = options
-
-  log.info('runReview started', { sessionId, turnMessageId })
-
-  // Step 1: resolve the turn scope.
-  const session = await getSession(sessionId)
-
-  if (!session) {
-    log.warn('session not found for review', { sessionId })
-    const errorReview = await reviewRepository.createReview({
-      projectId,
-      sessionId,
-      turnMessageId,
-      scope: { turnMessageId, blocks: [], artifactVersionIds: [] },
-      lifecycle: 'error',
-      errorMessage: `Session ${sessionId} not found`,
-      model
-    })
-    const withFindings: ReviewWithChecks = { ...errorReview, checks: [] }
-    onReviewUpdate?.(withFindings)
-    return withFindings
-  }
 
   // Audit the scope turn (defaults to the grouping turn) but keep the row grouped under turnMessageId.
   const scope = await resolveTurnScopeWithArtifactDigests(
@@ -946,6 +949,7 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
   let checksReceived: NewCheck[] = []
   let checksSubmitted = false
   let rejectedToolCalls = 0
+  let reviewerBridgeScoped: boolean | undefined
   const capturedLog: ReviewerLogEntry[] = []
 
   try {
@@ -1017,8 +1021,24 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
     // Always dispose the reviewer session and shut down the servers. dispose returns the gate's
     // rejection count and clears it atomically, so an incomplete review reports the real cause with
     // no capture-before-dispose ordering to get wrong.
-    if (reviewerSession) rejectedToolCalls = acpRuntime.disposeReviewerSession(reviewerSession)
+    if (reviewerSession) {
+      const disposition = acpRuntime.disposeReviewerSession(reviewerSession)
+      rejectedToolCalls = disposition.rejectedToolCalls
+      reviewerBridgeScoped = disposition.reviewerBridgeScoped
+    }
     await mcpServer?.stop().catch(() => undefined)
+  }
+
+  if (reviewerBridgeScoped === false) {
+    log.error('reviewer bridge isolation failed', { reviewId: review.id })
+    review = await reviewRepository.updateReview(review.id, {
+      lifecycle: 'error',
+      errorMessage: REVIEWER_BRIDGE_SCOPE_ERROR,
+      reviewerLog: capturedLog
+    })
+    const errorWithFindings: ReviewWithChecks = { ...review, checks: [] }
+    onReviewUpdate?.(errorWithFindings)
+    return errorWithFindings
   }
 
   if (!checksSubmitted) {
@@ -1127,6 +1147,59 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
 
   onReviewUpdate?.(finalReview)
   return finalReview
+}
+
+export const runReview = async (options: RunReviewOptions): Promise<ReviewWithChecks> => {
+  const {
+    sessionId,
+    turnMessageId,
+    projectId,
+    getSession,
+    reviewRepository,
+    acpRuntime,
+    onReviewUpdate,
+    mainSessionId,
+    model = ''
+  } = options
+
+  log.info('runReview started', { sessionId, turnMessageId })
+
+  const session = await getSession(sessionId)
+  if (!session) {
+    log.warn('session not found for review', { sessionId })
+    const errorReview = await reviewRepository.createReview({
+      projectId,
+      sessionId,
+      turnMessageId,
+      scope: { turnMessageId, blocks: [], artifactVersionIds: [] },
+      lifecycle: 'error',
+      errorMessage: `Session ${sessionId} not found`,
+      model
+    })
+    const withFindings: ReviewWithChecks = { ...errorReview, checks: [] }
+    onReviewUpdate?.(withFindings)
+    return withFindings
+  }
+
+  return withReviewerRuntimeActivity(
+    acpRuntime,
+    {
+      ...(mainSessionId
+        ? {
+            session: {
+              sessionId: mainSessionId,
+              cwd: session.cwd,
+              projectName: session.projectId,
+              permissionProfile: session.permissionProfile,
+              previousFrameworkId: session.agentFrameworkId,
+              previousBackendId: session.agentBackendId,
+              historyPreamble: buildHistoryPreamble(session.messages)
+            }
+          }
+        : {})
+    },
+    (scopedRuntime) => runReviewWithSession({ ...options, acpRuntime: scopedRuntime }, session)
+  )
 }
 
 // Builds the prompt sent to the isolated reviewer session. All evidence is available only through the

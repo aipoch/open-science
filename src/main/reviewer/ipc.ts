@@ -16,7 +16,7 @@ import { createLogger } from '../logger'
 import { runReview } from './orchestrator'
 import { flagStaleReviews } from './stale-reviews'
 import { ReviewRepository } from './repository'
-import type { AcpRuntime } from '../acp/runtime'
+import type { ReviewerAcpRuntime } from './acp-runtime'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { SessionRepository } from '../session-persistence/repository'
@@ -59,7 +59,7 @@ const createDefaultReviewRepository = (): ReviewRepository => {
 
 type ReviewerIpcOptions = {
   // The ACP runtime used to spawn reviewer sessions.
-  acpRuntime: AcpRuntime
+  acpRuntime: ReviewerAcpRuntime
   // Optional override for the config root (DB/sessions) (for testing).
   storageRoot?: string
   // Optional override for the data root (artifacts) (for testing).
