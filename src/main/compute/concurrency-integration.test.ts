@@ -413,6 +413,50 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     expect(status.provider_ceilings[providerId]).toBe(10) // default ceiling
   })
 
+  it('queued job is dispatched on drainOnStartup when no active jobs', async () => {
+    const providerId = computeProviderId('test-host')
+
+    // Set provider ceiling to 1 so the second submission queues
+    await hostRepo.updateConcurrencyLimit(providerId, 1)
+
+    // Submit first job (should be submitted — fills the single slot)
+    const result1 = await service.submitJob(
+      providerId,
+      'job 1',
+      'echo one',
+      {},
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+    expect(result1.status).toBe('submitted')
+
+    // Submit second job from a different session (should queue because provider ceiling is hit)
+    const result2 = await service.submitJob(
+      providerId,
+      'job 2',
+      'echo two',
+      {},
+      { sessionId: 'session-2', projectId: 'project-1' }
+    )
+    expect(result2.status).toBe('queued')
+
+    // Simulate restart: mark job-1 as done externally (as if the app exited while it was running)
+    await jobRepo.update(result1.job_id, {
+      status: 'success',
+      finishedAt: new Date(),
+      exitCode: 0
+    })
+
+    // No active jobs remain — call drainQueuedJobs to simulate startup drain
+    await service.drainQueuedJobs()
+
+    // Wait for async dispatch to complete
+    await new Promise((resolve) => setTimeout(resolve, 200))
+
+    // job-2 should now be submitted
+    const job2Updated = await jobRepo.get(result2.job_id)
+    expect(job2Updated?.status).toBe('submitted')
+  })
+
   it('should not dispatch queued job if status is not terminal', async () => {
     const providerId = computeProviderId('test-host')
 

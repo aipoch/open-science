@@ -608,6 +608,42 @@ describe('ConcurrencyManager', () => {
     })
   })
 
+  describe('drainOnStartup', () => {
+    it('drainOnStartup dispatches eligible queued jobs', async () => {
+      const queuedJobs: ComputeJob[] = [
+        {
+          job_id: 'job-1',
+          session_id: 'session-1',
+          provider_id: 'ssh:cluster-a',
+          created_at: 1000,
+          status: 'queued'
+        } as ComputeJob
+      ]
+
+      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue(queuedJobs)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({
+        concurrencyLimit: 10
+      } as ComputeHost)
+      vi.mocked(jobRepo.update).mockResolvedValue({} as ComputeJob)
+
+      await manager.drainOnStartup()
+
+      expect(jobRepo.update).toHaveBeenCalledWith('job-1', { status: 'submitted' })
+      expect(dispatchJob).toHaveBeenCalledWith('job-1')
+    })
+
+    it('drainOnStartup is a no-op when no queued jobs exist', async () => {
+      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue([])
+
+      await manager.drainOnStartup()
+
+      expect(jobRepo.update).not.toHaveBeenCalled()
+      expect(dispatchJob).not.toHaveBeenCalled()
+    })
+  })
+
   describe('admit - atomic status decision + row commit', () => {
     it('calls commit with submitted when limits are clear', async () => {
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)

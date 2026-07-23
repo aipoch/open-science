@@ -132,6 +132,13 @@ export class ConcurrencyManager {
     await this.tryDispatchNext()
   }
 
+  // Drains the queue after a process restart: attempts to dispatch any queued jobs that can now
+  // fill available capacity slots. Should be called once during startup after the poller has been
+  // initialized.
+  async drainOnStartup(): Promise<void> {
+    await this.tryDispatchNext()
+  }
+
   // Query session status (active/queued counts, limits, provider ceilings).
   async getStatus(sessionId: string): Promise<SessionStatus> {
     const sessionLimit = this.sessionLimits.get(sessionId) ?? null

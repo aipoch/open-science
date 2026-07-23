@@ -1478,6 +1478,15 @@ export class ComputeService {
     return status
   }
 
+  // Drains queued jobs after a process restart. Should be called once during startup after the poller
+  // has been initialized: any jobs that were queued when the process last exited will be dispatched
+  // if capacity is now available (e.g. previously-active jobs completed while the app was down).
+  async drainQueuedJobs(): Promise<void> {
+    if (this.concurrencyManager) {
+      await this.concurrencyManager.drainOnStartup()
+    }
+  }
+
   // Internal callback wrapper: when a job transitions to a terminal state, notify ConcurrencyManager
   // to trigger auto-dispatch of queued jobs. This is called by the JobPoller via onJobUpdated.
   // Exposed as a method so the JobPoller (or IPC layer) can wire it in production.
