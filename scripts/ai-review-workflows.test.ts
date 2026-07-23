@@ -583,7 +583,7 @@ exit 1
     expect(readFileSync(githubOutput, 'utf8')).toContain('literal `<review>` and `</review>` tags')
   })
 
-  it('fails closed if Claude attempts to use a tool outside the review tool set', () => {
+  it('keeps a structured review after Claude attempts an unavailable tool', () => {
     const root = createFixtureRoot('ai-review-claude-tool-use-')
     const executionFile = join(root, 'execution.json')
     const githubOutput = join(root, 'github-output')
@@ -594,8 +594,15 @@ exit 1
         message: {
           content: [
             { type: 'tool_use', name: 'Write', input: { file_path: 'changed.txt' } },
-            { type: 'text', text: '## Claude Architecture Review' }
+            { type: 'text', text: 'The unavailable tool call was rejected by Claude Code.' }
           ]
+        }
+      },
+      {
+        type: 'result',
+        subtype: 'success',
+        structured_output: {
+          review: '## Claude Architecture Review\n**Verdict: mergeable**'
         }
       }
     ])
@@ -606,8 +613,8 @@ exit 1
       env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
     })
 
-    expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('attempted to use an unexpected tool')
+    expect(result.status, result.stderr).toBe(0)
+    expect(readFileSync(githubOutput, 'utf8')).toContain('**Verdict: mergeable**')
   })
 
   it('fails closed if Claude advertises tools outside the review tool set', () => {

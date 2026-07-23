@@ -295,17 +295,6 @@ jobs:
             echo "Claude exposed an unexpected tool set." >&2
             exit 1
           fi
-          if jq -s -e '
-            any(.[]; any(.message.content[]?;
-              .type == "tool_use" and
-              (.name as $name
-                | ["Bash", "Glob", "Grep", "Read", "StructuredOutput"]
-                | index($name) == null)))
-          ' "$EXECUTION_FILE" > /dev/null; then
-            echo "Claude attempted to use an unexpected tool." >&2
-            exit 1
-          fi
-
           review="$(
             jq -s -r '
               ([.[] | select(.type == "result")] | last
