@@ -7,7 +7,8 @@ name: AI PR Review
 # ANTHROPIC_AUTH_TOKEN is also passed to the Claude action's required API-key input; do not add a
 # separate ANTHROPIC_API_KEY secret.
 # Set ENABLE_CLAUDE_REVIEW=false or ENABLE_CODEX_REVIEW=false to disable either reviewer.
-# Override the review models with CLAUDE_REVIEW_MODEL and CODEX_REVIEW_MODEL (optional).
+# Override the review models with CLAUDE_REVIEW_MODEL and CODEX_REVIEW_MODEL (optional), and their
+# reasoning effort with CLAUDE_REVIEW_EFFORT or CODEX_REVIEW_EFFORT (both default to high).
 # Set FORK_REVIEW_MODE to disabled, manual, or automatic (default: manual). Same-repository PRs
 # always run. Manual mode permits workflow_dispatch reviews of forks; automatic mode also reviews
 # fork PRs on opened, synchronize, and reopened events. Disabled mode blocks both fork paths.
@@ -18,11 +19,12 @@ name: AI PR Review
 # Neither reviewer agent posts comments directly. Each writes its verdict to a job output, and a
 # separate trusted post-job publishes the comment via the GitHub REST API.
 #
-# The Claude agent inspects the checked-out pull request with Read, Glob, Grep, and Bash. This means
-# the agent process can access its review credentials and other runner-local data; the repository
-# intentionally accepts that exposure in exchange for on-demand code exploration. --safe-mode still
-# disables project customisations (CLAUDE.md, skills, plugins, hooks, MCP servers), and
-# --strict-mcp-config prevents .mcp.json from loading additional servers.
+# The Claude agent inspects the checked-out pull request with Read, Glob, Grep, and Bash in dontAsk
+# mode. Claude Code's built-in read-only command classifier permits safe repository inspection,
+# while commands requiring approval are denied non-interactively. The process can still access its
+# review credentials and other runner-local data; the repository accepts that exposure in exchange
+# for on-demand code exploration. --safe-mode disables project customisations (CLAUDE.md, skills,
+# plugins, hooks, MCP servers), and --strict-mcp-config prevents .mcp.json from adding servers.
 on:
   pull_request_target:
     branches:
@@ -184,6 +186,9 @@ jobs:
               "$PR_DIFF_BASE" "$PR_DIFF_BASE"
             echo 'changed files, their callers, tests, configuration, and surrounding implementation.'
             echo 'Do not modify the checkout or post comments yourself.'
+            echo 'Perform static code inspection only. You may read test source files to understand'
+            echo 'expected behavior, but do not install dependencies or run lint, tests, typecheck,'
+            echo 'build, package-manager commands, repository scripts, or project executables.'
             echo
             echo 'The Codex review job performs a comprehensive correctness, security, and convention'
             echo 'review. Complement that review by focusing exclusively on architecture and integration:'
@@ -227,6 +232,7 @@ jobs:
           CLAUDE_CODE_DISABLE_1M_CONTEXT: '1'
           CLAUDE_PROMPT_FILE: ${{ steps.context.outputs.prompt_file }}
           CLAUDE_MODEL: ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-sonnet-5' }}
+          CLAUDE_REVIEW_EFFORT: ${{ vars.CLAUDE_REVIEW_EFFORT || 'high' }}
           CLAUDE_REVIEW_SCHEMA: >-
             {"type":"object","properties":{"verdict":{"type":"string","enum":["mergeable","needs changes"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"priority":{"type":"string","enum":["P0","P1","P2","P3"]},"title":{"type":"string"},"path":{"type":"string"},"line":{"type":"integer","minimum":1},"impact":{"type":"string"},"recommendation":{"type":"string"}},"required":["priority","title","path","line","impact","recommendation"],"additionalProperties":false}}},"required":["verdict","summary","findings"],"additionalProperties":false}
         shell: bash
@@ -235,8 +241,8 @@ jobs:
           execution_file="$RUNNER_TEMP/claude-execution.jsonl"
 
           # Safe mode disables project customisations, hooks, skills, and plugins; strict MCP
-          # prevents the checkout from adding servers. Bash runs without approval and can read or
-          # modify runner-local state; this is an intentional tradeoff for autonomous inspection.
+          # prevents the checkout from adding servers. dontAsk lets Claude Code's built-in
+          # read-only command classifier run inspections and denies commands that need approval.
           set +e
           claude \
             --print \
@@ -245,11 +251,13 @@ jobs:
             --verbose \
             --no-session-persistence \
             --model "$CLAUDE_MODEL" \
+            --effort "$CLAUDE_REVIEW_EFFORT" \
             --json-schema "$CLAUDE_REVIEW_SCHEMA" \
             --safe-mode \
             --strict-mcp-config \
-            --permission-mode bypassPermissions \
+            --permission-mode dontAsk \
             --tools "Read,Glob,Grep,Bash" \
+            --allowedTools "Read,Glob,Grep" \
             < "$CLAUDE_PROMPT_FILE" \
             > "$execution_file"
           claude_status=$?
@@ -550,6 +558,10 @@ jobs:
             echo 'rule. Report a project-standard finding when either result below is false.'
             echo "Branch name valid: ${branch_valid}"
             echo "Pull request title valid: ${title_valid}"
+            echo
+            echo 'Perform static code inspection only. Do not install dependencies or run lint,'
+            echo 'tests, typecheck, build, package-manager commands, repository scripts, or project'
+            echo 'executables. Read test source files when needed to understand expected behavior.'
           } > "$instructions_file"
 
           jq -n '
@@ -608,7 +620,7 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           responses-api-endpoint: ${{ steps.responses_endpoint.outputs.url }}
           model: ${{ vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}
-          effort: high
+          effort: ${{ vars.CODEX_REVIEW_EFFORT || 'high' }}
           permission-profile: ':read-only'
           codex-home: ${{ runner.temp }}/codex-home
           codex-args: ${{ steps.codex_args.outputs.value }}
@@ -617,6 +629,10 @@ jobs:
             Review only the changes introduced by this pull request. Inspect the checked-out
             repository, diff, callers, tests, and configuration as needed. Focus on actionable
             correctness, security, regression, and repository-standard defects.
+
+            Perform static code inspection only. Do not install dependencies or run lint, tests,
+            typecheck, build, package-manager commands, repository scripts, or project executables.
+            Reading test source files is encouraged when it clarifies expected behavior.
 
             The exact pull request changes are between these commits:
               base: ${{ steps.diff_base.outputs.sha }}

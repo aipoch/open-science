@@ -394,20 +394,35 @@ describe('AI review workflow contract', () => {
     expect(reviewWorkflow).toContain('--repo "${{ github.repository }}"')
   })
 
-  it('lets Claude inspect the checked-out pull request with an explicit local tool set', () => {
+  it('lets Claude use Bash only through its built-in read-only command classifier', () => {
     const step = getNamedStep('claude_review', 'Run Claude architecture review')
     const command = step.run
 
     expect(command).toContain('--tools "Read,Glob,Grep,Bash"')
+    expect(command).toContain('--effort "$CLAUDE_REVIEW_EFFORT"')
+    expect(step.env?.CLAUDE_REVIEW_EFFORT).toBe("${{ vars.CLAUDE_REVIEW_EFFORT || 'high' }}")
+    expect(command).toContain('--permission-mode dontAsk')
+    expect(command).toContain('--allowedTools "Read,Glob,Grep"')
+    expect(command).not.toContain('--permission-mode bypassPermissions')
     expect(command).not.toContain('--max-turns')
     expect(parsedWorkflow.jobs.claude_review['timeout-minutes']).toBe(30)
-    expect(command).toContain('--permission-mode bypassPermissions')
     // --safe-mode disables all project customisations (hooks, MCP servers, .claude/settings.json).
     expect(command).toContain('--safe-mode')
     expect(command).toContain('--strict-mcp-config')
-    expect(reviewWorkflow).not.toContain('--allowedTools')
+    expect(command).not.toMatch(/--allowedTools[^\n]*Bash/)
     expect(reviewWorkflow).toContain('Build Claude review prompt')
     expect(reviewWorkflow).toContain('post_claude_feedback')
+  })
+
+  it('keeps both reviewers on static code inspection instead of running project checks', () => {
+    const claudePrompt = getRunStep('claude_review', 'context')
+    const codexStep = getNamedStep('codex_review', 'Run Codex correctness review')
+    const prohibitedChecks = ['install dependencies', 'lint', 'tests', 'typecheck', 'build']
+
+    for (const check of prohibitedChecks) {
+      expect(claudePrompt).toContain(check)
+      expect(codexStep.with?.prompt).toContain(check)
+    }
   })
 
   it('runs Claude with an explicit Sonnet model and endpoint-compatible output framing', () => {
@@ -451,6 +466,7 @@ exit 1
         RUNNER_TEMP: root,
         CLAUDE_PROMPT_FILE: promptFile,
         CLAUDE_MODEL: 'claude-sonnet-5',
+        CLAUDE_REVIEW_EFFORT: 'high',
         CLAUDE_REVIEW_SCHEMA: '{}',
         GITHUB_OUTPUT: runOutput
       }
@@ -733,7 +749,7 @@ exit 1
       'openai-api-key': '${{ secrets.OPENAI_API_KEY }}',
       'responses-api-endpoint': '${{ steps.responses_endpoint.outputs.url }}',
       model: "${{ vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}",
-      effort: 'high',
+      effort: "${{ vars.CODEX_REVIEW_EFFORT || 'high' }}",
       'permission-profile': ':read-only',
       'codex-args': '${{ steps.codex_args.outputs.value }}',
       'output-schema-file': '${{ steps.codex_args.outputs.schema_file }}'
