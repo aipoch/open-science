@@ -19,6 +19,8 @@ type RuntimeUninstallControlProps = {
   isUninstalling: boolean
   isDetecting: boolean
   isInstalling: boolean
+  // Whether an ACP prompt is currently running; while true the uninstall button shows a standing hint.
+  promptInFlight?: boolean
   onUninstall: () => void
 }
 
@@ -36,12 +38,15 @@ const RuntimeUninstallControl = ({
   isUninstalling,
   isDetecting,
   isInstalling,
+  promptInFlight,
   onUninstall
 }: RuntimeUninstallControlProps): React.JSX.Element => {
   const busy = isUninstalling || isDetecting || isInstalling
   // Busy takes priority: during detect/uninstall the button is natively disabled with no explainer, even
   // if a standing reason (non-managed / active) also applies — that reason is stale mid-operation.
-  const hint = busy ? null : uninstallDisabledHint(label, uninstallCommand, { managed, active })
+  const hint = busy
+    ? null
+    : uninstallDisabledHint(label, uninstallCommand, { managed, active, promptInFlight })
 
   const button = (
     <Button

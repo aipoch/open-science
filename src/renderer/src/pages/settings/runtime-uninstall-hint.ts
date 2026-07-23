@@ -5,7 +5,11 @@
 export const uninstallDisabledHint = (
   label: string,
   uninstallCommand: string,
-  { managed, active }: { managed: boolean; active: boolean }
+  {
+    managed,
+    active,
+    promptInFlight
+  }: { managed: boolean; active: boolean; promptInFlight?: boolean }
 ): string | null => {
   if (!managed) {
     return `${label} was found on your system but isn't managed by the app, so it can't be uninstalled from here. Remove it with the tool you used to install it — for example \`${uninstallCommand}\`, your package manager, or by deleting it from your PATH — then re-detect.`
@@ -13,6 +17,10 @@ export const uninstallDisabledHint = (
 
   if (active) {
     return `${label} is the active agent framework and can't be uninstalled. Switch to another framework first, then uninstall.`
+  }
+
+  if (promptInFlight) {
+    return 'A task is running — wait for it to finish before uninstalling.'
   }
 
   return null

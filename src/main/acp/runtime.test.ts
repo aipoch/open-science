@@ -4124,6 +4124,108 @@ describe('ACP runtime session management', () => {
     expect(process.killed).toBe(true)
   })
 
+  it('createSession waits for a pending provider reconnect before using the new connection', async () => {
+    const oldProcess = new FakeAgentProcess()
+    const newProcess = new FakeAgentProcess()
+    const gate = createDeferred()
+    // Old process: one session, prompt gated so it stays in-flight.
+    startFakeAgent(oldProcess, ['s1'], { onPrompt: () => gate.promise })
+    // New process: serves sessions after the reconnect.
+    startFakeAgent(newProcess, ['s2'])
+
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: async () => {
+        spawnCount += 1
+        return {
+          framework: {
+            ...claudeCodeFramework,
+            spawn: () => asAgentProcess(spawnCount === 1 ? oldProcess : newProcess)
+          },
+          executablePath: '/bin/agent',
+          env: {},
+          args: []
+        }
+      }
+    })
+
+    // Establish the initial connection and start an in-flight prompt.
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+
+    // Request a provider reconnect while the prompt is running — arms the barrier.
+    await runtime.requestProviderReconnect()
+
+    // A concurrent createSession must NOT complete before the barrier resolves.
+    let secondSessionDone = false
+    const secondSession = runtime.createSession({ cwd: '/workspace' }).then((r) => {
+      secondSessionDone = true
+      return r
+    })
+
+    // Yield so any eager resolution would be observable, then assert still blocked.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(secondSessionDone).toBe(false)
+
+    // Release the gate → prompt finishes → deferred reconnect fires → barrier resolves.
+    gate.resolve()
+    await prompt
+    const result = await secondSession
+
+    // The second session must have landed on the new connection (second spawn).
+    expect(result.sessionId).toBe('s2')
+    expect(spawnCount).toBe(2)
+  })
+
+  it('createSession proceeds immediately when an unexpected connection close resolves the barrier', async () => {
+    const oldProcess = new FakeAgentProcess()
+    const newProcess = new FakeAgentProcess()
+    const gate = createDeferred()
+    startFakeAgent(oldProcess, ['s1'], { onPrompt: () => gate.promise })
+    startFakeAgent(newProcess, ['s2'])
+
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: async () => {
+        spawnCount += 1
+        return {
+          framework: {
+            ...claudeCodeFramework,
+            spawn: () => asAgentProcess(spawnCount === 1 ? oldProcess : newProcess)
+          },
+          executablePath: '/bin/agent',
+          env: {},
+          args: []
+        }
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+
+    // Arm the barrier with a deferred reconnect while the prompt is running.
+    await runtime.requestProviderReconnect()
+
+    // createSession blocks on the barrier.
+    const secondSession = runtime.createSession({ cwd: '/workspace' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // Simulate an unexpected connection close — handleConnectionClosed resolves the barrier.
+    oldProcess.stdout.end()
+
+    // createSession must unblock and connect fresh (the close cleared the stale connection).
+    const result = await secondSession
+    expect(result.sessionId).toBe('s2')
+
+    // Clean up the in-flight prompt gate so the test can exit cleanly.
+    gate.resolve()
+    await prompt.catch(() => undefined)
+  })
+
   it('reconnects immediately when a provider switch happens with no prompt in flight', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['s1'])

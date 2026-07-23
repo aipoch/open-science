@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 
 // Import the bare Mono/Color components straight from their modules: each icon's entry point
@@ -63,6 +63,13 @@ const AgentPanel = (): React.JSX.Element => {
   const uninstallCodex = useSettingsStore((state) => state.uninstallCodex)
   const detectClaude = useSettingsStore((state) => state.detectClaude)
   const installClaude = useSettingsStore((state) => state.installClaude)
+
+  // Track whether an ACP prompt is currently running so the uninstall button can be disabled.
+  const [promptInFlight, setPromptInFlight] = useState(false)
+  useEffect(() => {
+    void window.api.acp.getState().then((s) => setPromptInFlight(s.promptInFlight))
+    return window.api.acp.onState((s) => setPromptInFlight(s.promptInFlight))
+  }, [])
 
   // The app-managed runtime pending an uninstall confirmation (null = dialog closed), plus the
   // in-flight flag so the dialog and status cards can show progress and stay locked during removal.
@@ -233,6 +240,7 @@ const AgentPanel = (): React.JSX.Element => {
       managed={card.managed}
       isUninstalling={isUninstalling && pendingUninstall === card.key}
       isDetecting={isDetectingAnyFramework}
+      promptInFlight={promptInFlight}
       onUninstall={() => setPendingUninstall(card.key)}
       installSources={card.installSources}
       install={card.install}

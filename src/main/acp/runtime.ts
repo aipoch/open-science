@@ -521,6 +521,10 @@ class AcpRuntime {
   // A provider change requested while a prompt was running, applied when the session next goes idle.
   private pendingProviderReconnect = false
   private pendingSkillsReload = false
+  // Barrier awaited by ensureConnected so a createSession called while a deferred reconnect is
+  // queued blocks until the reconnect completes rather than reusing the stale connection.
+  private reconnectBarrier: Promise<void> | undefined
+  private reconnectBarrierResolve: (() => void) | undefined
   private expectedProcessExits = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly permissionBroker: AcpPermissionBroker
   private readonly callbacks: AcpRuntimeCallbacks
@@ -1572,6 +1576,9 @@ class AcpRuntime {
   async requestProviderReconnect(): Promise<void> {
     if (this.promptInFlightSessionIds.size > 0) {
       this.pendingProviderReconnect = true
+      // Arm the barrier so any concurrent createSession waits for the reconnect
+      // rather than reusing the stale connection with the old backend.
+      this.armReconnectBarrier()
       return
     }
 
@@ -1585,13 +1592,15 @@ class AcpRuntime {
 
     if (this.pendingProviderReconnect) {
       this.pendingProviderReconnect = false
-      void this.disconnect()
+      // Resolve the barrier after disconnect so ensureConnected falls through to
+      // a fresh connect with the new backend, not back onto the stale connection.
+      void this.disconnect().then(() => this.resolveReconnectBarrier())
       return
     }
 
     if (this.pendingSkillsReload) {
       this.pendingSkillsReload = false
-      void this.disconnect()
+      void this.disconnect().then(() => this.resolveReconnectBarrier())
     }
   }
 
@@ -1602,11 +1611,29 @@ class AcpRuntime {
   async requestSkillsReload(): Promise<void> {
     if (this.promptInFlightSessionIds.size > 0) {
       this.pendingSkillsReload = true
+      this.armReconnectBarrier()
       return
     }
 
     this.pendingSkillsReload = false
     await this.disconnect()
+  }
+
+  // Creates the reconnect barrier promise if one is not already pending.
+  private armReconnectBarrier(): void {
+    if (!this.reconnectBarrier) {
+      this.reconnectBarrier = new Promise<void>((resolve) => {
+        this.reconnectBarrierResolve = resolve
+      })
+    }
+  }
+
+  // Resolves and clears the reconnect barrier, unblocking any ensureConnected callers.
+  private resolveReconnectBarrier(): void {
+    const resolve = this.reconnectBarrierResolve
+    this.reconnectBarrier = undefined
+    this.reconnectBarrierResolve = undefined
+    resolve?.()
   }
 
   private async disconnectCurrent(emitClosedStatus = true): Promise<AcpStateSnapshot> {
@@ -2394,6 +2421,14 @@ class AcpRuntime {
 
   // Lazily initializes the process connection before session creation.
   private async ensureConnected(cwd: string): Promise<ClientConnection> {
+    // A deferred provider/framework/skills reconnect is pending: wait for it to
+    // complete before reusing (or opening) a connection. Without this guard a
+    // createSession called while a prompt is still running would piggy-back onto
+    // the stale connection and land on the old backend.
+    if (this.reconnectBarrier) {
+      await this.reconnectBarrier
+    }
+
     if (this.connection && this.status === 'connected') {
       return this.connection
     }
@@ -3310,6 +3345,11 @@ class AcpRuntime {
     this.connection = undefined
     this.agentProcess = undefined
     this.promptInFlightSessionIds.clear()
+    // The connection is already gone, so any ensureConnected caller waiting on
+    // the reconnect barrier must unblock now — it will fall through to connect()
+    // and pick up the new backend from resolveBackend.
+    this.pendingProviderReconnect = false
+    this.resolveReconnectBarrier()
     this.setStatus('closed')
   }
 
