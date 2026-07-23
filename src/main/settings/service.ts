@@ -1871,6 +1871,7 @@ class SettingsService {
     if (provider && status.authenticated === false) {
       await this.repository.upsertProvider({
         ...provider,
+        expiresAt: undefined,
         lastValidatedAt: undefined,
         lastValidationFailure: undefined
       })

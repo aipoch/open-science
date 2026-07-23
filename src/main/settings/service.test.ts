@@ -3038,7 +3038,7 @@ describe('SettingsService: logoutIsolatedClaude error propagation', () => {
     expect(result).toMatchObject({ ok: false, message: 'Codex sign-out timed out.' })
   })
 
-  it('returns ok when the controller reports no error', async () => {
+  it('clears credential metadata when the controller signs out successfully', async () => {
     const claudeIsolatedAuth = {
       getStatus: vi.fn(),
       loginIsolated: vi.fn(),
@@ -3050,10 +3050,23 @@ describe('SettingsService: logoutIsolatedClaude error propagation', () => {
       })
     }
     const service = createService(undefined, { claudeIsolatedAuth })
+    await repository.upsertProvider({
+      id: 'builtin-claude-isolated',
+      type: 'claude-isolated',
+      name: 'Claude subscription',
+      expiresAt: Date.now() + 1_000,
+      lastValidatedAt: Date.now()
+    })
 
     const result = await service.logoutIsolatedClaude()
+    const stored = (await repository.getSettings()).providers.find(
+      (provider) => provider.id === 'builtin-claude-isolated'
+    )
 
     expect(result).toEqual({ ok: true, category: 'ok' })
+    expect(stored?.expiresAt).toBeUndefined()
+    expect(stored?.lastValidatedAt).toBeUndefined()
+    expect(stored?.lastValidationFailure).toBeUndefined()
   })
 })
 
