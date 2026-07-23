@@ -350,7 +350,7 @@ describe('AI review workflow contract', () => {
     expect(step.env?.ANTHROPIC_API_KEY).toBe('${{ secrets.ANTHROPIC_AUTH_TOKEN }}')
     expect(step.run).toContain('--output-format stream-json')
     expect(step.run).toContain('Claude CLI failed: subtype=')
-    expect(step.run).not.toContain('--json-schema')
+    expect(step.run).toContain('--json-schema "$CLAUDE_REVIEW_SCHEMA"')
     expect(step.env).not.toHaveProperty('ANTHROPIC_DEFAULT_SONNET_MODEL')
   })
 
@@ -420,6 +420,34 @@ describe('AI review workflow contract', () => {
     expect(output).not.toContain('private reasoning')
     expect(output).not.toContain('<thinking>')
     expect(output).not.toContain('<review>')
+    expect(output).toContain('## Claude Architecture Review\n**Verdict: mergeable**')
+  })
+
+  it('prefers schema-validated review output over free-form reasoning', () => {
+    const root = createFixtureRoot('ai-review-claude-structured-')
+    const executionFile = join(root, 'execution.jsonl')
+    const githubOutput = join(root, 'github-output')
+    writeJsonLines(executionFile, [
+      { type: 'system', subtype: 'init', tools: [] },
+      {
+        type: 'result',
+        subtype: 'success',
+        result: '<thinking>private reasoning</thinking>',
+        structured_output: {
+          review: '## Claude Architecture Review\n**Verdict: mergeable**'
+        }
+      }
+    ])
+
+    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
+    })
+
+    expect(result.status, result.stderr).toBe(0)
+    const output = readFileSync(githubOutput, 'utf8')
+    expect(output).not.toContain('private reasoning')
     expect(output).toContain('## Claude Architecture Review\n**Verdict: mergeable**')
   })
 

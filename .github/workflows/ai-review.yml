@@ -236,8 +236,8 @@ jobs:
             echo '**Impact:** and **Recommendation:** labels. If no architectural or integration issues'
             echo 'are found, write **No architectural or integration issues found.** Be concise.'
             echo
-            echo 'Wrap only the final review Markdown in <review> and </review> tags. Keep all'
-            echo 'analysis or thinking outside that block. Do not use a JSON or code-fence wrapper.'
+            echo 'Return the final review Markdown only in the review field required by the output'
+            echo 'schema. Do not include analysis, thinking, JSON, or a code-fence wrapper in it.'
           } > "$prompt_file"
           echo "prompt_file=$prompt_file" >> "$GITHUB_OUTPUT"
 
@@ -264,6 +264,7 @@ jobs:
           CLAUDE_CODE_DISABLE_1M_CONTEXT: '1'
           CLAUDE_PROMPT_FILE: ${{ steps.context.outputs.prompt_file }}
           CLAUDE_MODEL: ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-sonnet-5' }}
+          CLAUDE_REVIEW_SCHEMA: '{"type":"object","properties":{"review":{"type":"string"}},"required":["review"],"additionalProperties":false}'
         shell: bash
         run: |
           set -euo pipefail
@@ -281,6 +282,7 @@ jobs:
               --no-session-persistence \
               --model "$CLAUDE_MODEL" \
               --max-turns 3 \
+              --json-schema "$CLAUDE_REVIEW_SCHEMA" \
               --safe-mode \
               --strict-mcp-config \
               --tools "" \
@@ -328,10 +330,15 @@ jobs:
 
           review="$(
             jq -s -r '
+              ([.[] | select(.type == "result")] | last
+                | .structured_output.review // "") as $structured
+              |
               ([.[] | select(.type == "assistant")] | last
                 | [.message.content[]? | select(.type == "text") | .text]
                 | join("\n")) as $assistant
-              | (if ($assistant | length) > 0 then
+              | (if ($structured | length) > 0 then
+                  $structured
+                elif ($assistant | length) > 0 then
                   $assistant
                 else
                   ([.[] | select(.type == "result")] | last | .result // "")
