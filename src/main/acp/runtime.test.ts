@@ -3186,6 +3186,50 @@ describe('ACP runtime session management', () => {
     runtime.disposeReviewerSession(session)
   })
 
+  // Claude Code preserves hyphens in MCP server names in real tool traces, so the permission title
+  // can use mcp__<hyphenated-server>__<tool> instead of the sanitized underscore form.
+  it('auto-approves a claude-code reviewer MCP tool identified by its hyphenated title', async () => {
+    const process = new FakeAgentProcess()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'reviewer-session-1',
+      toolCallId: 'reviewer-hyphenated-title',
+      toolTitle: 'mcp__open-science-reviewer__read_turn',
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
+
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
+    await session.prompt([{ type: 'text', text: 'read the audited turn' }])
+
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(runtime.reviewerRejectedToolCallCount(session.sessionId)).toBe(0)
+    runtime.disposeReviewerSession(session)
+  })
+
   // Security: the toolCallId is agent-controlled, so a reviewer-shaped id must NOT authorize a call
   // whose title/kind are a genuinely disallowed tool. Only the title carries the trusted MCP identity.
   it('rejects a Bash call that carries a reviewer-shaped toolCallId', async () => {

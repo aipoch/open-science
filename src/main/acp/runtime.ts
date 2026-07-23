@@ -331,22 +331,20 @@ const REVIEWER_MCP_OPENCODE_TOOL_NAMES = new Set(
   Object.values(REVIEWER_MCP_TOOLS).map((toolName) => `${REVIEWER_MCP_SERVER_NAME}_${toolName}`)
 )
 const REVIEWER_MCP_LEAF_TOOL_NAMES = new Set<string>(Object.values(REVIEWER_MCP_TOOLS))
-// claude-code namespaces MCP tools as mcp__<server>__<tool> and sanitizes the server name by replacing
-// every non-alphanumeric char with an underscore, so "open-science-reviewer" becomes
-// "open_science_reviewer". Match that sanitized identity, which appears in the tool call title and
-// carries no provider _meta tool name.
+// claude-code namespaces MCP tools as mcp__<server>__<tool>. Depending on the provider path, the
+// server segment either preserves hyphens or replaces them with underscores. Match both exact forms:
+// the tool call title can be the only identity available to a permission request.
 const REVIEWER_MCP_SERVER_NAME_SANITIZED = REVIEWER_MCP_SERVER_NAME.replace(/[^a-zA-Z0-9]/g, '_')
 const REVIEWER_MCP_CLAUDE_TOOL_NAMES = new Set(
-  Object.values(REVIEWER_MCP_TOOLS).map(
-    (toolName) => `mcp__${REVIEWER_MCP_SERVER_NAME_SANITIZED}__${toolName}`
+  Object.values(REVIEWER_MCP_TOOLS).flatMap((toolName) =>
+    [REVIEWER_MCP_SERVER_NAME, REVIEWER_MCP_SERVER_NAME_SANITIZED].map(
+      (serverName) => `mcp__${serverName}__${toolName}`
+    )
   )
 )
 const REVIEWER_MCP_PROVIDER_TOOL_NAMES = new Set([
   ...REVIEWER_MCP_OPENCODE_TOOL_NAMES,
-  ...REVIEWER_MCP_CLAUDE_TOOL_NAMES,
-  ...Object.values(REVIEWER_MCP_TOOLS).map(
-    (toolName) => `mcp__${REVIEWER_MCP_SERVER_NAME}__${toolName}`
-  )
+  ...REVIEWER_MCP_CLAUDE_TOOL_NAMES
 ])
 
 // Logs an error without ever throwing back into the caller. Used on failure paths where a throwing
@@ -3060,8 +3058,8 @@ class AcpRuntime {
   // identity must come from the title (the same field the generic MCP classifier trusts), never the
   // toolCallId: a tool call id is an opaque, agent-chosen string, so matching it would let a Bash call
   // carrying a reviewer-shaped id (e.g. mcp__open_science_reviewer__read_turn_0) slip past the gate.
-  // claude-code sanitizes server names (hyphens → underscores) and emits the exact mcp__<server>__<tool>
-  // form as the title with no numeric suffix, so an exact set membership check is sufficient.
+  // claude-code emits the exact mcp__<server>__<tool> form as the title with no numeric suffix, so an
+  // exact set membership check across its preserved and sanitized server-name forms is sufficient.
   private matchReviewerClaudeToolName(title: string | null | undefined): string | undefined {
     if (typeof title !== 'string') return undefined
     return REVIEWER_MCP_CLAUDE_TOOL_NAMES.has(title) ? title : undefined
