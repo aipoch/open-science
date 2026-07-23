@@ -85,4 +85,13 @@ describe('AI review workflow contract', () => {
     expect(reviewWorkflow).toContain('exit 1')
     expect(reviewWorkflow).not.toContain('head -c 393216 review_context_raw.txt > review_context.txt')
   })
+
+  it('uses codex exec review (built-in) instead of openai/codex-action with prompt injection', () => {
+    // codex exec review scopes the diff natively via --base and treats the prompt
+    // argument as supplementary instructions, not the entire review framing.
+    expect(reviewWorkflow).toContain('codex exec review')
+    expect(reviewWorkflow).toContain('--base')
+    expect(reviewWorkflow).toContain('--ignore-user-config')
+    expect(reviewWorkflow).not.toContain('openai/codex-action')
+  })
 })
