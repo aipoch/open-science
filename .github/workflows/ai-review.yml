@@ -256,6 +256,7 @@ jobs:
         id: run_claude
         if: ${{ steps.context.outputs.should_run == 'true' }}
         env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
           CLAUDE_CODE_ATTRIBUTION_HEADER: ${{ vars.CLAUDE_CODE_ATTRIBUTION_HEADER }}
@@ -271,19 +272,27 @@ jobs:
           # environment-string limits. An exact empty --tools value disables every built-in tool.
           # Safe mode disables project customisations, hooks, skills, and plugins; strict MCP
           # prevents the fork checkout from adding servers while the auth token is in the process.
-          claude \
-            --print \
-            --input-format text \
-            --output-format stream-json \
-            --verbose \
-            --no-session-persistence \
-            --model "$CLAUDE_MODEL" \
-            --max-turns 3 \
-            --safe-mode \
-            --strict-mcp-config \
-            --tools "" \
-            < "$CLAUDE_PROMPT_FILE" \
-            > "$execution_file"
+          if ! claude \
+              --print \
+              --input-format text \
+              --output-format stream-json \
+              --verbose \
+              --no-session-persistence \
+              --model "$CLAUDE_MODEL" \
+              --max-turns 3 \
+              --safe-mode \
+              --strict-mcp-config \
+              --tools "" \
+              < "$CLAUDE_PROMPT_FILE" \
+              > "$execution_file"; then
+            jq -s -r '
+              [.[] | select(.type == "result")] | last
+              | "Claude CLI failed: subtype=\(.subtype // "unknown") " +
+                "terminal_reason=\(.terminal_reason // "unknown") " +
+                "errors=\((.errors // []) | join("; "))"
+            ' "$execution_file" >&2 || echo 'Claude CLI failed without valid JSONL output.' >&2
+            exit 1
+          fi
 
           echo "execution_file=$execution_file" >> "$GITHUB_OUTPUT"
 
