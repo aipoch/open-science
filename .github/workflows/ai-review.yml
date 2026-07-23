@@ -12,6 +12,9 @@ name: AI PR Review
 # skipped unless ENABLE_FORK_REVIEW=true; same-repository PRs always run. workflow_dispatch with a
 # pull request number re-runs either review on demand and bypasses the fork gate (the secret and
 # workflow code are already trusted under a manual dispatch).
+# Codex reviews each opened, synchronized, or reopened PR state until the PR has accumulated 10
+# successful Codex review comments. Rapid updates still use concurrency cancellation so only the
+# latest surviving run publishes a review and consumes a round.
 #
 # Neither reviewer agent posts comments directly. Each writes its verdict to a job output, and a
 # separate trusted post-job publishes the comment via the GitHub REST API.
