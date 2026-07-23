@@ -81,18 +81,29 @@ describe('buildGithubIssueUrl', () => {
     expect(url.searchParams.get('what-happened')).toBe('Run failed: connection reset')
     expect(url.searchParams.get('app-version')).toBe('0.5.1')
     expect(url.searchParams.get('provider-model')).toBe('Anthropic · claude-opus-4')
-    expect(url.searchParams.get('logs')).toContain('Not attached automatically')
+    expect(url.searchParams.get('logs')).toContain('Runtime log not attached automatically')
   })
 
-  it('carries the environment block (framework + runtime) into the logs field', () => {
+  it('puts only non-structured environment facts (framework + runtime) in the logs field', () => {
     const logs = new URL(buildGithubIssueUrl(baseContext)).searchParams.get('logs') ?? ''
-    expect(logs).toContain('Environment')
     expect(logs).toContain('Agent framework: Claude Code')
     expect(logs).toContain('Electron 30.0.0, Chrome 124, Node 20.11')
+    // App version / provider-model / OS have their own form fields — must not be duplicated here,
+    // and the shell-rendered field must stay plain (no Markdown emphasis).
+    expect(logs).not.toContain('App version')
+    expect(logs).not.toContain('**')
   })
 
-  it('uses the edited report body for what-happened when provided', () => {
-    const url = new URL(buildGithubIssueUrl(baseContext, 'redacted summary'))
+  it('keeps what-happened to the error alone, without the environment block', () => {
+    const whatHappened =
+      new URL(buildGithubIssueUrl(baseContext)).searchParams.get('what-happened') ?? ''
+    expect(whatHappened).toBe('Run failed: connection reset')
+    expect(whatHappened).not.toContain('Environment')
+    expect(whatHappened).not.toContain('App version')
+  })
+
+  it('reflects a redacted error passed via context', () => {
+    const url = new URL(buildGithubIssueUrl({ ...baseContext, error: 'redacted summary' }))
     expect(url.searchParams.get('what-happened')).toBe('redacted summary')
   })
 

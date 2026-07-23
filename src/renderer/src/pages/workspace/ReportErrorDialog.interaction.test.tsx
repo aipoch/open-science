@@ -59,16 +59,25 @@ const consentCheckbox = (): HTMLInputElement =>
   document.body.querySelector('input[type="checkbox"]') as HTMLInputElement
 
 const textarea = (): HTMLTextAreaElement =>
-  document.body.querySelector('textarea[aria-label="Error report preview"]') as HTMLTextAreaElement
+  document.body.querySelector('textarea[aria-label="Error details"]') as HTMLTextAreaElement
+
+const environmentBlock = (): string =>
+  document.body.querySelector('[aria-label="Report environment"]')?.textContent ?? ''
 
 describe('ReportErrorDialog', () => {
-  it('seeds the editable textarea with error and environment on open', () => {
+  it('seeds the editable textarea with only the error text', () => {
     renderDialog()
-    const value = textarea()?.value ?? ''
-    expect(value).toContain('Run failed: connection reset')
-    expect(value).toContain('App version: 0.5.1')
-    expect(value).toContain('Provider / model: Anthropic · claude-opus-4')
-    expect(value).toContain('Operating system: Windows')
+    expect(textarea()?.value).toBe('Run failed: connection reset')
+  })
+
+  it('shows environment facts read-only, outside the editable field', () => {
+    renderDialog()
+    const env = environmentBlock()
+    expect(env).toContain('App version: 0.5.1')
+    expect(env).toContain('Provider / model: Anthropic · claude-opus-4')
+    expect(env).toContain('Operating system: Windows')
+    // Environment must not be duplicated inside the editable error field.
+    expect(textarea()?.value).not.toContain('App version')
   })
 
   it('gates the GitHub issue action behind the consent checkbox', () => {
@@ -106,15 +115,15 @@ describe('ReportErrorDialog', () => {
     expect(issueLink()?.getAttribute('aria-disabled')).toBe('true')
   })
 
-  it('includes environment block in the GitHub issue URL logs field', () => {
+  it('carries framework/runtime into the logs field without duplicating structured fields', () => {
     renderDialog()
     act(() => {
       consentCheckbox().click()
     })
-    const href = issueLink()?.getAttribute('href') ?? ''
-    const params = new URL(href).searchParams
-    expect(params.get('logs')).toContain('Environment')
+    const params = new URL(issueLink()?.getAttribute('href') ?? '').searchParams
     expect(params.get('logs')).toContain('Claude Code')
+    expect(params.get('logs')).not.toContain('App version')
+    expect(params.get('what-happened')).toBe('Run failed: connection reset')
   })
 
   it('surfaces an error message when the preload bridge is missing', async () => {

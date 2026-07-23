@@ -4,7 +4,12 @@ import { useMemo, useState } from 'react'
 
 import { useSettingsStore } from '@/stores/settings-store'
 import { useUpdateStore } from '@/stores/update-store'
-import { buildErrorReportText, buildGithubIssueUrl, type ErrorReportContext } from './error-report'
+import {
+  buildEnvironmentBlock,
+  buildErrorReportText,
+  buildGithubIssueUrl,
+  type ErrorReportContext
+} from './error-report'
 
 type ReportErrorDialogProps = {
   open: boolean
@@ -52,22 +57,26 @@ const ReportErrorDialog = ({ open, error, onClose }: ReportErrorDialogProps): Re
     agentFrameworks
   ])
 
-  const reportText = useMemo(() => buildErrorReportText(context), [context])
-
   const [consented, setConsented] = useState(false)
   const [copied, setCopied] = useState(false)
   const [revealMessage, setRevealMessage] = useState<string | null>(null)
-  // Editable copy of the report text so users can redact sensitive content before consenting. Seeded
-  // lazily from the current report; the parent remounts this dialog on each open, so it stays fresh.
-  const [editedText, setEditedText] = useState(reportText)
+  // Only the error text is editable — it is the unpredictable, possibly-sensitive part users may need
+  // to redact. Environment facts are non-sensitive and shown read-only below. Seeded lazily from the
+  // current error; the parent remounts this dialog on each open, so it stays fresh.
+  const [editedError, setEditedError] = useState(error)
 
-  // URL uses the user-edited body so any sensitive-data redactions made in the textarea are reflected.
-  const issueUrl = useMemo(() => buildGithubIssueUrl(context, editedText), [context, editedText])
+  // The edited error flows into every output so redactions are reflected everywhere it is shared.
+  const editedContext = useMemo<ErrorReportContext>(
+    () => ({ ...context, error: editedError }),
+    [context, editedError]
+  )
+  const environmentBlock = useMemo(() => buildEnvironmentBlock(context), [context])
+  const issueUrl = useMemo(() => buildGithubIssueUrl(editedContext), [editedContext])
 
-  // Copies the edited bundle and briefly confirms; the write stays local (no network).
+  // Copies the full bundle (error + environment) with the redacted error; the write stays local.
   const handleCopy = (): void => {
     void navigator.clipboard
-      .writeText(editedText)
+      .writeText(buildErrorReportText(editedContext))
       .then(() => {
         setCopied(true)
         window.setTimeout(() => setCopied(false), 1500)
@@ -102,21 +111,34 @@ const ReportErrorDialog = ({ open, error, onClose }: ReportErrorDialogProps): Re
             Report this error
           </Dialog.Title>
           <Dialog.Description className="mt-2 text-sm leading-relaxed text-text-100">
-            Review what will be included below. This report is posted publicly on GitHub — remove
-            anything sensitive before sharing. Your runtime log stays on this device and is never
-            attached automatically.
+            This report is posted publicly on GitHub. Edit the error text below to remove anything
+            sensitive before sharing. Your runtime log stays on this device and is never attached
+            automatically.
           </Dialog.Description>
 
+          <label className="mt-4 text-[11px] font-medium uppercase tracking-wide text-text-300">
+            Error details
+          </label>
           <textarea
-            className="mt-4 min-h-0 flex-1 resize-none overflow-auto rounded-lg border border-border-200 bg-bg-100 px-3 py-2.5 font-mono text-[12px] leading-5 text-text-100 focus:outline-none focus:ring-1 focus:ring-primary/50"
-            aria-label="Error report preview"
-            value={editedText}
+            className="mt-1 min-h-0 flex-1 resize-none overflow-auto rounded-lg border border-border-200 bg-bg-100 px-3 py-2.5 font-mono text-[12px] leading-5 text-text-100 focus:outline-none focus:ring-1 focus:ring-primary/50"
+            aria-label="Error details"
+            value={editedError}
             onChange={(event) => {
-              setEditedText(event.target.value)
+              setEditedError(event.target.value)
               // Require re-consent whenever the user edits the content being shared.
               setConsented(false)
             }}
           />
+
+          <p className="mt-3 text-[11px] font-medium uppercase tracking-wide text-text-300">
+            Also included
+          </p>
+          <pre
+            className="mt-1 max-h-28 shrink-0 overflow-auto whitespace-pre-wrap rounded-lg border border-border-200 bg-bg-100 px-3 py-2 font-mono text-[11px] leading-5 text-text-200"
+            aria-label="Report environment"
+          >
+            {environmentBlock}
+          </pre>
 
           <label className="mt-4 flex items-start gap-2 text-[13px] leading-5 text-text-100">
             <input

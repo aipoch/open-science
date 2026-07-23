@@ -50,20 +50,23 @@ export const formatProviderModel = (context: ErrorReportContext): string => {
   return 'Unknown'
 }
 
-// Renders the "Environment" section shared by the on-screen preview and the GitHub issue body. Kept
-// as a labelled list so a maintainer can read it at a glance and a user can scan it before sharing.
-export const buildEnvironmentBlock = (context: ErrorReportContext): string => {
+// Joins the runtime versions into one line, e.g. "Electron 30.0.0, Chrome 124, Node 20.11".
+const formatRuntimeVersions = (context: ErrorReportContext): string => {
   const runtime = context.runtimeVersions
-  const runtimeLine = runtime
-    ? [
-        runtime.electron ? `Electron ${runtime.electron}` : undefined,
-        runtime.chrome ? `Chrome ${runtime.chrome}` : undefined,
-        runtime.node ? `Node ${runtime.node}` : undefined
-      ]
-        .filter(Boolean)
-        .join(', ')
-    : ''
+  if (!runtime) return ''
+  return [
+    runtime.electron ? `Electron ${runtime.electron}` : undefined,
+    runtime.chrome ? `Chrome ${runtime.chrome}` : undefined,
+    runtime.node ? `Node ${runtime.node}` : undefined
+  ]
+    .filter(Boolean)
+    .join(', ')
+}
 
+// Renders the full "Environment" section for the copy-to-clipboard bundle. Kept as a labelled list so
+// a maintainer can read it at a glance and a user can scan it before sharing.
+export const buildEnvironmentBlock = (context: ErrorReportContext): string => {
+  const runtimeLine = formatRuntimeVersions(context)
   return [
     `- App version: ${context.appVersion ?? 'Unknown'}`,
     `- Operating system: ${osLabelForPlatform(context.platform) ?? context.platform ?? 'Unknown'}`,
@@ -93,18 +96,37 @@ export const buildErrorReportText = (context: ErrorReportContext): string =>
     'Settings → General → Diagnostics if you want to share it.'
   ].join('\n')
 
+// Builds the `logs` field text: only the environment facts that have no dedicated bug_report.yml
+// field (agent framework, runtime versions). App version / provider-model / OS are omitted here
+// because the form has structured inputs for them — repeating them would clutter the issue. The
+// field is `render: shell`, so this stays plain text (no Markdown).
+const buildLogsFieldText = (context: ErrorReportContext): string => {
+  const runtimeLine = formatRuntimeVersions(context)
+  const envLines = [
+    `Agent framework: ${context.frameworkName ?? 'Unknown'}`,
+    runtimeLine ? `Runtime: ${runtimeLine}` : undefined
+  ].filter(Boolean)
+
+  return [
+    ...envLines,
+    '',
+    'Runtime log not attached automatically (it can contain local paths and prompts).',
+    'Reveal it from Settings → General → Diagnostics and attach after reviewing.'
+  ].join('\n')
+}
+
 // Builds a pre-filled "new issue" URL against the Bug report form. GitHub's issue-form prefill reads
 // query params keyed by each field's `id` in bug_report.yml; the dropdown (`os`) is matched by option
 // label. Only fields we can fill accurately are set — Steps to reproduce is left for the user, and the
 // preflight checkboxes cannot be prefilled, so the user still confirms them in the browser.
 //
-// `reportBody` overrides the `what-happened` field with user-edited content (the dialog's textarea
-// value), so the submitted issue reflects any sensitive-data redactions made before consent.
-export const buildGithubIssueUrl = (context: ErrorReportContext, reportBody?: string): string => {
+// `what-happened` carries only the error/description (from `context.error`); the caller redacts it by
+// passing an edited context. Structured fields and `logs` carry the environment, so nothing is
+// duplicated across fields.
+export const buildGithubIssueUrl = (context: ErrorReportContext): string => {
   const params = new URLSearchParams({ template: 'bug_report.yml' })
 
-  // Prefer the user-edited body; fall back to the raw error string.
-  const whatHappened = (reportBody ?? context.error).trim()
+  const whatHappened = context.error.trim()
   if (whatHappened) params.set('what-happened', whatHappened)
 
   if (context.appVersion) params.set('app-version', context.appVersion)
@@ -115,15 +137,7 @@ export const buildGithubIssueUrl = (context: ErrorReportContext, reportBody?: st
   const osLabel = osLabelForPlatform(context.platform)
   if (osLabel) params.set('os', osLabel)
 
-  // Include the full environment block (framework, runtime versions) so the issue captures what the
-  // dialog preview shows — previously only the error text and structured fields were sent.
-  params.set(
-    'logs',
-    `**Environment**\n${buildEnvironmentBlock(context)}\n\n` +
-      '**Runtime log**\n' +
-      'Not attached automatically (may contain local paths and prompts). ' +
-      'Reveal it from Settings → General → Diagnostics and attach after reviewing.'
-  )
+  params.set('logs', buildLogsFieldText(context))
 
   return `${APP.links.githubRepo}/issues/new?${params.toString()}`
 }
