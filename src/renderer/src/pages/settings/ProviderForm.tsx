@@ -43,6 +43,10 @@ type ProviderFormProps = {
   // Whether Electron can protect new keys with the operating system's secure storage.
   encryptionAvailable?: boolean
   showCodexSubscriptions?: boolean
+  // Whether to surface the Claude subscription option in the provider-kind picker. Mirrors
+  // showCodexSubscriptions: claude-isolated is only meaningful while Claude Code is the active
+  // framework, so the wizard/settings page toggles this rather than showing it unconditionally.
+  showClaudeIsolated?: boolean
 }
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
@@ -108,11 +112,13 @@ const ProviderForm = ({
   isRefreshingModels = false,
   disabled = false,
   encryptionAvailable = true,
-  showCodexSubscriptions = false
+  showCodexSubscriptions = false,
+  showClaudeIsolated = false
 }: ProviderFormProps): React.JSX.Element => {
   const isCustom = value.type === 'custom'
   const isOfficial = value.type === 'official'
   const isCodexSubscription = value.type === 'codex-shared' || value.type === 'codex-isolated'
+  const isClaudeIsolated = value.type === 'claude-isolated'
   const vendor = isOfficial && value.vendorId ? getOfficialVendor(value.vendorId) : undefined
 
   const selectedKey = selectedKindKey(value)
@@ -182,10 +188,18 @@ const ProviderForm = ({
           </SelectTrigger>
           <SelectContent scrollToTopOnOpen>
             {PROVIDER_KIND_GROUPS.map((group) => {
-              const kinds = PROVIDER_KINDS.filter(
-                (kind) =>
-                  kind.group === group.id && (group.id !== 'coding' || showCodexSubscriptions)
-              )
+              const kinds = PROVIDER_KINDS.filter((kind) => {
+                if (kind.group !== group.id) return false
+                // The coding group is reserved for the Codex subscription; only show it when the
+                // active framework is Codex (mirrors the existing showCodexSubscriptions gate).
+                if (group.id === 'coding' && !showCodexSubscriptions) return false
+                // claude-isolated is the only Claude-side subscription option; gate it on the active
+                // framework being Claude Code, so the picker doesn't surface a kind the user can't
+                // actually drive (Claude Code is the only framework that speaks the bearer token).
+                if (kind.key === 'claude-isolated' && !showClaudeIsolated) return false
+
+                return true
+              })
 
               if (kinds.length === 0) return null
 
@@ -406,6 +420,36 @@ const ProviderForm = ({
               </div>
             )
           })()}
+        </>
+      ) : isClaudeIsolated ? (
+        <>
+          <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
+            <div className="space-y-1.5">
+              <span className={fieldLabelClassName}>Authentication</span>
+              <p className="text-xs text-muted-foreground">
+                Run <code className="font-mono">claude setup-token</code> in a terminal and paste
+                the token below. It is stored encrypted under your app-owned Claude config dir;
+                nothing is read from or written to <code className="font-mono">~/.claude</code>.
+              </p>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Paste the token in the Settings card after saving — the wizard&apos;s
+              Test &amp; continue flow signs you in.
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <label className={fieldLabelClassName} htmlFor="provider-model">
+              Model <span className="text-muted-foreground">(optional override)</span>
+            </label>
+            <Input
+              id="provider-model"
+              aria-label="Model"
+              value={value.model}
+              disabled={disabled}
+              placeholder="Leave blank to use Claude's default"
+              onChange={(event) => onChange({ model: event.target.value })}
+            />
+          </div>
         </>
       ) : (
         <div className="space-y-1.5">

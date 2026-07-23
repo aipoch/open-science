@@ -11,8 +11,10 @@ import type {
   ValidationCategory
 } from '../../shared/settings'
 import {
+  CLAUDE_ISOLATED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   SETTINGS_FILE_VERSION,
+  claudeIsolatedProviderIdentity,
   codexSubscriptionProviderIdentity,
   isCodexSubscriptionProvider,
   isCodexSubscriptionProviderId,
@@ -37,6 +39,7 @@ const SETTINGS_FILE = 'settings.json'
 const PROVIDER_TYPES = new Set<ProviderType>([
   'custom',
   'claude-default',
+  'claude-isolated',
   'official',
   'codex-shared',
   'codex-isolated'
@@ -618,6 +621,38 @@ class SettingsRepository {
       else providers.push(provider)
 
       return { ...settings, providers }
+    })
+  }
+
+  // Updates the single claude-isolated provider record (id is fixed at builtin-claude-isolated).
+  // The patch carries only the key-bearing fields the controller writes — model/lastValidatedAt/etc
+  // stay on whatever the renderer/service previously set, so a paste does not stomp the validated-at
+  // timestamp the validation flow recorded. When the record does not exist yet (a fresh install's
+  // first paste) it is created with the fixed id/name, mirroring codex's single subscription record.
+  async upsertClaudeIsolatedProvider(
+    patch: Partial<Pick<StoredProvider, 'keyRef' | 'keyMask' | 'lastValidatedAt' | 'lastValidationFailure'>>
+  ): Promise<StoredSettings> {
+    const identity = claudeIsolatedProviderIdentity()
+
+    return this.mutate((settings) => {
+      const index = settings.providers.findIndex(
+        (existing) => existing.id === CLAUDE_ISOLATED_PROVIDER_ID
+      )
+
+      if (index >= 0) {
+        const providers = [...settings.providers]
+
+        providers[index] = { ...providers[index], ...patch }
+        return { ...settings, providers }
+      }
+
+      const created: StoredProvider = {
+        id: identity.id,
+        type: 'claude-isolated',
+        name: identity.name
+      }
+
+      return { ...settings, providers: [...settings.providers, { ...created, ...patch }] }
     })
   }
 

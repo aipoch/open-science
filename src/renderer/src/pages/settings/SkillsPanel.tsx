@@ -1,4 +1,4 @@
-import { ChevronDown, Download, FileUp, Pencil, Plus, Search, Trash2 } from 'lucide-react'
+import { ChevronDown, Download, FileUp, FolderInput, Pencil, Plus, Search, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { SkillSource } from '../../../../shared/settings'
@@ -16,6 +16,7 @@ import { SkillDetailView } from './SkillDetailView'
 import { SkillEditor, SkillEditLoader } from './SkillEditor'
 import { SkillImportView } from './SkillImportView'
 import { SkillUploadView } from './SkillUploadView'
+import { AgentHomeImportView } from './AgentHomeImportView'
 import { SettingsIconAction, SettingsToggle } from './SettingsLayout'
 
 // The skills panel sub-view, driven by the settings navigation history so each is a breadcrumb page.
@@ -25,6 +26,7 @@ export type SkillsView =
   | { kind: 'create' }
   | { kind: 'edit'; id: string }
   | { kind: 'import' }
+  | { kind: 'import-agent-home' }
   | { kind: 'upload' }
 
 type SourceFilter = 'all' | SkillSource
@@ -100,6 +102,9 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
   if (view.kind === 'import') {
     return <SkillImportView onImported={() => undefined} />
   }
+  if (view.kind === 'import-agent-home') {
+    return <AgentHomeImportView onImported={() => undefined} />
+  }
   if (view.kind === 'upload') {
     return (
       <SkillUploadView
@@ -167,6 +172,16 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
               <span className="flex flex-col">
                 <span>Import from GitHub</span>
                 <span className="text-xs text-muted-foreground">Add a skill from a repo</span>
+              </span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="gap-2.5"
+              onSelect={() => onNavigate({ kind: 'import-agent-home' })}
+            >
+              <FolderInput className="size-4 shrink-0" aria-hidden="true" />
+              <span className="flex flex-col">
+                <span>From your agent home</span>
+                <span className="text-xs text-muted-foreground">~/.claude/skills/</span>
               </span>
             </DropdownMenuItem>
           </DropdownMenuContent>

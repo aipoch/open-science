@@ -246,6 +246,8 @@ interface OpenScienceAPI {
     cancelCodexLogin(): Promise<void>
     loginIsolatedCodex(): Promise<ValidateProviderResult>
     logoutIsolatedCodex(): Promise<ValidateProviderResult>
+    loginIsolatedClaude(token: string): Promise<ValidateProviderResult>
+    logoutIsolatedClaude(): Promise<ValidateProviderResult>
     refreshProviderModels(
       request: RefreshProviderModelsRequest
     ): Promise<RefreshProviderModelsResult>
@@ -263,6 +265,8 @@ interface OpenScienceAPI {
     importSkillZipBatch(request: ImportSkillZipBatchRequest): Promise<ImportSkillZipBatchResult>
     previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreviewResult>
     scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult>
+    listAgentHomeSkills(): Promise<AgentHomeSkillView[]>
+    importAgentHomeSkill(request: ImportAgentHomeSkillRequest): Promise<ImportSkillResult>
     listConnectors(): Promise<ConnectorsSnapshot>
     getConnectorDetail(id: string): Promise<ConnectorDetailView>
     setConnectorEnabled(request: SetConnectorEnabledRequest): Promise<ConnectorsSnapshot>

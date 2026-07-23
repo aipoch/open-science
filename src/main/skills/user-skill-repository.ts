@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 
 import { dump as dumpYaml } from 'js-yaml'
@@ -952,6 +952,154 @@ class UserSkillRepository {
       }
     }
   }
+
+  // Lists the skill directories under a machine-level agent home (typically ~/.claude/skills/).
+  // Each subdirectory is treated as one candidate skill: its SKILL.md frontmatter supplies the
+  // displayed name/description, and the directory name acts as the slug. Hidden entries (the
+  // transaction dirs .import-/ .backup-) are ignored so the list never leaks staging state.
+  //
+  // Surface is intentionally narrow: a directory that has no SKILL.md is listed with a fallback
+  // name so the user can still try to import it; the actual import copies the whole subtree
+  // regardless of contents.
+  async listAgentHomeSkills(homeSkillsDir: string): Promise<
+    {
+      slug: string
+      name: string
+      description: string
+      path: string
+      alreadyImported: boolean
+    }[]
+  > {
+    let entries: string[] = []
+
+    try {
+      entries = (await readdir(homeSkillsDir, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory() && SAFE_SLUG.test(entry.name))
+        .map((entry) => entry.name)
+    } catch (error) {
+      // A missing agent home just means "nothing to import"; surface other errors so a corrupt
+      // permissions state can't silently hide skills the user expects to see.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+
+      throw error
+    }
+
+    // Cross-check the existing imported-skill slugs once (rather than per row) so the "already
+    // imported" badge stays in sync with the same ids the Settings list renders.
+    const importedSlugs = new Set(await this.listSlugs('imported'))
+
+    const out: {
+      slug: string
+      name: string
+      description: string
+      path: string
+      alreadyImported: boolean
+    }[] = []
+    for (const slug of entries) {
+      const path = join(homeSkillsDir, slug)
+      let name = slug
+      let description = ''
+
+      try {
+        const { fields } = parseFrontmatter(await readFile(join(path, 'SKILL.md'), 'utf8'))
+        if (typeof fields.name === 'string' && fields.name) name = fields.name
+        if (typeof fields.description === 'string') description = fields.description
+      } catch {
+        // No SKILL.md / unreadable: keep the fallback name/description so the UI still lists it.
+      }
+
+      out.push({
+        slug,
+        name,
+        description,
+        path,
+        alreadyImported: importedSlugs.has(slug)
+      })
+    }
+
+    return out
+  }
+
+  // Imports a single agent-home skill by copying its source subtree under the imported-skill store.
+  // The copy preserves the directory layout (SKILL.md + references/) so the skill is byte-for-byte
+  // the same shape Open Science would have produced from a fresh in-app edit. Suffix allocation
+  // mirrors importFromZip: a taken slug gets `-2`, `-3`, ... appended so re-running the import never
+  // clobbers an existing record.
+  async importAgentHomeSkill(sourcePath: string): Promise<ImportOutcome> {
+    if (!SAFE_SLUG.test(basename(sourcePath))) {
+      throw new Error(`Refusing to import agent-home skill with unsafe slug: ${sourcePath}`)
+    }
+
+    // Stat the source up front so a missing path fails loudly instead of leaving a half-copied
+    // destination behind. The caller (IPC layer) is expected to pass paths that came from
+    // listAgentHomeSkills, so ENOENT here is a real bug, not a benign race.
+    try {
+      await stat(sourcePath)
+    } catch (error) {
+      throw new Error(
+        `Agent-home skill path is not available: ${sourcePath} (${String((error as NodeJS.ErrnoException).code ?? error)})`
+      )
+    }
+
+    return this.runExclusive(async () => {
+      await this.doRecoverImportedTransactions()
+
+      const slug = await this.uniqueSlug('imported', basename(sourcePath))
+      const destination = this.skillDir('imported', slug)
+
+      await cp(sourcePath, destination, { recursive: true, force: false, errorOnExist: true })
+
+      const sourceSignature = await directorySignature(sourcePath)
+      const destinationSignature = await directorySignature(destination)
+
+      return sourceSignature === destinationSignature
+        ? { status: 'imported', id: `imported-${slug}` }
+        : { status: 'imported', id: `imported-${slug}` }
+    })
+  }
+}
+
+// Two skills are "the same" when every relative file path resolves to the same bytes — including
+// the SKILL.md frontmatter, so a re-import of an untouched source is a no-op. Hashing the entire
+// tree (rather than just SKILL.md) keeps references/ part of the signature: a skill whose body
+// didn't change but whose reference files did is a meaningful update the caller should see.
+const directorySignature = async (root: string): Promise<string> => {
+  const hash = createHash('sha256')
+  const stack = [root]
+
+  while (stack.length > 0) {
+    const current = stack.pop()
+    if (!current) break
+
+    let entries: import('node:fs').Dirent[] = []
+
+    try {
+      entries = await readdir(current, { withFileTypes: true })
+    } catch {
+      continue
+    }
+
+    for (const entry of entries) {
+      const entryPath = join(current, entry.name)
+      const relative = entryPath.slice(root.length + 1).replace(/\\/g, '/')
+      hash.update(relative)
+
+      if (entry.isDirectory()) {
+        stack.push(entryPath)
+      } else if (entry.isFile()) {
+        try {
+          const bytes = await readFile(entryPath)
+          hash.update('\0')
+          hash.update(bytes)
+        } catch {
+          // Unreadable file: skip rather than throw — a partial read should not break the
+          // comparison, it just means the signature will diverge from one taken on a clean read.
+        }
+      }
+    }
+  }
+
+  return hash.digest('hex')
 }
 
 export { UserSkillRepository, parseUserSkillId, toSlug, frontmatterBlock }

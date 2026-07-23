@@ -43,6 +43,8 @@ type FakeSettingsService = Record<
   | 'cancelCodexLogin'
   | 'loginIsolatedCodex'
   | 'logoutIsolatedCodex'
+  | 'loginIsolatedClaude'
+  | 'logoutIsolatedClaude'
   | 'markOnboardingComplete'
   | 'listSkills'
   | 'getSkillDetail'
@@ -96,6 +98,8 @@ const createFakeService = (): FakeSettingsService => ({
   logoutIsolatedCodex: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], activeProviderId: undefined }),
+  loginIsolatedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+  logoutIsolatedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   markOnboardingComplete: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   listSkills: vi.fn().mockResolvedValue([]),
   getSkillDetail: vi.fn().mockResolvedValue({
@@ -141,6 +145,8 @@ describe('settings IPC handlers', () => {
       'settings:cancel-codex-login',
       'settings:login-isolated-codex',
       'settings:logout-isolated-codex',
+      'settings:login-isolated-claude',
+      'settings:logout-isolated-claude',
       'settings:mark-onboarding-complete'
     ]) {
       expect(handlers.has(channel)).toBe(true)

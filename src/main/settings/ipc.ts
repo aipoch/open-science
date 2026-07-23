@@ -1,12 +1,14 @@
 import { ipcMain } from 'electron'
 
 import {
+  CLAUDE_ISOLATED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   isReasoningEffort,
   type ReasoningEffort,
   type CreateSkillRequest,
   type DeleteProviderRequest,
   type DeleteSkillRequest,
+  type ImportAgentHomeSkillRequest,
   type ImportSkillRequest,
   type ImportSkillZipRequest,
   type ImportSkillZipBatchRequest,
@@ -204,6 +206,48 @@ const registerSettingsIpcHandlers = ({
     service.validateProvider(request)
   )
   ipcMain.handle('settings:cancel-codex-login', () => service.cancelCodexLogin())
+  ipcMain.handle('settings:login-isolated-claude', async (_event, token: string) => {
+    // Renderer payloads are untyped at runtime: reject anything that isn't a string before it
+    // reaches the controller, so a malicious or corrupt payload can never be coerced into a save.
+    if (typeof token !== 'string') {
+      throw new Error('Claude sign-in token must be a string.')
+    }
+
+    const result = await service.loginIsolatedClaude(token)
+
+    // A fresh login changes the credentials the live agent relies on; reconnect so it picks them
+    // up. Skip when the outcome was discarded (the claude-isolated record was deleted mid-paste) —
+    // reconnecting the now-active provider would be redundant (its credentials didn't change).
+    if (result.ok && result.applied !== false) {
+      const snapshot = await service.getSettingsView()
+      const active = snapshot.providers.find(
+        (provider) => provider.id === snapshot.activeProviderId
+      )
+      if (
+        snapshot.activeProviderId === CLAUDE_ISOLATED_PROVIDER_ID &&
+        active?.type === 'claude-isolated'
+      ) {
+        onActiveProviderChanged?.()
+      }
+    }
+
+    return result
+  })
+  ipcMain.handle('settings:logout-isolated-claude', async () => {
+    const result = await service.logoutIsolatedClaude()
+
+    // Reconnect only when the sign-out actually cleared the credential. A failed sign-out leaves
+    // the token in place, so forcing the live agent to reconnect would just re-authenticate with
+    // the token we failed to remove.
+    if (result.ok) {
+      const snapshot = await service.getSettingsView()
+      if (snapshot.activeProviderId === CLAUDE_ISOLATED_PROVIDER_ID) {
+        onActiveProviderChanged?.()
+      }
+    }
+
+    return result
+  })
   ipcMain.handle('settings:login-isolated-codex', async () => {
     const result = await service.loginIsolatedCodex()
 
@@ -300,6 +344,18 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMain.handle('settings:scan-repo-skills', (_event, request: ScanRepoRequest) =>
     service.scanRepoSkills(request)
+  )
+  // Lists the user's machine-level Claude skills (~/.claude/skills/) for the "From your agent home"
+  // import source. Read-only — the renderer calls importAgentHomeSkill to actually copy one in.
+  ipcMain.handle('settings:list-agent-home-skills', () => service.listAgentHomeSkills())
+  ipcMain.handle(
+    'settings:import-agent-home-skill',
+    async (_event, request: ImportAgentHomeSkillRequest) => {
+      const result = await service.importAgentHomeSkill(request)
+      onSkillsChanged?.()
+
+      return result
+    }
   )
 
   ipcMain.handle('settings:list-connectors', () => service.listConnectors())

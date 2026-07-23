@@ -41,6 +41,11 @@ type ProviderListProps = {
   onCancelCodexLogin?: () => void
   onLoginIsolatedCodex?: () => void
   onLogoutIsolatedCodex?: () => void
+  // Mirror pair for the Claude subscription's setup-token paste: the parent captures the token via
+  // its own modal and forwards it through onLoginIsolatedClaude. There is no in-flight "pending"
+  // state for the paste flow (it's a one-shot RPC), so no is-pending flag is needed.
+  onLoginIsolatedClaude?: () => void
+  onLogoutIsolatedClaude?: () => void
 }
 
 // Concise, actionable reason for a failed connection test, shown on the unverified warning.
@@ -80,6 +85,7 @@ const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
 const describeType = (provider: ProviderView): string => {
   if (provider.type === 'custom') return 'Custom'
   if (provider.type === 'claude-default') return 'Local Claude'
+  if (provider.type === 'claude-isolated') return 'Claude subscription'
   if (isCodexSubscriptionProvider(provider.type)) return codexSubscriptionProviderIdentity().name
 
   return provider.vendorId
@@ -100,7 +106,9 @@ const ProviderList = ({
   isCodexLoginPending = false,
   onCancelCodexLogin,
   onLoginIsolatedCodex,
-  onLogoutIsolatedCodex
+  onLogoutIsolatedCodex,
+  onLoginIsolatedClaude,
+  onLogoutIsolatedClaude
 }: ProviderListProps): React.JSX.Element => {
   if (providers.length === 0) {
     return (
@@ -216,6 +224,15 @@ const ProviderList = ({
                       <div>Uses your existing Codex profile · Managed by Codex CLI</div>
                     ) : provider.type === 'codex-isolated' ? (
                       <div>Codex login stored separately by Open Science</div>
+                    ) : provider.type === 'claude-isolated' ? (
+                      // The Claude subscription card carries an OAuth token, so we surface the masked
+                      // hint the same way custom/official providers do (no Keychain leak). The signed
+                      // // in / signed out framing belongs to the card icon, not this line.
+                      provider.maskedKey ? (
+                        <div className="font-mono">Token: {provider.maskedKey}</div>
+                      ) : (
+                        <div>Not signed in</div>
+                      )
                     ) : provider.type === 'claude-default' ? (
                       // Local Claude reuses the machine's own auth: show only the model (never a key).
                       <div className="truncate">Model: {provider.model || 'default'}</div>
@@ -275,6 +292,23 @@ const ProviderList = ({
                       label="Sign out"
                       icon={LogOut}
                       onClick={() => onLogoutIsolatedCodex?.()}
+                      className="border border-border text-foreground"
+                    />
+                  ) : null}
+                  {provider.type === 'claude-isolated' && !isVerified ? (
+                    <SettingsIconAction
+                      label="Sign in with Anthropic"
+                      icon={LogIn}
+                      onClick={() => onLoginIsolatedClaude?.()}
+                      disabled={isBusy}
+                      className="border border-border text-foreground"
+                    />
+                  ) : null}
+                  {provider.type === 'claude-isolated' && isVerified ? (
+                    <SettingsIconAction
+                      label="Sign out"
+                      icon={LogOut}
+                      onClick={() => onLogoutIsolatedClaude?.()}
                       className="border border-border text-foreground"
                     />
                   ) : null}

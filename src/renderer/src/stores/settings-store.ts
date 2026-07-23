@@ -31,6 +31,7 @@ import type {
   ReasoningEffort,
   SettingsSnapshot,
   SkillView,
+  AgentHomeSkillView,
   CreateSkillRequest,
   UpdateSkillRequest,
   ImportSkillResult,
@@ -177,6 +178,12 @@ type SettingsStore = SettingsStoreData & {
   // The explicit isolated sign-out. Resolves with the outcome so callers can surface a failure
   // (e.g. a timeout where the credential may still be in place) rather than silently succeeding.
   logoutIsolatedCodex: () => Promise<ValidateProviderResult>
+  // The Claude subscription's setup-token paste. Resolves with the recorded outcome; the renderer
+  // is responsible for collecting the token from the user (copy command + paste input).
+  loginIsolatedClaude: (token: string) => Promise<ValidateProviderResult>
+  // The Claude subscription's sign-out. Same failure semantics as logoutIsolatedCodex: a failed
+  // sign-out is surfaced rather than silently swallowed.
+  logoutIsolatedClaude: () => Promise<ValidateProviderResult>
   // Fetches a saved provider's live model list from the vendor and refreshes the cache on success.
   refreshProviderModels: (providerId: string) => Promise<RefreshProviderModelsResult>
   // Activates a provider and, optionally, a specific model within it (composer model switch). An
@@ -227,6 +234,11 @@ type SettingsStore = SettingsStoreData & {
   previewSkillZip: (dataBase64: string) => Promise<SkillBundlePreviewResult>
   // Scans a GitHub repo for importable skill directories (does not mutate state).
   scanRepoSkills: (repo: string) => Promise<ScanRepoResult>
+  // Lists the skills under the user's machine-level Claude config (~/.claude/skills/) for the
+  // "From your agent home" import source. Read-only; the import action lives below.
+  listAgentHomeSkills: () => Promise<AgentHomeSkillView[]>
+  // Copies one agent-home skill into the imported-skill store, refreshing the catalog on success.
+  importAgentHomeSkill: (sourcePath: string) => Promise<ImportSkillResult>
   // Loads the bundled-connector list (enabled/auto-allow + NCBI credential state) from main.
   loadConnectors: () => Promise<void>
   // Toggles one connector; optimistic, then reconciled with the authoritative snapshot from main.
@@ -775,6 +787,27 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     return result
   },
 
+  // Claude subscription's paste-token sign-in. The renderer owns the modal that captures the
+  // setup-token output; this action forwards it to main, where it lands encrypted on the fixed
+  // builtin-claude-isolated provider record.
+  loginIsolatedClaude: async (token: string) => {
+    const result = await window.api.settings.loginIsolatedClaude(token)
+
+    set(applySnapshot(await window.api.settings.getSettings()))
+    await get().refreshPreflight()
+
+    return result
+  },
+
+  logoutIsolatedClaude: async () => {
+    const result = await window.api.settings.logoutIsolatedClaude()
+    // Same refresh rule as the codex path: a failed sign-out keeps the verified markers, so the
+    // store must reflect the real stored state regardless of the outcome.
+    set(applySnapshot(await window.api.settings.getSettings()))
+    await get().refreshPreflight()
+    return result
+  },
+
   // Fetches a provider's live models from the vendor; on success the persisted list is reflected here.
   refreshProviderModels: async (providerId) => {
     const result = await window.api.settings.refreshProviderModels({ providerId })
@@ -943,6 +976,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   previewSkillZip: async (dataBase64) => window.api.settings.previewSkillZip({ dataBase64 }),
 
   scanRepoSkills: async (repo) => window.api.settings.scanRepoSkills({ repo }),
+
+  // The agent-home import surface: list is read-only, import copies one skill into the imported
+  // store and refreshes the catalog so the row can disappear (already-imported badge) immediately.
+  listAgentHomeSkills: async () => window.api.settings.listAgentHomeSkills(),
+  importAgentHomeSkill: async (sourcePath) => {
+    const result = await window.api.settings.importAgentHomeSkill({ sourcePath })
+
+    set(applySnapshot(await window.api.settings.getSettings()))
+
+    return result
+  },
 
   loadConnectors: async () => {
     const { connectors, customServers, ncbi } = await window.api.settings.listConnectors()

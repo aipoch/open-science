@@ -19,9 +19,11 @@ import type {
   RemoveCustomServerRequest,
   SetCustomServerEnabledRequest,
   UpdateCustomServerRequest,
+  AgentHomeSkillView,
   CreateSkillRequest,
   DeleteSkillRequest,
   EnvironmentCheckResult,
+  ImportAgentHomeSkillRequest,
   InstallClaudeRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
@@ -58,6 +60,7 @@ import type {
   ValidateProviderResult
 } from '../../shared/settings'
 import {
+  CLAUDE_ISOLATED_PROVIDER_ID,
   CODEX_ISOLATED_PROVIDER_ID,
   CODEX_SHARED_PROVIDER_ID,
   codexSubscriptionProviderIdentity,
@@ -170,6 +173,11 @@ import {
   type CodexAuthControllerPort,
   type CodexAuthStatus
 } from './codex-auth'
+import {
+  ClaudeIsolatedAuthController,
+  type ClaudeIsolatedAuthControllerPort,
+  type ClaudeIsolatedAuthStatus
+} from './claude-isolated-auth'
 
 const execFileAsync = promisify(execFile)
 
@@ -303,6 +311,10 @@ export type SettingsServiceOptions = {
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
   codexAuth?: CodexAuthControllerPort
+  // Encrypted-token controller for claude-isolated; default-constructed against this.storageRoot
+  // when omitted. Storage is delegated to the host's SettingsRepository + encrypt/tryDecryptKey
+  // pipeline, mirroring how CodexAuthController delegates to openCodexAuthSession.
+  claudeIsolatedAuth?: ClaudeIsolatedAuthControllerPort
 }
 
 // Orchestrates the settings units (repository + crypto + detect/install + validate) behind one
@@ -328,6 +340,7 @@ class SettingsService {
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
   private readonly codexAuth: CodexAuthControllerPort
+  private readonly claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort
   private responsesBridge: ResponsesBridge | undefined
   private providerSequence = 0
   private readonly providerValidationGenerations = new Map<string, number>()
@@ -387,6 +400,50 @@ class SettingsService {
           })
         }
       })
+    // The claude-isolated token is stored on the (single) builtin-claude-isolated provider record,
+    // so the controller reads/writes that record directly. The repository's setProviderKeyRef +
+    // clearProviderKeyRef helpers keep the encryption pipeline in one place (see repository.ts).
+    this.claudeIsolatedAuth =
+      options.claudeIsolatedAuth ??
+      new ClaudeIsolatedAuthController({
+        store: {
+          loadToken: () => this.loadClaudeIsolatedToken(),
+          saveToken: (token) => this.saveClaudeIsolatedToken(token),
+          clearToken: () => this.clearClaudeIsolatedToken(),
+          isEncryptionAvailable: () => isEncryptionAvailable()
+        }
+      })
+  }
+
+  // Reads (and decrypts) the long-lived OAuth token stored on the single builtin-claude-isolated
+  // provider record. The record is auto-created on first use by upsertClaudeIsolatedProvider so a
+  // fresh install has somewhere to write the token; reading before the first write returns
+  // undefined, which the controller renders as "not signed in".
+  private async loadClaudeIsolatedToken(): Promise<string | undefined> {
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
+    )
+
+    if (!provider?.keyRef) return undefined
+
+    return tryDecryptKey(provider.keyRef)
+  }
+
+  // Persists the encrypted OAuth token onto the single builtin-claude-isolated provider record. The
+  // record is upserted (created if missing) so a paste on a fresh install does not 404 — this is the
+  // inverse of "delete claude-default + write a new one": we keep a stable record so other code that
+  // keys on the provider id (the IPC layer's reconnect path) does not need to special-case first run.
+  private async saveClaudeIsolatedToken(token: string): Promise<void> {
+    const keyRef = encryptKey(token)
+
+    await this.repository.upsertClaudeIsolatedProvider({ keyRef, keyMask: maskKey(token) })
+  }
+
+  // Drops the stored token (sets keyRef to undefined on the record). The record itself stays so the
+  // provider card remains visible — it's still selectable, just not authenticated.
+  private async clearClaudeIsolatedToken(): Promise<void> {
+    await this.repository.upsertClaudeIsolatedProvider({ keyRef: undefined, keyMask: undefined })
   }
 
   // Returns the raw stored settings document (unmasked), for main-process bootstrap needs (e.g. priming
@@ -797,6 +854,24 @@ class SettingsService {
   // Scans a GitHub repo for importable skill directories (marking already-imported ones).
   async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
     return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
+  }
+
+  // Lists the skills under the user's machine-level Claude config (~/.claude/skills/). Surfaced
+  // when the active provider is claude-isolated so the user can pull their existing Claude skills
+  // into Open Science without re-importing from a zip or repo. The path is anchored on userClaudeDir
+  // (which is injectable for tests) rather than `homedir()` directly so tests don't read the real
+  // host home.
+  async listAgentHomeSkills(): Promise<AgentHomeSkillView[]> {
+    return this.userSkills.listAgentHomeSkills(join(this.userClaudeDir, 'skills'))
+  }
+
+  // Imports a single agent-home skill by copying its directory into the imported-skill store.
+  // Returns the same shape importSkill returns so the renderer can apply the same post-import
+  // refresh (refresh skill list, mark skills-changed so the agent reloads).
+  async importAgentHomeSkill(request: ImportAgentHomeSkillRequest): Promise<ImportSkillResult> {
+    const outcome = await this.userSkills.importAgentHomeSkill(request.sourcePath)
+
+    return { status: outcome.status, id: outcome.id, skills: await this.listSkills() }
   }
 
   // Projects a catalog skill into its renderer-safe view given the disabled set.
@@ -1426,6 +1501,15 @@ class SettingsService {
     if (isCodexSubscriptionProvider(request.type)) {
       provider.apiEndpoints = ['responses']
       credentialsChanged = existing !== undefined && existing.type !== request.type
+    } else if (request.type === 'claude-isolated') {
+      // claude-isolated has no fields of its own: the type tells the renderer/env-builder what to do
+      // with the encrypted token (stored separately on login). A model override is allowed and follows
+      // the same rule as claude-default; sign-in is handled by loginIsolatedClaude, not by upsert.
+      provider.apiEndpoints = ['anthropic']
+      credentialsChanged = false
+      const model = request.model?.trim() || existing?.model
+
+      if (model) provider.model = model
     } else if (request.type === 'official') {
       // Base URL and model catalog come from the registry; the provider only stores which vendor
       // (and, for multi-region vendors, which endpoint) plus the key.
@@ -1577,6 +1661,102 @@ class SettingsService {
     return { ok: true, category: 'ok' }
   }
 
+  // Pastes an OAuth token into the claude-isolated provider. The token is encrypted at rest via the
+  // same encryptKey pipeline other providers use; an invalid/missing token is recorded as a
+  // validation failure so the Settings card flips to the unverified warning with the reason. The
+  // stored provider is upserted on success too (record id is fixed at builtin-claude-isolated), so
+  // this is the only path that adds the card to a fresh install.
+  async loginIsolatedClaude(token: string): Promise<ValidateProviderResult> {
+    const result = this.claudeIsolatedAuthValidationResult(
+      await this.claudeIsolatedAuth.loginIsolated(token)
+    )
+
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
+    )
+    // The card can be deleted mid-paste. A deleted claude-isolated record means the paste should
+    // land fresh: create a new one carrying the now-stored token (the controller just persisted it
+    // for us via upsertClaudeIsolatedProvider, which has already written the record).
+    if (!provider) return { ...result, applied: false }
+
+    if (result.ok) {
+      await this.repository.upsertProvider({
+        ...provider,
+        lastValidatedAt: Date.now(),
+        lastValidationFailure: undefined
+      })
+    } else {
+      await this.repository.upsertProvider({
+        ...provider,
+        lastValidatedAt: undefined,
+        lastValidationFailure: {
+          at: Date.now(),
+          category: result.category,
+          status: result.status,
+          message: result.message
+        }
+      })
+    }
+
+    return { ...result, applied: true }
+  }
+
+  // Drops the stored token. The provider card stays so the user can sign back in without a fresh
+  // add; the verified markers are cleared so the next validation/test must succeed before it can
+  // re-gate onboarding.
+  async logoutIsolatedClaude(): Promise<ValidateProviderResult> {
+    const status = await this.claudeIsolatedAuth.logoutIsolated()
+
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
+    )
+
+    if (provider && status.authenticated === false) {
+      await this.repository.upsertProvider({
+        ...provider,
+        lastValidatedAt: undefined,
+        lastValidationFailure: undefined
+      })
+    }
+
+    if (status.message && status.authenticated !== false) {
+      return {
+        ok: false,
+        category: status.message.toLowerCase().includes('timed out') ? 'timeout' : 'unknown',
+        message: status.message
+      }
+    }
+
+    return { ok: true, category: 'ok' }
+  }
+
+  // Read-only status check used by validateProvider for a saved claude-isolated provider. A
+  // decryptable token means authenticated; an empty/undefined token means "sign in to connect", so
+  // the UI can say the right thing before the user goes looking for `claude setup-token` output.
+  async getClaudeIsolatedStatus(): Promise<ValidateProviderResult> {
+    const status = await this.claudeIsolatedAuth.getStatus()
+
+    return this.claudeIsolatedAuthValidationResult(
+      status,
+      'Not signed in. Run `claude setup-token` and paste the token to connect your Claude subscription.'
+    )
+  }
+
+  // The Claude-auth status does not have a 'timeout' or 'incompatible' category of its own; map it
+  // to the same validation-result envelope the renderer already understands for the codex path.
+  private claudeIsolatedAuthValidationResult(
+    status: ClaudeIsolatedAuthStatus,
+    notSignedInMessage?: string
+  ): ValidateProviderResult {
+    if (status.authenticated) return { ok: true, category: 'ok' }
+
+    const message = status.message ?? notSignedInMessage
+
+    return { ok: false, category: 'unknown', message }
+  }
+
   // Activates a provider and the model to run within it. An omitted/unknown model falls back to the
   // provider's default (its stored model, or the vendor's first catalog entry).
   async setActiveProvider(id: string, model?: string): Promise<SettingsSnapshot> {
@@ -1609,11 +1789,14 @@ class SettingsService {
     // while Claude Code is active would otherwise fail a raw /v1/messages probe and be reported as an
     // auth error, even though the key is valid — the pairing, not the credential, is the problem. Decide
     // this before any network call so the card names the real reason (which route the framework needs).
-    // codex-subscription keeps its own login-status branch below; its usability is enforced elsewhere.
+    // codex-subscription + claude-isolated keep their own login-status branches; their usability is
+    // enforced elsewhere.
     const framework = getAgentFramework(settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
-    const incompatibility = isCodexSubscriptionProvider(resolved.provider.type)
-      ? undefined
-      : this.frameworkIncompatibilityResult(resolved.provider, framework)
+    const incompatibility =
+      isCodexSubscriptionProvider(resolved.provider.type) ||
+      resolved.provider.type === 'claude-isolated'
+        ? undefined
+        : this.frameworkIncompatibilityResult(resolved.provider, framework)
 
     const result =
       incompatibility ??
@@ -1627,7 +1810,9 @@ class SettingsService {
             ),
             'Not signed in. Use Sign in to connect your ChatGPT account.'
           )
-        : await validateProvider(resolved.provider, {
+        : resolved.provider.type === 'claude-isolated'
+          ? await this.getClaudeIsolatedStatus()
+          : await validateProvider(resolved.provider, {
             // Probe over Electron's network stack, which honors the system/VPN proxy. Node's global
             // fetch (undici) takes a direct path and ignores that proxy, so an official vendor reachable
             // only through a proxy (e.g. api.openai.com) would fail the probe as a false `network` error
@@ -2366,7 +2551,8 @@ class SettingsService {
   // Maps a stored provider to its masked renderer view, flagging custom keys that no longer decrypt.
   private toProviderView(provider: StoredProvider, activeModel?: string): ProviderView {
     const hasKey = Boolean(provider.keyRef)
-    // custom and official both require a decryptable key; claude-default carries none.
+    // custom and official both require a decryptable key; claude-default carries none. claude-isolated
+    // carries a stored token, so it follows the same "needs a decryptable keyRef" rule as custom.
     const needsKey =
       provider.type !== 'claude-default' && hasKey && tryDecryptKey(provider.keyRef) === undefined
 
@@ -2391,8 +2577,9 @@ class SettingsService {
 
   private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
     if (isCodexSubscriptionProvider(provider.type)) return true
-    // claude-default always supports images (uses the user's Claude login, which has vision models)
-    if (provider.type === 'claude-default') return true
+    // claude-default + claude-isolated both authenticate against Anthropic (default or app-owned OAuth)
+    // and so inherit vision support the same way.
+    if (provider.type === 'claude-default' || provider.type === 'claude-isolated') return true
 
     // Custom providers: respect the user-configured supportsImageInput flag
     if (provider.type === 'custom') return provider.supportsImageInput === true
@@ -2410,7 +2597,8 @@ class SettingsService {
     return false
   }
 
-  // Credentials usable: claude-default always; custom/official need a key that still decrypts.
+  // Credentials usable: claude-default always (uses the machine's login); claude-isolated needs a
+  // decryptable token; custom/official need a key that still decrypts.
   private isProviderKeyUsable(provider: StoredProvider): boolean {
     if (isCodexSubscriptionProvider(provider.type)) return true
     if (provider.type === 'claude-default') return true
@@ -2536,7 +2724,7 @@ class SettingsService {
     provider: ResolvedProvider,
     framework: { displayName: string; supportedApiTypes: readonly ChatApiEndpoint[] }
   ): string {
-    if (provider.type === 'claude-default') {
+    if (provider.type === 'claude-default' || provider.type === 'claude-isolated') {
       return `Uses this machine's Claude sign-in, which only Claude Code can run. Switch to Claude Code or pick another provider.`
     }
 

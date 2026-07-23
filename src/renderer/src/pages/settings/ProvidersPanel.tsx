@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { Plus } from 'lucide-react'
 
 import { useSettingsStore } from '@/stores/settings-store'
-import type { ProviderView } from '../../../../shared/settings'
+import type { ProviderView, ValidateProviderResult } from '../../../../shared/settings'
 import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderList } from './ProviderList'
 import { ReasoningEffortSelect } from './ReasoningEffortSelect'
 import { SettingsSection } from './SettingsLayout'
+import { ClaudeIsolatedSignInModal } from './ClaudeIsolatedSignInModal'
 
 type ProvidersPanelProps = {
   // Navigation callbacks into the page-level history: the add/edit provider form is a breadcrumb
@@ -37,11 +38,17 @@ const ProvidersPanel = ({
   const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
   const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
   const logoutIsolatedCodex = useSettingsStore((state) => state.logoutIsolatedCodex)
+  const loginIsolatedClaude = useSettingsStore((state) => state.loginIsolatedClaude)
+  const logoutIsolatedClaude = useSettingsStore((state) => state.logoutIsolatedClaude)
 
   // The last connection-test/sign-in failure, shown as an error line under the list.
   const [providerTestError, setProviderTestError] = useState<string | undefined>(undefined)
   // True while the explicit isolated Codex sign-in is open in the browser; drives the cancel action.
   const [isCodexLoginPending, setIsCodexLoginPending] = useState(false)
+  // Modal state for the Claude subscription's setup-token paste. The modal collects the token and
+  // forwards it through loginIsolatedClaude; null means no modal is open. The wizard uses its own
+  // flow, so this state lives on the panel rather than the store.
+  const [isClaudeSignInOpen, setIsClaudeSignInOpen] = useState(false)
 
   // A pending sign-in lives in the main process for up to five minutes. This panel unmounts when
   // Settings closes (or the user switches panels), and an orphaned flow would have no cancel
@@ -57,10 +64,14 @@ const ProvidersPanel = ({
     }
   }, [cancelCodexLogin])
 
-  // Codex subscription pseudo-providers only make sense while Codex is the active framework.
-  const visibleProviders = providers.filter(
-    (provider) => agentFrameworkId === 'codex' || !isCodexSubscriptionProvider(provider.type)
-  )
+  // Codex + Claude subscription pseudo-providers only make sense while their matching framework is the
+// active one. Hide claude-isolated from non-claude-code frameworks (same rule as the codex branch).
+  const visibleProviders = providers.filter((provider) => {
+    if (provider.type === 'claude-isolated') return agentFrameworkId === 'claude-code'
+    if (isCodexSubscriptionProvider(provider.type)) return agentFrameworkId === 'codex'
+
+    return true
+  })
 
   const handleTest = async (provider: ProviderView): Promise<void> => {
     onBusyProviderChange(provider.id)
@@ -110,6 +121,46 @@ const ProvidersPanel = ({
     }
   }
 
+  // The Claude subscription's paste-token sign-in: open the modal, forward the token to main when
+  // the user confirms, and surface any failure through the same error line the other flows use.
+  const handleClaudeSignIn = async (token: string): Promise<ValidateProviderResult | undefined> => {
+    setProviderTestError(undefined)
+
+    try {
+      const result = await loginIsolatedClaude(token)
+      if (!result.ok) {
+        setProviderTestError(
+          result.message ?? 'Could not save the Claude token. Try again.'
+        )
+      }
+
+      return result
+    } catch (error) {
+      setProviderTestError(
+        error instanceof Error ? error.message : 'Could not save the Claude token.'
+      )
+
+      return undefined
+    }
+  }
+
+  const handleClaudeLogout = async (): Promise<void> => {
+    setProviderTestError(undefined)
+
+    try {
+      const result = await logoutIsolatedClaude()
+      if (!result.ok) {
+        setProviderTestError(
+          result.message ?? 'Claude sign-out did not complete. Try again.'
+        )
+      }
+    } catch (error) {
+      setProviderTestError(
+        error instanceof Error ? error.message : 'Could not sign out of Claude.'
+      )
+    }
+  }
+
   return (
     <div className="space-y-5 p-5">
       {/* Active model is its own section so the current selection reads separately from provider
@@ -151,6 +202,8 @@ const ProvidersPanel = ({
           onCancelCodexLogin={() => void cancelCodexLogin()}
           onLoginIsolatedCodex={() => void handleCodexLogin()}
           onLogoutIsolatedCodex={() => void handleCodexLogout()}
+          onLoginIsolatedClaude={() => setIsClaudeSignInOpen(true)}
+          onLogoutIsolatedClaude={() => void handleClaudeLogout()}
         />
         {providerTestError ? (
           <p className="mt-2 text-sm text-destructive" role="alert">
@@ -168,6 +221,13 @@ const ProvidersPanel = ({
           Add provider
         </button>
       </SettingsSection>
+      {/* The Claude subscription's sign-in modal collects the pasted token. Closing it (without a
+          successful paste) is a no-op for the store — the token only lands if the user confirms. */}
+      <ClaudeIsolatedSignInModal
+        open={isClaudeSignInOpen}
+        onOpenChange={setIsClaudeSignInOpen}
+        onSubmit={(token) => handleClaudeSignIn(token)}
+      />
     </div>
   )
 }
