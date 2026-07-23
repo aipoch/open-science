@@ -88,6 +88,8 @@ describe('resilientDownload', () => {
   it('resumes with a Range request after a mid-stream cut', async () => {
     const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
     const fs = memFs()
+    // Count .part reads to prove the hoisted hash is not re-read from disk on the Range resume.
+    const openReadSpy = vi.fn(fs.openReadStreamImpl)
     const first = fakeFetch(body, { cutAfter: 10 })
     const rest = fakeFetch(body)
     let call = 0
@@ -98,12 +100,20 @@ describe('resilientDownload', () => {
     const out = await resilientDownload('https://cdn/file', '/tmp/out.bin', {
       expectedSha256: sha(body),
       stallTimeoutMs: 20,
-      deps: { fetchImpl: fetchImpl as unknown as typeof fetch, ...fs, sleep: async () => {}, now: () => 0 }
+      deps: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        ...fs,
+        openReadStreamImpl: openReadSpy,
+        sleep: async () => {},
+        now: () => 0
+      }
     })
     expect(out).toBe('/tmp/out.bin')
     expect(fs.files.get('/tmp/out.bin')?.toString()).toBe(body.toString())
     const secondInit = rest.mock.calls[0][1] as { headers: Record<string, string> }
     expect(secondInit.headers['Range']).toBe('bytes=10-')
+    // The 10 already-downloaded bytes stay in the hoisted hash — no .part re-read on resume.
+    expect(openReadSpy).not.toHaveBeenCalled()
   })
 
   it('restarts from zero when server ignores Range (200 on resume)', async () => {

@@ -37,12 +37,13 @@ export type LanguagePackFetchDeps = {
   // Fetches a URL and returns its body as text (used for manifest.json).
   fetchText: (url: string) => Promise<string>
   // Downloads a URL to destPath (the pack archive). `expected` carries the manifest sha256/size so the
-  // resilient core can verify inline and resume against the right total.
+  // resilient core can verify inline and resume against the right total. Short-read detection needs a
+  // total, so callers must supply `expected.size` when the response may omit Content-Length.
+  // Cancellation is handled by the closure-captured signal in the default adapter, not a parameter.
   download: (
     url: string,
     destPath: string,
     onProgress?: (p: DownloadProgress) => void,
-    signal?: AbortSignal,
     expected?: { sha256?: string; size?: number }
   ) => Promise<void>
   // sha256 hex of a file; injectable for tests, defaults to the streaming sha256File.
@@ -142,7 +143,6 @@ export const fetchLanguagePack = async (
     // Fill in the manifest's pack size when the response omits Content-Length, so the UI still shows
     // a meaningful total/percent instead of an unknown-size bar.
     (p) => onDownloadProgress(p.total != null ? p : { ...p, total: entry.size }),
-    undefined,
     { sha256: entry.sha256, size: entry.size }
   )
   await verifyPackChecksum(
@@ -216,7 +216,7 @@ export const createFetchBundleAdapter =
           fetchText: deps.fetchText ?? ((url) => fetchText(url, signal)),
           download:
             deps.download ??
-            ((url, dest, op, _sig, expected) => downloadFile(url, dest, op, signal, expected)),
+            ((url, dest, op, expected) => downloadFile(url, dest, op, signal, expected)),
           sha256: deps.sha256
         },
         (download) => {

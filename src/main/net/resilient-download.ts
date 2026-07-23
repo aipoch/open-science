@@ -27,6 +27,10 @@ export type ResilientDownloadDeps = {
 
 export type ResilientDownloadOpts = {
   expectedSha256?: string
+  // Expected total byte size, normally from a manifest. Short-read detection (retry a stream that
+  // closes early) needs a known total: it comes from the response Content-Length OR this field. If
+  // both are absent, a silently truncated stream is accepted without retry — callers that may hit a
+  // server or CDN redirect that strips Content-Length should always supply this from their manifest.
   expectedSize?: number
   maxRetries?: number
   stallTimeoutMs?: number
@@ -103,6 +107,22 @@ export const resilientDownload = async (
     ])
   }
 
+  // Hoist the hash above the retry loop. The hash is fed bytes incrementally chunk-by-chunk during
+  // each attempt; hoisting avoids re-reading the entire .part from disk on every retry (for a 200 MB
+  // pack that drops at 150 MB and retries 5× that saves 5 × 150 MB = 750 MB of extra disk I/O).
+  // `hashSeededTo` tracks how many bytes are accounted for in the hash so the catch path can
+  // reconcile when the .part is behind the hash (partial OS flush after destroy).
+  let hash = createHash('sha256')
+  let hashSeededTo = 0
+
+  // Seed from any .part that already exists before the first attempt (e.g. a manual retry after the
+  // app was restarted; within a session this is usually 0 and is a no-op).
+  {
+    const initial = await partSize()
+    await seedHash(hash, initial)
+    hashSeededTo = initial
+  }
+
   let lastError: unknown
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (opts.signal?.aborted) throw opts.signal.reason ?? new Error('aborted')
@@ -159,10 +179,17 @@ export const resilientDownload = async (
       if (!resuming && offset > 0) {
         await removeFile(partPath)
         offset = 0
+        // Reset the hoisted hash since we are restarting from byte 0.
+        hash = createHash('sha256')
+        hashSeededTo = 0
+      } else if (offset < hashSeededTo) {
+        // The .part was truncated below the hash cursor (OS did not flush all writes before destroy).
+        // Re-seed the hash from disk to bring it back in sync.
+        hash = createHash('sha256')
+        await seedHash(hash, offset)
+        hashSeededTo = offset
       }
-
-      const hash = createHash('sha256')
-      await seedHash(hash, offset)
+      // else: hash already covers [0, offset) — no I/O needed.
 
       const rawContentLength = Number(res.headers.get('content-length'))
       const total =
@@ -195,6 +222,9 @@ export const resilientDownload = async (
           file!.write(buf, (e) => (e ? reject(e) : resolve()))
         )
         transferred += buf.length
+        // The hash now covers every byte up to `transferred`. Track it so a failed attempt leaves
+        // hashSeededTo accurate; the next attempt only re-seeds if the .part flushed fewer bytes.
+        hashSeededTo = transferred
         meter.record(transferred)
         armStall()
         const bps = meter.bytesPerSecond()
