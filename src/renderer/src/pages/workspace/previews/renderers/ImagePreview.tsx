@@ -1,12 +1,100 @@
-import { ImageOff } from 'lucide-react'
+import { ImageOff, Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
 import { useState } from 'react'
+import { TransformComponent, TransformWrapper, useControls } from 'react-zoom-pan-pinch'
 
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
 import { PreviewErrorCard, PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
 import { createPreviewResourceKey } from '../preview-resource-key'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useManagedPreviewResource } from '../useManagedPreviewResource'
+
+// scale=1 is the fit-to-window baseline; 8x is enough to inspect pixel detail without letting the
+// image run away off-bounds.
+const ZOOM_MIN = 1
+const ZOOM_MAX = 8
+
+// Overlay giving zoom/pan its discoverable, keyboard- and touch-accessible surface: the wheel and
+// pinch gestures are invisible affordances, so these buttons expose the same zoom-in/out/reset
+// actions for users who never try the modifier gestures.
+// useControls reads the TransformWrapper context, so this must render inside <TransformWrapper>.
+const ImageZoomControls = (): React.JSX.Element => {
+  const { zoomIn, zoomOut, resetTransform } = useControls()
+  const actions = [
+    { label: 'Zoom in', icon: ZoomIn, onClick: () => zoomIn() },
+    { label: 'Zoom out', icon: ZoomOut, onClick: () => zoomOut() },
+    { label: 'Reset zoom', icon: Maximize2, onClick: () => resetTransform() }
+  ]
+
+  return (
+    <TooltipProvider delayDuration={300}>
+      <div className="absolute bottom-3 right-3 z-10 flex gap-1 rounded-md border border-border-300/50 bg-bg-000/90 p-1 shadow-sm backdrop-blur">
+        {actions.map(({ label, icon: Icon, onClick }) => (
+          <Tooltip key={label}>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="text-text-100 hover:text-text-000"
+                aria-label={label}
+                onClick={onClick}
+              >
+                <Icon aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{label}</TooltipContent>
+          </Tooltip>
+        ))}
+      </div>
+    </TooltipProvider>
+  )
+}
+
+// Wraps the managed-resource <img> in a zoom/pan surface for inspecting high-resolution figures.
+// scale=1 keeps the object-contain fit-to-window baseline; zoom scales up from there, drag pans
+// once zoomed in, and double-click resets to fit. Plain scroll is left to the panel — only
+// Ctrl/Cmd+wheel or a trackpad pinch zooms — so scrolling a long preview list never zooms by
+// accident. The onError bubbles up unchanged so the existing decode-failure fallback still fires.
+const ZoomableImage = ({
+  url,
+  name,
+  onError
+}: {
+  url: string
+  name: string
+  onError: () => void
+}): React.JSX.Element => (
+  <TransformWrapper
+    minScale={ZOOM_MIN}
+    maxScale={ZOOM_MAX}
+    centerOnInit
+    doubleClick={{ mode: 'reset' }}
+    // Function form gives Control-OR-Meta; the array form ANDs its keys, requiring both at once.
+    // Trackpad pinch arrives as a wheel event with ctrlKey set, so it passes without a real key.
+    wheel={{
+      step: 0.2,
+      activationKeys: (keys) => keys.includes('Control') || keys.includes('Meta')
+    }}
+    panning={{ velocityDisabled: true }}
+  >
+    <ImageZoomControls />
+    <TransformComponent
+      wrapperClass="!size-full cursor-grab active:cursor-grabbing"
+      contentClass="!size-full"
+    >
+      <img
+        src={url}
+        alt={name}
+        className="size-full object-contain"
+        draggable={false}
+        onError={onError}
+      />
+    </TransformComponent>
+  </TransformWrapper>
+)
 
 export const PreviewImageContent = ({
   path,
@@ -57,12 +145,10 @@ export const PreviewImageContent = ({
   }
 
   return (
-    <div className="flex size-full items-center justify-center overflow-auto p-4">
-      <img
-        src={state.resource.url}
-        alt={name}
-        className="max-h-full max-w-full object-contain"
-        draggable={false}
+    <div className="relative size-full overflow-hidden p-4">
+      <ZoomableImage
+        url={state.resource.url}
+        name={name}
         onError={() => setFailedRequestKey(requestKey)}
       />
     </div>

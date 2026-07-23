@@ -6,6 +6,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PreviewUnsupportedContent } from './previews/PreviewFallback'
 import { PreviewImageContent } from './previews/renderers/ImagePreview'
 
+// react-zoom-pan-pinch constructs a ResizeObserver on mount; jsdom doesn't provide one.
+if (!(globalThis as { ResizeObserver?: unknown }).ResizeObserver) {
+  ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
+    observe(): void {
+      /* no-op shim for zoom/pan layout measurement in jsdom */
+    }
+    unobserve(): void {
+      /* no-op */
+    }
+    disconnect(): void {
+      /* no-op */
+    }
+  }
+}
+
 describe('PreviewUnsupportedContent', () => {
   let container: HTMLDivElement
   let root: Root
@@ -195,5 +210,66 @@ describe('PreviewImageContent', () => {
 
     expect(container.textContent).toContain("isn't in your current storage location")
     expect(container.textContent).not.toContain('no longer available')
+  })
+
+  it('renders accessible zoom and reset controls alongside the image', async () => {
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<PreviewImageContent path="/workspace/photo.png" name="photo.png" />)
+    })
+
+    // The controls stay outside the transformed content so they never scale with the image.
+    expect(container.querySelector('[aria-label="Zoom in"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Zoom out"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Reset zoom"]')).not.toBeNull()
+    expect(container.querySelector('img')?.getAttribute('src')).toBe(
+      'open-science-preview://resource-1/photo.png'
+    )
+  })
+
+  it('scales the transformed content when the zoom-in control is used', async () => {
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<PreviewImageContent path="/workspace/photo.png" name="photo.png" />)
+    })
+
+    const transformed = container.querySelector<HTMLElement>('.react-transform-component')
+    expect(transformed?.style.transform).toContain('scale(1)')
+
+    const readScale = (): number =>
+      Number.parseFloat(/scale\(([\d.]+)\)/.exec(transformed?.style.transform ?? '')?.[1] ?? 'NaN')
+
+    const zoomIn = container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')
+    await act(async () => {
+      zoomIn?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    // The zoom eases in over rAF frames (~300ms); poll until the animated scale settles.
+    await act(async () => {
+      const deadline = Date.now() + 2000
+      let previous = Number.NaN
+      while (Date.now() < deadline && !(readScale() > 1 && readScale() === previous)) {
+        previous = readScale()
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      }
+    })
+
+    expect(readScale()).toBeGreaterThan(1.2)
+  })
+
+  it('preserves the decode-failure fallback behind the zoom wrapper', async () => {
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<PreviewImageContent path="/workspace/photo.png" name="photo.png" />)
+    })
+
+    await act(async () => {
+      container.querySelector('img')?.dispatchEvent(new Event('error'))
+    })
+
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('[aria-label="Zoom in"]')).toBeNull()
+    expect(container.textContent).toContain("Image couldn't be loaded for preview")
+    expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })
   })
 })
