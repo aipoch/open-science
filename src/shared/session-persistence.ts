@@ -143,6 +143,11 @@ export type PersistedChatSession = {
   activities?: PersistedToolActivity[]
   activeRun?: PersistedActiveRun
   error?: string
+  // Whether a failed run's error is worth a GitHub issue. False for a recognized failure (a provider/
+  // model error the agent relayed, or one of the app's own actionable reminders); true/absent for an
+  // unknown ACP-layer failure. Resolved once when the run fails and persisted so the "Report error"
+  // gate survives a reload. Absent on older files — treated as reportable (the prior behavior).
+  errorReportable?: boolean
   artifacts?: PersistedArtifact[]
   // Incremented only when finalized file metadata changes; text streaming leaves it untouched.
   filesRevision?: number
@@ -684,6 +689,8 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
 
   if (activeRun) sanitized.activeRun = activeRun
   if (error) sanitized.error = error
+  // Only meaningful alongside an error; persisted only when explicitly false (absent = reportable).
+  if (error && session.errorReportable === false) sanitized.errorReportable = false
   if (agentFrameworkId && AGENT_FRAMEWORK_IDS.has(agentFrameworkId)) {
     sanitized.agentFrameworkId = agentFrameworkId
   }

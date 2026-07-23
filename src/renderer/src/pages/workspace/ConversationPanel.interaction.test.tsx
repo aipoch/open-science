@@ -686,4 +686,43 @@ describe('ConversationPanel error box + report affordance', () => {
     ) as HTMLTextAreaElement | null
     expect(textarea?.value).toBe('The run failed with no error message.')
   })
+
+  it('hides the Report button for an app-crafted, actionable failure', () => {
+    // A recognized failure keeps its message but is not a bug worth a GitHub issue.
+    renderPanel({
+      activeSession: {
+        ...errorSession,
+        error: 'Session workspace is missing; start a new conversation.'
+      }
+    })
+    expect(errorBoxText()).toContain('Session workspace is missing')
+    expect(reportButton()).toBeNull()
+  })
+
+  it('hides the Report button for a model-provider error (tagged non-reportable at the ACP layer)', () => {
+    // A provider/model failure is tagged structurally (errorReportable: false), not by its text —
+    // the raw provider message is kept visible but is not a bug worth a GitHub issue.
+    renderPanel({
+      activeSession: {
+        ...errorSession,
+        error: 'Invalid API key',
+        errorReportable: false
+      }
+    })
+    expect(errorBoxText()).toContain('Invalid API key')
+    expect(reportButton()).toBeNull()
+  })
+
+  it('shows the Report button when a persisted error predates the reportable flag (undefined)', () => {
+    // Old sessions have no errorReportable; fall back to classifying the text — an opaque failure
+    // stays reportable, an app-crafted reminder does not.
+    renderPanel({
+      activeSession: {
+        ...errorSession,
+        error: 'Run failed: connection reset',
+        errorReportable: undefined
+      }
+    })
+    expect(reportButton()).not.toBeNull()
+  })
 })

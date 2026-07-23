@@ -5,6 +5,7 @@ import type {
   SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import { isReportableRunFailure } from '../../../../shared/run-error-classification'
 import {
   ArrowUp,
   BookOpen,
@@ -173,6 +174,12 @@ const ConversationPanel = ({
   const allJobsForSession = useSessionJobStore((s) => s.allJobsForSession)
   const hasAnyJobs = activeSession !== undefined && allJobsForSession(activeSession.id).length > 0
   const resolvedRunError = normalizeRunFailureError(activeSession?.error)
+  // Only unknown/opaque ACP-layer failures offer the "Report error → GitHub issue" affordance. The
+  // reportability is resolved at failure time and persisted on the session: a model-provider error is
+  // tagged non-reportable at the ACP layer, and an app-crafted reminder is recognized by its own text.
+  // Fall back to classifying the raw error for sessions persisted before the flag existed (undefined).
+  const isRunErrorReportable =
+    activeSession?.errorReportable ?? isReportableRunFailure(activeSession?.error)
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
@@ -290,16 +297,20 @@ const ConversationPanel = ({
                       <div className="flex items-start gap-2">
                         <span className="min-w-0 flex-1 break-words">{resolvedRunError}</span>
                         {/* The button sits on the failure row beside the run's own error, so the shown
-                            text and the reported text are always the same error. */}
-                        <button
-                          type="button"
-                          onClick={() => setIsReportOpen(true)}
-                          className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100"
-                          aria-label="Report this error"
-                        >
-                          <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
-                          Report error
-                        </button>
+                            text and the reported text are always the same error. Shown only for an
+                            unknown failure — a recognized one (app guidance or a known provider error)
+                            keeps its message but is not a bug worth a GitHub issue. */}
+                        {isRunErrorReportable ? (
+                          <button
+                            type="button"
+                            onClick={() => setIsReportOpen(true)}
+                            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100"
+                            aria-label="Report this error"
+                          >
+                            <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
+                            Report error
+                          </button>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>

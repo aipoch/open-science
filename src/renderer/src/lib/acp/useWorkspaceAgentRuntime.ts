@@ -17,6 +17,14 @@ import type { ArtifactReference } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
+import {
+  IMAGE_REPLAY_UNSUPPORTED_MESSAGE,
+  RESUME_MODEL_INCOMPATIBLE_MESSAGE,
+  RESUME_RECONNECT_FAILED_MESSAGE,
+  RESUME_TIMED_OUT_MESSAGE,
+  RESUME_UNSUPPORTED_MESSAGE,
+  RESUME_WORKSPACE_MISSING_MESSAGE
+} from '../../../../shared/run-error-classification'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { useSessionStore, type ChatMessage } from '../../stores/session-store'
 import { useSettingsStore } from '../../stores/settings-store'
@@ -89,12 +97,24 @@ type WorkspaceRuntimeEventProcessor = {
 }
 
 // Strips the Electron IPC wrapper ("Error invoking remote method '…': Error: <cause>") and any
-// leading "Error:" so the underlying agent message can be shown to the user on its own.
-const unwrapResumeErrorDetail = (message: string): string =>
+// leading "Error:" so the underlying agent message can be shown to the user on its own. Used by both
+// the resume and createSession failure paths, since either crosses IPC and arrives wrapped.
+const unwrapIpcErrorDetail = (message: string): string =>
   message
     .replace(/^Error invoking remote method '[^']*':\s*/i, '')
     .replace(/^Error:\s*/i, '')
     .trim()
+
+// Turns a createSession (conversation-start) failure into the message persisted on the session. The
+// error crosses IPC wrapped, so it is unwrapped first — this keeps the app-authored setup guidance
+// (settings/service.ts: model-incompat, no provider, Codex bridge, missing Claude executable) matching
+// the classifier's prefixes/constants, so a wrong-config start failure hides the report button instead
+// of masquerading as a reportable bug behind the "Error invoking remote method" wrapper.
+const getCreateSessionFailureMessage = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : String(error)
+
+  return unwrapIpcErrorDetail(message) || message.trim() || 'Agent session could not be created.'
+}
 
 // Turns a resume failure into an actionable message. Each branch matches one distinct cause thrown
 // along the runtime resume path (runtime.ts): a deleted/moved workspace folder ("cwd does not exist"),
@@ -106,19 +126,19 @@ const getResumeFailureMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
 
   if (/cwd does not exist/i.test(message)) {
-    return 'Session workspace is missing; start a new conversation.'
+    return RESUME_WORKSPACE_MISSING_MESSAGE
   }
 
   if (/timed out/i.test(message)) {
-    return 'Agent session resume timed out; click Resume to try again.'
+    return RESUME_TIMED_OUT_MESSAGE
   }
 
   if (/does not support session resume/i.test(message)) {
-    return 'This agent build cannot resume sessions; start a new conversation.'
+    return RESUME_UNSUPPORTED_MESSAGE
   }
 
   if (/connection (failed|was superseded)|ACP connection/i.test(message)) {
-    return 'Could not reconnect to the agent; check it is installed, then click Resume to retry.'
+    return RESUME_RECONNECT_FAILED_MESSAGE
   }
 
   // Model↔framework mismatch is now flagged proactively in Settings → Model, so keep this soft and
@@ -127,10 +147,10 @@ const getResumeFailureMessage = (error: unknown): string => {
   // compatible with <framework>…") so unrelated "not compatible with" errors — notably an ACP
   // protocol-version mismatch — fall through to the default message instead of being mislabeled.
   if (/active model isn'?t compatible with/i.test(message)) {
-    return "The active model isn't compatible with this agent framework. Open Settings → Model to pick a compatible model or switch frameworks."
+    return RESUME_MODEL_INCOMPATIBLE_MESSAGE
   }
 
-  const detail = unwrapResumeErrorDetail(message)
+  const detail = unwrapIpcErrorDetail(message)
 
   return detail ? `Agent session resume failed: ${detail}` : 'Agent session resume failed'
 }
@@ -139,11 +159,32 @@ const getResumeFailureMessage = (error: unknown): string => {
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
+// The id of the most recent prompt-failure error event for a session, or undefined if none. Captured
+// before a prompt is dispatched so the rejection path can tell a NEW failure event (this turn) from a
+// stale one left by an earlier turn, and never inherit the earlier turn's providerError tag.
+const latestPromptFailureEventId = (
+  events: AcpRuntimeEvent[],
+  sessionId: string
+): string | undefined => {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event.kind === 'error' && event.sessionId === sessionId) return event.id
+  }
+  return undefined
+}
+
 // Classifies a failed prompt against the live connection status: an abnormal drop (status 'closed'/
 // 'error') shows the Resume banner so the user can reconnect and continue, while a turn-level error
 // (connection still up, e.g. a gateway 5xx) surfaces as a normal session error. Reading the status at
 // failure time avoids the race where failRun would flip the session out of 'running' first.
-const failOrMarkDisconnected = async (sessionId: string, message: string): Promise<void> => {
+//
+// priorErrorEventId is the newest prompt-failure event id observed BEFORE this prompt was dispatched;
+// it lets the reportability read below ignore a stale event from an earlier turn.
+const failOrMarkDisconnected = async (
+  sessionId: string,
+  message: string,
+  priorErrorEventId?: string
+): Promise<void> => {
   // A conversation being auto-compacted after a request-size overflow owns its own outcome (reset +
   // retry). Don't overwrite the neutral compacting state with a dead-end error from the rejected
   // sendPrompt call.
@@ -151,6 +192,14 @@ const failOrMarkDisconnected = async (sessionId: string, message: string): Promi
     return
   }
 
+  // The rejection carries no structural tag (IPC strips the Error's data), so read THIS turn's error
+  // event from the snapshot to learn whether it was a model-provider failure. The runtime pushes that
+  // event (tagged providerError) synchronously before rejecting, so by the time this getState resolves
+  // it is already present. Only a provider-tagged event forces reportable=false; everything else is left
+  // undefined so failRun's text tier decides — this converges with the event path (workspace-events) and
+  // keeps a non-recovered overflow (providerError=false) non-reportable via the text tier instead of
+  // being mislabeled reportable. Undefined also covers no NEW event (a stale prior-turn event is ignored).
+  let reportable: boolean | undefined
   try {
     const snapshot = await window.api.acp.getState()
 
@@ -159,11 +208,18 @@ const failOrMarkDisconnected = async (sessionId: string, message: string): Promi
       useSessionStore.getState().markDisconnected(sessionId, message)
       return
     }
+
+    const runError = [...snapshot.events]
+      .reverse()
+      .find((event) => event.kind === 'error' && event.sessionId === sessionId)
+    // Only trust an event that is NEW for this turn, so a provider-error tag from an earlier turn can
+    // neither hide this failure's report button nor mislabel it.
+    if (runError && runError.id !== priorErrorEventId && runError.providerError) reportable = false
   } catch {
     // Fall back to a plain error if the live status read fails.
   }
 
-  useSessionStore.getState().failRun(sessionId, message)
+  useSessionStore.getState().failRun(sessionId, message, { reportable })
 }
 
 // Moves staged uploads into the session directory and updates the already-visible user message.
@@ -291,7 +347,9 @@ const startPendingSessionPrompt = (
     try {
       createdSession = await runtime.createSession(cwd, projectName, permissionProfile)
     } catch (error) {
-      useSessionStore.getState().failRun(pending.sessionId, getErrorMessage(error))
+      // Unwrap the IPC wrapper so an app-authored setup failure (model-incompat / no provider / Codex
+      // bridge / missing executable) is recognized by the classifier and hides the report button.
+      useSessionStore.getState().failRun(pending.sessionId, getCreateSessionFailureMessage(error))
       return
     }
 
@@ -336,6 +394,9 @@ const startPendingSessionPrompt = (
       return
     }
 
+    // Baseline the newest prompt-failure event before dispatch so the rejection path can tell this
+    // turn's error event from a stale one when it derives the report affordance.
+    const priorErrorEventId = latestPromptFailureEventId(runtime.state.events, runtimeSessionId)
     void runtime
       .sendPrompt(runtimeSessionId, content, promptAttachments, forcedSkillIds, referencedArtifacts)
       .catch((error) => {
@@ -343,16 +404,10 @@ const startPendingSessionPrompt = (
         // visible session error, instead of being swallowed as an unhandled rejection.
         // Ensure non-empty message to avoid being silently dropped by failRun's empty check.
         const errorMessage = getErrorMessage(error).trim() || 'Agent run failed'
-        void failOrMarkDisconnected(runtimeSessionId, errorMessage)
+        void failOrMarkDisconnected(runtimeSessionId, errorMessage, priorErrorEventId)
       })
   })()
 }
-
-// Records the user's prompt before slow runtime work continues.
-// Shared by the send path and the edit-resend pre-check so both reject incompatible image replays
-// with the same wording.
-const IMAGE_REPLAY_UNSUPPORTED_MESSAGE =
-  'This conversation needs image replay, but the selected model does not support image input.'
 
 const sendWorkspaceMessage = async (
   runtime: WorkspaceMessageRuntime,
@@ -438,9 +493,7 @@ const sendWorkspaceMessage = async (
       const effectiveCwd = targetCwd || runtime.state.cwd
 
       if (!effectiveCwd) {
-        useSessionStore
-          .getState()
-          .failRun(targetSessionId, 'Session workspace is missing; start a new conversation.')
+        useSessionStore.getState().failRun(targetSessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
         return undefined
       }
 
@@ -548,6 +601,10 @@ const sendWorkspaceMessage = async (
       return appended
     }
 
+    // Baseline the newest prior failure event so the rejection path can tell this turn's error event
+    // (carrying the providerError tag) from a stale one left by an earlier turn.
+    const priorErrorEventId = latestPromptFailureEventId(runtime.state.events, targetSessionId)
+
     // The hook returns after local state is updated; event listeners handle the streamed result.
     void runtime
       .sendPrompt(
@@ -566,7 +623,7 @@ const sendWorkspaceMessage = async (
         // visible session error, instead of being swallowed as an unhandled rejection.
         // Ensure non-empty message to avoid being silently dropped by failRun's empty check.
         const errorMessage = getErrorMessage(error).trim() || 'Agent run failed'
-        void failOrMarkDisconnected(targetSessionId, errorMessage)
+        void failOrMarkDisconnected(targetSessionId, errorMessage, priorErrorEventId)
       })
 
     return appended
@@ -644,9 +701,7 @@ const resumeInterruptedWorkspaceSession = async (
   const resumeCwd = session.cwd || runtime.state.cwd
 
   if (!resumeCwd) {
-    useSessionStore
-      .getState()
-      .failRun(sessionId, 'Session workspace is missing; start a new conversation.')
+    useSessionStore.getState().failRun(sessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
     return
   }
 

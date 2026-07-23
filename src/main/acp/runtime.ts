@@ -65,7 +65,7 @@ import {
   resolveSessionEffortOption,
   type SessionModelSelection
 } from './session-config'
-import { describePromptError } from './prompt-error'
+import { describePromptError, isProviderPromptError } from './prompt-error'
 import {
   ATTACHMENT_PREVIEW_BYTES,
   MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
@@ -1967,6 +1967,10 @@ class AcpRuntime {
         kind: 'error',
         level: 'error',
         recoverable,
+        // Tag a model-provider failure (upstream LLM/HTTP error the agent relayed) so the renderer
+        // keeps the message but hides the "Report error" button — only ACP-layer exceptions are bugs
+        // worth a GitHub issue. Determined structurally from the agent's signals, not the message text.
+        providerError: isProviderPromptError(error),
         sessionId: request.sessionId,
         title: ACP_PROMPT_FAILED_EVENT_TITLE,
         text
@@ -3425,6 +3429,7 @@ class AcpRuntime {
       level: event.level ?? 'info',
       kind: event.kind,
       recoverable: event.recoverable,
+      providerError: event.providerError,
       sessionId: event.sessionId,
       messageId: event.messageId,
       role: event.role,

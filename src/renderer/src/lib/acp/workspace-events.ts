@@ -310,7 +310,16 @@ const applyWorkspaceRuntimeEvent = async (
       return true
     }
 
-    store.failRun(event.sessionId, getEventErrorText(event))
+    // A model-provider failure (upstream LLM/HTTP error the agent relayed, tagged structurally in the
+    // runtime) keeps its message but is not a bug worth a GitHub issue — hide the report button. For
+    // everything else, defer to failRun's text tier (undefined) rather than forcing reportable=true: a
+    // non-recovered overflow reaches here (repeat inside cooldown, nothing to replay, detached session)
+    // with providerError=false but IS a client-side/size failure the text tier recognizes as expected —
+    // forcing true here would wrongly show and persist the report button over it. Opaque ACP-layer
+    // failures still fall through the text tier to reportable.
+    store.failRun(event.sessionId, getEventErrorText(event), {
+      reportable: event.providerError ? false : undefined
+    })
     return true
   }
 
