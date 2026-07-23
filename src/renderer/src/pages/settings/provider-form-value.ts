@@ -1,4 +1,5 @@
 import {
+  claudeIsolatedProviderIdentity,
   codexSubscriptionProviderIdentity,
   type AgentFrameworkId,
   type ChatApiEndpoint,
@@ -92,6 +93,10 @@ export const getProviderFormErrors = (
   } else if (value.type === 'official') {
     // No model is chosen at add time: the vendor catalog + the global model selection cover that.
     if (!value.key.trim() && !options.hasStoredKey) errors.key = 'API key is required.'
+  } else if (value.type === 'claude-isolated') {
+    // claude-isolated has no add-time fields: the type alone provisions the provider card, and the
+    // token paste lives in a separate sign-in modal (loginIsolatedClaude). Rejecting here would
+    // block the renderer from even creating the record, which contradicts the UX.
   }
 
   return errors
@@ -128,6 +133,16 @@ export const PROVIDER_KINDS: ProviderKind[] = [
     label: codexSubscriptionProviderIdentity().name,
     description: 'Use an existing Codex profile or sign in with a separate Open Science profile.',
     group: 'coding'
+  },
+  {
+    // Sits in the API group (not coding) because claude-isolated is keyed off an OAuth token, not a
+    // ChatGPT-style sign-in — but it shares the "your subscription" framing the user is used to on
+    // the codex side. Surfaced only when Claude Code is the active framework, mirroring how the
+    // codex subscription is gated.
+    key: 'claude-isolated',
+    label: claudeIsolatedProviderIdentity().name,
+    description: 'Sign in with a Claude setup-token — no ~/.claude touch, no Keychain.',
+    group: 'api'
   },
   ...OFFICIAL_VENDORS.map((vendor): ProviderKind => ({
     key: `official:${vendor.id}`,
@@ -166,6 +181,20 @@ export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
     }
   }
 
+  if (key === 'claude-isolated') {
+    const identity = claudeIsolatedProviderIdentity()
+    return {
+      type: 'claude-isolated',
+      name: identity.name,
+      apiEndpoint: 'anthropic',
+      baseUrl: '',
+      model: '',
+      key: '',
+      vendorId: undefined,
+      region: undefined
+    }
+  }
+
   if (key === 'claude-default') {
     return { type: 'claude-default', vendorId: undefined, region: undefined, model: '' }
   }
@@ -193,6 +222,7 @@ export const selectedKindKey = (value: ProviderFormValue): string => {
     return 'custom'
   }
   if (value.type === 'claude-default') return 'claude-default'
+  if (value.type === 'claude-isolated') return 'claude-isolated'
   if (value.type === 'codex-shared' || value.type === 'codex-isolated') {
     return 'codex-subscription'
   }

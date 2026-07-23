@@ -3,6 +3,7 @@ import { AlertDialog } from 'radix-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   Card,
   CardContent,
@@ -159,6 +160,7 @@ const OnboardingWizard = (): React.JSX.Element => {
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
   const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
   const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
+  const loginIsolatedClaude = useSettingsStore((state) => state.loginIsolatedClaude)
   const completeOnboarding = useSettingsStore((state) => state.completeOnboarding)
 
   // A completed user re-opened only for a regressed required check: environment repair, no model step.
@@ -206,6 +208,10 @@ const OnboardingWizard = (): React.JSX.Element => {
   const [showProviderErrors, setShowProviderErrors] = useState(false)
   const [validationMessage, setValidationMessage] = useState<string | undefined>(undefined)
   const [validationOk, setValidationOk] = useState(false)
+  // The pasted Claude setup-token lives on the wizard (not the form value) so the form remains a
+  // pure provider-shape object that maps to UpsertProviderRequest. Cleared on submit success so
+  // it does not linger if the user backs up to edit the model and resubmits.
+  const [claudeSetupToken, setClaudeSetupToken] = useState('')
   const didRequestCheck = useRef(false)
   // Mirrors the Settings teardown: a pending isolated sign-in lives in the main process for up to
   // five minutes, and its guard rejects a second attempt as "already in progress". If the wizard
@@ -450,6 +456,42 @@ const OnboardingWizard = (): React.JSX.Element => {
           if (providerId) await setActiveProvider(providerId)
           // Location is the last step now: it decides completeOnboarding vs. the relaunch, once the
           // user confirms (or keeps) a location there.
+          setStep('location')
+        }
+        return
+      }
+
+      if (formValue.type === 'claude-isolated') {
+        // claude-isolated flow: persist the provider first (so the record exists), then forward the
+        // pasted setup-token to the controller. The token is captured on the wizard's own form (a
+        // separate input below the provider-kind picker) so the user can review + retry the paste
+        // without leaving the wizard.
+        const trimmedToken = claudeSetupToken.trim()
+        if (!trimmedToken) {
+          setValidationOk(false)
+          setValidationMessage('Paste the token printed by `claude setup-token` to continue.')
+          return
+        }
+
+        const providerId = await persistProvider(toUpsertRequest(formValue))
+        const validation = await loginIsolatedClaude(trimmedToken)
+
+        // A discarded sign-in (the provider was deleted/edited while the paste was in flight) returns
+        // applied: false — surface that as a distinct message so the user can re-check the picker.
+        if (validation.applied === false) {
+          setValidationOk(false)
+          setValidationMessage(
+            'The Claude provider changed during sign-in. Review the selection and try again.'
+          )
+          return
+        }
+
+        setValidationOk(validation.ok)
+        setValidationMessage(describeValidation(validation))
+
+        if (validation.ok) {
+          setClaudeSetupToken('')
+          if (providerId) await setActiveProvider(providerId)
           setStep('location')
         }
         return
@@ -861,7 +903,32 @@ const OnboardingWizard = (): React.JSX.Element => {
                       disabled={isSaving}
                       encryptionAvailable={encryptionAvailable}
                       showCodexSubscriptions={agentFrameworkId === 'codex'}
+                      showClaudeIsolated={agentFrameworkId === 'claude-code'}
                     />
+                    {formValue.type === 'claude-isolated' ? (
+                      // The Claude subscription's setup-token paste lives inline so the wizard's
+                      // existing "Test & continue" / "Sign in & continue" CTA can submit both the
+                      // provider record AND the token in one click. The modal is reserved for the
+                      // Settings-page post-onboarding flow where the user revisits the card later.
+                      <div className="mt-4 space-y-2">
+                        <label
+                          className="text-xs font-medium"
+                          htmlFor="wizard-claude-setup-token"
+                        >
+                          Paste the token from <code className="font-mono">claude setup-token</code>
+                        </label>
+                        <Input
+                          id="wizard-claude-setup-token"
+                          aria-label="Claude setup token"
+                          value={claudeSetupToken}
+                          onChange={(event) => setClaudeSetupToken(event.target.value)}
+                          placeholder="sk-ant-..."
+                          autoComplete="off"
+                          spellCheck={false}
+                          disabled={isSaving}
+                        />
+                      </div>
+                    ) : null}
                     {validationMessage ? (
                       <p
                         className={`mt-4 text-sm ${validationOk ? 'text-primary' : 'text-destructive'}`}

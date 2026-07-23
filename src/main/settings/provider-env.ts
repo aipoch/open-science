@@ -62,6 +62,12 @@ const buildProviderEnv = (
     }
 
     if (provider.key) env.ANTHROPIC_AUTH_TOKEN = provider.key
+  } else if (provider.type === 'claude-isolated') {
+    // claude-isolated: a long-lived OAuth token (from `claude setup-token`) injected as the bearer
+    // Claude Code reads under an explicit CLAUDE_CONFIG_DIR. The token is portable across config
+    // dirs and platforms, so isolation comes from the app-owned config dir + this one env var — no
+    // ~/.claude touch, no OS credential store.
+    if (provider.key) env.CLAUDE_CODE_OAUTH_TOKEN = provider.key
   }
 
   // claude-default (local): no endpoint/token injected here — it uses the auth stored in the app dir

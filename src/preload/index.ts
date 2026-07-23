@@ -136,6 +136,8 @@ import type {
   ImportSkillZipRequest,
   ImportSkillZipBatchRequest,
   ImportSkillZipBatchResult,
+  ImportAgentHomeSkillRequest,
+  AgentHomeSkillView,
   PreviewSkillZipRequest,
   SkillBundlePreviewResult,
   ScanRepoRequest,
@@ -269,6 +271,8 @@ type OpenScienceAPI = {
     cancelCodexLogin: () => Promise<void>
     loginIsolatedCodex: () => Promise<ValidateProviderResult>
     logoutIsolatedCodex: () => Promise<ValidateProviderResult>
+    loginIsolatedClaude: (token: string) => Promise<ValidateProviderResult>
+    logoutIsolatedClaude: () => Promise<ValidateProviderResult>
     refreshProviderModels: (
       request: RefreshProviderModelsRequest
     ) => Promise<RefreshProviderModelsResult>
@@ -286,6 +290,8 @@ type OpenScienceAPI = {
     importSkillZipBatch: (request: ImportSkillZipBatchRequest) => Promise<ImportSkillZipBatchResult>
     previewSkillZip: (request: PreviewSkillZipRequest) => Promise<SkillBundlePreviewResult>
     scanRepoSkills: (request: ScanRepoRequest) => Promise<ScanRepoResult>
+    listAgentHomeSkills: () => Promise<AgentHomeSkillView[]>
+    importAgentHomeSkill: (request: ImportAgentHomeSkillRequest) => Promise<ImportSkillResult>
     listConnectors: () => Promise<ConnectorsSnapshot>
     getConnectorDetail: (id: string) => Promise<ConnectorDetailView>
     setConnectorEnabled: (request: SetConnectorEnabledRequest) => Promise<ConnectorsSnapshot>
@@ -664,6 +670,12 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('settings:login-isolated-codex') as Promise<ValidateProviderResult>,
     logoutIsolatedCodex: () =>
       ipcRenderer.invoke('settings:logout-isolated-codex') as Promise<ValidateProviderResult>,
+    // The Claude subscription's setup-token paste. Same shape as the codex login, but the renderer
+    // supplies the token (no browser flow), so the payload is the plaintext string itself.
+    loginIsolatedClaude: (token: string) =>
+      ipcRenderer.invoke('settings:login-isolated-claude', token) as Promise<ValidateProviderResult>,
+    logoutIsolatedClaude: () =>
+      ipcRenderer.invoke('settings:logout-isolated-claude') as Promise<ValidateProviderResult>,
     refreshProviderModels: (request) =>
       ipcRenderer.invoke(
         'settings:refresh-provider-models',
@@ -702,6 +714,15 @@ const api: OpenScienceAPI = {
       ) as Promise<SkillBundlePreviewResult>,
     scanRepoSkills: (request: ScanRepoRequest) =>
       ipcRenderer.invoke('settings:scan-repo-skills', request) as Promise<ScanRepoResult>,
+    // "From your agent home" import source: lists the skills under ~/.claude/skills/ for the
+    // renderer to display, and copies one into the imported-skill store on demand.
+    listAgentHomeSkills: () =>
+      ipcRenderer.invoke('settings:list-agent-home-skills') as Promise<AgentHomeSkillView[]>,
+    importAgentHomeSkill: (request: ImportAgentHomeSkillRequest) =>
+      ipcRenderer.invoke(
+        'settings:import-agent-home-skill',
+        request
+      ) as Promise<ImportSkillResult>,
     listConnectors: () =>
       ipcRenderer.invoke('settings:list-connectors') as Promise<ConnectorsSnapshot>,
     getConnectorDetail: (id: string) =>
