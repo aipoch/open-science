@@ -313,8 +313,8 @@ describe('AI review workflow contract', () => {
     const step = getNamedStep('claude_review', 'Run Claude architecture review')
     const args = step.with?.claude_args
 
-    // --tools "" disables ALL built-in tools (not --allowedTools which is just the confirm-free list).
-    expect(args).toContain('--tools ""')
+    // A single space survives the action parser and is trimmed by Claude into an empty tool list.
+    expect(args).toContain('--tools " "')
     // --safe-mode disables all project customisations (hooks, MCP servers, .claude/settings.json).
     expect(args).toContain('--safe-mode')
     expect(args).toContain('--strict-mcp-config')
