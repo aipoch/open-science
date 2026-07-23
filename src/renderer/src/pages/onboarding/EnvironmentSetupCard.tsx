@@ -24,16 +24,23 @@ import { describeInstallProgress } from '../settings/claude-install-progress'
 type EnvironmentSetupCardProps = {
   environment: EnvironmentCheckResult | undefined
   isChecking: boolean
-  // `isInstalling` drives this card's own progress/label (the selected runtime's install). `busy` locks
-  // the action buttons while ANY runtime installs — including one still finishing on the previously
-  // selected framework during an async switch — so a second install can't start. Defaults to isInstalling.
+  // The selected runtime owns the visible progress; any runtime install can lock actions.
   isInstalling: boolean
   installBusy?: boolean
   installLogs: string[]
   installProgress?: ClaudeInstallProgressEvent | null
   error?: string
   onCheck: () => void
-  onInstall: () => void
+  // Optional because only steps that own the agent runtime offer the one-click install (Agent step,
+  // recovery view). Host/Notebook steps omit it and never show the install block.
+  onInstall?: () => void
+  // Limits which check rows render so each wizard step shows only the checks it owns: host rows on
+  // the Environment step, 'agent' on the Agent step, 'python' on the Notebook step. Undefined shows
+  // everything (recovery view). Pending placeholders are filtered by the same ids.
+  visibleCheckIds?: readonly EnvironmentCheckId[]
+  // Hides the intro text + "Check again" row when the hosting step already surfaces that control in
+  // its own card header (the Environment step does; embedded usages keep the built-in row).
+  hideIntro?: boolean
 }
 
 const CHECK_LABELS: Array<{ id: EnvironmentCheckId; label: string }> = [
@@ -71,6 +78,8 @@ const statusIcon = (status: EnvironmentCheckItem['status']): React.JSX.Element =
   return <XCircle className="size-4 text-destructive" aria-hidden="true" />
 }
 
+// Older installers report byte progress only through text logs. Keep this fallback behind the
+// structured progress event so the shared setup surface remains useful for both installer paths.
 const progressFromLogs = (logs: string[]): number | undefined => {
   for (let index = logs.length - 1; index >= 0; index -= 1) {
     const match = logs[index]?.match(/([\d.]+) MB\s*\/\s*([\d.]+) MB/i)
@@ -157,10 +166,10 @@ const EnvironmentSetupCard = ({
   installProgress,
   error,
   onCheck,
-  onInstall
+  onInstall,
+  visibleCheckIds,
+  hideIntro
 }: EnvironmentSetupCardProps): React.JSX.Element => {
-  // Any install running (this runtime's or one finishing on a just-switched-away framework) locks the
-  // buttons; default to this card's own install when the caller doesn't pass a global signal.
   const anyInstalling = installBusy ?? isInstalling
   const structuredProgress = installProgress ? describeInstallProgress(installProgress) : undefined
   const progress =
@@ -170,24 +179,34 @@ const EnvironmentSetupCard = ({
   const sourceLabel =
     environment?.recommendedRegistry === 'npmmirror' ? 'China-friendly mirror' : 'official registry'
 
+  // Both the resolved rows and the pre-check placeholders honor the same per-step filter.
+  const visibleChecks = visibleCheckIds
+    ? environment?.checks.filter((check) => visibleCheckIds.includes(check.id))
+    : environment?.checks
+  const pendingLabels = visibleCheckIds
+    ? CHECK_LABELS.filter((check) => visibleCheckIds.includes(check.id))
+    : CHECK_LABELS
+
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-4">
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          Open Science checks its core requirements, selects a trusted download source, and reports
-          optional Notebook availability.
-        </p>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onCheck}
-          disabled={isChecking || anyInstalling}
-        >
-          <RefreshCw className={cn(isChecking && 'animate-spin')} aria-hidden="true" />
-          {isChecking ? 'Checking…' : 'Check again'}
-        </Button>
-      </div>
+      {hideIntro ? null : (
+        <div className="flex items-start justify-between gap-4">
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Open Science checks its core requirements, selects a trusted download source, and
+            reports optional Notebook availability.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onCheck}
+            disabled={isChecking || anyInstalling}
+          >
+            <RefreshCw className={cn(isChecking && 'animate-spin')} aria-hidden="true" />
+            {isChecking ? 'Checking…' : 'Check again'}
+          </Button>
+        </div>
+      )}
 
       <ul
         className="divide-y divide-border-200"
@@ -197,15 +216,21 @@ const EnvironmentSetupCard = ({
         {environment
           ? // Both agent runtimes share id 'agent', so key by index (+id) to avoid a duplicate-key
             // collision that could mis-render or skip an update on one of the two runtime rows.
-            environment.checks.map((check, index) => (
+            visibleChecks?.map((check, index) => (
               <EnvironmentCheckRow key={`${check.id}-${index}`} check={check} />
             ))
-          : CHECK_LABELS.map((check) => <PendingCheckRow key={check.id} {...check} />)}
+          : pendingLabels.map((check) => <PendingCheckRow key={check.id} {...check} />)}
       </ul>
 
-      {environment && !environment.ready ? (
+      {/* The not-ready section only renders where it is actionable: steps without onInstall (host,
+          notebook) show it only when a VISIBLE item needs action — when the agent runtime is the only
+          gap (canAutoInstall) their visible rows all passed, so they show nothing and let the Agent
+          step handle it. */}
+      {environment &&
+      !environment.ready &&
+      (onInstall !== undefined || !environment.canAutoInstall) ? (
         <div className="rounded-lg bg-bg-10 px-4 py-4 ring-1 ring-border-200">
-          {environment.canAutoInstall ? (
+          {environment.canAutoInstall && onInstall ? (
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-foreground">
@@ -240,10 +265,6 @@ const EnvironmentSetupCard = ({
               <Button
                 type="button"
                 onClick={onInstall}
-                // Lock on anyInstalling (not just this runtime's isInstalling): while another runtime
-                // installs, clicking here would hit the store's single-install guard and surface its
-                // rejection as a phantom failure on this untouched runtime. Label still keys off
-                // isInstalling so only THIS runtime's install shows the "Installing…" state.
                 disabled={anyInstalling || isChecking}
                 className="shrink-0"
               >

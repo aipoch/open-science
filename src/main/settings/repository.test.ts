@@ -787,7 +787,12 @@ describe('settings repository: unknown provider type on load (claude-default rem
       activeProviderId: 'p-removed',
       activeModel: 'claude-sonnet-4-5',
       providers: [
-        { id: 'p-removed', type: 'claude-default', name: 'Old Local Claude', model: 'claude-sonnet-4-5' }
+        {
+          id: 'p-removed',
+          type: 'claude-default',
+          name: 'Old Local Claude',
+          model: 'claude-sonnet-4-5'
+        }
       ]
     })
 

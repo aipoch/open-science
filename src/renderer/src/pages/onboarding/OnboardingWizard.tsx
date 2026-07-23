@@ -1,67 +1,37 @@
 import { Check } from 'lucide-react'
-import { AlertDialog } from 'radix-ui'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle
-} from '@/components/ui/card'
-import { Separator } from '@/components/ui/separator'
+import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { APP } from '../../../../shared/app-config'
 import type { StorageInfo } from '../../../../shared/storage'
-import type {
-  AgentFrameworkId,
-  ClaudeInstallResult,
-  ClaudeInstallSource,
-  UpsertProviderRequest
-} from '../../../../shared/settings'
-import { isProviderUsableByFramework } from '../../../../shared/settings'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
-import {
-  selectAnyInstalling,
-  selectFrameworkApiEndpoints,
-  useSettingsStore
-} from '@/stores/settings-store'
-import { DataRootWarning } from '@/components/DataRootWarning'
-import { ClaudeInstallCard } from '../settings/ClaudeInstallCard'
-import { ClaudeStatusCard } from '../settings/ClaudeStatusCard'
-import { CodexStatusCard } from '../settings/CodexStatusCard'
-import { OpencodeStatusCard } from '../settings/OpencodeStatusCard'
-import { EnvironmentSetupCard } from './EnvironmentSetupCard'
-import { RuntimeChoiceCard } from './RuntimeChoiceCard'
-import { ProviderForm } from '../settings/ProviderForm'
+import { useSettingsStore } from '@/stores/settings-store'
 import {
   createEmptyProviderFormValue,
-  getProviderFormErrors,
-  hasProviderFormErrors,
-  providerKindPatch,
   type ProviderFormValue
 } from '../settings/provider-form-value'
-
-const createCodexProviderFormValue = (): ProviderFormValue =>
-  createEmptyProviderFormValue(providerKindPatch('codex-subscription'))
-import { describeValidation } from '../settings/validation-message'
+import { AgentStep } from './AgentStep'
+import { EnvironmentStep } from './EnvironmentStep'
+import { LocationStep, type LocationDraft } from './LocationStep'
+import { NotebookStep } from './NotebookStep'
+import { ProviderStep } from './ProviderStep'
+import { RecoveryStep } from './RecoveryStep'
 
 // Location is last: it doubles as the wizard's Finish step, so the confirm-restart dialog can
 // show only once the provider is already validated.
-type WizardStep = 'claude' | 'provider' | 'location'
-type EnvironmentMode = 'automatic' | 'manual'
+type WizardStep = 'environment' | 'agent' | 'provider' | 'notebook' | 'location'
 
-const STEP_ORDER: WizardStep[] = ['claude', 'provider', 'location']
+const STEP_ORDER: WizardStep[] = ['environment', 'agent', 'provider', 'notebook', 'location']
 const STEP_LABELS: Record<WizardStep, string> = {
-  claude: 'Environment',
+  environment: 'Environment',
+  agent: 'Agent runtime',
   provider: 'Model provider',
+  notebook: 'Notebook runtime',
   location: 'Data location'
 }
 
-// Keeps the three-step sequence visible without turning the lightweight setup flow into navigation.
+// Keeps the five-step sequence visible without turning the lightweight setup flow into navigation.
 const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element => {
   const currentIndex = STEP_ORDER.indexOf(step)
 
@@ -104,138 +74,46 @@ const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element =
   )
 }
 
-// Converts a form value into the upsert request the main process expects.
-const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
-  type: value.type,
-  name: value.name,
-  baseUrl: value.baseUrl,
-  model: value.model,
-  vendorId: value.vendorId,
-  region: value.region,
-  // Persist the chosen API format so an OpenAI-compatible provider is validated + driven correctly.
-  apiEndpoints: [value.apiEndpoint],
-  supportsImageInput: value.supportsImageInput,
-  key: value.key || undefined
-})
-
-// First-run gate: inspect the host (automatic checks, with the original manual installer kept as a
-// tab), configure and validate a model provider, then choose where data lives. Reuses the same
-// cards/form as the settings page so both surfaces stay in sync. For completed users App can
-// re-open only the environment portion when a required dependency later disappears (recovery mode).
+// First-run gate: inspect the host, install the agent runtime, configure and validate a model
+// provider, optionally set up the notebook runtime, then choose where data lives — one focused
+// step each. For completed users App can re-open only the repair surface (RecoveryStep) when a
+// required dependency later disappears.
 const OnboardingWizard = (): React.JSX.Element => {
-  const claude = useSettingsStore((state) => state.claude)
-  const opencode = useSettingsStore((state) => state.opencode)
-  const codex = useSettingsStore((state) => state.codex)
-  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
-  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
-  const setAgentFramework = useSettingsStore((state) => state.setAgentFramework)
-  const isDetectingOpencode = useSettingsStore((state) => state.isDetectingOpencode)
-  const isDetectingCodex = useSettingsStore((state) => state.isDetectingCodex)
-  const detectCodex = useSettingsStore((state) => state.detectCodex)
-  const installOpencode = useSettingsStore((state) => state.installOpencode)
-  const installCodex = useSettingsStore((state) => state.installCodex)
-  const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
-  const preflight = useSettingsStore((state) => state.preflight)
-  const isDetectingClaude = useSettingsStore((state) => state.isDetectingClaude)
-  // Onboarding shows one framework's card at a time, so read that framework's own install slice. Any
-  // install running still locks the framework switcher below (only one install runs at a time).
-  const installStates = useSettingsStore((state) => state.installStates)
-  const anyInstalling = useSettingsStore(selectAnyInstalling)
-  const activeInstall = installStates[agentFrameworkId]
-  const isInstalling = activeInstall.isInstalling
-  const installLogs = activeInstall.installLogs
-  const installProgress = activeInstall.installProgress
-  const storeInstallError = activeInstall.installError
-  const npmAvailable = useSettingsStore((state) => state.npmAvailable)
-  const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const onboardingCompletedAt = useSettingsStore((state) => state.onboardingCompletedAt)
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
   const isCheckingEnvironment = useSettingsStore((state) => state.isCheckingEnvironment)
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
-  const closeEnvironmentRepair = useSettingsStore((state) => state.closeEnvironmentRepair)
-  const installClaude = useSettingsStore((state) => state.installClaude)
-  const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
-  const persistProvider = useSettingsStore((state) => state.persistProvider)
-  const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
-  const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
-  const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
-  const loginIsolatedClaude = useSettingsStore((state) => state.loginIsolatedClaude)
-  const completeOnboarding = useSettingsStore((state) => state.completeOnboarding)
 
-  // A completed user re-opened only for a regressed required check: environment repair, no model step.
+  // A completed user re-opened only for a regressed required check: environment repair, no steps.
   const isRecovery = onboardingCompletedAt !== undefined
   // First-time setup always starts on the visible environment summary, even when every check has
-  // already passed. The user explicitly continues to model configuration after reviewing it.
+  // already passed. The user explicitly continues to agent setup after reviewing it.
 
   const envInit = useNotebookEnvStore((s) => s.init)
-  // A notebook runtime setup the user started must finish (or be cancelled) before leaving onboarding —
-  // continuing mid-create would strand a half-built env, so it gates Continue below.
-  const envProvisioning = useNotebookEnvStore((s) => s.status.provisioning)
-  const didKickEnv = useRef(false)
 
-  const [step, setStep] = useState<WizardStep>('claude')
-  const [environmentMode, setEnvironmentMode] = useState<EnvironmentMode>('automatic')
-  // The framework switcher stays collapsed once the selected agent is ready; the user reveals it with
-  // "Change agent" only when they actually want a different runtime.
-  const [showFrameworkSwitcher, setShowFrameworkSwitcher] = useState(false)
-  const [automaticInstallError, setAutomaticInstallError] = useState<string | undefined>(undefined)
-
-  // Data-root location step. Only `dataRoot` is ever touched here — the config root (settings,
-  // sessions, db, claude, skills) always stays at its fixed default.
-  const [dataRootInfo, setDataRootInfo] = useState<StorageInfo | null>(null)
-  // The picked PARENT directory (what the browse dialog returns and what setDataRootAndRelaunch
-  // takes); empty means "keep the default". The actual data root is always
-  // `<chosenParent>/OpenScience`, derived server-side and shown via chosenDataRoot below.
-  const [chosenParent, setChosenParent] = useState('')
-  // Display-only: the derived `<parent>/OpenScience` path returned by inspectDataRoot, shown in
-  // place of the raw parent so the user sees the real final location.
-  const [chosenDataRoot, setChosenDataRoot] = useState('')
-  // 'adopt' shows the "used as-is" note; 'move' is the ordinary empty-folder case. Irrelevant once
-  // chosenParent is cleared back to the default.
-  const [chosenKind, setChosenKind] = useState<'move' | 'adopt' | null>(null)
-  const [locationError, setLocationError] = useState<string | undefined>(undefined)
-  const [confirmRestart, setConfirmRestart] = useState(false)
-  const [isRelaunching, setIsRelaunching] = useState(false)
-  const [relaunchError, setRelaunchError] = useState<string | undefined>(undefined)
-
+  const [step, setStep] = useState<WizardStep>('environment')
+  // The provider draft lives here (not in ProviderStep) so going Back and returning keeps it.
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
   )
-  const [isSaving, setIsSaving] = useState(false)
-  // Required-field errors stay hidden until the user first tries to submit, so an untouched form is
-  // not littered with "required" messages. A `*` on each label signals the requirement up front.
-  const [showProviderErrors, setShowProviderErrors] = useState(false)
-  const [validationMessage, setValidationMessage] = useState<string | undefined>(undefined)
-  const [validationOk, setValidationOk] = useState(false)
-  // The pasted Claude setup-token lives on the wizard (not the form value) so the form remains a
-  // pure provider-shape object that maps to UpsertProviderRequest. Cleared on submit success so
-  // it does not linger if the user backs up to edit the model and resubmits.
-  const [claudeSetupToken, setClaudeSetupToken] = useState('')
+  // Fetched once, up front, so the Location step has the default to show and the provider step can
+  // later tell whether the user's choice actually differs from it.
+  const [dataRootInfo, setDataRootInfo] = useState<StorageInfo | null>(null)
+  // Like the provider draft, the data-location choice belongs to the stable shell so Back/Continue
+  // does not discard it when LocationStep unmounts.
+  const [locationDraft, setLocationDraft] = useState<LocationDraft>({
+    chosenParent: '',
+    chosenDataRoot: '',
+    chosenKind: null
+  })
+  const [relaunchError, setRelaunchError] = useState<string | undefined>(undefined)
+  // Relaunching replaces the whole wizard with a bare screen — owned here because LocationStep
+  // unmounts (and the layout disappears) while it is in flight.
+  const [isRelaunching, setIsRelaunching] = useState(false)
+
   const didRequestCheck = useRef(false)
-  // Mirrors the Settings teardown: a pending isolated sign-in lives in the main process for up to
-  // five minutes, and its guard rejects a second attempt as "already in progress". If the wizard
-  // unmounts mid-flow (app quit, relaunch, forced navigation), cancel it so the next attempt starts
-  // clean. The ref is written only from event handlers/effects, never during render.
-  const codexLoginPendingRef = useRef(false)
-  useEffect(
-    () => () => {
-      if (codexLoginPendingRef.current) void cancelCodexLogin()
-    },
-    [cancelCodexLogin]
-  )
-  // Once the user manually picks an agent, stop auto-selecting; and only auto-select once per mount.
-  const userPickedFramework = useRef(false)
-  const autoSelectAttempted = useRef(false)
-  // Serializes framework switches: detection + preflight run async in the store, so a second switch
-  // started before the first settles could interleave and leave the selection, preflight, and
-  // environment result out of sync. This synchronous guard drops any switch while one is in flight.
-  const switchInFlight = useRef(false)
-  // Guards against handleKeepDefault's completeOnboarding firing spuriously after Restart:
-  // AlertDialog.Action fires onOpenChange(false) on click (same as Cancel), and closures inside
-  // that handler can't see isRelaunching's update from the same synchronous batch, so a ref is
-  // used instead of state for this check.
-  const isRestartingRef = useRef(false)
+  const didKickEnv = useRef(false)
 
   // Fetch the default data location once, up front, so the Location step has something to show
   // and the provider step can later tell whether the user's choice actually differs from it.
@@ -257,324 +135,14 @@ const OnboardingWizard = (): React.JSX.Element => {
     }
   }, [environmentCheck, environmentCheckError, isCheckingEnvironment, checkEnvironment])
 
-  // Detect-only: hydrate the env store so its status/progress row reflects the real managed-python
-  // state, but do NOT auto-provision here. A fresh env is built lazily on first notebook use; an
-  // explicit choose/download step comes later. Guarded so re-renders don't refire it.
+  // Detect-only: hydrate the env store so the Notebook step's status/progress row reflects the real
+  // managed-python state, but do NOT auto-provision here. A fresh env is built lazily on first
+  // notebook use. Guarded so re-renders don't refire it.
   useEffect(() => {
     if (didKickEnv.current) return
     didKickEnv.current = true
     void envInit()
   }, [envInit])
-
-  // Onboarding always creates a provider, so required fields must be filled before it can continue.
-  const formErrors = getProviderFormErrors(formValue)
-
-  const describeInstallFailure = (result: ClaudeInstallResult): string => {
-    if (result.error) return result.error
-    if (result.timedOut) return 'The installer timed out before Claude was ready.'
-    if (result.exitCode !== undefined) return `The installer exited with code ${result.exitCode}.`
-
-    return 'Claude was not detected after the installer finished.'
-  }
-
-  const handleEnvironmentCheck = async (): Promise<void> => {
-    setAutomaticInstallError(undefined)
-    if (agentFrameworkId === 'codex') await detectCodex()
-    await checkEnvironment()
-  }
-
-  const handleInstall = async (
-    source: ClaudeInstallSource,
-    framework: AgentFrameworkId = agentFrameworkId
-  ): Promise<void> => {
-    setAutomaticInstallError(undefined)
-
-    try {
-      // Install the requested framework: the per-card button names its own, the automatic one-click
-      // install targets the selected framework.
-      let result: ClaudeInstallResult
-      if (framework === 'codex') {
-        if (source === 'official-script') {
-          throw new Error('Codex supports app-managed or npm installation only.')
-        }
-        result = await installCodex(source)
-      } else if (framework === 'opencode') {
-        result = await installOpencode(source)
-      } else {
-        result = await installClaude(
-          source,
-          source === 'managed' ? environmentCheck?.recommendedRegistry : undefined
-        )
-      }
-
-      if (!result.ok) {
-        setAutomaticInstallError(describeInstallFailure(result))
-        return
-      }
-
-      await checkEnvironment()
-    } catch (error) {
-      setAutomaticInstallError(
-        error instanceof Error ? error.message : 'The installer could not be started.'
-      )
-    }
-  }
-
-  // Switching the framework re-detects it and re-runs the host inspection so the environment card
-  // reflects the chosen runtime immediately. Serialized by switchInFlight so overlapping switches can't
-  // interleave the store's async detection/preflight; refs (not setState) keep it usable from effects.
-  const runFrameworkSwitch = useCallback(
-    async (id: AgentFrameworkId): Promise<void> => {
-      if (switchInFlight.current || id === agentFrameworkId) return
-
-      switchInFlight.current = true
-      try {
-        await setAgentFramework(id)
-        await checkEnvironment()
-      } finally {
-        switchInFlight.current = false
-      }
-    },
-    [agentFrameworkId, setAgentFramework, checkEnvironment]
-  )
-
-  // Records an explicit user choice so the prefer-installed auto-selection below never overrides it.
-  const handlePickFramework = (id: AgentFrameworkId): void => {
-    userPickedFramework.current = true
-    setAutomaticInstallError(undefined)
-    void runFrameworkSwitch(id)
-  }
-
-  // Prefer an installed runtime during first-time onboarding. Registry order is the stable tie-breaker
-  // (currently Claude Code, OpenCode, then Codex), while an installed current selection always wins.
-  // Runs once and never overrides an explicit user choice or a returning user's saved framework.
-  useEffect(() => {
-    if (isRecovery || userPickedFramework.current || autoSelectAttempted.current) return
-    if (agentFrameworks.length < 2) return
-
-    const readyByFramework: Record<AgentFrameworkId, boolean> = {
-      'claude-code': preflight.claudeReady,
-      opencode: preflight.opencodeReady,
-      codex: preflight.codexReady
-    }
-    if (readyByFramework[agentFrameworkId]) return
-
-    const installedFramework = agentFrameworks.find((framework) => readyByFramework[framework.id])
-    if (installedFramework) {
-      autoSelectAttempted.current = true
-      void runFrameworkSwitch(installedFramework.id)
-    }
-  }, [
-    isRecovery,
-    agentFrameworks,
-    agentFrameworkId,
-    preflight.claudeReady,
-    preflight.opencodeReady,
-    preflight.codexReady,
-    runFrameworkSwitch
-  ])
-
-  const handleBrowseLocation = async (): Promise<void> => {
-    const picked = await window.api.storage.pickDirectory()
-    if (!picked) return
-
-    const result = await window.api.storage.inspectDataRoot(picked)
-    if (result.kind === 'invalid') {
-      setLocationError(result.error)
-      return
-    }
-
-    setChosenParent(picked)
-    setChosenDataRoot(result.dataRoot)
-    setChosenKind(result.kind)
-    setLocationError(undefined)
-  }
-
-  const handleResetLocation = (): void => {
-    setChosenParent('')
-    setChosenDataRoot('')
-    setChosenKind(null)
-    setLocationError(undefined)
-  }
-
-  const handleSaveProvider = async (): Promise<void> => {
-    // First submit attempt surfaces any missing required fields instead of testing an incomplete draft.
-    if (hasProviderFormErrors(formErrors)) {
-      setShowProviderErrors(true)
-      return
-    }
-
-    // A provider that validates can still be unusable by the selected framework (e.g. Claude + an
-    // OpenAI-only gateway). Block that before it becomes the active provider, so onboarding can't
-    // finish with a pair the agent can't actually spawn.
-    if (
-      !isProviderUsableByFramework(
-        { apiEndpoints: [formValue.apiEndpoint], type: formValue.type },
-        { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
-      )
-    ) {
-      const label =
-        agentFrameworks.find((framework) => framework.id === agentFrameworkId)?.displayName ??
-        'the selected agent'
-      setValidationOk(false)
-      setValidationMessage(
-        `This provider isn't compatible with ${label}. Pick a provider whose API format ${label} supports, or change the agent framework.`
-      )
-      return
-    }
-
-    setIsSaving(true)
-    setValidationMessage(undefined)
-
-    try {
-      if (formValue.type === 'codex-isolated') {
-        // Isolated sign-in is explicit: persist the provider first, then run the browser login.
-        // Persisting alone never pops a browser; a cancelled login keeps the provider saved but
-        // unverified, so the user can retry without re-entering anything.
-        const providerId = await persistProvider(toUpsertRequest(formValue))
-        // Arm the unmount teardown for exactly the duration of the main-process login.
-        codexLoginPendingRef.current = true
-        const validation = await loginIsolatedCodex().finally(() => {
-          codexLoginPendingRef.current = false
-        })
-
-        // A discarded sign-in (the provider was switched/edited while the browser flow was open) can
-        // report ok but was never recorded on the stored provider — advancing would finish onboarding
-        // on an unverified profile. Keep the user here to retry against the provider they now have.
-        if (validation.applied === false) {
-          setValidationOk(false)
-          setValidationMessage(
-            'The Codex provider changed during sign-in. Review the selection and try again.'
-          )
-          return
-        }
-
-        setValidationOk(validation.ok)
-        setValidationMessage(describeValidation(validation))
-
-        if (validation.ok) {
-          if (providerId) await setActiveProvider(providerId)
-          // Location is the last step now: it decides completeOnboarding vs. the relaunch, once the
-          // user confirms (or keeps) a location there.
-          setStep('location')
-        }
-        return
-      }
-
-      if (formValue.type === 'claude-isolated') {
-        // claude-isolated flow: persist the provider first (so the record exists), then forward the
-        // pasted setup-token to the controller. The token is captured on the wizard's own form (a
-        // separate input below the provider-kind picker) so the user can review + retry the paste
-        // without leaving the wizard.
-        const trimmedToken = claudeSetupToken.trim()
-        if (!trimmedToken) {
-          setValidationOk(false)
-          setValidationMessage('Paste the token printed by `claude setup-token` to continue.')
-          return
-        }
-
-        const providerId = await persistProvider(toUpsertRequest(formValue))
-        const validation = await loginIsolatedClaude(trimmedToken)
-
-        // A discarded sign-in (the provider was deleted/edited while the paste was in flight) returns
-        // applied: false — surface that as a distinct message so the user can re-check the picker.
-        if (validation.applied === false) {
-          setValidationOk(false)
-          setValidationMessage(
-            'The Claude provider changed during sign-in. Review the selection and try again.'
-          )
-          return
-        }
-
-        setValidationOk(validation.ok)
-        setValidationMessage(describeValidation(validation))
-
-        if (validation.ok) {
-          setClaudeSetupToken('')
-          if (providerId) await setActiveProvider(providerId)
-          setStep('location')
-        }
-        return
-      }
-
-      const { validation } = await saveAndActivateProvider(toUpsertRequest(formValue))
-
-      // A validation superseded by a newer test (or a provider removed/edited mid-test) reports its
-      // outcome but was not recorded; do not finish onboarding on a result the stored provider never
-      // received.
-      if (validation.applied === false) {
-        setValidationOk(false)
-        setValidationMessage('The provider changed during testing. Try again.')
-        return
-      }
-
-      setValidationOk(validation.ok)
-      setValidationMessage(describeValidation(validation))
-
-      if (validation.ok) {
-        // Location is the last step now: it decides completeOnboarding vs. the relaunch, once the
-        // user confirms (or keeps) a location there.
-        setStep('location')
-      }
-    } catch (error) {
-      setValidationOk(false)
-      setValidationMessage(error instanceof Error ? error.message : 'Could not save provider.')
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  const handleFinishLocation = async (): Promise<void> => {
-    if (chosenParent) {
-      // A custom location was chosen: gate completeOnboarding behind the user's confirmation.
-      // Calling completeOnboarding immediately would flip the App-level startup gate to 'app'
-      // and unmount this wizard (and this confirm dialog) before it could ever be shown.
-      setConfirmRestart(true)
-    } else {
-      // Default kept: nothing more to do, the App gate takes it from here — no relaunch.
-      await completeOnboarding()
-    }
-  }
-
-  const handleKeepDefault = async (): Promise<void> => {
-    // AlertDialog.Action also fires onOpenChange(false) on click (it closes the dialog like Cancel
-    // does), which would otherwise call this a second time right after handleRestart. A ref (not
-    // isRelaunching state) is required here: both handlers run synchronously in the same click
-    // event, so a state-based check would still read the pre-update closure value.
-    if (isRestartingRef.current) return
-
-    setConfirmRestart(false)
-    await completeOnboarding()
-  }
-
-  const handleRestart = async (): Promise<void> => {
-    isRestartingRef.current = true
-    setConfirmRestart(false)
-    setIsRelaunching(true)
-
-    // Deliberately NOT calling the renderer completeOnboarding() here: it flips
-    // onboardingCompletedAt immediately, which would make App.tsx's startup gate swap this
-    // wizard for Home (showing the OLD data root) before setDataRootAndRelaunch even runs, and
-    // would turn the failure branch below into dead code. Instead the main-process handler marks
-    // onboarding complete itself, in the same step as setDataRoot, right before it relaunches -
-    // so the gate only flips once the new location is actually persisted.
-    const result = await window.api.storage.setDataRootAndRelaunch(chosenParent, true)
-    if (!result.ok) {
-      // The app is not relaunching; the gate was never flipped, so we're still on the wizard -
-      // surface the error here and let the user retry or fall back to Keep default.
-      isRestartingRef.current = false
-      setIsRelaunching(false)
-      setRelaunchError(result.error ?? 'Could not restart to apply the new location.')
-    }
-  }
-
-  // Ready only when the latest check is for the CURRENTLY selected framework and no re-check is in
-  // flight — otherwise switching a ready Claude to an uninstalled OpenCode would let Continue fire on
-  // the stale (Claude) result before the re-detect lands.
-  const environmentReady =
-    !isCheckingEnvironment &&
-    environmentCheck?.ready === true &&
-    environmentCheck.agentFrameworkId === agentFrameworkId
 
   if (isRelaunching) {
     return (
@@ -615,488 +183,49 @@ const OnboardingWizard = (): React.JSX.Element => {
                 ? 'A required environment check changed since your last launch. Repair it to continue.'
                 : 'A quick host check confirms this computer is ready, you connect the model you want to use, then you choose where your data lives.'}
             </p>
-            {/* Recovery only reopens the environment portion, so the step tracker does not apply. */}
+            {/* Recovery only reopens the repair surface, so the step tracker does not apply. */}
             {!isRecovery ? <OnboardingProgress step={step} /> : null}
           </section>
 
           {/* One stable work surface keeps the setup steps aligned as their content changes. */}
           <Card className="min-h-[420px] gap-0 rounded-lg bg-bg-000 py-0 shadow-card ring-1 ring-border-200">
-            {step === 'claude' ? (
-              <>
-                <CardHeader className="gap-1 rounded-t-lg px-6 py-5">
-                  <CardTitle className="text-[15px] font-semibold">
-                    {isRecovery ? 'Repair environment' : 'Prepare environment'}
-                  </CardTitle>
-                  <CardDescription className="text-xs leading-5">
-                    {isRecovery
-                      ? 'Resolve the required item below to return to Open Science.'
-                      : 'Open Science confirms its core requirements before your first research session.'}
-                  </CardDescription>
-                </CardHeader>
-                <Separator className="bg-border-200" />
-
-                <CardContent className="flex-1 px-6 py-5">
-                  <section aria-label="Prepare environment" className="space-y-5">
-                    <div
-                      className="grid grid-cols-2 gap-1 rounded-lg bg-bg-10 p-1 ring-1 ring-border-200"
-                      role="tablist"
-                      aria-label="Environment setup mode"
-                    >
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={environmentMode === 'automatic'}
-                        aria-controls="automatic-environment-panel"
-                        id="automatic-environment-tab"
-                        onClick={() => setEnvironmentMode('automatic')}
-                        className={cn(
-                          'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                          environmentMode === 'automatic'
-                            ? 'bg-bg-000 text-text-000 shadow-sm ring-1 ring-border-200'
-                            : 'text-text-100 hover:text-text-000'
-                        )}
-                      >
-                        Automatic detection
-                      </button>
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={environmentMode === 'manual'}
-                        aria-controls="manual-environment-panel"
-                        id="manual-environment-tab"
-                        onClick={() => setEnvironmentMode('manual')}
-                        className={cn(
-                          'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                          environmentMode === 'manual'
-                            ? 'bg-bg-000 text-text-000 shadow-sm ring-1 ring-border-200'
-                            : 'text-text-100 hover:text-text-000'
-                        )}
-                      >
-                        Manual setup
-                      </button>
-                    </div>
-
-                    {environmentMode === 'automatic' ? (
-                      <div
-                        id="automatic-environment-panel"
-                        role="tabpanel"
-                        aria-labelledby="automatic-environment-tab"
-                        className="space-y-5"
-                      >
-                        <EnvironmentSetupCard
-                          environment={environmentCheck}
-                          isChecking={isCheckingEnvironment}
-                          isInstalling={isInstalling}
-                          installBusy={anyInstalling}
-                          installLogs={installLogs}
-                          installProgress={installProgress}
-                          error={
-                            automaticInstallError ?? storeInstallError ?? environmentCheckError
-                          }
-                          onCheck={() => void handleEnvironmentCheck()}
-                          onInstall={() => void handleInstall('managed')}
-                        />
-                        {/* Optional, non-blocking: let first-run users pick their own Python. */}
-                        {!isRecovery ? <RuntimeChoiceCard /> : null}
-                      </div>
-                    ) : (
-                      <div
-                        id="manual-environment-panel"
-                        role="tabpanel"
-                        aria-labelledby="manual-environment-tab"
-                        className="space-y-5"
-                      >
-                        <p className="rounded-lg bg-bg-10 px-3 py-2 text-xs leading-relaxed text-text-100 ring-1 ring-border-200">
-                          Advanced fallback: pick the original installer source and copyable
-                          scripts. Use Re-detect after completing any external permission or
-                          installation step.
-                        </p>
-                        {/* Only the selected framework's runtime is shown — it is the one that must be
-                            installed to continue. Switch frameworks above to set up the other. */}
-                        {agentFrameworkId === 'codex' ? (
-                          <CodexStatusCard
-                            codex={codex}
-                            codexReady={preflight.codexReady}
-                            isDetecting={isDetectingCodex || isCheckingEnvironment}
-                            onDetect={() => void handleEnvironmentCheck()}
-                            isInstalling={isInstalling}
-                            installLogs={installLogs}
-                            installProgress={installProgress}
-                            installError={storeInstallError}
-                            installBusy={anyInstalling}
-                            npmAvailable={npmAvailable}
-                            onInstall={(source) => void handleInstall(source, 'codex')}
-                          />
-                        ) : agentFrameworkId === 'opencode' ? (
-                          <OpencodeStatusCard
-                            opencode={opencode}
-                            opencodeReady={preflight.opencodeReady}
-                            isDetecting={isDetectingOpencode || isCheckingEnvironment}
-                            onDetect={() => void handleEnvironmentCheck()}
-                            isInstalling={isInstalling}
-                            installLogs={installLogs}
-                            installProgress={installProgress}
-                            installError={storeInstallError}
-                            installBusy={anyInstalling}
-                            npmAvailable={npmAvailable}
-                            onInstall={(source) => void handleInstall(source, 'opencode')}
-                          />
-                        ) : (
-                          // Same boxed shell as OpencodeStatusCard so both frameworks read identically:
-                          // one card holding the runtime status and, when missing, the install picker.
-                          <Card className="gap-0 rounded-lg py-0">
-                            <CardContent className="space-y-3 p-4">
-                              <ClaudeStatusCard
-                                claude={claude}
-                                claudeReady={preflight.claudeReady}
-                                isDetecting={isDetectingClaude || isCheckingEnvironment}
-                                onDetect={() => void handleEnvironmentCheck()}
-                                embedded
-                              />
-                              {!preflight.claudeReady ? (
-                                <ClaudeInstallCard
-                                  isInstalling={isInstalling}
-                                  installLogs={installLogs}
-                                  installProgress={installProgress}
-                                  installError={storeInstallError}
-                                  installBusy={anyInstalling}
-                                  npmAvailable={npmAvailable}
-                                  onInstall={(source) => void handleInstall(source, 'claude-code')}
-                                  embedded
-                                />
-                              ) : null}
-                            </CardContent>
-                          </Card>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Agent switcher lives below the detection results. Detection auto-picks the
-                        installed runtime, so when the selected agent is ready this collapses to a
-                        "Change agent" link; only a not-ready (or explicitly revealed) state shows the
-                        full framework toggle. */}
-                    {agentFrameworks.length > 1 ? (
-                      <div className="rounded-lg bg-bg-10 p-3 ring-1 ring-border-200">
-                        {preflight.agentReady && !showFrameworkSwitcher ? (
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-xs leading-5 text-text-300">
-                              Open Science will use{' '}
-                              <span className="font-medium text-text-100">
-                                {agentFrameworks.find((f) => f.id === agentFrameworkId)
-                                  ?.displayName ?? 'the selected agent'}
-                              </span>
-                              . Only this agent needs to be installed to continue.
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setShowFrameworkSwitcher(true)}
-                              className="shrink-0 text-xs font-medium text-text-100 underline-offset-2 hover:text-text-000 hover:underline"
-                            >
-                              Change agent
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="space-y-1.5">
-                            <span className="text-xs font-medium text-text-100">
-                              Which agent should Open Science use?
-                            </span>
-                            <div
-                              className={cn(
-                                'grid gap-1 rounded-md bg-bg-000 p-1 ring-1 ring-border-200',
-                                agentFrameworks.length >= 3 ? 'grid-cols-3' : 'grid-cols-2'
-                              )}
-                              role="radiogroup"
-                              aria-label="Agent framework"
-                            >
-                              {agentFrameworks.map((framework) => (
-                                <button
-                                  key={framework.id}
-                                  type="button"
-                                  role="radio"
-                                  aria-checked={agentFrameworkId === framework.id}
-                                  onClick={() => handlePickFramework(framework.id)}
-                                  disabled={
-                                    isCheckingEnvironment ||
-                                    anyInstalling ||
-                                    isDetectingClaude ||
-                                    isDetectingOpencode ||
-                                    isDetectingCodex
-                                  }
-                                  className={cn(
-                                    'rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-60',
-                                    agentFrameworkId === framework.id
-                                      ? 'bg-bg-10 text-text-000 shadow-sm ring-1 ring-border-200'
-                                      : 'text-text-100 hover:text-text-000'
-                                  )}
-                                >
-                                  {framework.displayName}
-                                </button>
-                              ))}
-                            </div>
-                            <p className="text-xs leading-5 text-text-300">
-                              Only this agent needs to be installed to continue; you can change it
-                              later in Settings.
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    ) : null}
-                  </section>
-                </CardContent>
-                <CardFooter className="mt-auto items-center justify-between gap-4 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
-                  <p className="text-xs leading-5 text-text-100">
-                    {envProvisioning
-                      ? 'Setting up the notebook runtime — wait for it to finish, or cancel it, to continue.'
-                      : environmentReady
-                        ? 'All required environment checks passed.'
-                        : 'Complete every required item above to continue.'}
-                  </p>
-                  <Button
-                    type="button"
-                    onClick={() => {
-                      if (isRecovery) {
-                        closeEnvironmentRepair()
-                      } else {
-                        if (
-                          agentFrameworkId === 'codex' &&
-                          !formValue.name &&
-                          !formValue.baseUrl &&
-                          !formValue.model &&
-                          !formValue.key
-                        ) {
-                          setFormValue(createCodexProviderFormValue())
-                        }
-                        setStep('provider')
-                      }
-                    }}
-                    // Also blocked while a user-started runtime setup is in flight: leaving mid-create
-                    // would strand a half-built env (the user can cancel it from the card to proceed).
-                    disabled={!environmentReady || envProvisioning}
-                    className="px-4"
-                  >
-                    {isRecovery ? 'Return to Open Science' : 'Continue'}
-                  </Button>
-                </CardFooter>
-              </>
+            {/* Each step owns its validation gate and advances only through its callback. The shell
+                owns cross-step drafts so Back/Continue never discards provider or location input. */}
+            {isRecovery ? (
+              <RecoveryStep />
+            ) : step === 'environment' ? (
+              <EnvironmentStep onContinue={() => setStep('agent')} />
+            ) : step === 'agent' ? (
+              <AgentStep
+                onBack={() => setStep('environment')}
+                onContinue={() => setStep('provider')}
+              />
             ) : step === 'provider' ? (
-              <>
-                <CardHeader className="gap-1 rounded-t-lg px-6 py-5">
-                  <CardTitle className="text-[15px] font-semibold">Connect a model</CardTitle>
-                  <CardDescription className="text-xs leading-5">
-                    Choose the provider Open Science should use for new research sessions.
-                  </CardDescription>
-                </CardHeader>
-                <Separator className="bg-border-200" />
-
-                <CardContent className="flex-1 px-6 py-5">
-                  <section aria-label="Configure model">
-                    {!encryptionAvailable ? (
-                      <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                        Secure key storage is unavailable. API keys cannot be saved until the system
-                        keychain is unlocked or authorized.
-                      </p>
-                    ) : null}
-                    <ProviderForm
-                      value={formValue}
-                      onChange={(patch) => setFormValue((current) => ({ ...current, ...patch }))}
-                      errors={showProviderErrors ? formErrors : undefined}
-                      disabled={isSaving}
-                      encryptionAvailable={encryptionAvailable}
-                      showCodexSubscriptions={agentFrameworkId === 'codex'}
-                      showClaudeIsolated={agentFrameworkId === 'claude-code'}
-                    />
-                    {formValue.type === 'claude-isolated' ? (
-                      // The Claude subscription's setup-token paste lives inline so the wizard's
-                      // existing "Test & continue" / "Sign in & continue" CTA can submit both the
-                      // provider record AND the token in one click. The modal is reserved for the
-                      // Settings-page post-onboarding flow where the user revisits the card later.
-                      <div className="mt-4 space-y-2">
-                        <label
-                          className="text-xs font-medium"
-                          htmlFor="wizard-claude-setup-token"
-                        >
-                          Paste the token from <code className="font-mono">claude setup-token</code>
-                        </label>
-                        <Input
-                          id="wizard-claude-setup-token"
-                          aria-label="Claude setup token"
-                          value={claudeSetupToken}
-                          onChange={(event) => setClaudeSetupToken(event.target.value)}
-                          placeholder="sk-ant-..."
-                          autoComplete="off"
-                          spellCheck={false}
-                          disabled={isSaving}
-                        />
-                      </div>
-                    ) : null}
-                    {validationMessage ? (
-                      <p
-                        className={`mt-4 text-sm ${validationOk ? 'text-primary' : 'text-destructive'}`}
-                        role="alert"
-                      >
-                        {validationMessage}
-                      </p>
-                    ) : null}
-                  </section>
-                </CardContent>
-                <CardFooter className="mt-auto justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
-                  {isSaving && formValue.type === 'codex-isolated' ? (
-                    <Button type="button" variant="outline" onClick={() => void cancelCodexLogin()}>
-                      Cancel sign-in
-                    </Button>
-                  ) : (
-                    <Button type="button" variant="outline" onClick={() => setStep('claude')}>
-                      Back
-                    </Button>
-                  )}
-                  <Button
-                    type="button"
-                    onClick={() => void handleSaveProvider()}
-                    disabled={isSaving}
-                    className="px-4"
-                  >
-                    {isSaving
-                      ? formValue.type === 'codex-isolated'
-                        ? 'Waiting for sign-in…'
-                        : 'Testing connection…'
-                      : formValue.type === 'codex-isolated'
-                        ? 'Sign in & continue'
-                        : 'Test & continue'}
-                  </Button>
-                </CardFooter>
-              </>
+              <ProviderStep
+                formValue={formValue}
+                setFormValue={setFormValue}
+                onBack={() => setStep('agent')}
+                onAdvance={() => setStep('notebook')}
+              />
+            ) : step === 'notebook' ? (
+              <NotebookStep
+                onBack={() => setStep('provider')}
+                onContinue={() => setStep('location')}
+              />
             ) : (
-              <>
-                <CardHeader className="gap-1 rounded-t-lg px-6 py-5">
-                  <CardTitle className="text-[15px] font-semibold">
-                    Where should Open Science store your data?
-                  </CardTitle>
-                  <CardDescription className="text-xs leading-5">
-                    Large files (artifacts, notebooks, environments) go here. Your settings and
-                    history always stay in the default location. You can change this later in
-                    Settings.
-                  </CardDescription>
-                </CardHeader>
-                <Separator className="bg-border-200" />
-
-                <CardContent className="flex-1 px-6 py-5">
-                  <section aria-label="Choose data location" className="space-y-5">
-                    {relaunchError ? (
-                      <p
-                        className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
-                        role="alert"
-                      >
-                        Could not switch to the new location: {relaunchError} You can retry or keep
-                        the default location.
-                      </p>
-                    ) : null}
-
-                    <div className="rounded-xl border border-border-200 p-4">
-                      <span className="text-xs font-medium text-text-100">Location</span>
-                      <div className="mt-1 flex items-center gap-2">
-                        <p
-                          aria-label="Data location path"
-                          className="flex-1 truncate rounded-lg border border-border-200 bg-bg-000 px-2.5 py-1.5 font-mono text-xs"
-                        >
-                          {chosenDataRoot || dataRootInfo?.dataRoot || ''}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => void handleBrowseLocation()}
-                          className="inline-flex shrink-0 items-center rounded-lg border border-border-200 px-3 py-1.5 text-sm font-medium text-text-000 transition-colors hover:bg-bg-10"
-                        >
-                          Browse…
-                        </button>
-                      </div>
-
-                      {chosenDataRoot ? (
-                        <p className="mt-2 text-xs text-text-100">
-                          Your data will be stored in{' '}
-                          <span className="font-mono">{chosenDataRoot}</span>. Open Science will
-                          restart to set this up.{' '}
-                          <button
-                            type="button"
-                            onClick={handleResetLocation}
-                            className="underline underline-offset-2 hover:text-text-000"
-                          >
-                            Use default location instead
-                          </button>
-                        </p>
-                      ) : null}
-
-                      {chosenKind === 'adopt' ? (
-                        <p className="mt-2 text-xs text-text-100">
-                          This folder already contains Open Science data — it will be used as-is
-                          (nothing is moved).
-                        </p>
-                      ) : null}
-
-                      {locationError ? (
-                        <p className="mt-2 text-xs text-destructive" role="alert">
-                          {locationError}
-                        </p>
-                      ) : null}
-                    </div>
-
-                    <DataRootWarning />
-                  </section>
-                </CardContent>
-                <CardFooter className="mt-auto justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
-                  <Button type="button" variant="outline" onClick={() => setStep('provider')}>
-                    Back
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={() => void handleFinishLocation()}
-                    className="px-4"
-                  >
-                    Finish
-                  </Button>
-                </CardFooter>
-              </>
+              <LocationStep
+                dataRootInfo={dataRootInfo}
+                locationDraft={locationDraft}
+                onLocationDraftChange={setLocationDraft}
+                relaunchError={relaunchError}
+                onRelaunchErrorChange={setRelaunchError}
+                onBack={() => setStep('notebook')}
+                setIsRelaunching={setIsRelaunching}
+              />
             )}
           </Card>
         </div>
       </div>
-
-      <AlertDialog.Root
-        open={confirmRestart}
-        onOpenChange={(open) => {
-          if (!open) void handleKeepDefault()
-        }}
-      >
-        <AlertDialog.Portal>
-          <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
-          <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog">
-            <AlertDialog.Title className="text-base font-semibold text-text-000">
-              Restart to set up your data?
-            </AlertDialog.Title>
-            <AlertDialog.Description className="mt-2 text-sm leading-relaxed text-text-100">
-              Open Science will restart to set up your data at{' '}
-              <span className="font-mono">{chosenDataRoot}</span>.
-            </AlertDialog.Description>
-            <div className="mt-6 flex justify-end gap-2">
-              <AlertDialog.Cancel asChild>
-                <button
-                  type="button"
-                  className="rounded-lg border border-input px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
-                >
-                  Keep default
-                </button>
-              </AlertDialog.Cancel>
-              <AlertDialog.Action asChild>
-                <button
-                  type="button"
-                  onClick={() => void handleRestart()}
-                  className="rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-                >
-                  Restart
-                </button>
-              </AlertDialog.Action>
-            </div>
-          </AlertDialog.Content>
-        </AlertDialog.Portal>
-      </AlertDialog.Root>
     </main>
   )
 }

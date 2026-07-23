@@ -642,7 +642,9 @@ class SettingsRepository {
   // timestamp the validation flow recorded. When the record does not exist yet (a fresh install's
   // first paste) it is created with the fixed id/name, mirroring codex's single subscription record.
   async upsertClaudeIsolatedProvider(
-    patch: Partial<Pick<StoredProvider, 'keyRef' | 'keyMask' | 'lastValidatedAt' | 'lastValidationFailure'>>
+    patch: Partial<
+      Pick<StoredProvider, 'keyRef' | 'keyMask' | 'lastValidatedAt' | 'lastValidationFailure'>
+    >
   ): Promise<StoredSettings> {
     const identity = claudeIsolatedProviderIdentity()
 

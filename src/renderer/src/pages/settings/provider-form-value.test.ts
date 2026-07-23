@@ -56,7 +56,12 @@ describe('getProviderFormErrors', () => {
 
   it('never requires fields for a complete custom provider', () => {
     const errors = getProviderFormErrors(
-      createEmptyProviderFormValue({ type: 'custom', baseUrl: 'https://g/v1', model: 'm', key: 'k' })
+      createEmptyProviderFormValue({
+        type: 'custom',
+        baseUrl: 'https://g/v1',
+        model: 'm',
+        key: 'k'
+      })
     )
 
     expect(errors).toEqual({})

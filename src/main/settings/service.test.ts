@@ -2838,7 +2838,7 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
     )
   }
 
-  it("scans the user Claude home when the active framework is claude-code", async () => {
+  it('scans the user Claude home when the active framework is claude-code', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
     const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
     await seedSkill(userClaudeDir, 'alpha')
@@ -2853,7 +2853,7 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
     expect(items[0].path).toBe(join(userClaudeDir, 'skills', 'alpha'))
   })
 
-  it("scans the user Codex home when the active framework is codex", async () => {
+  it('scans the user Codex home when the active framework is codex', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
     const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
     await seedSkill(userCodexDir, 'beta')
@@ -3020,9 +3020,7 @@ describe('SettingsService: importAgentHomeSkill path containment', () => {
 
     // Path-traversal payloads are caught by the SAFE_SLUG regex (no '/', '.', etc.), so the
     // containment check downstream is defense-in-depth and is not exercised by valid slugs.
-    await expect(service.importAgentHomeSkill({ slug: '../../etc' })).rejects.toThrow(
-      /unsafe slug/
-    )
+    await expect(service.importAgentHomeSkill({ slug: '../../etc' })).rejects.toThrow(/unsafe slug/)
     await expect(service.importAgentHomeSkill({ slug: '../sibling' })).rejects.toThrow(
       /unsafe slug/
     )
@@ -3428,10 +3426,7 @@ describe('SettingsService: importAgentHomeSkill realpath containment', () => {
   const seedSkill = async (agentHome: string, slug: string): Promise<string> => {
     const dir = join(agentHome, 'skills', slug)
     await mkdir(dir, { recursive: true })
-    await writeFile(
-      join(dir, 'SKILL.md'),
-      `---\nname: ${slug}\ndescription: Test\n---\nBody.\n`
-    )
+    await writeFile(join(dir, 'SKILL.md'), `---\nname: ${slug}\ndescription: Test\n---\nBody.\n`)
     return dir
   }
 

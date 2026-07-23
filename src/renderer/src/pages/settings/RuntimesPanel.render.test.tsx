@@ -118,9 +118,12 @@ afterEach(() => {
   delete (window as unknown as { api?: unknown }).api
 })
 
-const render = async (): Promise<void> => {
+const render = async (
+  title = 'Notebook runtimes',
+  description = 'Enable the environments each notebook language may run in.'
+): Promise<void> => {
   await act(async () => {
-    root.render(<RuntimesPanel />)
+    root.render(<RuntimesPanel title={title} description={description} />)
   })
   // Flush the listEnvironments()/survey() microtasks.
   await act(async () => {})
@@ -134,6 +137,15 @@ const click = async (el: Element | null): Promise<void> => {
 }
 
 describe('RuntimesPanel', () => {
+  it('renders caller-provided heading copy with Recheck in the same top section', async () => {
+    await render('Custom runtime title', 'Custom runtime description')
+
+    const section = container.querySelector('section[aria-label="Custom runtime title"]')
+    expect(section?.querySelector('h3')?.textContent).toBe('Custom runtime title')
+    expect(section?.textContent).toContain('Custom runtime description')
+    expect(section?.querySelector('button')?.textContent).toContain('Recheck')
+  })
+
   it('renders a card per detected env with version and interpreter path', async () => {
     await render()
     const text = container.textContent ?? ''
@@ -150,6 +162,21 @@ describe('RuntimesPanel', () => {
     // managed env is not provisioned yet (R here): python (managed 3.12 + System) + R (managed setup +
     // R 4.4.1) = 4 cards.
     expect(container.querySelectorAll('[data-testid="runtime-card"]').length).toBe(4)
+  })
+
+  it('uses the theme color for Python and R managed-runtime actions', async () => {
+    // Remove both managed interpreters so each language exposes the same setup action.
+    listEnvironments.mockResolvedValue({ python: pythonEnvs.slice(1), r: rEnvs })
+    await render()
+
+    for (const language of ['Python', 'R']) {
+      const section = container.querySelector(`section[aria-label="${language} runtime"]`)
+      const setupButton = Array.from(section?.querySelectorAll('button') ?? []).find((button) =>
+        /download and set up/i.test(button.textContent ?? '')
+      )
+
+      expect(setupButton?.getAttribute('data-variant')).toBe('default')
+    }
   })
 
   it('enable toggle calls setEnvironmentEnabled with the env id', async () => {
@@ -242,7 +269,10 @@ describe('RuntimesPanel', () => {
     expect(
       container.querySelector('[data-testid="runtimes-provision-error-r"]')?.textContent
     ).toContain('runtime CDN unavailable')
-    expect(container.textContent).toContain('Retry setup')
+    const retryButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      /^retry setup$/i.test((button.textContent ?? '').trim())
+    )
+    expect(retryButton?.getAttribute('data-variant')).toBe('default')
   })
 
   it('adds an interpreter via the picker and enables the new external env', async () => {
@@ -309,6 +339,7 @@ describe('RuntimesPanel', () => {
       /^reset runtime$/i.test((b.textContent ?? '').trim())
     )
     expect(resetBtn).toBeDefined()
+    expect(resetBtn?.getAttribute('data-variant')).toBe('default')
     await click(resetBtn ?? null)
     expect(repairBridge).toHaveBeenCalledWith('r')
   })
@@ -334,6 +365,7 @@ describe('RuntimesPanel', () => {
       /^reset runtime$/i.test((b.textContent ?? '').trim())
     )
     expect(resetBtn).toBeDefined()
+    expect(resetBtn?.getAttribute('data-variant')).toBe('default')
     await click(resetBtn ?? null)
     expect(repairBridge).toHaveBeenCalledWith('python')
   })

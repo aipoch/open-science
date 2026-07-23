@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 
 // Import the bare Mono/Color components straight from their modules: each icon's entry point
@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { selectAnyInstalling, useSettingsStore } from '@/stores/settings-store'
 import type {
   AgentFrameworkId,
+  ClaudeInstallResult,
   ClaudeInstallSource,
   ClaudeInstallSourceInfo
 } from '../../../../shared/settings'
@@ -30,10 +31,26 @@ import { UninstallRuntimeDialog } from './UninstallRuntimeDialog'
 // uninstall dialog target and the framework card descriptors).
 type FrameworkKey = 'claude' | 'opencode' | 'codex'
 
+type AgentPanelProps = {
+  variant?: 'settings' | 'onboarding'
+  title: string
+  description: React.ReactNode
+}
+
+type OnboardingSwitchRequest = {
+  target: AgentFrameworkId
+  intentVersion: number
+}
+
 // The Agent settings panel: agent-framework management end to end — detection, install, uninstall,
-// and the active-framework switch. Fully store-driven (no props); the uninstall and switch
-// confirmations live here because only these cards can trigger them.
-const AgentPanel = (): React.JSX.Element => {
+// and the active-framework switch. Callers supply the heading copy while runtime behavior stays
+// store-driven; uninstall and switch confirmations live here because only these cards trigger them.
+const AgentPanel = ({
+  variant = 'settings',
+  title,
+  description
+}: AgentPanelProps): React.JSX.Element => {
+  const isOnboarding = variant === 'onboarding'
   const claude = useSettingsStore((state) => state.claude)
   const preflight = useSettingsStore((state) => state.preflight)
   const isDetectingClaude = useSettingsStore((state) => state.isDetectingClaude)
@@ -63,12 +80,17 @@ const AgentPanel = (): React.JSX.Element => {
   const uninstallCodex = useSettingsStore((state) => state.uninstallCodex)
   const detectClaude = useSettingsStore((state) => state.detectClaude)
   const installClaude = useSettingsStore((state) => state.installClaude)
+  const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
+  const environmentCheck = useSettingsStore((state) => state.environmentCheck)
+  const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
 
   // Track whether an ACP prompt is currently running so the uninstall (a destructive teardown) can be
-  // blocked while a task uses the runtime. Fail closed: default to true (treated as busy) until the
-  // first snapshot arrives, so the button is never briefly enabled during the getState() round-trip.
-  const [promptInFlight, setPromptInFlight] = useState(true)
+  // blocked while a task uses the runtime. Settings fails closed until the first snapshot arrives;
+  // onboarding hides uninstall entirely, so it does not need this unrelated ACP subscription.
+  const [promptInFlight, setPromptInFlight] = useState(!isOnboarding)
   useEffect(() => {
+    if (isOnboarding) return
+
     let mounted = true
     // A live onState broadcast is always fresher than the initial getState() read. Subscribing first
     // is NOT enough — getState() is async, so a live event can arrive before the snapshot resolves and
@@ -87,7 +109,7 @@ const AgentPanel = (): React.JSX.Element => {
       mounted = false
       removeListener()
     }
-  }, [])
+  }, [isOnboarding])
 
   // The app-managed runtime pending an uninstall confirmation (null = dialog closed), plus the
   // in-flight flag so the dialog and status cards can show progress and stay locked during removal.
@@ -95,6 +117,12 @@ const AgentPanel = (): React.JSX.Element => {
   const [isUninstalling, setIsUninstalling] = useState(false)
   // The framework the user picked (via a card) but hasn't confirmed switching to yet.
   const [pendingSwitch, setPendingSwitch] = useState<AgentFrameworkId | null>(null)
+  const [isSwitching, setIsSwitching] = useState(false)
+  const [frameworkDetectionError, setFrameworkDetectionError] = useState<string | undefined>()
+  const onboardingAutoSelectAttempted = useRef(false)
+  const onboardingSwitchInFlight = useRef(false)
+  const onboardingUserIntentVersion = useRef(0)
+  const onboardingPendingSwitch = useRef<OnboardingSwitchRequest | null>(null)
 
   // Removes the app-managed runtime for the framework awaiting confirmation, then closes the dialog.
   // The store applies the refreshed snapshot (which may auto-switch the active framework) and main
@@ -122,9 +150,51 @@ const AgentPanel = (): React.JSX.Element => {
     }
   }
 
-  // Selecting a card requests a framework switch; a no-op when it's already the active one. The actual
-  // switch is deferred to the confirmation, since it starts a fresh agent session.
+  // Every onboarding switch runs through one queue. A later explicit choice replaces the pending
+  // target and runs after the current IPC, so an older response cannot overwrite the user's intent.
+  const drainOnboardingSwitches = useCallback(async (): Promise<void> => {
+    if (onboardingSwitchInFlight.current) return
+
+    onboardingSwitchInFlight.current = true
+    setIsSwitching(true)
+    try {
+      while (onboardingPendingSwitch.current) {
+        const request = onboardingPendingSwitch.current
+        onboardingPendingSwitch.current = null
+
+        if (request.intentVersion !== onboardingUserIntentVersion.current) continue
+
+        if (useSettingsStore.getState().agentFrameworkId !== request.target) {
+          await setAgentFramework(request.target)
+        }
+
+        // If the user changed their mind during the IPC, immediately apply the newer queued target.
+        if (request.intentVersion !== onboardingUserIntentVersion.current) continue
+        await checkEnvironment()
+      }
+    } finally {
+      onboardingSwitchInFlight.current = false
+      setIsSwitching(false)
+    }
+  }, [checkEnvironment, setAgentFramework])
+
+  const queueOnboardingSwitch = useCallback(
+    (target: AgentFrameworkId, intentVersion = onboardingUserIntentVersion.current): void => {
+      onboardingPendingSwitch.current = { target, intentVersion }
+      void drainOnboardingSwitches()
+    },
+    [drainOnboardingSwitches]
+  )
+
+  // Settings keeps its confirmation dialog. Onboarding records every card click as a newer intent,
+  // including a click back to the framework that was active before an automatic switch.
   const requestSwitch = (target: AgentFrameworkId): void => {
+    if (isOnboarding) {
+      onboardingUserIntentVersion.current += 1
+      queueOnboardingSwitch(target, onboardingUserIntentVersion.current)
+      return
+    }
+
     if (target !== agentFrameworkId) setPendingSwitch(target)
   }
 
@@ -138,13 +208,59 @@ const AgentPanel = (): React.JSX.Element => {
     (framework) => framework.id === pendingSwitch
   )?.displayName
 
+  // First-run users should land on a runtime they can actually use. Registry order is the stable
+  // tie-breaker, and this onboarding-only preference never changes Settings selection behavior.
+  useEffect(() => {
+    if (
+      !isOnboarding ||
+      onboardingAutoSelectAttempted.current ||
+      onboardingUserIntentVersion.current > 0
+    ) {
+      return
+    }
+
+    const readyByFramework: Record<AgentFrameworkId, boolean> = {
+      'claude-code': preflight.claudeReady,
+      opencode: preflight.opencodeReady,
+      codex: preflight.codexReady
+    }
+    if (readyByFramework[agentFrameworkId]) return
+
+    const installedFramework = agentFrameworks.find((framework) => readyByFramework[framework.id])
+    if (!installedFramework) return
+
+    onboardingAutoSelectAttempted.current = true
+    queueOnboardingSwitch(installedFramework.id)
+  }, [
+    agentFrameworkId,
+    agentFrameworks,
+    isOnboarding,
+    preflight.claudeReady,
+    preflight.codexReady,
+    preflight.opencodeReady,
+    queueOnboardingSwitch
+  ])
+
   // The section-level Re-detect re-scans all three frameworks at once; the per-card detect buttons
   // were removed in favor of this single action.
   const isDetectingAnyFramework = isDetectingClaude || isDetectingOpencode || isDetectingCodex
-  const handleDetectAllFrameworks = (): void => {
-    void detectClaude()
-    void detectOpencode()
-    void detectCodex()
+  const handleDetectAllFrameworks = async (): Promise<void> => {
+    setFrameworkDetectionError(undefined)
+    // A non-selected runtime may be broken independently of the framework the user is configuring.
+    // Wait for every detector, then refresh the selected environment even when one detector rejected.
+    const results = await Promise.allSettled([detectClaude(), detectOpencode(), detectCodex()])
+    if (isOnboarding) await checkEnvironment()
+
+    const failure = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    )
+    if (failure) {
+      setFrameworkDetectionError(
+        failure.reason instanceof Error
+          ? failure.reason.message
+          : 'One or more agent runtimes could not be detected.'
+      )
+    }
   }
 
   // One descriptor per agent framework, in canonical display order. Cards are grouped by install
@@ -169,7 +285,7 @@ const AgentPanel = (): React.JSX.Element => {
     // This runtime's own install slice from the store (per-runtime install state, issue #278) —
     // each card renders only its own progress/logs/error.
     install: typeof claudeInstall
-    onInstall: (source: ClaudeInstallSource) => void
+    onInstall: (source: ClaudeInstallSource) => Promise<ClaudeInstallResult | undefined>
   }
 
   const frameworkCards: FrameworkCardModel[] = [
@@ -189,7 +305,11 @@ const AgentPanel = (): React.JSX.Element => {
       managed: claudeManaged,
       installSources: getClaudeInstallSources(window.api?.platform),
       install: claudeInstall,
-      onInstall: (source) => void installClaude(source)
+      onInstall: (source) =>
+        installClaude(
+          source,
+          isOnboarding && source === 'managed' ? environmentCheck?.recommendedRegistry : undefined
+        )
     },
     {
       key: 'opencode',
@@ -213,7 +333,7 @@ const AgentPanel = (): React.JSX.Element => {
       managed: opencodeManaged,
       installSources: getOpencodeInstallSources(window.api?.platform),
       install: opencodeInstall,
-      onInstall: (source) => void installOpencode(source)
+      onInstall: (source) => installOpencode(source)
     },
     {
       key: 'codex',
@@ -235,13 +355,31 @@ const AgentPanel = (): React.JSX.Element => {
       install: codexInstall,
       // Codex has no official-script source; the guard keeps the shared install-source type happy.
       onInstall: (source) => {
-        if (source !== 'official-script') void installCodex(source)
+        if (source !== 'official-script') return installCodex(source)
+        return Promise.resolve(undefined)
       }
     }
   ]
 
   const installedFrameworks = frameworkCards.filter((card) => card.ready)
   const availableFrameworks = frameworkCards.filter((card) => !card.ready)
+
+  // First-run installation selects the newly-ready runtime and refreshes the environment gate.
+  // Settings keeps its existing behavior: install only, then let the user choose explicitly.
+  const installFramework = async (
+    card: FrameworkCardModel,
+    source: ClaudeInstallSource
+  ): Promise<void> => {
+    const intentVersion = isOnboarding
+      ? (onboardingUserIntentVersion.current += 1)
+      : onboardingUserIntentVersion.current
+    const result = await card.onInstall(source)
+    if (!isOnboarding || !result?.ok) return
+
+    // A newer card click wins even if it lands between install completion and this switch.
+    if (intentVersion !== onboardingUserIntentVersion.current) return
+    queueOnboardingSwitch(card.frameworkId, intentVersion)
+  }
 
   // Maps one framework descriptor to its card, wiring in the panel-level concerns: radio selection
   // (via the switch confirmation), the uninstall dialog, and the per-runtime install slice that
@@ -260,47 +398,39 @@ const AgentPanel = (): React.JSX.Element => {
       notReadyHint={card.notReadyHint}
       active={agentFrameworkId === card.frameworkId}
       onSelect={() => requestSwitch(card.frameworkId)}
-      selectDisabled={anyInstalling || isUninstalling}
+      selectDisabled={anyInstalling || isUninstalling || (isOnboarding && isDetectingAnyFramework)}
       uninstallCommand={card.uninstallCommand}
       managed={card.managed}
       isUninstalling={isUninstalling && pendingUninstall === card.key}
       isDetecting={isDetectingAnyFramework}
       promptInFlight={promptInFlight}
       onUninstall={() => setPendingUninstall(card.key)}
+      showUninstall={!isOnboarding}
       installSources={card.installSources}
       install={card.install}
       installRunning={anyInstalling}
       npmAvailable={npmAvailable}
-      onInstall={(source) => card.onInstall(source)}
+      onInstall={(source) => void installFramework(card, source)}
     />
   )
 
   return (
     <div className="space-y-5 p-5">
-      <ModelFrameworkCompatibilityAlert />
-
       {/* The runtime cards double as the framework selector: pick a card to make it the active
           backend (confirmed, since it starts a fresh session). Cards are grouped by install state
           so management (Installed) and acquisition (Available) don't compete for attention — but
           the active runtime can't be uninstalled (switch to the other one first). */}
       <SettingsSection
-        title="Agent framework"
-        aria-label="Agent framework"
-        description={
-          <>
-            Choose which coding-agent backend drives your sessions. Select a card to switch;
-            switching starts a fresh agent session, and open conversations have their transcript
-            replayed to the new backend. The active runtime can&apos;t be uninstalled — switch to
-            the other one first.
-          </>
-        }
+        title={title}
+        aria-label={title}
+        description={description}
         action={
           <Button
             type="button"
             variant="outline"
             size="sm"
-            onClick={handleDetectAllFrameworks}
-            disabled={isDetectingAnyFramework || anyInstalling || isUninstalling}
+            onClick={() => void handleDetectAllFrameworks()}
+            disabled={isDetectingAnyFramework || anyInstalling || isUninstalling || isSwitching}
           >
             <RefreshCw
               className={isDetectingAnyFramework ? 'animate-spin' : ''}
@@ -311,6 +441,12 @@ const AgentPanel = (): React.JSX.Element => {
         }
       >
         <div className="space-y-5">
+          {frameworkDetectionError || (isOnboarding && environmentCheckError) ? (
+            <p className="text-sm text-destructive" role="alert">
+              {(isOnboarding && environmentCheckError) || frameworkDetectionError}
+            </p>
+          ) : null}
+          {isOnboarding ? null : <ModelFrameworkCompatibilityAlert />}
           {installedFrameworks.length > 0 ? (
             <div className="space-y-2">
               <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
@@ -336,17 +472,21 @@ const AgentPanel = (): React.JSX.Element => {
         </div>
       </SettingsSection>
 
-      <UninstallRuntimeDialog
-        framework={pendingUninstall}
-        isUninstalling={isUninstalling}
-        onCancel={() => setPendingUninstall(null)}
-        onConfirm={() => void handleConfirmUninstall()}
-      />
-      <SwitchFrameworkDialog
-        targetName={pendingSwitchName ?? null}
-        onCancel={() => setPendingSwitch(null)}
-        onConfirm={confirmSwitch}
-      />
+      {isOnboarding ? null : (
+        <>
+          <UninstallRuntimeDialog
+            framework={pendingUninstall}
+            isUninstalling={isUninstalling}
+            onCancel={() => setPendingUninstall(null)}
+            onConfirm={() => void handleConfirmUninstall()}
+          />
+          <SwitchFrameworkDialog
+            targetName={pendingSwitchName ?? null}
+            onCancel={() => setPendingSwitch(null)}
+            onConfirm={confirmSwitch}
+          />
+        </>
+      )}
     </div>
   )
 }

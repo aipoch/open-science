@@ -433,8 +433,8 @@ const ProviderForm = ({
               </p>
             </div>
             <p className="text-xs text-muted-foreground">
-              Paste the token in the Settings card after saving — the wizard&apos;s
-              Test &amp; continue flow signs you in.
+              Paste the token in the Settings card after saving — the wizard&apos;s Test &amp;
+              continue flow signs you in.
             </p>
           </div>
           <div className="space-y-1.5">

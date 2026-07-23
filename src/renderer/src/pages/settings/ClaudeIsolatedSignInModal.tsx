@@ -107,8 +107,7 @@ const ClaudeIsolatedSignInModalBody = ({
         <AlertDialog.Description className="mt-1 text-sm text-muted-foreground">
           Use a long-lived OAuth token from <code className="font-mono">claude setup-token</code>.
           The token is stored encrypted in your app-owned Claude config directory and never read
-          from or written to{' '}
-          <code className="font-mono">~/.claude</code>. See{' '}
+          from or written to <code className="font-mono">~/.claude</code>. See{' '}
           <a
             href={SETUP_TOKEN_DOCS_URL}
             className="text-primary underline underline-offset-2"

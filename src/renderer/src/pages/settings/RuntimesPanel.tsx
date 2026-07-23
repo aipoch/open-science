@@ -32,6 +32,11 @@ const LANGUAGES: ReadonlyArray<{ id: NotebookLanguage; label: string; icon: Reac
 type EnvLists = { python: DiscoveredInterpreter[]; r: DiscoveredInterpreter[] }
 type Enablements = Partial<Record<NotebookLanguage, RuntimeEnablement>>
 
+type RuntimesPanelProps = {
+  title: string
+  description: React.ReactNode
+}
+
 // Human provider/type for the card badge (provenance + conda env name), e.g. "App-managed",
 // "Conda: bio", "System".
 const providerType = (env: DiscoveredInterpreter): string => {
@@ -52,7 +57,7 @@ const managedLine = (runnable: boolean, preparing: boolean, message?: string): s
   return runnable ? 'Installed and ready' : 'Managed runtime is not set up yet'
 }
 
-const RuntimesPanel = (): React.JSX.Element => {
+const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.Element => {
   const [envs, setEnvs] = useState<EnvLists | null>(null)
   const [enablement, setEnablement] = useState<Enablements>({})
   const [loaded, setLoaded] = useState(false)
@@ -87,6 +92,8 @@ const RuntimesPanel = (): React.JSX.Element => {
       window.api.runtime.getEnablement('r').catch(() => undefined)
     ]).then(([nextEnvs, python, r]) => [nextEnvs, { python, r }])
 
+  // Commit discovery and persisted permissions as one snapshot. Mixing a fresh interpreter list
+  // with stale enablement could briefly expose the wrong toggle or package-install authorization.
   const applyAll = ([nextEnvs, nextEnablement]: [EnvLists, Enablements]): void => {
     setEnvs(nextEnvs)
     setEnablement(nextEnablement)
@@ -97,6 +104,8 @@ const RuntimesPanel = (): React.JSX.Element => {
     void fetchAll().then(applyAll)
   }, [])
 
+  // Recheck refreshes both halves of the runtime registry together for the same reason as initial
+  // loading: cards and their permissions must describe one coherent backend snapshot.
   const recheck = async (): Promise<void> => {
     setBusy(true)
     setError(null)
@@ -223,14 +232,13 @@ const RuntimesPanel = (): React.JSX.Element => {
   }
 
   const provisionManaged = async (language: NotebookLanguage): Promise<void> => {
-    // Don't hold the shared `busy` flag for the whole download — that would keep Cancel disabled for
-    // the entire setup. `provisioningLang` (+ the store's preparing state) drives the button instead,
-    // leaving Cancel clickable throughout.
+    // Provisioning deliberately avoids the panel-wide busy flag. Per-language store state marks only
+    // the active runtime as preparing and leaves its Cancel action available throughout the download.
     setError(null)
-    // The store tracks preparing per-language (byLang), so no local per-language flag is needed and
-    // Cancel stays clickable throughout without holding the shared `busy` flag.
     try {
       await provisionEnv(language)
+      // The provisioner updates files and registry metadata in the main process; reload both the
+      // discovered environments and persisted enablement before rendering the completed card.
       applyAll(await fetchAll())
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not refresh runtime readiness.')
@@ -329,200 +337,200 @@ const RuntimesPanel = (): React.JSX.Element => {
   const loading = !loaded || envs === null
 
   return (
-    <div className="space-y-5 p-5" data-testid="runtimes-panel">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Enable the environments each notebook language may run in. The app-managed environment
-            is on by default; enable your own interpreters to make them available to the agent.
+    <div className="p-5" data-testid="runtimes-panel">
+      <SettingsSection
+        title={title}
+        description={description}
+        aria-label={title}
+        contentClassName="space-y-5"
+        action={
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void recheck()}
+            disabled={busy}
+          >
+            <RefreshCw className={cn(busy && 'animate-spin')} aria-hidden="true" />
+            Recheck
+          </Button>
+        }
+      >
+        {error !== null && (
+          <p role="alert" className="text-sm text-destructive" data-testid="runtimes-error">
+            {error}
           </p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => void recheck()}
-          disabled={busy}
-        >
-          <RefreshCw className={cn(busy && 'animate-spin')} aria-hidden="true" />
-          Recheck
-        </Button>
-      </div>
+        )}
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Detecting runtimes…</p>
+        ) : (
+          LANGUAGES.map(({ id, label, icon }) => {
+            const list = envs[id]
+            // Per-language provisioning state — set immediately on click and cleared when THIS language's
+            // run settles, independent of the other language (fixes the concurrent python/R phantom-cancel).
+            const langState = byLang[id]
+            const preparing = langState?.preparing ?? false
+            const langProgress = langState?.progress
+            const langError = langState?.error
+            const managedRunnable = managedRunnableFor(id)
 
-      {error !== null && (
-        <p role="alert" className="text-sm text-destructive" data-testid="runtimes-error">
-          {error}
-        </p>
-      )}
-      {loading ? (
-        <p className="text-sm text-muted-foreground">Detecting runtimes…</p>
-      ) : (
-        LANGUAGES.map(({ id, label, icon }) => {
-          const list = envs[id]
-          // Per-language provisioning state — set immediately on click and cleared when THIS language's
-          // run settles, independent of the other language (fixes the concurrent python/R phantom-cancel).
-          const langState = byLang[id]
-          const preparing = langState?.preparing ?? false
-          const langProgress = langState?.progress
-          const langError = langState?.error
-          const managedRunnable = managedRunnableFor(id)
+            // App-managed goes FIRST; the user's own detected interpreters follow. A provisioned
+            // app-managed env appears in `list` (provenance app-managed) and renders as a normal card;
+            // when it isn't set up yet there is no such entry, so a setup card is shown in its place.
+            const managedEnv = list.find((env) => env.provenance === 'app-managed')
+            const ownEnvs = list.filter((env) => env.provenance !== 'app-managed')
 
-          // App-managed goes FIRST; the user's own detected interpreters follow. A provisioned
-          // app-managed env appears in `list` (provenance app-managed) and renders as a normal card;
-          // when it isn't set up yet there is no such entry, so a setup card is shown in its place.
-          const managedEnv = list.find((env) => env.provenance === 'app-managed')
-          const ownEnvs = list.filter((env) => env.provenance !== 'app-managed')
-
-          return (
-            <SettingsSection
-              key={id}
-              title={label}
-              icon={icon}
-              aria-label={`${label} runtime`}
-              separated
-              action={
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={busy}
-                        onClick={() => void addInterpreter(id)}
-                      >
-                        <FolderInput aria-hidden="true" />
-                        Add interpreter…
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-xs">
-                      {id === 'r'
-                        ? 'Pick your Rscript executable — e.g. Rscript.exe (Windows) or bin/Rscript (macOS/Linux). Choose the file, not a folder.'
-                        : 'Pick your Python interpreter executable — e.g. python.exe (Windows) or bin/python (macOS/Linux). Choose the file, not a folder.'}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              }
-            >
-              <div className="space-y-2" data-testid={`runtimes-cards-${id}`}>
-                {/* App-managed FIRST: a real card once provisioned, else a setup card in the same frame. */}
-                {managedEnv ? (
-                  <>
-                    {renderEnvCard(id, managedEnv)}
-                    {/* An interrupted upgrade/install usually leaves the interpreter present (so the
-                        card above still renders), but recovery may have quarantined its prefix. Surface
-                        the block + Reset here too, or the recovery entry would be unreachable whenever a
-                        runnable managed env exists. */}
-                    {!preparing && langError?.includes('RUNTIME_RECOVERY_BLOCKED') ? (
-                      <div
-                        data-testid={`runtimes-recovery-blocked-${id}`}
-                        className="flex items-start justify-between gap-4 rounded-lg border border-destructive/40 bg-card p-3"
-                      >
-                        <p
-                          role="alert"
-                          className="text-[13px] text-destructive"
-                          data-testid={`runtimes-provision-error-${id}`}
-                        >
-                          {langError}
-                        </p>
+            return (
+              <SettingsSection
+                key={id}
+                title={label}
+                icon={icon}
+                aria-label={`${label} runtime`}
+                separated
+                action={
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
                         <Button
                           type="button"
                           variant="outline"
                           size="sm"
-                          className="shrink-0"
                           disabled={busy}
-                          onClick={() => void resetManaged(id)}
+                          onClick={() => void addInterpreter(id)}
                         >
-                          Reset runtime
+                          <FolderInput aria-hidden="true" />
+                          Add interpreter…
                         </Button>
-                      </div>
-                    ) : null}
-                  </>
-                ) : (
-                  <div
-                    data-testid="runtime-card"
-                    className="rounded-lg border border-border bg-card p-3"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-foreground">
-                            App-managed environment
-                          </span>
-                          <Badge variant="secondary">App-managed</Badge>
-                        </div>
-                        <div className="mt-0.5 text-[13px] text-muted-foreground">
-                          {managedLine(managedRunnable, preparing, langProgress?.message)}
-                        </div>
-                        {preparing ? (
-                          <div
-                            className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted"
-                            role="progressbar"
-                            aria-label={`Setting up ${label} runtime`}
-                            aria-valuenow={Math.round((langProgress?.progress ?? 0) * 100)}
-                            aria-valuemin={0}
-                            aria-valuemax={100}
-                          >
-                            <div
-                              className="h-full rounded-full bg-primary transition-[width] duration-300"
-                              style={{
-                                width: `${Math.max(2, Math.min(100, Math.round((langProgress?.progress ?? 0) * 100)))}%`
-                              }}
-                            />
-                          </div>
-                        ) : null}
-                        {!preparing && langError ? (
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        {id === 'r'
+                          ? 'Pick your Rscript executable — e.g. Rscript.exe (Windows) or bin/Rscript (macOS/Linux). Choose the file, not a folder.'
+                          : 'Pick your Python interpreter executable — e.g. python.exe (Windows) or bin/python (macOS/Linux). Choose the file, not a folder.'}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                }
+              >
+                <div className="space-y-2" data-testid={`runtimes-cards-${id}`}>
+                  {/* App-managed FIRST: a real card once provisioned, else a setup card in the same frame. */}
+                  {managedEnv ? (
+                    <>
+                      {renderEnvCard(id, managedEnv)}
+                      {/* An interrupted upgrade/install usually leaves the interpreter present (so the
+                        card above still renders), but recovery may have quarantined its prefix. Surface
+                        the block + Reset here too, or the recovery entry would be unreachable whenever a
+                        runnable managed env exists. */}
+                      {!preparing && langError?.includes('RUNTIME_RECOVERY_BLOCKED') ? (
+                        <div
+                          data-testid={`runtimes-recovery-blocked-${id}`}
+                          className="flex items-start justify-between gap-4 rounded-lg border border-destructive/40 bg-card p-3"
+                        >
                           <p
                             role="alert"
-                            className="mt-1 text-[13px] text-destructive"
+                            className="text-[13px] text-destructive"
                             data-testid={`runtimes-provision-error-${id}`}
                           >
                             {langError}
                           </p>
-                        ) : null}
+                          <Button
+                            type="button"
+                            variant="default"
+                            size="sm"
+                            className="shrink-0"
+                            disabled={busy}
+                            onClick={() => void resetManaged(id)}
+                          >
+                            Reset runtime
+                          </Button>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div
+                      data-testid="runtime-card"
+                      className="rounded-lg border border-border bg-card p-3"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-foreground">
+                              App-managed environment
+                            </span>
+                            <Badge variant="secondary">App-managed</Badge>
+                          </div>
+                          <div className="mt-0.5 text-[13px] text-muted-foreground">
+                            {managedLine(managedRunnable, preparing, langProgress?.message)}
+                          </div>
+                          {preparing ? (
+                            <div
+                              className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted"
+                              role="progressbar"
+                              aria-label={`Setting up ${label} runtime`}
+                              aria-valuenow={Math.round((langProgress?.progress ?? 0) * 100)}
+                              aria-valuemin={0}
+                              aria-valuemax={100}
+                            >
+                              <div
+                                className="h-full rounded-full bg-primary transition-[width] duration-300"
+                                style={{
+                                  width: `${Math.max(2, Math.min(100, Math.round((langProgress?.progress ?? 0) * 100)))}%`
+                                }}
+                              />
+                            </div>
+                          ) : null}
+                          {!preparing && langError ? (
+                            <p
+                              role="alert"
+                              className="mt-1 text-[13px] text-destructive"
+                              data-testid={`runtimes-provision-error-${id}`}
+                            >
+                              {langError}
+                            </p>
+                          ) : null}
+                        </div>
+                        {preparing ? (
+                          // A download/setup in progress is cancelable — never a locked, un-abortable state.
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0"
+                            disabled={busy}
+                            onClick={() => void cancelProvision(id)}
+                          >
+                            Cancel
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="default"
+                            size="sm"
+                            className="shrink-0"
+                            disabled={busy}
+                            onClick={() =>
+                              langError?.includes('RUNTIME_RECOVERY_BLOCKED')
+                                ? void resetManaged(id)
+                                : void provisionManaged(id)
+                            }
+                          >
+                            {langError?.includes('RUNTIME_RECOVERY_BLOCKED')
+                              ? 'Reset runtime'
+                              : langError
+                                ? 'Retry setup'
+                                : 'Download and set up'}
+                          </Button>
+                        )}
                       </div>
-                      {preparing ? (
-                        // A download/setup in progress is cancelable — never a locked, un-abortable state.
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="shrink-0"
-                          disabled={busy}
-                          onClick={() => void cancelProvision(id)}
-                        >
-                          Cancel
-                        </Button>
-                      ) : (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="shrink-0"
-                          disabled={busy}
-                          onClick={() =>
-                            langError?.includes('RUNTIME_RECOVERY_BLOCKED')
-                              ? void resetManaged(id)
-                              : void provisionManaged(id)
-                          }
-                        >
-                          {langError?.includes('RUNTIME_RECOVERY_BLOCKED')
-                            ? 'Reset runtime'
-                            : langError
-                              ? 'Retry setup'
-                              : 'Download and set up'}
-                        </Button>
-                      )}
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {ownEnvs.map((env) => renderEnvCard(id, env))}
-              </div>
-            </SettingsSection>
-          )
-        })
-      )}
+                  {ownEnvs.map((env) => renderEnvCard(id, env))}
+                </div>
+              </SettingsSection>
+            )
+          })
+        )}
+      </SettingsSection>
 
       <AlertDialog.Root
         open={disableImpact !== null}

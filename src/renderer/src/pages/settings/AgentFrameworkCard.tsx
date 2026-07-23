@@ -51,6 +51,9 @@ type AgentFrameworkCardProps = {
   // Whether an ACP prompt is currently running; forwarded to RuntimeUninstallControl.
   promptInFlight?: boolean
   onUninstall: () => void
+  // Onboarding reuses the framework cards for selection/install, but runtime removal remains a
+  // Settings-only action.
+  showUninstall?: boolean
   // Install menu + progress wiring (only meaningful on not-ready cards).
   installSources: ClaudeInstallSourceInfo[]
   // This runtime's own install slice from the store (progress/logs/error plus whether THIS card's
@@ -164,6 +167,7 @@ const AgentFrameworkCard = ({
   isDetecting,
   promptInFlight,
   onUninstall,
+  showUninstall = true,
   installSources,
   install,
   installRunning,
@@ -292,35 +296,37 @@ const AgentFrameworkCard = ({
           {/* Actions live outside the selection gesture: clicks here must not switch frameworks.
               Exactly one action per card: Uninstall when ready, Repair when detected-but-broken,
               Install when nothing was detected. */}
-          <div
-            className="flex shrink-0 items-center gap-2"
-            onClick={(event) => event.stopPropagation()}
-          >
-            {ready ? (
-              <RuntimeUninstallControl
-                label={name}
-                uninstallCommand={uninstallCommand}
-                managed={managed}
-                active={active}
-                isUninstalling={isUninstalling}
-                isDetecting={isDetecting}
-                // Global by contract: an install of ANY framework locks every card's Uninstall.
-                isInstalling={installRunning}
-                promptInFlight={promptInFlight}
-                onUninstall={onUninstall}
-              />
-            ) : (
-              <InstallSourceMenu
-                name={name}
-                label={found ? 'Repair' : 'Install'}
-                sources={installSources}
-                installing={installing}
-                disabled={installLocked}
-                npmAvailable={npmAvailable}
-                onInstall={onInstall}
-              />
-            )}
-          </div>
+          {!ready || showUninstall ? (
+            <div
+              className="flex shrink-0 items-center gap-2"
+              onClick={(event) => event.stopPropagation()}
+            >
+              {ready ? (
+                <RuntimeUninstallControl
+                  label={name}
+                  uninstallCommand={uninstallCommand}
+                  managed={managed}
+                  active={active}
+                  isUninstalling={isUninstalling}
+                  isDetecting={isDetecting}
+                  // Global by contract: an install of ANY framework locks every card's Uninstall.
+                  isInstalling={installRunning}
+                  promptInFlight={promptInFlight}
+                  onUninstall={onUninstall}
+                />
+              ) : (
+                <InstallSourceMenu
+                  name={name}
+                  label={found ? 'Repair' : 'Install'}
+                  sources={installSources}
+                  installing={installing}
+                  disabled={installLocked}
+                  npmAvailable={npmAvailable}
+                  onInstall={onInstall}
+                />
+              )}
+            </div>
+          ) : null}
         </div>
 
         {!ready ? (

@@ -87,7 +87,15 @@ const toUpsertRequest = (
 // holds environment/config (Model manages providers, its Agent sub-panel manages agent frameworks,
 // General holds app settings incl. logs).
 type SettingsPanelId =
-  'model' | 'agent' | 'skills' | 'connectors' | 'compute' | 'general' | 'storage' | 'network' | 'runtimes'
+  | 'model'
+  | 'agent'
+  | 'skills'
+  | 'connectors'
+  | 'compute'
+  | 'general'
+  | 'storage'
+  | 'network'
+  | 'runtimes'
 
 type SettingsPanel = {
   id: SettingsPanelId
@@ -763,13 +771,19 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                 ) : activePanel === 'storage' ? (
                   <StoragePanel />
                 ) : activePanel === 'runtimes' ? (
-                  <RuntimesPanel />
+                  <RuntimesPanel
+                    title="Notebook runtimes"
+                    description="Enable the environments each notebook language may run in. The app-managed environment is on by default; enable your own interpreters to make them available to the agent."
+                  />
                 ) : activePanel === 'network' ? (
                   <NetworkPanel view={networkView} onNavigate={navigateNetwork} />
                 ) : activePanel === 'general' ? (
                   <GeneralPanel />
                 ) : activePanel === 'agent' ? (
-                  <AgentPanel />
+                  <AgentPanel
+                    title="Agent framework"
+                    description="Choose which coding-agent backend drives your sessions. Select a card to switch; switching starts a fresh agent session, and open conversations have their transcript replayed to the new backend. The active runtime can't be uninstalled — switch to the other one first."
+                  />
                 ) : isProviderFormOpen ? (
                   // Add/edit provider is a secondary page reached via the shared back/forward arrows.
                   <div className="p-5">
