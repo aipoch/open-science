@@ -1050,6 +1050,29 @@ describe('notebook runtime service', () => {
     expect(existsSync(join(runtimeRoot, 'packs', '.cache'))).toBe(false)
   })
 
+  it('wipes the pack download cache even when the operation journal is corrupt (WS13)', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = join(root, 'runtime')
+    // A corrupt journal makes recovery early-return (blocking all runtime writes). The .cache wipe must
+    // still run — it is ordered BEFORE that early return — so a corrupt journal can't strand a prior
+    // session's .part for a later fetch. (Correctness also holds via the per-session cache key; this
+    // covers the housekeeping path the reviewer flagged as untested.)
+    const cache = join(runtimeRoot, 'packs', '.cache', '1', 'osx-arm64')
+    await mkdir(cache, { recursive: true })
+    await writeFile(join(cache, 'python-3.12.tar.zst.part'), Buffer.from('half'))
+    await writeFile(operationJournalPath(runtimeRoot), 'not-json{{{')
+
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    await service.recoverInterruptedOperations()
+
+    expect(existsSync(join(runtimeRoot, 'packs', '.cache'))).toBe(false)
+  })
+
   it('reconciles a stale running run to interrupted on first load after a crash (WS12)', async () => {
     const root = await createStorageRoot()
 

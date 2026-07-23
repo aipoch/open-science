@@ -361,12 +361,53 @@ describe('createFetchBundleAdapter', () => {
       )
     ).rejects.toThrow(/Managed runtime pack unavailable/)
 
-    // The .part survived in the stable, version/subdir-keyed .cache dir…
-    expect(partPath).toContain(join('packs', '.cache', '1', 'osx-arm64'))
+    // The .part survived, under a per-session cache key then the version/subdir segments.
+    expect(partPath).toContain(join('packs', '.cache'))
+    expect(partPath.endsWith(join('1', 'osx-arm64', 'python-3.12.tar.zst.part'))).toBe(true)
     expect(existsSync(partPath)).toBe(true)
     // …while no .incoming-* staging dir was left behind.
     const leftovers = readdirSync(join(root, 'packs')).filter((n) => n.startsWith('.incoming-'))
     expect(leftovers).toEqual([])
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('uses a distinct cache dir per adapter instance so a prior session cannot resume', async () => {
+    // Two adapters model two app sessions. Each must download under its OWN cache key, so one
+    // session's leftover .part is invisible to the other — the "start from scratch" guarantee holds
+    // by construction, independent of the startup wipe. Capture each session's archive dir.
+    const root = makeDestDir()
+    const capture = (): { deps: ReturnType<typeof makeDeps>; dirOf: () => string } => {
+      const deps = makeDeps()
+      let dir = ''
+      deps.download = vi.fn(async (_url: string, destPath: string) => {
+        dir = destPath.slice(0, destPath.lastIndexOf('/'))
+        throw new Error('stop after capturing the path')
+      })
+      return { deps, dirOf: () => dir }
+    }
+    const a = capture()
+    const b = capture()
+    const spec = {
+      name: 'default-python',
+      language: 'python' as const,
+      version: '3.12',
+      packages: []
+    }
+    await createFetchBundleAdapter(root, 'https://cdn/envs', { ...a.deps, subdir: 'osx-arm64' })(
+      spec,
+      1,
+      () => {}
+    ).catch(() => {})
+    await createFetchBundleAdapter(root, 'https://cdn/envs', { ...b.deps, subdir: 'osx-arm64' })(
+      spec,
+      1,
+      () => {}
+    ).catch(() => {})
+
+    // Same version/subdir, but the two sessions resolved to DIFFERENT cache dirs (distinct keys).
+    expect(a.dirOf()).not.toBe(b.dirOf())
+    expect(a.dirOf()).toContain(join('packs', '.cache'))
+    expect(b.dirOf()).toContain(join('packs', '.cache'))
     await rm(root, { recursive: true, force: true })
   })
 })

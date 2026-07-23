@@ -2673,6 +2673,14 @@ class NotebookRuntimeService {
 
   private async runRecovery(): Promise<void> {
     const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
+    // Reclaim any prior-session pack-download cache FIRST — before the corrupt-journal early return
+    // below — so this housekeeping runs on every startup path, not just the healthy-journal one. It is
+    // only housekeeping: correctness of "app closes → start from scratch" is guaranteed independently by
+    // the per-session cache key (createFetchBundleAdapter), so a failure here (or skipping it) can never
+    // let a new fetch resume last session's .part — it only leaves reclaimable disk. Hence best-effort.
+    await rm(join(runtimeRoot, 'packs', '.cache'), { recursive: true, force: true }).catch(
+      () => undefined
+    )
     const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
     // Fail SAFE on a corrupt/unreadable journal: reconcileInterruptedOperations would read it as empty
     // (nothing in flight) and open the recovery barrier, but a corrupt journal is NOT proof that no op
@@ -2769,15 +2777,6 @@ class NotebookRuntimeService {
     // so they don't accumulate. A retained (unknown-blocked) record keeps its sidecar for the next
     // startup's liveness probe.
     for (const record of reconciled) removeOperationChildSync(runtimeRoot, record.operationId)
-
-    // Pack-download cache reset: a partial pack .part in packs/.cache resumes via Range within a run,
-    // but the design requires "app closes → start from scratch" — a restart must NOT resume a
-    // half-downloaded pack. Recovery runs ONCE at startup before any new fetch, so the whole .cache
-    // dir holds only leftovers from the previous session; wipe it (partials AND any orphaned complete
-    // archive). Best-effort: a failure here only leaves reclaimable disk, never blocks recovery.
-    await rm(join(runtimeRoot, 'packs', '.cache'), { recursive: true, force: true }).catch(
-      () => undefined
-    )
   }
 
   // Shuts down every live interpreter, used by app-level cleanup paths. Returns { reaped }: true only

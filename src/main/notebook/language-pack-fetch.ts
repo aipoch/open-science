@@ -171,9 +171,19 @@ type FetchBundleFn = (
 // Adapts the single-file CDN fetch to the provisioner's lock-based contract. A failed CDN fetch throws
 // one source-scoped, actionable error so HTTP/integrity failures survive through Settings and lazy
 // provisioning; no online solve is attempted. An aborted `signal` (user Cancel) aborts the download.
-export const createFetchBundleAdapter =
-  (root: string, cdnBase: string | undefined, deps: FetchBundleAdapterDeps = {}): FetchBundleFn =>
-  async (spec, version, onProgress, signal) => {
+export const createFetchBundleAdapter = (
+  root: string,
+  cdnBase: string | undefined,
+  deps: FetchBundleAdapterDeps = {}
+): FetchBundleFn => {
+  // One cache namespace per app session (per adapter instance — the provisioner builds it once at
+  // startup). A prior session's partial .part therefore lives under a DIFFERENT token and is invisible
+  // to this session's fetch, so "app closes → start from scratch" holds by construction — it does not
+  // depend on the startup .cache wipe running or succeeding (that wipe is now pure housekeeping, and a
+  // corrupt-journal early-return or a failed rm can no longer cause a stale resume). Within a session
+  // the token is stable, so a manual retry (no restart) still resumes via Range.
+  const sessionCacheKey = randomUUID()
+  return async (spec, version, onProgress, signal) => {
     if (!cdnBase) return undefined
     // Stage under <root>/packs (the SAME volume as the final pack dir), NOT the system tmpdir: the
     // final commit is an atomic rename() into runtimePackDir(root,...), and a relocated data root on a
@@ -184,15 +194,15 @@ export const createFetchBundleAdapter =
     await mkdir(packsRoot, { recursive: true })
     const workDir = await mkdtemp(join(packsRoot, '.incoming-'))
     const unpackedDir = join(workDir, 'pack')
-    // Stable, within-session-surviving location for the downloaded archive + its .part. The extraction
-    // staging (workDir) is disposable and wiped in the finally, but the .part must OUTLIVE a failed or
-    // cancelled fetch WITHIN a run so a manual retry (no restart) resumes via Range instead of
-    // restarting a ~345 MB download. It is NOT meant to survive an app restart — startup recovery wipes
-    // packs/.cache entirely ("app closes → start from scratch"). Keyed by envVersion AND subdir so a
-    // stale fragment from a different version/arch can never be Range-resumed against a new pack URL
-    // (which would only fail checksum after re-downloading the whole thing).
+    // Location for the downloaded archive + its .part. The extraction staging (workDir) is disposable
+    // and wiped in the finally, but the .part must OUTLIVE a failed or cancelled fetch WITHIN a session
+    // so a manual retry (no restart) resumes via Range instead of restarting a ~345 MB download.
+    // Path: .cache/<sessionCacheKey>/<envVersion>/<subdir>/. The session key makes a PRIOR session's
+    // .part invisible here ("app closes → start from scratch", independent of the startup wipe); the
+    // envVersion+subdir segments keep a stale fragment from a different version/arch from being
+    // Range-resumed against a new pack URL (which would only fail checksum after a full re-download).
     const subdir = deps.subdir ?? runtimeSubdir()
-    const archiveDir = join(packsRoot, '.cache', String(version), subdir)
+    const archiveDir = join(packsRoot, '.cache', sessionCacheKey, String(version), subdir)
     await mkdir(archiveDir, { recursive: true })
     // Crash recovery (WS13): record the download intent BEFORE staging so a hard-quit mid-fetch leaves
     // a journal entry whose targetPath is this .incoming-* dir; startup recovery removes the orphan.
@@ -330,3 +340,4 @@ export const createFetchBundleAdapter =
       await journal.complete(operationId).catch(() => undefined)
     }
   }
+}
