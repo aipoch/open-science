@@ -31,6 +31,7 @@ describe('notebook IPC handlers', () => {
       }),
       runCell: vi.fn().mockResolvedValue({ runId: 'run-2', status: 'completed' }),
       exportIpynb: vi.fn().mockResolvedValue({ saved: true, filePath: '/tmp/session.ipynb' }),
+      importIpynb: vi.fn().mockResolvedValue({ imported: true, cellCount: 1 }),
       beginCodeCell: vi.fn().mockResolvedValue({ cellId: 'cell-1', writeId: 'write-1' }),
       appendCodeCell: vi.fn().mockResolvedValue({ receivedBytes: 5 }),
       finishCodeCell: vi.fn().mockResolvedValue({ status: 'idle' }),
@@ -69,7 +70,12 @@ describe('notebook IPC handlers', () => {
     })
     await handlers.restart({ sessionId: 'session-1', workspaceCwd: '/workspace' })
     await handlers.shutdown({ sessionId: 'session-1', workspaceCwd: '/workspace' })
-    await handlers.exportIpynb({ sessionId: 'session-1', workspaceCwd: '/workspace', kernel: 'python' })
+    await handlers.exportIpynb({
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      kernel: 'python'
+    })
+    await handlers.importIpynb({ sessionId: 'session-1', workspaceCwd: '/workspace' })
 
     expect(service.execute).toHaveBeenCalledWith({
       sessionId: 'session-1',
@@ -96,6 +102,10 @@ describe('notebook IPC handlers', () => {
       workspaceCwd: '/workspace',
       kernel: 'python'
     })
+    expect(service.importIpynb).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
   })
 
   it('registers every notebook channel and forwards the renderer payload unchanged', async () => {
@@ -108,6 +118,7 @@ describe('notebook IPC handlers', () => {
       runCell: vi.fn().mockResolvedValue({ runId: 'run-1', status: 'completed' }),
       execute: vi.fn().mockResolvedValue({ runId: 'run-2', status: 'completed' }),
       exportIpynb: vi.fn().mockResolvedValue({ saved: false }),
+      importIpynb: vi.fn().mockResolvedValue({ imported: false }),
       restart: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
       shutdown: vi.fn().mockResolvedValue({ sessionId: 'session-1', status: 'shutdown' })
     } as unknown as NotebookRuntimeService
@@ -123,6 +134,7 @@ describe('notebook IPC handlers', () => {
       'notebook:execute',
       'notebook:export-ipynb',
       'notebook:export-ipynb-all',
+      'notebook:import-ipynb',
       'notebook:restart',
       'notebook:shutdown'
     ])
@@ -142,6 +154,7 @@ describe('notebook IPC handlers', () => {
     await ipcHandlers.get('notebook:run-cell')?.(undefined, run)
     await ipcHandlers.get('notebook:execute')?.(undefined, execute)
     await ipcHandlers.get('notebook:export-ipynb')?.(undefined, session)
+    await ipcHandlers.get('notebook:import-ipynb')?.(undefined, session)
     await ipcHandlers.get('notebook:restart')?.(undefined, session)
     await ipcHandlers.get('notebook:shutdown')?.(undefined, session)
 
@@ -153,6 +166,7 @@ describe('notebook IPC handlers', () => {
     expect(service.runCell).toHaveBeenCalledWith(run)
     expect(service.execute).toHaveBeenCalledWith(execute)
     expect(service.exportIpynb).toHaveBeenCalledWith(session)
+    expect(service.importIpynb).toHaveBeenCalledWith(session)
     expect(service.restart).toHaveBeenCalledWith(session)
     expect(service.shutdown).toHaveBeenCalledWith(session)
   })

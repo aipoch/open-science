@@ -16,6 +16,7 @@ import type {
   ExportNotebookKernelRequest,
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
+  ImportNotebookResult,
   NotebookEnvironmentStatus,
   NotebookKernelMetadata,
   NotebookLanguage,
@@ -46,6 +47,7 @@ import {
   type NbformatOutput,
   type ResolvedArtifact
 } from './ipynb-export'
+import { ipynbToRunRecords } from './ipynb-import'
 import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
 import { saveIpynbAll } from './save-ipynb-all'
 import type { KernelProcessKind } from './kernel-executor'
@@ -335,6 +337,8 @@ type NotebookRuntimeServiceOptions = {
     projectName: string
     sessionId: string
   }) => Promise<string>
+  // Native file-picker seam for notebook import tests.
+  pickIpynb?: () => Promise<string | null>
 }
 
 // The wire binding plus the interpreter override the executor needs. `resolvedInterpreter` is set only
@@ -403,6 +407,16 @@ const saveIpynbWithDialog = async (
   if (canceled || !filePath) return { saved: false }
   await writeFile(filePath, data, 'utf8')
   return { saved: true, filePath }
+}
+
+const pickIpynbWithDialog = async (): Promise<string | null> => {
+  const { dialog } = await import('electron')
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: 'Import notebook',
+    properties: ['openFile'],
+    filters: [{ name: 'Jupyter Notebook', extensions: ['ipynb'] }]
+  })
+  return canceled ? null : (filePaths[0] ?? null)
 }
 
 // Writes one .ipynb per data kernel under a user-picked directory. Used by the "Download all" path;
@@ -2105,6 +2119,52 @@ class NotebookRuntimeService {
     return (this.options.saveIpynbAll ?? saveIpynbAll)(files)
   }
 
+  // Imports code cells as durable, not-yet-executed records and exposes data-kernel cells for rerun.
+  async importIpynb(request: NotebookSessionRequest): Promise<ImportNotebookResult> {
+    const filePath = await (this.options.pickIpynb ?? pickIpynbWithDialog)()
+    if (!filePath) return { imported: false }
+
+    let notebook: unknown
+    try {
+      notebook = JSON.parse(await readFile(filePath, 'utf8')) as unknown
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`Could not read .ipynb: ${message}`)
+    }
+
+    const imported = ipynbToRunRecords(notebook, {
+      createId: randomUUID,
+      importedAt: Date.now()
+    })
+    const session = await this.ensureSession(request)
+    if (imported.runs.length > 0) {
+      await this.repository.appendRuns({
+        projectName: session.projectName,
+        sessionId: session.sessionId,
+        runs: imported.runs
+      })
+      for (const run of imported.runs) {
+        if (run.kernelKind !== 'python' && run.kernelKind !== 'r') continue
+        session.cells.push({
+          id: run.cellId,
+          language: run.kernelKind,
+          code: run.script,
+          status: 'idle',
+          executionCount: run.executionCount,
+          latestRunId: run.runId
+        })
+      }
+      session.executionCount += imported.runs.length
+      this.notifyNotebookChanged(session)
+    }
+
+    return {
+      imported: true,
+      cellCount: imported.runs.length,
+      skippedCellCount: imported.skippedCellCount
+    }
+  }
+
   // Replaces the interpreter process while preserving cells and durable run history. Prefers the
   // executor's own in-place restart (keeps the same instance, e.g. NotebookKernelExecutor tears down
   // and lazily respawns its loops) and only shuts down + recreates for executors that don't support it.
@@ -2836,7 +2896,19 @@ class NotebookRuntimeService {
       dataRoot: document.dataRoot,
       runtimeRoot: document.kernel.runtimeRoot,
       runJsonPath: getNotebookRunJsonPath(this.options.dataRoot, projectName, request.sessionId),
-      cells: [],
+      cells: document.runs
+        .filter(
+          (run) =>
+            run.status === 'imported' && (run.kernelKind === 'python' || run.kernelKind === 'r')
+        )
+        .map((run) => ({
+          id: run.cellId,
+          language: run.kernelKind as NotebookLanguage,
+          code: run.script,
+          status: 'idle' as const,
+          executionCount: run.executionCount,
+          latestRunId: run.runId
+        })),
       executionCount: document.runs.length,
       executor: this.createExecutor(request.sessionId, projectName),
       executionQueues: new Map(),
