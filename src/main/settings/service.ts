@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { access, chmod, mkdir, readdir, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
@@ -294,6 +295,9 @@ export type SettingsServiceOptions = {
   // The machine's own Claude config dir, read to reuse its login for the "local" provider. Injectable
   // so tests don't touch the real ~/.claude.
   userClaudeDir?: string
+  // The machine's own Codex config dir, scanned for the "From your agent home" skill source.
+  // Injectable for the same reason as userClaudeDir.
+  userCodexDir?: string
   // Bundled-skill source, injectable so tests can point at a seeded temp dir instead of app resources.
   skillRegistry?: SkillRegistry
   // Writable personal/imported skill store, injectable so tests can use a temp storage root.
@@ -328,6 +332,7 @@ class SettingsService {
   private readonly opencodeDetectDeps: OpencodeDetectDeps
   private readonly codexDetectDeps: CodexDetectDeps
   private readonly userClaudeDir: string
+  private readonly userCodexDir: string
   private readonly skillRegistry: SkillRegistry
   private readonly userSkills: UserSkillRepository
   private readonly executeClaudeProbe: ExecuteClaudeProbe
@@ -382,6 +387,7 @@ class SettingsService {
       managedCodexPath: managedNativePath
     }
     this.userClaudeDir = options.userClaudeDir ?? defaultUserClaudeDir()
+    this.userCodexDir = options.userCodexDir ?? join(homedir(), '.codex')
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
     this.userSkills = options.userSkills ?? new UserSkillRepository(this.storageRoot)
     this.executeClaudeProbe = options.executeClaudeProbe ?? executeClaudeProbe
@@ -857,13 +863,34 @@ class SettingsService {
     return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
   }
 
-  // Lists the skills under the user's machine-level Claude config (~/.claude/skills/). Surfaced
-  // when the active provider is claude-isolated so the user can pull their existing Claude skills
-  // into Open Science without re-importing from a zip or repo. The path is anchored on userClaudeDir
-  // (which is injectable for tests) rather than `homedir()` directly so tests don't read the real
-  // host home.
+  // Lists the skills under the active agent's machine-level home. The "From your agent home" import
+  // source is framework-agnostic: it resolves to `~/.claude/skills/` when the active framework is
+  // `claude-code` and to `~/.codex/skills/` when it is `codex`. OpenCode reads skills per-project
+  // (no global convention) so the source is hidden for that framework. The Claude path is anchored
+  // on `userClaudeDir` and the Codex path on `userCodexDir` so tests can inject a temp dir.
   async listAgentHomeSkills(): Promise<AgentHomeSkillView[]> {
-    return this.userSkills.listAgentHomeSkills(join(this.userClaudeDir, 'skills'))
+    const settings = await this.repository.getSettings()
+    const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+    const homeSkillsDir = this.resolveAgentHomeSkillsDir(framework)
+
+    if (!homeSkillsDir) return []
+
+    return this.userSkills.listAgentHomeSkills(homeSkillsDir)
+  }
+
+  // Resolves the per-framework global skills directory, or undefined when the active framework
+  // has no global skills convention. Kept private so callers go through `listAgentHomeSkills`.
+  private resolveAgentHomeSkillsDir(framework: AgentFrameworkId): string | undefined {
+    switch (framework) {
+      case 'claude-code':
+        return join(this.userClaudeDir, 'skills')
+      case 'codex':
+        return join(this.userCodexDir, 'skills')
+      case 'opencode':
+        return undefined
+      default:
+        return undefined
+    }
   }
 
   // Imports a single agent-home skill by copying its directory into the imported-skill store.

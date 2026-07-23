@@ -82,6 +82,7 @@ const createService = (
     // When false, the ACP smoke test fails (adapter present but can't initialize).
     codexSmokeOk?: boolean
     codexAuth?: CodexAuthControllerPort
+    userCodexDir?: string
   } = {}
 ): InstanceType<typeof SettingsService> =>
   new SettingsService({
@@ -89,6 +90,7 @@ const createService = (
     storageRoot,
     // Point at a non-existent user Claude dir so tests never read the real ~/.claude for local auth.
     userClaudeDir: options.userClaudeDir ?? join(storageRoot, 'no-user-claude'),
+    userCodexDir: options.userCodexDir ?? join(storageRoot, 'no-user-codex'),
     executeClaudeProbe: options.executeClaudeProbe,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     installManagedClaudeImpl: options.installManagedClaudeImpl as any,
@@ -2897,5 +2899,78 @@ describe('SettingsService: notifications preference', () => {
 
     expect(snapshot.notificationsEnabled).toBe(false)
     expect((await repository.getSettings()).notificationsEnabled).toBe(false)
+  })
+})
+
+describe('SettingsService: listAgentHomeSkills framework routing', () => {
+  // The agent-home skill import is framework-agnostic: claude-code scans `~/.claude/skills/`,
+  // codex scans `~/.codex/skills/`, and opencode (which has no global skills convention) returns
+  // an empty list. The active framework is read from settings on every call so switching the
+  // agent framework takes effect without restarting the service.
+
+  // Seeds a fake skill at <agentHome>/skills/<slug>/SKILL.md so the scanner picks it up.
+  const seedSkill = async (agentHome: string, slug: string): Promise<void> => {
+    const skillDir = join(agentHome, 'skills', slug)
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(
+      join(skillDir, 'SKILL.md'),
+      `---\nname: ${slug}\ndescription: Test skill ${slug}\n---\nBody of ${slug}.\n`
+    )
+  }
+
+  it("scans the user Claude home when the active framework is claude-code", async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
+    const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
+    await seedSkill(userClaudeDir, 'alpha')
+    // A Codex skill in the Codex home must not be picked up while the active framework is Claude.
+    await seedSkill(userCodexDir, 'should-not-appear')
+    const service = createService(undefined, { userClaudeDir, userCodexDir })
+    await repository.setAgentFramework('claude-code')
+
+    const items = await service.listAgentHomeSkills()
+
+    expect(items.map((item) => item.slug)).toEqual(['alpha'])
+    expect(items[0].path).toBe(join(userClaudeDir, 'skills', 'alpha'))
+  })
+
+  it("scans the user Codex home when the active framework is codex", async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
+    const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
+    await seedSkill(userCodexDir, 'beta')
+    // A Claude skill in the Claude home must not be picked up while the active framework is Codex.
+    await seedSkill(userClaudeDir, 'should-not-appear')
+    const service = createService(undefined, { userClaudeDir, userCodexDir })
+    await repository.setAgentFramework('codex')
+
+    const items = await service.listAgentHomeSkills()
+
+    expect(items.map((item) => item.slug)).toEqual(['beta'])
+    expect(items[0].path).toBe(join(userCodexDir, 'skills', 'beta'))
+  })
+
+  it('returns an empty list when the active framework is opencode (no global home)', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
+    const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
+    // Even with skills present, opencode's lack of a global skills convention must hide the source.
+    await seedSkill(userClaudeDir, 'hidden-1')
+    await seedSkill(userCodexDir, 'hidden-2')
+    const service = createService(undefined, { userClaudeDir, userCodexDir })
+    await repository.setAgentFramework('opencode')
+
+    expect(await service.listAgentHomeSkills()).toEqual([])
+  })
+
+  it('re-reads the active framework on every call (no cached home dir)', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
+    const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
+    await seedSkill(userClaudeDir, 'claude-only')
+    await seedSkill(userCodexDir, 'codex-only')
+    const service = createService(undefined, { userClaudeDir, userCodexDir })
+
+    await repository.setAgentFramework('claude-code')
+    expect((await service.listAgentHomeSkills()).map((i) => i.slug)).toEqual(['claude-only'])
+
+    await repository.setAgentFramework('codex')
+    expect((await service.listAgentHomeSkills()).map((i) => i.slug)).toEqual(['codex-only'])
   })
 })
