@@ -1616,10 +1616,17 @@ class AcpRuntime {
       // connection (e.g. session.dispose or connection.close). Force the connection invalid so the
       // barrier-release below cannot let a blocked ensureConnected reuse the STALE connection on the
       // old backend; the re-check there will fall through to a fresh connect(). Set status directly
-      // rather than via setStatus/emitState — the throw may have come from emitState itself, and the
-      // next connect() emits fresh state anyway.
+      // rather than via setStatus — the throw may have come from emitState itself.
       this.connection = undefined
       this.status = 'closed'
+      // Broadcast the closed status defensively so the renderer doesn't keep showing the prior
+      // 'connected' state when no createSession follows to re-emit it. Guarded because emitState may
+      // be the very thing that threw — the barrier release below must still run.
+      try {
+        this.emitState()
+      } catch (emitError) {
+        safeLogError('emitState after failed deferred disconnect failed', errorLogFields(emitError))
+      }
     } finally {
       this.resolveReconnectBarrier()
     }
