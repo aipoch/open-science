@@ -501,11 +501,15 @@ const ConversationPanel = ({
           </div>
         </div>
 
-        <ReportErrorDialog
-          open={isReportOpen}
-          error={activeSession?.error ?? ''}
-          onClose={() => setIsReportOpen(false)}
-        />
+        {/* Mounted only while open so the dialog seeds its editable report fresh from the current
+            error each time (lazy initial state), instead of syncing via an effect. */}
+        {isReportOpen ? (
+          <ReportErrorDialog
+            open
+            error={activeSession?.error ?? ''}
+            onClose={() => setIsReportOpen(false)}
+          />
+        ) : null}
       </section>
     </ResizablePanel>
   )

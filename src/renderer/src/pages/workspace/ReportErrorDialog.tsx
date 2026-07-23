@@ -24,10 +24,6 @@ const ReportErrorDialog = ({ open, error, onClose }: ReportErrorDialogProps): Re
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
 
-  const [consented, setConsented] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const [revealMessage, setRevealMessage] = useState<string | null>(null)
-
   // Recompute the bundle only when an input changes; the picker and preview share one source of truth.
   const context = useMemo<ErrorReportContext>(() => {
     const provider = providers.find((candidate) => candidate.id === activeProviderId)
@@ -35,8 +31,8 @@ const ReportErrorDialog = ({ open, error, onClose }: ReportErrorDialogProps): Re
       (framework) => framework.id === agentFrameworkId
     )?.displayName
 
-    // The bridge is read defensively so the always-mounted dialog renders even where the preload
-    // surface is absent (tests, early boot); the report helpers tolerate every missing field.
+    // The bridge is read defensively so the dialog renders even where the preload surface is absent
+    // (tests, early boot); the report helpers tolerate every missing field.
     return {
       error,
       appVersion,
@@ -57,30 +53,44 @@ const ReportErrorDialog = ({ open, error, onClose }: ReportErrorDialogProps): Re
   ])
 
   const reportText = useMemo(() => buildErrorReportText(context), [context])
-  const issueUrl = useMemo(() => buildGithubIssueUrl(context), [context])
 
-  // Copies the reviewed bundle and briefly confirms; the write stays local (no network).
+  const [consented, setConsented] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [revealMessage, setRevealMessage] = useState<string | null>(null)
+  // Editable copy of the report text so users can redact sensitive content before consenting. Seeded
+  // lazily from the current report; the parent remounts this dialog on each open, so it stays fresh.
+  const [editedText, setEditedText] = useState(reportText)
+
+  // URL uses the user-edited body so any sensitive-data redactions made in the textarea are reflected.
+  const issueUrl = useMemo(() => buildGithubIssueUrl(context, editedText), [context, editedText])
+
+  // Copies the edited bundle and briefly confirms; the write stays local (no network).
   const handleCopy = (): void => {
-    void navigator.clipboard.writeText(reportText).then(() => {
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1500)
-    })
+    void navigator.clipboard
+      .writeText(editedText)
+      .then(() => {
+        setCopied(true)
+        window.setTimeout(() => setCopied(false), 1500)
+      })
+      .catch(() => {
+        setRevealMessage('Could not write to clipboard.')
+      })
   }
 
   // Reveals the on-device log so the user can attach it themselves; the log is never sent for them.
+  // Defensive: `window.api` may be absent in tests or early boot (mirrors the useMemo guard above).
   const handleRevealLog = async (): Promise<void> => {
+    if (!window.api?.logs?.revealInFolder) {
+      setRevealMessage('Log reveal is not available in this environment.')
+      return
+    }
     const result = await window.api.logs.revealInFolder()
     if (!result.revealed) setRevealMessage(result.error ?? 'Could not reveal the log file.')
   }
 
-  // Reset transient state whenever the dialog closes so a re-open starts from a clean, unconsented view.
+  // Reset transient state whenever the dialog closes so a re-open starts from a clean view.
   const handleOpenChange = (next: boolean): void => {
-    if (!next) {
-      setConsented(false)
-      setCopied(false)
-      setRevealMessage(null)
-      onClose()
-    }
+    if (!next) onClose()
   }
 
   return (
@@ -97,12 +107,16 @@ const ReportErrorDialog = ({ open, error, onClose }: ReportErrorDialogProps): Re
             attached automatically.
           </Dialog.Description>
 
-          <pre
-            className="mt-4 min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-lg border border-border-200 bg-bg-100 px-3 py-2.5 font-mono text-[12px] leading-5 text-text-100"
+          <textarea
+            className="mt-4 min-h-0 flex-1 resize-none overflow-auto rounded-lg border border-border-200 bg-bg-100 px-3 py-2.5 font-mono text-[12px] leading-5 text-text-100 focus:outline-none focus:ring-1 focus:ring-primary/50"
             aria-label="Error report preview"
-          >
-            {reportText}
-          </pre>
+            value={editedText}
+            onChange={(event) => {
+              setEditedText(event.target.value)
+              // Require re-consent whenever the user edits the content being shared.
+              setConsented(false)
+            }}
+          />
 
           <label className="mt-4 flex items-start gap-2 text-[13px] leading-5 text-text-100">
             <input

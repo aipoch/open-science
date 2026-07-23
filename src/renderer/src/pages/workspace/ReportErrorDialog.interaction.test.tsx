@@ -7,7 +7,6 @@ import { ReportErrorDialog } from './ReportErrorDialog'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-// Minimal store state the dialog reads through its selectors.
 const settingsState = {
   providers: [{ id: 'p1', name: 'Anthropic' }],
   activeProviderId: 'p1',
@@ -59,14 +58,17 @@ const issueLink = (): HTMLAnchorElement | null =>
 const consentCheckbox = (): HTMLInputElement =>
   document.body.querySelector('input[type="checkbox"]') as HTMLInputElement
 
+const textarea = (): HTMLTextAreaElement =>
+  document.body.querySelector('textarea[aria-label="Error report preview"]') as HTMLTextAreaElement
+
 describe('ReportErrorDialog', () => {
-  it('previews the error and environment, prefilled from the stores and bridge', () => {
+  it('seeds the editable textarea with error and environment on open', () => {
     renderDialog()
-    const preview = document.body.querySelector('[aria-label="Error report preview"]')
-    expect(preview?.textContent).toContain('Run failed: connection reset')
-    expect(preview?.textContent).toContain('App version: 0.5.1')
-    expect(preview?.textContent).toContain('Provider / model: Anthropic · claude-opus-4')
-    expect(preview?.textContent).toContain('Operating system: Windows')
+    const value = textarea()?.value ?? ''
+    expect(value).toContain('Run failed: connection reset')
+    expect(value).toContain('App version: 0.5.1')
+    expect(value).toContain('Provider / model: Anthropic · claude-opus-4')
+    expect(value).toContain('Operating system: Windows')
   })
 
   it('gates the GitHub issue action behind the consent checkbox', () => {
@@ -81,5 +83,52 @@ describe('ReportErrorDialog', () => {
     expect(issueLink()?.getAttribute('aria-disabled')).toBe('false')
     expect(issueLink()?.getAttribute('href')).toContain('/issues/new?')
     expect(issueLink()?.getAttribute('href')).toContain('template=bug_report.yml')
+  })
+
+  it('resets consent when the user edits the textarea', () => {
+    renderDialog()
+    act(() => {
+      consentCheckbox().click()
+    })
+    expect(issueLink()?.getAttribute('aria-disabled')).toBe('false')
+
+    act(() => {
+      const ta = textarea()
+      // React tracks the controlled value internally; set via the native setter so onChange fires.
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value'
+      )?.set
+      setter?.call(ta, 'redacted content')
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    expect(issueLink()?.getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('includes environment block in the GitHub issue URL logs field', () => {
+    renderDialog()
+    act(() => {
+      consentCheckbox().click()
+    })
+    const href = issueLink()?.getAttribute('href') ?? ''
+    const params = new URL(href).searchParams
+    expect(params.get('logs')).toContain('Environment')
+    expect(params.get('logs')).toContain('Claude Code')
+  })
+
+  it('surfaces an error message when the preload bridge is missing', async () => {
+    ;(window as unknown as { api: unknown }).api = undefined
+    renderDialog()
+
+    await act(async () => {
+      const revealBtn = Array.from(document.body.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Reveal log file')
+      )
+      revealBtn?.click()
+    })
+
+    const alert = document.body.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('not available')
   })
 })

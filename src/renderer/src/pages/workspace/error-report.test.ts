@@ -81,7 +81,19 @@ describe('buildGithubIssueUrl', () => {
     expect(url.searchParams.get('what-happened')).toBe('Run failed: connection reset')
     expect(url.searchParams.get('app-version')).toBe('0.5.1')
     expect(url.searchParams.get('provider-model')).toBe('Anthropic · claude-opus-4')
-    expect(url.searchParams.get('logs')).toContain('not attached automatically')
+    expect(url.searchParams.get('logs')).toContain('Not attached automatically')
+  })
+
+  it('carries the environment block (framework + runtime) into the logs field', () => {
+    const logs = new URL(buildGithubIssueUrl(baseContext)).searchParams.get('logs') ?? ''
+    expect(logs).toContain('Environment')
+    expect(logs).toContain('Agent framework: Claude Code')
+    expect(logs).toContain('Electron 30.0.0, Chrome 124, Node 20.11')
+  })
+
+  it('uses the edited report body for what-happened when provided', () => {
+    const url = new URL(buildGithubIssueUrl(baseContext, 'redacted summary'))
+    expect(url.searchParams.get('what-happened')).toBe('redacted summary')
   })
 
   it('sets the os field only for platforms the dropdown can match', () => {

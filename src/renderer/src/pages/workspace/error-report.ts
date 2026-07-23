@@ -97,10 +97,14 @@ export const buildErrorReportText = (context: ErrorReportContext): string =>
 // query params keyed by each field's `id` in bug_report.yml; the dropdown (`os`) is matched by option
 // label. Only fields we can fill accurately are set — Steps to reproduce is left for the user, and the
 // preflight checkboxes cannot be prefilled, so the user still confirms them in the browser.
-export const buildGithubIssueUrl = (context: ErrorReportContext): string => {
+//
+// `reportBody` overrides the `what-happened` field with user-edited content (the dialog's textarea
+// value), so the submitted issue reflects any sensitive-data redactions made before consent.
+export const buildGithubIssueUrl = (context: ErrorReportContext, reportBody?: string): string => {
   const params = new URLSearchParams({ template: 'bug_report.yml' })
 
-  const whatHappened = context.error.trim()
+  // Prefer the user-edited body; fall back to the raw error string.
+  const whatHappened = (reportBody ?? context.error).trim()
   if (whatHappened) params.set('what-happened', whatHappened)
 
   if (context.appVersion) params.set('app-version', context.appVersion)
@@ -111,10 +115,14 @@ export const buildGithubIssueUrl = (context: ErrorReportContext): string => {
   const osLabel = osLabelForPlatform(context.platform)
   if (osLabel) params.set('os', osLabel)
 
+  // Include the full environment block (framework, runtime versions) so the issue captures what the
+  // dialog preview shows — previously only the error text and structured fields were sent.
   params.set(
     'logs',
-    'The runtime log is not attached automatically (it can contain local paths and prompts). ' +
-      'Attach it from Settings → General → Diagnostics after reviewing it.'
+    `**Environment**\n${buildEnvironmentBlock(context)}\n\n` +
+      '**Runtime log**\n' +
+      'Not attached automatically (may contain local paths and prompts). ' +
+      'Reveal it from Settings → General → Diagnostics and attach after reviewing.'
   )
 
   return `${APP.links.githubRepo}/issues/new?${params.toString()}`
