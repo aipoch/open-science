@@ -140,4 +140,24 @@ describe('ReportErrorDialog', () => {
     const alert = document.body.querySelector('[role="alert"]')
     expect(alert?.textContent).toContain('not available')
   })
+
+  it('surfaces an inline message when the reveal IPC call rejects', async () => {
+    ;(window as unknown as { api: { logs: { revealInFolder: () => Promise<unknown> } } }).api = {
+      logs: { revealInFolder: vi.fn().mockRejectedValue(new Error('IPC channel closed')) }
+    } as never
+
+    renderDialog()
+
+    await act(async () => {
+      const revealBtn = Array.from(document.body.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Reveal log file')
+      )
+      revealBtn?.click()
+      // Let the rejected promise settle before assertions.
+      await Promise.resolve()
+    })
+
+    const alert = document.body.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('IPC channel closed')
+  })
 })

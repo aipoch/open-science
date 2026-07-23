@@ -277,14 +277,16 @@ const ConversationPanel = ({
                     <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
                     Compacting conversation to fit the context limit…
                   </div>
-                ) : actionError || activeSession?.error ? (
+                ) : actionError || activeSession?.status === 'error' ? (
                   <div className="mb-2 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700">
                     <span className="min-w-0 flex-1 break-words">
-                      {actionError ?? activeSession?.error}
+                      {actionError ?? activeSession?.error ?? 'The run failed.'}
                     </span>
-                    {/* Failed runs get a report affordance; transient action errors do not, since there
-                        is no run diagnostic to attach. */}
-                    {activeSession?.error ? (
+                    {/* Report affordance only for a failed run (status === 'error'), and only when its
+                        own error is what's shown. A transient actionError takes over the box and has no
+                        run diagnostic to attach, so hiding the button keeps the shown text and the
+                        reported text identical — the user reports exactly what they see. */}
+                    {activeSession?.status === 'error' && !actionError ? (
                       <button
                         type="button"
                         onClick={() => setIsReportOpen(true)}
@@ -506,7 +508,7 @@ const ConversationPanel = ({
         {isReportOpen ? (
           <ReportErrorDialog
             open
-            error={activeSession?.error ?? ''}
+            error={activeSession?.error ?? 'The run failed with no error message.'}
             onClose={() => setIsReportOpen(false)}
           />
         ) : null}

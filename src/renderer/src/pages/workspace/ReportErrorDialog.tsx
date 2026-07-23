@@ -87,14 +87,19 @@ const ReportErrorDialog = ({ open, error, onClose }: ReportErrorDialogProps): Re
   }
 
   // Reveals the on-device log so the user can attach it themselves; the log is never sent for them.
-  // Defensive: `window.api` may be absent in tests or early boot (mirrors the useMemo guard above).
+  // Defensive: `window.api` may be absent in tests or early boot (mirrors the useMemo guard above),
+  // and the IPC call itself can reject — both surface inline rather than throwing (matches GeneralPanel).
   const handleRevealLog = async (): Promise<void> => {
     if (!window.api?.logs?.revealInFolder) {
       setRevealMessage('Log reveal is not available in this environment.')
       return
     }
-    const result = await window.api.logs.revealInFolder()
-    if (!result.revealed) setRevealMessage(result.error ?? 'Could not reveal the log file.')
+    try {
+      const result = await window.api.logs.revealInFolder()
+      if (!result.revealed) setRevealMessage(result.error ?? 'Could not reveal the log file.')
+    } catch (error) {
+      setRevealMessage(error instanceof Error ? error.message : 'Could not reveal the log file.')
+    }
   }
 
   // Reset transient state whenever the dialog closes so a re-open starts from a clean view.
@@ -148,7 +153,18 @@ const ReportErrorDialog = ({ open, error, onClose }: ReportErrorDialogProps): Re
               onChange={(event) => setConsented(event.target.checked)}
             />
             <span>
-              I&apos;ve reviewed the details above and agree to share them in a public GitHub issue.
+              I&apos;ve reviewed the details above and agree to share them in a public GitHub issue,
+              subject to GitHub&apos;s{' '}
+              <a
+                href="https://docs.github.com/site-policy/privacy-policies/github-privacy-statement"
+                target="_blank"
+                rel="noreferrer"
+                className="underline hover:text-text-000"
+                onClick={(event) => event.stopPropagation()}
+              >
+                Privacy Statement
+              </a>
+              .
             </span>
           </label>
 

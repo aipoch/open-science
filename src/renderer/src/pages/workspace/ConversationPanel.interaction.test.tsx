@@ -594,3 +594,65 @@ describe('ConversationPanel notebook bar', () => {
     expect(handleOpenJobList).toHaveBeenCalledWith('session-bar')
   })
 })
+
+describe('ConversationPanel error box + report affordance', () => {
+  const errorSession: ChatSession = {
+    id: 'session-err',
+    projectId: 'project-a',
+    title: 'Error session',
+    cwd: '/workspace',
+    status: 'error',
+    error: 'Run failed: connection reset',
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }
+
+  const reportButton = (): HTMLElement | null =>
+    container.querySelector('[aria-label="Report this error"]')
+
+  const errorText = (): string =>
+    container.querySelector('.border-red-200 .break-words')?.textContent ?? ''
+
+  it('shows the error and a Report button for a failed run (status === error)', () => {
+    renderPanel({ activeSession: errorSession })
+    expect(errorText()).toBe('Run failed: connection reset')
+    expect(reportButton()).not.toBeNull()
+  })
+
+  it('renders the error box for a failed run even when it has no error text', () => {
+    renderPanel({ activeSession: { ...errorSession, error: undefined } })
+    expect(errorText()).toBe('The run failed.')
+    // Still reportable — the affordance follows the failure status, not the presence of text.
+    expect(reportButton()).not.toBeNull()
+  })
+
+  it('shows only the transient actionError, without a Report button, for a non-failed session', () => {
+    renderPanel({
+      activeSession: { ...errorSession, status: 'idle', error: undefined },
+      actionError: 'Could not send message'
+    })
+    expect(errorText()).toBe('Could not send message')
+    expect(reportButton()).toBeNull()
+  })
+
+  it('prefers the transient actionError and hides Report so shown text matches reportable text', () => {
+    // Both present: the action error takes over the box; the run report is suppressed to avoid
+    // reporting an error different from the one displayed.
+    renderPanel({ activeSession: errorSession, actionError: 'Could not send message' })
+    expect(errorText()).toBe('Could not send message')
+    expect(reportButton()).toBeNull()
+  })
+
+  it('opens the report dialog when the Report button is clicked', () => {
+    renderPanel({ activeSession: errorSession })
+    act(() => {
+      reportButton()?.click()
+    })
+    // Dialog renders into a portal on document.body.
+    const title = Array.from(document.body.querySelectorAll('*')).find(
+      (el) => el.textContent === 'Report this error' && el.children.length === 0
+    )
+    expect(title).toBeTruthy()
+  })
+})
