@@ -100,28 +100,6 @@ describe('ModelFrameworkCompatibilityAlert', () => {
     expect(alert?.textContent).toContain('DeepSeek')
   })
 
-  it('warns when a Local Claude provider is active under a non-Claude framework', () => {
-    // A claude-default provider is Claude-only regardless of endpoint, so OpenCode can't use it.
-    useSettingsStore.setState({
-      agentFrameworkId: 'opencode',
-      agentFrameworks: FRAMEWORKS,
-      providers: [
-        provider({
-          id: 'p1',
-          name: 'Local Claude',
-          type: 'claude-default',
-          apiEndpoints: ['anthropic']
-        })
-      ],
-      activeProviderId: 'p1'
-    })
-    render()
-
-    const alert = container.querySelector('[role="alert"]')
-    expect(alert).not.toBeNull()
-    expect(alert?.textContent).toContain('OpenCode')
-  })
-
   it('does not warn for a bridge-compatible Chat Completions provider under Codex', () => {
     // A Chat Completions provider is usable through the Codex Responses bridge, and a custom provider's
     // model is always bridge-supported (static registry check, not a runtime probe), so no alert shows.

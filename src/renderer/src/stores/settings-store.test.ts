@@ -704,8 +704,9 @@ describe('selectProviderModelOptions', () => {
       },
       {
         id: 'local',
-        type: 'claude-default',
+        type: 'custom',
         name: 'Local',
+        model: undefined,
         models: [],
         supportsImageInput: false,
         hasKey: false,
@@ -716,7 +717,7 @@ describe('selectProviderModelOptions', () => {
     expect(options).toEqual([
       { providerId: 'c', providerName: 'GW', providerType: 'custom', model: 'm' },
       // A provider with no concrete model still yields one selectable "default" entry (empty model).
-      { providerId: 'local', providerName: 'Local', providerType: 'claude-default', model: '' }
+      { providerId: 'local', providerName: 'Local', providerType: 'custom', model: '' }
     ])
   })
 

@@ -24,6 +24,7 @@ import { isOfficialVendorId } from '../../shared/provider-registry'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
+import { createLogger } from '../logger'
 import {
   createEmptySettings,
   type StoredComputeGrant,
@@ -36,9 +37,10 @@ import {
 
 const SETTINGS_FILE = 'settings.json'
 
+const log = createLogger('settings.repository')
+
 const PROVIDER_TYPES = new Set<ProviderType>([
   'custom',
-  'claude-default',
   'claude-isolated',
   'official',
   'codex-shared',
@@ -154,6 +156,8 @@ const sanitizeValidationFailure = (value: unknown): ProviderValidationFailure | 
 }
 
 // Rebuilds one provider record, dropping unknown fields and records missing required identity.
+// An unknown `type` is dropped at load time and logged at WARN — usually a stale provider kind from a
+// prior version (e.g. the removed 'claude-default'). A bad value must never reach the active snapshot.
 const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   if (!isRecord(value)) return undefined
 
@@ -161,7 +165,13 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   const type = asString(value.type) as ProviderType | undefined
   const name = asString(value.name)
 
-  if (!id || !type || !PROVIDER_TYPES.has(type) || name === undefined) return undefined
+  if (!id || !type || name === undefined) return undefined
+
+  if (!PROVIDER_TYPES.has(type)) {
+    log.warn('dropping stored provider with unknown type', { id, type })
+
+    return undefined
+  }
 
   // An official provider without a recognizable vendor is unusable (no base URL/catalog to resolve),
   // so drop the corrupt record rather than keep a provider that can never spawn or validate.

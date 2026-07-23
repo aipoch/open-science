@@ -69,8 +69,6 @@ type ManagedCodexInstallImpl = (options: {
 const createService = (
   detectResult: ClaudeDetectResult = { found: true, path: '/bin/claude', version: '2.1.0' },
   options: {
-    userClaudeDir?: string
-    executeClaudeProbe?: (executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>
     installManagedClaudeImpl?: ManagedInstallImpl
     installManagedOpencodeImpl?: ManagedInstallImpl
     installManagedCodexImpl?: ManagedCodexInstallImpl
@@ -90,7 +88,8 @@ const createService = (
   new SettingsService({
     repository,
     storageRoot,
-    // Point at a non-existent user Claude dir so tests never read the real ~/.claude for local auth.
+    // Point at a non-existent user Claude dir so tests never read the real ~/.claude. The same
+    // path is now used by claude-isolated skill-scanning; claude-default is gone.
     userClaudeDir: options.userClaudeDir ?? join(storageRoot, 'no-user-claude'),
     userCodexDir: options.userCodexDir ?? join(storageRoot, 'no-user-codex'),
     executeClaudeProbe: options.executeClaudeProbe,
@@ -558,34 +557,9 @@ describe('SettingsService: providers', () => {
       baseUrl: 'https://gateway.example/v1'
     })
   })
-
-  it('allows a claude-default provider with no key or base URL', async () => {
-    const service = createService()
-
-    const snapshot = await service.upsertProvider({ type: 'claude-default', name: 'Local Claude' })
-
-    expect(snapshot.providers).toHaveLength(1)
-    expect(snapshot.providers[0]).toMatchObject({ type: 'claude-default', hasKey: false })
-    expect(snapshot.providers[0].baseUrl).toBeUndefined()
-  })
 })
 
 describe('SettingsService: validation', () => {
-  it('tests Local Claude in the implicit default config when auth is OS-store-only', async () => {
-    const probe = vi.fn<(executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>>()
-    probe.mockResolvedValue(undefined)
-    const service = createService(undefined, { executeClaudeProbe: probe })
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
-
-    const result = await service.validateProvider({ draft: { type: 'claude-default' } })
-
-    expect(result).toMatchObject({ ok: true, category: 'ok' })
-    expect(probe).toHaveBeenCalledOnce()
-    const probeEnv = probe.mock.calls[0][1]
-    // No portable token/credentials fixture exists, so Claude must be allowed to use its native login.
-    expect(Object.hasOwn(probeEnv, 'CLAUDE_CONFIG_DIR')).toBe(false)
-  })
-
   it('records lastValidatedAt for a saved provider on success', async () => {
     const service = createService()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200 }))
@@ -1509,57 +1483,6 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(config.envOverrides.ANTHROPIC_API_KEY).toBeUndefined()
   })
 
-  it("uses Claude's implicit default config for a local provider with OS-store-only auth", async () => {
-    const service = createService()
-
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
-    const created = (await service.upsertProvider({ type: 'claude-default', name: 'Local' }))
-      .providers[0]
-    await service.setActiveProvider(created.id)
-
-    const config = await service.resolveActiveSpawnConfig()
-
-    // No portable auth fixture exists, so the explicit app config is removed. This lets Claude Code
-    // reuse native credential stores that are available only in its implicit default context.
-    expect(config.envOverrides.CLAUDE_CONFIG_DIR).toBeUndefined()
-    expect(config.envOverrides.ANTHROPIC_BASE_URL).toBeUndefined()
-    expect(config.envOverrides.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
-  })
-
-  it('injects the local login (~/.claude token) for a local provider at spawn time', async () => {
-    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-user-claude-'))
-    await mkdir(userClaudeDir, { recursive: true })
-    await writeFile(
-      join(userClaudeDir, 'settings.json'),
-      JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'sk-user', ANTHROPIC_BASE_URL: 'https://gw' } })
-    )
-
-    const service = new SettingsService({
-      repository,
-      storageRoot,
-      userClaudeDir,
-      detectDeps: {
-        env: {},
-        homePath: '/home',
-        platform: 'linux',
-        isExecutable: () => Promise.resolve(true),
-        getVersion: () => Promise.resolve('2.1.0'),
-        resolveNpmBinDirs: () => Promise.resolve([])
-      }
-    })
-
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
-    const created = (await service.upsertProvider({ type: 'claude-default', name: 'Local' }))
-      .providers[0]
-    await service.setActiveProvider(created.id)
-
-    const config = await service.resolveActiveSpawnConfig()
-    await rm(userClaudeDir, { recursive: true, force: true })
-
-    expect(config.envOverrides.ANTHROPIC_AUTH_TOKEN).toBe('sk-user')
-    expect(config.envOverrides.ANTHROPIC_BASE_URL).toBe('https://gw')
-  })
-
   it('throws a clear error when no active provider is configured', async () => {
     const service = createService()
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
@@ -1782,14 +1705,6 @@ describe('SettingsService: official vendors', () => {
 // provider types: the type branches, the official default-model fallback, active-model switching,
 // and live-fetched models.
 describe('SettingsService: image-input capability', () => {
-  it('is always true for a claude-default provider', async () => {
-    const service = createService()
-    const created = (await service.upsertProvider({ type: 'claude-default', name: 'Local Claude' }))
-      .providers[0]
-
-    expect(created.supportsImageInput).toBe(true)
-  })
-
   it('reflects the custom provider flag (true only when explicitly enabled)', async () => {
     const service = createService()
 
@@ -1974,7 +1889,7 @@ describe('SettingsService: skills', () => {
     new SettingsService({
       repository,
       storageRoot,
-      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      
       skillRegistry: new SkillRegistry(await seedBundle())
     })
 
@@ -2061,8 +1976,15 @@ describe('SettingsService: skills', () => {
     const service = await createSkillService()
 
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
-    const created = (await service.upsertProvider({ type: 'claude-default', name: 'Local' }))
-      .providers[0]
+    const created = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'Local',
+        baseUrl: 'https://g/v1',
+        model: 'm',
+        key: 'k'
+      })
+    ).providers[0]
     await service.setActiveProvider(created.id)
     await service.setSkillEnabled({ id: 'demo', enabled: false })
 
@@ -2099,7 +2021,7 @@ describe('SettingsService: skills', () => {
     const service = new SettingsService({
       repository,
       storageRoot,
-      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      
       skillRegistry: new SkillRegistry(await seedBundle()),
       codexDetectDeps: {
         env: { PATH: dirname(adapterPath) },
@@ -2148,7 +2070,7 @@ describe('SettingsService: skills', () => {
     const service = new SettingsService({
       repository,
       storageRoot,
-      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      
       skillRegistry: new SkillRegistry(await seedBundle()),
       codexDetectDeps: {
         env: {},
@@ -2204,7 +2126,7 @@ describe('SettingsService: skills', () => {
     const service = new SettingsService({
       repository,
       storageRoot,
-      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      
       skillRegistry: new SkillRegistry(await seedBundle()),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { importFromGitHub, list: () => Promise.resolve([]) } as any
@@ -2223,7 +2145,7 @@ describe('SettingsService: skills', () => {
     const service = new SettingsService({
       repository,
       storageRoot,
-      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { scanRepo } as any
     })
@@ -2440,7 +2362,7 @@ describe('checkEnvironment', () => {
     const service = new SettingsService({
       repository,
       storageRoot,
-      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      
       detectDeps: {
         env: {},
         homePath: '/home',
@@ -2466,7 +2388,7 @@ describe('checkEnvironment', () => {
     const service = new SettingsService({
       repository,
       storageRoot,
-      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      
       detectDeps: {
         env: { PATH: '/other-bin' },
         homePath: '/home',
@@ -2494,7 +2416,7 @@ describe('checkEnvironment', () => {
     const service = new SettingsService({
       repository,
       storageRoot,
-      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      
       detectDeps: {
         env: { PATH: '/found-bin' },
         homePath: '/home',

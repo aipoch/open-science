@@ -37,9 +37,8 @@ export type ProviderEnvOptions = {
 const getAppClaudeConfigDir = (storageRoot: string): string => join(storageRoot, 'claude')
 
 // Builds spawn env overrides for one provider. All providers share the app-owned CLAUDE_CONFIG_DIR;
-// a provider only supplies credentials (endpoint / token / model). The "local" (claude-default)
-// provider supplies none here — it relies on the auth imported into the app dir. Empty/omitted fields
-// are simply not set so callers can merge this over process.env without erasing unrelated variables.
+// a provider only supplies credentials (endpoint / token / model). Empty/omitted fields are simply
+// not set so callers can merge this over process.env without erasing unrelated variables.
 const buildProviderEnv = (
   provider: ResolvedProvider,
   { storageRoot, claudeExecutablePath }: ProviderEnvOptions
@@ -49,7 +48,6 @@ const buildProviderEnv = (
     CLAUDE_CONFIG_DIR: getAppClaudeConfigDir(storageRoot)
   }
 
-  // Model applies to both types (required for custom, optional override for local).
   if (provider.model) env.ANTHROPIC_MODEL = provider.model
 
   if (provider.type === 'custom') {
@@ -69,9 +67,6 @@ const buildProviderEnv = (
     // ~/.claude touch, no OS credential store.
     if (provider.key) env.CLAUDE_CODE_OAUTH_TOKEN = provider.key
   }
-
-  // claude-default (local): no endpoint/token injected here — it uses the auth stored in the app dir
-  // (imported from ~/.claude, or written by an in-app `claude login`).
 
   return env
 }

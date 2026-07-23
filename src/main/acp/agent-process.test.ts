@@ -95,7 +95,6 @@ describe('buildAgentSpawnEnv', () => {
     expect(env.PATH).toBe('/usr/bin')
     expect(env.CLAUDE_CODE_EXECUTABLE).toBe('/bin/claude')
   })
-
   it('drops inherited CLAUDE_CODE_OAUTH_TOKEN so a custom gateway cannot carry a subscription', () => {
     // The setup-token flow writes CLAUDE_CODE_OAUTH_TOKEN to the shell. A custom / official gateway
     // that does not set this var would let the parent's subscription token bleed into the spawned
@@ -116,24 +115,6 @@ describe('buildAgentSpawnEnv', () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('provider-token')
     expect(env.CLAUDE_CONFIG_DIR).toBe('/provider/config')
-  })
-
-  it('preserves the legacy local Claude auth context until claude-default is removed', () => {
-    const env = buildAgentSpawnEnv(
-      {
-        ANTHROPIC_BASE_URL: 'https://proxy.example',
-        CLAUDE_CODE_OAUTH_TOKEN: 'local-subscription-token',
-        CLAUDE_CONFIG_DIR: '/inherited/config',
-        PATH: '/usr/bin'
-      },
-      { ANTHROPIC_MODEL: 'claude-opus' },
-      '/bin/claude'
-    )
-
-    expect(env.ANTHROPIC_BASE_URL).toBe('https://proxy.example')
-    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('local-subscription-token')
-    expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
-    expect(env.ANTHROPIC_MODEL).toBe('claude-opus')
   })
 
   it('drops inherited CLAUDE_CONFIG_DIR even when envOverrides provides a different one', () => {

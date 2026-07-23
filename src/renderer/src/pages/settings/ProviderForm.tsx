@@ -99,7 +99,7 @@ const RequiredMark = (): React.JSX.Element => (
 
 // Provider fields switch by type: pick a type first, then reveal its options. Custom exposes an
 // Anthropic-compatible gateway/key/model; an official vendor exposes a key (+ region) and picks a
-// model from the registry catalog; claude-default only a model override. No plaintext key is rendered.
+// model from the registry catalog. No plaintext key is rendered.
 const ProviderForm = ({
   value,
   onChange,
@@ -232,7 +232,7 @@ const ProviderForm = ({
             aria-label="Provider name"
             value={value.name}
             disabled={disabled}
-            placeholder={vendor ? vendor.label : isCustom ? 'e.g. My gateway' : 'e.g. Local Claude'}
+            placeholder={vendor ? vendor.label : 'e.g. My gateway'}
             onChange={(event) => onChange({ name: event.target.value })}
           />
         </div>

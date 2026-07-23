@@ -18,7 +18,7 @@ export type PreflightInput = {
   codexPathExists: boolean
   // The selected framework, resolved (default applied) by the caller.
   agentFrameworkId: AgentFrameworkId
-  // Whether a provider's credentials are usable (claude-default is always true; custom must decrypt).
+  // Whether a provider's credentials are usable (codex subscriptions always; custom must decrypt).
   isProviderKeyUsable: (provider: StoredProvider) => boolean
   // Whether the active provider can actually drive the selected framework (endpoint + provider-type
   // compatibility). Resolved by the caller, which has the vendor registry to derive official apiTypes.
@@ -52,7 +52,7 @@ const computePreflight = ({
     : undefined
 
   // "Ready" also requires the active provider to be able to drive the selected framework, so an
-  // incompatible pair (e.g. OpenCode + a Local Claude provider) is never marked ready.
+  // incompatible pair (e.g. OpenCode + a Codex-only provider) is never marked ready.
   const activeProviderReady = Boolean(
     activeProvider &&
     activeProvider.lastValidatedAt !== undefined &&

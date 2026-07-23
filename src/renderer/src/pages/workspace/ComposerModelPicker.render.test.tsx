@@ -302,17 +302,6 @@ describe('ComposerModelPicker', () => {
     expect(reason).toContain('/v1/chat/completions')
   })
 
-  it('explains a local Claude provider is only usable by Claude Code', () => {
-    const reason = incompatibilityReason(
-      { apiEndpoints: ['anthropic'], type: 'claude-default', name: 'Local Claude' },
-      'OpenCode',
-      ['anthropic', 'openai']
-    )
-
-    expect(reason).toContain('local Claude sign-in')
-    expect(reason).toContain('only Claude Code can run')
-  })
-
   it('shows the active model label when multiple options exist', () => {
     useSettingsStore.setState({
       providers: [
@@ -340,7 +329,7 @@ describe('ComposerModelPicker', () => {
     useSettingsStore.setState({
       providers: [
         provider({ id: 'c', name: 'Gateway', model: 'my-model', models: ['my-model'] }),
-        provider({ id: 'local', type: 'claude-default', name: 'Local', models: [] })
+        provider({ id: 'local', type: 'custom', name: 'Local', model: undefined, models: [] })
       ],
       activeProviderId: 'c',
       activeModel: 'my-model'

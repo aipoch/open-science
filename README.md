@@ -186,8 +186,9 @@ This section describes durable product capabilities rather than a version-specif
 | ---------------------------- | ------------------------------------------------------------------------------------------------- |
 | **Built-in cloud providers** | Choose from the provider list shown by the installed app and authenticate with the requested key. |
 | **Custom Gateway**           | Supply a compatible Base URL, API Key, and exact model ID.                                        |
-| **Local Claude**             | Reuse the computer's Claude Code login without entering an API Key in Open Science.               |
 | **Codex Subscription**       | Select the Codex agent framework first, then you can select Codex subscription in provider type   |
+
+The "Local Claude" provider has been removed. Use 'Sign in with Anthropic' (setup-token) instead.
 
 Built-in cloud vendors currently include OpenAI, Anthropic, DeepSeek, Zhipu AI (GLM) with a dedicated GLM Coding Plan endpoint, Kimi (Moonshot), MiniMax, StepFun, Xiaomi MIMO, SenseNova, Volcengine Ark, and the OpenRouter aggregation gateway, among others; some are region-specific.
 

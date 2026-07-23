@@ -13,8 +13,8 @@ const CATEGORY_MESSAGES: Record<ValidationCategory, string> = {
   unknown: 'Validation failed for an unknown reason.'
 }
 
-// Categories whose generic text benefits from the specific error/probe message (e.g. a local-Claude
-// timeout or network failure). Auth/model/bad-url already carry actionable text.
+// Categories whose generic text benefits from the specific error/probe message (a timeout or network
+// failure). Auth/model/bad-url already carry actionable text.
 const MESSAGE_CATEGORIES = new Set<ValidationCategory>(['network', 'timeout', 'unknown'])
 
 // Produces the message to show for a validation result, appending a specific server/probe message when
@@ -22,8 +22,7 @@ const MESSAGE_CATEGORIES = new Set<ValidationCategory>(['network', 'timeout', 'u
 const describeValidation = (result: ValidateProviderResult): string => {
   const base = CATEGORY_MESSAGES[result.category]
 
-  // Local Claude has no API-key field. Its subprocess probe supplies a controlled, actionable auth
-  // message, so prefer that over the generic gateway wording used for HTTP 401/403 responses.
+  // Some gateways return their own actionable auth text; prefer it over the generic HTTP 401/403 copy.
   if (result.category === 'auth' && result.message) {
     return result.message
   }

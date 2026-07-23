@@ -84,7 +84,6 @@ const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
 // Human label for a provider type badge: the vendor name for official providers, else a type name.
 const describeType = (provider: ProviderView): string => {
   if (provider.type === 'custom') return 'Custom'
-  if (provider.type === 'claude-default') return 'Local Claude'
   if (provider.type === 'claude-isolated') return 'Claude subscription'
   if (isCodexSubscriptionProvider(provider.type)) return codexSubscriptionProviderIdentity().name
 
@@ -245,9 +244,6 @@ const ProviderList = ({
                       ) : (
                         <div>Not signed in</div>
                       )
-                    ) : provider.type === 'claude-default' ? (
-                      // Local Claude reuses the machine's own auth: show only the model (never a key).
-                      <div className="truncate">Model: {provider.model || 'default'}</div>
                     ) : (
                       // custom + official both authenticate with a key; official's models come from its
                       // catalog (shown as a count) rather than a single stored model.

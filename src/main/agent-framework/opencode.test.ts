@@ -53,7 +53,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
 
   it('does not set the key env var when the provider carries no key', () => {
     const config = opencodeFramework.prepareModelConfig(
-      { type: 'claude-default' },
+      { type: 'custom', baseUrl: 'https://g/v1' },
       { storageRoot: '/data', executablePath: '/bin/opencode' }
     )
     expect(config.env && 'OPENCODE_APP_API_KEY' in config.env).toBe(false)
@@ -514,7 +514,7 @@ describe('buildOpencodeConfig', () => {
   })
 
   it('omits model + models registration when the provider has no model', () => {
-    const config = JSON.parse(buildOpencodeConfig({ type: 'claude-default' }))
+    const config = JSON.parse(buildOpencodeConfig({ type: 'custom' }))
 
     expect(config.model).toBeUndefined()
     expect(config.provider.anthropic.models).toBeUndefined()
