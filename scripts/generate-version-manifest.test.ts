@@ -10,13 +10,14 @@ const VERSION = '0.1.2'
 const CDN = 'https://cdn.example.com'
 const PREFIX = 'open-science'
 
-// The full set of installer filenames a complete release produces (matches release.yml output).
+// The full set of installer filenames a complete release produces (matches electron-builder.yml
+// artifactName templates with the aipoch- prefix).
 const INSTALLERS = {
-  'mac-arm64': `open-science-${VERSION}-mac-arm64.dmg`,
-  'mac-x64': `open-science-${VERSION}-mac-x64.dmg`,
-  'win-x64': `open-science-${VERSION}-win-x64-setup.exe`,
-  'linux-x64-appimage': `open-science-${VERSION}-linux-x64.AppImage`,
-  'linux-x64-deb': `open-science_${VERSION}_amd64.deb`
+  'mac-arm64': `aipoch-open-science-${VERSION}-mac-arm64.dmg`,
+  'mac-x64': `aipoch-open-science-${VERSION}-mac-x64.dmg`,
+  'win-x64': `aipoch-open-science-${VERSION}-win-x64-setup.exe`,
+  'linux-x64-appimage': `aipoch-open-science-${VERSION}-linux-x64.AppImage`,
+  'linux-x64-deb': `aipoch-open-science_${VERSION}_amd64.deb`
 }
 
 // One line of SHA256SUMS.txt worth of file: content is hashed by `sha` (or omitted when sha is null).
@@ -154,7 +155,7 @@ describe('buildManifest', () => {
     )
     // deb keeps the underscore/amd64 convention in its url.
     expect(manifest.downloads['linux-x64-deb'].url).toBe(
-      `${CDN}/${PREFIX}/releases/${VERSION}/open-science_${VERSION}_amd64.deb`
+      `${CDN}/${PREFIX}/releases/${VERSION}/aipoch-open-science_${VERSION}_amd64.deb`
     )
 
     // sha256 comes from SHA256SUMS.txt (entry #2 -> content length 12, sha of '2').
@@ -203,7 +204,7 @@ describe('buildManifest', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     dir = makeReleaseDir([
       entry('mac-arm64', 1),
-      { name: 'open-science-0.1.2-mac-arm64.zip', content: 'zip', sha: HEX('9') },
+      { name: 'aipoch-open-science-0.1.2-mac-arm64.zip', content: 'zip', sha: HEX('9') },
       { name: 'mystery-artifact.bin', content: 'bin', sha: HEX('8') }
     ])
 

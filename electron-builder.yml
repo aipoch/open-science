@@ -136,7 +136,7 @@ linux:
 appImage:
   artifactName: aipoch-${name}-${version}-linux-${arch}.${ext}
 deb:
-  artifactName: aipoch-${name}_${version}_${arch}.${ext}
+  artifactName: aipoch-${name}_${version}_amd64.${ext}
 npmRebuild: false
 # electron-updater feed. Win/Linux/macOS auto-update reads app-update.yml (generated from this block)
 # and fetches its feed from <url>. Win/Linux use the default `latest` channel (latest.yml /
