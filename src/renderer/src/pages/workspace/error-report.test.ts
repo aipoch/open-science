@@ -20,14 +20,15 @@ const baseContext: ErrorReportContext = {
 }
 
 describe('osLabelForPlatform', () => {
-  it('maps windows and linux to template labels', () => {
+  it('maps known platforms to human-readable names', () => {
     expect(osLabelForPlatform('win32')).toBe('Windows')
     expect(osLabelForPlatform('linux')).toBe('Linux')
+    expect(osLabelForPlatform('darwin')).toBe('macOS')
   })
 
-  it('leaves macOS unresolved so the user picks Apple Silicon vs Intel', () => {
-    expect(osLabelForPlatform('darwin')).toBeUndefined()
+  it('returns undefined for an unknown platform', () => {
     expect(osLabelForPlatform(undefined)).toBeUndefined()
+    expect(osLabelForPlatform('sunos')).toBeUndefined()
   })
 })
 
@@ -84,11 +85,13 @@ describe('buildGithubIssueUrl', () => {
     expect(url.searchParams.get('logs')).toContain('Runtime log not attached automatically')
   })
 
-  it('puts only non-structured environment facts (framework + runtime) in the logs field', () => {
+  it('carries framework, runtime, and detected OS in the logs field', () => {
     const logs = new URL(buildGithubIssueUrl(baseContext)).searchParams.get('logs') ?? ''
     expect(logs).toContain('Agent framework: Claude Code')
     expect(logs).toContain('Electron 30.0.0, Chrome 124, Node 20.11')
-    // App version / provider-model / OS have their own form fields — must not be duplicated here,
+    // OS is a dropdown GitHub won't prefill, so its detected value is surfaced here instead.
+    expect(logs).toContain('Detected OS: macOS')
+    // App version / provider-model have their own prefilled inputs — must not be duplicated here,
     // and the shell-rendered field must stay plain (no Markdown emphasis).
     expect(logs).not.toContain('App version')
     expect(logs).not.toContain('**')
@@ -107,11 +110,12 @@ describe('buildGithubIssueUrl', () => {
     expect(url.searchParams.get('what-happened')).toBe('redacted summary')
   })
 
-  it('sets the os field only for platforms the dropdown can match', () => {
-    expect(new URL(buildGithubIssueUrl(baseContext)).searchParams.get('os')).toBeNull()
-    expect(
-      new URL(buildGithubIssueUrl({ ...baseContext, platform: 'win32' })).searchParams.get('os')
-    ).toBe('Windows')
+  it('never sets the os query param (GitHub ignores dropdown prefill) and uses logs instead', () => {
+    // Regression guard for the empirically-confirmed limitation: prefilling a dropdown via query
+    // string does not work, so the param must not be sent and the value must live in logs.
+    const url = new URL(buildGithubIssueUrl({ ...baseContext, platform: 'win32' }))
+    expect(url.searchParams.get('os')).toBeNull()
+    expect(url.searchParams.get('logs')).toContain('Detected OS: Windows')
   })
 
   it('omits fields that are unknown rather than sending empty values', () => {

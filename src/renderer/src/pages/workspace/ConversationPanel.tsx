@@ -278,24 +278,29 @@ const ConversationPanel = ({
                     Compacting conversation to fit the context limit…
                   </div>
                 ) : actionError || activeSession?.status === 'error' ? (
-                  <div className="mb-2 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700">
-                    <span className="min-w-0 flex-1 break-words">
-                      {actionError ?? activeSession?.error ?? 'The run failed.'}
-                    </span>
-                    {/* Report affordance only for a failed run (status === 'error'), and only when its
-                        own error is what's shown. A transient actionError takes over the box and has no
-                        run diagnostic to attach, so hiding the button keeps the shown text and the
-                        reported text identical — the user reports exactly what they see. */}
-                    {activeSession?.status === 'error' && !actionError ? (
-                      <button
-                        type="button"
-                        onClick={() => setIsReportOpen(true)}
-                        className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100"
-                        aria-label="Report this error"
-                      >
-                        <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
-                        Report error
-                      </button>
+                  <div className="mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700">
+                    {/* Transient action errors and a run failure can coexist; show each on its own row
+                        so the run's report affordance is never suppressed by a transient error. */}
+                    {actionError ? (
+                      <span className="min-w-0 break-words">{actionError}</span>
+                    ) : null}
+                    {activeSession?.status === 'error' ? (
+                      <div className="flex items-start gap-2">
+                        <span className="min-w-0 flex-1 break-words">
+                          {activeSession.error ?? 'The run failed.'}
+                        </span>
+                        {/* The button sits on the failure row beside the run's own error, so the shown
+                            text and the reported text are always the same error. */}
+                        <button
+                          type="button"
+                          onClick={() => setIsReportOpen(true)}
+                          className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100"
+                          aria-label="Report this error"
+                        >
+                          <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
+                          Report error
+                        </button>
+                      </div>
                     ) : null}
                   </div>
                 ) : null}

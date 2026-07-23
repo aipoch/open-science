@@ -23,20 +23,21 @@ export type ErrorReportContext = {
   runtimeVersions?: ReportRuntimeVersions
 }
 
-// The exact option labels in .github/ISSUE_TEMPLATE/bug_report.yml's "Operating system" dropdown.
-// GitHub matches a prefilled dropdown by label, so these must stay in sync with the template.
-const OS_LABEL_WINDOWS = 'Windows'
-const OS_LABEL_LINUX = 'Linux'
-
-// Maps process.platform to the template's OS label. macOS is intentionally left unresolved: the
-// dropdown splits Apple Silicon vs Intel, which the platform string alone cannot tell apart, so the
-// user picks the right one rather than us guessing wrong.
+// Maps process.platform to a human-readable OS name for the preview and the `logs` field. macOS is
+// not split into Apple Silicon vs Intel here — the platform string alone can't tell them apart, and
+// the user selects the exact variant in the required dropdown themselves.
+//
+// Note: the bug_report.yml "Operating system" field is a `dropdown`, and GitHub's issue-form prefill
+// does NOT support dropdowns (only `input`/`textarea` accept query values). So we don't try to prefill
+// it — the detected OS is carried in the `logs` field instead, and the user picks the dropdown value.
 export const osLabelForPlatform = (platform: string | undefined): string | undefined => {
   switch (platform) {
     case 'win32':
-      return OS_LABEL_WINDOWS
+      return 'Windows'
     case 'linux':
-      return OS_LABEL_LINUX
+      return 'Linux'
+    case 'darwin':
+      return 'macOS'
     default:
       return undefined
   }
@@ -96,13 +97,16 @@ export const buildErrorReportText = (context: ErrorReportContext): string =>
     'Settings → General → Diagnostics if you want to share it.'
   ].join('\n')
 
-// Builds the `logs` field text: only the environment facts that have no dedicated bug_report.yml
-// field (agent framework, runtime versions). App version / provider-model / OS are omitted here
-// because the form has structured inputs for them — repeating them would clutter the issue. The
-// field is `render: shell`, so this stays plain text (no Markdown).
+// Builds the `logs` field text: the environment facts that either have no dedicated bug_report.yml
+// field (agent framework, runtime versions) or cannot be prefilled (OS — a dropdown GitHub won't
+// prefill, so we surface it here so maintainers still see the detected value even if the user's
+// dropdown pick differs). App version / provider-model are omitted — they prefill into their own
+// inputs. The field is `render: shell`, so this stays plain text (no Markdown).
 const buildLogsFieldText = (context: ErrorReportContext): string => {
+  const osLabel = osLabelForPlatform(context.platform)
   const runtimeLine = formatRuntimeVersions(context)
   const envLines = [
+    osLabel ? `Detected OS: ${osLabel}` : undefined,
     `Agent framework: ${context.frameworkName ?? 'Unknown'}`,
     runtimeLine ? `Runtime: ${runtimeLine}` : undefined
   ].filter(Boolean)
@@ -116,9 +120,10 @@ const buildLogsFieldText = (context: ErrorReportContext): string => {
 }
 
 // Builds a pre-filled "new issue" URL against the Bug report form. GitHub's issue-form prefill reads
-// query params keyed by each field's `id` in bug_report.yml; the dropdown (`os`) is matched by option
-// label. Only fields we can fill accurately are set — Steps to reproduce is left for the user, and the
-// preflight checkboxes cannot be prefilled, so the user still confirms them in the browser.
+// query params keyed by each field's `id` in bug_report.yml, but ONLY for `input`/`textarea` fields —
+// `dropdown` and `checkboxes` fields ignore query values. So we prefill what-happened / app-version /
+// provider-model / logs (the OS dropdown and preflight checkboxes are left for the user; the detected
+// OS is included in `logs` so it isn't lost). Steps to reproduce is intentionally left blank.
 //
 // `what-happened` carries only the error/description (from `context.error`); the caller redacts it by
 // passing an edited context. Structured fields and `logs` carry the environment, so nothing is
@@ -133,9 +138,6 @@ export const buildGithubIssueUrl = (context: ErrorReportContext): string => {
 
   const providerModel = formatProviderModel(context)
   if (providerModel !== 'Unknown') params.set('provider-model', providerModel)
-
-  const osLabel = osLabelForPlatform(context.platform)
-  if (osLabel) params.set('os', osLabel)
 
   params.set('logs', buildLogsFieldText(context))
 

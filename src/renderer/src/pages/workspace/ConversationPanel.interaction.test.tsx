@@ -611,18 +611,17 @@ describe('ConversationPanel error box + report affordance', () => {
   const reportButton = (): HTMLElement | null =>
     container.querySelector('[aria-label="Report this error"]')
 
-  const errorText = (): string =>
-    container.querySelector('.border-red-200 .break-words')?.textContent ?? ''
+  const errorBoxText = (): string => container.querySelector('.border-red-200')?.textContent ?? ''
 
   it('shows the error and a Report button for a failed run (status === error)', () => {
     renderPanel({ activeSession: errorSession })
-    expect(errorText()).toBe('Run failed: connection reset')
+    expect(errorBoxText()).toContain('Run failed: connection reset')
     expect(reportButton()).not.toBeNull()
   })
 
   it('renders the error box for a failed run even when it has no error text', () => {
     renderPanel({ activeSession: { ...errorSession, error: undefined } })
-    expect(errorText()).toBe('The run failed.')
+    expect(errorBoxText()).toContain('The run failed.')
     // Still reportable — the affordance follows the failure status, not the presence of text.
     expect(reportButton()).not.toBeNull()
   })
@@ -632,16 +631,18 @@ describe('ConversationPanel error box + report affordance', () => {
       activeSession: { ...errorSession, status: 'idle', error: undefined },
       actionError: 'Could not send message'
     })
-    expect(errorText()).toBe('Could not send message')
+    expect(errorBoxText()).toContain('Could not send message')
     expect(reportButton()).toBeNull()
   })
 
-  it('prefers the transient actionError and hides Report so shown text matches reportable text', () => {
-    // Both present: the action error takes over the box; the run report is suppressed to avoid
-    // reporting an error different from the one displayed.
+  it('shows both a transient actionError and the run failure, keeping the Report button', () => {
+    // Both present: each error gets its own row, and the run failure keeps its report entry — a
+    // transient error must not suppress the ability to report the actual failure.
     renderPanel({ activeSession: errorSession, actionError: 'Could not send message' })
-    expect(errorText()).toBe('Could not send message')
-    expect(reportButton()).toBeNull()
+    const text = errorBoxText()
+    expect(text).toContain('Could not send message')
+    expect(text).toContain('Run failed: connection reset')
+    expect(reportButton()).not.toBeNull()
   })
 
   it('opens the report dialog when the Report button is clicked', () => {
