@@ -95,6 +95,7 @@ describe('buildAgentSpawnEnv', () => {
     expect(env.PATH).toBe('/usr/bin')
     expect(env.CLAUDE_CODE_EXECUTABLE).toBe('/bin/claude')
   })
+
   it('drops inherited CLAUDE_CODE_OAUTH_TOKEN so a custom gateway cannot carry a subscription', () => {
     // The setup-token flow writes CLAUDE_CODE_OAUTH_TOKEN to the shell. A custom / official gateway
     // that does not set this var would let the parent's subscription token bleed into the spawned
@@ -131,6 +132,32 @@ describe('buildAgentSpawnEnv', () => {
     )
 
     expect(env.CLAUDE_CONFIG_DIR).toBe('/app/claude')
+  })
+
+  it('drops inherited ANTHROPIC_* even when a provider omits CLAUDE_CONFIG_DIR (fail closed)', () => {
+    // Defense-in-depth: a future provider that forgets to set CLAUDE_CONFIG_DIR must not silently
+    // inherit the parent shell's ANTHROPIC_* and undo the isolation guarantee. The env filter
+    // drops the prefix unconditionally.
+    const env = buildAgentSpawnEnv(
+      {
+        ANTHROPIC_BASE_URL: 'https://proxy.example',
+        ANTHROPIC_API_KEY: 'inherited-token',
+        PATH: '/usr/bin'
+      },
+      {
+        // Deliberately omit CLAUDE_CONFIG_DIR: simulates a broken / future provider.
+        ANTHROPIC_AUTH_TOKEN: 'provider-token'
+      },
+      '/bin/claude'
+    )
+
+    // Inherited ANTHROPIC_* are dropped even though the provider did not set CLAUDE_CONFIG_DIR.
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+    // The provider's own override still wins.
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('provider-token')
+    // Non-Anthropic inherited vars are preserved.
+    expect(env.PATH).toBe('/usr/bin')
   })
 })
 

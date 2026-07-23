@@ -25,9 +25,14 @@ const ANTHROPIC_ENV_PREFIX = 'ANTHROPIC_'
 // this var must not inherit the user's Anthropic subscription token from the parent shell.
 const CLAUDE_CODE_OAUTH_TOKEN = 'CLAUDE_CODE_OAUTH_TOKEN'
 
-// Builds the environment for the ACP agent child process. Credentials from the parent are dropped
-// unconditionally before per-provider overrides are applied, so a provider cannot accidentally
-// inherit another account even if it omits CLAUDE_CONFIG_DIR.
+// Builds the environment for the ACP agent child process. Credential variables from the parent
+// process are dropped unconditionally before the per-provider overrides are applied. The previous
+// `if (isolated && ...)` gate relied on every provider always setting CLAUDE_CONFIG_DIR; that
+// assumption is load-bearing — a future provider that forgets to set it would silently inherit
+// credentials from the host shell and undo the isolation guarantee. Failing closed here keeps
+// the agent process honest even if a provider misses the override. CLAUDE_CONFIG_DIR is then
+// overwritten by `envOverrides` (set by every provider that spawns the agent) so the app-owned
+// config dir wins regardless of what was in the parent env.
 const buildAgentSpawnEnv = (
   sourceEnv: NodeJS.ProcessEnv,
   envOverrides: Record<string, string>,

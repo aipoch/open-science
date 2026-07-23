@@ -134,7 +134,7 @@ Open Science brings those pieces into one inspectable desktop workspace:
 
 - **Work that persists.** Projects, sessions, drafts, files, previews, and run history survive application restarts.
 - **Execution, not just suggestions.** The agent can run commands, Python, and R, edit files, search, call connectors, and generate artifacts with the user's approval.
-- **Multiple model choices.** Use a built-in cloud provider, a compatible custom gateway, or a local Claude login.
+- **Multiple model choices.** Use a built-in cloud provider, a compatible custom gateway, or a Claude subscription via setup-token.
 - **Local-first ownership.** The application and project state run on your computer; external calls happen through services you explicitly configure or approve.
 - **Inspectability.** The source code, skills, connector definitions, tool activity, and generated files are available for review.
 - **Extensibility.** Add skills and MCP connectors instead of waiting for a closed plugin roadmap.
