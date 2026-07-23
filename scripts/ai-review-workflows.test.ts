@@ -31,9 +31,10 @@ type WorkflowStep = {
   if?: string
   name?: string
   run?: string
+  uses?: string
   'working-directory'?: string
   env?: Record<string, string>
-  with?: { script?: string }
+  with?: Record<string, string>
 }
 
 type WorkflowJob = {
@@ -99,79 +100,6 @@ function createMergeCommit(
   git(root, 'checkout', 'main')
   git(root, 'merge', '--no-ff', 'feature', '-m', 'merge')
   return root
-}
-
-function runCodexReviewStep(): { captureDir: string; githubOutput: string } {
-  const root = createFixtureRoot('ai-review-codex-')
-  const binDir = join(root, 'bin')
-  const captureDir = join(root, 'capture')
-  const codexHome = join(root, 'codex-home')
-  const githubOutput = join(root, 'github-output')
-  mkdirSync(binDir)
-  mkdirSync(captureDir)
-
-  writeExecutable(
-    join(binDir, 'codex-responses-api-proxy'),
-    `#!/usr/bin/env bash
-set -euo pipefail
-read -r api_key
-[[ "$api_key" == "test-api-key" ]]
-[[ -z "\${OPENAI_API_KEY:-}" ]]
-while (( $# )); do
-  if [[ "$1" == "--server-info" ]]; then
-    server_info="$2"
-    shift 2
-  else
-    shift
-  fi
-done
-echo '{"port":43210}' > "$server_info"
-`
-  )
-
-  writeExecutable(
-    join(binDir, 'codex'),
-    `#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "$@" > "$TEST_CAPTURE/args"
-printf '%s' "\${OPENAI_API_KEY-unset}" > "$TEST_CAPTURE/openai-api-key"
-printf '%s' "\${CODEX_BASE_URL-unset}" > "$TEST_CAPTURE/codex-base-url"
-cat > "$TEST_CAPTURE/stdin"
-while (( $# )); do
-  if [[ "$1" == "-o" ]]; then
-    output_file="$2"
-    break
-  fi
-  shift
-done
-echo 'review result' > "$output_file"
-`
-  )
-
-  const result = spawnSync('bash', ['-c', getRunStep('codex_review', 'run_codex')], {
-    cwd: root,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      PATH: `${binDir}:${process.env.PATH}`,
-      TEST_CAPTURE: captureDir,
-      OPENAI_API_KEY: 'test-api-key',
-      CODEX_BASE_URL: 'https://example.test/v1/responses',
-      CODEX_MODEL: 'test-model',
-      CODEX_HOME: codexHome,
-      PR_NUMBER: '349',
-      PR_BASE_SHA: 'base-sha',
-      PR_HEAD_SHA: 'head-sha',
-      PR_TITLE: 'ci(review): test workflow',
-      PR_BRANCH: 'ci/test-workflow',
-      GITHUB_OUTPUT: githubOutput
-    }
-  })
-
-  if (result.status !== 0) {
-    throw new Error(`Codex review step failed:\n${result.stdout}\n${result.stderr}`)
-  }
-  return { captureDir, githubOutput }
 }
 
 function readSimpleOutputs(path: string): Record<string, string> {
@@ -353,7 +281,7 @@ describe('AI review workflow contract', () => {
   })
 
   it('externalizes review models to repository variables', () => {
-    expect(reviewWorkflow).toContain('vars.CLAUDE_REVIEW_MODEL')
+    expect(reviewWorkflow).toContain("vars.CLAUDE_REVIEW_MODEL || 'claude-opus-4-8'")
     expect(reviewWorkflow).toContain("vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol'")
   })
 
@@ -376,16 +304,28 @@ describe('AI review workflow contract', () => {
   })
 
   it('runs the Claude agent with zero tools so it cannot read runner secrets', () => {
+    const step = getNamedStep('claude_review', 'Run Claude architecture review')
+    const args = step.with?.claude_args
+
     // --tools "" disables ALL built-in tools (not --allowedTools which is just the confirm-free list).
-    expect(reviewWorkflow).toContain('--tools ""')
+    expect(args).toContain('--tools ""')
     // --safe-mode disables all project customisations (hooks, MCP servers, .claude/settings.json).
-    expect(reviewWorkflow).toContain('--safe-mode')
-    expect(reviewWorkflow).toContain('--strict-mcp-config')
+    expect(args).toContain('--safe-mode')
+    expect(args).toContain('--strict-mcp-config')
     // Must NOT use the old --allowedTools approach which does not actually disable tools.
     expect(reviewWorkflow).not.toContain('--allowedTools')
     expect(reviewWorkflow).toContain('Generate review context')
     expect(reviewWorkflow).toContain('post_claude_feedback')
-    expect(reviewWorkflow).toContain('--json-schema')
+    expect(args).toContain('--json-schema')
+  })
+
+  it('runs Claude with an explicit Opus model and action-compatible output framing', () => {
+    const step = getNamedStep('claude_review', 'Run Claude architecture review')
+    const args = step.with?.claude_args
+
+    expect(args).toContain('--model "${{ vars.CLAUDE_REVIEW_MODEL || \'claude-opus-4-8\' }}"')
+    expect(args).not.toContain('--output-format json')
+    expect(step.env).not.toHaveProperty('ANTHROPIC_DEFAULT_SONNET_MODEL')
   })
 
   it('reads changed file contents via git show (not cat) to prevent symlink traversal', () => {
@@ -439,56 +379,19 @@ describe('AI review workflow contract', () => {
     expect(reviewStep.if).toBe("${{ steps.context.outputs.should_run == 'true' }}")
   })
 
-  it('uses codex exec review (built-in) instead of openai/codex-action with prompt injection', () => {
-    // codex exec review scopes the diff natively via --base and treats the prompt
-    // argument as supplementary instructions, not the entire review framing.
-    expect(reviewWorkflow).toContain('codex exec review')
-    expect(reviewWorkflow).toContain('--base')
-    expect(reviewWorkflow).toContain('CODEX_HOME: ${{ runner.temp }}/codex-home')
-    expect(reviewWorkflow).not.toContain('--ignore-user-config')
-    expect(reviewWorkflow).not.toContain('openai/codex-action')
-  })
+  it('runs Codex through the known-good action with the configured Responses endpoint', () => {
+    const step = getNamedStep('codex_review', 'Run Codex correctness review')
 
-  it('pins compatible Codex CLI and proxy versions', () => {
-    const step = getNamedStep('codex_review', 'Install Codex CLI and Responses API proxy')
-
-    expect(step.run).toContain('@openai/codex@0.145.0')
-    expect(step.run).toContain('@openai/codex-responses-api-proxy@0.145.0')
-  })
-
-  it('installs review binaries without reading fork-controlled npm configuration', () => {
-    const step = getNamedStep('codex_review', 'Install Codex CLI and Responses API proxy')
-
-    expect(step['working-directory']).toBe('${{ runner.temp }}')
-    expect(step.env?.NPM_CONFIG_USERCONFIG).toBe('${{ runner.temp }}/review-npmrc')
-    expect(step.run).toContain('--registry=https://registry.npmjs.org/')
-    expect(step.run).toContain('--ignore-scripts')
-  })
-
-  it('runs codex review with the sandbox option and generated proxy config enabled', () => {
-    const { captureDir } = runCodexReviewStep()
-    const args = readFileSync(join(captureDir, 'args'), 'utf8').trim().split('\n')
-
-    expect(args.slice(0, 4)).toEqual(['exec', '--sandbox', 'read-only', 'review'])
-    expect(args).not.toContain('--ignore-user-config')
-    expect(args).not.toContain('-')
-  })
-
-  it('does not expose upstream secrets to the codex process', () => {
-    const { captureDir } = runCodexReviewStep()
-
-    expect(readFileSync(join(captureDir, 'openai-api-key'), 'utf8')).toBe('unset')
-    expect(readFileSync(join(captureDir, 'codex-base-url'), 'utf8')).toBe('unset')
-  })
-
-  it('passes the pull request branch through developer instructions, not a prompt', () => {
-    const { captureDir } = runCodexReviewStep()
-    const args = readFileSync(join(captureDir, 'args'), 'utf8').trim().split('\n')
-    const configIndex = args.indexOf('--config')
-
-    expect(args[configIndex + 1]).toContain('developer_instructions=')
-    expect(args[configIndex + 1]).toContain('Pull request branch: ci/test-workflow')
-    expect(readFileSync(join(captureDir, 'stdin'), 'utf8')).toBe('')
+    expect(step.uses).toBe('openai/codex-action@v1')
+    expect(step.with).toMatchObject({
+      'openai-api-key': '${{ secrets.OPENAI_API_KEY }}',
+      'responses-api-endpoint': '${{ steps.responses_endpoint.outputs.url }}',
+      model: "${{ vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}",
+      effort: 'high',
+      sandbox: 'read-only'
+    })
+    expect(reviewWorkflow).not.toContain('codex-responses-api-proxy')
+    expect(reviewWorkflow).not.toContain('codex exec')
   })
 
   it('allows the first Codex review for a pull request', () => {
