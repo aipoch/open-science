@@ -52,9 +52,10 @@ describe('isReportableRunFailure', () => {
     // Rate limit
     expect(isExpectedRunFailure('429 Too Many Requests')).toBe(true)
     expect(isExpectedRunFailure('rate_limit_error: slow down')).toBe(true)
-    // Quota / billing (structured slugs only — a bare "billing" word is not a provider signal)
+    // Quota / billing (structured slugs or a narrow billing reason phrase, not a bare "billing" word)
     expect(isExpectedRunFailure('insufficient_quota')).toBe(true)
     expect(isExpectedRunFailure('{"error":{"type":"billing_hard_limit"}}')).toBe(true)
+    expect(isExpectedRunFailure('Your billing plan has no remaining credit')).toBe(true)
     // Overloaded / unavailable
     expect(isExpectedRunFailure('overloaded_error')).toBe(true)
     expect(isExpectedRunFailure('503 Service Unavailable')).toBe(true)
@@ -77,6 +78,14 @@ describe('isReportableRunFailure', () => {
     expect(isReportableRunFailure('Record 503 could not be decoded')).toBe(true)
     expect(isReportableRunFailure('Retrying after 429ms backoff')).toBe(true)
     expect(isReportableRunFailure('Quota manager initialization failed')).toBe(true)
+    // A longer identifier that merely starts with a slug is not the slug (\b token boundary).
+    expect(isReportableRunFailure('rate_limiter initialization failed')).toBe(true)
+    expect(isReportableRunFailure('permission_denied_handler crashed')).toBe(true)
+    // A status marker followed by a non-provider code is not swallowed (codes restricted to 401|403|429|5xx).
+    expect(
+      isReportableRunFailure('HTTP parser expected status 200 but received malformed headers')
+    ).toBe(true)
+    expect(isReportableRunFailure('expected status 404 but got none')).toBe(true)
   })
 
   it('recognizes a request-size overflow (its own recovery path) as expected', () => {

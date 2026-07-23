@@ -53,32 +53,42 @@ const EXPECTED_RUN_FAILURE_MESSAGES = new Set<string>([
 // deliberately anchored to signals that DO NOT occur in ordinary app-error prose, so a genuine app
 // failure that merely mentions one of these words ("EACCES: permission denied", "Failed to parse rate
 // limit configuration", "Record 503 could not be decoded") is never swallowed:
-//   - Structured error-type slugs in their exact underscore form (a provider payload field, e.g.
-//     `authentication_error`) — a bare "permission denied"/"rate limit" with spaces is NOT a slug.
-//   - An HTTP status code that carries an explicit `HTTP`/`status` marker (covers every 3-digit code,
-//     so all 5xx qualify), or a status code immediately followed by its canonical reason phrase.
-//   - A few multi-word HTTP reason phrases that are unmistakable on their own.
+//   - Structured error-type slugs in their exact underscore form, each \b-bounded (a provider payload
+//     field, e.g. `authentication_error`) — a bare "permission denied"/"rate limit" with spaces is NOT
+//     a slug, and a longer identifier like `rate_limiter`/`permission_denied_handler` does not match.
+//   - An auth/rate/5xx status code (401|403|429|5xx, not any 3-digit number) carrying an explicit
+//     `HTTP`/`status` marker, or a status code immediately followed by its canonical reason phrase.
+//   - A few multi-word HTTP reason phrases, and narrow billing/quota phrases, unmistakable on their own.
 // Resource-not-found and request-size overflow are recognized separately (their own dedicated paths).
 const PROVIDER_ERROR_PATTERN = new RegExp(
   [
-    // Structured provider error-type slugs (underscore form — absent from app-error prose).
-    'authentication_error',
-    'invalid_api_key',
-    'permission_denied',
-    'rate_limit(?:ed|_error|_exceeded)?',
-    'insufficient_quota',
-    'quota_exceeded',
-    'billing_(?:hard_limit|not_active)',
-    'overloaded_error',
-    // A 3-digit status code carrying an explicit HTTP/status marker (any code, so every 5xx matches).
-    '(?:\\bhttp\\b|\\bstatus(?:\\s*code)?\\b)[\\s:]*\\d{3}',
+    // Structured provider error-type slugs, each bounded by \b so a longer identifier that merely
+    // starts with one (e.g. `rate_limiter`, `permission_denied_handler`) is NOT matched. The trailing
+    // \b sits at the end of the slug's own word chars — `_` is a word char, so `permission_denied\b`
+    // cannot fire inside `permission_denied_handler`.
+    '\\bauthentication_error\\b',
+    '\\binvalid_api_key\\b',
+    '\\bpermission_denied\\b',
+    '\\brate_limit(?:ed|_error|_exceeded)?\\b',
+    '\\binsufficient_quota\\b',
+    '\\bquota_exceeded\\b',
+    '\\bbilling_(?:hard_limit|not_active)\\b',
+    '\\boverloaded_error\\b',
+    // A provider auth/rate/5xx status code carrying an explicit HTTP/status marker. Restricted to those
+    // families (not any 3-digit number) so an incidental "status 200"/"expected status 404" in an app
+    // error is not swallowed. 5\d\d covers every 5xx.
+    '(?:\\bhttp\\b|\\bstatus(?:\\s*code)?\\b)[\\s:]*(?:401|403|429|5\\d\\d)\\b',
     // A status code immediately followed by its canonical reason phrase.
     '\\b(?:401|403|429|500|502|503|504)\\s+(?:unauthorized|forbidden|too\\s+many\\s+requests|internal\\s+server\\s+error|bad\\s+gateway|service\\s+unavailable|gateway\\s+time-?out)\\b',
     // Unmistakable multi-word HTTP reason phrases on their own.
     'too\\s+many\\s+requests',
     'service\\s+unavailable',
     'bad\\s+gateway',
-    'gateway\\s+time-?out'
+    'gateway\\s+time-?out',
+    // Narrow billing/quota reason phrases (a bare "billing" is too broad — it recurs in app prose).
+    'billing\\s+(?:plan|account|period|issue|hard[_\\s-]?limit)',
+    'no\\s+remaining\\s+credit',
+    'insufficient\\s+(?:credit|balance|funds)'
   ].join('|'),
   'i'
 )
