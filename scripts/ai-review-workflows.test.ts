@@ -38,4 +38,9 @@ describe('AI review workflow contract', () => {
     const gates = reviewWorkflow.match(/vars\.ENABLE_FORK_REVIEW == 'true'/g)
     expect(gates?.length).toBe(2)
   })
+
+  it('externalizes review models to repository variables', () => {
+    expect(reviewWorkflow).toContain('vars.CLAUDE_REVIEW_MODEL')
+    expect(reviewWorkflow).toContain("vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol'")
+  })
 })

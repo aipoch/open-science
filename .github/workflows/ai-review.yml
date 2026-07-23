@@ -7,6 +7,7 @@ name: AI PR Review
 # ANTHROPIC_AUTH_TOKEN is also passed to the Claude action's required API-key input; do not add a
 # separate ANTHROPIC_API_KEY secret.
 # Set ENABLE_CLAUDE_REVIEW=false or ENABLE_CODEX_REVIEW=false to disable either reviewer.
+# Override the review models with CLAUDE_REVIEW_MODEL and CODEX_REVIEW_MODEL (optional).
 # Uses pull_request_target so secrets are reachable for fork pull requests as well. Fork PRs are
 # skipped unless ENABLE_FORK_REVIEW=true; same-repository PRs always run.
 on:
@@ -45,6 +46,9 @@ jobs:
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
           CLAUDE_CODE_ATTRIBUTION_HEADER: ${{ vars.CLAUDE_CODE_ATTRIBUTION_HEADER }}
+          # Remap the Sonnet-tier model Claude Code uses for the review. Empty/unset falls back
+          # to the CLI default (and ultimately the relay gateway's mapping).
+          ANTHROPIC_DEFAULT_SONNET_MODEL: ${{ vars.CLAUDE_REVIEW_MODEL }}
           # Long 1M-context runs have errored out mid-review through the relay gateway; cap the
           # window at 200k so Claude Code auto-compacts instead of failing the whole run.
           CLAUDE_CODE_DISABLE_1M_CONTEXT: '1'
@@ -147,7 +151,7 @@ jobs:
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           responses-api-endpoint: ${{ steps.responses_endpoint.outputs.url }}
-          model: gpt-5.6-sol
+          model: ${{ vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}
           effort: high
           sandbox: read-only
           prompt: |
