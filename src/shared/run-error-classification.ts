@@ -57,8 +57,10 @@ const EXPECTED_RUN_FAILURE_MESSAGES = new Set<string>([
 //     field, e.g. `authentication_error`) — a bare "permission denied"/"rate limit" with spaces is NOT
 //     a slug, and a longer identifier like `rate_limiter`/`permission_denied_handler` does not match.
 //   - An auth/rate/5xx status code (401|403|429|5xx, not any 3-digit number) carrying an explicit
-//     `HTTP`/`status` marker, or a status code immediately followed by its canonical reason phrase.
-//   - A few multi-word HTTP reason phrases, and narrow billing/quota phrases, unmistakable on their own.
+//     `HTTP`/`status` marker (tolerant of `HTTP Error 500`/`HTTPError: 503`/`status_code: 504`/
+//     `{"status":500}`), or a status code immediately followed by its canonical reason phrase.
+//   - A few multi-word HTTP reason phrases, the auth/overload phrasings the runtime persists verbatim
+//     ("Invalid API key", "Overloaded: …"), and narrow billing/quota phrases — unmistakable on their own.
 // Resource-not-found and request-size overflow are recognized separately (their own dedicated paths).
 const PROVIDER_ERROR_PATTERN = new RegExp(
   [
@@ -76,8 +78,10 @@ const PROVIDER_ERROR_PATTERN = new RegExp(
     '\\boverloaded_error\\b',
     // A provider auth/rate/5xx status code carrying an explicit HTTP/status marker. Restricted to those
     // families (not any 3-digit number) so an incidental "status 200"/"expected status 404" in an app
-    // error is not swallowed. 5\d\d covers every 5xx.
-    '(?:\\bhttp\\b|\\bstatus(?:\\s*code)?\\b)[\\s:]*(?:401|403|429|5\\d\\d)\\b',
+    // error is not swallowed; 5\d\d covers every 5xx. The marker word may carry a suffix and up to two
+    // connective tokens before the code, so real-world shapes match: "HTTP 500", "HTTP Error 500",
+    // "HTTPError: 503", "status code: 502", "status_code: 504", and JSON "{"status":500}".
+    '(?:https?|status)[a-z]*(?:[\\s:"_-]+[a-z]*){0,2}[\\s:"_-]*(?:401|403|429|5\\d\\d)\\b',
     // A status code immediately followed by its canonical reason phrase.
     '\\b(?:401|403|429|500|502|503|504)\\s+(?:unauthorized|forbidden|too\\s+many\\s+requests|internal\\s+server\\s+error|bad\\s+gateway|service\\s+unavailable|gateway\\s+time-?out)\\b',
     // Unmistakable multi-word HTTP reason phrases on their own.
@@ -85,10 +89,16 @@ const PROVIDER_ERROR_PATTERN = new RegExp(
     'service\\s+unavailable',
     'bad\\s+gateway',
     'gateway\\s+time-?out',
-    // Narrow billing/quota reason phrases (a bare "billing" is too broad — it recurs in app prose).
-    'billing\\s+(?:plan|account|period|issue|hard[_\\s-]?limit)',
-    'no\\s+remaining\\s+credit',
-    'insufficient\\s+(?:credit|balance|funds)'
+    // Common provider auth/overload phrasings the runtime persists verbatim (sendPrompt rejection text /
+    // describePromptError passthrough): "Invalid API key", "Overloaded: service is busy".
+    '\\binvalid\\s+api\\s+key\\b',
+    '\\boverloaded\\b',
+    // Narrow billing/quota reason phrases, each fully \b-bounded so a prefix ("Billing planner", "No
+    // remaining creditor", "Insufficient creditworthiness") is NOT mistaken for the phrase. A bare
+    // "billing" is deliberately excluded — it recurs in ordinary app prose.
+    'billing\\s+(?:plan|account|period|issue|hard[_\\s-]?limit)\\b',
+    'no\\s+remaining\\s+credit\\b',
+    'insufficient\\s+(?:credit|balance|funds)\\b'
   ].join('|'),
   'i'
 )

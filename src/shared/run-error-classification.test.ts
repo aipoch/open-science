@@ -49,6 +49,8 @@ describe('isReportableRunFailure', () => {
     expect(isExpectedRunFailure('{"error":{"type":"authentication_error"}}')).toBe(true)
     expect(isExpectedRunFailure('invalid_api_key: check your key')).toBe(true)
     expect(isExpectedRunFailure('403 permission_denied')).toBe(true)
+    // The auth phrasing the runtime persists verbatim from a sendPrompt rejection.
+    expect(isExpectedRunFailure('Invalid API key')).toBe(true)
     // Rate limit
     expect(isExpectedRunFailure('429 Too Many Requests')).toBe(true)
     expect(isExpectedRunFailure('rate_limit_error: slow down')).toBe(true)
@@ -56,9 +58,10 @@ describe('isReportableRunFailure', () => {
     expect(isExpectedRunFailure('insufficient_quota')).toBe(true)
     expect(isExpectedRunFailure('{"error":{"type":"billing_hard_limit"}}')).toBe(true)
     expect(isExpectedRunFailure('Your billing plan has no remaining credit')).toBe(true)
-    // Overloaded / unavailable
+    // Overloaded / unavailable — incl. the describePromptError passthrough the runtime persists verbatim.
     expect(isExpectedRunFailure('overloaded_error')).toBe(true)
     expect(isExpectedRunFailure('503 Service Unavailable')).toBe(true)
+    expect(isExpectedRunFailure('Internal error: Overloaded: service is busy')).toBe(true)
   })
 
   it('recognizes every 5xx status with an HTTP/status marker (overloaded/unavailable family)', () => {
@@ -67,6 +70,11 @@ describe('isReportableRunFailure', () => {
     expect(isExpectedRunFailure('500 Internal Server Error')).toBe(true)
     expect(isExpectedRunFailure('status code: 502')).toBe(true)
     expect(isExpectedRunFailure('504 Gateway Timeout')).toBe(true)
+    // Real-world marker shapes: a word between marker and code, no separator, JSON, underscored marker.
+    expect(isExpectedRunFailure('HTTP Error 500')).toBe(true)
+    expect(isExpectedRunFailure('HTTPError: 503')).toBe(true)
+    expect(isExpectedRunFailure('{"status":500}')).toBe(true)
+    expect(isExpectedRunFailure('status_code: 504')).toBe(true)
   })
 
   it('does not swallow an ordinary app error that merely mentions a provider word', () => {
@@ -86,6 +94,12 @@ describe('isReportableRunFailure', () => {
       isReportableRunFailure('HTTP parser expected status 200 but received malformed headers')
     ).toBe(true)
     expect(isReportableRunFailure('expected status 404 but got none')).toBe(true)
+    // A billing/credit reason phrase is \b-bounded, so a longer word that merely starts with it
+    // ("planner", "accountant", "creditor", "creditworthiness") stays reportable.
+    expect(isReportableRunFailure('Billing planner initialization failed')).toBe(true)
+    expect(isReportableRunFailure('Billing accountant crashed')).toBe(true)
+    expect(isReportableRunFailure('No remaining creditor record found')).toBe(true)
+    expect(isReportableRunFailure('Insufficient creditworthiness score parsing failed')).toBe(true)
   })
 
   it('recognizes a request-size overflow (its own recovery path) as expected', () => {
