@@ -123,10 +123,10 @@ jobs:
       pr_number: ${{ needs.review_target.outputs.number }}
       head_sha: ${{ needs.review_target.outputs.head_sha }}
     steps:
-      - name: Checkout pull request merge commit
+      - name: Checkout pull request head
         uses: actions/checkout@v7
         with:
-          ref: refs/pull/${{ needs.review_target.outputs.number }}/merge
+          ref: ${{ needs.review_target.outputs.head_sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -134,6 +134,7 @@ jobs:
         id: context
         env:
           PR_NUMBER: ${{ needs.review_target.outputs.number }}
+          PR_BASE_SHA: ${{ needs.review_target.outputs.base_sha }}
           REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
@@ -143,9 +144,10 @@ jobs:
             echo "Perform the architecture and integration review for PR #${PR_NUMBER}"
             echo "in ${REPOSITORY}. Review only changes introduced by this pull request."
             echo
-            echo 'The current working directory is the checked-out pull request merge commit. Use Read,'
+            echo 'The current working directory is the checked-out pull request head commit. Use Read,'
             echo 'Glob, Grep, and Bash as needed to inspect the repository and gather your own context.'
-            echo 'Start with `git diff --stat HEAD^1 HEAD` and `git diff HEAD^1 HEAD`, then inspect the'
+            printf 'Start with `base=$(git merge-base HEAD %s)`, then inspect `git diff --stat "$base" HEAD`\n' "$PR_BASE_SHA"
+            echo 'and `git diff "$base" HEAD`. Inspect the'
             echo 'changed files, their callers, tests, configuration, and surrounding implementation.'
             echo 'Do not modify the checkout or post comments yourself.'
             echo
@@ -436,10 +438,10 @@ jobs:
       pr_number: ${{ needs.review_target.outputs.number }}
       head_sha: ${{ needs.review_target.outputs.head_sha }}
     steps:
-      - name: Checkout pull request merge commit
+      - name: Checkout pull request head
         uses: actions/checkout@v7
         with:
-          ref: refs/pull/${{ needs.review_target.outputs.number }}/merge
+          ref: ${{ needs.review_target.outputs.head_sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -553,8 +555,7 @@ jobs:
                 "--base",
                 $base,
                 "--output-schema",
-                $schema,
-                "-"
+                $schema
               ]'
           )"
           echo "value=$args" >> "$GITHUB_OUTPUT"

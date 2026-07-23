@@ -341,6 +341,16 @@ describe('AI review workflow contract', () => {
     expect(reviewWorkflow).toContain("needs.review_target.outputs.fork_mode != 'disabled'")
   })
 
+  it('checks out the resolved head SHA so merged pull requests can be dispatched', () => {
+    const expectedRef = '${{ needs.review_target.outputs.head_sha }}'
+
+    expect(getNamedStep('claude_review', 'Checkout pull request head').with?.ref).toBe(expectedRef)
+    expect(getNamedStep('codex_review', 'Checkout pull request head').with?.ref).toBe(expectedRef)
+    expect(reviewWorkflow).not.toContain(
+      'refs/pull/${{ needs.review_target.outputs.number }}/merge'
+    )
+  })
+
   it('passes --repo to gh pr view so it works before checkout on a clean runner', () => {
     expect(reviewWorkflow).toContain('--repo "${{ github.repository }}"')
   })
@@ -587,7 +597,10 @@ exit 1
     const reviewStep = getNamedStep('claude_review', 'Run Claude architecture review')
 
     expect(contextStep.run).toContain('prompt_file="$RUNNER_TEMP/claude-review-prompt.md"')
-    expect(contextStep.run).toContain('git diff HEAD^1 HEAD')
+    expect(contextStep.env?.PR_BASE_SHA).toBe('${{ needs.review_target.outputs.base_sha }}')
+    expect(contextStep.run).toContain('git merge-base HEAD %s')
+    expect(contextStep.run).toContain('git diff --stat "$base" HEAD')
+    expect(contextStep.run).toContain('git diff "$base" HEAD')
     expect(contextStep.run).not.toMatch(/^\s+git diff /m)
     expect(reviewStep.run).toContain('< "$CLAUDE_PROMPT_FILE"')
     expect(reviewWorkflow).not.toContain('steps.context.outputs.content')
@@ -612,6 +625,7 @@ exit 1
         ...process.env,
         RUNNER_TEMP: root,
         PR_NUMBER: '376',
+        PR_BASE_SHA: 'base-sha',
         REPOSITORY: 'aipoch/open-science',
         GITHUB_OUTPUT: githubOutput
       }
@@ -620,7 +634,8 @@ exit 1
     expect(result.status, result.stderr).toBe(0)
     const prompt = readFileSync(join(root, 'claude-review-prompt.md'), 'utf8')
     expect(prompt).not.toContain('export const value10000 = 10001')
-    expect(prompt).toContain('git diff HEAD^1 HEAD')
+    expect(prompt).toContain('git merge-base HEAD base-sha')
+    expect(prompt).toContain('git diff --stat "$base" HEAD')
     expect(Buffer.byteLength(prompt)).toBeLessThan(8_192)
     expect(getNamedStep('claude_review', 'Install Claude CLI').if).toBeUndefined()
     expect(getNamedStep('claude_review', 'Run Claude architecture review').if).toBeUndefined()
@@ -667,7 +682,7 @@ exit 1
     expect(args).toContain('base-sha')
     expect(args).toContain('--output-schema')
     expect(args).not.toContain('--title')
-    expect(args).toContain('-')
+    expect(args).not.toContain('-')
     // codex-action writes its proxy route to the isolated CODEX_HOME config.
     expect(args).not.toContain('--ignore-user-config')
     const schemaIndex = args.indexOf('--output-schema')
