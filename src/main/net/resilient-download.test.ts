@@ -1,14 +1,14 @@
 import { createHash } from 'node:crypto'
-import { posix as posixPath } from 'node:path'
+import { join } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
 import { describe, expect, it, vi, type MockedFunction } from 'vitest'
 
 import { DownloadChecksumError, resilientDownload } from './resilient-download'
 
-// The memFs doubles key files by the exact string passed as destPath — they never touch the host
-// filesystem or path separators — so a stable posix join keeps the destPath host-agnostic (the plan's
-// Windows-safe join/sep rule) without changing behavior.
-const OUT_PATH = posixPath.join('downloads', 'out.bin')
+// Build the destPath with the host's own join/sep (the plan's Windows-safe path rule) rather than a
+// hardcoded literal. The memFs doubles key files by this exact string and never touch the real
+// filesystem, so the separator the host produces is what round-trips through the download.
+const OUT_PATH = join('downloads', 'out.bin')
 
 // Builds a fake fetch honoring Range header; `cutAfter` truncates the body to simulate a drop.
 const sha = (buf: Buffer): string => createHash('sha256').update(buf).digest('hex')
@@ -292,10 +292,11 @@ describe('resilientDownload', () => {
     expect(created?.destroyed).toBe(true) // cleanup path destroyed the failed stream
   })
 
-  it('destroys the failed write stream before opening a new one on a network retry', async () => {
-    // A retryable NETWORK fault (short read), not a disk fault. Records create/destroy order across
-    // streams and asserts the first stream was destroyed before the second was created — the actual
-    // "clean up before retry" guarantee the earlier emit-only test could not prove.
+  it('destroys the still-open write stream in the catch path when the body errors mid-stream', async () => {
+    // The response body delivers a few bytes then THROWS mid-stream (a dropped socket) — so the file
+    // is still open when the error propagates, unlike a clean short read that ends() first. This is
+    // the path where the retry catch must proactively destroy() the open handle. Assert the first
+    // stream is destroyed before the retry opens the second, then the retry resumes and completes.
     const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
     const fs = memFs()
     const events: string[] = []
@@ -314,13 +315,25 @@ describe('resilientDownload', () => {
       pt.on('close', () => events.push(`destroy:${id}`))
       return pt as unknown as import('node:fs').WriteStream
     }
-    // First fetch delivers a short body (retryable), second completes.
-    const first = fakeFetch(body, { cutAfter: 10 })
-    const rest = fakeFetch(body)
+    // First response: a body stream that yields the first 8 bytes, then errors (socket drop) while the
+    // write stream is still open. Content-length announces the full size so it is not a clean short read.
+    const firstFetch = vi.fn(async () => {
+      const gen = (async function* () {
+        yield body.subarray(0, 8)
+        throw new Error('ECONNRESET socket hang up')
+      })()
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (h: string) => (h.toLowerCase() === 'content-length' ? '26' : null) },
+        body: Readable.toWeb(Readable.from(gen))
+      } as unknown as Response
+    })
+    const rest = fakeFetch(body) // resumes from the persisted 8 bytes via Range
     let call = 0
     const fetchImpl = vi.fn((input: string | URL | Request, init?: RequestInit) => {
       call++
-      return call === 1 ? first(input, init) : rest(input, init)
+      return call === 1 ? firstFetch() : rest(input, init)
     })
     const out = await resilientDownload('https://cdn/file', OUT_PATH, {
       expectedSha256: sha(body),
@@ -335,7 +348,8 @@ describe('resilientDownload', () => {
     })
     expect(out).toBe(OUT_PATH)
     expect(fs.files.get(OUT_PATH)?.toString()).toBe(body.toString())
-    // The first stream is destroyed before the second is created.
+    expect(call).toBe(2) // it did retry after the mid-stream error
+    // The open handle from attempt 1 was destroyed (in the catch) before attempt 2 opened its stream.
     expect(events.indexOf('destroy:0')).toBeLessThan(events.indexOf('create:1'))
   })
 

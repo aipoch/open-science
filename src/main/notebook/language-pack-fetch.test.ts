@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -336,4 +336,37 @@ describe('createFetchBundleAdapter', () => {
       )
     }
   )
+
+  it('preserves a partial .part in the stable cache when a download fails, for resume', async () => {
+    // Simulate an interrupted download: write a .part next to the archive destPath, then throw. The
+    // adapter must wipe the disposable .incoming-* staging in its finally, but LEAVE the .part so a
+    // manual retry resumes via Range instead of restarting the whole pack.
+    const root = makeDestDir()
+    const deps = makeDeps()
+    let partPath = ''
+    deps.download = vi.fn(async (_url: string, destPath: string) => {
+      partPath = `${destPath}.part`
+      writeFileSync(partPath, Buffer.from('partial-bytes'))
+      throw new Error('ECONNRESET mid-download')
+    })
+    const adapter = createFetchBundleAdapter(root, 'https://cdn/envs', {
+      ...deps,
+      subdir: 'osx-arm64'
+    })
+    await expect(
+      adapter(
+        { name: 'default-python', language: 'python', version: '3.12', packages: [] },
+        1,
+        () => {}
+      )
+    ).rejects.toThrow(/Managed runtime pack unavailable/)
+
+    // The .part survived in the stable .cache dir…
+    expect(partPath).toContain(join('packs', '.cache'))
+    expect(existsSync(partPath)).toBe(true)
+    // …while no .incoming-* staging dir was left behind.
+    const leftovers = readdirSync(join(root, 'packs')).filter((n) => n.startsWith('.incoming-'))
+    expect(leftovers).toEqual([])
+    await rm(root, { recursive: true, force: true })
+  })
 })

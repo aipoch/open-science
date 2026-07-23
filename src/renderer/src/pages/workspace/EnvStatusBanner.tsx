@@ -1,4 +1,4 @@
-import { formatProgressLine } from '../../../../shared/download-progress'
+import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import type { ProvisionUiState } from './provisioning-view'
 
 // Floating top-of-app pill for the launch-time upgrade gate (spec §6.2). First-run python preparation
@@ -37,11 +37,13 @@ const EnvStatusBanner = ({
           ) : null}
         </>
       ) : ui.download ? (
-        // Compact pill: show the shared speed/ETA/resume text inline (the full bar would break the
-        // single-line layout) so a weak-network upgrade reads as "resuming" rather than a frozen %.
-        <span className="tabular-nums">
-          Updating the notebook environment… {formatProgressLine(ui.download)}
-        </span>
+        // Task 8: reuse the shared DownloadProgressLine (with its resume/pulse bar) so the upgrade
+        // banner renders speed/ETA and a stall reads as "resuming" consistently with the other hosts.
+        // The banner drops its single-line pill shape to a small stacked block for this phase.
+        <div className="flex min-w-56 flex-col text-left">
+          <span>Updating the notebook environment…</span>
+          <DownloadProgressLine progress={ui.download} />
+        </div>
       ) : (
         <span>Updating the notebook environment… {Math.round(ui.progress * 100)}%</span>
       )}

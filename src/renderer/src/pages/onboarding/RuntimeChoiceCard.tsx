@@ -187,13 +187,9 @@ const RuntimeChoiceCard = (): React.JSX.Element | null => {
                   : 'not set up yet'}
           </p>
           {managedPreparing && provisionUi.kind === 'preparing' ? (
-            provisionUi.download ? (
-              // During the pack download, show the shared speed/ETA/resume line so a weak-network
-              // stall reads as "resuming" rather than a frozen bar (same surface as the notebook gate).
-              <div className="mt-2 w-full max-w-xs">
-                <DownloadProgressLine progress={provisionUi.download} />
-              </div>
-            ) : (
+            <>
+              {/* §3.1: overall provision bar + the download sub-line coexist (the download is one
+                  phase of provisioning), matching the notebook-gate surface. */}
               <div
                 className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-bg-300"
                 role="progressbar"
@@ -209,7 +205,12 @@ const RuntimeChoiceCard = (): React.JSX.Element | null => {
                   }}
                 />
               </div>
-            )
+              {provisionUi.download ? (
+                <div className="mt-2 w-full max-w-xs">
+                  <DownloadProgressLine progress={provisionUi.download} />
+                </div>
+              ) : null}
+            </>
           ) : null}
           {enabledOwn.length > 0 ? (
             <p className="mt-1 truncate text-[11px] text-text-100">

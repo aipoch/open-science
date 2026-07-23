@@ -269,7 +269,11 @@ export const resilientDownload = async (
       if (total != null && transferred < total) throw new IncompleteStreamError('short read')
 
       if (opts.expectedSha256 && hash.digest('hex') !== opts.expectedSha256) {
-        await removeFile(partPath)
+        // digest() has finalized the hash, so it can never be reused on a retry. Guarantee the
+        // DownloadChecksumError is what propagates: if the .part cleanup itself fails (EACCES/EIO),
+        // swallow that error rather than let it escape — otherwise the loop would retry with a dead
+        // hash. A leftover .part is harmless (the next run re-checks or overwrites it).
+        await removeFile(partPath).catch(() => undefined)
         throw new DownloadChecksumError()
       }
 

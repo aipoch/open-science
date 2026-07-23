@@ -184,6 +184,13 @@ export const createFetchBundleAdapter =
     await mkdir(packsRoot, { recursive: true })
     const workDir = await mkdtemp(join(packsRoot, '.incoming-'))
     const unpackedDir = join(workDir, 'pack')
+    // Stable, per-invocation-surviving location for the downloaded archive + its .part. The extraction
+    // staging (workDir) is disposable and wiped in the finally, but the .part must OUTLIVE a failed or
+    // cancelled fetch so a manual retry resumes via Range instead of restarting a ~345 MB download.
+    // Keyed only by pack identity (the canonical archive filename), so a retry finds the same .part.
+    // Not under .incoming-*, so startup orphan-recovery (which wipes staging) leaves it intact.
+    const archiveDir = join(packsRoot, '.cache')
+    await mkdir(archiveDir, { recursive: true })
     // Crash recovery (WS13): record the download intent BEFORE staging so a hard-quit mid-fetch leaves
     // a journal entry whose targetPath is this .incoming-* dir; startup recovery removes the orphan.
     // Cleared in the finally on every normal completion/failure (the staging is gone by then), so only
@@ -207,7 +214,8 @@ export const createFetchBundleAdapter =
         progress: 0.05
       })
       const fetched = await fetchLanguagePack(
-        workDir,
+        // Download the archive to the stable cache dir (not workDir) so its .part survives for resume.
+        archiveDir,
         cdnBase,
         version,
         deps.subdir ?? runtimeSubdir(),
@@ -248,6 +256,11 @@ export const createFetchBundleAdapter =
       })
 
       await extractPackArchiveWithDeps(fetched.filePath, unpackedDir, { extract: deps.extract })
+      // The archive is now fully extracted into staging, so the cached copy is no longer needed —
+      // remove it (and any stale .part) to reclaim the ~345 MB. Best-effort: a leftover only wastes
+      // disk and is overwritten on the next fetch. A download that never reached here keeps its .part.
+      await rm(fetched.filePath, { force: true }).catch(() => undefined)
+      await rm(`${fetched.filePath}.part`, { force: true }).catch(() => undefined)
       const lockPath = join(unpackedDir, `${fetched.id}.lock`)
       await readFile(lockPath, 'utf8')
       const entries = await validateAndSeedPack(root, unpackedDir, lockPath, (completed, total) => {
