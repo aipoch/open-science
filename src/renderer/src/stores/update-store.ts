@@ -35,7 +35,18 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
       .then((info) =>
         set((s) => ({ appInfo: info, status: { ...s.status, current: info.version } }))
       )
-    api.onStatus((status) => set({ status }))
+    // Status events don't carry downloadProgress. A strategy that emits progress (with speed) then
+    // immediately a status (electron-updater does on every tick) would otherwise wipe the speed the
+    // progress event just set. Preserve downloadProgress across a status update while downloading so
+    // DownloadProgressLine keeps rendering speed/ETA on Win/Linux.
+    api.onStatus((status) =>
+      set((s) => ({
+        status: {
+          ...status,
+          downloadProgress: status.state === 'downloading' ? s.status.downloadProgress : undefined
+        }
+      }))
+    )
     api.onProgress((progress) =>
       set((s) => ({
         status: {

@@ -30,8 +30,7 @@ const fakeFetch = (
       ok: status < 400,
       status,
       headers: {
-        get: (h: string) =>
-          h.toLowerCase() === 'content-length' ? String(slice.length) : null
+        get: (h: string) => (h.toLowerCase() === 'content-length' ? String(slice.length) : null)
       },
       body: Readable.toWeb(stream)
     } as unknown as Response
@@ -135,7 +134,11 @@ describe('resilientDownload', () => {
       resilientDownload('https://cdn/file', '/tmp/out.bin', {
         expectedSha256: 'deadbeef',
         maxRetries: 0,
-        deps: { fetchImpl: fakeFetch(body) as unknown as typeof fetch, ...fs, sleep: async () => {} }
+        deps: {
+          fetchImpl: fakeFetch(body) as unknown as typeof fetch,
+          ...fs,
+          sleep: async () => {}
+        }
       })
     ).rejects.toBeInstanceOf(DownloadChecksumError)
     expect(fs.files.has('/tmp/out.bin.part')).toBe(false)
@@ -143,12 +146,15 @@ describe('resilientDownload', () => {
 
   it('keeps .part after exhausting retries on 5xx', async () => {
     const fs = memFs()
-    const failing = vi.fn(async () => ({
-      ok: false,
-      status: 503,
-      headers: { get: () => null },
-      body: Readable.toWeb(Readable.from([Buffer.alloc(0)]))
-    }) as unknown as Response)
+    const failing = vi.fn(
+      async () =>
+        ({
+          ok: false,
+          status: 503,
+          headers: { get: () => null },
+          body: Readable.toWeb(Readable.from([Buffer.alloc(0)]))
+        }) as unknown as Response
+    )
     await expect(
       resilientDownload('https://cdn/file', '/tmp/out.bin', {
         maxRetries: 2,
@@ -175,7 +181,12 @@ describe('resilientDownload', () => {
       expectedSha256: sha(body),
       stallTimeoutMs: 20,
       onProgress: (p) => phases.push(`${p.phase}:${p.attempt}`),
-      deps: { fetchImpl: fetchImpl as unknown as typeof fetch, ...fs, sleep: async () => {}, now: () => 0 }
+      deps: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        ...fs,
+        sleep: async () => {},
+        now: () => 0
+      }
     })
     expect(phases).toContain('reconnecting:1')
   })
@@ -239,5 +250,74 @@ describe('resilientDownload', () => {
     // The download must have been aborted during backoff — not after the full sleep completes.
     expect(sleepCallCount).toBe(1)
     expect(call).toBe(1) // second fetch was never started
+  })
+
+  it('closes the failed write stream before retry and keeps the hash consistent', async () => {
+    const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
+    const fs = memFs()
+    // Track every write stream so we can assert the failed one was destroyed before the retry.
+    const streams: Array<{ destroyed: boolean }> = []
+    let failNextWrite = true
+    const createWriteStreamImpl = (
+      path: string,
+      o?: { flags?: string }
+    ): import('node:fs').WriteStream => {
+      if (!o || o.flags !== 'a') fs.files.set(path, Buffer.alloc(0))
+      const pt = new PassThrough()
+      const rec = pt as unknown as { destroyed: boolean }
+      streams.push(rec)
+      pt.on('data', (c: Buffer) => {
+        // Fail the very first write to exercise the write-error path with the hash mid-stream.
+        if (failNextWrite) {
+          failNextWrite = false
+          pt.emit('error', new Error('EIO write failed'))
+          return
+        }
+        fs.files.set(path, Buffer.concat([fs.files.get(path) ?? Buffer.alloc(0), c]))
+      })
+      return pt as unknown as import('node:fs').WriteStream
+    }
+    const out = await resilientDownload('https://cdn/file', '/tmp/out.bin', {
+      expectedSha256: sha(body),
+      stallTimeoutMs: 50,
+      deps: {
+        fetchImpl: fakeFetch(body) as unknown as typeof fetch,
+        ...fs,
+        createWriteStreamImpl,
+        sleep: async () => {},
+        now: () => 0
+      }
+    })
+    expect(out).toBe('/tmp/out.bin')
+    // The download still succeeds with the correct digest — proof the hash did not run ahead of the
+    // bytes that actually reached disk when the first write failed.
+    expect(fs.files.get('/tmp/out.bin')?.toString()).toBe(body.toString())
+    // The first (failed) write stream was destroyed before the retry opened a new one.
+    expect(streams.length).toBeGreaterThanOrEqual(2)
+    expect(streams[0].destroyed).toBe(true)
+  })
+
+  it('does not retry when the final rename fails (terminal)', async () => {
+    const body = Buffer.from('payload-bytes')
+    const fs = memFs()
+    const fetchImpl = fakeFetch(body)
+    const renameImpl = vi.fn(async () => {
+      throw Object.assign(new Error('EXDEV cross-device rename'), { code: 'EXDEV' })
+    })
+    await expect(
+      resilientDownload('https://cdn/file', '/tmp/out.bin', {
+        expectedSha256: sha(body),
+        deps: {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          ...fs,
+          renameImpl,
+          sleep: async () => {},
+          now: () => 0
+        }
+      })
+    ).rejects.toThrow(/EXDEV/)
+    // A rename failure is terminal: exactly one fetch and one rename attempt, no retry spin.
+    expect(fetchImpl.mock.calls.length).toBe(1)
+    expect(renameImpl.mock.calls.length).toBe(1)
   })
 })

@@ -77,10 +77,7 @@ export const resilientDownload = async (
   }
 
   // Re-feed the existing .part into the hash so a resumed download's digest covers the whole file.
-  const seedHash = async (
-    hash: ReturnType<typeof createHash>,
-    bytes: number
-  ): Promise<void> => {
+  const seedHash = async (hash: ReturnType<typeof createHash>, bytes: number): Promise<void> => {
     if (bytes <= 0) return
     await new Promise<void>((resolve, reject) => {
       const rs = openRead(partPath)
@@ -98,11 +95,9 @@ export const resilientDownload = async (
     return Promise.race([
       sleepFn(ms),
       new Promise<never>((_, reject) => {
-        signal.addEventListener(
-          'abort',
-          () => reject(signal.reason ?? new Error('aborted')),
-          { once: true }
-        )
+        signal.addEventListener('abort', () => reject(signal.reason ?? new Error('aborted')), {
+          once: true
+        })
       })
     ])
   }
@@ -129,7 +124,20 @@ export const resilientDownload = async (
 
     if (attempt > 0) {
       const offset = await partSize()
-      opts.onProgress?.({ phase: 'reconnecting', transferred: offset, bytesPerSecond: 0, attempt })
+      // Carry the known total/percent (from the manifest expectedSize) through the reconnect so the
+      // UI holds the resume position instead of collapsing to an indeterminate bar mid-retry.
+      const reconnectTotal = opts.expectedSize
+      opts.onProgress?.({
+        phase: 'reconnecting',
+        transferred: offset,
+        total: reconnectTotal,
+        percent:
+          reconnectTotal && reconnectTotal > 0
+            ? Math.round((offset / reconnectTotal) * 100)
+            : undefined,
+        bytesPerSecond: 0,
+        attempt
+      })
       const backoff = Math.min(BASE_BACKOFF_MS * 2 ** (attempt - 1), MAX_BACKOFF_MS)
       // Race the backoff sleep against the external abort signal so a user cancel does not wait up
       // to MAX_BACKOFF_MS before taking effect.
@@ -140,10 +148,7 @@ export const resilientDownload = async (
     let stallTimer: ReturnType<typeof setTimeout> | undefined
     const armStall = (): void => {
       if (stallTimer) clearTimeout(stallTimer)
-      stallTimer = setTimeout(
-        () => controller.abort(new Error(`stalled >${stallMs}ms`)),
-        stallMs
-      )
+      stallTimer = setTimeout(() => controller.abort(new Error(`stalled >${stallMs}ms`)), stallMs)
     }
     const combined = opts.signal
       ? AbortSignal.any([controller.signal, opts.signal])
@@ -192,10 +197,7 @@ export const resilientDownload = async (
       // else: hash already covers [0, offset) — no I/O needed.
 
       const rawContentLength = Number(res.headers.get('content-length'))
-      const total =
-        rawContentLength > 0
-          ? offset + rawContentLength
-          : opts.expectedSize
+      const total = rawContentLength > 0 ? offset + rawContentLength : opts.expectedSize
       const meter = new SpeedMeter({ now })
       let transferred = offset
       meter.record(transferred)
@@ -211,19 +213,20 @@ export const resilientDownload = async (
       file = mkWrite(partPath, offset > 0 ? { flags: 'a' } : undefined)
       file.on('error', (e) => (fileError = e))
 
-      const nodeStream = Readable.fromWeb(
-        res.body as unknown as NodeReadableStream<Uint8Array>
-      )
+      const nodeStream = Readable.fromWeb(res.body as unknown as NodeReadableStream<Uint8Array>)
       for await (const chunk of nodeStream) {
         if (fileError) throw fileError
         const buf = Buffer.from(chunk as Uint8Array)
-        hash.update(buf)
+        // Update the hash only AFTER the write is confirmed. If the write callback rejects, the hash
+        // must NOT have consumed these bytes — otherwise it runs ahead of the persisted .part and,
+        // when the next attempt resumes at the same offset (no re-seed), the digest is corrupted.
+        // hash, transferred, and hashSeededTo advance together in lockstep, with no await between
+        // them, so a failed attempt always leaves the three consistent.
         await new Promise<void>((resolve, reject) =>
           file!.write(buf, (e) => (e ? reject(e) : resolve()))
         )
+        hash.update(buf)
         transferred += buf.length
-        // The hash now covers every byte up to `transferred`. Track it so a failed attempt leaves
-        // hashSeededTo accurate; the next attempt only re-seeds if the .part flushed fewer bytes.
         hashSeededTo = transferred
         meter.record(transferred)
         armStall()
@@ -254,7 +257,15 @@ export const resilientDownload = async (
         throw new DownloadChecksumError()
       }
 
-      await renameFile(partPath, destPath)
+      // Finalization. digest() above consumed the hash, so it cannot be reused; and a rename failure
+      // (EXDEV, EPERM, disk full) is not a transient network fault. Mark any error here terminal so
+      // the retry loop does not spin on a dead hash or a rename that will never succeed.
+      try {
+        await renameFile(partPath, destPath)
+      } catch (renameError) {
+        ;(renameError as { terminal?: boolean }).terminal = true
+        throw renameError
+      }
       opts.onProgress?.({
         phase: 'downloading',
         transferred,
@@ -273,7 +284,10 @@ export const resilientDownload = async (
         const f = file
         file = undefined
         await new Promise<void>((resolve) => {
-          if (f.destroyed) { resolve(); return }
+          if (f.destroyed) {
+            resolve()
+            return
+          }
           f.once('close', resolve)
           f.destroy()
         })
