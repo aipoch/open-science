@@ -10,8 +10,8 @@ name: AI PR Review
 # Override the review models with CLAUDE_REVIEW_MODEL and CODEX_REVIEW_MODEL (optional).
 # Uses pull_request_target so secrets are reachable for fork pull requests as well. Fork PRs are
 # skipped unless ENABLE_FORK_REVIEW=true; same-repository PRs always run. workflow_dispatch with a
-# pull request number re-runs either review on demand and bypasses the fork gate (the secret and
-# workflow code are already trusted under a manual dispatch).
+# pull request number re-runs either or both reviewers on demand and bypasses the fork gate (the
+# secret and workflow code are already trusted under a manual dispatch).
 # Codex reviews each opened, synchronized, or reopened PR state until the PR has accumulated 10
 # successful Codex review comments. Rapid updates still use concurrency cancellation so only the
 # latest surviving run publishes a review and consumes a round.
@@ -35,6 +35,15 @@ on:
       pull_request_number:
         description: Pull request number to review
         required: true
+      reviewer:
+        description: Reviewer to run
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - claude
+          - codex
 
 concurrency:
   group: ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}
@@ -46,7 +55,8 @@ jobs:
     name: Claude architecture review
     if: >-
       ${{ vars.ENABLE_CLAUDE_REVIEW != 'false' &&
-          ( github.event_name == 'workflow_dispatch' ||
+          ( ( github.event_name == 'workflow_dispatch' &&
+              ( inputs.reviewer == 'both' || inputs.reviewer == 'claude' ) ) ||
             github.event.pull_request.head.repo.full_name == github.repository ||
             vars.ENABLE_FORK_REVIEW == 'true' ) }}
     runs-on: ubuntu-latest
@@ -265,7 +275,8 @@ jobs:
     name: Check Codex review limit
     if: >-
       ${{ vars.ENABLE_CODEX_REVIEW != 'false' &&
-          ( github.event_name == 'workflow_dispatch' ||
+          ( ( github.event_name == 'workflow_dispatch' &&
+              ( inputs.reviewer == 'both' || inputs.reviewer == 'codex' ) ) ||
             github.event.pull_request.head.repo.full_name == github.repository ||
             vars.ENABLE_FORK_REVIEW == 'true' ) }}
     runs-on: ubuntu-latest

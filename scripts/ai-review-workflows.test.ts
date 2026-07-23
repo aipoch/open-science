@@ -285,18 +285,23 @@ describe('AI review workflow contract', () => {
     expect(reviewWorkflow).toContain("vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol'")
   })
 
-  it('exposes a workflow_dispatch trigger with a pull request number input', () => {
+  it('exposes workflow_dispatch inputs for the pull request and selected reviewer', () => {
     expect(reviewWorkflow).toContain('workflow_dispatch:')
     expect(reviewWorkflow).toContain('pull_request_number')
+    expect(reviewWorkflow).toMatch(/reviewer:\n\s+description: Reviewer to run/)
+    expect(reviewWorkflow).toMatch(/options:\n\s+- both\n\s+- claude\n\s+- codex/)
   })
 
   it('runs again when a pull request receives new commits', () => {
     expect(reviewWorkflow).toContain('types: [opened, synchronize, reopened]')
   })
 
-  it('lets both review jobs run on manual dispatch by bypassing the fork gate', () => {
+  it('lets manual dispatch select either reviewer while bypassing the fork gate', () => {
     const dispatchGuards = reviewWorkflow.match(/github\.event_name == 'workflow_dispatch'/g)
     expect(dispatchGuards?.length).toBe(2)
+    expect(reviewWorkflow.match(/inputs\.reviewer == 'both'/g)?.length).toBe(2)
+    expect(reviewWorkflow.match(/inputs\.reviewer == 'claude'/g)?.length).toBe(1)
+    expect(reviewWorkflow.match(/inputs\.reviewer == 'codex'/g)?.length).toBe(1)
   })
 
   it('passes --repo to gh pr view so it works before checkout on a clean runner', () => {
