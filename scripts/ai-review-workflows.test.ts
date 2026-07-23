@@ -335,27 +335,20 @@ describe('AI review workflow contract', () => {
 
   it('lets manual dispatch select either reviewer subject to the configured fork mode', () => {
     const dispatchGuards = reviewWorkflow.match(/github\.event_name == 'workflow_dispatch'/g)
-    expect(dispatchGuards?.length).toBe(5)
+    expect(dispatchGuards?.length).toBe(3)
     expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'both'/g)?.length).toBe(2)
     expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'claude'/g)?.length).toBe(1)
     expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'codex'/g)?.length).toBe(1)
     expect(reviewWorkflow).toContain("needs.review_target.outputs.fork_mode != 'disabled'")
   })
 
-  it('checks out the resolved head SHA only for trusted historical dispatches', () => {
-    const expectedRef = '${{ needs.review_target.outputs.head_sha }}'
-    const expectedDispatchGuard = "${{ github.event_name == 'workflow_dispatch' }}"
-    const expectedTargetGuard = "${{ github.event_name != 'workflow_dispatch' }}"
+  it('checks out the resolved review commit for open and merged pull requests', () => {
+    const expectedRef = '${{ needs.review_target.outputs.review_sha }}'
 
     for (const job of ['claude_review', 'codex_review']) {
-      const dispatchCheckout = getNamedStep(job, 'Checkout dispatched pull request head')
-      const targetCheckout = getNamedStep(job, 'Checkout pull request merge commit')
-
-      expect(dispatchCheckout.if).toBe(expectedDispatchGuard)
-      expect(dispatchCheckout.with?.ref).toBe(expectedRef)
-      expect(targetCheckout.if).toBe(expectedTargetGuard)
-      expect(targetCheckout.with?.ref).toBe(
-        'refs/pull/${{ needs.review_target.outputs.number }}/merge'
+      expect(getNamedStep(job, 'Checkout pull request review commit').with?.ref).toBe(expectedRef)
+      expect(getNamedStep(job, 'Resolve review comparison base').run).toContain(
+        'git rev-parse HEAD^'
       )
     }
   })
@@ -607,10 +600,8 @@ exit 1
     const reviewStep = getNamedStep('claude_review', 'Run Claude architecture review')
 
     expect(contextStep.run).toContain('prompt_file="$RUNNER_TEMP/claude-review-prompt.md"')
-    expect(contextStep.env?.PR_BASE_SHA).toBe('${{ needs.review_target.outputs.base_sha }}')
-    expect(contextStep.run).toContain('git merge-base HEAD %s')
-    expect(contextStep.run).toContain('git diff --stat "$base" HEAD')
-    expect(contextStep.run).toContain('git diff "$base" HEAD')
+    expect(contextStep.env?.PR_DIFF_BASE).toBe('${{ steps.diff_base.outputs.sha }}')
+    expect(contextStep.run).toContain('git diff --stat %s HEAD')
     expect(contextStep.run).not.toMatch(/^\s+git diff /m)
     expect(reviewStep.run).toContain('< "$CLAUDE_PROMPT_FILE"')
     expect(reviewWorkflow).not.toContain('steps.context.outputs.content')
@@ -635,7 +626,7 @@ exit 1
         ...process.env,
         RUNNER_TEMP: root,
         PR_NUMBER: '376',
-        PR_BASE_SHA: 'base-sha',
+        PR_DIFF_BASE: 'base-sha',
         REPOSITORY: 'aipoch/open-science',
         GITHUB_OUTPUT: githubOutput
       }
@@ -644,14 +635,13 @@ exit 1
     expect(result.status, result.stderr).toBe(0)
     const prompt = readFileSync(join(root, 'claude-review-prompt.md'), 'utf8')
     expect(prompt).not.toContain('export const value10000 = 10001')
-    expect(prompt).toContain('git merge-base HEAD base-sha')
-    expect(prompt).toContain('git diff --stat "$base" HEAD')
+    expect(prompt).toContain('git diff --stat base-sha HEAD')
     expect(Buffer.byteLength(prompt)).toBeLessThan(8_192)
     expect(getNamedStep('claude_review', 'Install Claude CLI').if).toBeUndefined()
     expect(getNamedStep('claude_review', 'Run Claude architecture review').if).toBeUndefined()
   })
 
-  it('runs built-in Codex review through the action proxy and read-only permission profile', () => {
+  it('runs structured Codex exec through the action proxy and read-only permission profile', () => {
     const step = getNamedStep('codex_review', 'Run Codex correctness review')
 
     expect(step.uses).toBe('openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56')
@@ -661,14 +651,15 @@ exit 1
       model: "${{ vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}",
       effort: 'high',
       'permission-profile': ':read-only',
-      'codex-args': '${{ steps.codex_args.outputs.value }}'
+      'codex-args': '${{ steps.codex_args.outputs.value }}',
+      'output-schema-file': '${{ steps.codex_args.outputs.schema_file }}'
     })
     expect(step.with).not.toHaveProperty('sandbox')
     expect(step.with?.prompt).toContain('Return the review through the required JSON schema')
     expect(reviewWorkflow).not.toContain('codex-responses-api-proxy')
   })
 
-  it('builds a conflict-free codex exec review invocation', () => {
+  it('builds a generic structured codex exec invocation', () => {
     const root = createFixtureRoot('ai-review-codex-args-')
     const githubOutput = join(root, 'github-output')
     const result = spawnSync('bash', ['-c', getRunStep('codex_review', 'codex_args')], {
@@ -677,7 +668,6 @@ exit 1
       env: {
         ...process.env,
         RUNNER_TEMP: root,
-        PR_BASE_SHA: 'base-sha',
         PR_BRANCH: 'ci/reviewer-dispatch-selector',
         PR_TITLE: 'ci(review): allow selecting a dispatched reviewer',
         GITHUB_OUTPUT: githubOutput
@@ -685,18 +675,17 @@ exit 1
     })
 
     expect(result.status, result.stderr).toBe(0)
-    const output = readFileSync(githubOutput, 'utf8').trim()
-    const args = JSON.parse(output.slice('value='.length)) as string[]
-    expect(args).toContain('review')
-    expect(args).toContain('--base')
-    expect(args).toContain('base-sha')
-    expect(args).toContain('--output-schema')
+    const outputLines = readFileSync(githubOutput, 'utf8').trim().split('\n')
+    const args = JSON.parse(outputLines[0]!.slice('value='.length)) as string[]
+    expect(args).not.toContain('review')
+    expect(args).not.toContain('--base')
+    expect(args).not.toContain('--output-schema')
     expect(args).not.toContain('--title')
     expect(args).not.toContain('-')
     // codex-action writes its proxy route to the isolated CODEX_HOME config.
     expect(args).not.toContain('--ignore-user-config')
-    const schemaIndex = args.indexOf('--output-schema')
-    const schema = JSON.parse(readFileSync(args[schemaIndex + 1]!, 'utf8')) as {
+    const schemaFile = outputLines[1]!.slice('schema_file='.length)
+    const schema = JSON.parse(readFileSync(schemaFile, 'utf8')) as {
       required: string[]
       properties: Record<string, unknown>
     }

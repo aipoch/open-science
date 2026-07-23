@@ -58,6 +58,8 @@ jobs:
       head_ref: ${{ steps.target.outputs.head_ref }}
       head_sha: ${{ steps.target.outputs.head_sha }}
       base_sha: ${{ steps.target.outputs.base_sha }}
+      review_sha: ${{ steps.target.outputs.review_sha }}
+      state: ${{ steps.target.outputs.state }}
       title: ${{ steps.target.outputs.title }}
       is_fork: ${{ steps.target.outputs.is_fork }}
       fork_mode: ${{ steps.target.outputs.fork_mode }}
@@ -88,12 +90,25 @@ jobs:
           fi
 
           gh pr view "$pr_number" --repo "${{ github.repository }}" \
-            --json number,headRefName,headRefOid,baseRefOid,title,isCrossRepository > pr.json
+            --json number,headRefName,headRefOid,baseRefOid,title,isCrossRepository,state,mergeCommit \
+            > pr.json
+          state="$(jq -r '.state' pr.json)"
+          head_sha="$(jq -r '.headRefOid' pr.json)"
+          review_sha="$head_sha"
+          if [[ "$state" == "MERGED" ]]; then
+            review_sha="$(jq -r '.mergeCommit.oid // empty' pr.json)"
+            if [[ -z "$review_sha" ]]; then
+              echo "Merged pull request has no merge commit OID." >&2
+              exit 1
+            fi
+          fi
           {
             echo "number=$(jq -r '.number' pr.json)"
             echo "head_ref=$(jq -r '.headRefName' pr.json)"
-            echo "head_sha=$(jq -r '.headRefOid' pr.json)"
+            echo "head_sha=$head_sha"
             echo "base_sha=$(jq -r '.baseRefOid' pr.json)"
+            echo "review_sha=$review_sha"
+            echo "state=$state"
             echo "title=$(jq -r '.title' pr.json)"
             echo "is_fork=$(jq -r '.isCrossRepository' pr.json)"
             echo "fork_mode=$FORK_REVIEW_MODE"
@@ -124,27 +139,33 @@ jobs:
       pr_number: ${{ needs.review_target.outputs.number }}
       head_sha: ${{ needs.review_target.outputs.head_sha }}
     steps:
-      - name: Checkout dispatched pull request head
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+      - name: Checkout pull request review commit
         uses: actions/checkout@v7
         with:
-          ref: ${{ needs.review_target.outputs.head_sha }}
+          ref: ${{ needs.review_target.outputs.review_sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Checkout pull request merge commit
-        if: ${{ github.event_name != 'workflow_dispatch' }}
-        uses: actions/checkout@v7
-        with:
-          ref: refs/pull/${{ needs.review_target.outputs.number }}/merge
-          fetch-depth: 0
-          persist-credentials: false
+      - name: Resolve review comparison base
+        id: diff_base
+        env:
+          PR_BASE_SHA: ${{ needs.review_target.outputs.base_sha }}
+          PR_STATE: ${{ needs.review_target.outputs.state }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$PR_STATE" == "MERGED" ]]; then
+            base_sha="$(git rev-parse HEAD^)"
+          else
+            base_sha="$(git merge-base HEAD "$PR_BASE_SHA")"
+          fi
+          echo "sha=$base_sha" >> "$GITHUB_OUTPUT"
 
       - name: Build Claude review prompt
         id: context
         env:
           PR_NUMBER: ${{ needs.review_target.outputs.number }}
-          PR_BASE_SHA: ${{ needs.review_target.outputs.base_sha }}
+          PR_DIFF_BASE: ${{ steps.diff_base.outputs.sha }}
           REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
@@ -154,10 +175,10 @@ jobs:
             echo "Perform the architecture and integration review for PR #${PR_NUMBER}"
             echo "in ${REPOSITORY}. Review only changes introduced by this pull request."
             echo
-            echo 'The current working directory is the checked-out pull request head commit. Use Read,'
+            echo 'The current working directory is the checked-out pull request review commit. Use Read,'
             echo 'Glob, Grep, and Bash as needed to inspect the repository and gather your own context.'
-            printf 'Start with `base=$(git merge-base HEAD %s)`, then inspect `git diff --stat "$base" HEAD`\n' "$PR_BASE_SHA"
-            echo 'and `git diff "$base" HEAD`. Inspect the'
+            printf 'Start with `git diff --stat %s HEAD` and `git diff %s HEAD`. Inspect the\n' \
+              "$PR_DIFF_BASE" "$PR_DIFF_BASE"
             echo 'changed files, their callers, tests, configuration, and surrounding implementation.'
             echo 'Do not modify the checkout or post comments yourself.'
             echo
@@ -447,21 +468,27 @@ jobs:
       pr_number: ${{ needs.review_target.outputs.number }}
       head_sha: ${{ needs.review_target.outputs.head_sha }}
     steps:
-      - name: Checkout dispatched pull request head
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+      - name: Checkout pull request review commit
         uses: actions/checkout@v7
         with:
-          ref: ${{ needs.review_target.outputs.head_sha }}
+          ref: ${{ needs.review_target.outputs.review_sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Checkout pull request merge commit
-        if: ${{ github.event_name != 'workflow_dispatch' }}
-        uses: actions/checkout@v7
-        with:
-          ref: refs/pull/${{ needs.review_target.outputs.number }}/merge
-          fetch-depth: 0
-          persist-credentials: false
+      - name: Resolve review comparison base
+        id: diff_base
+        env:
+          PR_BASE_SHA: ${{ needs.review_target.outputs.base_sha }}
+          PR_STATE: ${{ needs.review_target.outputs.state }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$PR_STATE" == "MERGED" ]]; then
+            base_sha="$(git rev-parse HEAD^)"
+          else
+            base_sha="$(git merge-base HEAD "$PR_BASE_SHA")"
+          fi
+          echo "sha=$base_sha" >> "$GITHUB_OUTPUT"
 
       - name: Resolve Responses API endpoint
         id: responses_endpoint
@@ -495,7 +522,6 @@ jobs:
       - name: Build Codex review arguments
         id: codex_args
         env:
-          PR_BASE_SHA: ${{ needs.review_target.outputs.base_sha }}
           PR_BRANCH: ${{ needs.review_target.outputs.head_ref }}
           PR_TITLE: ${{ needs.review_target.outputs.title }}
         shell: bash
@@ -561,22 +587,16 @@ jobs:
 
           args="$(
             jq -cn \
-              --arg base "$PR_BASE_SHA" \
-              --arg schema "$schema_file" \
               --rawfile instructions "$instructions_file" \
               '[
                 "--ephemeral",
                 "--ignore-rules",
                 "--config",
-                ("developer_instructions=" + ($instructions | tojson)),
-                "review",
-                "--base",
-                $base,
-                "--output-schema",
-                $schema
+                ("developer_instructions=" + ($instructions | tojson))
               ]'
           )"
           echo "value=$args" >> "$GITHUB_OUTPUT"
+          echo "schema_file=$schema_file" >> "$GITHUB_OUTPUT"
 
       - name: Run Codex correctness review
         id: run_codex
@@ -589,10 +609,17 @@ jobs:
           permission-profile: ':read-only'
           codex-home: ${{ runner.temp }}/codex-home
           codex-args: ${{ steps.codex_args.outputs.value }}
+          output-schema-file: ${{ steps.codex_args.outputs.schema_file }}
           prompt: |
             Review only the changes introduced by this pull request. Inspect the checked-out
             repository, diff, callers, tests, and configuration as needed. Focus on actionable
             correctness, security, regression, and repository-standard defects.
+
+            The exact pull request changes are between these commits:
+              base: ${{ steps.diff_base.outputs.sha }}
+              review: ${{ needs.review_target.outputs.review_sha }}
+            Start with `git diff --stat <base> HEAD` and `git diff <base> HEAD`, substituting the
+            base commit above, then inspect relevant files and callers as needed.
 
             Return the review through the required JSON schema. Use "needs changes" exactly when
             findings is non-empty, and "mergeable" exactly when findings is empty. Every finding
