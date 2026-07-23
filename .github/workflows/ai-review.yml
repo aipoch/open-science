@@ -360,7 +360,7 @@ jobs:
     steps:
       - name: Post Claude architecture review
         id: post
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8
         env:
           REVIEW_BODY: ${{ needs.claude_review.outputs.review_body }}
           PR_NUMBER: ${{ needs.claude_review.outputs.pr_number }}
@@ -634,7 +634,7 @@ jobs:
 
       - name: Normalize Codex review
         id: normalize_codex
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8
         env:
           CODEX_FINAL_MESSAGE: ${{ steps.run_codex.outputs.final-message }}
         with:
@@ -717,7 +717,7 @@ jobs:
     steps:
       - name: Post Codex correctness review
         id: post
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8
         env:
           CODEX_REVIEW_BODY: ${{ needs.codex_review.outputs.review_body }}
           PR_NUMBER: ${{ needs.codex_review.outputs.pr_number }}
@@ -790,7 +790,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Apply ready-to-merge from published review outputs
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8
         env:
           PR_NUMBER: ${{ needs.review_target.outputs.number }}
           REVIEW_HEAD_SHA: ${{ needs.review_target.outputs.head_sha }}
