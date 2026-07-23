@@ -29,33 +29,22 @@ const ReportErrorDialog = ({ open, error, onClose }: ReportErrorDialogProps): Re
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
 
-  // Recompute the bundle only when an input changes; the picker and preview share one source of truth.
-  const context = useMemo<ErrorReportContext>(() => {
-    const provider = providers.find((candidate) => candidate.id === activeProviderId)
-    const frameworkName = agentFrameworks.find(
-      (framework) => framework.id === agentFrameworkId
-    )?.displayName
-
-    // The bridge is read defensively so the dialog renders even where the preload surface is absent
-    // (tests, early boot); the report helpers tolerate every missing field.
-    return {
-      error,
-      appVersion,
-      platform: window.api?.platform,
-      frameworkName,
-      providerName: provider?.name,
-      model: activeModel,
-      runtimeVersions: window.api?.getRuntimeVersions?.()
-    }
-  }, [
+  // Freeze the bundle at mount into a snapshot. These stores update asynchronously (e.g. getAppInfo()
+  // resolves after open), and re-deriving live would let new fields enter the reviewed preview and the
+  // GitHub URL *after* the user has consented — sharing data they never saw. The parent remounts this
+  // dialog on each open, so a lazy initializer captures a fresh, consistent snapshot every time and it
+  // stays stable for the lifetime of the open dialog. The bridge is read defensively so the dialog
+  // renders where the preload surface is absent (tests, early boot); the helpers tolerate missing fields.
+  const [context] = useState<ErrorReportContext>(() => ({
     error,
     appVersion,
-    providers,
-    activeProviderId,
-    activeModel,
-    agentFrameworkId,
-    agentFrameworks
-  ])
+    platform: window.api?.platform,
+    frameworkName: agentFrameworks.find((framework) => framework.id === agentFrameworkId)
+      ?.displayName,
+    providerName: providers.find((candidate) => candidate.id === activeProviderId)?.name,
+    model: activeModel,
+    runtimeVersions: window.api?.getRuntimeVersions?.()
+  }))
 
   const [consented, setConsented] = useState(false)
   const [copied, setCopied] = useState(false)

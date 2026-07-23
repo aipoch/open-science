@@ -29,6 +29,8 @@ let container: HTMLElement
 let root: Root
 
 beforeEach(() => {
+  // Reset the mutable mock state so a test that mutates it (e.g. the snapshot-freeze test) can't leak.
+  settingsState.activeModel = 'claude-opus-4'
   ;(window as unknown as { api: unknown }).api = {
     platform: 'win32',
     getRuntimeVersions: () => ({ electron: '30.0.0', chrome: '124', node: '20.11' }),
@@ -159,5 +161,27 @@ describe('ReportErrorDialog', () => {
 
     const alert = document.body.querySelector('[role="alert"]')
     expect(alert?.textContent).toContain('IPC channel closed')
+  })
+
+  it('freezes the context at open so a later store change cannot alter the consented report', () => {
+    renderDialog()
+    act(() => {
+      consentCheckbox().click()
+    })
+    const before = issueLink()?.getAttribute('href') ?? ''
+    expect(before).toContain('claude-opus-4')
+
+    // Simulate an async store update landing after the user consented (e.g. getAppInfo resolving),
+    // then a re-render. The mounted dialog must keep its snapshot: no new field enters the shared
+    // URL, and consent is not silently carried onto content the user never reviewed.
+    act(() => {
+      settingsState.activeModel = 'claude-sneaky-swap'
+      renderDialog()
+    })
+
+    const after = issueLink()?.getAttribute('href') ?? ''
+    expect(after).toBe(before)
+    expect(after).not.toContain('claude-sneaky-swap')
+    expect(consentCheckbox().checked).toBe(true)
   })
 })
