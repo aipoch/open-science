@@ -100,22 +100,32 @@ jobs:
               mode="$(git cat-file -e "HEAD:${f}" 2>/dev/null && \
                        git ls-tree HEAD --format='%(objectmode)' -- "${f}" || true)"
               blob_type="$(git cat-file -t "HEAD:${f}" 2>/dev/null || echo missing)"
+              if [[ "$mode" == "120000" ]]; then
+                echo
+                echo "### ${f} (skipped: symlink)"
+                continue
+              fi
               if [[ "$blob_type" != "blob" ]]; then
                 echo
                 echo "### ${f} (skipped: ${blob_type})"
                 continue
               fi
-              if git show "HEAD:${f}" | LC_ALL=C grep -qP '\x00' 2>/dev/null; then
+
+              blob_file="$(mktemp)"
+              git show "HEAD:${f}" > "$blob_file"
+              if [[ -s "$blob_file" ]] && ! LC_ALL=C grep -Iq . "$blob_file"; then
                 echo
                 echo "### ${f} (skipped: binary)"
+                rm -f "$blob_file"
                 continue
               fi
               echo
               echo "### ${f}"
               echo '```'
-              git show "HEAD:${f}"
+              cat "$blob_file"
               echo
               echo '```'
+              rm -f "$blob_file"
             done
           } > review_context_raw.txt
 
@@ -274,7 +284,7 @@ jobs:
 
       - name: Install Codex CLI and Responses API proxy
         shell: bash
-        run: npm install -g @openai/codex @openai/codex-responses-api-proxy
+        run: npm install -g @openai/codex@0.145.0 @openai/codex-responses-api-proxy@0.145.0
 
       - name: Start Responses API proxy and run Codex review
         id: run_codex
@@ -318,6 +328,10 @@ jobs:
               --upstream-url "$endpoint" &
           proxy_pid=$!
 
+          # The proxy has its own copy of the key and endpoint. Remove both secrets from the
+          # parent shell before Codex starts so model-invoked tools cannot inspect them.
+          unset OPENAI_API_KEY CODEX_BASE_URL
+
           # Wait for the proxy to write its server info.
           for _ in $(seq 1 30); do
             [[ -s "$server_info_file" ]] && break
@@ -348,23 +362,24 @@ jobs:
           # know about, keeping the prompt-injection surface minimal.
           review_prompt_file="$CODEX_HOME/review-prompt.txt"
           cat > "$review_prompt_file" <<'REVIEW_INSTRUCTIONS'
-This repository follows Conventional Commits. Verify that the branch name uses
-<type>/<short-description> with one of: feat, fix, docs, style, refactor, perf,
-test, build, ci, chore, revert. Verify that the PR title uses
-<type>(<scope>): <description> with an imperative description starting with a
-lowercase letter (uppercase allowed inside for proper nouns and technical terms).
+          This repository follows Conventional Commits. Verify that the branch name uses
+          <type>/<short-description> with one of: feat, fix, docs, style, refactor, perf,
+          test, build, ci, chore, revert. Verify that the PR title uses
+          <type>(<scope>): <description> with an imperative description starting with a
+          lowercase letter (uppercase allowed inside for proper nouns and technical terms).
 
-Begin the review with:
-## Codex Correctness Review
-**Verdict: mergeable** or **Verdict: needs changes**
-REVIEW_INSTRUCTIONS
+          Begin the review with:
+          ## Codex Correctness Review
+          **Verdict: mergeable** or **Verdict: needs changes**
+          REVIEW_INSTRUCTIONS
+          printf '\nPull request branch: %s\n' "$PR_BRANCH" >> "$review_prompt_file"
 
           output_file="$CODEX_HOME/review-output.md"
 
-          codex exec review \
+          codex exec \
             --sandbox read-only \
+            review \
             --skip-git-repo-check \
-            --ignore-user-config \
             --model "$CODEX_MODEL" \
             --base "$PR_BASE_SHA" \
             --title "$PR_TITLE" \
