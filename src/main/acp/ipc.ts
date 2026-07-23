@@ -106,14 +106,13 @@ const createRuntime = ({
         appVersion: app.getVersion(),
         // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
         defaultCwd,
-        resolveBackend: async () => settingsService.resolveAgentBackend(await selection),
+        resolveBackend: async (context) =>
+          settingsService.resolveAgentBackend(await selection, context),
         // HTTP MCP registrations are runtime-owned. Sharing one host would let an old runtime teardown
         // clear routes belonging to sessions on the newly selected framework.
         mcpHttpHost: new AgentMcpHttpHost(),
         skills: {
           needForceLoad: (ids) => settingsService.skillsNeedingForceLoad(ids),
-          setTurnForced: (ids) => settingsService.setTurnForcedSkillIds(ids),
-          clearTurnForced: () => settingsService.clearTurnForcedSkillIds(),
           namesForIds: (ids) => settingsService.skillNudgeNamesForIds(ids)
         },
         artifacts: {

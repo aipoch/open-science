@@ -8,6 +8,7 @@ import { CODEX_SUBSCRIPTION_PROVIDER_ID, type ClaudeDetectResult } from '../../s
 import type { CodexAuthControllerPort } from './codex-auth'
 import type { ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 import type { UserSkillRepository } from '../skills/user-skill-repository'
+import type { ResponsesBridge } from './responses-bridge'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -1495,6 +1496,7 @@ describe('SettingsService: preflight & spawn config', () => {
 
     await service.setActiveProvider(first.id)
     const firstBackend = await service.resolveActiveAgentBackend()
+    const firstBackendPeer = await service.resolveActiveAgentBackend()
     await service.setActiveProvider(second.id)
     const secondBackend = await service.resolveActiveAgentBackend()
 
@@ -1502,7 +1504,18 @@ describe('SettingsService: preflight & spawn config', () => {
       secondBackend.providerConfiguration?.baseUrl
     )
 
-    const send = async (backend: typeof firstBackend): Promise<void> => {
+    const bridges = Array.from(
+      (
+        service as unknown as {
+          responsesBridges: Map<string, { bridge: ResponsesBridge }>
+        }
+      ).responsesBridges.values(),
+      (entry) => entry.bridge
+    )
+    bridges[0].registerReviewerSession('reviewer-one')
+    bridges[1].registerReviewerSession('reviewer-two')
+
+    const send = async (backend: typeof firstBackend, promptCacheKey: string): Promise<void> => {
       const response = await localFetch(`${backend.providerConfiguration?.baseUrl}/responses`, {
         method: 'POST',
         headers: {
@@ -1511,15 +1524,16 @@ describe('SettingsService: preflight & spawn config', () => {
         },
         body: JSON.stringify({
           model: 'gpt-5.5',
-          input: '<open_science_reviewer_session> hello',
+          input: 'hello',
+          prompt_cache_key: promptCacheKey,
           stream: true,
           tools: [{ type: 'tool_search' }]
         })
       })
       await response.text()
     }
-    await send(firstBackend)
-    await send(secondBackend)
+    await send(firstBackend, 'reviewer-one')
+    await send(secondBackend, 'reviewer-two')
 
     expect(upstreamRequests).toEqual([
       {
@@ -1537,6 +1551,19 @@ describe('SettingsService: preflight & spawn config', () => {
       expect.arrayContaining(['mcp__open_science_reviewer__submit_findings']),
       expect.arrayContaining(['mcp__open_science_reviewer__submit_findings'])
     ])
+
+    const bridgePool = (
+      service as unknown as {
+        responsesBridges: Map<string, unknown>
+      }
+    ).responsesBridges
+    expect(bridgePool.size).toBe(2)
+    await firstBackend.responsesBridgeLease?.release()
+    expect(bridgePool.size).toBe(2)
+    await firstBackendPeer.responsesBridgeLease?.release()
+    expect(bridgePool.size).toBe(1)
+    await secondBackend.responsesBridgeLease?.release()
+    expect(bridgePool.size).toBe(0)
   })
 
   it('drives a native-Responses official vendor directly, without starting the bridge', async () => {
@@ -2130,8 +2157,7 @@ describe('SettingsService: skills', () => {
     expect(await exists(skillDir)).toBe(false)
 
     // Turn-forced: the disabled skill is materialized for this spawn only.
-    service.setTurnForcedSkillIds(['demo'])
-    await service.resolveActiveSpawnConfig()
+    await service.resolveActiveSpawnConfig({ forcedSkillIds: ['demo'] })
     expect(await exists(skillDir)).toBe(true)
 
     // The stored disabled set is untouched, so the skill still lists as disabled.
@@ -2139,7 +2165,6 @@ describe('SettingsService: skills', () => {
     expect(skills.find((skill) => skill.id === 'demo')?.enabled).toBe(false)
 
     // Clearing the force set removes it again on the next spawn.
-    service.clearTurnForcedSkillIds()
     await service.resolveActiveSpawnConfig()
     expect(await exists(skillDir)).toBe(false)
   })
@@ -2992,7 +3017,7 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
     )
   }
 
-  it("scans the user Claude home when the active framework is claude-code", async () => {
+  it('scans the user Claude home when the active framework is claude-code', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
     const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
     await seedSkill(userClaudeDir, 'alpha')
@@ -3007,7 +3032,7 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
     expect(items[0].path).toBe(join(userClaudeDir, 'skills', 'alpha'))
   })
 
-  it("scans the user Codex home when the active framework is codex", async () => {
+  it('scans the user Codex home when the active framework is codex', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
     const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
     await seedSkill(userCodexDir, 'beta')
@@ -3174,9 +3199,7 @@ describe('SettingsService: importAgentHomeSkill path containment', () => {
 
     // Path-traversal payloads are caught by the SAFE_SLUG regex (no '/', '.', etc.), so the
     // containment check downstream is defense-in-depth and is not exercised by valid slugs.
-    await expect(service.importAgentHomeSkill({ slug: '../../etc' })).rejects.toThrow(
-      /unsafe slug/
-    )
+    await expect(service.importAgentHomeSkill({ slug: '../../etc' })).rejects.toThrow(/unsafe slug/)
     await expect(service.importAgentHomeSkill({ slug: '../sibling' })).rejects.toThrow(
       /unsafe slug/
     )
@@ -3582,10 +3605,7 @@ describe('SettingsService: importAgentHomeSkill realpath containment', () => {
   const seedSkill = async (agentHome: string, slug: string): Promise<string> => {
     const dir = join(agentHome, 'skills', slug)
     await mkdir(dir, { recursive: true })
-    await writeFile(
-      join(dir, 'SKILL.md'),
-      `---\nname: ${slug}\ndescription: Test\n---\nBody.\n`
-    )
+    await writeFile(join(dir, 'SKILL.md'), `---\nname: ${slug}\ndescription: Test\n---\nBody.\n`)
     return dir
   }
 

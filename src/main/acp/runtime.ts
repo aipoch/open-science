@@ -130,7 +130,9 @@ type AcpRuntimeOptions = {
   // Resolves the active agent backend (framework + spawn inputs) at connect time so a framework or
   // provider switch takes effect on reconnect. Ignored when an explicit spawnAgent is provided (tests
   // inject that directly).
-  resolveBackend?: () => Promise<ResolvedAgentBackend> | ResolvedAgentBackend
+  resolveBackend?: (context: {
+    forcedSkillIds: string[]
+  }) => Promise<ResolvedAgentBackend> | ResolvedAgentBackend
   artifacts?: AcpRuntimeArtifactOptions
   uploads?: AcpRuntimeUploadOptions
   notebook?: AcpRuntimeNotebookOptions
@@ -157,12 +159,19 @@ type AcpRuntimeOptions = {
 type AcpRuntimeSkillsOptions = {
   // Returns the subset of forced ids that are currently disabled (i.e. need a respawn to materialize).
   needForceLoad: (ids: string[]) => Promise<string[]>
-  // Marks these ids force-loaded for the next spawn's provisioning.
-  setTurnForced: (ids: string[]) => void
-  // Clears the turn-scoped force-load set so later spawns use the normal enabled set.
-  clearTurnForced: () => void
   // Resolves picker ids to the names accepted by the agent's Skill tool.
   namesForIds: (ids: string[]) => Promise<string[]>
+}
+
+type ReviewerSessionRequest = {
+  cwd: string
+  mcpServers: McpServer[]
+  systemPromptAppend?: string
+}
+
+type ReviewerSessionResult = {
+  session: import('@agentclientprotocol/sdk').ActiveSession
+  promptPrefix?: string
 }
 
 type AcpRuntimeArtifactOptions = {
@@ -512,10 +521,17 @@ class AcpRuntime {
   // framework while moving to a different on-disk session store, where the old id is not resumable.
   private readonly sessionBackendIds = new Map<string, string>()
   private readonly promptInFlightSessionIds = new Set<string>()
+  // Public operations acquire this lease synchronously, before backend resolution, skill checks, or
+  // session handshakes can await. Retirement cannot remove a generation while one of those preflight
+  // phases is still capable of spawning or attaching a process/session.
+  private operationLeaseCount = 0
   // Workflow-scoped leases keep this generation alive across gaps between ephemeral sessions and main
   // prompts (for example reviewer -> correction -> re-review). A framework switch can retire the runtime
   // only after every lease and reviewer session has been released.
   private activityLeaseCount = 0
+  // Forced skill state belongs to this runtime generation. It is passed explicitly into backend
+  // provisioning so concurrent old/new generations cannot overwrite a SettingsService singleton.
+  private readonly turnForcedSkillIds = new Set<string>()
   // Monotonic per-turn token and the token of the turn that currently owns each app session id. When an
   // overflow-recovery replay reuses a session id, its start bumps the token; the abandoned turn's finally
   // then sees a newer owner and leaves the replay's shared state (lock, artifact run) untouched.
@@ -564,6 +580,7 @@ class AcpRuntime {
   // initialize so the decrypted key is not retained by the runtime longer than necessary.
   private pendingAuthentication: ResolvedAgentBackend['authentication']
   private pendingProviderConfiguration: ResolvedAgentBackend['providerConfiguration']
+  private responsesBridgeLease: ResolvedAgentBackend['responsesBridgeLease']
   // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
   private readonly resumeTimeoutMs: number
   private readonly cancelTimeoutMs: number
@@ -866,6 +883,10 @@ class AcpRuntime {
 
   // Starts a fresh agent process connection and initializes protocol capabilities.
   async connect(request: AcpConnectRequest = {}): Promise<AcpStateSnapshot> {
+    return this.withOperationLease(() => this.connectOperation(request))
+  }
+
+  private async connectOperation(request: AcpConnectRequest = {}): Promise<AcpStateSnapshot> {
     if (this.connectInFlight) {
       return this.connectInFlight
     }
@@ -925,8 +946,12 @@ class AcpRuntime {
       // on timeout. Awaited (not a bare kill) so a teardown that awaits this in-flight connect does not
       // resolve before the child's whole tree is reaped on Windows.
       if (this.shuttingDown || generation !== this.connectionGeneration) {
-        const result = await terminateProcessTree(agentProcess, undefined, log)
-        this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
+        try {
+          const result = await terminateProcessTree(agentProcess, undefined, log)
+          this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
+        } finally {
+          await spawned.backend.responsesBridgeLease?.release()
+        }
         throw new Error(
           this.shuttingDown
             ? 'ACP runtime is shutting down.'
@@ -934,6 +959,7 @@ class AcpRuntime {
         )
       }
 
+      this.applyResolvedBackend(spawned.backend)
       this.agentProcess = agentProcess
       this.attachAgentProcessEvents(this.agentProcess)
 
@@ -1101,6 +1127,12 @@ class AcpRuntime {
 
   // Creates a protocol session, injects artifact tooling, and uses the returned id as the app session id.
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
+    return this.withOperationLease(() => this.createSessionOperation(request))
+  }
+
+  private async createSessionOperation(
+    request: AcpCreateSessionRequest = {}
+  ): Promise<AcpCreateSessionResponse> {
     try {
       log.info('createSession: starting', { request })
       const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
@@ -1209,6 +1241,12 @@ class AcpRuntime {
 
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+    return this.withOperationLease(() => this.resumeSessionOperation(request))
+  }
+
+  private async resumeSessionOperation(
+    request: AcpResumeSessionRequest
+  ): Promise<AcpCreateSessionResponse> {
     const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
     const projectName = this.normalizeProjectName(request.projectName)
 
@@ -1251,6 +1289,12 @@ class AcpRuntime {
   // transcript starts clean. Returns contextReset so the caller replays a bounded transcript into the
   // next prompt (the app-level equivalent of compaction, which — unlike the backend's — drops all media).
   async resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+    return this.withOperationLease(() => this.resetSessionContextOperation(request))
+  }
+
+  private async resetSessionContextOperation(
+    request: AcpResumeSessionRequest
+  ): Promise<AcpCreateSessionResponse> {
     const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
     const projectName = this.normalizeProjectName(request.projectName)
     const connection = await this.ensureConnected(sessionCwd)
@@ -1532,6 +1576,7 @@ class AcpRuntime {
     this.connection?.close()
     this.connection = undefined
     this.killAgentProcess()
+    void this.releaseResponsesBridgeLease()
   }
 
   // Awaitable quit/relaunch teardown. Latches shuttingDown FIRST so a connect that is mid-spawn when
@@ -1581,7 +1626,7 @@ class AcpRuntime {
   // coordinator stops routing new work here immediately; teardown waits for every prompt and lease.
   async requestRetirement(): Promise<void> {
     this.pendingRetirement = true
-    if (this.hasBlockingActivity()) return
+    if (this.hasRetirementBlockingActivity()) return
 
     this.pendingRetirement = false
     this.pendingProviderReconnect = false
@@ -1608,15 +1653,17 @@ class AcpRuntime {
 
   // If a provider reconnect was deferred while a prompt ran, apply it once nothing is in flight.
   private maybeApplyPendingProviderReconnect(): void {
-    if (this.hasBlockingActivity()) return
-
     if (this.pendingRetirement) {
+      if (this.hasRetirementBlockingActivity()) return
+
       this.pendingRetirement = false
       this.pendingProviderReconnect = false
       this.pendingSkillsReload = false
       void this.disconnectForRetirement()
       return
     }
+
+    if (this.hasBlockingActivity()) return
 
     // A single reconnect satisfies both a pending provider switch and a pending skills reload: the
     // fresh spawn picks up the new backend AND re-provisions the current skill set. So clear both
@@ -1708,12 +1755,26 @@ class AcpRuntime {
     }
   }
 
+  private async withOperationLease<T>(work: () => Promise<T>): Promise<T> {
+    this.operationLeaseCount += 1
+    try {
+      return await work()
+    } finally {
+      this.operationLeaseCount = Math.max(0, this.operationLeaseCount - 1)
+      this.maybeApplyPendingProviderReconnect()
+    }
+  }
+
   private hasBlockingActivity(): boolean {
     return (
       this.promptInFlightSessionIds.size > 0 ||
       this.reviewerSessionIds.size > 0 ||
       this.activityLeaseCount > 0
     )
+  }
+
+  private hasRetirementBlockingActivity(): boolean {
+    return this.operationLeaseCount > 0 || this.hasBlockingActivity()
   }
 
   // Creates the reconnect barrier promise if one is not already pending.
@@ -1734,37 +1795,41 @@ class AcpRuntime {
   }
 
   private async disconnectCurrent(emitClosedStatus = true): Promise<AcpStateSnapshot> {
-    for (const timer of this.cancelTimers.values()) this.clearTimer(timer)
-    this.cancelTimers.clear()
-    this.permissionBroker.cancelAll()
-    this.clearReviewerSessionState()
-    this.promptInFlightSessionIds.clear()
+    try {
+      for (const timer of this.cancelTimers.values()) this.clearTimer(timer)
+      this.cancelTimers.clear()
+      this.permissionBroker.cancelAll()
+      this.clearReviewerSessionState()
+      this.promptInFlightSessionIds.clear()
 
-    for (const session of this.sessions.values()) {
-      session.dispose()
+      for (const session of this.sessions.values()) {
+        session.dispose()
+      }
+
+      this.sessions.clear()
+      this.sessionCwds.clear()
+      this.sessionInlineImageBytes.clear()
+      this.currentPromptTurnBySession.clear()
+      this.latestSessionConfigOptions.clear()
+      this.sessionMcpServerNames.clear()
+      this.codexMcpToolIdentities.clear()
+      this.sessionProjectNames.clear()
+      this.permissionProfiles.clear()
+      this.artifactSessionIds.clear()
+      this.notebookRoutingIds.clear()
+      this.mcpHttpHost?.clear()
+      this.agentToAppSessionId.clear()
+      this.currentSessionId = undefined
+      this.supportsSessionClose = false
+      this.supportsSessionDelete = false
+      this.supportsSessionResume = false
+      this.connection?.close()
+      this.connection = undefined
+
+      await this.killAgentProcessTree()
+    } finally {
+      await this.releaseResponsesBridgeLease()
     }
-
-    this.sessions.clear()
-    this.sessionCwds.clear()
-    this.sessionInlineImageBytes.clear()
-    this.currentPromptTurnBySession.clear()
-    this.latestSessionConfigOptions.clear()
-    this.sessionMcpServerNames.clear()
-    this.codexMcpToolIdentities.clear()
-    this.sessionProjectNames.clear()
-    this.permissionProfiles.clear()
-    this.artifactSessionIds.clear()
-    this.notebookRoutingIds.clear()
-    this.mcpHttpHost?.clear()
-    this.agentToAppSessionId.clear()
-    this.currentSessionId = undefined
-    this.supportsSessionClose = false
-    this.supportsSessionDelete = false
-    this.supportsSessionResume = false
-    this.connection?.close()
-    this.connection = undefined
-
-    await this.killAgentProcessTree()
 
     if (emitClosedStatus) {
       this.setStatus('closed')
@@ -1820,30 +1885,27 @@ class AcpRuntime {
   private async spawnAgentProcess(): Promise<{
     process: ChildProcessWithoutNullStreams
     framework: AgentFramework['id']
+    backend: ResolvedAgentBackend
   }> {
     if (this.spawnAgent) {
-      return { process: this.spawnAgent(), framework: this.framework.id }
+      return {
+        process: this.spawnAgent(),
+        framework: this.framework.id,
+        backend: {
+          framework: this.framework,
+          executablePath: '',
+          env: {}
+        }
+      }
     }
 
-    const backend = this.options.resolveBackend ? await this.options.resolveBackend() : undefined
+    const backend = this.options.resolveBackend
+      ? await this.options.resolveBackend({ forcedSkillIds: [...this.turnForcedSkillIds] })
+      : undefined
 
     if (!backend) {
       throw new Error('ACP agent spawn configuration is not available.')
     }
-
-    // Adopt the framework this reconnect resolved so session meta, permission mapping, and the spawn
-    // itself all agree with the current selection.
-    this.framework = backend.framework
-    this.backendId = backend.backendId
-    this.nativeMcpEnabled =
-      backend.framework.id !== 'codex' || backend.providerConfiguration === undefined
-    this.bridgeMcpAliasesEnabled =
-      backend.framework.id === 'codex' && backend.providerConfiguration !== undefined
-    this.pendingSessionModel = backend.sessionModel
-    this.pendingSessionModelRequired = backend.sessionModelRequired ?? false
-    this.pendingSessionEffort = backend.sessionEffort
-    this.pendingAuthentication = backend.authentication
-    this.pendingProviderConfiguration = backend.providerConfiguration
 
     // Surfaces which backend + model this connect uses, so a fallback to the framework's own default
     // model (e.g. opencode with no app model to inject) is diagnosable in the log rather than silent.
@@ -1860,7 +1922,7 @@ class AcpRuntime {
 
     let process: ChildProcessWithoutNullStreams
     try {
-      process = this.framework.spawn({
+      process = backend.framework.spawn({
         executablePath: backend.executablePath,
         env: backend.env,
         args: backend.args ?? []
@@ -1869,6 +1931,7 @@ class AcpRuntime {
       // Wrap (never mutate) the failure with the framework this spawn targeted: the connect-level catch
       // would otherwise fall back to this.framework.id, which an overlapping reconnect could move before
       // the log is written. connectFresh unwraps this and re-throws the original `error` value.
+      await backend.responsesBridgeLease?.release()
       throw new SpawnFailure(backend.framework.id, error)
     }
 
@@ -1877,12 +1940,33 @@ class AcpRuntime {
       pid: process.pid
     })
 
-    return { process, framework: backend.framework.id }
+    return { process, framework: backend.framework.id, backend }
+  }
+
+  private applyResolvedBackend(backend: ResolvedAgentBackend): void {
+    this.framework = backend.framework
+    this.backendId = backend.backendId
+    this.nativeMcpEnabled =
+      backend.framework.id !== 'codex' || backend.providerConfiguration === undefined
+    this.bridgeMcpAliasesEnabled =
+      backend.framework.id === 'codex' && backend.providerConfiguration !== undefined
+    this.pendingSessionModel = backend.sessionModel
+    this.pendingSessionModelRequired = backend.sessionModelRequired ?? false
+    this.pendingSessionEffort = backend.sessionEffort
+    this.pendingAuthentication = backend.authentication
+    this.pendingProviderConfiguration = backend.providerConfiguration
+    this.responsesBridgeLease = backend.responsesBridgeLease
+  }
+
+  private async releaseResponsesBridgeLease(): Promise<void> {
+    const lease = this.responsesBridgeLease
+    this.responsesBridgeLease = undefined
+    await lease?.release()
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
   async sendPrompt(request: AcpPromptRequest): Promise<PromptResponse> {
-    return withDataRootWrite(() => this.sendPromptTurn(request))
+    return this.withOperationLease(() => withDataRootWrite(() => this.sendPromptTurn(request)))
   }
 
   private async sendPromptTurn(request: AcpPromptRequest): Promise<PromptResponse> {
@@ -1903,37 +1987,43 @@ class AcpRuntime {
     const forced = request.forcedSkillIds ?? []
     let didForceReload = false
 
-    if (this.skillsHooks && forced.length > 0) {
-      const toForce = await this.skillsHooks.needForceLoad(forced)
+    try {
+      if (this.skillsHooks && forced.length > 0) {
+        const toForce = await this.skillsHooks.needForceLoad(forced)
 
-      if (toForce.length > 0) {
-        // Capture routing before the disconnect clears it, so the resume lands on the same conversation.
-        const sessionCwd = this.sessionCwds.get(request.sessionId) ?? this.cwd
-        const projectName = this.resolveSessionProjectName(request.sessionId)
-        const permissionProfile =
-          this.permissionProfiles.get(request.sessionId)?.selectedProfile ??
-          DEFAULT_PERMISSION_PROFILE
-        this.skillsHooks.setTurnForced(forced)
-        didForceReload = true
-        await this.disconnect(false)
-        const reloadResume = await this.resumeSession({
-          sessionId: request.sessionId,
-          cwd: sessionCwd,
-          projectName,
-          permissionProfile
-        })
-        if (reloadResume.contextReset) {
-          request.historyPreamble = request.resumeFallback?.historyPreamble
-          request.historyAttachments = request.resumeFallback?.historyAttachments
-          request.historyImages = request.resumeFallback?.historyImages
-        }
+        if (toForce.length > 0) {
+          // Capture routing before disconnect clears it, so resume lands on the same conversation.
+          const sessionCwd = this.sessionCwds.get(request.sessionId) ?? this.cwd
+          const projectName = this.resolveSessionProjectName(request.sessionId)
+          const permissionProfile =
+            this.permissionProfiles.get(request.sessionId)?.selectedProfile ??
+            DEFAULT_PERMISSION_PROFILE
+          this.turnForcedSkillIds.clear()
+          for (const id of forced) this.turnForcedSkillIds.add(id)
+          didForceReload = true
+          await this.disconnect(false)
+          const reloadResume = await this.resumeSession({
+            sessionId: request.sessionId,
+            cwd: sessionCwd,
+            projectName,
+            permissionProfile
+          })
+          if (reloadResume.contextReset) {
+            request.historyPreamble = request.resumeFallback?.historyPreamble
+            request.historyAttachments = request.resumeFallback?.historyAttachments
+            request.historyImages = request.resumeFallback?.historyImages
+          }
 
-        const reloaded = this.sessions.get(request.sessionId)
-        if (!reloaded) {
-          throw new Error(`ACP session not found after force-load: ${request.sessionId}`)
+          const reloaded = this.sessions.get(request.sessionId)
+          if (!reloaded) {
+            throw new Error(`ACP session not found after force-load: ${request.sessionId}`)
+          }
+          activeSession = reloaded
         }
-        activeSession = reloaded
       }
+    } catch (error) {
+      if (didForceReload) this.turnForcedSkillIds.clear()
+      throw error
     }
 
     this.currentSessionId = request.sessionId
@@ -2098,8 +2188,8 @@ class AcpRuntime {
       // A disabled skill forced for this turn is restored now: clear the force set, then schedule a
       // reconnect so the NEXT prompt respawns with the normal enabled set. Ordering matters — the clear
       // must happen before the reconnect is applied so the fresh spawn no longer sees the forced ids.
-      if (didForceReload && this.skillsHooks) {
-        this.skillsHooks.clearTurnForced()
+      if (didForceReload) {
+        this.turnForcedSkillIds.clear()
         this.pendingSkillsReload = true
       }
       // A provider switch requested mid-turn is applied now that the session is idle.
@@ -3465,6 +3555,7 @@ class AcpRuntime {
     this.pendingSkillsReload = false
     this.pendingRetirement = false
     this.resolveReconnectBarrier()
+    void this.releaseResponsesBridgeLease()
     this.setStatus('closed')
   }
 
@@ -3539,6 +3630,7 @@ class AcpRuntime {
 
   private clearReviewerSessionState(): void {
     for (const [sessionId, reviewerCwd] of this.reviewerSessionDirectories) {
+      this.responsesBridgeLease?.unregisterReviewerSession(sessionId)
       this.removeReviewerDirectory(reviewerCwd)
       this.codexMcpToolIdentities.delete(sessionId)
       this.sessionFrameworks.delete(sessionId)
@@ -3562,18 +3654,15 @@ class AcpRuntime {
   // session is isolated from main agent sessions: it is not tracked in this.sessions, does not
   // appear in the snapshot, and callers are responsible for disposing it. This allows background
   // review to run in parallel with the main session without affecting the main state machine.
-  async buildReviewerSession(request: {
+  async buildReviewerSession(request: ReviewerSessionRequest): Promise<ReviewerSessionResult> {
+    return this.withOperationLease(() => this.buildReviewerSessionOperation(request))
+  }
+
+  private async buildReviewerSessionOperation(
+    request: ReviewerSessionRequest
+  ): Promise<ReviewerSessionResult> {
     // Used only to establish/reuse the shared agent connection. The reviewer session itself runs in an
     // app-created empty temporary directory so built-in read tools cannot see the audited workspace.
-    cwd: string
-    mcpServers: McpServer[]
-    systemPromptAppend?: string
-  }): Promise<{
-    session: import('@agentclientprotocol/sdk').ActiveSession
-    // Framework-neutral rubric delivery: Claude carries the append in session _meta (empty prefix),
-    // opencode has no preset so the rubric rides back as a prompt prefix the caller must prepend.
-    promptPrefix?: string
-  }> {
     const mcpServerNames = this.mcpServerNamesOf(request.mcpServers)
     const reviewerMcp = request.mcpServers[0]
     const reviewerMcpHttp =
@@ -3649,6 +3738,7 @@ class AcpRuntime {
       }
 
       this.reviewerSessionIds.add(session.sessionId)
+      this.responsesBridgeLease?.registerReviewerSession(session.sessionId)
       this.reviewerSessionDirectories.set(session.sessionId, reviewerCwd)
       this.sessionMcpServerNames.set(session.sessionId, mcpServerNames)
       this.sessionFrameworks.set(session.sessionId, this.framework.id)
@@ -3667,6 +3757,7 @@ class AcpRuntime {
   disposeReviewerSession(session: import('@agentclientprotocol/sdk').ActiveSession): number {
     const rejectedToolCalls = this.reviewerRejectedToolCalls.get(session.sessionId) ?? 0
     this.reviewerSessionIds.delete(session.sessionId)
+    this.responsesBridgeLease?.unregisterReviewerSession(session.sessionId)
     this.sessionMcpServerNames.delete(session.sessionId)
     this.codexMcpToolIdentities.delete(session.sessionId)
     this.sessionFrameworks.delete(session.sessionId)

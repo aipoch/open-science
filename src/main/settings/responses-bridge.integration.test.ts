@@ -7,7 +7,6 @@ import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 import { expect, it, vi } from 'vitest'
 
-import { REVIEWER_BRIDGE_SESSION_MARKER } from '../../shared/reviewer'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
 import { ReviewerMcpServer, type SubmitFindingsHandler } from '../reviewer/mcp-server'
 import { ResponsesBridge } from './responses-bridge'
@@ -394,7 +393,6 @@ it.runIf(runLiveContract)(
           }
         ],
         reviewerScope: {
-          marker: REVIEWER_BRIDGE_SESSION_MARKER,
           namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS
         }
       },
@@ -468,9 +466,8 @@ it.runIf(runLiveContract)(
               _meta: { disableBuiltInTools: true }
             })
             .withSession(async (session) => {
-              session.prompt(
-                `${REVIEWER_BRIDGE_SESSION_MARKER}\nUse read_turn, then call submit_findings.`
-              )
+              bridge.registerReviewerSession(session.sessionId)
+              session.prompt('Use read_turn, then call submit_findings.')
               const updates: acp.SessionNotification[] = []
               for (;;) {
                 const update = await session.nextUpdate()

@@ -29,7 +29,6 @@ export type ResponsesBridgeTarget = {
   // and gateways fronting non-OpenAI models often reject unknown parameters.
   forwardReasoningEffort?: boolean
   reviewerScope?: {
-    marker: string
     namespacedTools: ResponsesBridgeNamespacedTool[]
   }
 }
@@ -345,21 +344,6 @@ const withConnectorInstructions = (
     body: { ...body, instructions },
     selectedIds: selected.map((connector) => connector.id)
   }
-}
-
-const containsTextMarker = (value: unknown, marker: string): boolean => {
-  if (typeof value === 'string') return value.includes(marker)
-  if (Array.isArray(value)) return value.some((item) => containsTextMarker(item, marker))
-  if (!value || typeof value !== 'object') return false
-  return Object.values(value).some((item) => containsTextMarker(item, marker))
-}
-
-const isReviewerScopedRequest = (body: JsonObject, target: ResponsesBridgeTarget): boolean => {
-  const marker = target.reviewerScope?.marker
-  return Boolean(
-    marker &&
-    (containsTextMarker(body.instructions, marker) || containsTextMarker(body.input, marker))
-  )
 }
 
 const namespacedToolAlias = (
@@ -1059,6 +1043,7 @@ export class ResponsesBridge {
   // it back to thinking-mode providers that require it. Grows within a session; cleared on close (a
   // provider switch / disconnect). Keyed by call_id, which Codex round-trips, so lookups stay stable.
   private readonly reasoningByCallId = new Map<string, string>()
+  private readonly reviewerSessionKeys = new Set<string>()
 
   constructor(
     target: ResponsesBridgeTarget,
@@ -1085,6 +1070,14 @@ export class ResponsesBridge {
   // a setTarget: the upstream provider is unchanged, so the reasoning cache must be preserved.
   setForwardReasoningEffort(forward: boolean): void {
     this.target = { ...this.target, forwardReasoningEffort: forward }
+  }
+
+  registerReviewerSession(promptCacheKey: string): void {
+    this.reviewerSessionKeys.add(promptCacheKey)
+  }
+
+  unregisterReviewerSession(promptCacheKey: string): void {
+    this.reviewerSessionKeys.delete(promptCacheKey)
   }
 
   async start(): Promise<ResponsesBridgeConnection> {
@@ -1124,6 +1117,7 @@ export class ResponsesBridge {
     this.server = undefined
     this.connection = undefined
     this.reasoningByCallId.clear()
+    this.reviewerSessionKeys.clear()
     if (!server) return
     const closing = new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
@@ -1162,7 +1156,9 @@ export class ResponsesBridge {
 
     try {
       const body = await readBody(request)
-      const reviewerScoped = isReviewerScopedRequest(body, this.target)
+      const reviewerScoped =
+        typeof body.prompt_cache_key === 'string' &&
+        this.reviewerSessionKeys.has(body.prompt_cache_key)
       const namespacedTools = reviewerScoped
         ? (this.target.reviewerScope?.namespacedTools ?? [])
         : (this.target.namespacedTools ?? [])

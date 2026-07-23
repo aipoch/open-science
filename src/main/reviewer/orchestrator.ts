@@ -14,14 +14,13 @@ import type { ActiveSession } from '@agentclientprotocol/sdk'
 import { withReviewerRuntimeActivity, type ReviewerAcpRuntime } from './acp-runtime'
 import { createLogger } from '../logger'
 import { extractProviderToolName, extractTerminalMeta } from '../acp/runtime-events'
-import {
-  REVIEWER_BRIDGE_SESSION_MARKER,
-  type NewCheck,
-  type ReviewCheck,
-  type ReviewerLogEntry,
-  type ReviewOutcome,
-  type ReviewWithChecks,
-  type TurnScope
+import type {
+  NewCheck,
+  ReviewCheck,
+  ReviewerLogEntry,
+  ReviewOutcome,
+  ReviewWithChecks,
+  TurnScope
 } from '../../shared/reviewer'
 import type { ReviewRepository } from './repository'
 import { resolveTurnScopeWithArtifactDigests } from './artifact-digest'
@@ -1208,7 +1207,6 @@ export const buildReviewerPrompt = (
 
   return [
     `You are reviewing turn: ${scope.turnMessageId}`,
-    REVIEWER_BRIDGE_SESSION_MARKER,
     '',
     blockSummary,
     artifactSummary,

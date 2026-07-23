@@ -3,7 +3,6 @@ import { createConnection } from 'node:net'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { REVIEWER_BRIDGE_SESSION_MARKER } from '../../shared/reviewer'
 import {
   ResponsesBridge,
   completionToResponse,
@@ -14,6 +13,7 @@ import {
 } from './responses-bridge'
 
 describe('Responses-compatible bridge conversion', () => {
+  const legacyReviewerMarker = '<open_science_reviewer_session>'
   it('maps instructions, messages, function calls, and tool results to Chat Completions', () => {
     const request = responsesToChatRequest({
       model: 'model-a',
@@ -981,7 +981,7 @@ describe('Responses-compatible bridge conversion', () => {
     }
   })
 
-  it('advertises only reviewer MCP functions for a marked reviewer session', async () => {
+  it('advertises reviewer MCP functions only for a trusted registered session key', async () => {
     const upstreamRequests: Array<Record<string, unknown>> = []
     const upstreamFetch = vi.fn(
       async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
@@ -1012,7 +1012,6 @@ describe('Responses-compatible bridge conversion', () => {
           }
         ],
         reviewerScope: {
-          marker: REVIEWER_BRIDGE_SESSION_MARKER,
           namespacedTools: [
             {
               namespace: 'mcp__open_science_reviewer',
@@ -1030,7 +1029,7 @@ describe('Responses-compatible bridge conversion', () => {
       upstreamFetch
     )
     const connection = await bridge.start()
-    const post = async (input: string): Promise<void> => {
+    const post = async (input: string, promptCacheKey: string): Promise<void> => {
       const response = await fetch(`${connection.baseUrl}/responses`, {
         method: 'POST',
         headers: {
@@ -1040,6 +1039,7 @@ describe('Responses-compatible bridge conversion', () => {
         body: JSON.stringify({
           model: 'model-a',
           input,
+          prompt_cache_key: promptCacheKey,
           stream: true,
           tools: [
             { type: 'function', name: 'exec_command', parameters: { type: 'object' } },
@@ -1053,8 +1053,9 @@ describe('Responses-compatible bridge conversion', () => {
     }
 
     try {
-      await post('normal session')
-      await post(`${REVIEWER_BRIDGE_SESSION_MARKER} review this turn`)
+      await post(`${legacyReviewerMarker} normal user content`, 'normal-session')
+      bridge.registerReviewerSession('reviewer-session')
+      await post('review this turn without a model-visible routing marker', 'reviewer-session')
 
       const toolNames = upstreamRequests.map((request) =>
         ((request.tools ?? []) as Array<{ function?: { name?: string } }>).map(
