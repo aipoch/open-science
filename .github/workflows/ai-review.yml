@@ -246,6 +246,16 @@ jobs:
             echo "Claude execution output is unavailable." >&2
             exit 1
           fi
+          if ! jq -e '
+            any(.[];
+              .type == "system" and
+              .subtype == "init" and
+              (.tools | type == "array") and
+              (.tools | length == 0))
+          ' "$EXECUTION_FILE" > /dev/null; then
+            echo "Claude did not report an empty available-tools list." >&2
+            exit 1
+          fi
           if jq -e '
             any(.[]; any(.message.content[]?; .type == "tool_use"))
           ' "$EXECUTION_FILE" > /dev/null; then

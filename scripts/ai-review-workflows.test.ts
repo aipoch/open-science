@@ -344,6 +344,7 @@ describe('AI review workflow contract', () => {
     writeFileSync(
       executionFile,
       JSON.stringify([
+        { type: 'system', subtype: 'init', tools: [] },
         { type: 'assistant', message: { content: [{ type: 'text', text: 'draft' }] } },
         {
           type: 'assistant',
@@ -378,6 +379,7 @@ describe('AI review workflow contract', () => {
     writeFileSync(
       executionFile,
       JSON.stringify([
+        { type: 'system', subtype: 'init', tools: [] },
         {
           type: 'assistant',
           message: {
@@ -398,6 +400,31 @@ describe('AI review workflow contract', () => {
 
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain('attempted to use a tool')
+  })
+
+  it('fails closed if Claude advertises any available tool', () => {
+    const root = createFixtureRoot('ai-review-claude-tools-available-')
+    const executionFile = join(root, 'execution.json')
+    const githubOutput = join(root, 'github-output')
+    writeFileSync(
+      executionFile,
+      JSON.stringify([
+        { type: 'system', subtype: 'init', tools: ['Read'] },
+        {
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: '## Claude Architecture Review' }] }
+        }
+      ])
+    )
+
+    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
+    })
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('did not report an empty available-tools list')
   })
 
   it('reads changed file contents via git show (not cat) to prevent symlink traversal', () => {
