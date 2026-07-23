@@ -43,4 +43,14 @@ describe('AI review workflow contract', () => {
     expect(reviewWorkflow).toContain('vars.CLAUDE_REVIEW_MODEL')
     expect(reviewWorkflow).toContain("vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol'")
   })
+
+  it('exposes a workflow_dispatch trigger with a pull request number input', () => {
+    expect(reviewWorkflow).toContain('workflow_dispatch:')
+    expect(reviewWorkflow).toContain('pull_request_number')
+  })
+
+  it('lets both review jobs run on manual dispatch by bypassing the fork gate', () => {
+    const dispatchGuards = reviewWorkflow.match(/github\.event_name == 'workflow_dispatch'/g)
+    expect(dispatchGuards?.length).toBe(2)
+  })
 })
