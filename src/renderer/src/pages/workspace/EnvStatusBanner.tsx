@@ -1,3 +1,4 @@
+import { formatProgressLine } from '../../../../shared/download-progress'
 import type { ProvisionUiState } from './provisioning-view'
 
 // Floating top-of-app pill for the launch-time upgrade gate (spec §6.2). First-run python preparation
@@ -35,6 +36,12 @@ const EnvStatusBanner = ({
             </button>
           ) : null}
         </>
+      ) : ui.download ? (
+        // Compact pill: show the shared speed/ETA/resume text inline (the full bar would break the
+        // single-line layout) so a weak-network upgrade reads as "resuming" rather than a frozen %.
+        <span className="tabular-nums">
+          Updating the notebook environment… {formatProgressLine(ui.download)}
+        </span>
       ) : (
         <span>Updating the notebook environment… {Math.round(ui.progress * 100)}%</span>
       )}

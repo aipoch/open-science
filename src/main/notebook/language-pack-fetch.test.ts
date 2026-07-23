@@ -111,16 +111,15 @@ describe('fetchLanguagePack', () => {
     ).rejects.toThrow(/sha256 mismatch/)
   })
 
-  it('skips the post-download re-hash when the downloader verified inline', async () => {
-    // downloadVerifiesInline signals the pack was already sha256-verified by the resilient core, so
-    // verifyPackChecksum should NOT re-hash — a deliberately wrong sha256 hasher must not be consulted.
+  it('runs an independent post-download sha256 verification (defense-in-depth)', async () => {
+    // Even though the production download verifies inline, fetchLanguagePack must still run its own
+    // post-download hash as a separate integrity gate. A wrong hasher here must fail the fetch.
     const sha256 = vi.fn(async () => 'f'.repeat(64))
-    const deps = makeDeps({ sha256, downloadVerifiesInline: true })
-    const result = await fetchLanguagePack(
-      makeDestDir(), 'https://cdn/envs', 1, 'osx-arm64', 'python', '3.11', deps
-    )
-    expect(result.id).toBe('python-3.11')
-    expect(sha256).not.toHaveBeenCalled()
+    const deps = makeDeps({ sha256 })
+    await expect(
+      fetchLanguagePack(makeDestDir(), 'https://cdn/envs', 1, 'osx-arm64', 'python', '3.11', deps)
+    ).rejects.toThrow(/sha256 mismatch/)
+    expect(sha256).toHaveBeenCalled()
   })
 
   it('rejects a version that was not published', async () => {

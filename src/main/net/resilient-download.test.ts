@@ -1,8 +1,14 @@
 import { createHash } from 'node:crypto'
-import { PassThrough, Readable } from 'node:stream'
+import { posix as posixPath } from 'node:path'
+import { PassThrough, Readable, Writable } from 'node:stream'
 import { describe, expect, it, vi, type MockedFunction } from 'vitest'
 
 import { DownloadChecksumError, resilientDownload } from './resilient-download'
+
+// The memFs doubles key files by the exact string passed as destPath — they never touch the host
+// filesystem or path separators — so a stable posix join keeps the destPath host-agnostic (the plan's
+// Windows-safe join/sep rule) without changing behavior.
+const OUT_PATH = posixPath.join('downloads', 'out.bin')
 
 // Builds a fake fetch honoring Range header; `cutAfter` truncates the body to simulate a drop.
 const sha = (buf: Buffer): string => createHash('sha256').update(buf).digest('hex')
@@ -75,13 +81,13 @@ describe('resilientDownload', () => {
   it('downloads and verifies a clean file', async () => {
     const body = Buffer.from('hello world payload')
     const fs = memFs()
-    const out = await resilientDownload('https://cdn/file', '/tmp/out.bin', {
+    const out = await resilientDownload('https://cdn/file', OUT_PATH, {
       expectedSha256: sha(body),
       deps: { fetchImpl: fakeFetch(body) as unknown as typeof fetch, ...fs, sleep: async () => {} }
     })
-    expect(out).toBe('/tmp/out.bin')
-    expect(fs.files.get('/tmp/out.bin')?.toString()).toBe('hello world payload')
-    expect(fs.files.has('/tmp/out.bin.part')).toBe(false)
+    expect(out).toBe(OUT_PATH)
+    expect(fs.files.get(OUT_PATH)?.toString()).toBe('hello world payload')
+    expect(fs.files.has(`${OUT_PATH}.part`)).toBe(false)
   })
 
   it('resumes with a Range request after a mid-stream cut', async () => {
@@ -96,7 +102,7 @@ describe('resilientDownload', () => {
       call++
       return call === 1 ? first(input, init) : rest(input, init)
     })
-    const out = await resilientDownload('https://cdn/file', '/tmp/out.bin', {
+    const out = await resilientDownload('https://cdn/file', OUT_PATH, {
       expectedSha256: sha(body),
       stallTimeoutMs: 20,
       deps: {
@@ -107,8 +113,8 @@ describe('resilientDownload', () => {
         now: () => 0
       }
     })
-    expect(out).toBe('/tmp/out.bin')
-    expect(fs.files.get('/tmp/out.bin')?.toString()).toBe(body.toString())
+    expect(out).toBe(OUT_PATH)
+    expect(fs.files.get(OUT_PATH)?.toString()).toBe(body.toString())
     const secondInit = rest.mock.calls[0][1] as { headers: Record<string, string> }
     expect(secondInit.headers['Range']).toBe('bytes=10-')
     // The 10 already-downloaded bytes stay in the hoisted hash — no .part re-read on resume.
@@ -118,20 +124,20 @@ describe('resilientDownload', () => {
   it('restarts from zero when server ignores Range (200 on resume)', async () => {
     const body = Buffer.from('0123456789')
     const fs = memFs()
-    fs.files.set('/tmp/out.bin.part', Buffer.from('GARBAGE'))
-    const out = await resilientDownload('https://cdn/file', '/tmp/out.bin', {
+    fs.files.set(`${OUT_PATH}.part`, Buffer.from('GARBAGE'))
+    const out = await resilientDownload('https://cdn/file', OUT_PATH, {
       expectedSha256: sha(body),
       deps: { fetchImpl: fakeFetch(body, { status: 200 }), ...fs, sleep: async () => {} }
     })
-    expect(fs.files.get('/tmp/out.bin')?.toString()).toBe('0123456789')
-    expect(out).toBe('/tmp/out.bin')
+    expect(fs.files.get(OUT_PATH)?.toString()).toBe('0123456789')
+    expect(out).toBe(OUT_PATH)
   })
 
   it('throws DownloadChecksumError and deletes .part on mismatch', async () => {
     const body = Buffer.from('payload')
     const fs = memFs()
     await expect(
-      resilientDownload('https://cdn/file', '/tmp/out.bin', {
+      resilientDownload('https://cdn/file', OUT_PATH, {
         expectedSha256: 'deadbeef',
         maxRetries: 0,
         deps: {
@@ -141,7 +147,7 @@ describe('resilientDownload', () => {
         }
       })
     ).rejects.toBeInstanceOf(DownloadChecksumError)
-    expect(fs.files.has('/tmp/out.bin.part')).toBe(false)
+    expect(fs.files.has(`${OUT_PATH}.part`)).toBe(false)
   })
 
   it('keeps .part after exhausting retries on 5xx', async () => {
@@ -156,7 +162,7 @@ describe('resilientDownload', () => {
         }) as unknown as Response
     )
     await expect(
-      resilientDownload('https://cdn/file', '/tmp/out.bin', {
+      resilientDownload('https://cdn/file', OUT_PATH, {
         maxRetries: 2,
         deps: { fetchImpl: failing as unknown as typeof fetch, ...fs, sleep: async () => {} }
       })
@@ -177,7 +183,7 @@ describe('resilientDownload', () => {
       return call === 1 ? first(input, init) : rest(input, init)
     })
     const phases: string[] = []
-    await resilientDownload('https://cdn/file', '/tmp/out.bin', {
+    await resilientDownload('https://cdn/file', OUT_PATH, {
       expectedSha256: sha(body),
       stallTimeoutMs: 20,
       onProgress: (p) => phases.push(`${p.phase}:${p.attempt}`),
@@ -201,7 +207,7 @@ describe('resilientDownload', () => {
       throw err
     })
     await expect(
-      resilientDownload('https://cdn/file', '/tmp/out.bin', {
+      resilientDownload('https://cdn/file', OUT_PATH, {
         signal: controller.signal,
         deps: { fetchImpl: fetchImpl as unknown as typeof fetch, ...fs, sleep: async () => {} }
       })
@@ -235,7 +241,7 @@ describe('resilientDownload', () => {
       return new Promise((resolve) => setTimeout(resolve, ms))
     })
     await expect(
-      resilientDownload('https://cdn/file', '/tmp/out.bin', {
+      resilientDownload('https://cdn/file', OUT_PATH, {
         expectedSha256: sha(body),
         stallTimeoutMs: 20,
         signal: controller.signal,
@@ -252,49 +258,85 @@ describe('resilientDownload', () => {
     expect(call).toBe(1) // second fetch was never started
   })
 
-  it('closes the failed write stream before retry and keeps the hash consistent', async () => {
+  it('fails terminally and destroys the stream when a write callback rejects', async () => {
+    // The write callback itself rejects (a real disk fault: ENOSPC/EIO), NOT merely a stream 'error'
+    // event with a still-succeeding write. A disk fault is terminal — retrying the download cannot fix
+    // a full/unwritable disk, and a partial write may already have hit disk. Assert: rejects, exactly
+    // one fetch (no retry), and the failed stream was destroyed by the cleanup path.
     const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
     const fs = memFs()
-    // Track every write stream so we can assert the failed one was destroyed before the retry.
-    const streams: Array<{ destroyed: boolean }> = []
-    let failNextWrite = true
+    const fetchImpl = fakeFetch(body)
+    let created: Writable | undefined
+    const createWriteStreamImpl = (): import('node:fs').WriteStream => {
+      const w = new Writable({
+        write(_chunk, _enc, cb) {
+          cb(new Error('ENOSPC no space left on device'))
+        }
+      })
+      created = w
+      return w as unknown as import('node:fs').WriteStream
+    }
+    await expect(
+      resilientDownload('https://cdn/file', OUT_PATH, {
+        expectedSha256: sha(body),
+        deps: {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          ...fs,
+          createWriteStreamImpl,
+          sleep: async () => {},
+          now: () => 0
+        }
+      })
+    ).rejects.toThrow(/ENOSPC/)
+    expect(fetchImpl.mock.calls.length).toBe(1) // terminal — never retried
+    expect(created?.destroyed).toBe(true) // cleanup path destroyed the failed stream
+  })
+
+  it('destroys the failed write stream before opening a new one on a network retry', async () => {
+    // A retryable NETWORK fault (short read), not a disk fault. Records create/destroy order across
+    // streams and asserts the first stream was destroyed before the second was created — the actual
+    // "clean up before retry" guarantee the earlier emit-only test could not prove.
+    const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
+    const fs = memFs()
+    const events: string[] = []
+    let idx = 0
     const createWriteStreamImpl = (
       path: string,
       o?: { flags?: string }
     ): import('node:fs').WriteStream => {
       if (!o || o.flags !== 'a') fs.files.set(path, Buffer.alloc(0))
+      const id = idx++
+      events.push(`create:${id}`)
       const pt = new PassThrough()
-      const rec = pt as unknown as { destroyed: boolean }
-      streams.push(rec)
-      pt.on('data', (c: Buffer) => {
-        // Fail the very first write to exercise the write-error path with the hash mid-stream.
-        if (failNextWrite) {
-          failNextWrite = false
-          pt.emit('error', new Error('EIO write failed'))
-          return
-        }
+      pt.on('data', (c: Buffer) =>
         fs.files.set(path, Buffer.concat([fs.files.get(path) ?? Buffer.alloc(0), c]))
-      })
+      )
+      pt.on('close', () => events.push(`destroy:${id}`))
       return pt as unknown as import('node:fs').WriteStream
     }
-    const out = await resilientDownload('https://cdn/file', '/tmp/out.bin', {
+    // First fetch delivers a short body (retryable), second completes.
+    const first = fakeFetch(body, { cutAfter: 10 })
+    const rest = fakeFetch(body)
+    let call = 0
+    const fetchImpl = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      call++
+      return call === 1 ? first(input, init) : rest(input, init)
+    })
+    const out = await resilientDownload('https://cdn/file', OUT_PATH, {
       expectedSha256: sha(body),
       stallTimeoutMs: 50,
       deps: {
-        fetchImpl: fakeFetch(body) as unknown as typeof fetch,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
         ...fs,
         createWriteStreamImpl,
         sleep: async () => {},
         now: () => 0
       }
     })
-    expect(out).toBe('/tmp/out.bin')
-    // The download still succeeds with the correct digest — proof the hash did not run ahead of the
-    // bytes that actually reached disk when the first write failed.
-    expect(fs.files.get('/tmp/out.bin')?.toString()).toBe(body.toString())
-    // The first (failed) write stream was destroyed before the retry opened a new one.
-    expect(streams.length).toBeGreaterThanOrEqual(2)
-    expect(streams[0].destroyed).toBe(true)
+    expect(out).toBe(OUT_PATH)
+    expect(fs.files.get(OUT_PATH)?.toString()).toBe(body.toString())
+    // The first stream is destroyed before the second is created.
+    expect(events.indexOf('destroy:0')).toBeLessThan(events.indexOf('create:1'))
   })
 
   it('does not retry when the final rename fails (terminal)', async () => {
@@ -305,7 +347,7 @@ describe('resilientDownload', () => {
       throw Object.assign(new Error('EXDEV cross-device rename'), { code: 'EXDEV' })
     })
     await expect(
-      resilientDownload('https://cdn/file', '/tmp/out.bin', {
+      resilientDownload('https://cdn/file', OUT_PATH, {
         expectedSha256: sha(body),
         deps: {
           fetchImpl: fetchImpl as unknown as typeof fetch,

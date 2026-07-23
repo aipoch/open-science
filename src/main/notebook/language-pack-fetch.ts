@@ -48,11 +48,6 @@ export type LanguagePackFetchDeps = {
   ) => Promise<void>
   // sha256 hex of a file; injectable for tests, defaults to the streaming sha256File.
   sha256?: (path: string) => Promise<string>
-  // Set when `download` already verifies the pack's sha256 inline (the default resilient core does, via
-  // the `expected` arg). When true, the post-download verifyPackChecksum runs a size-only check instead
-  // of re-hashing the whole archive a second time. Injected test/custom downloaders leave this false so
-  // the full hash still runs as their integrity gate.
-  downloadVerifiesInline?: boolean
 }
 
 // The manifest is tiny, so a total request timeout is fine. Without it, a CDN that accepts the
@@ -150,13 +145,13 @@ export const fetchLanguagePack = async (
     (p) => onDownloadProgress(p.total != null ? p : { ...p, total: entry.size }),
     { sha256: entry.sha256, size: entry.size }
   )
-  // When the downloader verified sha256 inline (default resilient core), this is a cheap size-only
-  // re-check rather than a second full-file hash of a potentially huge archive.
+  // Defense-in-depth: an independent post-download size+sha256 verification, separate from the inline
+  // check the resilient core already performed while streaming. See verifyPackChecksum — this is a
+  // required second integrity gate for a large executed artifact, not redundant work.
   await verifyPackChecksum(
     filePath,
     { sha256: entry.sha256, size: entry.size },
-    { sha256: deps.sha256 },
-    { skipHash: deps.downloadVerifiesInline === true }
+    { sha256: deps.sha256 }
   )
   return { id: packId(language, packVersion), entry, filePath, manifest }
 }
@@ -225,10 +220,7 @@ export const createFetchBundleAdapter =
           download:
             deps.download ??
             ((url, dest, op, expected) => downloadFile(url, dest, op, signal, expected)),
-          sha256: deps.sha256,
-          // Only the default downloadFile verifies sha256 inline; an injected download does not, so the
-          // post-download hash must still run for it.
-          downloadVerifiesInline: deps.download == null
+          sha256: deps.sha256
         },
         (download) => {
           const ratio =

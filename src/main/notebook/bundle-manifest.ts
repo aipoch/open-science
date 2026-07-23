@@ -222,16 +222,16 @@ export const sha256File = (path: string): Promise<string> =>
 // the whole file through sha256 and compares. Throws on any mismatch so the caller drops the partial
 // pack and reports an actionable provisioning error.
 //
-// `opts.skipHash` runs the size check only, skipping the full-file sha256 pass. Use it when the file
-// was just streamed and sha256-verified inline by the resilient download core (which renames into
-// place only after the digest matches) — re-hashing hundreds of MB a second time is pure waste on the
-// provisioning hot path. Local bundled packs (bundle-local) are NOT inline-verified, so they must keep
-// the full hash and leave skipHash unset.
+// Defense-in-depth (INTENTIONAL — do not "optimize" into a size-only check): the resilient download
+// core already verifies sha256 inline while streaming, but this independent post-download re-hash is a
+// required, separate integrity gate per the plan. It catches corruption that inline hashing cannot —
+// a bad disk sector or another process mutating the file between the core's rename and extraction —
+// on a runtime the app will execute. The extra full-file read is a deliberate correctness/perf
+// tradeoff for a large, long-lived, executed artifact, not redundant work.
 export const verifyPackChecksum = async (
   filePath: string,
   expected: { sha256: string; size?: number },
-  deps: VerifyDeps = {},
-  opts: { skipHash?: boolean } = {}
+  deps: VerifyDeps = {}
 ): Promise<void> => {
   if (typeof expected.size === 'number') {
     const actualSize = statSync(filePath).size
@@ -239,7 +239,6 @@ export const verifyPackChecksum = async (
       throw new Error(`size mismatch for ${filePath}: expected ${expected.size}, got ${actualSize}`)
     }
   }
-  if (opts.skipHash) return
   const sha256Of = deps.sha256 ?? sha256File
   const actual = await sha256Of(filePath)
   if (actual.toLowerCase() !== expected.sha256.toLowerCase()) {

@@ -47,6 +47,15 @@ const MAX_BACKOFF_MS = 30_000
 // Signals that a server closed the stream before delivering all expected bytes (short read).
 class IncompleteStreamError extends Error {}
 
+// Marks an error terminal so the retry loop rethrows instead of retrying. Local filesystem faults
+// (open/write/end failing with ENOSPC, EIO, EACCES, …) and rename failures are not transient network
+// problems — re-downloading will not fix a full or unwritable disk, and after a partial write the
+// on-disk .part can be left in a state the resume math should not paper over. Fail fast and loud.
+const markTerminal = <E>(error: E): E => {
+  ;(error as { terminal?: boolean }).terminal = true
+  return error
+}
+
 const isAbortError = (e: unknown): boolean =>
   e instanceof Error && (e.name === 'AbortError' || e.name === 'TimeoutError')
 
@@ -187,9 +196,13 @@ export const resilientDownload = async (
         // Reset the hoisted hash since we are restarting from byte 0.
         hash = createHash('sha256')
         hashSeededTo = 0
-      } else if (offset < hashSeededTo) {
-        // The .part was truncated below the hash cursor (OS did not flush all writes before destroy).
-        // Re-seed the hash from disk to bring it back in sync.
+      } else if (offset !== hashSeededTo) {
+        // The hash cursor and the on-disk .part disagree, so re-seed the hash from disk to match the
+        // exact bytes we are about to resume after. This covers both directions:
+        //  - offset < hashSeededTo: the .part was truncated below the cursor (partial OS flush).
+        //  - offset > hashSeededTo: bytes reached disk that the hash never consumed. File writes are
+        //    terminal now, so this should be unreachable — but re-seeding keeps the digest correct
+        //    rather than silently skipping the gap and later failing checksum.
         hash = createHash('sha256')
         await seedHash(hash, offset)
         hashSeededTo = offset
@@ -211,7 +224,8 @@ export const resilientDownload = async (
       })
 
       file = mkWrite(partPath, offset > 0 ? { flags: 'a' } : undefined)
-      file.on('error', (e) => (fileError = e))
+      // A stream 'error' is a local disk fault (ENOSPC/EIO/…), not a network problem — terminal.
+      file.on('error', (e) => (fileError = markTerminal(e)))
 
       const nodeStream = Readable.fromWeb(res.body as unknown as NodeReadableStream<Uint8Array>)
       for await (const chunk of nodeStream) {
@@ -221,9 +235,10 @@ export const resilientDownload = async (
         // must NOT have consumed these bytes — otherwise it runs ahead of the persisted .part and,
         // when the next attempt resumes at the same offset (no re-seed), the digest is corrupted.
         // hash, transferred, and hashSeededTo advance together in lockstep, with no await between
-        // them, so a failed attempt always leaves the three consistent.
+        // them, so a failed attempt always leaves the three consistent. A write fault is terminal:
+        // a partial write may have reached disk, and re-downloading will not fix a bad disk.
         await new Promise<void>((resolve, reject) =>
-          file!.write(buf, (e) => (e ? reject(e) : resolve()))
+          file!.write(buf, (e) => (e ? reject(markTerminal(e)) : resolve()))
         )
         hash.update(buf)
         transferred += buf.length
@@ -242,8 +257,9 @@ export const resilientDownload = async (
         })
       }
 
+      // Flushing/closing the fd failed — a local disk fault, terminal like the per-chunk writes.
       await new Promise<void>((resolve, reject) =>
-        file!.end((e?: Error | null) => (e ? reject(e) : resolve()))
+        file!.end((e?: Error | null) => (e ? reject(markTerminal(e)) : resolve()))
       )
       file = undefined // fd closed cleanly — no cleanup needed in catch
       if (stallTimer) clearTimeout(stallTimer)
@@ -263,8 +279,7 @@ export const resilientDownload = async (
       try {
         await renameFile(partPath, destPath)
       } catch (renameError) {
-        ;(renameError as { terminal?: boolean }).terminal = true
-        throw renameError
+        throw markTerminal(renameError)
       }
       opts.onProgress?.({
         phase: 'downloading',
