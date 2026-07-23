@@ -34,7 +34,7 @@ const RecoveryStep = (): React.JSX.Element => {
 
       <CardContent className="flex-1 px-6 py-5">
         <section aria-label="Prepare environment" className="space-y-5">
-          <AgentEnvironmentPanel variant="recovery" />
+          <AgentEnvironmentPanel />
         </section>
       </CardContent>
       <CardFooter className="mt-auto items-center justify-between gap-4 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">

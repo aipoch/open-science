@@ -23,9 +23,6 @@ import {
 } from '../settings/provider-form-value'
 import { describeValidation } from '../settings/validation-message'
 
-const createCodexProviderFormValue = (): ProviderFormValue =>
-  createEmptyProviderFormValue(providerKindPatch('codex-subscription'))
-
 // Converts a form value into the upsert request the main process expects.
 const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
   type: value.type,
@@ -89,23 +86,16 @@ const ProviderStep = ({
     [cancelCodexLogin]
   )
 
-  // Entering the step with Codex selected and an untouched form preselects the Codex subscription
-  // kind — the same prefill the old single-file wizard applied on its Continue button.
-  const didPrefillCodex = useRef(false)
+  // Codex starts with its subscription provider, but an existing draft always wins when navigating
+  // back to this step.
   useEffect(() => {
-    if (didPrefillCodex.current) return
-    didPrefillCodex.current = true
-    if (
-      agentFrameworkId === 'codex' &&
-      !formValue.name &&
-      !formValue.baseUrl &&
-      !formValue.model &&
-      !formValue.key
-    ) {
-      setFormValue(createCodexProviderFormValue())
-    }
-    // formValue is read once at mount for the prefill check; later edits must not retrigger it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (agentFrameworkId !== 'codex') return
+
+    setFormValue((current) =>
+      current.name || current.baseUrl || current.model || current.key
+        ? current
+        : createEmptyProviderFormValue(providerKindPatch('codex-subscription'))
+    )
   }, [agentFrameworkId, setFormValue])
 
   // Onboarding always creates a provider, so required fields must be filled before it can continue.

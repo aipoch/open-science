@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 
 import type {
   AgentFrameworkId,
@@ -68,11 +68,9 @@ type AgentEnvironment = {
   handlePickFramework: (id: AgentFrameworkId) => void
 }
 
-// All agent-runtime state and actions shared by the Agent step and the recovery view: framework
-// selection (with the prefer-installed auto-pick), detection, and installs across the three
-// supported frameworks. `isRecovery` only suppresses the first-run auto-pick — a returning user's
-// saved framework always wins there.
-const useAgentEnvironment = (isRecovery: boolean): AgentEnvironment => {
+// Recovery keeps the saved framework while providing detection and installation actions for all
+// supported runtimes.
+const useAgentEnvironment = (): AgentEnvironment => {
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const setAgentFramework = useSettingsStore((state) => state.setAgentFramework)
@@ -106,9 +104,6 @@ const useAgentEnvironment = (isRecovery: boolean): AgentEnvironment => {
   const [showFrameworkSwitcher, setShowFrameworkSwitcher] = useState(false)
   const [automaticInstallError, setAutomaticInstallError] = useState<string | undefined>(undefined)
 
-  // Once the user manually picks an agent, stop auto-selecting; and only auto-select once per mount.
-  const userPickedFramework = useRef(false)
-  const autoSelectAttempted = useRef(false)
   // Serializes framework switches: detection + preflight run async in the store, so a second switch
   // started before the first settles could interleave and leave the selection, preflight, and
   // environment result out of sync. This synchronous guard drops any switch while one is in flight.
@@ -160,56 +155,22 @@ const useAgentEnvironment = (isRecovery: boolean): AgentEnvironment => {
   // Switching the framework re-detects it and re-runs the host inspection so the environment card
   // reflects the chosen runtime immediately. Serialized by switchInFlight so overlapping switches can't
   // interleave the store's async detection/preflight; refs (not setState) keep it usable from effects.
-  const runFrameworkSwitch = useCallback(
-    async (id: AgentFrameworkId): Promise<void> => {
-      if (switchInFlight.current || id === agentFrameworkId) return
+  const runFrameworkSwitch = async (id: AgentFrameworkId): Promise<void> => {
+    if (switchInFlight.current || id === agentFrameworkId) return
 
-      switchInFlight.current = true
-      try {
-        await setAgentFramework(id)
-        await checkEnvironment()
-      } finally {
-        switchInFlight.current = false
-      }
-    },
-    [agentFrameworkId, setAgentFramework, checkEnvironment]
-  )
+    switchInFlight.current = true
+    try {
+      await setAgentFramework(id)
+      await checkEnvironment()
+    } finally {
+      switchInFlight.current = false
+    }
+  }
 
-  // Records an explicit user choice so the prefer-installed auto-selection below never overrides it.
   const handlePickFramework = (id: AgentFrameworkId): void => {
-    userPickedFramework.current = true
     setAutomaticInstallError(undefined)
     void runFrameworkSwitch(id)
   }
-
-  // Prefer an installed runtime during first-time onboarding. Registry order is the stable tie-breaker
-  // (currently Claude Code, OpenCode, then Codex), while an installed current selection always wins.
-  // Runs once and never overrides an explicit user choice or a returning user's saved framework.
-  useEffect(() => {
-    if (isRecovery || userPickedFramework.current || autoSelectAttempted.current) return
-    if (agentFrameworks.length < 2) return
-
-    const readyByFramework: Record<AgentFrameworkId, boolean> = {
-      'claude-code': preflight.claudeReady,
-      opencode: preflight.opencodeReady,
-      codex: preflight.codexReady
-    }
-    if (readyByFramework[agentFrameworkId]) return
-
-    const installedFramework = agentFrameworks.find((framework) => readyByFramework[framework.id])
-    if (installedFramework) {
-      autoSelectAttempted.current = true
-      void runFrameworkSwitch(installedFramework.id)
-    }
-  }, [
-    isRecovery,
-    agentFrameworks,
-    agentFrameworkId,
-    preflight.claudeReady,
-    preflight.opencodeReady,
-    preflight.codexReady,
-    runFrameworkSwitch
-  ])
 
   return {
     agentFrameworkId,

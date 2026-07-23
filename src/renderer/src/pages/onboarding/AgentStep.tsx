@@ -9,16 +9,10 @@ import { OpencodeStatusCard } from '../settings/OpencodeStatusCard'
 import { EnvironmentSetupCard } from './EnvironmentSetupCard'
 import { useAgentEnvironment, useEnvironmentReady } from './use-agent-environment'
 
-type AgentEnvironmentPanelProps = {
-  // 'wizard' (Agent step): framework switcher on top, checks filtered to the agent row.
-  // 'recovery': today's repair layout — tabs first, switcher below, all check rows unfiltered.
-  variant: 'wizard' | 'recovery'
-}
-
 // Framework switcher + Automatic/Manual install surface. The automatic tab is the one-click
 // app-managed install over the live check result; the manual tab keeps the original per-framework
 // installer cards as an advanced fallback.
-const AgentEnvironmentPanel = ({ variant }: AgentEnvironmentPanelProps): React.JSX.Element => {
+const AgentEnvironmentPanel = (): React.JSX.Element => {
   const {
     agentFrameworkId,
     agentFrameworks,
@@ -46,7 +40,7 @@ const AgentEnvironmentPanel = ({ variant }: AgentEnvironmentPanelProps): React.J
     handleEnvironmentCheck,
     handleInstall,
     handlePickFramework
-  } = useAgentEnvironment(variant === 'recovery')
+  } = useAgentEnvironment()
 
   const frameworkSwitcher =
     agentFrameworks.length > 1 ? (
@@ -174,7 +168,6 @@ const AgentEnvironmentPanel = ({ variant }: AgentEnvironmentPanelProps): React.J
             error={automaticInstallError ?? storeInstallError ?? environmentCheckError}
             onCheck={() => void handleEnvironmentCheck()}
             onInstall={() => void handleInstall('managed')}
-            visibleCheckIds={variant === 'recovery' ? undefined : ['agent']}
           />
         </div>
       ) : (
@@ -250,14 +243,7 @@ const AgentEnvironmentPanel = ({ variant }: AgentEnvironmentPanelProps): React.J
     </>
   )
 
-  // The wizard step leads with the framework choice (it drives everything below); the recovery
-  // view keeps the original order — detection results first, switcher below.
-  return variant === 'wizard' ? (
-    <>
-      {frameworkSwitcher}
-      {modePanels}
-    </>
-  ) : (
+  return (
     <>
       {modePanels}
       {frameworkSwitcher}

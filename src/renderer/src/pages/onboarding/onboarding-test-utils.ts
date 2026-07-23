@@ -189,7 +189,7 @@ const stubWindowApi = (): void => {
         .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' }),
       setDataRootAndRelaunch: vi.fn().mockResolvedValue({ ok: true })
     },
-    // The optional RuntimeChoiceCard lists detected interpreters on mount; stub so the effect resolves.
+    // The reused RuntimesPanel lists detected interpreters on mount; stub so the effect resolves.
     runtime: {
       listEnvironments: vi.fn().mockResolvedValue({ python: [], r: [] }),
       getEnablement: vi.fn().mockResolvedValue({ enabled: {}, installAuthorized: {} }),

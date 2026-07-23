@@ -198,6 +198,24 @@ describe('ProviderStep', () => {
     expect(container.querySelector('[aria-label="API key"]')).toBeNull()
   })
 
+  it('keeps an existing provider draft when Codex is selected', async () => {
+    useSettingsStore.setState(codexReadyState())
+    const initialValue = {
+      ...createEmptyProviderFormValue(),
+      name: 'Existing gateway',
+      baseUrl: 'https://gateway.example',
+      model: 'gpt-5',
+      key: 'sk-existing'
+    }
+
+    await renderStep({ initialValue })
+
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Base URL"]')?.value).toBe(
+      'https://gateway.example'
+    )
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Model"]')?.value).toBe('gpt-5')
+  })
+
   // Switches the auth picker to the isolated "Sign in with Open Science" mode — the only path that
   // runs the browser login (loginIsolatedCodex).
   const switchToIsolatedSignIn = async (): Promise<void> => {
