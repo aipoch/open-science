@@ -64,11 +64,24 @@ const AgentPanel = (): React.JSX.Element => {
   const detectClaude = useSettingsStore((state) => state.detectClaude)
   const installClaude = useSettingsStore((state) => state.installClaude)
 
-  // Track whether an ACP prompt is currently running so the uninstall button can be disabled.
-  const [promptInFlight, setPromptInFlight] = useState(false)
+  // Track whether an ACP prompt is currently running so the uninstall (a destructive teardown) can be
+  // blocked while a task uses the runtime. Fail closed: default to true (treated as busy) until the
+  // first snapshot arrives, so the button is never briefly enabled during the getState() round-trip.
+  // Subscribe FIRST, then load the initial snapshot, both gated by a mounted flag — mirrors
+  // useAcpRuntime so a broadcast arriving mid-load can't be overwritten by a stale initial read.
+  const [promptInFlight, setPromptInFlight] = useState(true)
   useEffect(() => {
-    void window.api.acp.getState().then((s) => setPromptInFlight(s.promptInFlight))
-    return window.api.acp.onState((s) => setPromptInFlight(s.promptInFlight))
+    let mounted = true
+    const removeListener = window.api.acp.onState((s) => {
+      if (mounted) setPromptInFlight(s.promptInFlight)
+    })
+    void window.api.acp.getState().then((s) => {
+      if (mounted) setPromptInFlight(s.promptInFlight)
+    })
+    return () => {
+      mounted = false
+      removeListener()
+    }
   }, [])
 
   // The app-managed runtime pending an uninstall confirmation (null = dialog closed), plus the
@@ -83,6 +96,13 @@ const AgentPanel = (): React.JSX.Element => {
   // reconnects the agent, so the cards and readiness gate update without a manual re-detect.
   const handleConfirmUninstall = async (): Promise<void> => {
     if (!pendingUninstall) return
+    // Revalidate at confirm time: a prompt may have started after the dialog opened (the card control
+    // disables live, but an already-open dialog wouldn't). Uninstalling the runtime out from under a
+    // running task is exactly what the guard prevents, so close the dialog instead of proceeding.
+    if (promptInFlight) {
+      setPendingUninstall(null)
+      return
+    }
 
     setIsUninstalling(true)
 

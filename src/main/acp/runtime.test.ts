@@ -4226,14 +4226,29 @@ describe('ACP runtime session management', () => {
     await prompt.catch(() => undefined)
   })
 
-  it('does not strand the reconnect barrier when the deferred disconnect rejects', async () => {
-    const process = new FakeAgentProcess()
+  it('reconnects on a fresh backend when the deferred disconnect rejects', async () => {
+    const oldProcess = new FakeAgentProcess()
+    const newProcess = new FakeAgentProcess()
     const gate = createDeferred()
-    startFakeAgent(process, ['s1'], { onPrompt: () => gate.promise })
+    startFakeAgent(oldProcess, ['s1'], { onPrompt: () => gate.promise })
+    startFakeAgent(newProcess, ['s2'])
+
+    let spawnCount = 0
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
+      resolveBackend: async () => {
+        spawnCount += 1
+        return {
+          framework: {
+            ...claudeCodeFramework,
+            spawn: () => asAgentProcess(spawnCount === 1 ? oldProcess : newProcess)
+          },
+          executablePath: '/bin/agent',
+          env: {},
+          args: []
+        }
+      }
     })
 
     await runtime.createSession({ cwd: '/workspace' })
@@ -4242,8 +4257,9 @@ describe('ACP runtime session management', () => {
     // Arm the barrier with a deferred reconnect while the prompt is running.
     await runtime.requestProviderReconnect()
 
-    // The deferred disconnect (fired when the turn settles) rejects. The barrier must still
-    // resolve — otherwise every later createSession would await it forever.
+    // The deferred disconnect (fired when the turn settles) rejects before it can clear the stale
+    // connection. The barrier must still resolve AND the stale connection must be invalidated, so a
+    // blocked createSession reconnects on a fresh backend instead of reusing the old one.
     const disconnectSpy = vi
       .spyOn(runtime, 'disconnect')
       .mockRejectedValueOnce(new Error('teardown failed'))
@@ -4252,13 +4268,15 @@ describe('ACP runtime session management', () => {
     const secondSession = runtime.createSession({ cwd: '/workspace' })
 
     // Release the gate → turn settles → maybeApplyPendingProviderReconnect calls the rejecting
-    // disconnect → finally() still resolves the barrier.
+    // disconnect → catch invalidates the connection → finally() resolves the barrier.
     gate.resolve()
     await prompt
 
-    // The blocked createSession must complete rather than hang. A real timeout here would fail
-    // the suite; resolving proves the barrier was released on the rejection path.
-    await expect(secondSession).resolves.toBeDefined()
+    // Must complete (no deadlock) AND land on the second spawn — proof the stale connection was not
+    // reused after the teardown failure.
+    const result = await secondSession
+    expect(result.sessionId).toBe('s2')
+    expect(spawnCount).toBe(2)
     disconnectSpy.mockRestore()
   })
 

@@ -1612,6 +1612,14 @@ class AcpRuntime {
       await this.disconnect()
     } catch (error) {
       safeLogError('deferred reconnect disconnect failed', errorLogFields(error))
+      // disconnect() rejected — its synchronous teardown may have thrown before clearing the
+      // connection (e.g. session.dispose or connection.close). Force the connection invalid so the
+      // barrier-release below cannot let a blocked ensureConnected reuse the STALE connection on the
+      // old backend; the re-check there will fall through to a fresh connect(). Set status directly
+      // rather than via setStatus/emitState — the throw may have come from emitState itself, and the
+      // next connect() emits fresh state anyway.
+      this.connection = undefined
+      this.status = 'closed'
     } finally {
       this.resolveReconnectBarrier()
     }
