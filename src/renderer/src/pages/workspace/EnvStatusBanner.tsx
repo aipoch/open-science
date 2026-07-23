@@ -37,11 +37,10 @@ const EnvStatusBanner = ({
           ) : null}
         </>
       ) : ui.download ? (
-        // Task 8: reuse the shared DownloadProgressLine (with its resume/pulse bar) so the upgrade
-        // banner renders speed/ETA and a stall reads as "resuming" consistently with the other hosts.
-        // The banner drops its single-line pill shape to a small stacked block for this phase.
+        // Task 8: keep the existing overall provision phase text (with its percent), and render the
+        // shared DownloadProgressLine (speed/ETA + resume bar) BELOW it — not a second overall bar.
         <div className="flex min-w-56 flex-col text-left">
-          <span>Updating the notebook environment…</span>
+          <span>Updating the notebook environment… {Math.round(ui.progress * 100)}%</span>
           <DownloadProgressLine progress={ui.download} />
         </div>
       ) : (

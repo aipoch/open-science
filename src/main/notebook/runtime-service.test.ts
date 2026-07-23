@@ -1027,6 +1027,29 @@ describe('notebook runtime service', () => {
     expect(await journal.pending()).toEqual([])
   })
 
+  it('wipes the pack download cache on startup so a restart does not resume a partial (WS13)', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = join(root, 'runtime')
+    // A leftover partial download from a prior session: a .part (and a stale complete archive) in the
+    // version/subdir-keyed .cache. The design requires "app closes → start from scratch", so startup
+    // recovery must remove these rather than let a restart Range-resume them.
+    const cache = join(runtimeRoot, 'packs', '.cache', '1', 'osx-arm64')
+    await mkdir(cache, { recursive: true })
+    await writeFile(join(cache, 'python-3.12.tar.zst.part'), Buffer.from('half'))
+    await writeFile(join(cache, 'r-4.4.tar.zst'), Buffer.from('whole-but-orphaned'))
+
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    await service.recoverInterruptedOperations()
+
+    // The entire .cache is gone — neither the partial nor the orphaned archive survives the restart.
+    expect(existsSync(join(runtimeRoot, 'packs', '.cache'))).toBe(false)
+  })
+
   it('reconciles a stale running run to interrupted on first load after a crash (WS12)', async () => {
     const root = await createStorageRoot()
 

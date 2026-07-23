@@ -325,7 +325,9 @@ type NotebookRuntimeServiceOptions = {
   saveIpynb?: (suggestedName: string, data: string) => Promise<ExportNotebookResult>
   // Save-directory seam for the "Download all" path. Production falls back to a directory picker
   // dialog and writes one file per data kernel under the user's chosen directory.
-  saveIpynbAll?: (files: Array<{ kernel: 'python' | 'r'; name: string; data: string }>) => Promise<ExportNotebookAllResult>
+  saveIpynbAll?: (
+    files: Array<{ kernel: 'python' | 'r'; name: string; data: string }>
+  ) => Promise<ExportNotebookAllResult>
   // Resolves app-managed artifact paths with the artifact repository's canonical/symlink checks,
   // bound to the artifact's declaring project/session subtree.
   resolveArtifactPath?: (request: {
@@ -2055,14 +2057,10 @@ class NotebookRuntimeService {
       document,
       this.options.resolveArtifactPath
     )
-    const notebook = runDocumentToIpynbForKernel(
-      document,
-      dataKernel,
-      {
-        appVersion: this.options.appVersion,
-        artifactOutputs
-      }
-    )
+    const notebook = runDocumentToIpynbForKernel(document, dataKernel, {
+      appVersion: this.options.appVersion,
+      artifactOutputs
+    })
     const suggestedName = `session-${request.sessionId.slice(0, 8)}-${dataKernel}.ipynb`
     const serialized = `${JSON.stringify(notebook, null, 2)}\n`
 
@@ -2771,6 +2769,15 @@ class NotebookRuntimeService {
     // so they don't accumulate. A retained (unknown-blocked) record keeps its sidecar for the next
     // startup's liveness probe.
     for (const record of reconciled) removeOperationChildSync(runtimeRoot, record.operationId)
+
+    // Pack-download cache reset: a partial pack .part in packs/.cache resumes via Range within a run,
+    // but the design requires "app closes → start from scratch" — a restart must NOT resume a
+    // half-downloaded pack. Recovery runs ONCE at startup before any new fetch, so the whole .cache
+    // dir holds only leftovers from the previous session; wipe it (partials AND any orphaned complete
+    // archive). Best-effort: a failure here only leaves reclaimable disk, never blocks recovery.
+    await rm(join(runtimeRoot, 'packs', '.cache'), { recursive: true, force: true }).catch(
+      () => undefined
+    )
   }
 
   // Shuts down every live interpreter, used by app-level cleanup paths. Returns { reaped }: true only

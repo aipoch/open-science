@@ -361,8 +361,8 @@ describe('createFetchBundleAdapter', () => {
       )
     ).rejects.toThrow(/Managed runtime pack unavailable/)
 
-    // The .part survived in the stable .cache dir…
-    expect(partPath).toContain(join('packs', '.cache'))
+    // The .part survived in the stable, version/subdir-keyed .cache dir…
+    expect(partPath).toContain(join('packs', '.cache', '1', 'osx-arm64'))
     expect(existsSync(partPath)).toBe(true)
     // …while no .incoming-* staging dir was left behind.
     const leftovers = readdirSync(join(root, 'packs')).filter((n) => n.startsWith('.incoming-'))

@@ -184,12 +184,15 @@ export const createFetchBundleAdapter =
     await mkdir(packsRoot, { recursive: true })
     const workDir = await mkdtemp(join(packsRoot, '.incoming-'))
     const unpackedDir = join(workDir, 'pack')
-    // Stable, per-invocation-surviving location for the downloaded archive + its .part. The extraction
+    // Stable, within-session-surviving location for the downloaded archive + its .part. The extraction
     // staging (workDir) is disposable and wiped in the finally, but the .part must OUTLIVE a failed or
-    // cancelled fetch so a manual retry resumes via Range instead of restarting a ~345 MB download.
-    // Keyed only by pack identity (the canonical archive filename), so a retry finds the same .part.
-    // Not under .incoming-*, so startup orphan-recovery (which wipes staging) leaves it intact.
-    const archiveDir = join(packsRoot, '.cache')
+    // cancelled fetch WITHIN a run so a manual retry (no restart) resumes via Range instead of
+    // restarting a ~345 MB download. It is NOT meant to survive an app restart — startup recovery wipes
+    // packs/.cache entirely ("app closes → start from scratch"). Keyed by envVersion AND subdir so a
+    // stale fragment from a different version/arch can never be Range-resumed against a new pack URL
+    // (which would only fail checksum after re-downloading the whole thing).
+    const subdir = deps.subdir ?? runtimeSubdir()
+    const archiveDir = join(packsRoot, '.cache', String(version), subdir)
     await mkdir(archiveDir, { recursive: true })
     // Crash recovery (WS13): record the download intent BEFORE staging so a hard-quit mid-fetch leaves
     // a journal entry whose targetPath is this .incoming-* dir; startup recovery removes the orphan.
@@ -218,7 +221,7 @@ export const createFetchBundleAdapter =
         archiveDir,
         cdnBase,
         version,
-        deps.subdir ?? runtimeSubdir(),
+        subdir,
         spec.language,
         spec.version,
         {
@@ -272,7 +275,7 @@ export const createFetchBundleAdapter =
       })
       if (entries.length === 0) return undefined
 
-      const subdir = deps.subdir ?? runtimeSubdir()
+      // subdir was resolved once above (used for the version/subdir-keyed archive cache dir).
       const pathBudget = pathBudgetForPack(fetched.entry)
       if (subdir === 'win-64' && !pathBudget) return undefined
       if (pathBudget) {
