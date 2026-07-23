@@ -1,3 +1,5 @@
+import { PROVIDER_RESOURCE_NOT_FOUND_PREFIX } from '../../shared/run-error-classification'
+
 // Turns an agent prompt failure into user-visible text. Agents (opencode) relay an upstream provider
 // HTTP error wrapped as a JSON-RPC failure like
 //   `Internal error: Not Found: {"error":{"message":"The requested resource was not found","type":"resource_not_found_error"}}`
@@ -144,5 +146,5 @@ export const describePromptError = (error: unknown, ctx: PromptErrorContext = {}
   const providerText = detail?.text ?? stripWrapperPrefixes(raw)
   const modelPart = ctx.model ? ` for model "${ctx.model}"` : ''
 
-  return `The model provider could not find the requested resource${modelPart}. The model name or endpoint is likely incorrect — check it in Settings → Model. Provider response: ${providerText}`
+  return `${PROVIDER_RESOURCE_NOT_FOUND_PREFIX}${modelPart}. The model name or endpoint is likely incorrect — check it in Settings → Model. Provider response: ${providerText}`
 }

@@ -686,4 +686,24 @@ describe('ConversationPanel error box + report affordance', () => {
     ) as HTMLTextAreaElement | null
     expect(textarea?.value).toBe('The run failed with no error message.')
   })
+
+  it('hides the Report button for an app-crafted, actionable failure', () => {
+    // A recognized failure keeps its message but is not a bug worth a GitHub issue.
+    renderPanel({
+      activeSession: {
+        ...errorSession,
+        error: 'Session workspace is missing; start a new conversation.'
+      }
+    })
+    expect(errorBoxText()).toContain('Session workspace is missing')
+    expect(reportButton()).toBeNull()
+  })
+
+  it('hides the Report button for a recognized provider-side error', () => {
+    renderPanel({
+      activeSession: { ...errorSession, error: '429 Too Many Requests: rate_limit_error' }
+    })
+    expect(errorBoxText()).toContain('429 Too Many Requests')
+    expect(reportButton()).toBeNull()
+  })
 })

@@ -17,6 +17,14 @@ import type { ArtifactReference } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
+import {
+  IMAGE_REPLAY_UNSUPPORTED_MESSAGE,
+  RESUME_MODEL_INCOMPATIBLE_MESSAGE,
+  RESUME_RECONNECT_FAILED_MESSAGE,
+  RESUME_TIMED_OUT_MESSAGE,
+  RESUME_UNSUPPORTED_MESSAGE,
+  RESUME_WORKSPACE_MISSING_MESSAGE
+} from '../../../../shared/run-error-classification'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { useSessionStore, type ChatMessage } from '../../stores/session-store'
 import { useSettingsStore } from '../../stores/settings-store'
@@ -106,19 +114,19 @@ const getResumeFailureMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
 
   if (/cwd does not exist/i.test(message)) {
-    return 'Session workspace is missing; start a new conversation.'
+    return RESUME_WORKSPACE_MISSING_MESSAGE
   }
 
   if (/timed out/i.test(message)) {
-    return 'Agent session resume timed out; click Resume to try again.'
+    return RESUME_TIMED_OUT_MESSAGE
   }
 
   if (/does not support session resume/i.test(message)) {
-    return 'This agent build cannot resume sessions; start a new conversation.'
+    return RESUME_UNSUPPORTED_MESSAGE
   }
 
   if (/connection (failed|was superseded)|ACP connection/i.test(message)) {
-    return 'Could not reconnect to the agent; check it is installed, then click Resume to retry.'
+    return RESUME_RECONNECT_FAILED_MESSAGE
   }
 
   // Model↔framework mismatch is now flagged proactively in Settings → Model, so keep this soft and
@@ -127,7 +135,7 @@ const getResumeFailureMessage = (error: unknown): string => {
   // compatible with <framework>…") so unrelated "not compatible with" errors — notably an ACP
   // protocol-version mismatch — fall through to the default message instead of being mislabeled.
   if (/active model isn'?t compatible with/i.test(message)) {
-    return "The active model isn't compatible with this agent framework. Open Settings → Model to pick a compatible model or switch frameworks."
+    return RESUME_MODEL_INCOMPATIBLE_MESSAGE
   }
 
   const detail = unwrapResumeErrorDetail(message)
@@ -348,12 +356,6 @@ const startPendingSessionPrompt = (
   })()
 }
 
-// Records the user's prompt before slow runtime work continues.
-// Shared by the send path and the edit-resend pre-check so both reject incompatible image replays
-// with the same wording.
-const IMAGE_REPLAY_UNSUPPORTED_MESSAGE =
-  'This conversation needs image replay, but the selected model does not support image input.'
-
 const sendWorkspaceMessage = async (
   runtime: WorkspaceMessageRuntime,
   {
@@ -438,9 +440,7 @@ const sendWorkspaceMessage = async (
       const effectiveCwd = targetCwd || runtime.state.cwd
 
       if (!effectiveCwd) {
-        useSessionStore
-          .getState()
-          .failRun(targetSessionId, 'Session workspace is missing; start a new conversation.')
+        useSessionStore.getState().failRun(targetSessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
         return undefined
       }
 
@@ -644,9 +644,7 @@ const resumeInterruptedWorkspaceSession = async (
   const resumeCwd = session.cwd || runtime.state.cwd
 
   if (!resumeCwd) {
-    useSessionStore
-      .getState()
-      .failRun(sessionId, 'Session workspace is missing; start a new conversation.')
+    useSessionStore.getState().failRun(sessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
     return
   }
 
