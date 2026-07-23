@@ -2523,6 +2523,7 @@ describe('ACP runtime session management', () => {
       rawInput?: unknown
       requestId: string
       isMcp?: boolean
+      options: Array<{ optionId: string }>
     }> = []
     const permissionResponses: unknown[] = []
 
@@ -2568,14 +2569,14 @@ describe('ACP runtime session management', () => {
               status: 'pending'
             },
             options: [
-              { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+              { optionId: 'allow_once', name: 'Allow', kind: 'allow_once' },
               {
-                optionId: 'allow-session',
+                optionId: 'allow_session',
                 name: 'Allow for This Session',
                 kind: 'allow_always'
               },
               {
-                optionId: 'allow-always',
+                optionId: 'allow_always',
                 name: "Allow and Don't Ask Again",
                 kind: 'allow_always'
               },
@@ -2611,7 +2612,7 @@ describe('ACP runtime session management', () => {
           permissionRequests.push(request)
           runtime.respondToPermission({
             requestId: request.requestId,
-            optionId: 'allow-session'
+            optionId: 'allow_session'
           })
         }
       }
@@ -2628,11 +2629,12 @@ describe('ACP runtime session management', () => {
       title: 'mcp.open-science-notebook.notebook_execute',
       providerToolName: 'notebook_execute',
       isMcp: true,
-      rawInput: { code: 'print(1)', language: 'python' }
+      rawInput: { code: 'print(1)', language: 'python' },
+      options: [{ optionId: 'allow_once' }, { optionId: 'allow_session' }, { optionId: 'decline' }]
     })
     expect(permissionResponses).toEqual([
-      { outcome: { outcome: 'selected', optionId: 'allow-session' } },
-      { outcome: { outcome: 'selected', optionId: 'allow-once' } }
+      { outcome: { outcome: 'selected', optionId: 'allow_session' } },
+      { outcome: { outcome: 'selected', optionId: 'allow_once' } }
     ])
     expect(runtime.getSnapshot().permissionGrants[session.sessionId]).toEqual([
       {
