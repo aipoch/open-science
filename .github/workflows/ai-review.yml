@@ -236,7 +236,8 @@ jobs:
             echo '**Impact:** and **Recommendation:** labels. If no architectural or integration issues'
             echo 'are found, write **No architectural or integration issues found.** Be concise.'
             echo
-            echo 'Return only the review Markdown, without a JSON or code-fence wrapper.'
+            echo 'Wrap only the final review Markdown in <review> and </review> tags. Keep all'
+            echo 'analysis or thinking outside that block. Do not use a JSON or code-fence wrapper.'
           } > "$prompt_file"
           echo "prompt_file=$prompt_file" >> "$GITHUB_OUTPUT"
 
@@ -330,17 +331,32 @@ jobs:
               ([.[] | select(.type == "assistant")] | last
                 | [.message.content[]? | select(.type == "text") | .text]
                 | join("\n")) as $assistant
-              | if ($assistant | length) > 0 then
+              | (if ($assistant | length) > 0 then
                   $assistant
                 else
                   ([.[] | select(.type == "result")] | last | .result // "")
+                end) as $raw
+              | ([$raw | capture("(?s)<review>(?<body>.*?)</review>").body] | first // "") as $tagged
+              | if ($tagged | length) > 0 then
+                  $tagged
+                else
+                  ($raw
+                    | gsub("(?s)<thinking>.*?</thinking>[[:space:]]*"; "")
+                    | gsub("(?s)<analysis>.*?</analysis>[[:space:]]*"; ""))
                 end
-              | gsub("(?s)<thinking>.*?</thinking>[[:space:]]*"; "")
-              | gsub("(?s)<analysis>.*?</analysis>[[:space:]]*"; "")
             ' "$EXECUTION_FILE"
           )"
           if [[ -z "$review" ]]; then
             echo "Claude produced no review text." >&2
+            exit 1
+          fi
+          if [[ "$review" != '## Claude Architecture Review'* ]] ||
+             ! grep -Eq '^\*\*Verdict: (mergeable|needs changes)\*\*$' <<< "$review"; then
+            echo "Claude review did not match the required header and verdict format." >&2
+            exit 1
+          fi
+          if grep -Eq '<(/?)(thinking|analysis|review)>' <<< "$review"; then
+            echo "Claude review still contains internal framing tags." >&2
             exit 1
           fi
 

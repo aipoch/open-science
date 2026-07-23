@@ -403,8 +403,9 @@ describe('AI review workflow contract', () => {
         type: 'result',
         subtype: 'success',
         result:
-          '<thinking>private reasoning\nthat must not be published</thinking>\n\n' +
-          '## Claude Architecture Review\n**Verdict: mergeable**'
+          '<thinking>private reasoning\n' +
+          '<review>## Claude Architecture Review\n**Verdict: mergeable**</review>\n' +
+          'that must not be published</thinking>'
       }
     ])
 
@@ -418,6 +419,7 @@ describe('AI review workflow contract', () => {
     const output = readFileSync(githubOutput, 'utf8')
     expect(output).not.toContain('private reasoning')
     expect(output).not.toContain('<thinking>')
+    expect(output).not.toContain('<review>')
     expect(output).toContain('## Claude Architecture Review\n**Verdict: mergeable**')
   })
 
