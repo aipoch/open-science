@@ -65,7 +65,7 @@ const ProvidersPanel = ({
   }, [cancelCodexLogin])
 
   // Codex + Claude subscription pseudo-providers only make sense while their matching framework is the
-// active one. Hide claude-isolated from non-claude-code frameworks (same rule as the codex branch).
+  // active one. Hide claude-isolated from non-claude-code frameworks (same rule as the codex branch).
   const visibleProviders = providers.filter((provider) => {
     if (provider.type === 'claude-isolated') return agentFrameworkId === 'claude-code'
     if (isCodexSubscriptionProvider(provider.type)) return agentFrameworkId === 'codex'
