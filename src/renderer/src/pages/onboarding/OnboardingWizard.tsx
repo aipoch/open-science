@@ -399,8 +399,8 @@ const OnboardingWizard = (): React.JSX.Element => {
     }
 
     // A provider that validates can still be unusable by the selected framework (e.g. Claude + an
-    // OpenAI-only gateway, or OpenCode + a Local Claude login). Block that before it becomes the active
-    // provider, so onboarding can't finish with a pair the agent can't actually spawn.
+    // OpenAI-only gateway). Block that before it becomes the active provider, so onboarding can't
+    // finish with a pair the agent can't actually spawn.
     if (
       !isProviderUsableByFramework(
         { apiEndpoints: [formValue.apiEndpoint], type: formValue.type },

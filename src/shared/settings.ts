@@ -11,11 +11,10 @@ import type { PackageMirror } from './mirror'
 // providers (vendorId/region) and a per-selection activeModel alongside activeProviderId.
 export const SETTINGS_FILE_VERSION = 2
 
-// A provider targets a custom gateway, a built-in official vendor, a local Claude login, or one of
-// Codex's two subscription profiles. Codex shared uses the machine's normal CODEX_HOME; isolated uses
-// the app-owned profile.
-export type ProviderType =
-  'custom' | 'claude-default' | 'official' | 'codex-shared' | 'codex-isolated'
+// A provider targets a custom gateway, a built-in official vendor, or one of Codex's two
+// subscription profiles. Codex shared uses the machine's normal CODEX_HOME; isolated uses the
+// app-owned profile.
+export type ProviderType = 'custom' | 'official' | 'codex-shared' | 'codex-isolated'
 
 export const CODEX_SHARED_PROVIDER_ID = 'builtin-codex-shared'
 export const CODEX_ISOLATED_PROVIDER_ID = 'builtin-codex-isolated'
@@ -59,15 +58,13 @@ export const isProviderCompatibleWith = (
 ): boolean => endpoints.some((endpoint) => frameworkEndpoints.includes(endpoint))
 
 // Whether a provider can actually drive a given framework. Two axes: endpoint compatibility (above),
-// AND provider-type — a `claude-default` provider reuses the machine's own Claude login (Claude-specific
-// OAuth/config), which no other framework can consume, so it is only usable by Claude Code regardless
-// of endpoint. Enforced both in the renderer gates and main-side (preflight + spawn).
+// AND provider-type — Codex subscription providers carry their own login and can only drive Codex
+// regardless of endpoint. Enforced both in the renderer gates and main-side (preflight + spawn).
 export const isProviderUsableByFramework = (
   provider: { apiEndpoints?: readonly ChatApiEndpoint[]; type: ProviderType },
   framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
 ): boolean => {
   if (isCodexSubscriptionProvider(provider.type)) return framework.id === 'codex'
-  if (provider.type === 'claude-default' && framework.id !== 'claude-code') return false
 
   const endpoints = providerEndpoints(provider)
 
@@ -166,7 +163,7 @@ export type ProviderView = {
   vendorId?: OfficialVendorId
   region?: string
   // Models selectable for this provider in the composer: the vendor catalog for official providers,
-  // or the single configured model for custom/claude-default. Derived from the registry in main.
+  // or the single configured model for custom. Derived from the registry in main.
   models: string[]
   // A short, non-secret hint like "sk-…abcd" for display only.
   maskedKey?: string
@@ -234,8 +231,8 @@ export type SettingsSnapshot = {
   // Detected codex-acp adapter and its paired native Codex runtime.
   codex: CodexInfo
   activeProviderId?: string
-  // The active model within the active provider. For custom/claude-default this mirrors the provider's
-  // own model; for official providers it's the chosen catalog entry. Undefined until a provider exists.
+  // The active model within the active provider. For custom this mirrors the provider's own model;
+  // for official providers it's the chosen catalog entry. Undefined until a provider exists.
   activeModel?: string
   providers: ProviderView[]
   // The selected agent backend, and the frameworks available to choose from.

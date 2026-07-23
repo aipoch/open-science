@@ -486,27 +486,4 @@ describe('validate: provider dispatch', () => {
     expect(result.category).toBe('bad-url')
     expect(fetchImpl).not.toHaveBeenCalled()
   })
-
-  it('runs the claude probe for claude-default providers', async () => {
-    const okResult = await validateProvider(
-      { type: 'claude-default' },
-      { runClaudeProbe: () => Promise.resolve({ ok: true }) }
-    )
-    const failResult = await validateProvider(
-      { type: 'claude-default' },
-      { runClaudeProbe: () => Promise.resolve({ ok: false }) }
-    )
-
-    expect(okResult).toMatchObject({ ok: true, category: 'ok' })
-    expect(failResult).toMatchObject({ ok: false, category: 'auth' })
-  })
-
-  it('classifies a claude-default probe timeout as timeout, not auth', async () => {
-    const result = await validateProvider(
-      { type: 'claude-default' },
-      { runClaudeProbe: () => Promise.resolve({ ok: false, timedOut: true }) }
-    )
-
-    expect(result).toMatchObject({ ok: false, category: 'timeout' })
-  })
 })

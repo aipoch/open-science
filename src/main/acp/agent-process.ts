@@ -22,8 +22,9 @@ const toUnpackedAsarPath = (filePath: string): string =>
 const ANTHROPIC_ENV_PREFIX = 'ANTHROPIC_'
 
 // Builds the environment for the ACP agent child process. Isolated providers carry CLAUDE_CONFIG_DIR,
-// so inherited ANTHROPIC_* variables are dropped before their own overrides are applied. A local provider
-// with OS-store-only OAuth deliberately omits CLAUDE_CONFIG_DIR and reuses Claude's default auth context.
+// so inherited ANTHROPIC_* variables are dropped before their own overrides are applied. Every
+// provider now sets CLAUDE_CONFIG_DIR (the app-owned config dir), so the isolated branch is always
+// taken and CLAUDE_CONFIG_DIR from the parent env is overwritten by the override below.
 const buildAgentSpawnEnv = (
   sourceEnv: NodeJS.ProcessEnv,
   envOverrides: Record<string, string>,
@@ -34,9 +35,6 @@ const buildAgentSpawnEnv = (
 
   for (const [key, value] of Object.entries(sourceEnv)) {
     if (isolated && key.startsWith(ANTHROPIC_ENV_PREFIX)) continue
-    // A non-isolated local provider must use Claude's implicit default context. Inheriting an explicit
-    // CLAUDE_CONFIG_DIR would recreate the same native-credential lookup failure we are avoiding.
-    if (!isolated && key === 'CLAUDE_CONFIG_DIR') continue
     base[key] = value
   }
 

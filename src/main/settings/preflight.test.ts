@@ -128,7 +128,7 @@ describe('computePreflight', () => {
   })
 
   it('is not provider-ready when the active provider is incompatible with the framework', () => {
-    // e.g. OpenCode selected but the active provider is a Local Claude — validated + usable key, yet
+    // e.g. OpenCode selected but the active provider is unusable by it — validated + usable key, yet
     // unusable by the framework, so the pair must not be marked ready.
     expect(run({ activeProviderCompatible: false }).activeProviderReady).toBe(false)
   })

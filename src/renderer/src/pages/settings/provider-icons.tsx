@@ -1,4 +1,4 @@
-import { CirclePlus, Laptop, Sparkles } from 'lucide-react'
+import { CirclePlus, Sparkles } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 import claudeLogo from '@/assets/provider-icons/claude.svg'
@@ -17,7 +17,7 @@ import type { OfficialVendorId } from '../../../../shared/provider-registry'
 // Official vendor brand marks, bundled as assets. Both Kimi providers (the general Moonshot platform
 // and Kimi For Coding) share the one Kimi mark, and both GLM providers (pay-as-you-go Zhipu and the
 // GLM Coding Plan) share the one GLM mark. Any vendor without an entry falls back to a neutral glyph
-// rather than a made-up logo. Custom uses a plus-in-circle and local Claude a laptop.
+// rather than a made-up logo. Custom uses a plus-in-circle.
 const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   openai: openaiLogo,
   anthropic: claudeLogo,
@@ -34,7 +34,7 @@ const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   volcengine: volcengineLogo
 }
 
-// Renders the icon for a provider-kind key ('custom', 'claude-default', or `official:<vendorId>`).
+// Renders the icon for a provider-kind key ('custom' or `official:<vendorId>`).
 export const ProviderKindIcon = ({
   kindKey,
   className
@@ -45,15 +45,6 @@ export const ProviderKindIcon = ({
   if (kindKey === 'custom') {
     return (
       <CirclePlus
-        className={cn('size-5 shrink-0 text-muted-foreground', className)}
-        aria-hidden="true"
-      />
-    )
-  }
-
-  if (kindKey === 'claude-default') {
-    return (
-      <Laptop
         className={cn('size-5 shrink-0 text-muted-foreground', className)}
         aria-hidden="true"
       />

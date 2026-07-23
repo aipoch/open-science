@@ -455,7 +455,7 @@ export const selectFrameworkApiEndpoints = (state: SettingsStoreData): ChatApiEn
     ?.supportedApiTypes ?? DEFAULT_FRAMEWORK_API_ENDPOINTS
 
 // A single selectable (provider, model) entry for the composer picker. `model` is '' for a provider
-// with no concrete model (a claude-default without an override), meaning "use the provider default".
+// with no concrete model, meaning "use the provider default".
 export type ProviderModelOption = {
   providerId: string
   providerName: string

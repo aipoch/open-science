@@ -134,7 +134,6 @@ import {
   type ManagedInstallOutcome
 } from './managed-claude'
 import { encryptKey, isEncryptionAvailable, maskKey, tryDecryptKey } from './crypto'
-import { applyLocalClaudeAuth, defaultUserClaudeDir } from './local-claude-auth'
 import { computePreflight } from './preflight'
 import { listProviderModels } from './list-models'
 import { buildProviderEnv, getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
@@ -163,7 +162,7 @@ import type {
   StoredProvider,
   StoredSettings
 } from './types'
-import { classifyStatus, validateProvider, type ClaudeProbeResult } from './validate'
+import { classifyStatus, validateProvider } from './validate'
 import {
   CodexAuthController,
   openCodexAuthSession,
@@ -173,8 +172,6 @@ import {
 
 const execFileAsync = promisify(execFile)
 
-// Hard ceiling for the claude-default probe so a stuck local claude can never hang the wizard.
-const CLAUDE_PROBE_TIMEOUT_MS = 20_000
 const CODEX_INSTALL_TARGET: InstallTarget = {
   npmPackage: '@agentclientprotocol/codex-acp',
   // Codex exposes no supported shell installer; InstallCodexRequest cannot select this branch.
@@ -219,19 +216,6 @@ const CODEX_BRIDGE_ARTIFACT_TOOLS: ResponsesBridgeNamespacedTool[] = [
 const isManagedCodexPath = (adapterPath: string, storageRoot: string): boolean =>
   adapterPath === managedCodexAdapterEntry(storageRoot)
 
-type ExecuteClaudeProbe = (executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>
-
-const executeClaudeProbe: ExecuteClaudeProbe = async (executablePath, env) => {
-  await execFileAsync(executablePath, ['-p', 'ok'], {
-    env,
-    timeout: CLAUDE_PROBE_TIMEOUT_MS,
-    // On Windows the detected claude is a `claude.cmd` shim, which execFile can't launch without a
-    // shell (spawn EINVAL); route the probe through the shell there.
-    shell: process.platform === 'win32',
-    windowsHide: true
-  })
-}
-
 const runCodexAdapterVersion = async (
   adapterPath: string,
   fallback: (path: string) => Promise<string | undefined>
@@ -248,17 +232,6 @@ const runCodexAdapterVersion = async (
   } catch {
     return undefined
   }
-}
-
-// Detects a child-process timeout (SIGTERM kill or ETIMEDOUT) so the probe can report it distinctly.
-const isTimeoutError = (error: unknown): boolean => {
-  if (typeof error !== 'object' || error === null) return false
-
-  const candidate = error as { killed?: boolean; signal?: string; code?: string }
-
-  return (
-    candidate.killed === true || candidate.signal === 'SIGTERM' || candidate.code === 'ETIMEDOUT'
-  )
 }
 
 // A spawn configuration the ACP runtime reads at connect time so the active provider's credentials
@@ -282,15 +255,10 @@ export type SettingsServiceOptions = {
   detectDeps?: ClaudeDetectDeps
   opencodeDetectDeps?: OpencodeDetectDeps
   codexDetectDeps?: CodexDetectDeps
-  // The machine's own Claude config dir, read to reuse its login for the "local" provider. Injectable
-  // so tests don't touch the real ~/.claude.
-  userClaudeDir?: string
   // Bundled-skill source, injectable so tests can point at a seeded temp dir instead of app resources.
   skillRegistry?: SkillRegistry
   // Writable personal/imported skill store, injectable so tests can use a temp storage root.
   userSkills?: UserSkillRepository
-  // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
-  executeClaudeProbe?: ExecuteClaudeProbe
   // One-shot managed Claude installer, injectable so tests avoid real network/fs.
   installManagedClaudeImpl?: (
     options: InstallManagedClaudeOptions
@@ -314,10 +282,8 @@ class SettingsService {
   private readonly detectDeps: ClaudeDetectDeps
   private readonly opencodeDetectDeps: OpencodeDetectDeps
   private readonly codexDetectDeps: CodexDetectDeps
-  private readonly userClaudeDir: string
   private readonly skillRegistry: SkillRegistry
   private readonly userSkills: UserSkillRepository
-  private readonly executeClaudeProbe: ExecuteClaudeProbe
   private readonly installManagedClaudeImpl: (
     options: InstallManagedClaudeOptions
   ) => Promise<ManagedInstallOutcome>
@@ -367,10 +333,8 @@ class SettingsService {
       managedAdapterPath,
       managedCodexPath: managedNativePath
     }
-    this.userClaudeDir = options.userClaudeDir ?? defaultUserClaudeDir()
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
     this.userSkills = options.userSkills ?? new UserSkillRepository(this.storageRoot)
-    this.executeClaudeProbe = options.executeClaudeProbe ?? executeClaudeProbe
     this.installManagedClaudeImpl = options.installManagedClaudeImpl ?? installManagedClaude
     this.installManagedOpencodeImpl = options.installManagedOpencodeImpl ?? installManagedOpencode
     this.installManagedCodexImpl = options.installManagedCodexImpl ?? installManagedCodex
@@ -1473,11 +1437,6 @@ class SettingsService {
         provider.baseUrl !== existing?.baseUrl ||
         provider.model !== existing?.model ||
         provider.apiEndpoints.join(',') !== (existing?.apiEndpoints ?? []).join(',')
-    } else {
-      // claude-default: optional model override, no credentials of its own.
-      const model = request.model?.trim() || existing?.model
-
-      if (model) provider.model = model
     }
 
     // A re-test is required before a changed provider can re-gate onboarding.
@@ -1633,10 +1592,6 @@ class SettingsService {
             // only through a proxy (e.g. api.openai.com) would fail the probe as a false `network` error
             // even with a valid key. The local Responses-bridge loopback stays on the direct fetch.
             fetchImpl: netFetchStandard,
-            runClaudeProbe:
-              resolved.provider.type === 'claude-default'
-                ? () => this.runClaudeProbe(resolved.provider, settings)
-                : undefined,
             // For a multi-route provider, probe the route this framework actually drives so a passing
             // test proves that route (e.g. Claude Code hits /v1/messages, not /v1/chat/completions).
             // Codex is excluded: it bridges the provider's OpenAI route under its `responses` protocol,
@@ -2098,23 +2053,13 @@ class SettingsService {
       disabledSkillIds
     })
 
-    let envOverrides = buildProviderEnv(
+    const envOverrides = buildProviderEnv(
       this.resolveProvider(activeProvider, settings.activeModel),
       {
         storageRoot: this.storageRoot,
         claudeExecutablePath: executablePath
       }
     )
-
-    // The "local" provider reuses the machine's own Claude login: inject its token/base URL (or copy
-    // OAuth credentials) at spawn time. OS-store-only OAuth falls back to Claude's implicit default
-    // config context, because setting CLAUDE_CONFIG_DIR makes that native login invisible.
-    if (activeProvider.type === 'claude-default') {
-      envOverrides = await applyLocalClaudeAuth(envOverrides, {
-        userClaudeDir: this.userClaudeDir,
-        appConfigDir
-      })
-    }
 
     return { envOverrides, executablePath }
   }
@@ -2366,9 +2311,8 @@ class SettingsService {
   // Maps a stored provider to its masked renderer view, flagging custom keys that no longer decrypt.
   private toProviderView(provider: StoredProvider, activeModel?: string): ProviderView {
     const hasKey = Boolean(provider.keyRef)
-    // custom and official both require a decryptable key; claude-default carries none.
-    const needsKey =
-      provider.type !== 'claude-default' && hasKey && tryDecryptKey(provider.keyRef) === undefined
+    // custom and official both require a decryptable key.
+    const needsKey = hasKey && tryDecryptKey(provider.keyRef) === undefined
 
     return {
       id: provider.id,
@@ -2391,8 +2335,6 @@ class SettingsService {
 
   private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
     if (isCodexSubscriptionProvider(provider.type)) return true
-    // claude-default always supports images (uses the user's Claude login, which has vision models)
-    if (provider.type === 'claude-default') return true
 
     // Custom providers: respect the user-configured supportsImageInput flag
     if (provider.type === 'custom') return provider.supportsImageInput === true
@@ -2410,10 +2352,9 @@ class SettingsService {
     return false
   }
 
-  // Credentials usable: claude-default always; custom/official need a key that still decrypts.
+  // Credentials usable: codex subscriptions always; custom/official need a key that still decrypts.
   private isProviderKeyUsable(provider: StoredProvider): boolean {
     if (isCodexSubscriptionProvider(provider.type)) return true
-    if (provider.type === 'claude-default') return true
 
     return Boolean(provider.keyRef) && tryDecryptKey(provider.keyRef) !== undefined
   }
@@ -2529,17 +2470,13 @@ class SettingsService {
     }
   }
 
-  // The human reason a provider can't drive a framework: a Claude-only login, else a route mismatch
-  // (which endpoint the framework needs vs. which the provider speaks). Route paths, not vendor names,
-  // so it reads as "which API shape".
+  // The human reason a provider can't drive a framework: a route mismatch (which endpoint the framework
+  // needs vs. which the provider speaks). Route paths, not vendor names, so it reads as "which API
+  // shape".
   private frameworkIncompatibilityMessage(
     provider: ResolvedProvider,
     framework: { displayName: string; supportedApiTypes: readonly ChatApiEndpoint[] }
   ): string {
-    if (provider.type === 'claude-default') {
-      return `Uses this machine's Claude sign-in, which only Claude Code can run. Switch to Claude Code or pick another provider.`
-    }
-
     const routes: Record<ChatApiEndpoint, string> = {
       anthropic: '/v1/messages',
       openai: '/v1/chat/completions',
@@ -2590,55 +2527,7 @@ class SettingsService {
     )
   }
 
-  // One-shot `claude -p "ok"` probe for claude-default validation, using the isolated/default env. A
-  // hard timeout guarantees the wizard never hangs on a claude that never returns; a timeout is
-  // reported distinctly so the UI can say "timed out" rather than "auth failed".
-  private async runClaudeProbe(
-    provider: ResolvedProvider,
-    settings: StoredSettings
-  ): Promise<ClaudeProbeResult> {
-    const executablePath = settings.claude?.resolvedPath
-
-    if (!executablePath) {
-      return { ok: false, message: 'Claude executable is not configured.' }
-    }
-
-    const appConfigDir = getAppClaudeConfigDir(this.storageRoot)
-    await provisionAppClaudeConfigDir(appConfigDir, {
-      skills: await this.skillCatalog(),
-      disabledSkillIds: settings.disabledSkillIds
-    })
-
-    const envOverrides = await applyLocalClaudeAuth(
-      buildProviderEnv(provider, {
-        storageRoot: this.storageRoot,
-        claudeExecutablePath: executablePath
-      }),
-      { userClaudeDir: this.userClaudeDir, appConfigDir }
-    )
-    const env = {
-      ...process.env,
-      ...envOverrides
-    }
-
-    // The native-auth fallback requires the variable to be absent, including from the parent process.
-    if (!('CLAUDE_CONFIG_DIR' in envOverrides)) delete env.CLAUDE_CONFIG_DIR
-
-    try {
-      await this.executeClaudeProbe(executablePath, env)
-
-      return { ok: true }
-    } catch (error) {
-      return isTimeoutError(error)
-        ? { ok: false, timedOut: true, message: 'Local claude did not respond in time.' }
-        : {
-            ok: false,
-            message:
-              'Local Claude could not authenticate. Run `claude` in a terminal and log in, then try again.'
-          }
-    }
-  }
-
+  // Issues a fresh, monotonically-increasing provider id for an upsert.
   private createProviderId(): string {
     this.providerSequence += 1
 

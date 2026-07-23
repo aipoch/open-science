@@ -70,7 +70,7 @@ export const defaultProviderKindKey = (
 }
 
 // Per-field validation errors. Custom needs base URL/model/key; official needs only a key (base URL
-// and model come from the registry); claude-default has no required fields.
+// and model come from the registry).
 export type ProviderFormErrors = {
   baseUrl?: string
   key?: string
@@ -102,8 +102,8 @@ export const hasProviderFormErrors = (errors: ProviderFormErrors): boolean =>
   Object.keys(errors).length > 0
 
 // Grouping for the provider-type picker. 'api' = official vendors via their standard API key;
-// 'other' = the custom gateway and local Claude. ('coding' — subscription coding plans — is reserved
-// for once those endpoints are wired up.)
+// 'other' = the custom gateway. ('coding' — subscription coding plans — is reserved for once those
+// endpoints are wired up.)
 export type ProviderKindGroup = 'coding' | 'api' | 'other'
 
 // Group headers shown in the provider-type picker and dropdown, in display order. ('coding' is
@@ -140,12 +140,6 @@ export const PROVIDER_KINDS: ProviderKind[] = [
     label: 'Custom Gateway',
     description: 'Base URL, key, and model for a Messages or Chat Completions endpoint',
     group: 'other'
-  },
-  {
-    key: 'claude-default',
-    label: 'Local Claude',
-    description: "Reuse this machine's Claude login",
-    group: 'other'
   }
 ]
 
@@ -164,10 +158,6 @@ export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
       vendorId: undefined,
       region: undefined
     }
-  }
-
-  if (key === 'claude-default') {
-    return { type: 'claude-default', vendorId: undefined, region: undefined, model: '' }
   }
 
   if (key.startsWith('official:')) {
@@ -192,7 +182,6 @@ export const selectedKindKey = (value: ProviderFormValue): string => {
   if (value.type === 'custom') {
     return 'custom'
   }
-  if (value.type === 'claude-default') return 'claude-default'
   if (value.type === 'codex-shared' || value.type === 'codex-isolated') {
     return 'codex-subscription'
   }
@@ -200,7 +189,7 @@ export const selectedKindKey = (value: ProviderFormValue): string => {
   return value.vendorId ? `official:${value.vendorId}` : 'custom'
 }
 
-// Maps a provider's type + vendor to its icon key ('custom' | 'claude-default' | 'official:<id>').
+// Maps a provider's type + vendor to its icon key ('custom' | 'official:<id>').
 export const providerKindKey = (type: ProviderType, vendorId?: OfficialVendorId): string =>
   type === 'official' && vendorId
     ? `official:${vendorId}`

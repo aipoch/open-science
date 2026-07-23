@@ -376,14 +376,6 @@ const hasResponsesBridgeProbeToolCall = (bodyText: string): boolean => {
   return completed && found
 }
 
-// Outcome of the one-shot claude-default probe. `timedOut` lets the UI show a timeout message instead
-// of a misleading auth failure when the local claude never responds.
-export type ClaudeProbeResult = {
-  ok: boolean
-  timedOut?: boolean
-  message?: string
-}
-
 export type ValidateProviderDeps = {
   fetchImpl?: typeof fetch
   timeoutMs?: number
@@ -391,8 +383,6 @@ export type ValidateProviderDeps = {
   // The routes the active agent framework can drive; the probe targets the endpoint shared with the
   // provider so the test exercises the route the agent will actually use. Omitted → framework-agnostic.
   frameworkEndpoints?: readonly ChatApiEndpoint[]
-  // Runs a one-shot `claude -p "ok"` probe for claude-default providers.
-  runClaudeProbe?: () => Promise<ClaudeProbeResult>
 }
 
 const validateProviderThroughResponsesBridge = async (
@@ -537,41 +527,11 @@ const validateCustomProvider = async (
   }
 }
 
-// Validates a claude-default provider by running a one-shot claude probe against the user's auth.
-const validateClaudeDefaultProvider = async (
-  deps: ValidateProviderDeps
-): Promise<ValidateProviderResult> => {
-  if (!deps.runClaudeProbe) {
-    return toResult('unknown', { message: 'Claude probe is not configured.' })
-  }
-
-  try {
-    const probe = await deps.runClaudeProbe()
-
-    if (probe.ok) return toResult('ok')
-
-    return toResult(probe.timedOut ? 'timeout' : 'auth', {
-      message:
-        probe.message ??
-        (probe.timedOut
-          ? 'Local claude did not respond in time.'
-          : 'Local claude could not complete a request.')
-    })
-  } catch (error) {
-    return toResult('unknown', {
-      message: error instanceof Error ? error.message : String(error)
-    })
-  }
-}
-
 // Dispatches validation by provider type.
 const validateProvider = (
   provider: ResolvedProvider,
   deps: ValidateProviderDeps = {}
-): Promise<ValidateProviderResult> =>
-  provider.type === 'claude-default'
-    ? validateClaudeDefaultProvider(deps)
-    : validateCustomProvider(provider, deps)
+): Promise<ValidateProviderResult> => validateCustomProvider(provider, deps)
 
 export {
   ANTHROPIC_VERSION,

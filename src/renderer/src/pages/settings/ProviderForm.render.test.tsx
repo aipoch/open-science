@@ -103,15 +103,6 @@ describe('ProviderForm field switching', () => {
     )
   })
 
-  it('hides gateway/key fields for a local-claude provider', () => {
-    render(createEmptyProviderFormValue({ type: 'claude-default' }))
-
-    expect(container.querySelector('[aria-label="Base URL"]')).toBeNull()
-    expect(container.querySelector('[aria-label="API key"]')).toBeNull()
-    // Only the optional model override remains.
-    expect(container.querySelector('[aria-label="Model"]')).not.toBeNull()
-  })
-
   it('shows a fixed shared Codex subscription without editable credentials or identity', () => {
     render(
       createEmptyProviderFormValue({
@@ -244,19 +235,6 @@ describe('ProviderForm field switching', () => {
     expect(document.body.textContent).toContain(
       'Bundled with the app. Refresh from the vendor to pull the latest.'
     )
-  })
-
-  it('shows only provider-type help for local Claude', async () => {
-    render(createEmptyProviderFormValue({ type: 'claude-default' }))
-    const helpButtons = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('[data-slot="field-help"]')
-    )
-
-    expect(helpButtons).toHaveLength(1)
-    expect(container.textContent).not.toContain("Reuse this machine's Claude login")
-
-    await act(async () => helpButtons[0]?.focus())
-    expect(document.body.textContent).toContain("Reuse this machine's Claude login")
   })
 
   it('describes encrypted and unavailable storage accurately', () => {

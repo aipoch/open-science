@@ -95,26 +95,6 @@ describe('buildAgentSpawnEnv', () => {
     expect(env.PATH).toBe('/usr/bin')
     expect(env.CLAUDE_CODE_EXECUTABLE).toBe('/bin/claude')
   })
-
-  it('keeps inherited ANTHROPIC_* for a non-isolated (claude-default) provider', () => {
-    const env = buildAgentSpawnEnv(
-      {
-        ANTHROPIC_BASE_URL: 'https://proxy.example',
-        CLAUDE_CONFIG_DIR: '/inherited/isolated-config',
-        PATH: '/usr/bin'
-      },
-      // claude-default overrides carry no CLAUDE_CONFIG_DIR → not isolated.
-      { ANTHROPIC_MODEL: 'claude-opus' },
-      '/bin/claude'
-    )
-
-    // Reuses the user's global environment (proxy, login, etc.).
-    expect(env.ANTHROPIC_BASE_URL).toBe('https://proxy.example')
-    expect(env.ANTHROPIC_MODEL).toBe('claude-opus')
-    // Native credential stores are keyed to Claude's implicit config context.
-    expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
-    expect(env.CLAUDE_CODE_EXECUTABLE).toBe('/bin/claude')
-  })
 })
 
 describe('spawnClaudeAgentAcp', () => {

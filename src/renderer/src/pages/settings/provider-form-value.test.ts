@@ -54,8 +54,10 @@ describe('getProviderFormErrors', () => {
     expect(hasProviderFormErrors(errors)).toBe(false)
   })
 
-  it('never requires fields for a local-claude provider', () => {
-    const errors = getProviderFormErrors(createEmptyProviderFormValue({ type: 'claude-default' }))
+  it('never requires fields for a complete custom provider', () => {
+    const errors = getProviderFormErrors(
+      createEmptyProviderFormValue({ type: 'custom', baseUrl: 'https://g/v1', model: 'm', key: 'k' })
+    )
 
     expect(errors).toEqual({})
     expect(hasProviderFormErrors(errors)).toBe(false)
@@ -63,7 +65,7 @@ describe('getProviderFormErrors', () => {
 })
 
 describe('provider-kind helpers', () => {
-  it('lists official vendors under the API group and custom/local under Other', () => {
+  it('lists official vendors under the API group and custom under Other', () => {
     const codingKeys = PROVIDER_KINDS.filter((kind) => kind.group === 'coding').map(
       (kind) => kind.key
     )
@@ -75,7 +77,7 @@ describe('provider-kind helpers', () => {
     expect(apiKeys).toContain('official:deepseek')
     expect(apiKeys).toContain('official:openai')
     expect(codingKeys).toEqual(['codex-subscription'])
-    expect(otherKeys).toEqual(['custom', 'claude-default'])
+    expect(otherKeys).toEqual(['custom'])
   })
 
   it('uses one provider kind while keeping the auth mode in the form value', () => {
@@ -115,15 +117,9 @@ describe('provider-kind helpers', () => {
     ).toBe('official:openai')
   })
 
-  it('clears vendor-only fields when picking custom or local', () => {
+  it('clears vendor-only fields when picking custom', () => {
     expect(providerKindPatch('custom')).toEqual({
       type: 'custom',
-      vendorId: undefined,
-      region: undefined,
-      model: ''
-    })
-    expect(providerKindPatch('claude-default')).toEqual({
-      type: 'claude-default',
       vendorId: undefined,
       region: undefined,
       model: ''
@@ -132,9 +128,6 @@ describe('provider-kind helpers', () => {
 
   it('round-trips a value back to its picker key', () => {
     expect(selectedKindKey(createEmptyProviderFormValue({ type: 'custom' }))).toBe('custom')
-    expect(selectedKindKey(createEmptyProviderFormValue({ type: 'claude-default' }))).toBe(
-      'claude-default'
-    )
     expect(
       selectedKindKey(createEmptyProviderFormValue({ type: 'official', vendorId: 'zhipu' }))
     ).toBe('official:zhipu')

@@ -6,10 +6,10 @@ import { isModelBridgeSupported } from '../../../../shared/provider-registry'
 import { incompatibilityReason } from '../workspace/composer-model-picker-utils'
 
 // Settings-time compatibility guard for the Model panel. The active provider must be able to drive the
-// selected agent framework (endpoint + provider-type; a Local Claude provider is Claude-only). When the
-// current pair is incompatible, this surfaces the same mismatch the spawn path would otherwise raise
-// only when a conversation fails to start — so the user can fix it here (switch model or framework)
-// instead of discovering it mid-chat. Renders nothing while the pair is compatible or no provider is
+// selected agent framework (endpoint + provider-type). When the current pair is incompatible, this
+// surfaces the same mismatch the spawn path would otherwise raise only when a conversation fails to
+// start — so the user can fix it here (switch model or framework) instead of discovering it mid-chat.
+// Renders nothing while the pair is compatible or no provider is
 // active.
 const ModelFrameworkCompatibilityAlert = (): React.JSX.Element | null => {
   const providers = useSettingsStore((state) => state.providers)
