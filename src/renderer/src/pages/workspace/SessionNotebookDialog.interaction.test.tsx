@@ -52,6 +52,7 @@ describe('SessionNotebookContent export', () => {
           onExport={onExport}
           onExportAll={vi.fn()}
           onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -87,6 +88,7 @@ describe('SessionNotebookContent export', () => {
           onExport={onExport}
           onExportAll={vi.fn()}
           onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -124,6 +126,7 @@ describe('SessionNotebookContent export', () => {
           onExport={onExport}
           onExportAll={vi.fn()}
           onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -153,6 +156,7 @@ describe('SessionNotebookContent export', () => {
           onExport={onExport}
           onExportAll={vi.fn()}
           onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -180,6 +184,7 @@ describe('SessionNotebookContent export', () => {
           onExport={failingExport}
           onExportAll={vi.fn()}
           onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -204,6 +209,7 @@ describe('SessionNotebookContent export', () => {
           onExport={vi.fn()}
           onExportAll={vi.fn()}
           onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -227,6 +233,7 @@ describe('SessionNotebookContent export', () => {
           onExport={vi.fn()}
           onExportAll={onExportAll}
           onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -255,6 +262,7 @@ describe('SessionNotebookContent export', () => {
           onExport={vi.fn()}
           onExportAll={onExportAll}
           onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -278,6 +286,7 @@ describe('SessionNotebookContent export', () => {
           onExport={vi.fn()}
           onExportAll={vi.fn()}
           onImport={onImport}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -292,5 +301,35 @@ describe('SessionNotebookContent export', () => {
     expect(onImport).toHaveBeenCalledOnce()
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('Invalid notebook')
     expect(button?.disabled).toBe(false)
+  })
+
+  it('opens JupyterLab and surfaces launcher failures', async () => {
+    const onOpenJupyterLab = vi.fn().mockRejectedValue(new Error('Install denied'))
+    await act(async () => {
+      root.render(
+        <SessionNotebookContent
+          sessionId="session-1"
+          runs={[run]}
+          status="ready"
+          onClose={vi.fn()}
+          onExport={vi.fn()}
+          onExportAll={vi.fn()}
+          onImport={vi.fn()}
+          onOpenJupyterLab={onOpenJupyterLab}
+        />
+      )
+    })
+
+    const button = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open in JupyterLab"]'
+    )
+    expect(button?.disabled).toBe(false)
+    await act(async () => {
+      button?.click()
+      await Promise.resolve()
+    })
+
+    expect(onOpenJupyterLab).toHaveBeenCalledOnce()
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Install denied')
   })
 })

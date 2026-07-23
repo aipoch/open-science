@@ -284,6 +284,12 @@ export type ImportNotebookResult =
       skippedCellCount: number
     }
 
+export type OpenJupyterLabResult = {
+  opened: true
+  url: string
+  alreadyRunning: boolean
+}
+
 // Starts a streamed code write into a notebook cell.
 export type BeginNotebookCodeCellRequest = NotebookSessionRequest & {
   cellId?: string
