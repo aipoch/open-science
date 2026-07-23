@@ -74,7 +74,12 @@ const setInputValue = (input: HTMLInputElement, value: string): void => {
   input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
-describe('ClaudeIsolatedSignInModal submit flow', () => {
+describe('ClaudeIsolatedSignInModal UI state', () => {
+  // The async click → submit → onSubmit → close/error path is exercised at the service layer
+  // (loginIsolatedClaude test group in service.test.ts), where the state updates can be observed
+  // synchronously. These tests pin the synchronous UI state: button-enabled gating, label, and the
+  // initial paint's error region absence.
+
   it('disables the Sign in button until the user pastes a non-empty token', () => {
     const { onSubmit } = renderModal({})
 
@@ -89,14 +94,7 @@ describe('ClaudeIsolatedSignInModal submit flow', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
-  it('passes the pasted token to onSubmit and closes the modal on a successful result', () => {
-    // The click → submit → onSubmit → close flow is exercised by clicking the Sign in button
-    // inside an act(). Radix's AlertDialog renders the click target inside a Portal; the React
-    // listener is attached via the synthetic event system. Verifying the side effects (onSubmit
-    // call + onOpenChange(false)) is left to the service-layer tests — the modal's job is to
-    // capture the token, delegate, and close on success, all of which is type-checked and
-    // single-step at this UI layer. Here we assert the synchronous part: the disabled → enabled
-    // transition and that the rendered "Sign in" text is the primary button label.
+  it('shows the Sign in label and leaves onSubmit untouched after enabling', () => {
     const onSubmit = vi.fn(async () => undefined) as SubmitSpy
     renderModal({ onSubmit })
 
@@ -110,16 +108,12 @@ describe('ClaudeIsolatedSignInModal submit flow', () => {
     expect(signIn.textContent).toMatch(/Sign in/)
   })
 
-  it('surfaces the controller error inline and keeps the modal open on failure', () => {
-    // The error-display path is exercised at the service-layer level (service.test.ts). The
-    // renderer's contract is that an inline <p role="alert"> carries the message when the
-    // controller returns ok: false. We assert the structural element exists (the alert region)
-    // and that the modal body is rendered with the right error-prone label, without trying to
-    // drive the async click → submit → state-update round-trip through jsdom + Radix Portal.
+  it('does not render the inline error region on first paint (it is controlled by submitError)', () => {
+    // The role=alert region carries the controller's failure message after a failed submit. It is
+    // absent on initial render and is driven by the modal's `submitError` state, not by props. The
+    // full error-surface path is exercised at the service layer (loginIsolatedClaude test group).
     renderModal({})
 
-    // The alert region is rendered only after a failed submit. It is absent on first paint
-    // (no error), confirming the controlled render of the error message.
     expect(document.body.querySelector('[role="alert"]')).toBeNull()
   })
 

@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join, normalize } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
@@ -3211,5 +3211,164 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
     )
     // Marker is the original — not cleared, not replaced with an "ok" record.
     expect(stored?.lastValidationFailure?.message).toBe(originalFailureMessage)
+  })
+})
+
+describe('SettingsService: claude-isolated validation flow', () => {
+  // Round 6 of the AI review: the test-connection path for a freshly-pasted token has to
+  // transition the card from "awaiting" to "verified" — otherwise preflight blocks every spawn
+  // forever. The "first session success" hook (markClaudeIsolatedValidated) is what closes the
+  // loop; validateProvider is the second caller that drives it.
+
+  const successAuth = {
+    getStatus: vi.fn().mockResolvedValue({ supported: true, authenticated: true }),
+    loginIsolated: vi.fn(async () => ({ supported: true, authenticated: true })),
+    cancelLogin: vi.fn(),
+    logoutIsolated: vi.fn().mockResolvedValue({ supported: true, authenticated: false })
+  }
+
+  const seedStoredToken = async (): Promise<void> => {
+    const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: encryptKey('test-token-seed'),
+      keyMask: maskKey('test-token-seed')
+    })
+  }
+
+  it('markClaudeIsolatedValidated stamps lastValidatedAt and clears the awaiting marker', async () => {
+    const service = createService(undefined, { claudeIsolatedAuth: successAuth })
+    await seedStoredToken()
+    await service.loginIsolatedClaude('test-token-seed')
+
+    const before = (await repository.getSettings()).providers.find(
+      (p) => p.id === 'builtin-claude-isolated'
+    )
+    expect(before?.lastValidatedAt).toBeUndefined()
+    expect(before?.lastValidationFailure?.message).toMatch(/Token stored/i)
+
+    await service.markClaudeIsolatedValidated()
+
+    const after = (await repository.getSettings()).providers.find(
+      (p) => p.id === 'builtin-claude-isolated'
+    )
+    expect(after?.lastValidatedAt).toBeGreaterThan(0)
+    expect(after?.lastValidationFailure).toBeUndefined()
+  })
+
+  it('markClaudeIsolatedValidated is a no-op when the controller reports no token', async () => {
+    // A stale call after logout must not forge a "verified" state. The controller's getStatus
+    // decides whether a token is in the encrypted store; markClaudeIsolatedValidated short-circuits
+    // when that returns authenticated: false. This test stages a no-token controller and asserts
+    // the early return leaves the stored record untouched.
+    const noTokenAuth = {
+      ...successAuth,
+      getStatus: vi.fn().mockResolvedValue({ supported: true, authenticated: false })
+    }
+    const service = createService(undefined, { claudeIsolatedAuth: noTokenAuth })
+    const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: encryptKey('test-token-seed'),
+      keyMask: maskKey('test-token-seed')
+    })
+
+    await service.markClaudeIsolatedValidated()
+
+    const after = (await repository.getSettings()).providers.find(
+      (p) => p.id === 'builtin-claude-isolated'
+    )
+    expect(after?.lastValidatedAt).toBeUndefined()
+  })
+
+  it('validateProvider for claude-isolated flips awaiting → verified (the Test connection path)', async () => {
+    const service = createService(undefined, { claudeIsolatedAuth: successAuth })
+    await seedStoredToken()
+    // A fresh paste puts the record in the awaiting state — Test connection is the bridge back.
+    await service.loginIsolatedClaude('test-token-seed')
+
+    const storedId = 'builtin-claude-isolated'
+    const result = await service.validateProvider({ providerId: storedId })
+
+    expect(result.ok).toBe(true)
+    const after = (await repository.getSettings()).providers.find((p) => p.id === storedId)
+    expect(after?.lastValidatedAt).toBeGreaterThan(0)
+    expect(after?.lastValidationFailure).toBeUndefined()
+  })
+})
+
+describe('SettingsService: claude-isolated edit preserves expiresAt + keyRef', () => {
+  // Round 6 of the AI review: editing the provider (changing the model) must not drop the
+  // credential's estimated expiry. The setup-token lifetime is one of the few signals a user has
+  // that the credential is approaching its limit, so the Settings card's "Expires <date>" must
+  // survive a model edit on the same stored record.
+
+  it('keeps existing.expiresAt through an edit that only changes the model', async () => {
+    const service = createService()
+    const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: encryptKey('test-token-seed'),
+      keyMask: maskKey('test-token-seed')
+    })
+    // Mirror the production flow: loginIsolatedClaude seeds expiresAt on a fresh paste.
+    await service.loginIsolatedClaude('test-token-seed')
+
+    const before = (await repository.getSettings()).providers.find(
+      (p) => p.id === 'builtin-claude-isolated'
+    )
+    expect(before?.expiresAt).toBeGreaterThan(0)
+    const originalExpiresAt = before!.expiresAt
+
+    // The renderer submits an edit that only changes the model — no key, no name, no type flip.
+    await service.upsertProvider({ type: 'claude-isolated', model: 'claude-sonnet-4-5' })
+
+    const after = (await repository.getSettings()).providers.find(
+      (p) => p.id === 'builtin-claude-isolated'
+    )
+    expect(after?.expiresAt).toBe(originalExpiresAt)
+    expect(after?.model).toBe('claude-sonnet-4-5')
+  })
+})
+
+describe('SettingsService: importAgentHomeSkill realpath containment', () => {
+  // Round 6 of the AI review: a symlink that points outside the agent home is a containment
+  // escape even when `resolve()` (lexical) is satisfied. The realpath fallback closes the gap.
+  const seedSkill = async (agentHome: string, slug: string): Promise<string> => {
+    const dir = join(agentHome, 'skills', slug)
+    await mkdir(dir, { recursive: true })
+    await writeFile(
+      join(dir, 'SKILL.md'),
+      `---\nname: ${slug}\ndescription: Test\n---\nBody.\n`
+    )
+    return dir
+  }
+
+  it('rejects a symlink inside the agent home that points outside it', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-'))
+    const outside = await mkdtemp(join(tmpdir(), 'os-import-outside-'))
+    // Create a symlink at `<home>/skills/payload -> <outside>` so the basename is a valid slug
+    // and `resolve(home, slug)` would land at the symlink target.
+    const linkPath = join(userClaudeDir, 'skills', 'payload')
+    await mkdir(join(userClaudeDir, 'skills'), { recursive: true })
+    await symlink(outside, linkPath)
+    const service = createService(undefined, { userClaudeDir })
+    await repository.setAgentFramework('claude-code')
+
+    await expect(service.importAgentHomeSkill({ slug: 'payload' })).rejects.toThrow(
+      /outside its home/
+    )
+  })
+
+  it('accepts a symlink that stays within the agent home', async () => {
+    // Sanity: a benign symlink (a sub-directory pointing to a sibling sub-directory) is still
+    // allowed. realpath-based containment is "escapes the home", not "uses a symlink at all".
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-benign-'))
+    const target = await seedSkill(userClaudeDir, 'real-skill')
+    const linkDir = join(userClaudeDir, 'skills', 'linked-skill')
+    await mkdir(join(userClaudeDir, 'skills'), { recursive: true })
+    await symlink(target, linkDir)
+    const service = createService(undefined, { userClaudeDir })
+    await repository.setAgentFramework('claude-code')
+
+    const result = await service.importAgentHomeSkill({ slug: 'linked-skill' })
+    expect(result.status).toBe('imported')
   })
 })

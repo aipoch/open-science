@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { access, chmod, mkdir, readdir, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, readdir, realpath, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
@@ -915,6 +915,9 @@ class SettingsService {
   // Resolves a renderer-supplied slug to an absolute path under the active agent's skills dir,
   // refusing escapes. Centralises the containment check so the IPC and the import path agree on
   // which directory is "the agent home" and a malicious slug cannot reach arbitrary host files.
+  // The home is resolved via realpath so a symlink that points outside the agent home (e.g. an
+  // attacker who writes `~/.claude/skills/innocent -> /etc` and tries to import `innocent`) is
+  // rejected even though `resolve(home, slug)` would pass the lexical containment check.
   private async resolveAgentHomeSkillPath(slug: string): Promise<string> {
     const settings = await this.repository.getSettings()
     const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
@@ -929,8 +932,11 @@ class SettingsService {
       throw new Error(`Refusing to import agent-home skill with unsafe slug: ${slug}`)
     }
 
-    const homeRoot = resolve(homeSkillsDir)
-    const candidate = resolve(homeRoot, slug)
+    // Realpath both sides so a symlink under the home that points outside the configured skills
+    // directory is rejected (lexical `resolve` would only catch `..` traversal, not symlinks).
+    const homeRoot = await realpath(homeSkillsDir).catch(() => resolve(homeSkillsDir))
+    const lexicalCandidate = resolve(homeRoot, slug)
+    const candidate = await realpath(lexicalCandidate).catch(() => lexicalCandidate)
     const homeWithSep = homeRoot.endsWith(sep) ? homeRoot : homeRoot + sep
 
     if (candidate !== homeRoot && !candidate.startsWith(homeWithSep)) {
@@ -1576,13 +1582,17 @@ class SettingsService {
     } else if (request.type === 'claude-isolated') {
       // claude-isolated has no fields of its own: the type tells the renderer/env-builder what to do
       // with the encrypted token (stored separately on login). A model override is allowed and follows
-      // the same rule as claude-default. The encrypted token must carry over an edit so a model
-      // change does not silently invalidate the stored credential; sign-in itself is handled by
-      // loginIsolatedClaude, not by upsert.
+      // the same rule as claude-default. The encrypted token AND the credential's estimated expiry
+      // must carry over an edit so a model change does not silently drop the stored credential or
+      // hide the Expires <date> on the Settings card; sign-in itself is handled by
+      // loginIsolatedClaude, which sets expiresAt on a fresh paste.
       provider.apiEndpoints = ['anthropic']
       if (existing?.keyRef) {
         provider.keyRef = existing.keyRef
         provider.keyMask = existing.keyMask
+      }
+      if (existing?.expiresAt !== undefined) {
+        provider.expiresAt = existing.expiresAt
       }
       credentialsChanged = false
       const model = request.model?.trim() || existing?.model
@@ -1872,6 +1882,34 @@ class SettingsService {
     return { ok: true, category: 'ok' }
   }
 
+  // Stamps a successful Claude session against the stored claude-isolated provider. The spawn layer
+  // calls this after the first request with a stored token completes without an auth error — the
+  // "first session success" hook that the validateProvider path cannot observe on its own (it has
+  // no live process to probe). Until the spawn layer wires this in, the "Test connection" button
+  // is the only path that flips lastValidatedAt.
+  //
+  // Idempotent: re-calling on a provider that already has lastValidatedAt overwrites the stamp
+  // with a fresh timestamp (no-op if there is no stored record to mark). Refuses to write when the
+  // token is not in storage, so a stale call after logout cannot forge a "verified" state.
+  async markClaudeIsolatedValidated(): Promise<void> {
+    const status = await this.claudeIsolatedAuth.getStatus()
+
+    if (!status.authenticated) return
+
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
+    )
+
+    if (!provider) return
+
+    await this.repository.upsertProvider({
+      ...provider,
+      lastValidatedAt: Date.now(),
+      lastValidationFailure: undefined
+    })
+  }
+
   // The Claude-auth status does not have a 'timeout' or 'incompatible' category of its own; map it
   // to the same validation-result envelope the renderer already understands for the codex path.
   private claudeIsolatedAuthValidationResult(
@@ -1926,7 +1964,7 @@ class SettingsService {
         ? undefined
         : this.frameworkIncompatibilityResult(resolved.provider, framework)
 
-    const result =
+    let result =
       incompatibility ??
       (isCodexSubscriptionProvider(resolved.provider.type)
         ? this.codexAuthValidationResult(
@@ -1956,6 +1994,28 @@ class SettingsService {
             // so its HTTP route is decided by the bridge, not by supportedApiTypes — keep it as-is.
             frameworkEndpoints: framework.id === 'codex' ? undefined : framework.supportedApiTypes
           }))
+
+    // For a stored claude-isolated token, the status check above can only report ok: true when the
+    // stored record already has a lastValidatedAt stamp — which is a chicken-and-egg state right
+    // after a fresh paste. Treat the validate call as the "Test connection" event for the
+    // claude-isolated flow: stamp the record so the card flips to "verified", and surface a
+    // helpful message when no token is stored yet. The spawn layer will additionally call
+    // markClaudeIsolatedValidated on the first successful request, keeping the record honest.
+    if (resolved.provider.type === 'claude-isolated') {
+      const status = await this.claudeIsolatedAuth.getStatus()
+      if (!status.authenticated) {
+        result = {
+          ok: false,
+          category: 'unknown',
+          message:
+            status.message ??
+            'Not signed in. Run `claude setup-token` and paste the token to connect your Claude subscription.'
+        }
+      } else {
+        await this.markClaudeIsolatedValidated()
+        result = { ok: true, category: 'ok' }
+      }
+    }
 
     if (resolved.storedId) {
       // Each early return here means the tested target no longer matches what is stored (a newer test
