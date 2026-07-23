@@ -309,7 +309,7 @@ type OpenScienceAPI = {
   }
   officePreview: {
     open: (request: OfficePreviewOpenRequest) => Promise<OfficePreviewOpenResult>
-    setBounds: (sessionId: string, bounds: OfficePreviewBounds) => Promise<void>
+    setBounds: (sessionId: string, bounds: OfficePreviewBounds) => void
     close: (sessionId: string) => Promise<void>
     onState: (listener: (state: OfficePreviewRuntimeState) => void) => RemoveListener
   }
@@ -670,8 +670,9 @@ const api: OpenScienceAPI = {
   officePreview: {
     open: (request) =>
       ipcRenderer.invoke(OFFICE_PREVIEW_OPEN_CHANNEL, request) as Promise<OfficePreviewOpenResult>,
+    // Bounds are transient layout notifications; no reply should accumulate on the resize hot path.
     setBounds: (sessionId, bounds) =>
-      ipcRenderer.invoke(OFFICE_PREVIEW_SET_BOUNDS_CHANNEL, sessionId, bounds) as Promise<void>,
+      ipcRenderer.send(OFFICE_PREVIEW_SET_BOUNDS_CHANNEL, sessionId, bounds),
     close: (sessionId) =>
       ipcRenderer.invoke(OFFICE_PREVIEW_CLOSE_CHANNEL, sessionId) as Promise<void>,
     onState: (listener) => onIpcMessage(OFFICE_PREVIEW_STATE_CHANNEL, listener)

@@ -3,6 +3,7 @@ import { FileWarning } from 'lucide-react'
 
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
 import type {
+  OfficePreviewBounds,
   OfficePreviewErrorCode,
   OfficePreviewRequestedExtension,
   OfficePreviewRuntimeState
@@ -89,6 +90,97 @@ const getDownloadOnlyErrorMessage = (
     return 'This Office file exceeds the safe preview limits. Download it to view.'
   }
   return undefined
+}
+
+type OfficePreviewBoundsSnapshot = Omit<OfficePreviewBounds, 'sequence'>
+
+const areHorizontalLayoutsEqual = (
+  left: OfficePreviewBoundsSnapshot['horizontalLayout'],
+  right: OfficePreviewBoundsSnapshot['horizontalLayout']
+): boolean =>
+  left === right ||
+  (left !== undefined &&
+    right !== undefined &&
+    left.splitGroupX === right.splitGroupX &&
+    left.splitGroupWidth === right.splitGroupWidth &&
+    left.panelX === right.panelX &&
+    left.panelWidth === right.panelWidth)
+
+const areBoundsSnapshotsEqual = (
+  left: OfficePreviewBoundsSnapshot | undefined,
+  right: OfficePreviewBoundsSnapshot
+): boolean =>
+  left !== undefined &&
+  left.x === right.x &&
+  left.y === right.y &&
+  left.width === right.width &&
+  left.height === right.height &&
+  left.visible === right.visible &&
+  left.viewportWidth === right.viewportWidth &&
+  left.viewportHeight === right.viewportHeight &&
+  areHorizontalLayoutsEqual(left.horizontalLayout, right.horizontalLayout)
+
+type OfficePreviewLayoutTargets = {
+  resizeTargets: Element[]
+  splitGroup?: HTMLElement
+  panel?: HTMLElement
+}
+
+// Sibling panels can move the preview without changing its own size, so observe the whole split group.
+const getOfficePreviewLayoutTargets = (host: HTMLElement): OfficePreviewLayoutTargets => {
+  const targets = new Set<Element>([host])
+  let panel: HTMLElement | undefined
+  let splitGroup: HTMLElement | undefined
+  let current = host.parentElement
+
+  while (current) {
+    if (!panel && current.dataset.slot === 'resizable-panel') panel = current
+    if (current.dataset.slot === 'resizable-panel-group') {
+      splitGroup = current
+      targets.add(current)
+      current
+        .querySelectorAll(':scope > [data-slot="resizable-panel"]')
+        .forEach((panel) => targets.add(panel))
+      break
+    }
+    current = current.parentElement
+  }
+
+  return {
+    resizeTargets: [...targets],
+    splitGroup,
+    panel: panel?.parentElement === splitGroup ? panel : undefined
+  }
+}
+
+const measureOfficePreviewBounds = (
+  host: HTMLElement,
+  visible: boolean,
+  layoutTargets: OfficePreviewLayoutTargets
+): OfficePreviewBoundsSnapshot => {
+  const rect = host.getBoundingClientRect()
+  const splitGroupRect = layoutTargets.splitGroup?.getBoundingClientRect()
+  const panelRect = layoutTargets.panel?.getBoundingClientRect()
+  const horizontalLayout =
+    splitGroupRect && panelRect
+      ? {
+          splitGroupX: Math.round(splitGroupRect.left),
+          splitGroupWidth: Math.max(0, Math.round(splitGroupRect.width)),
+          panelX: Math.round(panelRect.left),
+          panelWidth: Math.max(0, Math.round(panelRect.width))
+        }
+      : undefined
+
+  return {
+    x: Math.round(rect.left),
+    y: Math.round(rect.top),
+    width: Math.max(0, Math.round(rect.width)),
+    height: Math.max(0, Math.round(rect.height)),
+    visible: visible && isOfficePreviewHostVisible(host, rect),
+    viewportWidth: Math.max(1, Math.round(window.innerWidth)),
+    viewportHeight: Math.max(1, Math.round(window.innerHeight)),
+    ...(horizontalLayout ? { horizontalLayout } : {})
+  }
 }
 
 // Owns only native-view coordination; Office bytes and vendor libraries stay in the child runtime.
@@ -198,16 +290,17 @@ export const OfficePreviewContent = ({
 
     let animationFrame: number | undefined
     let isIntersecting = true
+    let sequence = 0
+    let lastBounds: OfficePreviewBoundsSnapshot | undefined
+    const layoutTargets = getOfficePreviewLayoutTargets(host)
     const syncBounds = (): void => {
       animationFrame = undefined
-      const rect = host.getBoundingClientRect()
-      void window.api.officePreview.setBounds(sessionId, {
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: rect.height,
-        visible: isIntersecting && isOfficePreviewHostVisible(host, rect)
-      })
+      const nextBounds = measureOfficePreviewBounds(host, isIntersecting, layoutTargets)
+      if (areBoundsSnapshotsEqual(lastBounds, nextBounds)) return
+
+      lastBounds = nextBounds
+      sequence += 1
+      window.api.officePreview.setBounds(sessionId, { ...nextBounds, sequence })
     }
     const scheduleBounds = (): void => {
       if (animationFrame !== undefined) return
@@ -215,7 +308,7 @@ export const OfficePreviewContent = ({
     }
     const resizeObserver =
       typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(scheduleBounds)
-    resizeObserver?.observe(host)
+    layoutTargets.resizeTargets.forEach((target) => resizeObserver?.observe(target))
     const intersectionObserver =
       typeof IntersectionObserver === 'undefined'
         ? undefined

@@ -176,6 +176,139 @@ describe('OfficePreviewRenderer', () => {
     })
   })
 
+  it('sends normalized viewport bounds once when repeated frames have not changed', async () => {
+    const frames: FrameRequestCallback[] = []
+    const requestFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        frames.push(callback)
+        return frames.length
+      })
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+    let rect = {
+      left: 640.4,
+      top: 72.3,
+      right: 1260.6,
+      bottom: 780.2,
+      width: 620.2,
+      height: 707.9,
+      x: 640.4,
+      y: 72.3,
+      toJSON: () => ({})
+    } as DOMRect
+    const getRect = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(() => rect)
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+    Object.defineProperty(document, 'elementsFromPoint', {
+      configurable: true,
+      value: vi.fn(() => {
+        const host = container.querySelector<HTMLElement>('[data-office-preview-state]')
+        return host ? [host] : []
+      })
+    })
+
+    await act(async () => {
+      root.render(<OfficePreviewRenderer item={createItem()} />)
+      await flushMicrotasks()
+    })
+
+    expect(setBounds).toHaveBeenLastCalledWith('office-session-1', {
+      x: 640,
+      y: 72,
+      width: 620,
+      height: 708,
+      visible: true,
+      sequence: 1,
+      viewportWidth: 1280,
+      viewportHeight: 800
+    })
+
+    while (frames.length > 0) frames.shift()?.(0)
+    setBounds.mockClear()
+    window.dispatchEvent(new Event('resize'))
+    window.dispatchEvent(new Event('resize'))
+    frames.shift()?.(1)
+    expect(setBounds).not.toHaveBeenCalled()
+
+    rect = { ...rect, left: 600.2, x: 600.2, width: 660.4 }
+    window.dispatchEvent(new Event('resize'))
+    frames.shift()?.(2)
+    expect(setBounds).toHaveBeenCalledWith(
+      'office-session-1',
+      expect.objectContaining({ x: 600, width: 660, sequence: 2 })
+    )
+
+    getRect.mockRestore()
+    requestFrame.mockRestore()
+    cancelFrame.mockRestore()
+  })
+
+  it('observes sibling resizable panels that can move the host without resizing it', async () => {
+    const observed: Element[] = []
+    class TestResizeObserver {
+      observe = vi.fn((element: Element) => observed.push(element))
+      unobserve = vi.fn()
+      disconnect = vi.fn()
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver)
+    const group = document.createElement('div')
+    group.dataset.slot = 'resizable-panel-group'
+    const leftPanel = document.createElement('div')
+    leftPanel.dataset.slot = 'resizable-panel'
+    const rightPanel = document.createElement('div')
+    rightPanel.dataset.slot = 'resizable-panel'
+    document.body.appendChild(group)
+    group.append(leftPanel, rightPanel)
+    rightPanel.appendChild(container)
+    const getRect = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        const geometry =
+          this === group
+            ? { x: 220, width: 1060 }
+            : this === rightPanel
+              ? { x: 856, width: 424 }
+              : { x: 865, width: 400 }
+        return {
+          left: geometry.x,
+          top: 72,
+          right: geometry.x + geometry.width,
+          bottom: 780,
+          width: geometry.width,
+          height: 708,
+          x: geometry.x,
+          y: 72,
+          toJSON: () => ({})
+        } as DOMRect
+      })
+
+    await act(async () => {
+      root.render(<OfficePreviewRenderer item={createItem()} />)
+      await flushMicrotasks()
+    })
+
+    const host = container.querySelector<HTMLElement>('[data-office-preview-state]')
+    expect(host).not.toBeNull()
+    expect(observed).toEqual(expect.arrayContaining([leftPanel, rightPanel, host]))
+    expect(setBounds).toHaveBeenCalledWith(
+      'office-session-1',
+      expect.objectContaining({
+        horizontalLayout: {
+          splitGroupX: 220,
+          splitGroupWidth: 1060,
+          panelX: 856,
+          panelWidth: 424
+        }
+      })
+    )
+
+    getRect.mockRestore()
+    vi.unstubAllGlobals()
+    group.remove()
+  })
+
   it('shows the authoritative file-check stage while opening the isolated runtime', async () => {
     open.mockReturnValue(new Promise(() => undefined))
 

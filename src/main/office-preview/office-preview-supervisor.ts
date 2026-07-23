@@ -1,6 +1,7 @@
 import type {
   OfficePreviewAdmissionError,
   OfficePreviewBounds,
+  OfficePreviewHorizontalLayout,
   OfficePreviewOpenRequest,
   OfficePreviewOpenResult,
   OfficePreviewResourceSnapshot,
@@ -8,7 +9,7 @@ import type {
   OfficePreviewRuntimeStart,
   OfficePreviewRuntimeState
 } from '../../shared/office-preview'
-import { OFFICE_PREVIEW_MAX_FILE_BYTES } from '../../shared/office-preview'
+import { isOfficePreviewBounds, OFFICE_PREVIEW_MAX_FILE_BYTES } from '../../shared/office-preview'
 import {
   OFFICE_PREVIEW_PROCESS_MEMORY_LIMIT_BYTES,
   OFFICE_PREVIEW_PROCESS_MEMORY_POLL_MS
@@ -54,7 +55,97 @@ type OfficePreviewSession = {
   timeout?: ReturnType<typeof setTimeout>
   memoryPoll?: ReturnType<typeof setInterval>
   memoryPollInFlight?: boolean
+  lastAppliedBounds?: OfficePreviewNativeBounds
+  lastAppliedVisible: boolean
+  lastBoundsSequence: number
+  latestOwnerViewport?: OfficePreviewViewport
+  layoutReference?: OfficePreviewLayoutReference
   view: OfficePreviewChildView
+}
+
+type OfficePreviewNativeBounds = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+type OfficePreviewViewport = {
+  width: number
+  height: number
+}
+
+type OfficePreviewLayoutReference = {
+  bounds: OfficePreviewNativeBounds
+  viewport: OfficePreviewViewport
+  horizontalLayout?: OfficePreviewHorizontalLayout
+}
+
+const normalizeOfficePreviewViewport = (
+  viewport: OfficePreviewViewport
+): OfficePreviewViewport | undefined => {
+  if (
+    !Number.isFinite(viewport.width) ||
+    !Number.isFinite(viewport.height) ||
+    viewport.width <= 0 ||
+    viewport.height <= 0
+  ) {
+    return undefined
+  }
+
+  return {
+    width: Math.max(1, Math.round(viewport.width)),
+    height: Math.max(1, Math.round(viewport.height))
+  }
+}
+
+const areOfficePreviewViewportsEqual = (
+  left: OfficePreviewViewport,
+  right: OfficePreviewViewport
+): boolean => left.width === right.width && left.height === right.height
+
+// Projects the last renderer layout into a newer native viewport without accumulating resize drift.
+const projectOfficePreviewBounds = (
+  reference: OfficePreviewLayoutReference,
+  viewport: OfficePreviewViewport
+): OfficePreviewNativeBounds => {
+  const rightInset = reference.viewport.width - (reference.bounds.x + reference.bounds.width)
+  const bottomInset = reference.viewport.height - (reference.bounds.y + reference.bounds.height)
+  let x: number
+  let right: number
+
+  if (reference.horizontalLayout && reference.horizontalLayout.splitGroupWidth > 0) {
+    const layout = reference.horizontalLayout
+    const splitGroupRightInset =
+      reference.viewport.width - (layout.splitGroupX + layout.splitGroupWidth)
+    const targetSplitGroupWidth = Math.max(
+      0,
+      viewport.width - splitGroupRightInset - layout.splitGroupX
+    )
+    const panelLeftRatio = (layout.panelX - layout.splitGroupX) / layout.splitGroupWidth
+    const panelRightRatio =
+      (layout.panelX + layout.panelWidth - layout.splitGroupX) / layout.splitGroupWidth
+    const hostLeftInset = reference.bounds.x - layout.panelX
+    const hostRightInset =
+      layout.panelX + layout.panelWidth - (reference.bounds.x + reference.bounds.width)
+
+    x = Math.round(layout.splitGroupX + targetSplitGroupWidth * panelLeftRatio + hostLeftInset)
+    right = Math.round(
+      layout.splitGroupX + targetSplitGroupWidth * panelRightRatio - hostRightInset
+    )
+  } else {
+    const horizontalScale = viewport.width / reference.viewport.width
+    x = Math.round(reference.bounds.x * horizontalScale)
+    right = Math.round(viewport.width - rightInset)
+  }
+
+  const bottom = Math.round(viewport.height - bottomInset)
+  return {
+    x,
+    y: reference.bounds.y,
+    width: Math.max(0, right - x),
+    height: Math.max(0, bottom - reference.bounds.y)
+  }
 }
 
 class OfficePreviewOpenSupersededError extends Error {
@@ -120,6 +211,7 @@ class OfficePreviewSupervisor {
           if (session.timeout) clearTimeout(session.timeout)
           session.timeout = undefined
           session.view.setVisible(session.requestedVisible)
+          session.lastAppliedVisible = session.requestedVisible
         }
         this.publishState(parentOwnerId, request.requestId, state)
         if (state.phase === 'error') void this.close(parentOwnerId, sessionId)
@@ -152,6 +244,8 @@ class OfficePreviewSupervisor {
         requestId: request.requestId,
         ready: false,
         requestedVisible: true,
+        lastAppliedVisible: false,
+        lastBoundsSequence: 0,
         resource: acquired,
         view
       }
@@ -282,18 +376,99 @@ class OfficePreviewSupervisor {
   setBounds(parentOwnerId: number, sessionId: string, bounds: OfficePreviewBounds): void {
     const session = this.sessions.get(sessionId)
     if (!session || session.parentOwnerId !== parentOwnerId) return
-    if (![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)) return
+    if (!isOfficePreviewBounds(bounds) || bounds.sequence <= session.lastBoundsSequence) return
 
-    const normalized = {
+    const normalized: OfficePreviewNativeBounds = {
       x: Math.round(bounds.x),
       y: Math.round(bounds.y),
       width: Math.max(0, Math.round(bounds.width)),
       height: Math.max(0, Math.round(bounds.height))
     }
-    session.requestedVisible = bounds.visible && normalized.width > 0 && normalized.height > 0
-    session.view.setBounds(normalized)
-    // Frame-based Office renderers must remain drawable before ready or their first paint can stall.
-    session.view.setVisible(session.requestedVisible)
+    session.lastBoundsSequence = bounds.sequence
+    const layoutReference: OfficePreviewLayoutReference = {
+      bounds: normalized,
+      viewport: {
+        width: Math.max(1, Math.round(bounds.viewportWidth)),
+        height: Math.max(1, Math.round(bounds.viewportHeight))
+      },
+      ...(bounds.horizontalLayout
+        ? {
+            horizontalLayout: {
+              splitGroupX: Math.round(bounds.horizontalLayout.splitGroupX),
+              splitGroupWidth: Math.max(0, Math.round(bounds.horizontalLayout.splitGroupWidth)),
+              panelX: Math.round(bounds.horizontalLayout.panelX),
+              panelWidth: Math.max(0, Math.round(bounds.horizontalLayout.panelWidth))
+            }
+          }
+        : {})
+    }
+    session.layoutReference = layoutReference
+    const requestedVisible = bounds.visible && normalized.width > 0 && normalized.height > 0
+    const targetViewport = session.latestOwnerViewport
+    this.applyBounds(
+      sessionId,
+      session,
+      targetViewport && !areOfficePreviewViewportsEqual(targetViewport, layoutReference.viewport)
+        ? projectOfficePreviewBounds(layoutReference, targetViewport)
+        : normalized,
+      requestedVisible
+    )
+  }
+
+  // Keeps the native surface moving while the host renderer is delayed by an OS live-resize loop.
+  resizeOwner(parentOwnerId: number, viewport: OfficePreviewViewport): void {
+    const sessionId = this.activeSessionByParent.get(parentOwnerId)
+    const normalizedViewport = normalizeOfficePreviewViewport(viewport)
+    if (!sessionId || !normalizedViewport) return
+
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+
+    session.latestOwnerViewport = normalizedViewport
+    const reference = session.layoutReference
+    if (!reference) return
+
+    this.applyBounds(
+      sessionId,
+      session,
+      projectOfficePreviewBounds(reference, normalizedViewport),
+      session.requestedVisible
+    )
+  }
+
+  private applyBounds(
+    sessionId: string,
+    session: OfficePreviewSession,
+    bounds: OfficePreviewNativeBounds,
+    visible: boolean
+  ): void {
+    try {
+      const previous = session.lastAppliedBounds
+      if (
+        !previous ||
+        previous.x !== bounds.x ||
+        previous.y !== bounds.y ||
+        previous.width !== bounds.width ||
+        previous.height !== bounds.height
+      ) {
+        session.view.setBounds(bounds)
+        session.lastAppliedBounds = bounds
+      }
+
+      session.requestedVisible = visible
+      if (session.lastAppliedVisible === visible) return
+
+      // Frame-based Office renderers remain drawable before ready so their first paint cannot stall.
+      session.view.setVisible(visible)
+      session.lastAppliedVisible = visible
+    } catch {
+      this.publishState(session.parentOwnerId, session.requestId, {
+        sessionId,
+        phase: 'error',
+        error: 'RENDER_FAILED'
+      })
+      void this.close(session.parentOwnerId, sessionId)
+    }
   }
 
   private publishState(
@@ -309,5 +484,6 @@ export { OfficePreviewOpenSupersededError, OfficePreviewSupervisor }
 export type {
   CreateOfficePreviewViewOptions,
   OfficePreviewChildView,
+  OfficePreviewViewport,
   OfficePreviewSupervisorDependencies
 }

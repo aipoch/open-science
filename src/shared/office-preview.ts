@@ -92,10 +92,64 @@ export type OfficePreviewRuntimeState = {
   error?: OfficePreviewErrorCode
 }
 
+export type OfficePreviewHorizontalLayout = {
+  splitGroupX: number
+  splitGroupWidth: number
+  panelX: number
+  panelWidth: number
+}
+
 export type OfficePreviewBounds = {
   x: number
   y: number
   width: number
   height: number
   visible: boolean
+  sequence: number
+  viewportWidth: number
+  viewportHeight: number
+  horizontalLayout?: OfficePreviewHorizontalLayout
+}
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value)
+
+const isOfficePreviewHorizontalLayout = (
+  value: unknown
+): value is OfficePreviewHorizontalLayout => {
+  if (typeof value !== 'object' || value === null) return false
+
+  const layout = value as Partial<OfficePreviewHorizontalLayout>
+  return (
+    isFiniteNumber(layout.splitGroupX) &&
+    isFiniteNumber(layout.splitGroupWidth) &&
+    layout.splitGroupWidth >= 0 &&
+    isFiniteNumber(layout.panelX) &&
+    isFiniteNumber(layout.panelWidth) &&
+    layout.panelWidth >= 0
+  )
+}
+
+// One-way renderer messages cross an untrusted runtime boundary and must be checked before use.
+export const isOfficePreviewBounds = (value: unknown): value is OfficePreviewBounds => {
+  if (typeof value !== 'object' || value === null) return false
+
+  const bounds = value as Partial<OfficePreviewBounds>
+  return (
+    isFiniteNumber(bounds.x) &&
+    isFiniteNumber(bounds.y) &&
+    isFiniteNumber(bounds.width) &&
+    bounds.width >= 0 &&
+    isFiniteNumber(bounds.height) &&
+    bounds.height >= 0 &&
+    typeof bounds.visible === 'boolean' &&
+    Number.isSafeInteger(bounds.sequence) &&
+    (bounds.sequence ?? 0) > 0 &&
+    isFiniteNumber(bounds.viewportWidth) &&
+    bounds.viewportWidth > 0 &&
+    isFiniteNumber(bounds.viewportHeight) &&
+    bounds.viewportHeight > 0 &&
+    (bounds.horizontalLayout === undefined ||
+      isOfficePreviewHorizontalLayout(bounds.horizontalLayout))
+  )
 }

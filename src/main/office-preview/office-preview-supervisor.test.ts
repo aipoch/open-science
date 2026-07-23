@@ -203,9 +203,20 @@ describe('OfficePreviewSupervisor', () => {
     await supervisor.open(7, request)
     const ready = { sessionId: 'session-1', phase: 'ready' as const }
     ;(viewOptions?.onState as ((state: typeof ready) => void) | undefined)?.(ready)
+    supervisor.setBounds(7, 'session-1', {
+      x: 640,
+      y: 72,
+      width: 620,
+      height: 708,
+      visible: false,
+      sequence: 1,
+      viewportWidth: 1280,
+      viewportHeight: 800
+    })
 
     expect(publishState).toHaveBeenCalledWith(7, { ...ready, requestId: 'request-1' })
-    expect(view.setVisible).toHaveBeenLastCalledWith(true)
+    expect(view.setVisible).toHaveBeenNthCalledWith(2, true)
+    expect(view.setVisible).toHaveBeenLastCalledWith(false)
   })
 
   it('keeps a requested child view drawable before ready so frame-based renderers can finish', async () => {
@@ -239,7 +250,10 @@ describe('OfficePreviewSupervisor', () => {
       y: 20,
       width: 500,
       height: 300,
-      visible: true
+      visible: true,
+      sequence: 1,
+      viewportWidth: 1280,
+      viewportHeight: 800
     })
 
     expect(view.setVisible).toHaveBeenLastCalledWith(true)
@@ -320,19 +334,258 @@ describe('OfficePreviewSupervisor', () => {
       y: 20.6,
       width: 500.2,
       height: 300.7,
-      visible: true
+      visible: true,
+      sequence: 1,
+      viewportWidth: 1280,
+      viewportHeight: 800
     })
     supervisor.setBounds(8, 'session-1', {
       x: 0,
       y: 0,
       width: 1,
       height: 1,
-      visible: true
+      visible: true,
+      sequence: 2,
+      viewportWidth: 1280,
+      viewportHeight: 800
     })
 
     expect(view.setBounds).toHaveBeenCalledTimes(1)
     expect(view.setBounds).toHaveBeenCalledWith({ x: 10, y: 21, width: 500, height: 301 })
     expect(view.setVisible).toHaveBeenLastCalledWith(true)
+  })
+
+  it('deduplicates exact bounds and rejects stale renderer sequences', async () => {
+    const view = {
+      ownerId: 91,
+      start: vi.fn().mockResolvedValue(undefined),
+      setBounds: vi.fn(),
+      setVisible: vi.fn(),
+      close: vi.fn()
+    }
+    const supervisor = new OfficePreviewSupervisor({
+      inspectResource: vi.fn().mockResolvedValue({ size: 1024, version: 1 }),
+      acquireResource: vi.fn().mockResolvedValue({
+        id: 'resource-1',
+        url: 'open-science-preview://resource-1/report.xlsx',
+        size: 1024,
+        mimeType: 'application/octet-stream',
+        version: 1
+      }),
+      releaseResource: vi.fn(),
+      createView: vi.fn().mockReturnValue(view),
+      createSessionId: () => 'session-1'
+    })
+
+    await supervisor.open(7, request)
+    const exact = {
+      x: 640,
+      y: 72,
+      width: 620,
+      height: 708,
+      visible: true,
+      viewportWidth: 1280,
+      viewportHeight: 800
+    }
+    supervisor.setBounds(7, 'session-1', { ...exact, sequence: 2 })
+    supervisor.setBounds(7, 'session-1', { ...exact, sequence: 3 })
+    supervisor.setBounds(7, 'session-1', {
+      ...exact,
+      x: 10,
+      sequence: 1
+    })
+
+    expect(view.setBounds).toHaveBeenCalledTimes(1)
+    expect(view.setVisible).toHaveBeenCalledTimes(2)
+  })
+
+  it('predicts right-anchored native bounds during parent window live resize', async () => {
+    const view = {
+      ownerId: 91,
+      start: vi.fn().mockResolvedValue(undefined),
+      setBounds: vi.fn(),
+      setVisible: vi.fn(),
+      close: vi.fn()
+    }
+    const supervisor = new OfficePreviewSupervisor({
+      inspectResource: vi.fn().mockResolvedValue({ size: 1024, version: 1 }),
+      acquireResource: vi.fn().mockResolvedValue({
+        id: 'resource-1',
+        url: 'open-science-preview://resource-1/report.xlsx',
+        size: 1024,
+        mimeType: 'application/octet-stream',
+        version: 1
+      }),
+      releaseResource: vi.fn(),
+      createView: vi.fn().mockReturnValue(view),
+      createSessionId: () => 'session-1'
+    })
+
+    await supervisor.open(7, request)
+    supervisor.setBounds(7, 'session-1', {
+      x: 640,
+      y: 72,
+      width: 620,
+      height: 708,
+      visible: true,
+      sequence: 1,
+      viewportWidth: 1280,
+      viewportHeight: 800
+    })
+    view.setBounds.mockClear()
+
+    supervisor.resizeOwner(7, { width: 1440, height: 900 })
+
+    expect(view.setBounds).toHaveBeenCalledWith({
+      x: 720,
+      y: 72,
+      width: 700,
+      height: 808
+    })
+  })
+
+  it('keeps the latest owner viewport when an older renderer measurement arrives late', async () => {
+    const view = {
+      ownerId: 91,
+      start: vi.fn().mockResolvedValue(undefined),
+      setBounds: vi.fn(),
+      setVisible: vi.fn(),
+      close: vi.fn()
+    }
+    const supervisor = new OfficePreviewSupervisor({
+      inspectResource: vi.fn().mockResolvedValue({ size: 1024, version: 1 }),
+      acquireResource: vi.fn().mockResolvedValue({
+        id: 'resource-1',
+        url: 'open-science-preview://resource-1/report.xlsx',
+        size: 1024,
+        mimeType: 'application/octet-stream',
+        version: 1
+      }),
+      releaseResource: vi.fn(),
+      createView: vi.fn().mockReturnValue(view),
+      createSessionId: () => 'session-1'
+    })
+    const rendererBounds = {
+      x: 640,
+      y: 72,
+      width: 620,
+      height: 708,
+      visible: true,
+      viewportWidth: 1280,
+      viewportHeight: 800
+    }
+
+    await supervisor.open(7, request)
+    supervisor.setBounds(7, 'session-1', { ...rendererBounds, sequence: 1 })
+    supervisor.resizeOwner(7, { width: 1440, height: 900 })
+    view.setBounds.mockClear()
+
+    supervisor.setBounds(7, 'session-1', { ...rendererBounds, sequence: 2 })
+
+    expect(view.setBounds).not.toHaveBeenCalled()
+  })
+
+  it('projects the preview inside the split group instead of scaling fixed window chrome', async () => {
+    const view = {
+      ownerId: 91,
+      start: vi.fn().mockResolvedValue(undefined),
+      setBounds: vi.fn(),
+      setVisible: vi.fn(),
+      close: vi.fn()
+    }
+    const supervisor = new OfficePreviewSupervisor({
+      inspectResource: vi.fn().mockResolvedValue({ size: 1024, version: 1 }),
+      acquireResource: vi.fn().mockResolvedValue({
+        id: 'resource-1',
+        url: 'open-science-preview://resource-1/report.xlsx',
+        size: 1024,
+        mimeType: 'application/octet-stream',
+        version: 1
+      }),
+      releaseResource: vi.fn(),
+      createView: vi.fn().mockReturnValue(view),
+      createSessionId: () => 'session-1'
+    })
+
+    await supervisor.open(7, request)
+    supervisor.setBounds(7, 'session-1', {
+      x: 865,
+      y: 72,
+      width: 400,
+      height: 708,
+      visible: true,
+      sequence: 1,
+      viewportWidth: 1280,
+      viewportHeight: 800,
+      horizontalLayout: {
+        splitGroupX: 220,
+        splitGroupWidth: 1060,
+        panelX: 856,
+        panelWidth: 424
+      }
+    })
+    view.setBounds.mockClear()
+
+    supervisor.resizeOwner(7, { width: 1100, height: 800 })
+
+    expect(view.setBounds).toHaveBeenCalledWith({
+      x: 757,
+      y: 72,
+      width: 328,
+      height: 708
+    })
+  })
+
+  it('turns a native bounds failure into a recoverable preview error', async () => {
+    const view = {
+      ownerId: 91,
+      start: vi.fn().mockResolvedValue(undefined),
+      setBounds: vi.fn(() => {
+        throw new Error('native view was destroyed')
+      }),
+      setVisible: vi.fn(),
+      close: vi.fn()
+    }
+    const publishState = vi.fn()
+    const releaseResource = vi.fn()
+    const supervisor = new OfficePreviewSupervisor({
+      inspectResource: vi.fn().mockResolvedValue({ size: 1024, version: 1 }),
+      acquireResource: vi.fn().mockResolvedValue({
+        id: 'resource-1',
+        url: 'open-science-preview://resource-1/report.xlsx',
+        size: 1024,
+        mimeType: 'application/octet-stream',
+        version: 1
+      }),
+      releaseResource,
+      createView: vi.fn().mockReturnValue(view),
+      createSessionId: () => 'session-1',
+      publishState
+    })
+
+    await supervisor.open(7, request)
+
+    expect(() =>
+      supervisor.setBounds(7, 'session-1', {
+        x: 640,
+        y: 72,
+        width: 620,
+        height: 708,
+        visible: true,
+        sequence: 1,
+        viewportWidth: 1280,
+        viewportHeight: 800
+      })
+    ).not.toThrow()
+    await vi.waitFor(() => {
+      expect(releaseResource).toHaveBeenCalledWith(91, 'resource-1')
+    })
+    expect(publishState).toHaveBeenCalledWith(7, {
+      sessionId: 'session-1',
+      requestId: 'request-1',
+      phase: 'error',
+      error: 'RENDER_FAILED'
+    })
   })
 
   it('destroys an unfinished child when its size-based deadline expires', async () => {

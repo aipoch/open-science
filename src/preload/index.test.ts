@@ -10,8 +10,9 @@
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-const { invokeMock, exposeMock } = vi.hoisted(() => ({
+const { invokeMock, sendMock, exposeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
+  sendMock: vi.fn(),
   exposeMock: vi.fn()
 }))
 
@@ -21,7 +22,7 @@ vi.mock('electron', () => ({
     invoke: invokeMock,
     on: vi.fn(),
     off: vi.fn(),
-    send: vi.fn(),
+    send: sendMock,
     removeListener: vi.fn()
   }
 }))
@@ -54,6 +55,9 @@ type PreloadApi = {
     install: () => unknown
     uninstall: () => unknown
   }
+  officePreview: {
+    setBounds: (sessionId: string, bounds: unknown) => void
+  }
 }
 
 let api: PreloadApi
@@ -73,6 +77,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   invokeMock.mockClear()
+  sendMock.mockClear()
 })
 
 // Each case: invoke a bridge method with sample args, then assert the exact channel + forwarded args.
@@ -219,5 +224,23 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
     // ipcRenderer.invoke unchanged.
     api.settings.installOpencode(sampleInstall)
     expect(invokeMock.mock.calls[0]?.[1]).toBe(sampleInstall)
+  })
+
+  it('sends Office preview bounds without creating an unused reply promise', () => {
+    const bounds = {
+      x: 640,
+      y: 72,
+      width: 480,
+      height: 720,
+      visible: true,
+      sequence: 1,
+      viewportWidth: 1280,
+      viewportHeight: 800
+    }
+
+    api.officePreview.setBounds('office-session-1', bounds)
+
+    expect(sendMock).toHaveBeenCalledWith('office-preview:set-bounds', 'office-session-1', bounds)
+    expect(invokeMock).not.toHaveBeenCalled()
   })
 })

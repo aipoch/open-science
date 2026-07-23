@@ -284,7 +284,7 @@ interface OpenScienceAPI {
   }
   officePreview: {
     open(request: OfficePreviewOpenRequest): Promise<OfficePreviewOpenResult>
-    setBounds(sessionId: string, bounds: OfficePreviewBounds): Promise<void>
+    setBounds(sessionId: string, bounds: OfficePreviewBounds): void
     close(sessionId: string): Promise<void>
     onState(listener: (state: OfficePreviewRuntimeState) => void): RemoveListener
   }
