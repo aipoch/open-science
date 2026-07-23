@@ -1590,19 +1590,17 @@ class AcpRuntime {
   private maybeApplyPendingProviderReconnect(): void {
     if (this.promptInFlightSessionIds.size > 0) return
 
-    if (this.pendingProviderReconnect) {
+    // A single reconnect satisfies both a pending provider switch and a pending skills reload: the
+    // fresh spawn picks up the new backend AND re-provisions the current skill set. So clear both
+    // flags before tearing down — leaving one set would fire a second, redundant disconnect on the
+    // next idle turn, needlessly killing the just-established connection.
+    if (this.pendingProviderReconnect || this.pendingSkillsReload) {
       this.pendingProviderReconnect = false
-      // Resolve the barrier once teardown settles so ensureConnected falls through to a fresh
-      // connect with the new backend, not back onto the stale connection. catch-then-finally
-      // (not a bare then): a rejected disconnect must still release the barrier — otherwise it
-      // strands and every later createSession hangs forever — and the rejection must be swallowed
-      // so it doesn't surface as an unhandled promise rejection.
-      void this.disconnectForDeferredReconnect()
-      return
-    }
-
-    if (this.pendingSkillsReload) {
       this.pendingSkillsReload = false
+      // Resolve the barrier once teardown settles so ensureConnected falls through to a fresh
+      // connect with the new backend, not back onto the stale connection. disconnectForDeferredReconnect
+      // resolves the barrier even if disconnect() rejects — otherwise it strands and every later
+      // createSession hangs forever — and swallows the rejection so it never surfaces as unhandled.
       void this.disconnectForDeferredReconnect()
     }
   }
@@ -2001,7 +1999,14 @@ class AcpRuntime {
         this.currentPromptTurnBySession.delete(request.sessionId)
         this.promptInFlightSessionIds.delete(request.sessionId)
       }
-      this.emitState()
+      // emitState invokes the renderer onStateChanged callback; guard it so a throw there cannot skip
+      // the reconnect below. maybeApplyPendingProviderReconnect is what resolves an armed reconnect
+      // barrier, so skipping it would strand the barrier and hang every later createSession.
+      try {
+        this.emitState()
+      } catch (error) {
+        safeLogError('emitState after prompt turn failed', errorLogFields(error))
+      }
       // A disabled skill forced for this turn is restored now: clear the force set, then schedule a
       // reconnect so the NEXT prompt respawns with the normal enabled set. Ordering matters — the clear
       // must happen before the reconnect is applied so the fresh spawn no longer sees the forced ids.

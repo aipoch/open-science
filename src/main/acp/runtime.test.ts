@@ -4317,6 +4317,52 @@ describe('ACP runtime session management', () => {
     expect(process.killed).toBe(true)
   })
 
+  it('applies a provider reconnect and a skills reload deferred in the same turn with one disconnect', async () => {
+    const oldProcess = new FakeAgentProcess()
+    const newProcess = new FakeAgentProcess()
+    const gate = createDeferred()
+    startFakeAgent(oldProcess, ['s1'], { onPrompt: () => gate.promise })
+    startFakeAgent(newProcess, ['s2'])
+
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: async () => {
+        spawnCount += 1
+        return {
+          framework: {
+            ...claudeCodeFramework,
+            spawn: () => asAgentProcess(spawnCount === 1 ? oldProcess : newProcess)
+          },
+          executablePath: '/bin/agent',
+          env: {},
+          args: []
+        }
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+
+    // Both a provider switch and a skill toggle arrive during the same in-flight prompt.
+    await runtime.requestProviderReconnect()
+    await runtime.requestSkillsReload()
+    expect(oldProcess.killed).toBe(false)
+
+    // Turn finishes → a SINGLE deferred disconnect satisfies both (spawnCount 1 → 2). A second,
+    // redundant disconnect would spawn a third process on the next createSession.
+    gate.resolve()
+    await prompt
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(oldProcess.killed).toBe(true)
+
+    // The next session lands on the second spawn — proof no extra reconnect churned the process.
+    const next = await runtime.createSession({ cwd: '/workspace' })
+    expect(next.sessionId).toBe('s2')
+    expect(spawnCount).toBe(2)
+  })
+
   it('passes the artifact MCP server to new and resumed sessions', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'])
