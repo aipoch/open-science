@@ -148,3 +148,41 @@ export const describePromptError = (error: unknown, ctx: PromptErrorContext = {}
 
   return `${PROVIDER_RESOURCE_NOT_FOUND_PREFIX}${modelPart}. The model name or endpoint is likely incorrect — check it in Settings → Model. Provider response: ${providerText}`
 }
+
+// The agent's structured tag for a failure it relayed from the upstream model provider (as opposed to
+// an ACP protocol/session error). The bridges attach `data.errorKind: 'provider-error'` for these.
+const isProviderErrorKind = (error: unknown): boolean => {
+  try {
+    const data = (error as { data?: unknown } | null)?.data
+    const kind = (data as { errorKind?: unknown } | null | undefined)?.errorKind
+
+    return (
+      typeof kind === 'string' &&
+      kind
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_-]+/g, '-') === 'provider-error'
+    )
+  } catch {
+    return false
+  }
+}
+
+// Whether a failed prompt originates from the model provider (an upstream LLM/HTTP failure the agent
+// relayed) rather than from the app's own ACP layer. Provider failures are the user's/provider's to
+// resolve (wrong key, rate limit, quota, model id, a provider 5xx), so the renderer does NOT offer a
+// "Report error → GitHub issue" affordance for them — only genuinely unexpected ACP-layer exceptions
+// are worth a bug report. Determined structurally, from the signals the agent attaches, so it needs no
+// message-text pattern matching:
+//   - the agent tagged the failure as an upstream `APIError` (covers auth/rate/quota/5xx/etc.), or
+//   - the agent tagged `data.errorKind: 'provider-error'` (the bridges' machine-readable marker), or
+//   - it is a provider "resource not found" (wrong model id / endpoint), which requires the same
+//     upstream signal (see isProviderNotFound) and is never a bare ACP protocol not-found.
+export const isProviderPromptError = (error: unknown): boolean => {
+  if (isApiError(error)) return true
+  if (isProviderErrorKind(error)) return true
+
+  const raw = rawErrorMessage(error)
+
+  return isProviderNotFound(error, raw, extractUpstreamDetail(raw))
+}

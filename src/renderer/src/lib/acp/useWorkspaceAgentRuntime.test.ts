@@ -788,6 +788,108 @@ describe('workspace agent message sending', () => {
     expect(session.error).toBe('Invalid API key')
   })
 
+  it('marks a model-provider prompt failure non-reportable from the run error event', async () => {
+    // The runtime pushes a providerError-tagged error event before rejecting; the rejection path reads
+    // it from the snapshot so the failure is recorded non-reportable (no "Report error" button) without
+    // guessing from the message text.
+    const providerErrorEvent: AcpRuntimeEvent = {
+      id: 'error-provider-1',
+      timestamp: Date.now(),
+      kind: 'error',
+      level: 'error',
+      sessionId: 'session-1',
+      providerError: true,
+      title: 'Prompt failed',
+      text: 'Invalid API key'
+    }
+    vi.stubGlobal('window', {
+      api: {
+        acp: {
+          getState: vi
+            .fn()
+            .mockResolvedValue({ ...createSnapshot(['session-1']), events: [providerErrorEvent] })
+        }
+      }
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockRejectedValue(new Error('Invalid API key'))
+    }
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'earlier turn',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'hello',
+      cwd: '/workspace/project'
+    })
+    await flushRuntimeTasks()
+    await flushRuntimeTasks()
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('error')
+    expect(session.errorReportable).toBe(false)
+  })
+
+  it('marks an untagged (ACP-layer) prompt failure reportable', async () => {
+    // No providerError tag on the run's error event → an app-layer failure the user should be able to
+    // report as a bug.
+    const acpErrorEvent: AcpRuntimeEvent = {
+      id: 'error-acp-1',
+      timestamp: Date.now(),
+      kind: 'error',
+      level: 'error',
+      sessionId: 'session-1',
+      title: 'Prompt failed',
+      text: 'Something unexpected broke'
+    }
+    vi.stubGlobal('window', {
+      api: {
+        acp: {
+          getState: vi
+            .fn()
+            .mockResolvedValue({ ...createSnapshot(['session-1']), events: [acpErrorEvent] })
+        }
+      }
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockRejectedValue(new Error('Something unexpected broke'))
+    }
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'earlier turn',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'hello',
+      cwd: '/workspace/project'
+    })
+    await flushRuntimeTasks()
+    await flushRuntimeTasks()
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('error')
+    expect(session.errorReportable).toBe(true)
+  })
+
   it('uses fallback message when error is empty or whitespace-only', async () => {
     vi.stubGlobal('window', {
       api: {

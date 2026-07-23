@@ -310,7 +310,10 @@ const applyWorkspaceRuntimeEvent = async (
       return true
     }
 
-    store.failRun(event.sessionId, getEventErrorText(event))
+    // A model-provider failure (upstream LLM/HTTP error the agent relayed, tagged structurally in the
+    // runtime) keeps its message but is not a bug worth a GitHub issue — hide the report button. An
+    // ACP-layer failure stays reportable. providerError is absent on non-provider events (→ reportable).
+    store.failRun(event.sessionId, getEventErrorText(event), { reportable: !event.providerError })
     return true
   }
 

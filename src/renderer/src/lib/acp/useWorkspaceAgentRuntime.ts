@@ -147,11 +147,32 @@ const getResumeFailureMessage = (error: unknown): string => {
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
+// The id of the most recent prompt-failure error event for a session, or undefined if none. Captured
+// before a prompt is dispatched so the rejection path can tell a NEW failure event (this turn) from a
+// stale one left by an earlier turn, and never inherit the earlier turn's providerError tag.
+const latestPromptFailureEventId = (
+  events: AcpRuntimeEvent[],
+  sessionId: string
+): string | undefined => {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event.kind === 'error' && event.sessionId === sessionId) return event.id
+  }
+  return undefined
+}
+
 // Classifies a failed prompt against the live connection status: an abnormal drop (status 'closed'/
 // 'error') shows the Resume banner so the user can reconnect and continue, while a turn-level error
 // (connection still up, e.g. a gateway 5xx) surfaces as a normal session error. Reading the status at
 // failure time avoids the race where failRun would flip the session out of 'running' first.
-const failOrMarkDisconnected = async (sessionId: string, message: string): Promise<void> => {
+//
+// priorErrorEventId is the newest prompt-failure event id observed BEFORE this prompt was dispatched;
+// it lets the reportability read below ignore a stale event from an earlier turn.
+const failOrMarkDisconnected = async (
+  sessionId: string,
+  message: string,
+  priorErrorEventId?: string
+): Promise<void> => {
   // A conversation being auto-compacted after a request-size overflow owns its own outcome (reset +
   // retry). Don't overwrite the neutral compacting state with a dead-end error from the rejected
   // sendPrompt call.
@@ -159,6 +180,13 @@ const failOrMarkDisconnected = async (sessionId: string, message: string): Promi
     return
   }
 
+  // The rejection carries no structural tag (IPC strips the Error's data), so read THIS turn's error
+  // event from the snapshot to learn whether it was a model-provider failure. The runtime pushes that
+  // event (tagged providerError) synchronously before rejecting, so by the time this getState resolves
+  // it is already present. Deriving `reportable = !providerError` here converges with the event path
+  // (workspace-events), so whichever path writes last agrees. Undefined (no NEW event — should not
+  // happen, but a stale prior-turn event is ignored) leaves failRun to fall back to text classification.
+  let reportable: boolean | undefined
   try {
     const snapshot = await window.api.acp.getState()
 
@@ -167,11 +195,18 @@ const failOrMarkDisconnected = async (sessionId: string, message: string): Promi
       useSessionStore.getState().markDisconnected(sessionId, message)
       return
     }
+
+    const runError = [...snapshot.events]
+      .reverse()
+      .find((event) => event.kind === 'error' && event.sessionId === sessionId)
+    // Only trust an event that is NEW for this turn, so a provider-error tag from an earlier turn can
+    // neither hide this failure's report button nor mislabel it.
+    if (runError && runError.id !== priorErrorEventId) reportable = !runError.providerError
   } catch {
     // Fall back to a plain error if the live status read fails.
   }
 
-  useSessionStore.getState().failRun(sessionId, message)
+  useSessionStore.getState().failRun(sessionId, message, { reportable })
 }
 
 // Moves staged uploads into the session directory and updates the already-visible user message.
@@ -344,6 +379,9 @@ const startPendingSessionPrompt = (
       return
     }
 
+    // Baseline the newest prompt-failure event before dispatch so the rejection path can tell this
+    // turn's error event from a stale one when it derives the report affordance.
+    const priorErrorEventId = latestPromptFailureEventId(runtime.state.events, runtimeSessionId)
     void runtime
       .sendPrompt(runtimeSessionId, content, promptAttachments, forcedSkillIds, referencedArtifacts)
       .catch((error) => {
@@ -351,7 +389,7 @@ const startPendingSessionPrompt = (
         // visible session error, instead of being swallowed as an unhandled rejection.
         // Ensure non-empty message to avoid being silently dropped by failRun's empty check.
         const errorMessage = getErrorMessage(error).trim() || 'Agent run failed'
-        void failOrMarkDisconnected(runtimeSessionId, errorMessage)
+        void failOrMarkDisconnected(runtimeSessionId, errorMessage, priorErrorEventId)
       })
   })()
 }
@@ -548,6 +586,10 @@ const sendWorkspaceMessage = async (
       return appended
     }
 
+    // Baseline the newest prior failure event so the rejection path can tell this turn's error event
+    // (carrying the providerError tag) from a stale one left by an earlier turn.
+    const priorErrorEventId = latestPromptFailureEventId(runtime.state.events, targetSessionId)
+
     // The hook returns after local state is updated; event listeners handle the streamed result.
     void runtime
       .sendPrompt(
@@ -566,7 +608,7 @@ const sendWorkspaceMessage = async (
         // visible session error, instead of being swallowed as an unhandled rejection.
         // Ensure non-empty message to avoid being silently dropped by failRun's empty check.
         const errorMessage = getErrorMessage(error).trim() || 'Agent run failed'
-        void failOrMarkDisconnected(targetSessionId, errorMessage)
+        void failOrMarkDisconnected(targetSessionId, errorMessage, priorErrorEventId)
       })
 
     return appended

@@ -465,6 +465,77 @@ describe('session store', () => {
     })
   })
 
+  it('derives errorReportable from the message when no explicit flag is passed', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Read the files'
+    })
+
+    // An opaque/internal failure with no crafted-message match stays reportable.
+    useSessionStore.getState().failRun('transport-session-1', 'Agent session could not be created.')
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(true)
+
+    // An app-crafted reminder is recognized by its exact text and is not reportable.
+    useSessionStore
+      .getState()
+      .failRun('transport-session-1', 'Session workspace is missing; start a new conversation.')
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
+  })
+
+  it('honors an explicit reportable flag (the runtime tags a model-provider failure)', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Read the files'
+    })
+
+    // A model-provider failure: opaque text that WOULD derive reportable=true, but the ACP layer
+    // structurally tagged it non-reportable, and the explicit flag wins.
+    useSessionStore.getState().failRun('transport-session-1', 'Invalid API key', {
+      reportable: false
+    })
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
+  })
+
+  it('clears errorReportable when a new run starts, so a later error cannot inherit it', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'first turn'
+    })
+    // A model-provider failure hides the report button.
+    useSessionStore.getState().failRun('transport-session-1', 'Invalid API key', {
+      reportable: false
+    })
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
+
+    // A new turn clears the prior error + flag.
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'second turn'
+    })
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBeUndefined()
+
+    // A later ACP-layer failure with no explicit flag derives reportable=true — it never inherits the
+    // earlier provider error's false.
+    useSessionStore.getState().failRun('transport-session-1', 'Agent cancellation failed')
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(true)
+  })
+
+  it('records an artifact finalization error as reportable (an app-layer failure)', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Create a report'
+    })
+    // Simulate a prior provider error's flag lingering, then an artifact error overwriting it.
+    useSessionStore.getState().failRun('transport-session-1', 'Invalid API key', {
+      reportable: false
+    })
+    useSessionStore.getState().recordArtifactError('transport-session-1', 'disk full')
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.error).toContain('disk full')
+    expect(session.errorReportable).toBe(true)
+  })
+
   it('keeps artifact finalization errors visible when the run later stops', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',

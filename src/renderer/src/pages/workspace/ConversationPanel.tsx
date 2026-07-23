@@ -174,11 +174,12 @@ const ConversationPanel = ({
   const allJobsForSession = useSessionJobStore((s) => s.allJobsForSession)
   const hasAnyJobs = activeSession !== undefined && allJobsForSession(activeSession.id).length > 0
   const resolvedRunError = normalizeRunFailureError(activeSession?.error)
-  // Only unknown/opaque failures offer the "Report error → GitHub issue" affordance. Failures the app
-  // already recognizes (its own actionable guidance, or a known provider error) keep their message but
-  // hide the button, so the issue tracker is not flooded with wrong-config / provider-side problems.
-  // Classify the raw persisted error (not the fallback) so a failure with no message stays reportable.
-  const isRunErrorReportable = isReportableRunFailure(activeSession?.error)
+  // Only unknown/opaque ACP-layer failures offer the "Report error → GitHub issue" affordance. The
+  // reportability is resolved at failure time and persisted on the session: a model-provider error is
+  // tagged non-reportable at the ACP layer, and an app-crafted reminder is recognized by its own text.
+  // Fall back to classifying the raw error for sessions persisted before the flag existed (undefined).
+  const isRunErrorReportable =
+    activeSession?.errorReportable ?? isReportableRunFailure(activeSession?.error)
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {

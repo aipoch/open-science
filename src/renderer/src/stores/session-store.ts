@@ -32,6 +32,7 @@ import {
   type PersistedSessionStatus,
   type PersistedToolActivity
 } from '../../../shared/session-persistence'
+import { isReportableRunFailure } from '../../../shared/run-error-classification'
 
 export type SessionStatus = PersistedSessionStatus
 export type ChatMessageRole = PersistedMessageRole
@@ -186,7 +187,10 @@ type SessionStore = SessionStoreData & {
   hydrateSessions: (sessions: PersistedChatSession[], manifest?: PersistedSessionManifest) => void
   upsertPersistedSession: (session: PersistedChatSession) => void
   finishRun: (sessionId: string) => void
-  failRun: (sessionId: string, error: string) => void
+  // opts.reportable overrides the report-affordance decision: pass false for a model-provider failure
+  // (the agent relayed an upstream LLM/HTTP error), true to force it, or omit to let the store derive it
+  // from the message (an app-crafted reminder → not reportable; anything else → reportable).
+  failRun: (sessionId: string, error: string, opts?: { reportable?: boolean }) => void
   // Sets the transient agent status line shown in the waiting indicator; only applies while running.
   setAgentStatus: (sessionId: string, text: string) => void
   // Enters the auto-recovery "compacting" state after a request-size overflow: clears the error so the
@@ -625,6 +629,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                 agentModel: normalizedAgentModel,
                 agentStatus: undefined,
                 error: undefined,
+                // Clear the prior failure's report flag alongside its text so a later internal error
+                // cannot inherit a stale `false` and wrongly hide its Report button.
+                errorReportable: undefined,
                 compacting: undefined,
                 messages: [...session.messages, userMessage],
                 updatedAt: now
@@ -1034,6 +1041,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               ...session,
               status: 'error',
               error: `${ARTIFACT_ERROR_PREFIX}: ${message}`,
+              // An app-layer finalization failure IS a reportable bug; set it explicitly so it never
+              // inherits a stale `false` from a prior provider error on the same session.
+              errorReportable: true,
               updatedAt: Date.now()
             }
           : session
@@ -1055,6 +1065,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           ...session,
           status: session.activeRun ? 'running' : 'idle',
           error: undefined,
+          errorReportable: undefined,
           updatedAt: Date.now()
         }
       })
@@ -1170,6 +1181,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           agentStatus: undefined,
           compacting: undefined,
           error: keepArtifactError ? session.error : undefined,
+          errorReportable: keepArtifactError ? session.errorReportable : undefined,
           messages: completeStreamingMessages(session.messages),
           activities: completeOpenActivities(session.activities),
           updatedAt: Date.now()
@@ -1179,10 +1191,15 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Fails the active run and records the visible session error.
-  failRun: (sessionId, error) => {
+  failRun: (sessionId, error, opts) => {
     const message = error.trim()
 
     if (!message) return
+
+    // Resolve the report affordance once and persist it (survives reload): an explicit opts.reportable
+    // wins (the runtime passes false for a model-provider failure); otherwise derive it from the message
+    // so an app-crafted reminder hides the button while an unknown/opaque failure keeps it.
+    const errorReportable = opts?.reportable ?? isReportableRunFailure(message)
 
     set((state) => ({
       sessions: state.sessions.map((session) =>
@@ -1194,6 +1211,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               agentStatus: undefined,
               compacting: undefined,
               error: message,
+              errorReportable,
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
               updatedAt: Date.now()
@@ -1232,6 +1250,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               activeRun: undefined,
               agentStatus: undefined,
               error: undefined,
+              errorReportable: undefined,
               compacting: true,
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
@@ -1251,6 +1270,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               ...session,
               status: 'idle',
               error: undefined,
+              errorReportable: undefined,
               interrupted: undefined,
               agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
               agentBackendId: agentBackendId ?? session.agentBackendId,
@@ -1281,6 +1301,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               interrupted: true,
               compacting: undefined,
               error,
+              // Cleared so a prior run's report flag can't bleed onto this disconnect (the interrupted
+              // banner owns this path anyway; the report button never shows for it).
+              errorReportable: undefined,
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
               updatedAt: Date.now()
@@ -1341,6 +1364,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           activeRun: undefined,
           agentStatus: undefined,
           error: undefined,
+          errorReportable: undefined,
           interrupted: undefined,
           filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
           updatedAt: Date.now()

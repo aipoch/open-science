@@ -699,11 +699,30 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(reportButton()).toBeNull()
   })
 
-  it('hides the Report button for a recognized provider-side error', () => {
+  it('hides the Report button for a model-provider error (tagged non-reportable at the ACP layer)', () => {
+    // A provider/model failure is tagged structurally (errorReportable: false), not by its text —
+    // the raw provider message is kept visible but is not a bug worth a GitHub issue.
     renderPanel({
-      activeSession: { ...errorSession, error: '429 Too Many Requests: rate_limit_error' }
+      activeSession: {
+        ...errorSession,
+        error: 'Invalid API key',
+        errorReportable: false
+      }
     })
-    expect(errorBoxText()).toContain('429 Too Many Requests')
+    expect(errorBoxText()).toContain('Invalid API key')
     expect(reportButton()).toBeNull()
+  })
+
+  it('shows the Report button when a persisted error predates the reportable flag (undefined)', () => {
+    // Old sessions have no errorReportable; fall back to classifying the text — an opaque failure
+    // stays reportable, an app-crafted reminder does not.
+    renderPanel({
+      activeSession: {
+        ...errorSession,
+        error: 'Run failed: connection reset',
+        errorReportable: undefined
+      }
+    })
+    expect(reportButton()).not.toBeNull()
   })
 })

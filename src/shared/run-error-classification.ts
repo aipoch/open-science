@@ -1,15 +1,18 @@
 import { isMediaOverflowError } from './media-overflow'
 
-// Classifies a failed run's error text into "expected" (the app already recognized the failure and
-// showed actionable guidance, or the provider returned a well-understood error) vs "unknown" (an
-// opaque or internal failure worth a GitHub issue). Only unknown failures get the "Report error"
-// affordance; expected ones keep their message but drop the report button, so the issue tracker is
-// not flooded with wrong-config / provider-side problems the user is meant to fix themselves.
+// Classifies a failed run into "expected" (keep the message, no report button) vs "unknown/reportable"
+// (an opaque or internal failure worth a GitHub issue). The primary signal is STRUCTURAL, not textual:
+// a model/provider failure is tagged `providerError` on the error event at the ACP layer (runtime.ts,
+// via isProviderPromptError) and persisted as `session.errorReportable = false`. Text is NEVER used to
+// guess whether a failure came from the provider — that was fragile and repeatedly swallowed genuine
+// app errors that merely mentioned a provider word.
 //
-// Kept as a pure, dependency-light leaf module (like media-overflow.ts) so both the main process
-// (the error producers) and the renderer (the report gate) reference the SAME constants and patterns,
-// and the branch matrix is unit-testable. The persisted `session.error` string is classified at
-// display time, so recognition survives a reload without a schema change.
+// This module owns only the SECONDARY, text-based tier: recognizing the app's OWN crafted reminder
+// strings (which we author, so an exact-match set is reliable) so their report button is hidden even
+// on the paths that don't carry the structural flag (a persisted pre-flag session, or a renderer-side
+// failRun call). It is a pure, dependency-light leaf module (like media-overflow.ts) usable from both
+// processes. Anything it does not recognize stays reportable — including opaque provider text — so the
+// structural flag, not this text tier, is what suppresses ordinary provider errors.
 
 // App-crafted resume-failure messages (useWorkspaceAgentRuntime.getResumeFailureMessage). Each is the
 // actionable text the app writes when it recognizes a specific resume cause. The generic
@@ -47,64 +50,12 @@ const EXPECTED_RUN_FAILURE_MESSAGES = new Set<string>([
   IMAGE_REPLAY_UNSUPPORTED_MESSAGE
 ])
 
-// Recognizes provider-side API errors that are the user's or provider's to resolve, not app bugs:
-// bad/absent credentials, rate limits, exhausted quota or billing, and provider "overloaded/
-// unavailable" responses. Matching stays language-agnostic (no localized message bodies) but is
-// deliberately anchored to signals that DO NOT occur in ordinary app-error prose, so a genuine app
-// failure that merely mentions one of these words ("EACCES: permission denied", "Failed to parse rate
-// limit configuration", "Record 503 could not be decoded") is never swallowed:
-//   - Structured error-type slugs in their exact underscore form, each \b-bounded (a provider payload
-//     field, e.g. `authentication_error`) — a bare "permission denied"/"rate limit" with spaces is NOT
-//     a slug, and a longer identifier like `rate_limiter`/`permission_denied_handler` does not match.
-//   - An auth/rate/5xx status code (401|403|429|5xx, not any 3-digit number) carrying an explicit
-//     `HTTP`/`status` marker (tolerant of `HTTP Error 500`/`HTTPError: 503`/`status_code: 504`/
-//     `{"status":500}`), or a status code immediately followed by its canonical reason phrase.
-//   - A few multi-word HTTP reason phrases, the auth/overload phrasings the runtime persists verbatim
-//     ("Invalid API key", "Overloaded: …"), and narrow billing/quota phrases — unmistakable on their own.
-// Resource-not-found and request-size overflow are recognized separately (their own dedicated paths).
-const PROVIDER_ERROR_PATTERN = new RegExp(
-  [
-    // Structured provider error-type slugs, each bounded by \b so a longer identifier that merely
-    // starts with one (e.g. `rate_limiter`, `permission_denied_handler`) is NOT matched. The trailing
-    // \b sits at the end of the slug's own word chars — `_` is a word char, so `permission_denied\b`
-    // cannot fire inside `permission_denied_handler`.
-    '\\bauthentication_error\\b',
-    '\\binvalid_api_key\\b',
-    '\\bpermission_denied\\b',
-    '\\brate_limit(?:ed|_error|_exceeded)?\\b',
-    '\\binsufficient_quota\\b',
-    '\\bquota_exceeded\\b',
-    '\\bbilling_(?:hard_limit|not_active)\\b',
-    '\\boverloaded_error\\b',
-    // A provider auth/rate/5xx status code carrying an explicit HTTP/status marker. Restricted to those
-    // families (not any 3-digit number) so an incidental "status 200"/"expected status 404" in an app
-    // error is not swallowed; 5\d\d covers every 5xx. The marker word may carry a suffix and up to two
-    // connective tokens before the code, so real-world shapes match: "HTTP 500", "HTTP Error 500",
-    // "HTTPError: 503", "status code: 502", "status_code: 504", and JSON "{"status":500}".
-    '(?:https?|status)[a-z]*(?:[\\s:"_-]+[a-z]*){0,2}[\\s:"_-]*(?:401|403|429|5\\d\\d)\\b',
-    // A status code immediately followed by its canonical reason phrase.
-    '\\b(?:401|403|429|500|502|503|504)\\s+(?:unauthorized|forbidden|too\\s+many\\s+requests|internal\\s+server\\s+error|bad\\s+gateway|service\\s+unavailable|gateway\\s+time-?out)\\b',
-    // Unmistakable multi-word HTTP reason phrases on their own.
-    'too\\s+many\\s+requests',
-    'service\\s+unavailable',
-    'bad\\s+gateway',
-    'gateway\\s+time-?out',
-    // Common provider auth/overload phrasings the runtime persists verbatim (sendPrompt rejection text /
-    // describePromptError passthrough): "Invalid API key", "Overloaded: service is busy".
-    '\\binvalid\\s+api\\s+key\\b',
-    '\\boverloaded\\b',
-    // Narrow billing/quota reason phrases, each fully \b-bounded so a prefix ("Billing planner", "No
-    // remaining creditor", "Insufficient creditworthiness") is NOT mistaken for the phrase. A bare
-    // "billing" is deliberately excluded — it recurs in ordinary app prose.
-    'billing\\s+(?:plan|account|period|issue|hard[_\\s-]?limit)\\b',
-    'no\\s+remaining\\s+credit\\b',
-    'insufficient\\s+(?:credit|balance|funds)\\b'
-  ].join('|'),
-  'i'
-)
-
-// Whether a run failure is one the app already recognizes — either app-crafted actionable guidance or
-// a well-understood provider error. These keep their message but hide the "Report error" button.
+// Whether a run failure is one the app itself already surfaced with a purpose — an app-crafted
+// actionable reminder, the reworded provider not-found, or a request-size overflow the app auto-
+// recovers — so the report button is hidden even without the structural `providerError` flag (an old
+// persisted session, or a renderer-side failRun). Recognition is by EXACT crafted string / known
+// prefix only; it deliberately does NOT try to recognize arbitrary provider error text (that is the
+// structural flag's job), so an unknown/opaque failure it doesn't author stays reportable.
 export const isExpectedRunFailure = (error: string | null | undefined): boolean => {
   const message = error?.trim()
 
@@ -112,10 +63,10 @@ export const isExpectedRunFailure = (error: string | null | undefined): boolean 
   if (!message) return false
 
   if (EXPECTED_RUN_FAILURE_MESSAGES.has(message)) return true
+  // The reworded provider not-found (a model-config problem the user fixes in Settings, not a bug).
   if (message.startsWith(PROVIDER_RESOURCE_NOT_FOUND_PREFIX)) return true
-  if (isMediaOverflowError(message)) return true
-
-  return PROVIDER_ERROR_PATTERN.test(message)
+  // A request-size overflow the app auto-recovers from — never a reportable bug.
+  return isMediaOverflowError(message)
 }
 
 // Whether a run failure should offer the "Report error → open a GitHub issue" affordance. True only for
