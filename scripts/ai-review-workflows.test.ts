@@ -70,6 +70,29 @@ function writeJsonLines(path: string, events: unknown[]): void {
   writeFileSync(path, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`)
 }
 
+function claudeFinding(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    priority: 'P1',
+    title: 'Runtime ownership can drift',
+    path: 'src/main/acp/runtime.ts',
+    line: 100,
+    impact: 'A session can use the wrong runtime.',
+    recommendation: 'Validate ownership before sending.',
+    ...overrides
+  }
+}
+
+function claudeStructuredOutput(
+  findings: Record<string, unknown>[] = [],
+  verdict = findings.length > 0 ? 'needs changes' : 'mergeable'
+): Record<string, unknown> {
+  return {
+    verdict,
+    summary: findings.length > 0 ? 'Architecture changes are required.' : 'No issues found.',
+    findings
+  }
+}
+
 function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: 'ignore' })
 }
@@ -271,9 +294,13 @@ describe('AI review workflow contract', () => {
     expect(() => load(reviewWorkflow)).not.toThrow()
   })
 
-  it('keeps the verdict format consumed by the outcome job in the reviewer prompts', () => {
-    expect(reviewWorkflow).toContain('**Verdict: mergeable**')
-    expect(reviewWorkflow).toContain('**Verdict: needs changes**')
+  it('keeps the verdict format consumed by the outcome job in both normalizers', () => {
+    expect(getRunStep('claude_review', 'extract_claude')).toContain(
+      '"**Verdict: \\(.verdict)**\\n\\n"'
+    )
+    expect(getNamedStep('codex_review', 'Normalize Codex review').with?.script).toContain(
+      '`**Verdict: ${result.verdict}**`'
+    )
   })
 
   it('applies labels only after both reviewer publish jobs have settled', () => {
@@ -410,7 +437,7 @@ describe('AI review workflow contract', () => {
       `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' '{"type":"system","subtype":"init","tools":["Bash","Glob","Grep","Read","StructuredOutput"]}'
-printf '%s\\n' '{"type":"result","subtype":"success","terminal_reason":"blocking_limit","structured_output":{"review":"## Claude Architecture Review\\n**Verdict: mergeable**\\n\\n**No architectural or integration issues found.**"}}'
+printf '%s\\n' '{"type":"result","subtype":"success","terminal_reason":"blocking_limit","structured_output":{"verdict":"mergeable","summary":"No issues found.","findings":[]}}'
 exit 1
 `
     )
@@ -453,7 +480,7 @@ exit 1
     expect(codexStep.with?.['allow-users']).toBe(automaticForkExpression)
   })
 
-  it('extracts only the final Claude assistant message from the CLI JSONL stream', () => {
+  it('fails closed when Claude emits assistant text without structured output', () => {
     const root = createFixtureRoot('ai-review-claude-output-')
     const executionFile = join(root, 'execution.json')
     const githubOutput = join(root, 'github-output')
@@ -486,13 +513,11 @@ exit 1
       env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
     })
 
-    expect(result.status, result.stderr).toBe(0)
-    const output = readFileSync(githubOutput, 'utf8')
-    expect(output).not.toContain('draft')
-    expect(output).toContain('## Claude Architecture Review\n**Verdict: mergeable**')
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('no structured review')
   })
 
-  it('falls back to the CLI result event when no assistant event is emitted', () => {
+  it('fails closed when Claude emits only an unstructured result event', () => {
     const root = createFixtureRoot('ai-review-claude-result-')
     const executionFile = join(root, 'execution.jsonl')
     const githubOutput = join(root, 'github-output')
@@ -520,12 +545,8 @@ exit 1
       env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
     })
 
-    expect(result.status, result.stderr).toBe(0)
-    const output = readFileSync(githubOutput, 'utf8')
-    expect(output).not.toContain('private reasoning')
-    expect(output).not.toContain('<thinking>')
-    expect(output).not.toContain('<review>')
-    expect(output).toContain('## Claude Architecture Review\n**Verdict: mergeable**')
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('no structured review')
   })
 
   it('prefers schema-validated review output over free-form reasoning', () => {
@@ -538,9 +559,7 @@ exit 1
         type: 'result',
         subtype: 'success',
         result: '<thinking>private reasoning</thinking>',
-        structured_output: {
-          review: '## Claude Architecture Review\n**Verdict: mergeable**'
-        }
+        structured_output: claudeStructuredOutput()
       }
     ])
 
@@ -553,7 +572,7 @@ exit 1
     expect(result.status, result.stderr).toBe(0)
     const output = readFileSync(githubOutput, 'utf8')
     expect(output).not.toContain('private reasoning')
-    expect(output).toContain('## Claude Architecture Review\n**Verdict: mergeable**')
+    expect(output).toContain('## Claude Architecture Review\n\n**Verdict: mergeable**')
   })
 
   it('allows structured findings to quote review framing tags', () => {
@@ -565,11 +584,11 @@ exit 1
       {
         type: 'result',
         subtype: 'success',
-        structured_output: {
-          review:
-            '## Claude Architecture Review\n**Verdict: needs changes**\n\n' +
-            '**P1 - Do not reject literal `<review>` and `</review>` tags in findings.**'
-        }
+        structured_output: claudeStructuredOutput([
+          claudeFinding({
+            title: 'Do not reject literal <review> and </review> tags in findings'
+          })
+        ])
       }
     ])
 
@@ -580,7 +599,29 @@ exit 1
     })
 
     expect(result.status, result.stderr).toBe(0)
-    expect(readFileSync(githubOutput, 'utf8')).toContain('literal `<review>` and `</review>` tags')
+    expect(readFileSync(githubOutput, 'utf8')).toContain('literal <review> and </review> tags')
+  })
+
+  it('rejects a mergeable Claude verdict that contains an actionable finding', () => {
+    const root = createFixtureRoot('ai-review-claude-contradictory-verdict-')
+    const executionFile = join(root, 'execution.jsonl')
+    const githubOutput = join(root, 'github-output')
+    writeJsonLines(executionFile, [
+      { type: 'system', subtype: 'init', tools: claudeReviewTools },
+      {
+        type: 'result',
+        subtype: 'success',
+        structured_output: claudeStructuredOutput([claudeFinding()], 'mergeable')
+      }
+    ])
+
+    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
+    })
+
+    expect(result.status).not.toBe(0)
   })
 
   it('keeps a structured review after Claude attempts an unavailable tool', () => {
@@ -601,9 +642,7 @@ exit 1
       {
         type: 'result',
         subtype: 'success',
-        structured_output: {
-          review: '## Claude Architecture Review\n**Verdict: mergeable**'
-        }
+        structured_output: claudeStructuredOutput()
       }
     ])
 
