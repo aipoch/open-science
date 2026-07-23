@@ -140,7 +140,7 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
-  it('applies live settings changes only to the active runtime generation', async () => {
+  it('keeps reconnecting settings on the active generation and fans out live effort', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
       const fake = createFakeRuntime({
@@ -154,6 +154,7 @@ describe('AcpRuntimeCoordinator', () => {
 
     await coordinator.createSession()
     await coordinator.requestAgentFrameworkSwitch()
+    created[0].applyReasoningEffortChange.mockResolvedValue(false)
     await coordinator.requestProviderReconnect()
     await coordinator.requestSkillsReload()
     await expect(coordinator.applyReasoningEffortChange('high')).resolves.toBe(true)
@@ -161,7 +162,7 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created).toHaveLength(2)
     expect(created[0].requestProviderReconnect).not.toHaveBeenCalled()
     expect(created[0].requestSkillsReload).not.toHaveBeenCalled()
-    expect(created[0].applyReasoningEffortChange).not.toHaveBeenCalled()
+    expect(created[0].applyReasoningEffortChange).toHaveBeenCalledWith('high')
     expect(created[1].requestProviderReconnect).toHaveBeenCalledOnce()
     expect(created[1].requestSkillsReload).toHaveBeenCalledOnce()
     expect(created[1].applyReasoningEffortChange).toHaveBeenCalledWith('high')

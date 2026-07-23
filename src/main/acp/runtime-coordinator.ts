@@ -204,9 +204,9 @@ class AcpRuntimeCoordinator {
     await retiring.requestRetirement()
   }
 
-  // Settings changes target the generation that owns future turns. Retiring generations stay pinned
-  // to the configuration of the workflow they are finishing; reconnecting or mutating them here would
-  // break the framework-switch guarantee that an in-progress turn/reviewer loop completes atomically.
+  // Reconnect-triggering settings target the generation that owns future turns. Retiring generations
+  // stay pinned to the backend of the workflow they are finishing; reconnecting them here can strand a
+  // later workflow operation behind a barrier that its own activity lease prevents from resolving.
   requestProviderReconnect(): Promise<void> {
     return this.getActiveRuntime().requestProviderReconnect()
   }
@@ -215,8 +215,18 @@ class AcpRuntimeCoordinator {
     return this.getActiveRuntime().requestSkillsReload()
   }
 
-  applyReasoningEffortChange(effort: ReasoningEffort): Promise<boolean> {
-    return this.getActiveRuntime().applyReasoningEffortChange(effort)
+  async applyReasoningEffortChange(effort: ReasoningEffort): Promise<boolean> {
+    const active = this.getActiveRuntime()
+    const activeResult = active.applyReasoningEffortChange(effort)
+    const otherResults = Array.from(this.runtimes)
+      .filter((runtime) => runtime !== active)
+      .map((runtime) => runtime.applyReasoningEffortChange(effort))
+
+    // Effort is a non-disruptive live session option, so every still-running generation receives the
+    // global preference. Only the active result controls reconnect fallback: an old generation that
+    // cannot apply effort must not force the selected generation to respawn unnecessarily.
+    const [appliedToActive] = await Promise.all([activeResult, Promise.all(otherResults)])
+    return appliedToActive
   }
 
   writeArtifactForCurrentRun(
