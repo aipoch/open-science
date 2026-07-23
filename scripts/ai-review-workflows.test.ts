@@ -303,6 +303,16 @@ describe('AI review workflow contract', () => {
     )
   })
 
+  it('retries transient GitHub API failures while publishing reviews and labels', () => {
+    const steps = [
+      getNamedStep('post_claude_feedback', 'Post Claude architecture review'),
+      getNamedStep('post_codex_feedback', 'Post Codex correctness review'),
+      getNamedStep('apply_review_outcome', 'Apply ready-to-merge from published review outputs')
+    ]
+
+    for (const step of steps) expect(step.with?.retries).toBe(3)
+  })
+
   it('supports disabled, manual, and automatic fork review modes', () => {
     const targetStep = getNamedStep('review_target', 'Resolve pull request metadata')
 

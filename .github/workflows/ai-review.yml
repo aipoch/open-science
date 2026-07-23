@@ -370,6 +370,7 @@ jobs:
           REVIEW_RUN_ID: ${{ github.run_id }}
         with:
           github-token: ${{ github.token }}
+          retries: 3
           script: |
             const marker = '<!-- ai-review:claude -->';
             const provenance =
@@ -727,6 +728,7 @@ jobs:
           CODEX_REVIEW_MAX_ROUNDS: ${{ vars.CODEX_REVIEW_MAX_ROUNDS || '20' }}
         with:
           github-token: ${{ github.token }}
+          retries: 3
           script: |
             const marker = '<!-- ai-review:codex -->';
             const provenance =
@@ -804,6 +806,7 @@ jobs:
           CODEX_REVIEW_BODY: ${{ needs.codex_review.outputs.review_body }}
         with:
           github-token: ${{ github.token }}
+          retries: 3
           script: |
             const issueNumber = Number(process.env.PR_NUMBER);
             const reviewedHeadSha = process.env.REVIEW_HEAD_SHA;
