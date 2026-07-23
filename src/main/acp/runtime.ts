@@ -1592,15 +1592,30 @@ class AcpRuntime {
 
     if (this.pendingProviderReconnect) {
       this.pendingProviderReconnect = false
-      // Resolve the barrier after disconnect so ensureConnected falls through to
-      // a fresh connect with the new backend, not back onto the stale connection.
-      void this.disconnect().then(() => this.resolveReconnectBarrier())
+      // Resolve the barrier once teardown settles so ensureConnected falls through to a fresh
+      // connect with the new backend, not back onto the stale connection. catch-then-finally
+      // (not a bare then): a rejected disconnect must still release the barrier — otherwise it
+      // strands and every later createSession hangs forever — and the rejection must be swallowed
+      // so it doesn't surface as an unhandled promise rejection.
+      void this.disconnectForDeferredReconnect()
       return
     }
 
     if (this.pendingSkillsReload) {
       this.pendingSkillsReload = false
-      void this.disconnect().then(() => this.resolveReconnectBarrier())
+      void this.disconnectForDeferredReconnect()
+    }
+  }
+
+  // Tears down the connection for a deferred provider/skills reconnect, always releasing the
+  // reconnect barrier — even if the disconnect rejects — and never leaking an unhandled rejection.
+  private async disconnectForDeferredReconnect(): Promise<void> {
+    try {
+      await this.disconnect()
+    } catch (error) {
+      safeLogError('deferred reconnect disconnect failed', errorLogFields(error))
+    } finally {
+      this.resolveReconnectBarrier()
     }
   }
 
@@ -3347,8 +3362,10 @@ class AcpRuntime {
     this.promptInFlightSessionIds.clear()
     // The connection is already gone, so any ensureConnected caller waiting on
     // the reconnect barrier must unblock now — it will fall through to connect()
-    // and pick up the new backend from resolveBackend.
+    // and pick up the new backend from resolveBackend. A fresh spawn re-provisions
+    // skills too, so clear both pending flags to avoid a spurious later reconnect.
     this.pendingProviderReconnect = false
+    this.pendingSkillsReload = false
     this.resolveReconnectBarrier()
     this.setStatus('closed')
   }

@@ -82,7 +82,9 @@ const installApi = (): void => {
       setPackageMirror: vi.fn().mockResolvedValue({})
     },
     acp: {
-      getState: vi.fn().mockResolvedValue({ promptInFlightSessionIds: [] }),
+      getState: vi.fn().mockResolvedValue({ promptInFlight: false, promptInFlightSessionIds: [] }),
+      // AgentPanel subscribes to live prompt-in-flight state; the mock returns a no-op unsubscribe.
+      onState: vi.fn().mockReturnValue(() => {}),
       cancel: vi.fn()
     },
     logs: {

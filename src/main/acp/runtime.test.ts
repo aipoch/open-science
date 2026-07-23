@@ -4226,6 +4226,42 @@ describe('ACP runtime session management', () => {
     await prompt.catch(() => undefined)
   })
 
+  it('does not strand the reconnect barrier when the deferred disconnect rejects', async () => {
+    const process = new FakeAgentProcess()
+    const gate = createDeferred()
+    startFakeAgent(process, ['s1'], { onPrompt: () => gate.promise })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+
+    // Arm the barrier with a deferred reconnect while the prompt is running.
+    await runtime.requestProviderReconnect()
+
+    // The deferred disconnect (fired when the turn settles) rejects. The barrier must still
+    // resolve — otherwise every later createSession would await it forever.
+    const disconnectSpy = vi
+      .spyOn(runtime, 'disconnect')
+      .mockRejectedValueOnce(new Error('teardown failed'))
+
+    // A createSession issued during the deferred window blocks on the barrier.
+    const secondSession = runtime.createSession({ cwd: '/workspace' })
+
+    // Release the gate → turn settles → maybeApplyPendingProviderReconnect calls the rejecting
+    // disconnect → finally() still resolves the barrier.
+    gate.resolve()
+    await prompt
+
+    // The blocked createSession must complete rather than hang. A real timeout here would fail
+    // the suite; resolving proves the barrier was released on the rejection path.
+    await expect(secondSession).resolves.toBeDefined()
+    disconnectSpy.mockRestore()
+  })
+
   it('reconnects immediately when a provider switch happens with no prompt in flight', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['s1'])
