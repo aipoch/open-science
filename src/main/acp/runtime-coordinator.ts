@@ -109,7 +109,14 @@ class AcpRuntimeCoordinator {
 
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
     const runtimes = Array.from(this.runtimes)
-    await Promise.all(runtimes.map((runtime) => runtime.disconnect(emitClosedStatus)))
+    const results = await Promise.allSettled(
+      runtimes.map((runtime) => runtime.disconnect(emitClosedStatus))
+    )
+    const failure = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    )
+    // Keep ownership when any teardown fails so a later disconnect/shutdown can retry the runtime.
+    if (failure) throw failure.reason
     this.clearRuntimeOwnership()
     return this.getSnapshot()
   }
@@ -224,9 +231,11 @@ class AcpRuntimeCoordinator {
 
     // Effort is a non-disruptive live session option, so every still-running generation receives the
     // global preference. Only the active result controls reconnect fallback: an old generation that
-    // cannot apply effort must not force the selected generation to respawn unnecessarily.
-    const [appliedToActive] = await Promise.all([activeResult, Promise.all(otherResults)])
-    return appliedToActive
+    // cannot apply effort or rejects must not force the selected generation to respawn unnecessarily.
+    const results = await Promise.allSettled([activeResult, ...otherResults])
+    const activeOutcome = results[0]
+    if (activeOutcome.status === 'rejected') throw activeOutcome.reason
+    return activeOutcome.value
   }
 
   writeArtifactForCurrentRun(
@@ -255,7 +264,7 @@ class AcpRuntimeCoordinator {
     return built
   }
 
-  disposeReviewerSession(session: ActiveSession): number {
+  disposeReviewerSession(session: ActiveSession): ReturnType<AcpRuntime['disposeReviewerSession']> {
     const runtime = this.reviewerRuntimes.get(session) ?? this.getActiveRuntime()
     this.reviewerRuntimes.delete(session)
     return runtime.disposeReviewerSession(session)
@@ -412,8 +421,9 @@ class AcpRuntimeCoordinator {
   private visibleSessionIds(runtime: AcpRuntime, snapshot: AcpStateSnapshot): string[] {
     if (!this.retiredRuntimes.has(runtime)) return snapshot.sessionIds
 
-    // Keep a retiring session visible only while its current turn still needs routing. Once idle, hiding
-    // it makes every client use resumeSession, which adopts it under the selected framework.
+    // Keep a retiring session visible only while its current turn still needs routing. Once idle it
+    // deliberately disappears from coordinator aggregation; the next client turn uses resumeSession,
+    // which re-discovers and adopts it under the selected framework.
     const active = new Set([
       ...snapshot.promptInFlightSessionIds,
       ...snapshot.pendingPermissions.map((request) => request.sessionId)
@@ -433,9 +443,17 @@ class AcpRuntimeCoordinator {
   private async shutdownAll(
     shutdown: (runtime: AcpRuntime) => Promise<{ reaped: boolean }>
   ): Promise<{ reaped: boolean }> {
-    const results = await Promise.all(Array.from(this.runtimes, shutdown))
+    const runtimes = Array.from(this.runtimes)
+    const outcomes = await Promise.allSettled(runtimes.map(shutdown))
+    const failure = outcomes.find(
+      (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected'
+    )
+    // Preserve failed runtime ownership so a bounded caller can retry or use the synchronous guard.
+    if (failure) throw failure.reason
     this.clearRuntimeOwnership()
-    return { reaped: results.every((result) => result.reaped) }
+    return {
+      reaped: outcomes.every((outcome) => outcome.status === 'fulfilled' && outcome.value.reaped)
+    }
   }
 
   private clearRuntimeOwnership(): void {

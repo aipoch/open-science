@@ -2730,6 +2730,7 @@ class SettingsService {
       entry.leaseCount = Math.max(0, entry.leaseCount - 1)
       if (entry.leaseCount === 0 && this.responsesBridges.get(fingerprint) === entry) {
         this.responsesBridges.delete(fingerprint)
+        await entry.bridge.close().catch(() => undefined)
       }
       throw error
     }
@@ -2761,6 +2762,8 @@ class SettingsService {
   }
 
   private responsesBridgeFingerprint(target: ResponsesBridgeTarget): string {
+    // forwardReasoningEffort is intentionally live mutable and therefore excluded from the pinned
+    // routing identity. Including it would split leases and prevent effort fan-out to existing bridges.
     const pinnedTarget = {
       baseUrl: target.baseUrl,
       key: target.key,

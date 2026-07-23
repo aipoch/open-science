@@ -1102,17 +1102,23 @@ export class ResponsesBridge {
         }
       })
     })
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject)
-      server.listen(0, '127.0.0.1', resolve)
-    })
-    server.unref()
-    const address = server.address()
-    if (!address || typeof address === 'string')
-      throw new Error('Responses bridge did not bind a port')
+    // Own the server before listen resolves so every partial-start failure remains closeable.
     this.server = server
-    this.connection = { baseUrl: `http://127.0.0.1:${address.port}/v1`, token }
-    return this.connection
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(0, '127.0.0.1', resolve)
+      })
+      server.unref()
+      const address = server.address()
+      if (!address || typeof address === 'string')
+        throw new Error('Responses bridge did not bind a port')
+      this.connection = { baseUrl: `http://127.0.0.1:${address.port}/v1`, token }
+      return this.connection
+    } catch (error) {
+      await this.close().catch(() => undefined)
+      throw error
+    }
   }
 
   async close(): Promise<void> {

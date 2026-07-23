@@ -30,6 +30,7 @@ vi.mock('electron', () => ({
 }))
 
 const { SettingsService } = await import('./service')
+const { ResponsesBridge: ResponsesBridgeClass } = await import('./responses-bridge')
 const { SettingsRepository } = await import('./repository')
 const { getAppClaudeConfigDir } = await import('./provider-env')
 const { SkillRegistry } = await import('../skills/registry')
@@ -1564,6 +1565,43 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(bridgePool.size).toBe(1)
     await secondBackend.responsesBridgeLease?.release()
     expect(bridgePool.size).toBe(0)
+  })
+
+  it('closes and evicts a responses bridge whose start fails', async () => {
+    const startError = new Error('bridge start failed')
+    const startSpy = vi.spyOn(ResponsesBridgeClass.prototype, 'start').mockRejectedValue(startError)
+    const closeSpy = vi.spyOn(ResponsesBridgeClass.prototype, 'close').mockResolvedValue(undefined)
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, '', 'utf8')
+    const service = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
+    })
+    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.1.4' })
+    await repository.setAgentFramework('codex')
+    const provider = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'Broken bridge provider',
+        apiEndpoints: ['openai'],
+        baseUrl: 'https://broken.example/v1',
+        model: 'model-one',
+        key: 'key-one'
+      })
+    ).providers[0]
+    const storedProvider = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({ ...storedProvider, lastValidatedAt: Date.now() })
+    await service.setActiveProvider(provider.id)
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
+
+    await expect(service.resolveActiveAgentBackend()).rejects.toBe(startError)
+
+    const bridgePool = (service as unknown as { responsesBridges: Map<string, unknown> })
+      .responsesBridges
+    expect(closeSpy).toHaveBeenCalledOnce()
+    expect(bridgePool.size).toBe(0)
+    startSpy.mockRestore()
+    closeSpy.mockRestore()
   })
 
   it('drives a native-Responses official vendor directly, without starting the bridge', async () => {

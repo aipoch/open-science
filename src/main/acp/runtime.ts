@@ -174,6 +174,12 @@ type ReviewerSessionResult = {
   promptPrefix?: string
 }
 
+export type ReviewerSessionDisposition = {
+  rejectedToolCalls: number
+  // Undefined for frameworks/providers that do not traverse the Responses bridge.
+  reviewerBridgeScoped: boolean | undefined
+}
+
 type AcpRuntimeArtifactOptions = {
   // Config root: where the app-owned claude config dir lives (never relocated).
   configRoot: string
@@ -1972,7 +1978,11 @@ class AcpRuntime {
   private async releaseResponsesBridgeLease(): Promise<void> {
     const lease = this.responsesBridgeLease
     this.responsesBridgeLease = undefined
-    await lease?.release()
+    try {
+      await lease?.release()
+    } catch (error) {
+      safeLogError('responses bridge lease release failed', errorLogFields(error))
+    }
   }
 
   private async closeMcpHttpHost(): Promise<void> {
@@ -3782,13 +3792,15 @@ class AcpRuntime {
   }
 
   // Disposes an ephemeral reviewer session and unregisters it from the auto-approve set. Safe to call
-  // even if the session was never registered (e.g. it failed before start). Returns the number of tool
-  // calls the gate rejected during the session: the read and the clear are atomic here so callers need
-  // no capture-before-dispose ordering — dispose deletes the counter, and this is its last observer.
-  disposeReviewerSession(session: import('@agentclientprotocol/sdk').ActiveSession): number {
+  // even if the session was never registered (e.g. it failed before start). Returns the gate rejection
+  // count plus whether a bridged reviewer request actually hit its trusted session scope. The reads and
+  // clears are atomic here so callers need no capture-before-dispose ordering.
+  disposeReviewerSession(
+    session: import('@agentclientprotocol/sdk').ActiveSession
+  ): ReviewerSessionDisposition {
     const rejectedToolCalls = this.reviewerRejectedToolCalls.get(session.sessionId) ?? 0
     this.reviewerSessionIds.delete(session.sessionId)
-    this.unregisterReviewerBridgeSession(session.sessionId)
+    const reviewerBridgeScoped = this.unregisterReviewerBridgeSession(session.sessionId)
     this.sessionMcpServerNames.delete(session.sessionId)
     this.codexMcpToolIdentities.delete(session.sessionId)
     this.sessionFrameworks.delete(session.sessionId)
@@ -3798,14 +3810,15 @@ class AcpRuntime {
     session.dispose()
     if (reviewerCwd) this.removeReviewerDirectory(reviewerCwd)
     this.maybeApplyPendingProviderReconnect()
-    return rejectedToolCalls
+    return { rejectedToolCalls, reviewerBridgeScoped }
   }
 
-  private unregisterReviewerBridgeSession(sessionId: string): void {
+  private unregisterReviewerBridgeSession(sessionId: string): boolean | undefined {
     const scoped = this.responsesBridgeLease?.unregisterReviewerSession(sessionId)
     if (scoped === false) {
       log.error('reviewer bridge request was never scoped', { sessionId })
     }
+    return scoped
   }
 
   // Returns how many permission requests the strict reviewer gate rejected for a given reviewer

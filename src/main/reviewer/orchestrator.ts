@@ -116,6 +116,9 @@ const incompleteReviewMessage = (rejectedToolCalls: number): string =>
       `${rejectedToolCalls} tool call(s) were also rejected by the permission gate.`
     : 'Reviewer stopped without calling submit_findings.'
 
+const REVIEWER_BRIDGE_SCOPE_ERROR =
+  'Reviewer request was not constrained to the reviewer-only tool scope.'
+
 // Streaming content deltas are emitted one-per-chunk as the reviewer writes its message/thinking, so
 // their count tracks how much it *says*, not how much it *does*. Counting them toward the loop cap
 // made a normally-verbose review trip the guard mid-stream before it could call submit_findings. Only
@@ -748,6 +751,7 @@ const runScopedReview = async (options: {
   let checksReceived: NewCheck[] = []
   let checksSubmitted = false
   let rejectedToolCalls = 0
+  let reviewerBridgeScoped: boolean | undefined
   const capturedLog: ReviewerLogEntry[] = []
 
   try {
@@ -801,8 +805,24 @@ const runScopedReview = async (options: {
     return { review: errorWithChecks, submittedChecks: [] }
   } finally {
     // dispose returns the gate's rejection count and clears it atomically — no ordering hazard.
-    if (reviewerSession) rejectedToolCalls = acpRuntime.disposeReviewerSession(reviewerSession)
+    if (reviewerSession) {
+      const disposition = acpRuntime.disposeReviewerSession(reviewerSession)
+      rejectedToolCalls = disposition.rejectedToolCalls
+      reviewerBridgeScoped = disposition.reviewerBridgeScoped
+    }
     await mcpServer?.stop().catch(() => undefined)
+  }
+
+  if (reviewerBridgeScoped === false) {
+    log.error('scoped re-review bridge isolation failed', { reviewId: review.id })
+    review = await reviewRepository.updateReview(review.id, {
+      lifecycle: 'error',
+      errorMessage: REVIEWER_BRIDGE_SCOPE_ERROR,
+      reviewerLog: capturedLog
+    })
+    const errorWithChecks: ReviewWithChecks = { ...review, checks: [] }
+    onReviewUpdate?.(errorWithChecks)
+    return { review: errorWithChecks, submittedChecks: [] }
   }
 
   if (!checksSubmitted) {
@@ -929,6 +949,7 @@ const runReviewWithSession = async (
   let checksReceived: NewCheck[] = []
   let checksSubmitted = false
   let rejectedToolCalls = 0
+  let reviewerBridgeScoped: boolean | undefined
   const capturedLog: ReviewerLogEntry[] = []
 
   try {
@@ -1000,8 +1021,24 @@ const runReviewWithSession = async (
     // Always dispose the reviewer session and shut down the servers. dispose returns the gate's
     // rejection count and clears it atomically, so an incomplete review reports the real cause with
     // no capture-before-dispose ordering to get wrong.
-    if (reviewerSession) rejectedToolCalls = acpRuntime.disposeReviewerSession(reviewerSession)
+    if (reviewerSession) {
+      const disposition = acpRuntime.disposeReviewerSession(reviewerSession)
+      rejectedToolCalls = disposition.rejectedToolCalls
+      reviewerBridgeScoped = disposition.reviewerBridgeScoped
+    }
     await mcpServer?.stop().catch(() => undefined)
+  }
+
+  if (reviewerBridgeScoped === false) {
+    log.error('reviewer bridge isolation failed', { reviewId: review.id })
+    review = await reviewRepository.updateReview(review.id, {
+      lifecycle: 'error',
+      errorMessage: REVIEWER_BRIDGE_SCOPE_ERROR,
+      reviewerLog: capturedLog
+    })
+    const errorWithFindings: ReviewWithChecks = { ...review, checks: [] }
+    onReviewUpdate?.(errorWithFindings)
+    return errorWithFindings
   }
 
   if (!checksSubmitted) {

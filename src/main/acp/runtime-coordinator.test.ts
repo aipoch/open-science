@@ -52,6 +52,8 @@ const createFakeRuntime = (options: {
   const requestSkillsReload = vi.fn(async () => undefined)
   const applyReasoningEffortChange = vi.fn(async () => true)
   const respondToPermission = vi.fn(() => snapshot)
+  const shutdownForQuit = vi.fn(async () => ({ reaped: true }))
+  const shutdownForUpdateGate = vi.fn(async () => ({ reaped: true }))
   const sendPrompt = vi.fn(async ({ sessionId }: { sessionId: string }) => {
     snapshot = {
       ...snapshot,
@@ -105,13 +107,18 @@ const createFakeRuntime = (options: {
     buildReviewerSession: vi.fn(async () => ({
       session: { sessionId: `reviewer-${options.frameworkId}` }
     })),
-    disposeReviewerSession: vi.fn(() => 0),
+    disposeReviewerSession: vi.fn(() => ({
+      rejectedToolCalls: 0,
+      reviewerBridgeScoped: undefined
+    })),
     disconnect,
     requestRetirement,
     requestProviderReconnect,
     requestSkillsReload,
     applyReasoningEffortChange,
-    respondToPermission
+    respondToPermission,
+    shutdownForQuit,
+    shutdownForUpdateGate
   } as unknown as AcpRuntime
 
   return {
@@ -166,6 +173,95 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[1].requestProviderReconnect).toHaveBeenCalledOnce()
     expect(created[1].requestSkillsReload).toHaveBeenCalledOnce()
     expect(created[1].applyReasoningEffortChange).toHaveBeenCalledWith('high')
+  })
+
+  it('keeps the active effort result when a retiring generation rejects', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+        sessionIds: [`session-${created.length + 1}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    await coordinator.createSession()
+    await coordinator.requestAgentFrameworkSwitch()
+    await coordinator.createSession()
+    created[0].applyReasoningEffortChange.mockRejectedValue(new Error('old effort failed'))
+
+    await expect(coordinator.applyReasoningEffortChange('high')).resolves.toBe(true)
+    expect(created[1].applyReasoningEffortChange).toHaveBeenCalledWith('high')
+  })
+
+  it('attempts every runtime disconnect before surfacing a partial failure', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+        sessionIds: [`session-${created.length + 1}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    await coordinator.createSession()
+    await coordinator.requestAgentFrameworkSwitch()
+    await coordinator.createSession()
+    const activeDisconnect = createDeferred<AcpStateSnapshot>()
+    created[0].disconnect.mockRejectedValueOnce(new Error('old disconnect failed'))
+    created[1].disconnect.mockReturnValueOnce(activeDisconnect.promise)
+
+    let settled = false
+    const disconnecting = coordinator.disconnect().finally(() => {
+      settled = true
+    })
+    void disconnecting.catch(() => undefined)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(settled).toBe(false)
+    expect(created[0].disconnect).toHaveBeenCalledOnce()
+    expect(created[1].disconnect).toHaveBeenCalledOnce()
+    activeDisconnect.resolve(emptySnapshot())
+    await expect(disconnecting).rejects.toThrow('old disconnect failed')
+  })
+
+  it('attempts every runtime quit teardown before surfacing a partial failure', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+        sessionIds: [`session-${created.length + 1}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    await coordinator.createSession()
+    await coordinator.requestAgentFrameworkSwitch()
+    await coordinator.createSession()
+    const activeShutdown = createDeferred<{ reaped: boolean }>()
+    vi.mocked(created[0].runtime.shutdownForQuit).mockRejectedValueOnce(
+      new Error('old shutdown failed')
+    )
+    vi.mocked(created[1].runtime.shutdownForQuit).mockReturnValueOnce(activeShutdown.promise)
+
+    let settled = false
+    const shuttingDown = coordinator.shutdownForQuit().finally(() => {
+      settled = true
+    })
+    void shuttingDown.catch(() => undefined)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(settled).toBe(false)
+    expect(created[0].runtime.shutdownForQuit).toHaveBeenCalledOnce()
+    expect(created[1].runtime.shutdownForQuit).toHaveBeenCalledOnce()
+    activeShutdown.resolve({ reaped: true })
+    await expect(shuttingDown).rejects.toThrow('old shutdown failed')
   })
 
   it('runs new sessions immediately and moves the old session after its active turn', async () => {

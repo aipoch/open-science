@@ -3319,7 +3319,10 @@ describe('ACP runtime session management', () => {
 
     expect(runtime.reviewerRejectedToolCallCount(session.sessionId)).toBe(1)
     // dispose returns the final count and clears it atomically — the orchestrator relies on this.
-    expect(runtime.disposeReviewerSession(session)).toBe(1)
+    expect(runtime.disposeReviewerSession(session)).toEqual({
+      rejectedToolCalls: 1,
+      reviewerBridgeScoped: undefined
+    })
     expect(runtime.reviewerRejectedToolCallCount('reviewer-session-1')).toBe(0)
   })
 
@@ -4439,6 +4442,36 @@ describe('ACP runtime session management', () => {
     })
     expect(process.killed).toBe(true)
     expect(releaseBridge).toHaveBeenCalledOnce()
+  })
+
+  it('finishes disconnect state cleanup when the responses bridge lease rejects release', async () => {
+    const process = new FakeAgentProcess()
+    const releaseBridge = vi.fn().mockRejectedValue(new Error('bridge close failed'))
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/agent',
+        env: {},
+        responsesBridgeLease: {
+          registerReviewerSession: vi.fn(),
+          unregisterReviewerSession: vi.fn(() => true),
+          release: releaseBridge
+        }
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    await expect(runtime.disconnect()).resolves.toMatchObject({ status: 'closed' })
+
+    expect(releaseBridge).toHaveBeenCalledOnce()
+    expect(runtime.getSnapshot().status).toBe('closed')
+    expect(errorLogSpy).toHaveBeenCalledWith(
+      'responses bridge lease release failed',
+      expect.objectContaining({ error: 'bridge close failed' })
+    )
   })
 
   it('keeps a retiring runtime alive across gaps in an activity workflow', async () => {
