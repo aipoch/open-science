@@ -134,6 +134,8 @@ const startFakeAgent = (
     // the session/cancel notification on delete instead of a close request.
     supportsClose?: boolean
     rejectModeChange?: boolean
+    onSetMode?: (context: { sessionId: string; modeId: string }) => Promise<void> | void
+    onClose?: (sessionId: string) => Promise<void> | void
     onPrompt?: (context: {
       sessionId: string
       text: string
@@ -241,9 +243,16 @@ const startFakeAgent = (
     })
     .onRequest(acp.methods.agent.session.setMode, (ctx) => {
       if (options.rejectModeChange) throw new Error('set mode failed')
-      modeChanges.push({ sessionId: ctx.params.sessionId, modeId: ctx.params.modeId })
-      actions.push(`mode:${ctx.params.modeId}`)
-      return {}
+      const recordModeChange = (): Record<string, never> => {
+        modeChanges.push({ sessionId: ctx.params.sessionId, modeId: ctx.params.modeId })
+        actions.push(`mode:${ctx.params.modeId}`)
+        return {}
+      }
+      const pending = options.onSetMode?.({
+        sessionId: ctx.params.sessionId,
+        modeId: ctx.params.modeId
+      })
+      return pending ? pending.then(recordModeChange) : recordModeChange()
     })
     .onRequest(acp.methods.agent.session.setConfigOption, (ctx) => {
       if (options.rejectSetConfigOption) throw acp.RequestError.internalError()
@@ -285,8 +294,12 @@ const startFakeAgent = (
       return undefined
     })
     .onRequest(acp.methods.agent.session.close, (ctx) => {
-      closedSessions.push(ctx.params.sessionId)
-      return {}
+      const recordClose = (): Record<string, never> => {
+        closedSessions.push(ctx.params.sessionId)
+        return {}
+      }
+      const pending = options.onClose?.(ctx.params.sessionId)
+      return pending ? pending.then(recordClose) : recordClose()
     })
     .connect(
       acp.ndJsonStream(
@@ -4274,6 +4287,73 @@ describe('ACP runtime session management', () => {
 
     releaseSkillCheck.resolve()
     await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(process.killed).toBe(true)
+    expect(onRetired).toHaveBeenCalledOnce()
+  })
+
+  it('does not retire while deleteSession awaits the agent close request', async () => {
+    const process = new FakeAgentProcess()
+    const closeEntered = createDeferred()
+    const releaseClose = createDeferred()
+    const onRetired = vi.fn()
+    startFakeAgent(process, ['s1'], {
+      onClose: async () => {
+        closeEntered.resolve()
+        await releaseClose.promise
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onRetired }
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const deleting = runtime.deleteSession({ sessionId: 's1' })
+    await closeEntered.promise
+    await runtime.requestRetirement()
+
+    expect(process.killed).toBe(false)
+    expect(onRetired).not.toHaveBeenCalled()
+
+    releaseClose.resolve()
+    await deleting
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(process.killed).toBe(true)
+    expect(onRetired).toHaveBeenCalledOnce()
+  })
+
+  it('does not retire while setPermissionProfile awaits the agent mode request', async () => {
+    const process = new FakeAgentProcess()
+    const modeEntered = createDeferred()
+    const releaseMode = createDeferred()
+    const onRetired = vi.fn()
+    startFakeAgent(process, ['s1'], {
+      modes: createModes(['default', 'bypassPermissions']),
+      onSetMode: async () => {
+        modeEntered.resolve()
+        await releaseMode.promise
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onRetired }
+    })
+    await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    const changingProfile = runtime.setPermissionProfile({ sessionId: 's1', profile: 'full' })
+    await modeEntered.promise
+    await runtime.requestRetirement()
+
+    expect(process.killed).toBe(false)
+    expect(onRetired).not.toHaveBeenCalled()
+
+    releaseMode.resolve()
+    await changingProfile
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(process.killed).toBe(true)
     expect(onRetired).toHaveBeenCalledOnce()

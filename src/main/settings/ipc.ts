@@ -4,7 +4,9 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   isReasoningEffort,
+  type AgentFrameworkId,
   type ReasoningEffort,
+  type SettingsSnapshot,
   type CreateSkillRequest,
   type DeleteProviderRequest,
   type DeleteSkillRequest,
@@ -79,6 +81,21 @@ const registerSettingsIpcHandlers = ({
   onSkillsChanged,
   onConnectorsChanged
 }: SettingsIpcOptions = {}): void => {
+  const notifyAfterRuntimeUninstall = (
+    uninstalledFramework: AgentFrameworkId,
+    snapshot: SettingsSnapshot,
+    activeBackendAffected: boolean
+  ): void => {
+    if (!activeBackendAffected) return
+
+    if (snapshot.agentFrameworkId !== uninstalledFramework) {
+      onAgentFrameworkChanged?.()
+      return
+    }
+
+    onActiveProviderChanged?.()
+  }
+
   ipcMain.handle('settings:get-preflight', () => service.getPreflight())
   ipcMain.handle('settings:get-settings', () => service.getSettingsView())
   ipcMain.handle('settings:encryption-available', () => service.isEncryptionAvailable())
@@ -101,10 +118,10 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:uninstall-claude', async () => {
     const { snapshot, activeBackendAffected } = await service.uninstallClaude()
 
-    // Reconnect only when the removed runtime backed the active framework (its live agent is now stale,
-    // possibly auto-switched to the other). Uninstalling the inactive runtime touches nothing the live
-    // agent depends on, so it must not churn the connection.
-    if (activeBackendAffected) onActiveProviderChanged?.()
+    // Refresh only when the removed runtime backed the active framework. Rotate generations when the
+    // service selected a fallback framework; otherwise reconnect the now-stale current generation.
+    // Uninstalling an inactive runtime must not churn the live agent.
+    notifyAfterRuntimeUninstall('claude-code', snapshot, activeBackendAffected)
 
     return snapshot
   })
@@ -112,7 +129,7 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:uninstall-opencode', async () => {
     const { snapshot, activeBackendAffected } = await service.uninstallOpencode()
 
-    if (activeBackendAffected) onActiveProviderChanged?.()
+    notifyAfterRuntimeUninstall('opencode', snapshot, activeBackendAffected)
 
     return snapshot
   })
@@ -120,7 +137,7 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:uninstall-codex', async () => {
     const { snapshot, activeBackendAffected } = await service.uninstallCodex()
 
-    if (activeBackendAffected) onActiveProviderChanged?.()
+    notifyAfterRuntimeUninstall('codex', snapshot, activeBackendAffected)
 
     return snapshot
   })

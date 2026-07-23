@@ -1533,6 +1533,12 @@ class AcpRuntime {
   // Changes approval behavior only while the conversation is idle. Applying the ACP mode before the
   // next prompt guarantees Full access cannot show a first-tool permission race.
   async setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<AcpStateSnapshot> {
+    return this.withOperationLease(() => this.setPermissionProfileOperation(request))
+  }
+
+  private async setPermissionProfileOperation(
+    request: AcpSetPermissionProfileRequest
+  ): Promise<AcpStateSnapshot> {
     const session = this.sessions.get(request.sessionId)
 
     if (!session) throw new Error(`ACP session not found: ${request.sessionId}`)
@@ -2256,6 +2262,12 @@ class AcpRuntime {
 
   // Closes the agent-side session when supported, then removes local routing state.
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot> {
+    return this.withOperationLease(() => this.deleteSessionOperation(request))
+  }
+
+  private async deleteSessionOperation(
+    request: AcpDeleteSessionRequest
+  ): Promise<AcpStateSnapshot> {
     const session = this.sessions.get(request.sessionId)
 
     if (session) {
