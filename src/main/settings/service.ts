@@ -87,6 +87,7 @@ import {
   resolveVendorOpenAiBaseUrl
 } from '../../shared/provider-registry'
 import { resolveStorageRoot } from '../storage-root'
+import { buildAgentSpawnEnv } from '../acp/agent-process'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   getAgentFramework,
@@ -140,6 +141,7 @@ import {
 } from './managed-claude'
 import { encryptKey, isEncryptionAvailable, maskKey, tryDecryptKey } from './crypto'
 import { applyLocalClaudeAuth, defaultUserClaudeDir } from './local-claude-auth'
+import { augmentedPathEnv } from './shell-path'
 import { computePreflight } from './preflight'
 import { listProviderModels } from './list-models'
 import { buildProviderEnv, getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
@@ -183,13 +185,10 @@ import {
 
 const execFileAsync = promisify(execFile)
 
-// Hard ceiling for the claude-default probe so a stuck local claude can never hang the wizard.
+// Hard ceiling for a Claude credential probe so a stuck process can never hang the wizard.
 const CLAUDE_PROBE_TIMEOUT_MS = 20_000
-// Anthropic documents `claude setup-token` as a one-year long-lived OAuth token. We surface
-// "expires <date>" on the Settings card using this estimate until the first Claude session returns
-// a real expiry. A one-year window is a coarse upper bound; a token that the underlying
-// subscription has already revoked surfaces as a validation failure on first use, so the worst case
-// is a card that says "expires in a year" for a credential that actually expires sooner.
+// Anthropic documents `claude setup-token` as a one-year long-lived OAuth token. The token carries
+// no locally readable expiry, so the Settings card surfaces this estimate from the successful paste.
 const SETUP_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000
 const CODEX_INSTALL_TARGET: InstallTarget = {
   npmPackage: '@agentclientprotocol/codex-acp',
@@ -275,6 +274,38 @@ const isTimeoutError = (error: unknown): boolean => {
   return (
     candidate.killed === true || candidate.signal === 'SIGTERM' || candidate.code === 'ETIMEDOUT'
   )
+}
+
+const classifyClaudeProbeFailure = (error: unknown): 'auth' | 'network' | 'unknown' => {
+  if (typeof error !== 'object' || error === null) return 'unknown'
+
+  const candidate = error as {
+    code?: string | number
+    message?: string
+    stderr?: unknown
+    stdout?: unknown
+  }
+  if (candidate.code === 'ENOENT' || candidate.code === 'EACCES') return 'unknown'
+
+  const detail = [candidate.message, candidate.stderr, candidate.stdout]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ')
+  if (
+    /\b(?:401|403)\b|unauthori[sz]ed|not authenticated|not logged in|authentication failed|invalid api key|api key.*invalid|please run \/login|oauth.*(?:invalid|expired|reject)|(?:invalid|expired|rejected).*token|token.*(?:invalid|expired|rejected)/i.test(
+      detail
+    )
+  ) {
+    return 'auth'
+  }
+  if (
+    /\b(?:ECONNREFUSED|ECONNRESET|ENETUNREACH|EHOSTUNREACH|EAI_AGAIN)\b|network|fetch failed|getaddrinfo/i.test(
+      detail
+    )
+  ) {
+    return 'network'
+  }
+
+  return 'unknown'
 }
 
 // A spawn configuration the ACP runtime reads at connect time so the active provider's credentials
@@ -1749,15 +1780,11 @@ class SettingsService {
     return { ok: true, category: 'ok' }
   }
 
-  // Pastes an OAuth token into the claude-isolated provider. The token is encrypted at rest via the
-  // same encryptKey pipeline other providers use. We do NOT mark the record as verified on a
-  // successful paste: the token is opaque to Open Science, and the actual validation happens when
-  // Claude carries a request with it. Until then, the card shows the "awaiting first session"
-  // warning so the user is not told "verified" for a credential Claude has not actually accepted.
-  // The stored provider is upserted either way (record id is fixed at builtin-claude-isolated), so
-  // this is the only path that adds the card to a fresh install.
+  // Stores a pasted OAuth token, then runs a one-shot Claude request with the exact isolated spawn
+  // environment. Storage roundtrip success alone is not authentication: only the subprocess probe
+  // can mark the provider verified or advance onboarding.
   async loginIsolatedClaude(token: string): Promise<ValidateProviderResult> {
-    const result = this.claudeIsolatedAuthValidationResult(
+    let result = this.claudeIsolatedAuthValidationResult(
       await this.claudeIsolatedAuth.loginIsolated(token)
     )
 
@@ -1771,36 +1798,48 @@ class SettingsService {
     if (!provider) return { ...result, applied: false }
 
     if (result.ok) {
-      // Stored but unvalidated. Keep `lastValidatedAt` undefined and record a benign failure
-      // marker so the Settings card shows "awaiting first Claude session" rather than a green
-      // verified check. The regular validation flow (validateProvider / the next Claude session)
-      // will replace this with a real pass/fail record. The estimated expiry mirrors Anthropic's
-      // documented one-year setup-token lifetime; the validation flow replaces it with a real value
-      // once Claude accepts the token.
-      await this.repository.upsertProvider({
-        ...provider,
-        expiresAt: Date.now() + SETUP_TOKEN_LIFETIME_MS,
-        lastValidatedAt: undefined,
-        lastValidationFailure: {
-          at: Date.now(),
-          category: 'unknown',
-          // No HTTP status — the token hasn't been sent yet. The "awaiting-validation" state is
-          // recognised in the renderer by the absence of `lastValidatedAt`, not by this field.
-          message: 'Token stored. Open Science finishes the sign-in check on the first Claude session.'
-        }
-      })
-    } else {
-      await this.repository.upsertProvider({
-        ...provider,
-        lastValidatedAt: undefined,
-        lastValidationFailure: {
-          at: Date.now(),
-          category: result.category,
-          status: result.status,
-          message: result.message
-        }
-      })
+      result = await this.runClaudeIsolatedProbe(
+        this.resolveProvider(
+          provider,
+          settings.activeProviderId === provider.id ? settings.activeModel : undefined
+        ),
+        settings
+      )
+
+      const applied = await this.repository.updateClaudeIsolatedValidationIfKeyMatches(
+        provider.keyRef,
+        result.ok
+          ? {
+              expiresAt: Date.now() + SETUP_TOKEN_LIFETIME_MS,
+              lastValidatedAt: Date.now(),
+              lastValidationFailure: undefined
+            }
+          : {
+              expiresAt: undefined,
+              lastValidatedAt: undefined,
+              lastValidationFailure: {
+                at: Date.now(),
+                category: result.category,
+                status: result.status,
+                message: result.message
+              }
+            }
+      )
+
+      return { ...result, applied }
     }
+
+    await this.repository.upsertProvider({
+      ...provider,
+      expiresAt: undefined,
+      lastValidatedAt: undefined,
+      lastValidationFailure: {
+        at: Date.now(),
+        category: result.category,
+        status: result.status,
+        message: result.message
+      }
+    })
 
     return { ...result, applied: true }
   }
@@ -1840,12 +1879,9 @@ class SettingsService {
     return { ok: true, category: 'ok' }
   }
 
-  // Read-only status check used by validateProvider for a saved claude-isolated provider. A
-  // decryptable token means the credential is present; "not signed in" means the store is empty.
-  // A stored token is NOT yet "verified" — the verification record lives on the provider
-  // (`lastValidatedAt` / `lastValidationFailure`) and is set by the validation flow that runs
-  // against a live Claude session. This status check consults both so the card surfaces a stored
-  // but unvalidated token as a benign "awaiting first session" state instead of a green check.
+  // Re-validates a stored claude-isolated credential through the same one-shot Claude command used
+  // during sign-in. Reading the encrypted token only proves storage health; the subprocess probe is
+  // what detects a rejected, revoked, or expired setup-token.
   async getClaudeIsolatedStatus(): Promise<ValidateProviderResult> {
     const status = await this.claudeIsolatedAuth.getStatus()
 
@@ -1861,53 +1897,21 @@ class SettingsService {
       (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
     )
 
-    // A stored token without a successful validation record is "awaiting first session", not ok.
-    // A failed last validation (expired / rejected) surfaces its message so the card shows the
-    // exact reason the token is no longer trusted.
-    if (provider?.lastValidationFailure) {
+    if (!provider) {
       return {
         ok: false,
         category: 'unknown',
-        message: provider.lastValidationFailure.message
-      }
-    }
-    if (!provider?.lastValidatedAt) {
-      return {
-        ok: false,
-        category: 'unknown',
-        message: 'Token stored. Open Science finishes the sign-in check on the first Claude session.'
+        message: 'Claude subscription provider is not configured.'
       }
     }
 
-    return { ok: true, category: 'ok' }
-  }
-
-  // Stamps a successful Claude session against the stored claude-isolated provider. The spawn layer
-  // calls this after the first request with a stored token completes without an auth error — the
-  // "first session success" hook that the validateProvider path cannot observe on its own (it has
-  // no live process to probe). Until the spawn layer wires this in, the "Test connection" button
-  // is the only path that flips lastValidatedAt.
-  //
-  // Idempotent: re-calling on a provider that already has lastValidatedAt overwrites the stamp
-  // with a fresh timestamp (no-op if there is no stored record to mark). Refuses to write when the
-  // token is not in storage, so a stale call after logout cannot forge a "verified" state.
-  async markClaudeIsolatedValidated(): Promise<void> {
-    const status = await this.claudeIsolatedAuth.getStatus()
-
-    if (!status.authenticated) return
-
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
+    return this.runClaudeIsolatedProbe(
+      this.resolveProvider(
+        provider,
+        settings.activeProviderId === provider.id ? settings.activeModel : undefined
+      ),
+      settings
     )
-
-    if (!provider) return
-
-    await this.repository.upsertProvider({
-      ...provider,
-      lastValidatedAt: Date.now(),
-      lastValidationFailure: undefined
-    })
   }
 
   // The Claude-auth status does not have a 'timeout' or 'incompatible' category of its own; map it
@@ -1964,7 +1968,7 @@ class SettingsService {
         ? undefined
         : this.frameworkIncompatibilityResult(resolved.provider, framework)
 
-    let result =
+    const result =
       incompatibility ??
       (isCodexSubscriptionProvider(resolved.provider.type)
         ? this.codexAuthValidationResult(
@@ -1979,43 +1983,21 @@ class SettingsService {
         : resolved.provider.type === 'claude-isolated'
           ? await this.getClaudeIsolatedStatus()
           : await validateProvider(resolved.provider, {
-            // Probe over Electron's network stack, which honors the system/VPN proxy. Node's global
-            // fetch (undici) takes a direct path and ignores that proxy, so an official vendor reachable
-            // only through a proxy (e.g. api.openai.com) would fail the probe as a false `network` error
-            // even with a valid key. The local Responses-bridge loopback stays on the direct fetch.
-            fetchImpl: netFetchStandard,
-            runClaudeProbe:
-              resolved.provider.type === 'claude-default'
-                ? () => this.runClaudeProbe(resolved.provider, settings)
-                : undefined,
-            // For a multi-route provider, probe the route this framework actually drives so a passing
-            // test proves that route (e.g. Claude Code hits /v1/messages, not /v1/chat/completions).
-            // Codex is excluded: it bridges the provider's OpenAI route under its `responses` protocol,
-            // so its HTTP route is decided by the bridge, not by supportedApiTypes — keep it as-is.
-            frameworkEndpoints: framework.id === 'codex' ? undefined : framework.supportedApiTypes
-          }))
-
-    // For a stored claude-isolated token, the status check above can only report ok: true when the
-    // stored record already has a lastValidatedAt stamp — which is a chicken-and-egg state right
-    // after a fresh paste. Treat the validate call as the "Test connection" event for the
-    // claude-isolated flow: stamp the record so the card flips to "verified", and surface a
-    // helpful message when no token is stored yet. The spawn layer will additionally call
-    // markClaudeIsolatedValidated on the first successful request, keeping the record honest.
-    if (resolved.provider.type === 'claude-isolated') {
-      const status = await this.claudeIsolatedAuth.getStatus()
-      if (!status.authenticated) {
-        result = {
-          ok: false,
-          category: 'unknown',
-          message:
-            status.message ??
-            'Not signed in. Run `claude setup-token` and paste the token to connect your Claude subscription.'
-        }
-      } else {
-        await this.markClaudeIsolatedValidated()
-        result = { ok: true, category: 'ok' }
-      }
-    }
+              // Probe over Electron's network stack, which honors the system/VPN proxy. Node's global
+              // fetch (undici) takes a direct path and ignores that proxy, so an official vendor reachable
+              // only through a proxy (e.g. api.openai.com) would fail the probe as a false `network` error
+              // even with a valid key. The local Responses-bridge loopback stays on the direct fetch.
+              fetchImpl: netFetchStandard,
+              runClaudeProbe:
+                resolved.provider.type === 'claude-default'
+                  ? () => this.runClaudeProbe(resolved.provider, settings)
+                  : undefined,
+              // For a multi-route provider, probe the route this framework actually drives so a passing
+              // test proves that route (e.g. Claude Code hits /v1/messages, not /v1/chat/completions).
+              // Codex is excluded: it bridges the provider's OpenAI route under its `responses` protocol,
+              // so its HTTP route is decided by the bridge, not by supportedApiTypes — keep it as-is.
+              frameworkEndpoints: framework.id === 'codex' ? undefined : framework.supportedApiTypes
+            }))
 
     if (resolved.storedId) {
       // Each early return here means the tested target no longer matches what is stored (a newer test
@@ -3016,6 +2998,56 @@ class SettingsService {
             message:
               'Local Claude could not authenticate. Run `claude` in a terminal and log in, then try again.'
           }
+    }
+  }
+
+  private async runClaudeIsolatedProbe(
+    provider: ResolvedProvider,
+    settings: StoredSettings
+  ): Promise<ValidateProviderResult> {
+    const executablePath = settings.claude?.resolvedPath
+
+    if (!executablePath) {
+      return {
+        ok: false,
+        category: 'unknown',
+        message: 'Claude executable is not configured. Complete Claude detection in settings first.'
+      }
+    }
+
+    const appConfigDir = getAppClaudeConfigDir(this.storageRoot)
+    await provisionAppClaudeConfigDir(appConfigDir, {
+      skills: await this.skillCatalog(),
+      disabledSkillIds: settings.disabledSkillIds
+    })
+    const envOverrides = buildProviderEnv(provider, {
+      storageRoot: this.storageRoot,
+      claudeExecutablePath: executablePath
+    })
+    const env = buildAgentSpawnEnv(augmentedPathEnv(process.env), envOverrides, executablePath)
+
+    try {
+      await this.executeClaudeProbe(executablePath, env)
+
+      return { ok: true, category: 'ok' }
+    } catch (error) {
+      if (isTimeoutError(error)) {
+        return {
+          ok: false,
+          category: 'timeout',
+          message: 'Claude token validation timed out. Try again.'
+        }
+      }
+
+      const category = classifyClaudeProbeFailure(error)
+      const messages = {
+        auth: 'Claude rejected the setup token. Run `claude setup-token` again and paste a new token.',
+        network:
+          'Claude could not reach Anthropic while validating the token. Check your network and try again.',
+        unknown: 'Claude could not run the token validation probe. Re-detect Claude and try again.'
+      } as const
+
+      return { ok: false, category, message: messages[category] }
     }
   }
 

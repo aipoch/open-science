@@ -658,6 +658,32 @@ class SettingsRepository {
     })
   }
 
+  // Records a probe result only while the credential that was probed is still current. Login probes
+  // run a subprocess and can overlap logout, deletion, edits, or a second paste; comparing inside the
+  // serialized mutation prevents a stale result from restoring an old provider snapshot or marking a
+  // replacement token as verified.
+  async updateClaudeIsolatedValidationIfKeyMatches(
+    expectedKeyRef: string | undefined,
+    patch: Pick<StoredProvider, 'expiresAt' | 'lastValidatedAt' | 'lastValidationFailure'>
+  ): Promise<boolean> {
+    let applied = false
+
+    await this.mutate((settings) => {
+      const index = settings.providers.findIndex(
+        (provider) => provider.id === CLAUDE_ISOLATED_PROVIDER_ID
+      )
+      if (index < 0 || settings.providers[index].keyRef !== expectedKeyRef) return settings
+
+      const providers = [...settings.providers]
+      providers[index] = { ...providers[index], ...patch }
+      applied = true
+
+      return { ...settings, providers }
+    })
+
+    return applied
+  }
+
   // Removes a provider and clears the active pointer (and model) when it referenced the removed one.
   async deleteProvider(id: string): Promise<StoredSettings> {
     return this.mutate((settings) => {

@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+// Testing Library wraps portal interactions and their async state updates in React's test lifecycle.
+import { fireEvent, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ClaudeIsolatedSignInModal } from './ClaudeIsolatedSignInModal'
@@ -31,11 +33,6 @@ const renderModal = (props: {
   open?: boolean
 }): { onSubmit: SubmitSpy; onOpenChange: ReturnType<typeof vi.fn> } => {
   const onSubmit = (props.onSubmit ?? vi.fn(async () => undefined)) as SubmitSpy
-  // The first call's promise resolves with whatever the test queued. Subsequent calls reuse the
-  // same spy so tests can stage success/failure by setting the mock return in sequence.
-  if (onSubmit.mock.results.length === 0) {
-    onSubmit.mockResolvedValueOnce(undefined)
-  }
   const onOpenChange = vi.fn()
   act(() => {
     root.render(
@@ -75,11 +72,6 @@ const setInputValue = (input: HTMLInputElement, value: string): void => {
 }
 
 describe('ClaudeIsolatedSignInModal UI state', () => {
-  // The async click → submit → onSubmit → close/error path is exercised at the service layer
-  // (loginIsolatedClaude test group in service.test.ts), where the state updates can be observed
-  // synchronously. These tests pin the synchronous UI state: button-enabled gating, label, and the
-  // initial paint's error region absence.
-
   it('disables the Sign in button until the user pastes a non-empty token', () => {
     const { onSubmit } = renderModal({})
 
@@ -109,9 +101,6 @@ describe('ClaudeIsolatedSignInModal UI state', () => {
   })
 
   it('does not render the inline error region on first paint (it is controlled by submitError)', () => {
-    // The role=alert region carries the controller's failure message after a failed submit. It is
-    // absent on initial render and is driven by the modal's `submitError` state, not by props. The
-    // full error-surface path is exercised at the service layer (loginIsolatedClaude test group).
     renderModal({})
 
     expect(document.body.querySelector('[role="alert"]')).toBeNull()
@@ -126,5 +115,50 @@ describe('ClaudeIsolatedSignInModal UI state', () => {
 
     expect(onSubmit).not.toHaveBeenCalled()
     expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('closes the dialog on a successful submit and calls onSubmit with the pasted token', async () => {
+    const onSubmit = vi.fn(async (): Promise<ValidateProviderResult | undefined> => ({
+      ok: true,
+      category: 'ok'
+    })) as SubmitSpy
+    const { onOpenChange } = renderModal({ onSubmit })
+
+    const input = findInput('Claude setup token')
+    if (!input) throw new Error('token input not found')
+    setInputValue(input, 'sk-ant-pasted')
+
+    const signIn = findButton('Sign in')
+    if (!signIn) throw new Error('sign in button not found')
+
+    fireEvent.click(signIn)
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(onSubmit).toHaveBeenCalledWith('sk-ant-pasted')
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
+  })
+
+  it('surfaces the controller error inline and keeps the dialog open on a failed submit', async () => {
+    const onSubmit = vi.fn(async (): Promise<ValidateProviderResult | undefined> => ({
+      ok: false,
+      category: 'unknown',
+      message: 'Secure credential storage is unavailable. Unlock the system keychain and retry.'
+    })) as SubmitSpy
+    const { onOpenChange } = renderModal({ onSubmit })
+
+    const input = findInput('Claude setup token')
+    if (!input) throw new Error('token input not found')
+    setInputValue(input, 'sk-ant-pasted')
+
+    const signIn = findButton('Sign in')
+    if (!signIn) throw new Error('sign in button not found')
+
+    fireEvent.click(signIn)
+
+    await waitFor(() => {
+      const alert = document.body.querySelector('[role="alert"]')
+      expect(alert?.textContent).toContain('Unlock the system keychain')
+    })
+    expect(onOpenChange).not.toHaveBeenCalled()
   })
 })

@@ -78,12 +78,9 @@ export class ClaudeIsolatedAuthController {
     }
   }
 
-  // Persists a freshly-pasted setup-token. The token itself is opaque to Open Science — Claude Code
-  // validates it on first use — so we cannot decode it here. The status we return is "stored but
-  // unvalidated": the token roundtripped through the encrypted store (a corrupted save would surface
-  // as a half-state below), but Claude has not accepted it yet. The validation flow records the
-  // pass/fail result against the provider so the Settings card can show "verified" only after
-  // Claude has actually carried a request with this token.
+  // Persists a freshly-pasted setup-token. The controller proves only that encrypted storage
+  // roundtrips; the SettingsService subsequently runs Claude with the token before reporting the
+  // provider as verified.
   async loginIsolated(token: string): Promise<ClaudeIsolatedAuthStatus> {
     const trimmed = token.trim()
 
@@ -116,10 +113,8 @@ export class ClaudeIsolatedAuthController {
       }
     }
 
-    // Re-probe the store after save so a corrupted roundtrip (a save that does not survive a load)
-    // surfaces here as the malformed-token case instead of masquerading as authenticated and only
-    // failing on the next Claude spawn. Distinguishing valid / expired / malformed at login time
-    // keeps the Settings card truthful about the credential's actual state.
+    // Re-read after save so corrupted ciphertext or a failed write surfaces before the service runs
+    // the external credential probe.
     try {
       const reloaded = await this.store.loadToken()
 

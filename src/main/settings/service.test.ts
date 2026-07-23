@@ -3128,14 +3128,238 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
     logoutIsolated: vi.fn().mockResolvedValue({ supported: true, authenticated: false })
   }
 
-  it('records expiresAt + an awaiting-validation marker on a successful paste', async () => {
-    const service = createService(undefined, { claudeIsolatedAuth: successAuth })
+  it('verifies a pasted token with Claude under the app-owned config before reporting success', async () => {
+    const probe = vi.fn<(executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>>()
+    probe.mockResolvedValue(undefined)
+    const service = createService(undefined, {
+      claudeIsolatedAuth: successAuth,
+      executeClaudeProbe: probe
+    })
+    const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: encryptKey('sk-ant-valid'),
+      keyMask: maskKey('sk-ant-valid')
+    })
+
+    const result = await service.loginIsolatedClaude('sk-ant-valid')
+
+    expect(result).toMatchObject({ ok: true, category: 'ok', applied: true })
+    expect(probe).toHaveBeenCalledOnce()
+    expect(probe).toHaveBeenCalledWith(
+      '/bin/claude',
+      expect.objectContaining({
+        CLAUDE_CONFIG_DIR: getAppClaudeConfigDir(storageRoot),
+        CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-valid'
+      })
+    )
+  })
+
+  it('keeps a rejected setup token unverified and records an actionable auth failure', async () => {
+    const probe = vi.fn<(executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>>()
+    probe.mockRejectedValue(
+      Object.assign(new Error('Command failed with exit code 1'), {
+        stdout: 'Invalid API key. Please run /login.'
+      })
+    )
+    const service = createService(undefined, {
+      claudeIsolatedAuth: successAuth,
+      executeClaudeProbe: probe
+    })
+    const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: encryptKey('sk-ant-valid'),
+      keyMask: maskKey('sk-ant-valid')
+    })
+
+    const result = await service.loginIsolatedClaude('sk-ant-valid')
+
+    expect(result).toMatchObject({ ok: false, category: 'auth', applied: true })
+    expect(result.message).toMatch(/rejected the setup token/i)
+    const stored = (await repository.getSettings()).providers.find(
+      (provider) => provider.id === 'builtin-claude-isolated'
+    )
+    expect(stored?.lastValidatedAt).toBeUndefined()
+    expect(stored?.lastValidationFailure).toMatchObject({
+      category: 'auth',
+      message: expect.stringMatching(/rejected the setup token/i)
+    })
+  })
+
+  it('does not misreport a missing Claude executable as a rejected token', async () => {
+    const probe = vi.fn<(executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>>()
+    probe.mockRejectedValue(Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }))
+    const service = createService(undefined, {
+      claudeIsolatedAuth: successAuth,
+      executeClaudeProbe: probe
+    })
+    const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.setClaudeInfo({ resolvedPath: '/missing/claude', version: '2.1.0' })
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: encryptKey('sk-ant-valid'),
+      keyMask: maskKey('sk-ant-valid')
+    })
+
+    const result = await service.loginIsolatedClaude('sk-ant-valid')
+
+    expect(result).toMatchObject({ ok: false, category: 'unknown', applied: true })
+    expect(result.message).toMatch(/could not run.*re-detect Claude/i)
+    expect(result.message).not.toMatch(/rejected.*token/i)
+  })
+
+  it('reports a terminated Claude credential probe as a timeout', async () => {
+    const probe = vi.fn<(executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>>()
+    probe.mockRejectedValue(
+      Object.assign(new Error('Command timed out'), { killed: true, signal: 'SIGTERM' })
+    )
+    const service = createService(undefined, {
+      claudeIsolatedAuth: successAuth,
+      executeClaudeProbe: probe
+    })
+    const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: encryptKey('sk-ant-valid'),
+      keyMask: maskKey('sk-ant-valid')
+    })
+
+    const result = await service.loginIsolatedClaude('sk-ant-valid')
+
+    expect(result).toMatchObject({ ok: false, category: 'timeout', applied: true })
+    expect(result.message).toMatch(/validation timed out/i)
+  })
+
+  it('reports a Claude credential probe DNS failure as a network error', async () => {
+    const probe = vi.fn<(executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>>()
+    probe.mockRejectedValue(
+      Object.assign(new Error('getaddrinfo EAI_AGAIN api.anthropic.com'), { code: 'EAI_AGAIN' })
+    )
+    const service = createService(undefined, {
+      claudeIsolatedAuth: successAuth,
+      executeClaudeProbe: probe
+    })
+    const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: encryptKey('sk-ant-valid'),
+      keyMask: maskKey('sk-ant-valid')
+    })
+
+    const result = await service.loginIsolatedClaude('sk-ant-valid')
+
+    expect(result).toMatchObject({ ok: false, category: 'network', applied: true })
+    expect(result.message).toMatch(/could not reach Anthropic.*check your network/i)
+  })
+
+  it('re-probes a previously verified token so later expiry is reported', async () => {
+    const probe = vi.fn<(executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>>()
+    probe.mockRejectedValue(new Error('token expired'))
+    const service = createService(undefined, {
+      claudeIsolatedAuth: successAuth,
+      executeClaudeProbe: probe
+    })
+    const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: encryptKey('sk-ant-valid'),
+      keyMask: maskKey('sk-ant-valid')
+    })
+    const stored = (await repository.getSettings()).providers.find(
+      (provider) => provider.id === 'builtin-claude-isolated'
+    )
+    if (!stored) throw new Error('claude-isolated provider not found')
+    await repository.upsertProvider({
+      ...stored,
+      lastValidatedAt: Date.now(),
+      lastValidationFailure: undefined
+    })
+
+    const result = await service.getClaudeIsolatedStatus()
+
+    expect(probe).toHaveBeenCalledOnce()
+    expect(result).toMatchObject({ ok: false, category: 'auth' })
+    expect(result.message).toMatch(/rejected the setup token/i)
+  })
+
+  it('does not restore a token cleared while its login probe is still running', async () => {
+    let finishProbe: (() => void) | undefined
+    const probe = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishProbe = resolve
+        })
+    )
+    const service = createService(undefined, { executeClaudeProbe: probe })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.upsertProvider({
+      id: 'builtin-claude-isolated',
+      type: 'claude-isolated',
+      name: 'Claude subscription'
+    })
+
+    const login = service.loginIsolatedClaude('sk-ant-valid')
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce())
+    await service.logoutIsolatedClaude()
+    finishProbe?.()
+
+    const result = await login
+    const stored = (await repository.getSettings()).providers.find(
+      (provider) => provider.id === 'builtin-claude-isolated'
+    )
+    expect(result).toMatchObject({ ok: true, applied: false })
+    expect(stored?.keyRef).toBeUndefined()
+    expect(stored?.lastValidatedAt).toBeUndefined()
+  })
+
+  it('discards an older probe when a newer setup-token login wins', async () => {
+    const finishProbes: Array<() => void> = []
+    const probe = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishProbes.push(resolve)
+        })
+    )
+    const service = createService(undefined, { executeClaudeProbe: probe })
+    const { encryptKey } = await import('./crypto.js')
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.upsertProvider({
+      id: 'builtin-claude-isolated',
+      type: 'claude-isolated',
+      name: 'Claude subscription'
+    })
+
+    const olderLogin = service.loginIsolatedClaude('sk-ant-older')
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(1))
+    const newerLogin = service.loginIsolatedClaude('sk-ant-newer')
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2))
+
+    finishProbes[1]?.()
+    expect(await newerLogin).toMatchObject({ ok: true, applied: true })
+    finishProbes[0]?.()
+    expect(await olderLogin).toMatchObject({ ok: true, applied: false })
+
+    const stored = (await repository.getSettings()).providers.find(
+      (provider) => provider.id === 'builtin-claude-isolated'
+    )
+    expect(stored?.keyRef).toBe(encryptKey('sk-ant-newer'))
+    expect(stored?.lastValidatedAt).toBeGreaterThan(0)
+  })
+
+  it('records expiresAt and a verified timestamp after a successful token probe', async () => {
+    const probe = vi.fn<(executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>>()
+    probe.mockResolvedValue(undefined)
+    const service = createService(undefined, {
+      claudeIsolatedAuth: successAuth,
+      executeClaudeProbe: probe
+    })
     // Seed the provider card. The loginIsolatedClaude path requires an existing record to find
     // (the early-return for a missing card is the "applied: false" branch).
     const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
     await repository.upsertClaudeIsolatedProvider({
-      keyRef: encryptKey('test-token-seed'),
-      keyMask: maskKey('test-token-seed')
+      keyRef: encryptKey('sk-ant-valid'),
+      keyMask: maskKey('sk-ant-valid')
     })
 
     const before = Date.now()
@@ -3150,26 +3374,8 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
     // Estimated one-year expiry: must be within the window the service set, not "now exactly".
     expect(stored?.expiresAt).toBeGreaterThanOrEqual(before + 364 * 24 * 60 * 60 * 1000)
     expect(stored?.expiresAt).toBeLessThanOrEqual(after + 366 * 24 * 60 * 60 * 1000)
-    // lastValidatedAt stays undefined; the placeholder message carries the awaiting state.
-    expect(stored?.lastValidatedAt).toBeUndefined()
-    expect(stored?.lastValidationFailure?.message).toMatch(/Token stored/i)
-  })
-
-  it('getClaudeIsolatedStatus reports "awaiting first session" for a stored-but-unvalidated token', async () => {
-    const service = createService(undefined, { claudeIsolatedAuth: successAuth })
-    const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.upsertClaudeIsolatedProvider({
-      keyRef: encryptKey('test-token-seed'),
-      keyMask: maskKey('test-token-seed')
-    })
-    // A successful login sets the awaiting marker.
-    await service.loginIsolatedClaude('sk-ant-valid')
-
-    const result = await service.getClaudeIsolatedStatus()
-
-    // Not "ok" — the token is stored, but Claude has not actually accepted it yet.
-    expect(result.ok).toBe(false)
-    expect(result.message).toMatch(/Token stored/i)
+    expect(stored?.lastValidatedAt).toBeGreaterThanOrEqual(before)
+    expect(stored?.lastValidationFailure).toBeUndefined()
   })
 
   it('logoutIsolatedClaude on error does NOT clear the stored validation markers', async () => {
@@ -3191,14 +3397,14 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       keyMask: maskKey('test-token-seed')
     })
     // Stamp a real failure marker on the record so we can verify it survives the failed logout.
-    const originalFailureMessage = 'Token stored. Open Science finishes the sign-in check on the first Claude session.'
+    const originalFailureMessage = 'Claude rejected the setup token.'
     await repository.upsertProvider({
       id: 'builtin-claude-isolated',
       type: 'claude-isolated',
       name: 'Claude subscription',
       lastValidationFailure: {
         at: Date.now(),
-        category: 'unknown',
+        category: 'auth',
         message: originalFailureMessage
       }
     })
@@ -3215,11 +3421,6 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
 })
 
 describe('SettingsService: claude-isolated validation flow', () => {
-  // Round 6 of the AI review: the test-connection path for a freshly-pasted token has to
-  // transition the card from "awaiting" to "verified" — otherwise preflight blocks every spawn
-  // forever. The "first session success" hook (markClaudeIsolatedValidated) is what closes the
-  // loop; validateProvider is the second caller that drives it.
-
   const successAuth = {
     getStatus: vi.fn().mockResolvedValue({ supported: true, authenticated: true }),
     loginIsolated: vi.fn(async () => ({ supported: true, authenticated: true })),
@@ -3235,60 +3436,21 @@ describe('SettingsService: claude-isolated validation flow', () => {
     })
   }
 
-  it('markClaudeIsolatedValidated stamps lastValidatedAt and clears the awaiting marker', async () => {
-    const service = createService(undefined, { claudeIsolatedAuth: successAuth })
-    await seedStoredToken()
-    await service.loginIsolatedClaude('test-token-seed')
-
-    const before = (await repository.getSettings()).providers.find(
-      (p) => p.id === 'builtin-claude-isolated'
-    )
-    expect(before?.lastValidatedAt).toBeUndefined()
-    expect(before?.lastValidationFailure?.message).toMatch(/Token stored/i)
-
-    await service.markClaudeIsolatedValidated()
-
-    const after = (await repository.getSettings()).providers.find(
-      (p) => p.id === 'builtin-claude-isolated'
-    )
-    expect(after?.lastValidatedAt).toBeGreaterThan(0)
-    expect(after?.lastValidationFailure).toBeUndefined()
-  })
-
-  it('markClaudeIsolatedValidated is a no-op when the controller reports no token', async () => {
-    // A stale call after logout must not forge a "verified" state. The controller's getStatus
-    // decides whether a token is in the encrypted store; markClaudeIsolatedValidated short-circuits
-    // when that returns authenticated: false. This test stages a no-token controller and asserts
-    // the early return leaves the stored record untouched.
-    const noTokenAuth = {
-      ...successAuth,
-      getStatus: vi.fn().mockResolvedValue({ supported: true, authenticated: false })
-    }
-    const service = createService(undefined, { claudeIsolatedAuth: noTokenAuth })
-    const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.upsertClaudeIsolatedProvider({
-      keyRef: encryptKey('test-token-seed'),
-      keyMask: maskKey('test-token-seed')
+  it('validateProvider re-probes claude-isolated and records the successful result', async () => {
+    const probe = vi.fn<(executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>>()
+    probe.mockResolvedValue(undefined)
+    const service = createService(undefined, {
+      claudeIsolatedAuth: successAuth,
+      executeClaudeProbe: probe
     })
-
-    await service.markClaudeIsolatedValidated()
-
-    const after = (await repository.getSettings()).providers.find(
-      (p) => p.id === 'builtin-claude-isolated'
-    )
-    expect(after?.lastValidatedAt).toBeUndefined()
-  })
-
-  it('validateProvider for claude-isolated flips awaiting → verified (the Test connection path)', async () => {
-    const service = createService(undefined, { claudeIsolatedAuth: successAuth })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
     await seedStoredToken()
-    // A fresh paste puts the record in the awaiting state — Test connection is the bridge back.
-    await service.loginIsolatedClaude('test-token-seed')
 
     const storedId = 'builtin-claude-isolated'
     const result = await service.validateProvider({ providerId: storedId })
 
     expect(result.ok).toBe(true)
+    expect(probe).toHaveBeenCalledOnce()
     const after = (await repository.getSettings()).providers.find((p) => p.id === storedId)
     expect(after?.lastValidatedAt).toBeGreaterThan(0)
     expect(after?.lastValidationFailure).toBeUndefined()
@@ -3302,8 +3464,11 @@ describe('SettingsService: claude-isolated edit preserves expiresAt + keyRef', (
   // survive a model edit on the same stored record.
 
   it('keeps existing.expiresAt through an edit that only changes the model', async () => {
-    const service = createService()
+    const service = createService(undefined, {
+      executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
+    })
     const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('test-token-seed'),
       keyMask: maskKey('test-token-seed')

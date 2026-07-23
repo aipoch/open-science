@@ -96,21 +96,6 @@ describe('buildAgentSpawnEnv', () => {
     expect(env.CLAUDE_CODE_EXECUTABLE).toBe('/bin/claude')
   })
 
-  it('throws when envOverrides is missing CLAUDE_CONFIG_DIR (fail closed)', () => {
-    // The non-isolated fallback path used to inherit the parent's CLAUDE_CONFIG_DIR (or read the
-    // default `~/.claude` on the host). A future provider that forgot the override would silently
-    // fall back to the user's machine-level Claude Code login. Failing closed here means a broken
-    // provider produces a hard error at spawn time rather than leaking auth.
-    expect(() =>
-      buildAgentSpawnEnv(
-        { PATH: '/usr/bin' },
-        // Deliberately omit CLAUDE_CONFIG_DIR.
-        { ANTHROPIC_MODEL: 'claude-opus' },
-        '/bin/claude'
-      )
-    ).toThrow(/envOverrides must include CLAUDE_CONFIG_DIR/)
-  })
-
   it('drops inherited CLAUDE_CODE_OAUTH_TOKEN so a custom gateway cannot carry a subscription', () => {
     // The setup-token flow writes CLAUDE_CODE_OAUTH_TOKEN to the shell. A custom / official gateway
     // that does not set this var would let the parent's subscription token bleed into the spawned
@@ -131,6 +116,24 @@ describe('buildAgentSpawnEnv', () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('provider-token')
     expect(env.CLAUDE_CONFIG_DIR).toBe('/provider/config')
+  })
+
+  it('preserves the legacy local Claude auth context until claude-default is removed', () => {
+    const env = buildAgentSpawnEnv(
+      {
+        ANTHROPIC_BASE_URL: 'https://proxy.example',
+        CLAUDE_CODE_OAUTH_TOKEN: 'local-subscription-token',
+        CLAUDE_CONFIG_DIR: '/inherited/config',
+        PATH: '/usr/bin'
+      },
+      { ANTHROPIC_MODEL: 'claude-opus' },
+      '/bin/claude'
+    )
+
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://proxy.example')
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('local-subscription-token')
+    expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
+    expect(env.ANTHROPIC_MODEL).toBe('claude-opus')
   })
 
   it('drops inherited CLAUDE_CONFIG_DIR even when envOverrides provides a different one', () => {
