@@ -1,10 +1,18 @@
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 
 import { load } from 'js-yaml'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 // ai-review-labels.yml consumes reviewer job names and comment headers produced by ai-review.yml.
 // That contract is otherwise invisible: a rename on either side silently disables verdict-based
@@ -18,16 +26,41 @@ const labelsWorkflow = readFileSync(
 const jobNames = [...labelsWorkflow.matchAll(/jobName: '([^']+)'/g)].map(([, name]) => name)
 const headers = [...labelsWorkflow.matchAll(/header: '([^']+)'/g)].map(([, header]) => header)
 
+type WorkflowStep = {
+  id?: string
+  name?: string
+  run?: string
+  'working-directory'?: string
+  env?: Record<string, string>
+}
+
 type Workflow = {
-  jobs: Record<string, { steps: Array<{ id?: string; run?: string }> }>
+  jobs: Record<string, { steps: WorkflowStep[] }>
 }
 
 const parsedWorkflow = load(reviewWorkflow) as Workflow
+const fixtureRoots: string[] = []
+
+afterEach(() => {
+  for (const root of fixtureRoots.splice(0)) rmSync(root, { force: true, recursive: true })
+})
+
+function createFixtureRoot(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix))
+  fixtureRoots.push(root)
+  return root
+}
 
 function getRunStep(jobName: string, stepId: string): string {
   const step = parsedWorkflow.jobs[jobName].steps.find(({ id }) => id === stepId)
   if (!step?.run) throw new Error(`Missing run step ${jobName}.${stepId}`)
   return step.run
+}
+
+function getNamedStep(jobName: string, stepName: string): WorkflowStep {
+  const step = parsedWorkflow.jobs[jobName].steps.find(({ name }) => name === stepName)
+  if (!step) throw new Error(`Missing step ${jobName}.${stepName}`)
+  return step
 }
 
 function writeExecutable(path: string, contents: string): void {
@@ -39,8 +72,11 @@ function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: 'ignore' })
 }
 
-function createMergeCommit(files: Record<string, string | Buffer>): string {
-  const root = mkdtempSync(join(tmpdir(), 'ai-review-context-'))
+function createMergeCommit(
+  files: Record<string, string | Buffer>,
+  symlinks: Record<string, string> = {}
+): string {
+  const root = createFixtureRoot('ai-review-context-')
   git(root, 'init', '-b', 'main')
   git(root, 'config', 'user.name', 'Test')
   git(root, 'config', 'user.email', 'test@example.com')
@@ -49,6 +85,7 @@ function createMergeCommit(files: Record<string, string | Buffer>): string {
   git(root, 'commit', '-m', 'base')
   git(root, 'checkout', '-b', 'feature')
   for (const [path, contents] of Object.entries(files)) writeFileSync(join(root, path), contents)
+  for (const [path, target] of Object.entries(symlinks)) symlinkSync(target, join(root, path))
   git(root, 'add', '.')
   git(root, 'commit', '-m', 'feature')
   git(root, 'checkout', 'main')
@@ -57,7 +94,7 @@ function createMergeCommit(files: Record<string, string | Buffer>): string {
 }
 
 function runCodexReviewStep(): { captureDir: string; githubOutput: string } {
-  const root = mkdtempSync(join(tmpdir(), 'ai-review-codex-'))
+  const root = createFixtureRoot('ai-review-codex-')
   const binDir = join(root, 'bin')
   const captureDir = join(root, 'capture')
   const codexHome = join(root, 'codex-home')
@@ -216,6 +253,21 @@ describe('AI review workflow contract', () => {
     expect(output.toString('utf8')).toContain('### payload.bin (skipped: binary)')
   })
 
+  it('does not follow changed symlinks when generating Claude review context', () => {
+    if (process.platform === 'win32') return
+
+    const root = createMergeCommit({}, { 'outside-link': '/etc/hosts' })
+    const githubOutput = join(root, 'github-output')
+    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'context')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, GITHUB_OUTPUT: githubOutput }
+    })
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(readFileSync(githubOutput, 'utf8')).toContain('### outside-link (skipped: symlink)')
+  })
+
   it('fails closed when review context exceeds the size limit', () => {
     expect(reviewWorkflow).toContain('exit 1')
     expect(reviewWorkflow).not.toContain(
@@ -234,9 +286,19 @@ describe('AI review workflow contract', () => {
   })
 
   it('pins compatible Codex CLI and proxy versions', () => {
-    expect(reviewWorkflow).toContain(
-      'npm install -g @openai/codex@0.145.0 @openai/codex-responses-api-proxy@0.145.0'
-    )
+    const step = getNamedStep('codex_review', 'Install Codex CLI and Responses API proxy')
+
+    expect(step.run).toContain('@openai/codex@0.145.0')
+    expect(step.run).toContain('@openai/codex-responses-api-proxy@0.145.0')
+  })
+
+  it('installs review binaries without reading fork-controlled npm configuration', () => {
+    const step = getNamedStep('codex_review', 'Install Codex CLI and Responses API proxy')
+
+    expect(step['working-directory']).toBe('${{ runner.temp }}')
+    expect(step.env?.NPM_CONFIG_USERCONFIG).toBe('${{ runner.temp }}/review-npmrc')
+    expect(step.run).toContain('--registry=https://registry.npmjs.org/')
+    expect(step.run).toContain('--ignore-scripts')
   })
 
   it('runs codex review with the sandbox option and generated proxy config enabled', () => {

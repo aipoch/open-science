@@ -284,7 +284,15 @@ jobs:
 
       - name: Install Codex CLI and Responses API proxy
         shell: bash
-        run: npm install -g @openai/codex@0.145.0 @openai/codex-responses-api-proxy@0.145.0
+        working-directory: ${{ runner.temp }}
+        env:
+          NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/review-npmrc
+        run: |
+          set -euo pipefail
+          : > "$NPM_CONFIG_USERCONFIG"
+          npm install -g --ignore-scripts --registry=https://registry.npmjs.org/ \
+            @openai/codex@0.145.0 \
+            @openai/codex-responses-api-proxy@0.145.0
 
       - name: Start Responses API proxy and run Codex review
         id: run_codex
