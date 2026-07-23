@@ -53,4 +53,20 @@ describe('AI review workflow contract', () => {
     const dispatchGuards = reviewWorkflow.match(/github\.event_name == 'workflow_dispatch'/g)
     expect(dispatchGuards?.length).toBe(2)
   })
+
+  it('passes --repo to gh pr view so it works before checkout on a clean runner', () => {
+    expect(reviewWorkflow).toContain('--repo "${{ github.repository }}"')
+  })
+
+  it('does not grant the Claude agent gh pr comment (secrets isolation for fork review)', () => {
+    // Claude must not post comments directly; its output flows through a trusted post-job.
+    const allowedToolsLine = reviewWorkflow.match(/--allowedTools[^\n]+/g)
+    expect(allowedToolsLine).toBeTruthy()
+    for (const line of allowedToolsLine!) {
+      expect(line).not.toContain('gh pr comment')
+    }
+    expect(reviewWorkflow).toContain('post_claude_feedback')
+    expect(reviewWorkflow).toContain('structured_output')
+    expect(reviewWorkflow).toContain('--json-schema')
+  })
 })

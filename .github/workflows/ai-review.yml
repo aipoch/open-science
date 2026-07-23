@@ -12,6 +12,11 @@ name: AI PR Review
 # skipped unless ENABLE_FORK_REVIEW=true; same-repository PRs always run. workflow_dispatch with a
 # pull request number re-runs either review on demand and bypasses the fork gate (the secret and
 # workflow code are already trusted under a manual dispatch).
+#
+# Neither reviewer agent posts comments directly. Each writes its verdict to a job output, and a
+# separate trusted post-job publishes the comment via the GitHub REST API. This keeps secret-bearing
+# tokens out of the agent's reach for network egress, so a prompt-injection in a fork PR diff cannot
+# exfiltrate credentials through a tool like `gh pr comment --body-file`.
 on:
   pull_request_target:
     branches:
@@ -38,12 +43,15 @@ jobs:
       cancel-in-progress: true
     permissions:
       contents: read
-      pull-requests: write
-      issues: write
+    outputs:
+      review_body: ${{ steps.run_claude.outputs.structured_output != '' && fromJSON(steps.run_claude.outputs.structured_output).review || '' }}
+      pr_number: ${{ steps.pr.outputs.number }}
     steps:
       - name: Resolve pull request number
         id: pr
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           DISPATCH_PR_NUMBER: ${{ github.event.inputs.pull_request_number }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
         shell: bash
@@ -64,6 +72,7 @@ jobs:
           persist-credentials: false
 
       - name: Run Claude architecture review
+        id: run_claude
         uses: anthropics/claude-code-action@v1
         env:
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
@@ -106,14 +115,45 @@ jobs:
             are found, write **No architectural or integration issues found.** Be concise.
 
             Budget at most 10 tool calls: inspect the diff, read only files directly affected by
-            the change, then post the review. Do not explore the wider repository.
+            the change, then stop. Do not explore the wider repository. Do not post any PR comments;
+            the review text you produce will be published by a trusted downstream job.
 
-            Post the review as a PR comment via `gh pr comment`.
+            You must return your final review as structured output matching the JSON schema.
+          # --json-schema captures the review text as a structured output so a separate, trusted
+          # post-job can publish it. The agent never gets gh pr comment, so a prompt-injection in a
+          # fork diff cannot exfiltrate secrets via --body-file or similar.
+          #
           # Cap agentic turns so a slow gateway cannot stretch a review indefinitely; the prompt
           # budgets fewer calls, so hitting the cap means the run was already unhealthy.
-          claude_args: |
+          claude_args: >-
             --max-turns 15
-            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Read,Grep,Glob"
+            --output-format json
+            --json-schema '{"type":"object","properties":{"review":{"type":"string"}},"required":["review"]}'
+            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Read,Grep,Glob"
+
+  post_claude_feedback:
+    name: Post Claude feedback
+    if: ${{ needs.claude_review.result == 'success' && needs.claude_review.outputs.review_body != '' }}
+    needs: claude_review
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Post Claude architecture review
+        uses: actions/github-script@v8
+        env:
+          REVIEW_BODY: ${{ needs.claude_review.outputs.review_body }}
+          PR_NUMBER: ${{ needs.claude_review.outputs.pr_number }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number(process.env.PR_NUMBER),
+              body: process.env.REVIEW_BODY,
+            });
 
   codex_review:
     # Keep this name in sync with ai-review-labels.yml, which recognizes successful reviewers.
@@ -138,6 +178,7 @@ jobs:
         id: pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           DISPATCH_PR_NUMBER: ${{ github.event.inputs.pull_request_number }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
         shell: bash
@@ -148,7 +189,7 @@ jobs:
             echo "No pull request number available (workflow_dispatch input or pull_request event)." >&2
             exit 1
           fi
-          gh pr view "$pr_number" --json number,headRefName,headRefOid,baseRefOid,title > pr.json
+          gh pr view "$pr_number" --repo "${{ github.repository }}" --json number,headRefName,headRefOid,baseRefOid,title > pr.json
           {
             echo "number=$(jq -r '.number' pr.json)"
             echo "head_ref=$(jq -r '.headRefName' pr.json)"
