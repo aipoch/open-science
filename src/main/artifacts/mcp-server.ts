@@ -45,16 +45,6 @@ type ArtifactToolWriteInput = {
   encoding?: ArtifactWriteEncoding
 }
 
-const parseJsonString = (value: unknown): unknown => {
-  if (typeof value !== 'string') return value
-
-  try {
-    return JSON.parse(value) as unknown
-  } catch {
-    return value
-  }
-}
-
 const writeArtifactFileToolSchema = {
   filename: z
     .string()
@@ -62,29 +52,26 @@ const writeArtifactFileToolSchema = {
     .describe('Display filename for the artifact, e.g. "sine_wave.png" or "report.pdf".'),
   mimeType: z.string().min(1).optional(),
   source: z
-    .preprocess(
-      parseJsonString,
-      z.union([
-        z.object({
-          kind: z.literal('inline'),
-          content: z
-            .string()
-            .describe(
-              'Small in-memory text to write directly. Use localPath for files already on disk.'
-            ),
-          encoding: z.enum(['utf8', 'base64']).default('utf8')
-        }),
-        z.object({
-          kind: z.literal('localPath'),
-          path: z
-            .string()
-            .min(1)
-            .describe(
-              'Path to an ALREADY-SAVED file. A bare filename or relative path (e.g. "plot.png") resolves against the notebook session data dir (the kernel cwd), or the session workspace when there is no notebook data dir this turn — pass the same name you saved with. An absolute path also works. Do NOT rebuild a path from an env var; the kernel cwd already IS the data dir. The file must exist before you call this — the app copies it.'
-            )
-        })
-      ])
-    )
+    .union([
+      z.object({
+        kind: z.literal('inline'),
+        content: z
+          .string()
+          .describe(
+            'Small in-memory text to write directly. Use localPath for files already on disk.'
+          ),
+        encoding: z.enum(['utf8', 'base64']).default('utf8')
+      }),
+      z.object({
+        kind: z.literal('localPath'),
+        path: z
+          .string()
+          .min(1)
+          .describe(
+            'Path to an ALREADY-SAVED file. A bare filename or relative path (e.g. "plot.png") resolves against the notebook session data dir (the kernel cwd), or the session workspace when there is no notebook data dir this turn — pass the same name you saved with. An absolute path also works. Do NOT rebuild a path from an env var; the kernel cwd already IS the data dir. The file must exist before you call this — the app copies it.'
+          )
+      })
+    ])
     .optional(),
   content: z.string().optional(),
   encoding: z.enum(['utf8', 'base64']).default('utf8')

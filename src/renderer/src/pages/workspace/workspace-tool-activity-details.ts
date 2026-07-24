@@ -2,6 +2,7 @@ import type { ContentBlock, ToolCallContent, ToolKind } from '@agentclientprotoc
 
 import { formatByteSize } from '@/lib/utils'
 import type { ToolActivity } from '@/stores/session-store'
+import { isNotebookExecuteToolName, resolveNotebookLanguage } from './notebook-tool-names'
 
 type ToolCodeSection = {
   kind: 'code'
@@ -477,57 +478,51 @@ const buildArtifactDetails = (activity: ToolActivity): ToolActivityDetails | und
 // The kernel kinds a notebook run tool can produce; drives language, label, and display name.
 type NotebookKernelKindLike = 'python' | 'r' | 'repl' | 'bash'
 
-const NOTEBOOK_KERNEL_KINDS = new Set<NotebookKernelKindLike>(['python', 'r', 'repl', 'bash'])
+const toNotebookKernelKind = (value: unknown): NotebookKernelKindLike | undefined => {
+  if (typeof value !== 'string') return undefined
 
-// Provider tool suffixes (under the notebook MCP server) whose result is one kernel run.
-const NOTEBOOK_RUN_TOOL_SUFFIXES = ['notebook_execute', 'repl_execute', 'bash_execute'] as const
-
-// Shiki language id for each kernel's code block: repl is JavaScript, bash is a shell command.
-const NOTEBOOK_KERNEL_LANGUAGE: Record<NotebookKernelKindLike, string> = {
-  python: 'python',
-  r: 'r',
-  repl: 'javascript',
-  bash: 'bash'
-}
-
-// Row heading per kernel: python/r are notebook cells, repl is the Agent SDK, bash is the shell.
-const NOTEBOOK_KERNEL_DISPLAY: Record<NotebookKernelKindLike, string> = {
-  python: 'Notebook cell',
-  r: 'Notebook cell',
-  repl: 'Agent SDK',
-  bash: 'Shell'
+  const normalized = value.toLowerCase()
+  return normalized === 'python' ||
+    normalized === 'r' ||
+    normalized === 'repl' ||
+    normalized === 'bash'
+    ? normalized
+    : undefined
 }
 
 // Detects any notebook kernel run (python/r cell, repl control-plane, or bash) so all three render
 // as code plus output rather than the raw run-summary JSON envelope.
-const isNotebookKernelRunActivity = (activity: ToolActivity): boolean => {
-  // Match both server-name forms: Claude Code's hyphenated open-science-notebook and the Codex/gpt
-  // bridge's underscore-sanitized open_science_notebook.
-  const providerName = trimDetail(activity.providerToolName)?.toLowerCase() ?? ''
+// Matches both server-name forms (Claude Code's hyphenated open-science-notebook and the
+// responses bridge's underscore-sanitized open_science_notebook) via the shared matcher, which
+// also requires the server segment to match exactly so lookalike server names are excluded.
+const isNotebookKernelRunActivity = (activity: ToolActivity): boolean =>
+  isNotebookExecuteToolName(trimDetail(activity.providerToolName))
 
-  if (!/open[-_]science[-_]notebook/u.test(providerName)) return false
-
-  return NOTEBOOK_RUN_TOOL_SUFFIXES.some((suffix) => providerName.endsWith(suffix))
-}
-
-// Resolves the kernel from the run summary, falling back to the tool name (repl_execute/bash_execute).
-const getNotebookKernelKind = (
+// Resolves the kernel's Shiki language from input, run summary, tool name, and code heuristics.
+// Returns the language string directly (no intermediate NotebookKernelKindLike round-trip).
+// Uses the shared notebook-tool-names helper so the dialog and transcript agree on language.
+const getNotebookLanguage = (
   activity: ToolActivity,
   summary: Record<string, unknown> | undefined
-): NotebookKernelKindLike => {
-  const fromSummary =
-    summary && typeof summary.kernelKind === 'string' ? summary.kernelKind : undefined
-
-  if (fromSummary && NOTEBOOK_KERNEL_KINDS.has(fromSummary as NotebookKernelKindLike)) {
-    return fromSummary as NotebookKernelKindLike
-  }
-
-  const providerName = trimDetail(activity.providerToolName)?.toLowerCase() ?? ''
-
-  if (providerName.endsWith('repl_execute')) return 'repl'
-  if (providerName.endsWith('bash_execute')) return 'bash'
-
-  return 'python'
+): string => {
+  const rawInput = activity.rawInput
+  const input =
+    rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)
+      ? (rawInput as Record<string, unknown>)
+      : {}
+  const inputKernel = ['kernelKind', 'kernel', 'language'].reduce<
+    NotebookKernelKindLike | undefined
+  >((found, key) => found ?? toNotebookKernelKind(input[key]), undefined)
+  const summaryKernel = toNotebookKernelKind(summary?.kernelKind)
+  const resolvedInput =
+    inputKernel || !summaryKernel ? input : { ...input, kernelKind: summaryKernel }
+  const code =
+    typeof input.code === 'string'
+      ? input.code
+      : typeof summary?.script === 'string'
+        ? summary.script
+        : undefined
+  return resolveNotebookLanguage(activity.providerToolName, resolvedInput, code)
 }
 
 // Reads the notebook run summary the execute tool returns as JSON content (or raw output).
@@ -630,13 +625,11 @@ const getNotebookOutput = (summary: Record<string, unknown> | undefined): string
 // kernel: python/r cells, the repl control-plane (Agent SDK), and bash shell runs.
 const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
   const summary = parseNotebookRunSummary(activity)
-  const kernelKind = getNotebookKernelKind(activity, summary)
+  const language = getNotebookLanguage(activity, summary)
   const code = getNotebookCode(activity, summary)
   const sections: ToolDetailSection[] = []
-  const codeLabel = kernelKind === 'bash' ? 'Command' : 'Code'
-  const codeSection = code
-    ? createCodeSection(codeLabel, code, NOTEBOOK_KERNEL_LANGUAGE[kernelKind])
-    : undefined
+  const codeLabel = language === 'bash' ? 'Command' : 'Code'
+  const codeSection = code ? createCodeSection(codeLabel, code, language) : undefined
 
   if (codeSection) sections.push(codeSection)
 
@@ -651,8 +644,16 @@ const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | und
 
   const status = summary && typeof summary.status === 'string' ? summary.status : undefined
 
+  // Derive display name from language: python/r are cells, javascript (repl) is Agent SDK, bash is shell.
+  const displayName =
+    language === 'javascript'
+      ? 'Agent SDK'
+      : language === 'bash'
+        ? 'Shell'
+        : 'Notebook cell'
+
   return {
-    displayName: NOTEBOOK_KERNEL_DISPLAY[kernelKind],
+    displayName,
     metaLabel: status,
     sections
   }

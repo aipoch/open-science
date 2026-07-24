@@ -305,17 +305,19 @@ describe('conversation message scroller integration', () => {
   it('keeps permission prompts constrained to the conversation content width', () => {
     const permissionApprovalControlsSource = readFileSync(permissionApprovalControlsPath, 'utf8')
 
+    // Outer container maintains width constraints (overflow-visible so the scope dropdown is not clipped)
     expect(permissionApprovalControlsSource).toContain(
-      'className="mb-2 w-full max-w-full space-y-2 overflow-hidden rounded-lg'
+      'className="mb-2 w-full max-w-full rounded-lg border border-border-200'
     )
+    // Header maintains min-w-0 for text truncation
     expect(permissionApprovalControlsSource).toContain(
-      'className="flex min-w-0 flex-col items-stretch gap-2 overflow-hidden"'
+      'className="mb-2 flex min-w-0 items-center gap-2"'
     )
+    // Code block uses WorkspaceToolCodeBlock with max-height constraint
+    expect(permissionApprovalControlsSource).toContain('WorkspaceToolCodeBlock')
+    // Button row maintains layout constraints
     expect(permissionApprovalControlsSource).toContain(
-      'max-h-48 min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-words'
-    )
-    expect(permissionApprovalControlsSource).toContain(
-      'className="flex flex-wrap items-center justify-end gap-1 w-full overflow-hidden"'
+      'className="flex items-center justify-end gap-2"'
     )
   })
 
