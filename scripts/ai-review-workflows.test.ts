@@ -583,6 +583,15 @@ describe('AI review workflow contract', () => {
     }
   })
 
+  it('keeps non-blocking Claude hardening suggestions out of findings', () => {
+    const claudePrompt = getRunStep('claude_review', 'context')
+
+    expect(claudePrompt).toContain('concrete problem in the current change')
+    expect(claudePrompt).toContain('hypothetical future drift')
+    expect(claudePrompt).toContain('do not report that accepted trade-off')
+    expect(claudePrompt).toContain('must not change a mergeable verdict to needs changes')
+  })
+
   it('runs Claude with an explicit Sonnet model and endpoint-compatible output framing', () => {
     const step = getNamedStep('claude_review', 'Run Claude architecture review')
     const installStep = getNamedStep('claude_review', 'Install Claude CLI')
