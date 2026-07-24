@@ -4,9 +4,9 @@ import { getUserClaudeConfigDir } from './provider-env'
 import { augmentedPathEnv } from './shell-path'
 
 // Claude-shared auth lifecycle: browser OAuth via `claude auth login --claudeai`. Mirrors
-// CodexAuthController in shape (getStatus / loginShared / cancelLogin / logoutShared) but calls
-// the Claude CLI directly instead of going through an ACP adapter. Credentials are stored in
-// ~/.claude by the CLI; the app never touches them.
+// CodexAuthController in shape (getStatus / loginShared / cancelLogin) but calls the Claude CLI
+// directly instead of going through an ACP adapter. Credentials are stored in ~/.claude by the
+// CLI; the app never removes them.
 
 export type ClaudeSharedAuthStatus = {
   supported: boolean
@@ -229,62 +229,9 @@ export class ClaudeSharedAuthController {
   cancelLogin(): void {
     this.activeLogin?.abort('user-cancel')
   }
-
-  async logoutShared(): Promise<ClaudeSharedAuthStatus> {
-    const abort = new AbortController()
-    const timeout = setTimeout(() => abort.abort('timeout'), this.statusTimeoutMs)
-
-    try {
-      const claudePath = await this.resolveClaude()
-      const result = await waitForAbortableOperation(
-        new Promise<{ success: boolean; message?: string }>((resolve, reject) => {
-          const proc = spawnClaudeCli(
-            resolveClaudeExecutableForSpawn(claudePath),
-            ['auth', 'logout'],
-            {
-              env: {
-                ...augmentedPathEnv(process.env),
-                CLAUDE_CONFIG_DIR: getUserClaudeConfigDir()
-              },
-              signal: abort.signal as AbortSignal
-            }
-          )
-
-          let stderr = ''
-
-          proc.stderr?.on('data', (chunk) => {
-            stderr += chunk.toString()
-          })
-
-          proc.on('error', reject)
-          proc.on('close', (code) => {
-            if (code === 0) {
-              resolve({ success: true })
-            } else {
-              resolve({ success: false, message: stderr || 'Logout failed' })
-            }
-          })
-        }),
-        abort.signal
-      )
-
-      if (result.success) {
-        return { supported: true, authenticated: false }
-      }
-      return { supported: true, authenticated: false, message: result.message }
-    } catch (error) {
-      return {
-        supported: true,
-        authenticated: false,
-        message: error instanceof Error ? error.message : 'Logout failed'
-      }
-    } finally {
-      clearTimeout(timeout)
-    }
-  }
 }
 
 export type ClaudeSharedAuthControllerPort = Pick<
   ClaudeSharedAuthController,
-  'getStatus' | 'loginShared' | 'cancelLogin' | 'logoutShared'
+  'getStatus' | 'loginShared' | 'cancelLogin'
 >

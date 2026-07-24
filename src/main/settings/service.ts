@@ -2105,23 +2105,12 @@ class SettingsService {
 
   async logoutClaudeShared(): Promise<ValidateProviderResult> {
     this.invalidateClaudeSharedAuthStatus()
-    const status = await this.claudeSharedAuth.logoutShared()
-    this.invalidateClaudeSharedAuthStatus()
-
-    if (status.message) {
-      return {
-        ok: false,
-        category: status.message.toLowerCase().includes('timed out') ? 'timeout' : 'unknown',
-        message: status.message
-      }
-    }
-
     const settings = await this.repository.getSettings()
     const provider = settings.providers.find(
       (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
     )
 
-    if (provider && status.authenticated === false) {
+    if (provider) {
       await this.repository.upsertProvider({
         ...provider,
         lastValidatedAt: undefined,

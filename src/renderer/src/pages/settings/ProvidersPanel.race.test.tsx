@@ -210,3 +210,36 @@ describe('ProvidersPanel: claude-isolated browser + paste race', () => {
     expect(cancelIsolatedClaudeLogin).toHaveBeenCalledOnce()
   })
 })
+
+describe('ProvidersPanel: claude-shared disconnect', () => {
+  it('uses app-local wording when disconnect fails without a message', async () => {
+    useSettingsStore.setState({
+      ...useSettingsStore.getState(),
+      providers: [
+        {
+          id: 'builtin-claude-shared',
+          type: 'claude-shared',
+          name: 'Claude subscription',
+          models: [],
+          model: undefined,
+          maskedKey: undefined,
+          hasKey: false,
+          lastValidatedAt: 1,
+          needsKey: false,
+          supportsImageInput: false
+        }
+      ],
+      logoutSharedClaude: vi.fn().mockResolvedValue({ ok: false, category: 'unknown' }) as never
+    })
+
+    render()
+    const disconnect = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Disconnect from Open Science"]'
+    )
+    await act(async () => disconnect?.click())
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not disconnect Claude from Open Science.'
+    )
+  })
+})

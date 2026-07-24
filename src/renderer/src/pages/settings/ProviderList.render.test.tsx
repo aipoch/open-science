@@ -352,9 +352,9 @@ describe('ProviderList', () => {
     act(() => buttonByLabel('Cancel sign-in')?.click())
     expect(onCancelSharedClaudeLogin).toHaveBeenCalledOnce()
 
-    // Signed in (verified): sign-in actions go away, sign out is offered.
+    // Signed in (verified): sign-in actions go away, app-local disconnect is offered.
     renderList([{ ...shared, lastValidatedAt: 1 }], undefined, undefined, { onLogoutSharedClaude })
-    act(() => buttonByLabel('Sign out')?.click())
+    act(() => buttonByLabel('Disconnect from Open Science')?.click())
     expect(onLogoutSharedClaude).toHaveBeenCalledOnce()
     expect(buttonByLabel('Sign in with browser')).toBeUndefined()
   })

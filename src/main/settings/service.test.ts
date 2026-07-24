@@ -1168,8 +1168,7 @@ describe('SettingsService: preflight & spawn config', () => {
         supported: true,
         authenticated: true
       }),
-      cancelLogin: vi.fn(),
-      logoutShared: vi.fn()
+      cancelLogin: vi.fn()
     }
     const service = createService(undefined, { claudeSharedAuth })
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
@@ -1195,8 +1194,7 @@ describe('SettingsService: preflight & spawn config', () => {
           authenticated: true
         }),
         loginShared: vi.fn(),
-        cancelLogin: vi.fn(),
-        logoutShared: vi.fn()
+        cancelLogin: vi.fn()
       }
       const service = createService(undefined, { claudeSharedAuth })
       await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
@@ -1233,8 +1231,7 @@ describe('SettingsService: preflight & spawn config', () => {
           })
       ),
       loginShared: vi.fn(),
-      cancelLogin: vi.fn(),
-      logoutShared: vi.fn()
+      cancelLogin: vi.fn()
     }
     const service = createService(undefined, { claudeSharedAuth })
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
@@ -1272,8 +1269,7 @@ describe('SettingsService: preflight & spawn config', () => {
         )
         .mockResolvedValueOnce({ supported: true, authenticated: true }),
       loginShared: vi.fn().mockResolvedValue({ supported: true, authenticated: true }),
-      cancelLogin: vi.fn(),
-      logoutShared: vi.fn()
+      cancelLogin: vi.fn()
     }
     const service = createService(undefined, { claudeSharedAuth })
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
@@ -1302,8 +1298,7 @@ describe('SettingsService: preflight & spawn config', () => {
         .mockResolvedValueOnce({ supported: true, authenticated: false })
         .mockResolvedValueOnce({ supported: true, authenticated: true }),
       loginShared: vi.fn().mockResolvedValue({ supported: true, authenticated: true }),
-      cancelLogin: vi.fn(),
-      logoutShared: vi.fn()
+      cancelLogin: vi.fn()
     }
     const service = createService(undefined, { claudeSharedAuth })
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
@@ -1326,8 +1321,7 @@ describe('SettingsService: preflight & spawn config', () => {
     const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
       getStatus: vi.fn().mockResolvedValue({ supported: true, authenticated: true }),
       loginShared: vi.fn(),
-      cancelLogin: vi.fn(),
-      logoutShared: vi.fn()
+      cancelLogin: vi.fn()
     }
     const service = createService(undefined, { claudeSharedAuth })
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
@@ -1345,15 +1339,14 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(claudeSharedAuth.getStatus).toHaveBeenCalledOnce()
   })
 
-  it('does not reuse an authenticated shared Claude cache after logout', async () => {
+  it('does not reuse an authenticated shared Claude cache after app disconnect', async () => {
     const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
       getStatus: vi
         .fn()
         .mockResolvedValueOnce({ supported: true, authenticated: true })
         .mockResolvedValueOnce({ supported: true, authenticated: false }),
       loginShared: vi.fn(),
-      cancelLogin: vi.fn(),
-      logoutShared: vi.fn().mockResolvedValue({ supported: true, authenticated: false })
+      cancelLogin: vi.fn()
     }
     const service = createService(undefined, { claudeSharedAuth })
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
@@ -1367,11 +1360,11 @@ describe('SettingsService: preflight & spawn config', () => {
 
     await expect(service.getPreflight()).resolves.toMatchObject({ activeProviderReady: true })
     await service.logoutClaudeShared()
-    const loggedOutProvider = (await repository.getSettings()).providers.find(
+    const disconnectedProvider = (await repository.getSettings()).providers.find(
       (provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID
     )
-    if (!loggedOutProvider) throw new Error('shared Claude provider not found')
-    await repository.upsertProvider({ ...loggedOutProvider, lastValidatedAt: 2 })
+    if (!disconnectedProvider) throw new Error('shared Claude provider not found')
+    await repository.upsertProvider({ ...disconnectedProvider, lastValidatedAt: 2 })
 
     await expect(service.getPreflight()).resolves.toMatchObject({ activeProviderReady: false })
     expect(claudeSharedAuth.getStatus).toHaveBeenCalledTimes(2)
@@ -4148,7 +4141,6 @@ describe('SettingsService: claude-shared login orchestration', () => {
     opts: {
       loginOk?: boolean
       loginMsg?: string
-      logoutOk?: boolean
     } = {}
   ): ClaudeSharedAuthControllerPort => ({
     getStatus: vi.fn(),
@@ -4157,12 +4149,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       authenticated: opts.loginOk ?? true,
       message: opts.loginMsg
     }),
-    cancelLogin: vi.fn(),
-    logoutShared: vi.fn().mockResolvedValue({
-      supported: true,
-      authenticated: false,
-      message: opts.logoutOk === false ? 'logout failed' : undefined
-    })
+    cancelLogin: vi.fn()
   })
 
   it('persists claude-shared with the fixed builtin-claude-shared id on upsert', async () => {
@@ -4271,22 +4258,24 @@ describe('SettingsService: claude-shared login orchestration', () => {
     expect(provider?.lastValidationFailure).toBeUndefined()
   })
 
-  it('logoutClaudeShared clears verified markers on success', async () => {
-    const auth = sharedAuth()
+  it('logoutClaudeShared disconnects locally without logging out the global CLI profile', async () => {
+    const globalLogout = vi.fn().mockResolvedValue({ supported: true, authenticated: false })
+    const auth = { ...sharedAuth(), logoutShared: globalLogout }
     const service = createService(undefined, { claudeSharedAuth: auth })
     await service.upsertProvider({ type: 'claude-shared', name: 'Claude subscription' })
     await service.loginClaudeShared()
 
-    const beforeLogout = await service.getSettingsView()
+    const beforeDisconnect = await service.getSettingsView()
     expect(
-      beforeLogout.providers.find((p) => p.id === CLAUDE_SHARED_PROVIDER_ID)?.lastValidatedAt
+      beforeDisconnect.providers.find((p) => p.id === CLAUDE_SHARED_PROVIDER_ID)?.lastValidatedAt
     ).toBeGreaterThan(0)
 
     const result = await service.logoutClaudeShared()
     expect(result.ok).toBe(true)
-    const afterLogout = await service.getSettingsView()
+    expect(globalLogout).not.toHaveBeenCalled()
+    const afterDisconnect = await service.getSettingsView()
     expect(
-      afterLogout.providers.find((p) => p.id === CLAUDE_SHARED_PROVIDER_ID)?.lastValidatedAt
+      afterDisconnect.providers.find((p) => p.id === CLAUDE_SHARED_PROVIDER_ID)?.lastValidatedAt
     ).toBeUndefined()
   })
 

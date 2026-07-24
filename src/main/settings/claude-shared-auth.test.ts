@@ -183,30 +183,3 @@ describe('ClaudeSharedAuthController.cancelLogin', () => {
     expect(() => ctrl.cancelLogin()).not.toThrow()
   })
 })
-
-describe('ClaudeSharedAuthController.logoutShared', () => {
-  it('returns authenticated:false on successful logout', async () => {
-    nextSpawn = scriptChild('', '', 0)
-    const ctrl = makeController()
-    await expect(ctrl.logoutShared()).resolves.toMatchObject({
-      supported: true,
-      authenticated: false
-    })
-    expect(spawnCalls[0]?.args).toEqual(['auth', 'logout'])
-  })
-
-  it('surfaces the error message on a failed logout', async () => {
-    nextSpawn = scriptChild('', 'keychain locked', 1)
-    const ctrl = makeController()
-    const result = await ctrl.logoutShared()
-    expect(result.authenticated).toBe(false)
-    expect(result.message).toContain('keychain locked')
-  })
-
-  it('uses the lazy path resolver', async () => {
-    nextSpawn = scriptChild('', '', 0)
-    const ctrl = makeController(() => '/abs/claude')
-    await ctrl.logoutShared()
-    expect(spawnCalls[0]?.command).toBe('/abs/claude')
-  })
-})

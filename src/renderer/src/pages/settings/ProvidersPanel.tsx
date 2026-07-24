@@ -247,16 +247,18 @@ const ProvidersPanel = ({
     }
   }
 
-  const handleClaudeSharedLogout = async (): Promise<void> => {
+  const handleClaudeSharedDisconnect = async (): Promise<void> => {
     setProviderTestError(undefined)
 
     try {
       const result = await logoutSharedClaude()
       if (!result.ok) {
-        setProviderTestError(result.message ?? 'Claude sign-out did not complete. Try again.')
+        setProviderTestError(result.message ?? 'Could not disconnect Claude from Open Science.')
       }
     } catch (error) {
-      setProviderTestError(error instanceof Error ? error.message : 'Could not sign out of Claude.')
+      setProviderTestError(
+        error instanceof Error ? error.message : 'Could not disconnect Claude from Open Science.'
+      )
     }
   }
 
@@ -305,7 +307,7 @@ const ProvidersPanel = ({
           isClaudeSharedLoginPending={isClaudeSharedLoginPending}
           onLoginSharedClaude={() => void handleClaudeSharedLogin()}
           onCancelSharedClaudeLogin={() => void cancelSharedClaudeLogin()}
-          onLogoutSharedClaude={() => void handleClaudeSharedLogout()}
+          onLogoutSharedClaude={() => void handleClaudeSharedDisconnect()}
           isClaudeIsolatedLoginPending={isClaudeIsolatedLoginPending}
           onLoginIsolatedClaude={() => void handleClaudeIsolatedBrowserLogin()}
           onCancelIsolatedClaudeLogin={() => {
