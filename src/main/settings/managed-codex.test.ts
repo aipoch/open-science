@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { Readable } from 'node:stream'
@@ -12,12 +13,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 //   onDestBackup: throw EPERM when dest contains .backup- (destination→backup, upgrade path)
 //   onRestore: throw EPERM when src contains .backup- (backup→destination restore)
 //   cp: throw EPERM from cp() to exercise the copy-failure→backup-restore branch
+//   adapterReplaceFailures: transiently lock the destination during temp→adapter publication
 const fsFaults = vi.hoisted(() => ({
   renameOnStagedMove: false,
   renameOnStagedMoveEio: false,
   renameOnDestBackup: false,
   renameOnRestore: false,
-  cpFailure: false
+  cpFailure: false,
+  adapterReplaceFailures: 0,
+  adapterReplaceFailureCode: 'EPERM' as 'EPERM' | 'EBUSY',
+  pauseNextWrite: false,
+  partialWritePublished: undefined as (() => void) | undefined,
+  resumeWrite: undefined as Promise<void> | undefined
 }))
 
 vi.mock('node:fs/promises', async (importActual) => {
@@ -41,6 +48,17 @@ vi.mock('node:fs/promises', async (importActual) => {
         fsFaults.renameOnRestore = false
         throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' })
       }
+      if (
+        fsFaults.adapterReplaceFailures > 0 &&
+        src.endsWith('.tmp') &&
+        dest.endsWith('index.js')
+      ) {
+        fsFaults.adapterReplaceFailures -= 1
+        const code = fsFaults.adapterReplaceFailureCode
+        throw Object.assign(new Error(`${code}: destination is temporarily locked, rename`), {
+          code
+        })
+      }
       return actual.rename(src, dest)
     }),
     cp: vi.fn(async (src: string, dest: string, opts?: object) => {
@@ -51,6 +69,20 @@ vi.mock('node:fs/promises', async (importActual) => {
         })
       }
       return actual.cp(src, dest, opts as Parameters<typeof actual.cp>[2])
+    }),
+    writeFile: vi.fn(async (...args: Parameters<typeof actual.writeFile>) => {
+      const [file, data] = args
+      if (fsFaults.pauseNextWrite && typeof data === 'string') {
+        fsFaults.pauseNextWrite = false
+        const patchTarget = '    const lastTokenUsage = this.sessionState.lastTokenUsage;'
+        const targetOffset = data.indexOf(patchTarget)
+        if (targetOffset !== -1) {
+          await actual.writeFile(file, data.slice(0, targetOffset))
+          fsFaults.partialWritePublished?.()
+          await fsFaults.resumeWrite
+        }
+      }
+      return actual.writeFile(...args)
     })
   }
 })
@@ -1167,6 +1199,106 @@ describe('patchCodexAcpContextUsageSource', () => {
         'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
       )
     } finally {
+      await rm(patchRoot, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'preserves executable access when patching an installed adapter',
+    async () => {
+      const patchRoot = await mkdtemp(join(tmpdir(), 'managed-codex-patch-mode-'))
+      try {
+        const adapterPath = join(patchRoot, 'index.js')
+        await writeFile(
+          adapterPath,
+          [
+            '  createUsageUpdate(params) {',
+            '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
+            '  }'
+          ].join('\n')
+        )
+        await chmod(adapterPath, 0o755)
+
+        await ensureManagedCodexContextUsage(adapterPath)
+
+        await expect(access(adapterPath, constants.X_OK)).resolves.toBeUndefined()
+      } finally {
+        await rm(patchRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each(['EPERM', 'EBUSY'] as const)(
+    'retries an atomic adapter replace after a transient %s destination lock',
+    async (errorCode) => {
+      const patchRoot = await mkdtemp(join(tmpdir(), 'managed-codex-patch-lock-'))
+      try {
+        const adapterPath = join(patchRoot, 'index.js')
+        await writeFile(
+          adapterPath,
+          [
+            '  createUsageUpdate(params) {',
+            '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
+            '  }'
+          ].join('\n')
+        )
+        fsFaults.adapterReplaceFailureCode = errorCode
+        fsFaults.adapterReplaceFailures = 1
+
+        await ensureManagedCodexContextUsage(adapterPath)
+
+        expect(await readFile(adapterPath, 'utf8')).toContain(
+          'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
+        )
+      } finally {
+        fsFaults.adapterReplaceFailures = 0
+        fsFaults.adapterReplaceFailureCode = 'EPERM'
+        await rm(patchRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('keeps concurrent context-usage checks from observing a partially patched adapter', async () => {
+    const patchRoot = await mkdtemp(join(tmpdir(), 'managed-codex-patch-race-'))
+    let releaseWrite: (() => void) | undefined
+    try {
+      const adapterPath = join(patchRoot, 'index.js')
+      await writeFile(
+        adapterPath,
+        [
+          '  const usageSchema = { totalTokens: true };',
+          '  createUsageUpdate(params) {',
+          '    this.handleTokenUsageUpdated(params);',
+          '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
+          '    return { used };',
+          '  }'
+        ].join('\n')
+      )
+
+      const partialWritePublished = new Promise<void>((resolve) => {
+        fsFaults.partialWritePublished = resolve
+      })
+      fsFaults.resumeWrite = new Promise<void>((resolve) => {
+        releaseWrite = resolve
+      })
+      fsFaults.pauseNextWrite = true
+
+      const firstCheck = ensureManagedCodexContextUsage(adapterPath)
+      await partialWritePublished
+      const secondCheck = ensureManagedCodexContextUsage(adapterPath)
+
+      await expect(secondCheck).resolves.toBeUndefined()
+      releaseWrite?.()
+
+      await expect(firstCheck).resolves.toBeUndefined()
+      expect(await readFile(adapterPath, 'utf8')).toContain(
+        'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
+      )
+    } finally {
+      releaseWrite?.()
+      fsFaults.pauseNextWrite = false
+      fsFaults.partialWritePublished = undefined
+      fsFaults.resumeWrite = undefined
       await rm(patchRoot, { recursive: true, force: true })
     }
   })
