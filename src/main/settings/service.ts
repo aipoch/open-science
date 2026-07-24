@@ -3135,12 +3135,11 @@ class SettingsService {
     return false
   }
 
-  // Credentials usable: codex/claude subscriptions are CLI-managed; claude-isolated needs a
-  // decryptable token; custom/official need a key that still decrypts.
+  // Credentials usable without a live profile check: Codex subscriptions are adapter-managed;
+  // claude-isolated/custom/official need a decryptable key. Active claude-shared is checked live in
+  // getPreflight and must fall through to false here because it intentionally stores no keyRef.
   private isProviderKeyUsable(provider: StoredProvider): boolean {
     if (isCodexSubscriptionProvider(provider.type)) return true
-    // claude-shared credentials live in ~/.claude and are owned by the CLI; no keyRef is stored.
-    if (provider.type === 'claude-shared') return true
 
     return Boolean(provider.keyRef) && tryDecryptKey(provider.keyRef) !== undefined
   }

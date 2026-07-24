@@ -1,29 +1,13 @@
-import { spawn, type SpawnOptions } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
+import { spawnClaudeCli, waitForAbortableOperation } from './claude-cli-process'
 import { augmentedPathEnv } from './shell-path'
 
 // ~/.claude is where `claude auth login --claudeai` writes credentials. Always set CLAUDE_CONFIG_DIR
 // to this path so auth/status/logout are consistent regardless of what the parent process inherited.
 const sharedClaudeConfigDir = (): string => join(homedir(), '.claude')
-
-// On Windows, resolveClaudeExecutableForSpawn converts claude.cmd to its underlying cli.js entry.
-// child_process.spawn cannot execute .js files directly — use process.execPath (Electron as Node)
-// as the launcher, the same way agent-process.ts does for the ACP spawn.
-const spawnClaude = (
-  resolvedPath: string,
-  args: string[],
-  options: SpawnOptions
-): ReturnType<typeof spawn> => {
-  if (/\.(js|mjs)$/i.test(resolvedPath)) {
-    // Electron acts as a Node runtime only when ELECTRON_RUN_AS_NODE=1 is set.
-    const env = { ...(options.env as NodeJS.ProcessEnv), ELECTRON_RUN_AS_NODE: '1' }
-    return spawn(process.execPath, [resolvedPath, ...args], { ...options, env })
-  }
-  return spawn(resolvedPath, args, options)
-}
 
 // Claude-shared auth lifecycle: browser OAuth via `claude auth login --claudeai`. Mirrors
 // CodexAuthController in shape (getStatus / loginShared / cancelLogin / logoutShared) but calls
@@ -46,21 +30,6 @@ type ClaudeSharedAuthControllerOptions = {
   statusTimeoutMs?: number
 }
 
-const abortError = (message: string): Error => {
-  const error = new Error(message)
-  error.name = 'AbortError'
-  return error
-}
-
-const waitForAbort = (signal: AbortSignal): Promise<never> =>
-  new Promise((_, reject) => {
-    if (signal.aborted) reject(abortError(String(signal.reason ?? 'aborted')))
-    signal.addEventListener('abort', () => reject(abortError(String(signal.reason ?? 'aborted'))))
-  })
-
-const waitForOperation = <Value>(operation: Promise<Value>, signal: AbortSignal): Promise<Value> =>
-  Promise.race([operation, waitForAbort(signal)])
-
 // Checks whether the user is signed in by running `claude auth status`.
 const checkAuthStatus = async (
   claudePath: string,
@@ -70,9 +39,9 @@ const checkAuthStatus = async (
   const timeout = setTimeout(() => abort.abort('timeout'), timeoutMs)
 
   try {
-    const result = await waitForOperation(
+    const result = await waitForAbortableOperation(
       new Promise<{ authenticated: boolean; message?: string }>((resolve, reject) => {
-        const proc = spawnClaude(
+        const proc = spawnClaudeCli(
           resolveClaudeExecutableForSpawn(claudePath),
           ['auth', 'status', '--json'],
           {
@@ -138,9 +107,9 @@ const runBrowserLogin = async (
   signal: AbortSignal
 ): Promise<ClaudeSharedAuthStatus> => {
   try {
-    const result = await waitForOperation(
+    const result = await waitForAbortableOperation(
       new Promise<{ success: boolean; message?: string }>((resolve, reject) => {
-        const proc = spawnClaude(
+        const proc = spawnClaudeCli(
           resolveClaudeExecutableForSpawn(claudePath),
           ['auth', 'login', '--claudeai'],
           {
@@ -273,9 +242,9 @@ export class ClaudeSharedAuthController {
 
     try {
       const claudePath = await this.resolveClaude()
-      const result = await waitForOperation(
+      const result = await waitForAbortableOperation(
         new Promise<{ success: boolean; message?: string }>((resolve, reject) => {
-          const proc = spawnClaude(
+          const proc = spawnClaudeCli(
             resolveClaudeExecutableForSpawn(claudePath),
             ['auth', 'logout'],
             {

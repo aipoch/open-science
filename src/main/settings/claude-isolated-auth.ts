@@ -1,22 +1,6 @@
-import { spawn, type SpawnOptions } from 'node:child_process'
-
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
+import { spawnClaudeCli, waitForAbortableOperation } from './claude-cli-process'
 import { augmentedPathEnv } from './shell-path'
-
-// On Windows, resolveClaudeExecutableForSpawn converts claude.cmd to its underlying cli.js entry.
-// child_process.spawn cannot run .js files directly; use process.execPath (Electron as Node).
-const spawnClaude = (
-  resolvedPath: string,
-  args: string[],
-  options: SpawnOptions
-): ReturnType<typeof spawn> => {
-  if (/\.(js|mjs)$/i.test(resolvedPath)) {
-    // Electron acts as a Node runtime only when ELECTRON_RUN_AS_NODE=1 is set.
-    const env = { ...(options.env as NodeJS.ProcessEnv), ELECTRON_RUN_AS_NODE: '1' }
-    return spawn(process.execPath, [resolvedPath, ...args], { ...options, env })
-  }
-  return spawn(resolvedPath, args, options)
-}
 
 // Claude-isolated auth lifecycle. Mirrors CodexAuthController in shape (getStatus / loginIsolated /
 // cancelLogin / logoutIsolated). The credential material is a long-lived OAuth token minted by
@@ -98,21 +82,6 @@ const extractSetupToken = (output: string): string | undefined => {
   return match?.[0]
 }
 
-const abortError = (message: string): Error => {
-  const error = new Error(message)
-  error.name = 'AbortError'
-  return error
-}
-
-const waitForAbort = (signal: AbortSignal): Promise<never> =>
-  new Promise((_, reject) => {
-    if (signal.aborted) reject(abortError(String(signal.reason ?? 'aborted')))
-    signal.addEventListener('abort', () => reject(abortError(String(signal.reason ?? 'aborted'))))
-  })
-
-const waitForOperation = <Value>(operation: Promise<Value>, signal: AbortSignal): Promise<Value> =>
-  Promise.race([operation, waitForAbort(signal)])
-
 // Runs `claude setup-token` under the isolated CLAUDE_CONFIG_DIR. The CLI opens the browser for OAuth
 // and, on success, prints the long-lived token to stdout. We capture stdout, extract the token, and
 // return it for the controller to persist. Failure (non-zero exit, no token in output) surfaces the
@@ -122,7 +91,7 @@ const runSetupTokenLogin = async (
   configDir: string,
   signal: AbortSignal
 ): Promise<{ token?: string; message?: string }> =>
-  waitForOperation(
+  waitForAbortableOperation(
     new Promise<{ token?: string; message?: string }>((resolve, reject) => {
       // This flow's whole point is to pop the browser, so strip any inherited signals that could tell
       // the CLI to suppress it (NO_BROWSER from a codex spawn context, CI from a headless launcher).
@@ -134,7 +103,7 @@ const runSetupTokenLogin = async (
       delete env.NO_BROWSER
       delete env.CI
 
-      const proc = spawnClaude(resolveClaudeExecutableForSpawn(claudePath), ['setup-token'], {
+      const proc = spawnClaudeCli(resolveClaudeExecutableForSpawn(claudePath), ['setup-token'], {
         env,
         signal: signal as AbortSignal
       })
@@ -276,7 +245,7 @@ export class ClaudeIsolatedAuthController {
             abort.signal.reason === 'timeout'
               ? 'Browser sign-in timed out. If your browser did not open, use "Use setup token" instead.'
               : 'Sign-in cancelled.',
-            cancelled: abort.signal.reason === 'user-cancel'
+          cancelled: abort.signal.reason === 'user-cancel'
         }
       }
       return {
