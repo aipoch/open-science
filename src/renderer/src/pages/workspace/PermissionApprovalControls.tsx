@@ -342,7 +342,7 @@ const PermissionApprovalControls = ({
   requests,
   onRespond
 }: PermissionApprovalControlsProps): React.JSX.Element | null => {
-  const [scope, setScope] = useState<PermissionScope>('once')
+  const [scope, setScope] = useState<PermissionScope>('conversation')
   const [scopeOpen, setScopeOpen] = useState(false)
   const scopeTriggerRef = useRef<HTMLButtonElement>(null)
   const closeScopeMenu = useCallback((restoreTriggerFocus = false) => {
@@ -353,11 +353,13 @@ const PermissionApprovalControls = ({
   // Show only the oldest pending request; the rest stay queued.
   const request = requests[0]
 
-  // Default the primary Allow action to the NARROWEST scope the request offers, so the single
-  // easiest click grants the least standing access (a one-time approval). Widening to
-  // 'conversation' (allow_always) requires an explicit choice via the scope menu.
+  // Default the primary Allow action to the WIDEST in-session scope the request offers
+  // ('conversation', backed by allow_always), so a repeated tool doesn't re-prompt on every
+  // call. Narrowing to a one-time approval ('once') is an explicit choice via the scope menu.
   const availableScopes = request ? getAvailableScopes(request.options) : new Set<PermissionScope>()
-  const defaultScope: PermissionScope = availableScopes.has('once') ? 'once' : 'conversation'
+  const defaultScope: PermissionScope = availableScopes.has('conversation')
+    ? 'conversation'
+    : 'once'
 
   // Reset per-request UI state (scope + open menu) whenever the displayed request changes,
   // so nothing leaks from the previously answered prompt.

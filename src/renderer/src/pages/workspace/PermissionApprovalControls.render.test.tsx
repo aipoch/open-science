@@ -137,10 +137,10 @@ const secondPermissionRequest: AcpPermissionRequest = {
 }
 
 describe('PermissionApprovalControls', () => {
-  it('renders the Allow button with the narrowest default scope (once), not standing access', () => {
+  it('renders the Allow button with the conversation scope by default', () => {
     const html = renderControls()
-    expect(html).toContain('for this call only')
-    expect(html).not.toContain('for this conversation')
+    expect(html).toContain('for this conversation')
+    expect(html).not.toContain('for this call only')
     expect(html).toContain('data-testid="allow-primary"')
     expect(html).toContain('data-testid="deny-button"')
     expect(html).toContain('data-testid="scope-chevron"')
