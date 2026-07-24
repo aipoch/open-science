@@ -37,8 +37,7 @@ const permissionRequest: AcpPermissionRequest = {
       name: unknownKindOptionNameWithAlways,
       kind: 'custom_permission'
     }
-  ],
-  raw: {}
+  ]
 }
 
 const bashPermissionRequest: AcpPermissionRequest = {
@@ -53,8 +52,7 @@ const bashPermissionRequest: AcpPermissionRequest = {
     { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
     { optionId: 'allow-always', name: 'Always', kind: 'allow_always' },
     { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' }
-  ],
-  raw: {}
+  ]
 }
 
 // Real Claude Code MCP naming: mcp__<server>__<tool>. The dialog must recognize this format.
@@ -68,8 +66,7 @@ const notebookPermissionRequest: AcpPermissionRequest = {
   options: [
     { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
     { optionId: 'allow-always', name: 'Always', kind: 'allow_always' }
-  ],
-  raw: {}
+  ]
 }
 
 // R kernel run whose rawInput carries no explicit kernel field; language must be inferred from code.
@@ -80,8 +77,7 @@ const rNotebookRequest: AcpPermissionRequest = {
   title: 'mcp__open-science-notebook__notebook_execute',
   providerToolName: 'mcp__open-science-notebook__notebook_execute',
   rawInput: { code: 'df <- read.csv("x.csv")\nlibrary(ggplot2)' },
-  options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
-  raw: {}
+  options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
 }
 
 // repl_execute pins JavaScript regardless of code content.
@@ -92,8 +88,7 @@ const replRequest: AcpPermissionRequest = {
   title: 'mcp__open-science-notebook__repl_execute',
   providerToolName: 'mcp__open-science-notebook__repl_execute',
   rawInput: { code: 'const x = 1' },
-  options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
-  raw: {}
+  options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
 }
 
 // bash_execute pins bash regardless of code content.
@@ -104,8 +99,7 @@ const bashExecuteRequest: AcpPermissionRequest = {
   title: 'mcp__open-science-notebook__bash_execute',
   providerToolName: 'mcp__open-science-notebook__bash_execute',
   rawInput: { command: 'ls' },
-  options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
-  raw: {}
+  options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
 }
 
 const noInputRequest: AcpPermissionRequest = {
@@ -113,8 +107,7 @@ const noInputRequest: AcpPermissionRequest = {
   sessionId: 'session-1',
   toolCallId: 'tool-no-input',
   title: 'some tool',
-  options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
-  raw: {}
+  options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
 }
 
 const renderControls = (): string =>
@@ -132,8 +125,7 @@ const secondPermissionRequest: AcpPermissionRequest = {
   options: [
     { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
     { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' }
-  ],
-  raw: {}
+  ]
 }
 
 describe('PermissionApprovalControls', () => {
@@ -210,8 +202,7 @@ describe('PermissionApprovalControls', () => {
       toolCallId: 'tool-exec-title',
       title: 'python scripts/run_pipeline.py --full',
       toolKind: 'execute',
-      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
-      raw: {}
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
     }
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[executeTitleOnly]} onRespond={() => undefined} />
@@ -310,8 +301,7 @@ describe('PermissionApprovalControls', () => {
       toolKind: 'execute',
       isMcp: true,
       rawInput: { kernelKind: 'python', code: 'print("hi")' },
-      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
-      raw: {}
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
     }
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[brokerShape]} onRespond={() => undefined} />
@@ -334,8 +324,7 @@ describe('PermissionApprovalControls', () => {
       toolKind: 'execute',
       isMcp: true,
       rawInput: { kernelKind: 'python', code: 'print("oc")' },
-      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
-      raw: {}
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
     }
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[opencodeShape]} onRespond={() => undefined} />
@@ -400,8 +389,7 @@ describe('PermissionApprovalControls', () => {
       providerToolName: 'database_execute',
       isMcp: true,
       rawInput: { sql: 'DROP TABLE users' },
-      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
-      raw: {}
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
     }
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[dbExecute]} onRespond={() => undefined} />
@@ -422,8 +410,7 @@ describe('PermissionApprovalControls', () => {
       providerToolName: 'mcp__acme-db__notebook_execute',
       isMcp: true,
       rawInput: { target: 'prod', code: 'SELECT 1' },
-      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
-      raw: {}
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
     }
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[lookalike]} onRespond={() => undefined} />
@@ -444,8 +431,7 @@ describe('PermissionApprovalControls', () => {
       title: 'Write report.md',
       providerToolName: 'Write',
       toolKind: 'edit',
-      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
-      raw: {}
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
     }
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[write]} onRespond={() => undefined} />
@@ -466,8 +452,7 @@ describe('PermissionApprovalControls', () => {
         { optionId: 'opt-once', name: 'Allow once', kind: 'allow_once' },
         { optionId: 'opt-reject', name: 'Reject', kind: 'reject_once' },
         { optionId: 'opt-sandbox', name: 'Run in sandbox', kind: 'allow_sandbox' }
-      ],
-      raw: {}
+      ]
     }
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[withCustom]} onRespond={() => undefined} />
@@ -476,8 +461,7 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('Run in sandbox')
   })
 
-  it('keeps a second allow_always option selectable via a labeled button', () => {
-    // Two distinct allow_always: the Allow control surfaces the first; the second must not vanish.
+  it('does not expose reserved project or global scopes before they are implemented', () => {
     const twoAlways: AcpPermissionRequest = {
       requestId: 'two-1',
       sessionId: 'session-1',
@@ -486,17 +470,33 @@ describe('PermissionApprovalControls', () => {
       providerToolName: 'Edit',
       toolKind: 'edit',
       options: [
-        { optionId: 'opt-once', name: 'Allow once', kind: 'allow_once' },
-        { optionId: 'opt-always-session', name: 'Allow this session', kind: 'allow_always' },
-        { optionId: 'opt-always-project', name: 'Allow this project', kind: 'allow_always' }
-      ],
-      raw: {}
+        { optionId: 'opt-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
+        {
+          optionId: 'opt-always-session',
+          name: 'This conversation',
+          kind: 'allow_always',
+          scope: 'session'
+        },
+        {
+          optionId: 'opt-always-project',
+          name: 'This project',
+          kind: 'allow_always',
+          scope: 'project'
+        },
+        {
+          optionId: 'opt-always-global',
+          name: 'Global',
+          kind: 'allow_always',
+          scope: 'global'
+        }
+      ]
     }
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[twoAlways]} onRespond={() => undefined} />
     )
-    expect(html).toContain('data-testid="extra-option"')
-    expect(html).toContain('Allow this project')
+    expect(html).not.toContain('data-testid="extra-option"')
+    expect(html).not.toContain('This project')
+    expect(html).not.toContain('Global')
   })
 
   it('keeps reject_always reachable with a canonical label when Deny sends reject_once', () => {
@@ -514,8 +514,7 @@ describe('PermissionApprovalControls', () => {
         { optionId: 'a-always', name: 'Allow always', kind: 'allow_always' },
         { optionId: 'r-once', name: 'Reject once', kind: 'reject_once' },
         { optionId: 'r-always', name: 'Reject always', kind: 'reject_always' }
-      ],
-      raw: {}
+      ]
     }
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[canonical]} onRespond={() => undefined} />
@@ -537,8 +536,7 @@ describe('PermissionApprovalControls', () => {
         { optionId: 'a-once', name: 'Allow once', kind: 'allow_once' },
         { optionId: 'a-always-1', name: 'Allow always', kind: 'allow_always' },
         { optionId: 'a-always-evil', name: 'Reject', kind: 'allow_always' }
-      ],
-      raw: {}
+      ]
     }
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[adversarial]} onRespond={() => undefined} />

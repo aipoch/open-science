@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpRuntime, AcpRuntimeCallbacks } from './runtime'
+import type { ConversationPermissionGrantStore } from './permission-broker'
 
 const createDeferred = <Value = void>(): {
   promise: Promise<Value>
@@ -32,6 +33,7 @@ const createFakeRuntime = (options: {
   frameworkId: 'claude-code' | 'codex'
   sessionIds: string[]
   callbacks: AcpRuntimeCallbacks
+  permissionGrantStore?: ConversationPermissionGrantStore
   prompt?: (sessionId: string) => Promise<unknown>
 }): {
   runtime: AcpRuntime
@@ -100,6 +102,13 @@ const createFakeRuntime = (options: {
       options.callbacks.onStateChanged?.(snapshot)
       return { sessionId, cwd: '/workspace', frameworkId: options.frameworkId, contextReset: true }
     }),
+    revokePermissionGrant: vi.fn(
+      ({ sessionId, categoryKey }: { sessionId: string; categoryKey: string }) => {
+        options.permissionGrantStore?.revoke(sessionId, categoryKey)
+        options.callbacks.onStateChanged?.(snapshot)
+        return snapshot
+      }
+    ),
     sendPrompt,
     withActivity: vi.fn(
       async (_activityOptions: unknown, work: (scopedRuntime: AcpRuntime) => Promise<unknown>) =>
@@ -148,6 +157,69 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it('shares one conversation permission store across runtime generations', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const stores: unknown[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks, permissionGrantStore) => {
+      stores.push(permissionGrantStore)
+      const fake = createFakeRuntime({
+        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+        sessionIds: [`session-${created.length + 1}`],
+        callbacks,
+        permissionGrantStore
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    await coordinator.createSession()
+    await coordinator.requestAgentFrameworkSwitch()
+    await coordinator.createSession()
+
+    expect(stores).toHaveLength(2)
+    expect(stores[1]).toBe(stores[0])
+  })
+
+  it('keeps detached conversation grants visible and revocable during framework rotation', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    let store: ConversationPermissionGrantStore | undefined
+    const coordinator = new AcpRuntimeCoordinator((callbacks, permissionGrantStore) => {
+      store = permissionGrantStore
+      const fake = createFakeRuntime({
+        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+        sessionIds: [`session-${created.length + 1}`],
+        callbacks,
+        permissionGrantStore
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const session = await coordinator.createSession()
+    store?.remember(session.sessionId, 'tool:WebFetch')
+
+    await coordinator.requestAgentFrameworkSwitch()
+
+    expect(coordinator.getSnapshot()).toMatchObject({
+      sessionIds: [],
+      permissionGrants: {
+        [session.sessionId]: [{ categoryKey: 'tool:WebFetch', label: 'WebFetch', scope: 'session' }]
+      }
+    })
+
+    coordinator.revokePermissionGrant({
+      sessionId: session.sessionId,
+      categoryKey: 'tool:WebFetch'
+    })
+    expect(coordinator.getSnapshot().permissionGrants).toEqual({})
+
+    await coordinator.resumeSession({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      previousFrameworkId: 'claude-code'
+    })
+    expect(coordinator.getSnapshot().permissionGrants).toEqual({})
+  })
+
   it('keeps reconnecting settings on the active generation and fans out live effort', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
@@ -448,8 +520,7 @@ describe('AcpRuntimeCoordinator', () => {
       sessionId: 'session-1',
       toolCallId: 'tool-1',
       title: 'Run tool',
-      options: [],
-      raw: {}
+      options: []
     }
     created[0].emitPermission(permission)
     expect(coordinator.getSnapshot().sessionIds).toContain('session-1')
