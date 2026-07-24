@@ -316,4 +316,62 @@ describe('PermissionApprovalControls interactions', () => {
     expect(container.querySelector('[role="menuitemradio"]')).not.toBeNull()
     expect(chevron.getAttribute('aria-expanded')).toBe('true')
   })
+
+  it('falls back to the Settings runtime name for the env badge before any kernel ran', async () => {
+    // No live kernel and no run history: the badge must still name the enabled runtime from
+    // Settings → Runtimes (the app-managed default wins over user-registered envs).
+    const notebookRequest: AcpPermissionRequest = {
+      requestId: 'req-env',
+      sessionId: 'session-env-fallback',
+      toolCallId: 'tool-env',
+      title: 'mcp__open-science-notebook__notebook_execute',
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      rawInput: { kernelKind: 'python', code: 'print(1)' },
+      options: [{ optionId: 'opt-once', name: 'Allow once', kind: 'allow_once' }],
+      raw: {}
+    }
+    ;(window as { api?: unknown }).api = {
+      notebook: {
+        state: async () => ({ environments: [], runs: [] })
+      },
+      runtime: {
+        listEnvironments: async () => ({
+          python: [
+            {
+              language: 'python',
+              provenance: 'app-managed',
+              envId: '/envs/default-python',
+              interpreterPath: '/envs/default-python/bin/python',
+              label: 'default-python',
+              runnable: true
+            }
+          ],
+          r: []
+        }),
+        getEnablement: async () => ({ enabled: {}, installAuthorized: {} })
+      }
+    }
+    try {
+      act(() => {
+        root.render(
+          <PermissionApprovalControls
+            requests={[notebookRequest]}
+            onRespond={vi.fn()}
+            notebookLookup={{ sessionId: 'session-env-fallback', workspaceCwd: '' }}
+          />
+        )
+      })
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      expect(container.querySelector('[data-testid="permission-env-badge"]')?.textContent).toBe(
+        'default-python'
+      )
+      expect(
+        container.querySelector('[data-testid="permission-language-badge"]')?.textContent
+      ).toBe('python')
+    } finally {
+      delete (window as { api?: unknown }).api
+    }
+  })
 })

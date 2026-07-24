@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import type { NotebookSessionRequest } from '../../../../shared/notebook'
+import { isEnvEnabled } from '../../../../shared/notebook-runtime'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { dialogTitleClassName } from '@/components/ui/dialog-chrome'
@@ -246,29 +247,45 @@ const getPermissionRiskLabel = (request: AcpPermissionRequest): string => {
 // Keyed by sessionId + kernel kind so a python badge and an R badge never share a stale answer.
 const notebookEnvCache = new Map<string, Promise<string | undefined>>()
 
-// Resolves the environment a session's notebook kernels run in: prefer the live kernel matching
-// the requested kind, then any live env, then the most recent run's recorded env. Sessions that
-// never touched the notebook (or have no bridge in tests) resolve to undefined — no badge.
+// Resolves the environment a session's notebook kernels run in, best-known first: the live kernel
+// matching the requested kind, then any live env, then the most recent run's recorded env, and
+// finally the enabled runtime from Settings → Runtimes (what a kernel started now would bind).
+// Sessions with no notebook history and no bridge (tests) resolve to undefined — no badge.
 const lookupNotebookEnvironment = async (
   request: NotebookSessionRequest,
   kernelKind: 'python' | 'r'
 ): Promise<string | undefined> => {
-  const api = window.api?.notebook
-  if (!api) return undefined
-  try {
-    const state = await api.state(request)
-    const live =
-      state.environments.find((e) => e.kind === kernelKind && e.environment)?.environment ??
-      state.environments.find((e) => e.environment)?.environment
-    if (live) return live
-    for (let i = state.runs.length - 1; i >= 0; i -= 1) {
-      const env = state.runs[i].environment
-      if (env) return env
+  const notebookApi = window.api?.notebook
+  if (notebookApi) {
+    try {
+      const state = await notebookApi.state(request)
+      const live =
+        state.environments.find((e) => e.kind === kernelKind && e.environment)?.environment ??
+        state.environments.find((e) => e.environment)?.environment
+      if (live) return live
+      for (let i = state.runs.length - 1; i >= 0; i -= 1) {
+        const env = state.runs[i].environment
+        if (env) return env
+      }
+    } catch {
+      /* no notebook for this session yet — fall through to the Settings default */
     }
-  } catch {
-    /* no notebook for this session yet */
   }
-  return undefined
+
+  const runtimeApi = window.api?.runtime
+  if (!runtimeApi) return undefined
+  try {
+    const [lists, enablement] = await Promise.all([
+      runtimeApi.listEnvironments(),
+      runtimeApi.getEnablement(kernelKind)
+    ])
+    const enabled = lists[kernelKind].filter((env) => isEnvEnabled(env, enablement))
+    // Mirror the session's default binding: the app-managed env wins over user-registered ones.
+    const fallback = enabled.find((env) => env.provenance === 'app-managed') ?? enabled[0]
+    return fallback?.label
+  } catch {
+    return undefined
+  }
 }
 
 const useNotebookEnvironment = (
