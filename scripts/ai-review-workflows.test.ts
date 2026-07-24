@@ -404,7 +404,7 @@ describe('AI review workflow contract', () => {
     expect(command).toContain('--effort "$CLAUDE_REVIEW_EFFORT"')
     expect(step.env?.CLAUDE_REVIEW_EFFORT).toBe("${{ vars.CLAUDE_REVIEW_EFFORT || 'high' }}")
     expect(command).toContain('--permission-mode dontAsk')
-    expect(command).toContain("allowed_tools='Read,Glob,Grep,Agent'")
+    expect(command).toContain("allowed_tools='Read,Glob,Grep,Agent,StructuredOutput'")
     expect(command).toContain('--allowedTools "$allowed_tools"')
     expect(command).not.toContain('--permission-mode bypassPermissions')
     expect(command).not.toContain('--max-turns')
@@ -549,6 +549,9 @@ describe('AI review workflow contract', () => {
 
     expect(result.status, result.stderr).toBe(0)
     expect(result.stdout).toContain('Claude model turns: reported=2, observed=2')
+    expect(result.stdout).toContain(
+      'Claude result: subtype=success, terminal_reason=unknown, structured_output=false'
+    )
     expect(result.stdout).toContain('1  claude-sonnet-5  10  100  20  30')
     expect(result.stdout).toContain('PostToolUse: 2')
     const summaryText = readFileSync(summary, 'utf8')

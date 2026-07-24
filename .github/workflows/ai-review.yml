@@ -428,7 +428,7 @@ jobs:
           started_at="$(date +%s)"
 
           tools='Read,Glob,Grep,Bash,Agent'
-          allowed_tools='Read,Glob,Grep,Agent'
+          allowed_tools='Read,Glob,Grep,Agent,StructuredOutput'
           if [[ "$CODEGRAPH_ENABLED" == 'true' ]]; then
             tools+=',mcp__codegraph__codegraph_explore'
             allowed_tools+=',mcp__codegraph__codegraph_explore'
@@ -499,6 +499,9 @@ jobs:
           reported_turns="$(jq -r '.num_turns // "unknown"' <<< "$result_json")"
           total_cost="$(jq -r '.total_cost_usd // "unknown"' <<< "$result_json")"
           api_duration_ms="$(jq -r '.duration_api_ms // "unknown"' <<< "$result_json")"
+          result_subtype="$(jq -r '.subtype // "unknown"' <<< "$result_json")"
+          terminal_reason="$(jq -r '.terminal_reason // "unknown"' <<< "$result_json")"
+          structured_output="$(jq -r 'has("structured_output")' <<< "$result_json")"
           init_tools="$(jq -c '.tools // []' <<< "$init_json")"
           init_mcp_servers="$(jq -c '.mcp_servers // []' <<< "$init_json")"
 
@@ -530,6 +533,7 @@ jobs:
           echo "Claude model turns: reported=${reported_turns}, observed=${observed_turns}"
           echo "Claude duration: wall=${DURATION_SECONDS:-unknown}s, api=${api_duration_ms}ms"
           echo "Claude reported cost: ${total_cost}"
+          echo "Claude result: subtype=${result_subtype}, terminal_reason=${terminal_reason}, structured_output=${structured_output}"
           echo "Claude init tools: ${init_tools}"
           echo "Claude init MCP servers: ${init_mcp_servers}"
           printf '%s\n' 'turn  model  input  cache-read  cache-create  output'
