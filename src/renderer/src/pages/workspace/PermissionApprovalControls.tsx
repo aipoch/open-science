@@ -283,7 +283,7 @@ const ScopeDropdown = ({
       ref={ref}
       role="menu"
       aria-label="Authorization scope"
-      className="absolute bottom-full right-0 z-10 mb-1 min-w-[216px] rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu outline-none"
+      className="absolute bottom-full left-0 z-10 mb-1 min-w-44 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-menu outline-none"
     >
       {options.map(({ scope, label, subtitle }, index) => (
         <button
@@ -323,15 +323,15 @@ const ScopeDropdown = ({
             }
           }}
         >
-          {/* Label column: left-aligned flush to padding so both rows line up */}
+          {/* Check column: left side, fixed slot so selection never shifts the label */}
+          <span className="flex w-3.5 shrink-0 justify-center text-primary">
+            {selected === scope ? <Check className="size-3.5" strokeWidth={2.5} /> : null}
+          </span>
+          {/* Label column: left-aligned flush to the check slot so both rows line up */}
           <div className="flex min-w-0 flex-1 flex-col">
             <span className="text-xs font-medium text-foreground">{label}</span>
             <span className="text-[11px] leading-tight text-muted-foreground">{subtitle}</span>
           </div>
-          {/* Check column: right side, fixed slot so selection never shifts the label */}
-          <span className="flex w-3.5 shrink-0 justify-center text-primary">
-            {selected === scope ? <Check className="size-3.5" strokeWidth={2.5} /> : null}
-          </span>
         </button>
       ))}
     </div>
@@ -387,22 +387,37 @@ const PermissionApprovalControls = ({
     denyOptionId
   )
 
-  // The header shows the provider name; the title often carries the actual target (e.g. provider
-  // "Write" with title "Write report.md"). Surface the title as a detail line when it adds
-  // information the header doesn't, and isn't already shown verbatim by the code card.
+  // Header asks a friendly action question; raw tool identifiers (namespaced MCP names like
+  // mcp__open-science-notebook__notebook_execute) are illegible in a sentence, so notebook and
+  // shell runs get plain-language phrasing. The provider name only heads the prompt for other
+  // tools, where it is typically a short readable name (Write, Edit).
+  const isNotebook = resolveNotebookToolName(request) !== undefined
+  const isShell = request.toolKind === 'execute' || request.providerToolName === 'Bash'
+  const headerTitle = isNotebook
+    ? 'Run notebook code?'
+    : isShell
+      ? 'Run command?'
+      : `Run ${request.providerToolName ?? request.title}?`
+
+  // The title often carries the actual target (e.g. provider "Write" with title
+  // "Write report.md"). Surface it as a detail line when it adds information the header
+  // doesn't, and isn't already shown verbatim by the code card. Skipped for notebook and
+  // shell prompts: there the title is just the tool identifier or the command itself.
   const headerName = request.providerToolName ?? request.title
   const titleDetail =
-    request.title && request.title !== headerName && request.title !== permCode?.code
+    !isNotebook &&
+    !isShell &&
+    request.title &&
+    request.title !== headerName &&
+    request.title !== permCode?.code
       ? request.title
       : undefined
 
   return (
-    <div className="mb-2 w-full max-w-full rounded-xl border border-border bg-card px-3 py-2.5 text-xs leading-5 text-card-foreground shadow-dialog outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
-      {/* Header: tool name + risk label */}
-      <div className="mb-2 flex min-w-0 items-center gap-2">
-        <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>
-          Run {request.providerToolName ?? request.title}?
-        </span>
+    <div className="mb-2 flex w-full max-w-full flex-col gap-3 rounded-xl border border-border bg-card p-4 text-xs leading-5 text-card-foreground shadow-dialog outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
+      {/* Header: action question + risk label */}
+      <div className="flex min-w-0 items-center gap-2">
+        <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>{headerTitle}</span>
         <Badge variant="secondary" className="ml-auto">
           {getPermissionRiskLabel(request)}
         </Badge>
@@ -410,38 +425,37 @@ const PermissionApprovalControls = ({
 
       {/* Full request title (the target being authorized) when the header alone doesn't show it. */}
       {titleDetail ? (
-        <div className="mb-2 break-all text-[11px] text-muted-foreground">{titleDetail}</div>
+        <div className="break-all text-xs text-muted-foreground">{titleDetail}</div>
       ) : null}
 
       {/* Affected file targets — the canonical location field, shown so read/edit/delete
           prompts always reveal the path being authorized. Wraps to keep full values readable. */}
       {request.toolLocations?.length ? (
-        <div className="mb-2 flex flex-wrap gap-x-2 gap-y-0.5 break-all text-[11px] text-muted-foreground">
+        <div className="flex flex-wrap gap-x-2 gap-y-0.5 break-all text-xs text-muted-foreground">
           {request.toolLocations.map((location) => (
             <span key={location.path}>{location.path}</span>
           ))}
         </div>
       ) : null}
 
-      {/* Activity-style card showing the code that will run */}
+      {/* Activity-style card showing the code that will run.
+          Keyed by requestId so the collapsed/expanded state never carries over between prompts. */}
       {permCode && (
-        <div className="mb-2">
-          {/* Keyed by requestId so the collapsed/expanded state never carries over between prompts. */}
-          <PermissionCodeSection
-            key={requestId}
-            title={getPermissionActionTitle(request)}
-            code={permCode.code}
-            language={permCode.language}
-          />
-        </div>
+        <PermissionCodeSection
+          key={requestId}
+          title={getPermissionActionTitle(request)}
+          code={permCode.code}
+          language={permCode.language}
+        />
       )}
 
-      {/* Allow / Deny button row */}
-      <div className="flex items-center justify-end gap-2">
-        {/* Split Allow button: main action + scope chevron; the menu anchors to this group's right edge.
-            Styled like the shared Button (size sm) but kept as two segments so the chevron stays a
-            separate tab stop with its own aria-haspopup semantics. */}
-        <div className="relative flex items-stretch overflow-visible rounded-lg">
+      {/* Allow / Deny button row, left-aligned like the reference approval prompts */}
+      <div className="flex items-center gap-2">
+        {/* Split Allow button: main action + scope chevron; the menu anchors to this group's left edge.
+            Styled like the shared Button (size sm, including flex centering so the label baseline
+            matches the neighboring Button primitives) but kept as two segments so the chevron
+            stays a separate tab stop with its own aria-haspopup semantics. */}
+        <div className="relative flex items-stretch overflow-visible rounded-[min(var(--radius-md),12px)]">
           {scopeOpen && (
             <ScopeDropdown
               selected={effectiveScope}
@@ -450,11 +464,11 @@ const PermissionApprovalControls = ({
               onClose={closeScopeMenu}
             />
           )}
-          <div className="flex items-stretch overflow-hidden rounded-lg">
+          <div className="flex items-stretch overflow-hidden rounded-[min(var(--radius-md),12px)]">
             <button
               type="button"
               data-testid="allow-primary"
-              className="h-7 bg-primary px-2.5 text-[0.8rem] font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+              className="inline-flex h-7 select-none items-center justify-center whitespace-nowrap bg-primary px-2.5 text-[0.8rem] font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
               disabled={!allowOptionId}
               onClick={() => {
                 if (allowOptionId) onRespond(request.requestId, allowOptionId)
@@ -470,7 +484,7 @@ const PermissionApprovalControls = ({
               aria-label="Choose authorization scope"
               aria-expanded={scopeOpen}
               aria-haspopup="menu"
-              className="h-7 bg-primary px-1.5 text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50"
+              className="inline-flex h-7 select-none items-center justify-center bg-primary px-1.5 text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50"
               onClick={(e) => {
                 // Stop propagation so this click doesn't reach the dropdown's document
                 // click-listener and immediately re-close the menu it just opened.
