@@ -319,7 +319,7 @@ describe('conversation message scroller integration', () => {
 
     // Outer container maintains width constraints (overflow-visible so the scope dropdown is not clipped)
     expect(permissionApprovalControlsSource).toContain(
-      'className="mb-2 w-full max-w-full rounded-lg border border-border-200'
+      'className="mb-2 w-full max-w-full rounded-xl border border-border bg-card'
     )
     // Header maintains min-w-0 for text truncation
     expect(permissionApprovalControlsSource).toContain(
