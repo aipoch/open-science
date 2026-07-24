@@ -762,8 +762,7 @@ class SettingsRepository {
   async updateClaudeSharedValidationIfUnchanged(
     expectedProvider: StoredProvider,
     expectedPreferredMode: ClaudeSubscriptionProviderId | undefined,
-    expectedActiveProviderId: string | undefined,
-    expectedActiveModel: string | undefined,
+    expectedResolvedModel: string | undefined,
     patch: Pick<StoredProvider, 'disconnectedAt' | 'lastValidatedAt' | 'lastValidationFailure'>
   ): Promise<boolean> {
     let applied = false
@@ -772,12 +771,19 @@ class SettingsRepository {
       const index = settings.providers.findIndex(
         (provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID
       )
+      if (index < 0) return settings
+
+      const currentProvider = settings.providers[index]
+      // Only the effective shared-Claude target belongs in this CAS. Models selected on unrelated
+      // active providers do not change what the completed shared probe actually verified.
+      const currentResolvedModel =
+        settings.activeProviderId === CLAUDE_SHARED_PROVIDER_ID
+          ? (settings.activeModel ?? currentProvider?.model)
+          : currentProvider?.model
       if (
-        index < 0 ||
         settings.claudeSubscriptionProviderId !== expectedPreferredMode ||
-        settings.activeProviderId !== expectedActiveProviderId ||
-        settings.activeModel !== expectedActiveModel ||
-        !isDeepStrictEqual(settings.providers[index], expectedProvider)
+        currentResolvedModel !== expectedResolvedModel ||
+        !isDeepStrictEqual(currentProvider, expectedProvider)
       ) {
         return settings
       }

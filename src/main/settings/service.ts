@@ -2113,21 +2113,19 @@ class SettingsService {
       return { ...result, applied: false }
     }
 
+    const resolvedTarget = this.resolveProvider(
+      targetProvider,
+      settings.activeProviderId === targetProvider.id ? settings.activeModel : undefined
+    )
+
     if (result.ok) {
-      result = await this.runClaudeSubscriptionProbe(
-        this.resolveProvider(
-          targetProvider,
-          settings.activeProviderId === targetProvider.id ? settings.activeModel : undefined
-        ),
-        settings
-      )
+      result = await this.runClaudeSubscriptionProbe(resolvedTarget, settings)
     }
 
     const applied = await this.repository.updateClaudeSharedValidationIfUnchanged(
       targetProvider,
       loginTarget.claudeSubscriptionProviderId,
-      loginTarget.activeProviderId,
-      loginTarget.activeModel,
+      resolvedTarget.model,
       result.ok
         ? {
             disconnectedAt: undefined,
@@ -2405,8 +2403,7 @@ class SettingsService {
         const applied = await this.repository.updateClaudeSharedValidationIfUnchanged(
           storedValidationTarget,
           settings.claudeSubscriptionProviderId,
-          settings.activeProviderId,
-          settings.activeModel,
+          resolved.provider.model,
           validationPatch
         )
 

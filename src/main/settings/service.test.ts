@@ -4397,6 +4397,44 @@ describe('SettingsService: claude-shared login orchestration', () => {
     )
   })
 
+  it('records shared Claude login after an unrelated active model switch', async () => {
+    let finishProbe: (() => void) | undefined
+    const probe = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishProbe = resolve
+        })
+    )
+    const service = createService(undefined, {
+      claudeSharedAuth: sharedAuth({ loginOk: true }),
+      executeClaudeProbe: probe
+    })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await service.upsertProvider({ type: 'claude-shared', model: 'claude-opus-4-6' })
+    const gateway = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'DeepSeek',
+        vendorId: 'deepseek',
+        key: 'sk-deepseek'
+      })
+    ).providers.find((provider) => provider.vendorId === 'deepseek')
+    if (!gateway) throw new Error('DeepSeek provider not found')
+    await service.setActiveProvider(gateway.id, 'deepseek-v4-pro')
+
+    const login = service.loginClaudeShared()
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce())
+    await service.setActiveProvider(gateway.id, 'deepseek-v4-flash')
+    finishProbe?.()
+
+    await expect(login).resolves.toMatchObject({ ok: true, applied: true })
+    expect(
+      (await repository.getSettings()).providers.find(
+        (provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID
+      )?.lastValidatedAt
+    ).toBeGreaterThan(0)
+  })
+
   it('discards a shared login result after the provider is edited and isolated mode is selected', async () => {
     let finishProbe: (() => void) | undefined
     const probe = vi.fn(
@@ -4538,6 +4576,54 @@ describe('SettingsService: claude-shared login orchestration', () => {
     expect(provider?.disconnectedAt).toBeGreaterThan(0)
     expect(provider?.lastValidatedAt).toBeUndefined()
     expect(provider?.lastValidationFailure?.category).toBe('auth')
+  })
+
+  it('records shared Claude validation after an unrelated active provider switch', async () => {
+    let finishProbe: (() => void) | undefined
+    const probe = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishProbe = resolve
+        })
+    )
+    const auth = sharedAuth()
+    vi.mocked(auth.getStatus).mockResolvedValue({ supported: true, authenticated: true })
+    const service = createService(undefined, {
+      claudeSharedAuth: auth,
+      executeClaudeProbe: probe
+    })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await service.upsertProvider({ type: 'claude-shared', model: 'claude-sonnet-4-5' })
+    const first = await service.upsertProvider({
+      type: 'custom',
+      name: 'First gateway',
+      baseUrl: 'https://first.example.com',
+      model: 'first-model',
+      key: 'sk-first'
+    })
+    const firstId = first.providers.find((provider) => provider.name === 'First gateway')?.id
+    const second = await service.upsertProvider({
+      type: 'custom',
+      name: 'Second gateway',
+      baseUrl: 'https://second.example.com',
+      model: 'second-model',
+      key: 'sk-second'
+    })
+    const secondId = second.providers.find((provider) => provider.name === 'Second gateway')?.id
+    if (!firstId || !secondId) throw new Error('custom providers not found')
+    await service.setActiveProvider(firstId)
+
+    const validation = service.validateProvider({ providerId: CLAUDE_SHARED_PROVIDER_ID })
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce())
+    await service.setActiveProvider(secondId)
+    finishProbe?.()
+
+    await expect(validation).resolves.toMatchObject({ ok: true, applied: true })
+    expect(
+      (await repository.getSettings()).providers.find(
+        (provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID
+      )?.lastValidatedAt
+    ).toBeGreaterThan(0)
   })
 
   it('does not replace a verified shared login with a cancellation failure', async () => {
