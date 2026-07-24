@@ -243,7 +243,7 @@ jobs:
           set_gate architecture "$ARCHITECTURE_ENABLED" "$architecture_count"
 
   codex_correctness_review:
-    name: Codex correctness review
+    name: Correctness
     needs: [review_target, codex_review_gate]
     if: ${{ needs.codex_review_gate.outputs.correctness_should_run == 'true' }}
     permissions:
@@ -268,7 +268,7 @@ jobs:
       CODEX_BASE_URL: ${{ secrets.CODEX_CORRECTNESS_BASE_URL || secrets.CODEX_BASE_URL }}
 
   codex_architecture_review:
-    name: Codex architecture review
+    name: Architecture
     needs: [review_target, codex_review_gate]
     if: ${{ needs.codex_review_gate.outputs.architecture_should_run == 'true' }}
     permissions:
