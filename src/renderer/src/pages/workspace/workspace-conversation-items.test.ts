@@ -161,6 +161,19 @@ describe('workspace conversation items', () => {
     ).toBe('Used tool: Notebook cell')
   })
 
+  it('detects a Codex notebook activity whose MCP identity is only in the title', () => {
+    expect(
+      formatActivityTitle(
+        createActivity({
+          id: 'tool-codex-notebook',
+          title: 'mcp.open-science-notebook.notebook_execute',
+          status: 'completed',
+          toolKind: 'execute'
+        })
+      )
+    ).toBe('Used tool: Notebook cell')
+  })
+
   it('falls back to readable tool kind names for unnamed tools', () => {
     expect(
       formatActivityTitle(

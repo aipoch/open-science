@@ -184,6 +184,41 @@ describe('PermissionApprovalControls interactions', () => {
     expect(container.querySelector('[role="menuitemradio"]')).toBeNull()
   })
 
+  it('focuses and navigates scope choices from the keyboard', async () => {
+    act(() => {
+      root.render(<PermissionApprovalControls requests={[baseRequest]} onRespond={vi.fn()} />)
+    })
+    const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
+
+    await act(async () => {
+      chevron.click()
+    })
+    const items = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+    )
+    expect(document.activeElement).toBe(items[0])
+
+    act(() => {
+      items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    })
+    expect(document.activeElement).toBe(items[1])
+
+    act(() => {
+      items[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    expect(container.textContent).toContain('this conversation')
+    expect(container.querySelector('[role="menuitemradio"]')).toBeNull()
+
+    act(() => chevron.click())
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(document.activeElement).toBe(chevron)
+  })
+
   it('Deny calls onRespond with reject optionId', () => {
     const onRespond = vi.fn()
     act(() => {
