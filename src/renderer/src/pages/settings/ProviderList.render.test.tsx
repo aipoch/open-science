@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ProviderView } from '../../../../shared/settings'
+import type { ClaudeSubscriptionProviderId, ProviderView } from '../../../../shared/settings'
 import { ProviderList } from './ProviderList'
 
 let container: HTMLDivElement
@@ -55,6 +55,7 @@ const renderList = (
     onCancelIsolatedClaudeLogin?: () => void
     onLoginIsolatedClaudePaste?: () => void
     onLogoutIsolatedClaude?: () => void
+    claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
   } = {}
 ): void => {
   act(() => {
@@ -79,6 +80,7 @@ const renderList = (
         onCancelIsolatedClaudeLogin={callbacks.onCancelIsolatedClaudeLogin}
         onLoginIsolatedClaudePaste={callbacks.onLoginIsolatedClaudePaste}
         onLogoutIsolatedClaude={callbacks.onLogoutIsolatedClaude}
+        claudeSubscriptionProviderId={callbacks.claudeSubscriptionProviderId}
       />
     )
   })
@@ -355,6 +357,33 @@ describe('ProviderList', () => {
     act(() => buttonByLabel('Sign out')?.click())
     expect(onLogoutSharedClaude).toHaveBeenCalledOnce()
     expect(buttonByLabel('Sign in with browser')).toBeUndefined()
+  })
+
+  it('keeps the preferred Claude mode visible while a custom provider is active', () => {
+    const shared = provider({
+      id: 'builtin-claude-shared',
+      type: 'claude-shared',
+      name: 'Claude subscription',
+      models: [],
+      model: undefined,
+      hasKey: false,
+      lastValidatedAt: undefined
+    })
+    const isolated = provider({
+      id: 'builtin-claude-isolated',
+      type: 'claude-isolated',
+      name: 'Claude subscription',
+      models: [],
+      model: undefined,
+      hasKey: false,
+      lastValidatedAt: undefined
+    })
+
+    renderList([shared, isolated, provider()], 'p1', undefined, {
+      claudeSubscriptionProviderId: 'builtin-claude-isolated'
+    })
+
+    expect(buttonByLabel('Use setup token')).toBeDefined()
   })
 
   it('renders an empty state with no providers', () => {

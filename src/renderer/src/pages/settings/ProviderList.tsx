@@ -13,6 +13,7 @@ import {
 
 import type {
   ChatApiEndpoint,
+  ClaudeSubscriptionProviderId,
   ProviderValidationFailure,
   ProviderView
 } from '../../../../shared/settings'
@@ -21,7 +22,8 @@ import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   providerEndpoints,
-  providerValidationFailed
+  providerValidationFailed,
+  selectClaudeSubscriptionProvider
 } from '../../../../shared/settings'
 import { getOfficialVendor } from '../../../../shared/provider-registry'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -34,6 +36,7 @@ type ProviderListProps = {
   // Provider that sources the currently selected model. Not shown as an "active provider"; used only
   // to keep the in-use provider from being deleted (which would leave no selectable model).
   activeProviderId: string | undefined
+  claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
   busyProviderId?: string
   onEdit: (provider: ProviderView) => void
   onDelete: (provider: ProviderView) => void
@@ -112,6 +115,7 @@ const describeType = (provider: ProviderView): string => {
 const ProviderList = ({
   providers,
   activeProviderId,
+  claudeSubscriptionProviderId,
   busyProviderId,
   onEdit,
   onDelete,
@@ -142,11 +146,13 @@ const ProviderList = ({
   const selectedCodexProvider =
     codexProviders.find((provider) => provider.id === activeProviderId) ?? codexProviders[0]
 
-  // Collapse both Claude subscription modes (claude-shared and claude-isolated) into a single card,
-  // preferring the active one — exactly mirroring how Codex shared/isolated collapse to one card.
-  const claudeProviders = providers.filter((provider) => isClaudeSubscriptionProvider(provider.type))
-  const selectedClaudeProvider =
-    claudeProviders.find((provider) => provider.id === activeProviderId) ?? claudeProviders[0]
+  // Collapse both Claude subscription modes into one card while remembering the last configured mode
+  // even when another provider currently supplies the selected model.
+  const selectedClaudeProvider = selectClaudeSubscriptionProvider(
+    providers,
+    activeProviderId,
+    claudeSubscriptionProviderId
+  )
 
   const displayedProviders = [
     ...providers.filter(
@@ -156,9 +162,7 @@ const ProviderList = ({
     ...(selectedCodexProvider
       ? [{ ...selectedCodexProvider, name: codexSubscriptionProviderIdentity().name }]
       : []),
-    ...(selectedClaudeProvider
-      ? [{ ...selectedClaudeProvider, name: 'Claude subscription' }]
-      : [])
+    ...(selectedClaudeProvider ? [{ ...selectedClaudeProvider, name: 'Claude subscription' }] : [])
   ]
 
   return (

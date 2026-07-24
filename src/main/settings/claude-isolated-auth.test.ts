@@ -288,6 +288,37 @@ describe('ClaudeIsolatedAuthController', () => {
       expect(spawnCalls[0]?.env?.CLAUDE_CONFIG_DIR).toBe('/tmp/app-claude')
     })
 
+    it('runs a resolved JavaScript CLI through Electron in Node mode', async () => {
+      const controller = new ClaudeIsolatedAuthController({
+        store: createStore(),
+        claudePath: '/resolved/cli.js',
+        configDir: '/tmp/app-claude'
+      })
+      nextSpawn = scriptChild('sk-ant-oat01-abc123\n', '', 0)
+
+      await controller.loginIsolatedBrowser()
+
+      expect(spawnCalls[0]).toMatchObject({
+        command: process.execPath,
+        args: ['/resolved/cli.js', 'setup-token'],
+        env: { ELECTRON_RUN_AS_NODE: '1' }
+      })
+    })
+
+    it('returns a structured failure when the path resolver rejects', async () => {
+      const controller = new ClaudeIsolatedAuthController({
+        store: createStore(),
+        claudePath: () => Promise.reject(new Error('Claude path unavailable')),
+        configDir: '/tmp/app-claude'
+      })
+
+      await expect(controller.loginIsolatedBrowser()).resolves.toEqual({
+        supported: true,
+        authenticated: false,
+        message: 'Claude path unavailable'
+      })
+    })
+
     it('strips NO_BROWSER and CI so the CLI is never told to suppress the browser', async () => {
       const priorNoBrowser = process.env.NO_BROWSER
       const priorCi = process.env.CI

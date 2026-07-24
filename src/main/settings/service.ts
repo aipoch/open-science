@@ -557,10 +557,6 @@ class SettingsService {
   // inverse of "delete claude-default + write a new one": we keep a stable record so other code that
   // keys on the provider id (the IPC layer's reconnect path) does not need to special-case first run.
   private async saveClaudeIsolatedToken(token: string): Promise<void> {
-    const settings = await this.repository.getSettings()
-    // If the user switched to shared mode while the browser login was in-flight, the isolated record
-    // was deleted. Skip the write so the switch isn't reversed by the finishing login.
-    if (settings.providers.some((p) => p.id === CLAUDE_SHARED_PROVIDER_ID)) return
     const keyRef = encryptKey(token)
 
     await this.repository.upsertClaudeIsolatedProvider({ keyRef, keyMask: maskKey(token) })
@@ -600,6 +596,7 @@ class SettingsService {
         ? isManagedCodexPath(settings.codex.resolvedPath, this.storageRoot)
         : false,
       activeProviderId: settings.activeProviderId,
+      claudeSubscriptionProviderId: settings.claudeSubscriptionProviderId,
       activeModel: settings.activeModel,
       providers: settings.providers.map((provider) =>
         this.toProviderView(
@@ -1118,6 +1115,10 @@ class SettingsService {
             this.resolveActiveModel(activeProvider, settings.activeModel)
           ))
       : false
+    const activeSharedCredentialsUsable =
+      activeProvider?.type === 'claude-shared' && activeProvider.lastValidatedAt !== undefined
+        ? (await this.claudeSharedAuth.getStatus()).authenticated
+        : undefined
 
     return computePreflight({
       settings,
@@ -1125,7 +1126,10 @@ class SettingsService {
       opencodePathExists,
       codexPathExists,
       agentFrameworkId,
-      isProviderKeyUsable: (provider) => this.isProviderKeyUsable(provider),
+      isProviderKeyUsable: (provider) =>
+        provider.type === 'claude-shared' && provider.id === activeProvider?.id
+          ? activeSharedCredentialsUsable === true
+          : this.isProviderKeyUsable(provider),
       activeProviderCompatible
     })
   }
@@ -1801,24 +1805,20 @@ class SettingsService {
       provider.lastValidationFailure = existing.lastValidationFailure
     }
 
-    // When switching between claude-shared and claude-isolated, remove the outgoing record so the
-    // two fixed-id entries don't accumulate. The collapsed card in the list shows whichever is
-    // active; leaving a stale sibling would keep the old mode visible after the switch.
+    // Claude auth modes own separate fixed records. Keep the sibling record so switching modes does
+    // not discard its credential or validation state; the renderer collapses both records into one
+    // card and prefers the active id.
     if (isClaudeSubscriptionProvider(provider.type)) {
       const outgoingId =
         provider.type === 'claude-shared' ? CLAUDE_ISOLATED_PROVIDER_ID : CLAUDE_SHARED_PROVIDER_ID
-      const outgoingExists = settings.providers.some((p) => p.id === outgoingId)
       const outgoingWasActive = settings.activeProviderId === outgoingId
-
-      if (outgoingExists) {
-        await this.repository.deleteProvider(outgoingId)
-      }
 
       await this.repository.upsertProvider(provider)
 
-      // Re-activate after the switch so the collapsed card continues pointing at the new mode.
+      // Move an active collapsed card to the selected mode while retaining its compatible Claude
+      // model choice. An inactive sibling remains inactive.
       if (outgoingWasActive) {
-        await this.repository.setActiveProvider(provider.id)
+        await this.repository.setActiveProvider(provider.id, settings.activeModel)
       }
 
       return this.getSettingsView()
@@ -1932,7 +1932,13 @@ class SettingsService {
     // A user-cancel should not mark the card as failed: the user intentionally stopped the flow,
     // so no failure marker is written and the card keeps its previous state.
     if (authStatus.cancelled) {
-      return { ok: false, category: 'unknown', message: authStatus.message, applied: false, cancelled: true }
+      return {
+        ok: false,
+        category: 'unknown',
+        message: authStatus.message,
+        applied: false,
+        cancelled: true
+      }
     }
     return this.finalizeClaudeIsolatedLogin(this.claudeIsolatedAuthValidationResult(authStatus))
   }
@@ -2242,19 +2248,20 @@ class SettingsService {
         : resolved.provider.type === 'claude-shared'
           ? await this.getClaudeSharedStatus()
           : resolved.provider.type === 'claude-isolated'
-          ? await this.getClaudeIsolatedStatus()
-          : await validateProvider(resolved.provider, {
-              // Probe over Electron's network stack, which honors the system/VPN proxy. Node's global
-              // fetch (undici) takes a direct path and ignores that proxy, so an official vendor reachable
-              // only through a proxy (e.g. api.openai.com) would fail the probe as a false `network` error
-              // even with a valid key. The local Responses-bridge loopback stays on the direct fetch.
-              fetchImpl: netFetchStandard,
-              // For a multi-route provider, probe the route this framework actually drives so a passing
-              // test proves that route (e.g. Claude Code hits /v1/messages, not /v1/chat/completions).
-              // Codex is excluded: it bridges the provider's OpenAI route under its `responses` protocol,
-              // so its HTTP route is decided by the bridge, not by supportedApiTypes — keep it as-is.
-              frameworkEndpoints: framework.id === 'codex' ? undefined : framework.supportedApiTypes
-            }))
+            ? await this.getClaudeIsolatedStatus()
+            : await validateProvider(resolved.provider, {
+                // Probe over Electron's network stack, which honors the system/VPN proxy. Node's global
+                // fetch (undici) takes a direct path and ignores that proxy, so an official vendor reachable
+                // only through a proxy (e.g. api.openai.com) would fail the probe as a false `network` error
+                // even with a valid key. The local Responses-bridge loopback stays on the direct fetch.
+                fetchImpl: netFetchStandard,
+                // For a multi-route provider, probe the route this framework actually drives so a passing
+                // test proves that route (e.g. Claude Code hits /v1/messages, not /v1/chat/completions).
+                // Codex is excluded: it bridges the provider's OpenAI route under its `responses` protocol,
+                // so its HTTP route is decided by the bridge, not by supportedApiTypes — keep it as-is.
+                frameworkEndpoints:
+                  framework.id === 'codex' ? undefined : framework.supportedApiTypes
+              }))
 
     if (resolved.storedId) {
       // Each early return here means the tested target no longer matches what is stored (a newer test

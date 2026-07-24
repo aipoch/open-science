@@ -16,6 +16,8 @@ import {
   SETTINGS_FILE_VERSION,
   claudeIsolatedProviderIdentity,
   codexSubscriptionProviderIdentity,
+  isClaudeSubscriptionProvider,
+  isClaudeSubscriptionProviderId,
   isCodexSubscriptionProvider,
   isCodexSubscriptionProviderId,
   isReasoningEffort
@@ -377,6 +379,18 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     version: SETTINGS_FILE_VERSION,
     providers
   }
+  const claudeSubscriptionProviderId = asString(value.claudeSubscriptionProviderId)
+
+  if (
+    claudeSubscriptionProviderId &&
+    isClaudeSubscriptionProviderId(claudeSubscriptionProviderId) &&
+    providers.some(
+      (provider) =>
+        provider.id === claudeSubscriptionProviderId && isClaudeSubscriptionProvider(provider.type)
+    )
+  ) {
+    settings.claudeSubscriptionProviderId = claudeSubscriptionProviderId
+  }
   const claude = sanitizeClaudeInfo(value.claude)
   const codex = sanitizeCodexInfo(value.codex)
   const activeProviderId =
@@ -646,7 +660,14 @@ class SettingsRepository {
       if (index >= 0) providers[index] = provider
       else providers.push(provider)
 
-      return { ...settings, providers }
+      return {
+        ...settings,
+        providers,
+        ...(isClaudeSubscriptionProvider(provider.type) &&
+        isClaudeSubscriptionProviderId(provider.id)
+          ? { claudeSubscriptionProviderId: provider.id }
+          : {})
+      }
     })
   }
 

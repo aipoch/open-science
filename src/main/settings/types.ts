@@ -1,5 +1,6 @@
 import type {
   ChatApiEndpoint,
+  ClaudeSubscriptionProviderId,
   ClaudeInfo,
   CodexInfo,
   ProviderType,
@@ -117,6 +118,9 @@ export type StoredSettings = {
   // codex-acp adapter plus the native Codex runtime it launches.
   codex?: StoredCodexInfo
   activeProviderId?: string
+  // Last explicitly configured Claude subscription mode. Kept separately from activeProviderId so
+  // switching to a custom provider does not make the collapsed Claude card fall back to list order.
+  claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
   // Active model within the active provider; backfilled from the provider's own model on load when a
   // pre-v2 settings file (which had no per-model selection) is read.
   activeModel?: string

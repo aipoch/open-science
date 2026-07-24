@@ -72,10 +72,14 @@ const checkAuthStatus = async (
   try {
     const result = await waitForOperation(
       new Promise<{ authenticated: boolean; message?: string }>((resolve, reject) => {
-        const proc = spawnClaude(resolveClaudeExecutableForSpawn(claudePath), ['auth', 'status', '--json'], {
-          env: { ...augmentedPathEnv(process.env), CLAUDE_CONFIG_DIR: sharedClaudeConfigDir() },
-          signal: abort.signal as AbortSignal
-        })
+        const proc = spawnClaude(
+          resolveClaudeExecutableForSpawn(claudePath),
+          ['auth', 'status', '--json'],
+          {
+            env: { ...augmentedPathEnv(process.env), CLAUDE_CONFIG_DIR: sharedClaudeConfigDir() },
+            signal: abort.signal as AbortSignal
+          }
+        )
 
         let stdout = ''
         let stderr = ''
@@ -136,16 +140,23 @@ const runBrowserLogin = async (
   try {
     const result = await waitForOperation(
       new Promise<{ success: boolean; message?: string }>((resolve, reject) => {
-        const proc = spawnClaude(resolveClaudeExecutableForSpawn(claudePath), ['auth', 'login', '--claudeai'], {
-          env: (() => {
-            const env: NodeJS.ProcessEnv = { ...augmentedPathEnv(process.env), CLAUDE_CONFIG_DIR: sharedClaudeConfigDir() }
-            // Suppress flags that prevent browser OAuth from opening; same pattern as claude-isolated-auth.
-            delete env.NO_BROWSER
-            delete env.CI
-            return env
-          })(),
-          signal: signal as AbortSignal
-        })
+        const proc = spawnClaude(
+          resolveClaudeExecutableForSpawn(claudePath),
+          ['auth', 'login', '--claudeai'],
+          {
+            env: (() => {
+              const env: NodeJS.ProcessEnv = {
+                ...augmentedPathEnv(process.env),
+                CLAUDE_CONFIG_DIR: sharedClaudeConfigDir()
+              }
+              // Suppress flags that prevent browser OAuth from opening; same pattern as claude-isolated-auth.
+              delete env.NO_BROWSER
+              delete env.CI
+              return env
+            })(),
+            signal: signal as AbortSignal
+          }
+        )
 
         let stderr = ''
 
@@ -174,7 +185,8 @@ const runBrowserLogin = async (
       return {
         supported: true,
         authenticated: false,
-        message: signal.reason === 'timeout' ? 'Browser login timed out' : 'Login cancelled'
+        message: signal.reason === 'timeout' ? 'Browser login timed out' : 'Login cancelled',
+        cancelled: signal.reason === 'user-cancel'
       }
     }
     return {
@@ -205,7 +217,11 @@ export class ClaudeSharedAuthController {
     try {
       return checkAuthStatus(await this.resolveClaude(), this.statusTimeoutMs)
     } catch (error) {
-      return { supported: true, authenticated: false, message: error instanceof Error ? error.message : 'Could not resolve Claude path' }
+      return {
+        supported: true,
+        authenticated: false,
+        message: error instanceof Error ? error.message : 'Could not resolve Claude path'
+      }
     }
   }
 
@@ -228,9 +244,19 @@ export class ClaudeSharedAuthController {
       return await runBrowserLogin(claudePath, abort.signal)
     } catch (error) {
       if (abort.signal.aborted) {
-        return { supported: true, authenticated: false, message: abort.signal.reason === 'timeout' ? 'Browser sign-in timed out.' : 'Sign-in cancelled.', cancelled: abort.signal.reason === 'user-cancel' }
+        return {
+          supported: true,
+          authenticated: false,
+          message:
+            abort.signal.reason === 'timeout' ? 'Browser sign-in timed out.' : 'Sign-in cancelled.',
+          cancelled: abort.signal.reason === 'user-cancel'
+        }
       }
-      return { supported: true, authenticated: false, message: error instanceof Error ? error.message : 'Could not resolve Claude path' }
+      return {
+        supported: true,
+        authenticated: false,
+        message: error instanceof Error ? error.message : 'Could not resolve Claude path'
+      }
     } finally {
       clearTimeout(timeout)
       this.activeLogin = undefined
@@ -249,10 +275,14 @@ export class ClaudeSharedAuthController {
       const claudePath = await this.resolveClaude()
       const result = await waitForOperation(
         new Promise<{ success: boolean; message?: string }>((resolve, reject) => {
-          const proc = spawnClaude(resolveClaudeExecutableForSpawn(claudePath), ['auth', 'logout'], {
-            env: { ...augmentedPathEnv(process.env), CLAUDE_CONFIG_DIR: sharedClaudeConfigDir() },
-            signal: abort.signal as AbortSignal
-          })
+          const proc = spawnClaude(
+            resolveClaudeExecutableForSpawn(claudePath),
+            ['auth', 'logout'],
+            {
+              env: { ...augmentedPathEnv(process.env), CLAUDE_CONFIG_DIR: sharedClaudeConfigDir() },
+              signal: abort.signal as AbortSignal
+            }
+          )
 
           let stderr = ''
 

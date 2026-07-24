@@ -7,8 +7,10 @@ import {
   claudeIsolatedProviderIdentity,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
+  isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
-  providerValidationFailed
+  providerValidationFailed,
+  selectClaudeSubscriptionProvider
 } from '../../../shared/settings'
 import type { PackageMirror } from '../../../shared/mirror'
 import type { CloseActionPreference } from '../../../shared/window-controls'
@@ -20,6 +22,7 @@ import type {
   ClaudeInstallProgressEvent,
   ClaudeInstallResult,
   ClaudeInstallSource,
+  ClaudeSubscriptionProviderId,
   CodexInfo,
   CodexInstallSource,
   EnvironmentCheckResult,
@@ -79,6 +82,7 @@ type SettingsStoreData = {
   isLoaded: boolean
   claude: ClaudeInfo
   activeProviderId: string | undefined
+  claudeSubscriptionProviderId: ClaudeSubscriptionProviderId | undefined
   // Active model within the active provider; undefined means the provider's own default.
   activeModel: string | undefined
   providers: ProviderView[]
@@ -312,6 +316,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   isLoaded: false,
   claude: {},
   activeProviderId: undefined,
+  claudeSubscriptionProviderId: undefined,
   activeModel: undefined,
   providers: [],
   agentFrameworkId: 'claude-code',
@@ -356,6 +361,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
 const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> => ({
   claude: snapshot.claude,
   activeProviderId: snapshot.activeProviderId,
+  claudeSubscriptionProviderId: snapshot.claudeSubscriptionProviderId,
   activeModel: snapshot.activeModel,
   providers: snapshot.providers,
   onboardingCompletedAt: snapshot.onboardingCompletedAt,
@@ -498,8 +504,22 @@ export type ProviderModelOption = {
 // official vendor, the single model for a custom provider, and one default entry for a provider that
 // exposes no concrete model. Providers whose last test failed are excluded so a broken provider can't
 // be picked as a model source. Pure so the composer and its tests can share it.
-export const selectProviderModelOptions = (providers: ProviderView[]): ProviderModelOption[] =>
-  providers
+export const selectProviderModelOptions = (
+  providers: ProviderView[],
+  activeProviderId?: string,
+  claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
+): ProviderModelOption[] => {
+  const selectedClaudeProvider = selectClaudeSubscriptionProvider(
+    providers,
+    activeProviderId,
+    claudeSubscriptionProviderId
+  )
+
+  return providers
+    .filter(
+      (provider) =>
+        !isClaudeSubscriptionProvider(provider.type) || provider.id === selectedClaudeProvider?.id
+    )
     .filter((provider) => !providerValidationFailed(provider))
     .flatMap((provider) => {
       const models = provider.models.length > 0 ? provider.models : ['']
@@ -512,6 +532,7 @@ export const selectProviderModelOptions = (providers: ProviderView[]): ProviderM
         model
       }))
     })
+}
 
 // Finds the provider id affected by an upsert: the edited id, or the one new since `before`.
 const resolveUpsertedProviderId = (

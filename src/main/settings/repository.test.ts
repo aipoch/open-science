@@ -49,6 +49,58 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('keeps only an existing Claude subscription provider as the preferred mode', () => {
+    const providers = [
+      {
+        id: 'builtin-claude-isolated',
+        type: 'claude-isolated',
+        name: 'Claude subscription'
+      }
+    ]
+
+    expect(
+      sanitizeSettings({
+        claudeSubscriptionProviderId: 'builtin-claude-isolated',
+        providers
+      }).claudeSubscriptionProviderId
+    ).toBe('builtin-claude-isolated')
+    expect(
+      sanitizeSettings({
+        claudeSubscriptionProviderId: 'builtin-claude-shared',
+        providers
+      }).claudeSubscriptionProviderId
+    ).toBeUndefined()
+    expect(
+      sanitizeSettings({
+        claudeSubscriptionProviderId: 'unknown',
+        providers
+      }).claudeSubscriptionProviderId
+    ).toBeUndefined()
+  })
+
+  it('remembers the most recently upserted Claude subscription mode', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.upsertProvider(
+      provider({
+        id: 'builtin-claude-shared',
+        type: 'claude-shared',
+        name: 'Claude subscription'
+      })
+    )
+    await repository.upsertProvider(
+      provider({
+        id: 'builtin-claude-isolated',
+        type: 'claude-isolated',
+        name: 'Claude subscription'
+      })
+    )
+
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      claudeSubscriptionProviderId: 'builtin-claude-isolated'
+    })
+  })
+
   it('migrates two legacy Codex subscription cards into one active-mode provider', () => {
     const settings = sanitizeSettings({
       activeProviderId: 'builtin-codex-isolated',

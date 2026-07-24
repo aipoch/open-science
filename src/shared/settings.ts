@@ -31,6 +31,8 @@ export const CODEX_SUBSCRIPTION_PROVIDER_ID = 'builtin-codex-subscription'
 
 export const CLAUDE_SHARED_PROVIDER_ID = 'builtin-claude-shared'
 export const CLAUDE_ISOLATED_PROVIDER_ID = 'builtin-claude-isolated'
+export type ClaudeSubscriptionProviderId =
+  typeof CLAUDE_SHARED_PROVIDER_ID | typeof CLAUDE_ISOLATED_PROVIDER_ID
 
 export const isCodexSubscriptionProvider = (
   type: ProviderType
@@ -48,7 +50,8 @@ export const isCodexSubscriptionProviderId = (id: string): boolean =>
 
 export const isClaudeSubscriptionProvider = (
   type: ProviderType
-): type is 'claude-shared' | 'claude-isolated' => type === 'claude-shared' || type === 'claude-isolated'
+): type is 'claude-shared' | 'claude-isolated' =>
+  type === 'claude-shared' || type === 'claude-isolated'
 
 // The claude-isolated record's fixed identity. Every isolated lookup (repository upsert,
 // service login/edit/validation) keys on CLAUDE_ISOLATED_PROVIDER_ID.
@@ -63,8 +66,27 @@ export const claudeSharedProviderIdentity = (): { id: string; name: string } => 
   name: 'Claude subscription'
 })
 
-export const isClaudeSubscriptionProviderId = (id: string): boolean =>
+export const isClaudeSubscriptionProviderId = (id: string): id is ClaudeSubscriptionProviderId =>
   id === CLAUDE_SHARED_PROVIDER_ID || id === CLAUDE_ISOLATED_PROVIDER_ID
+
+// Chooses the single Claude subscription record projected by collapsed UI surfaces. An active Claude
+// record wins; otherwise the last explicitly configured mode wins, with list order only as a legacy
+// fallback for settings written before the preference existed.
+export const selectClaudeSubscriptionProvider = <T extends { id: string; type: ProviderType }>(
+  providers: readonly T[],
+  activeProviderId?: string,
+  preferredProviderId?: ClaudeSubscriptionProviderId
+): T | undefined => {
+  const claudeProviders = providers.filter((provider) =>
+    isClaudeSubscriptionProvider(provider.type)
+  )
+
+  return (
+    claudeProviders.find((provider) => provider.id === activeProviderId) ??
+    claudeProviders.find((provider) => provider.id === preferredProviderId) ??
+    claudeProviders[0]
+  )
+}
 
 // The chat API a model endpoint speaks: `anthropic` = /v1/messages, `openai` =
 // /v1/chat/completions, and `responses` = /v1/responses. Keep the two OpenAI-shaped protocols
@@ -274,6 +296,8 @@ export type SettingsSnapshot = {
   // Detected codex-acp adapter and its paired native Codex runtime.
   codex: CodexInfo
   activeProviderId?: string
+  // Last explicitly configured Claude subscription mode, used when another provider is active.
+  claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
   // The active model within the active provider. For custom this mirrors the provider's own model;
   // for official providers it's the chosen catalog entry. Undefined until a provider exists.
   activeModel?: string

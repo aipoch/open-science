@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 import { buildProviderEnv, getAppClaudeConfigDir } from './provider-env'
 
@@ -74,6 +76,17 @@ describe('provider-env', () => {
     expect(env).toEqual({
       CLAUDE_CODE_EXECUTABLE: '/bin/claude',
       CLAUDE_CONFIG_DIR: getAppClaudeConfigDir('/root')
+    })
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+  })
+
+  it('uses the default Claude profile for a shared subscription', () => {
+    const env = buildProviderEnv({ type: 'claude-shared', model: 'claude-sonnet-4-5' }, options)
+
+    expect(env).toEqual({
+      CLAUDE_CODE_EXECUTABLE: '/bin/claude',
+      CLAUDE_CONFIG_DIR: join(homedir(), '.claude'),
+      ANTHROPIC_MODEL: 'claude-sonnet-4-5'
     })
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
   })

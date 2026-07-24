@@ -19,15 +19,17 @@ class FakeChild extends EventEmitter {
   stderr = new EventEmitter()
 }
 
-const scriptChild = (stdout: string, stderr: string, code: number): (() => FakeChild) => () => {
-  const child = new FakeChild()
-  setImmediate(() => {
-    if (stdout) child.stdout.emit('data', Buffer.from(stdout))
-    if (stderr) child.stderr.emit('data', Buffer.from(stderr))
-    child.emit('close', code)
-  })
-  return child
-}
+const scriptChild =
+  (stdout: string, stderr: string, code: number): (() => FakeChild) =>
+  () => {
+    const child = new FakeChild()
+    setImmediate(() => {
+      if (stdout) child.stdout.emit('data', Buffer.from(stdout))
+      if (stderr) child.stderr.emit('data', Buffer.from(stderr))
+      child.emit('close', code)
+    })
+    return child
+  }
 
 const makeController = (
   claudePath: string | (() => string | Promise<string>) = 'claude',
@@ -89,13 +91,26 @@ describe('ClaudeSharedAuthController.getStatus', () => {
     expect(calls).toBe(1)
     expect(spawnCalls[0]?.command).toBe('my-claude')
   })
+
+  it('returns a structured failure when the path resolver rejects', async () => {
+    const ctrl = makeController(() => Promise.reject(new Error('Claude path unavailable')))
+
+    await expect(ctrl.getStatus()).resolves.toEqual({
+      supported: true,
+      authenticated: false,
+      message: 'Claude path unavailable'
+    })
+  })
 })
 
 describe('ClaudeSharedAuthController.loginShared', () => {
   it('returns authenticated:true when the CLI exits 0', async () => {
     nextSpawn = scriptChild('', '', 0)
     const ctrl = makeController()
-    await expect(ctrl.loginShared()).resolves.toMatchObject({ supported: true, authenticated: true })
+    await expect(ctrl.loginShared()).resolves.toMatchObject({
+      supported: true,
+      authenticated: true
+    })
     expect(spawnCalls[0]?.args).toEqual(['auth', 'login', '--claudeai'])
   })
 
@@ -136,6 +151,19 @@ describe('ClaudeSharedAuthController.loginShared', () => {
     await ctrl.loginShared()
     expect(spawnCalls[0]?.command).toBe('/resolved/claude')
   })
+
+  it('runs a resolved JavaScript CLI through Electron in Node mode', async () => {
+    nextSpawn = scriptChild('', '', 0)
+    const ctrl = makeController('/resolved/cli.js')
+
+    await ctrl.loginShared()
+
+    expect(spawnCalls[0]).toMatchObject({
+      command: process.execPath,
+      args: ['/resolved/cli.js', 'auth', 'login', '--claudeai'],
+      env: { ELECTRON_RUN_AS_NODE: '1' }
+    })
+  })
 })
 
 describe('ClaudeSharedAuthController.cancelLogin', () => {
@@ -147,6 +175,7 @@ describe('ClaudeSharedAuthController.cancelLogin', () => {
     const result = await pending
     expect(result.authenticated).toBe(false)
     expect(result.message).not.toMatch(/timed out/)
+    expect(result.cancelled).toBe(true)
   })
 
   it('is a no-op when no login is in flight', () => {

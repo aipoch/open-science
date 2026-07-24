@@ -5,6 +5,7 @@ import { execPath } from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   type ClaudeDetectResult
@@ -1130,6 +1131,32 @@ describe('SettingsService: preflight & spawn config', () => {
       agentReady: true,
       activeProviderReady: true
     })
+  })
+
+  it('closes the provider gate when the active shared Claude session is signed out', async () => {
+    const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
+      getStatus: vi.fn().mockResolvedValue({
+        supported: true,
+        authenticated: false
+      }),
+      loginShared: vi.fn().mockResolvedValue({
+        supported: true,
+        authenticated: true
+      }),
+      cancelLogin: vi.fn(),
+      logoutShared: vi.fn()
+    }
+    const service = createService(undefined, { claudeSharedAuth })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await service.upsertProvider({ type: 'claude-shared' })
+    await service.loginClaudeShared()
+    await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID)
+
+    await expect(service.getPreflight()).resolves.toMatchObject({
+      claudeReady: true,
+      activeProviderReady: false
+    })
+    expect(claudeSharedAuth.getStatus).toHaveBeenCalledOnce()
   })
 
   it('does not report claude ready when the recorded binary exists but fails --version', async () => {
@@ -3899,11 +3926,13 @@ describe('SettingsService: importAgentHomeSkill realpath containment', () => {
 })
 
 describe('SettingsService: claude-shared login orchestration', () => {
-  const sharedAuth = (opts: {
-    loginOk?: boolean
-    loginMsg?: string
-    logoutOk?: boolean
-  } = {}): ClaudeSharedAuthControllerPort => ({
+  const sharedAuth = (
+    opts: {
+      loginOk?: boolean
+      loginMsg?: string
+      logoutOk?: boolean
+    } = {}
+  ): ClaudeSharedAuthControllerPort => ({
     getStatus: vi.fn(),
     loginShared: vi.fn().mockResolvedValue({
       supported: true,
@@ -3923,6 +3952,41 @@ describe('SettingsService: claude-shared login orchestration', () => {
     const snap = await service.upsertProvider({ type: 'claude-shared', name: 'ignored' })
     expect(snap.providers.find((p) => p.id === CLAUDE_SHARED_PROVIDER_ID)).toBeDefined()
     expect(snap.providers.filter((p) => p.id === CLAUDE_SHARED_PROVIDER_ID)).toHaveLength(1)
+  })
+
+  it('preserves both Claude auth records and moves the active selection between them', async () => {
+    const service = createService()
+    await service.upsertProvider({ type: 'claude-isolated', model: 'claude-sonnet-4-5' })
+    const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: encryptKey('sk-ant-preserved'),
+      keyMask: maskKey('sk-ant-preserved')
+    })
+    await service.setActiveProvider(CLAUDE_ISOLATED_PROVIDER_ID, 'claude-sonnet-4-5')
+
+    const snapshot = await service.upsertProvider({
+      type: 'claude-shared',
+      model: 'claude-sonnet-4-5'
+    })
+
+    expect(snapshot.providers.map((provider) => provider.id)).toEqual(
+      expect.arrayContaining([CLAUDE_ISOLATED_PROVIDER_ID, CLAUDE_SHARED_PROVIDER_ID])
+    )
+    expect(
+      snapshot.providers.find((provider) => provider.id === CLAUDE_ISOLATED_PROVIDER_ID)?.hasKey
+    ).toBe(true)
+    expect(snapshot.activeProviderId).toBe(CLAUDE_SHARED_PROVIDER_ID)
+    expect(snapshot.activeModel).toBe('claude-sonnet-4-5')
+
+    const switchedBack = await service.upsertProvider({ type: 'claude-isolated' })
+    expect(switchedBack.providers.map((provider) => provider.id)).toEqual(
+      expect.arrayContaining([CLAUDE_ISOLATED_PROVIDER_ID, CLAUDE_SHARED_PROVIDER_ID])
+    )
+    expect(
+      switchedBack.providers.find((provider) => provider.id === CLAUDE_ISOLATED_PROVIDER_ID)?.hasKey
+    ).toBe(true)
+    expect(switchedBack.activeProviderId).toBe(CLAUDE_ISOLATED_PROVIDER_ID)
+    expect(switchedBack.activeModel).toBe('claude-sonnet-4-5')
   })
 
   it('loginClaudeShared records verified marker and returns applied:true', async () => {
@@ -3958,6 +4022,35 @@ describe('SettingsService: claude-shared login orchestration', () => {
     const settings = await service.getSettingsView()
     const provider = settings.providers.find((p) => p.id === CLAUDE_SHARED_PROVIDER_ID)
     expect(provider?.lastValidationFailure?.message).toContain('OAuth rejected')
+  })
+
+  it('does not replace a verified shared login with a cancellation failure', async () => {
+    const auth = sharedAuth({ loginOk: true })
+    const loginShared = vi.mocked(auth.loginShared)
+    const service = createService(undefined, { claudeSharedAuth: auth })
+    await service.upsertProvider({ type: 'claude-shared', name: 'Claude subscription' })
+    await service.loginClaudeShared()
+    const validatedAt = (await service.getSettingsView()).providers.find(
+      (provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID
+    )?.lastValidatedAt
+
+    loginShared.mockResolvedValueOnce({
+      supported: true,
+      authenticated: false,
+      message: 'Sign-in cancelled.',
+      cancelled: true
+    })
+
+    await expect(service.loginClaudeShared()).resolves.toMatchObject({
+      ok: false,
+      applied: false,
+      cancelled: true
+    })
+    const provider = (await service.getSettingsView()).providers.find(
+      (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
+    )
+    expect(provider?.lastValidatedAt).toBe(validatedAt)
+    expect(provider?.lastValidationFailure).toBeUndefined()
   })
 
   it('logoutClaudeShared clears verified markers on success', async () => {

@@ -32,6 +32,9 @@ const ProvidersPanel = ({
 }: ProvidersPanelProps): React.JSX.Element => {
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
+  const claudeSubscriptionProviderId = useSettingsStore(
+    (state) => state.claudeSubscriptionProviderId
+  )
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const deleteProvider = useSettingsStore((state) => state.deleteProvider)
   const validateProvider = useSettingsStore((state) => state.validateProvider)
@@ -290,6 +293,7 @@ const ProvidersPanel = ({
         <ProviderList
           providers={visibleProviders}
           activeProviderId={activeProviderId}
+          claudeSubscriptionProviderId={claudeSubscriptionProviderId}
           busyProviderId={busyProviderId}
           onEdit={onEditProvider}
           onDelete={(provider) => void deleteProvider(provider.id)}
