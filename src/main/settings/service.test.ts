@@ -2808,6 +2808,17 @@ describe('SettingsService: skills', () => {
     }
   })
 
+  it('injects the selected shared Claude model context window into the spawn config', async () => {
+    const service = createService()
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await service.upsertProvider({ type: 'claude-shared', model: 'claude-opus-4-8' })
+    await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID, 'claude-opus-4-8')
+
+    await expect(service.resolveActiveSpawnConfig()).resolves.toMatchObject({
+      contextWindow: 1_000_000
+    })
+  })
+
   it('materializes enabled skills into the app-owned CODEX_HOME before spawn', async () => {
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
@@ -4708,6 +4719,36 @@ describe('SettingsService: claude-shared login orchestration', () => {
         (provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID
       )?.disconnectedAt
     ).toBeUndefined()
+  })
+
+  it('keeps a disconnected shared Claude provider unavailable after a model edit', async () => {
+    const service = createService()
+    await service.upsertProvider({ type: 'claude-shared', model: 'claude-opus-4-6' })
+    await service.logoutClaudeShared()
+
+    const snapshot = await service.upsertProvider({
+      type: 'claude-shared',
+      model: 'claude-sonnet-4-5'
+    })
+
+    expect(
+      snapshot.providers.find((provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID)
+    ).toEqual(
+      expect.objectContaining({
+        model: 'claude-sonnet-4-5',
+        lastValidationFailure: expect.objectContaining({ category: 'auth' })
+      })
+    )
+    expect(
+      (await repository.getSettings()).providers.find(
+        (provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID
+      )
+    ).toEqual(
+      expect.objectContaining({
+        disconnectedAt: expect.any(Number),
+        lastValidationFailure: expect.objectContaining({ category: 'auth' })
+      })
+    )
   })
 
   it('invalidates shared Claude verification when its model override changes or is cleared', async () => {

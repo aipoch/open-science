@@ -1825,8 +1825,13 @@ class SettingsService {
     }
 
     // Carry a prior failure only while credentials are unchanged; a credential change invalidates it
-    // (the provider must be re-tested), so it drops and the warning clears until the next test.
-    if (existing?.lastValidationFailure !== undefined && !credentialsChanged) {
+    // (the provider must be re-tested), so it drops and the warning clears until the next test. A local
+    // shared-Claude disconnect is different: model edits must keep its renderer-visible auth failure
+    // until browser login clears disconnectedAt, or pickers can offer a profile runtime will reject.
+    const preserveValidationFailure =
+      !credentialsChanged ||
+      (provider.type === 'claude-shared' && provider.disconnectedAt !== undefined)
+    if (existing?.lastValidationFailure !== undefined && preserveValidationFailure) {
       provider.lastValidationFailure = existing.lastValidationFailure
     }
 
@@ -3382,7 +3387,7 @@ class SettingsService {
     const contextWindow =
       provider.type === 'custom'
         ? resolveCustomModelContextWindow(provider.contextWindow)
-        : provider.type === 'claude-isolated'
+        : isClaudeSubscriptionProvider(provider.type)
           ? resolveModelContextWindow('anthropic', model)
           : undefined
 
