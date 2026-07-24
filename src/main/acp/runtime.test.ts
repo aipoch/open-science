@@ -744,6 +744,7 @@ describe('ACP runtime session management', () => {
     ])
     expect(JSON.stringify(fakeAgent.newSessions[0]._meta)).toContain(BEGIN_ACTIVITY_GROUP_TOOL_NAME)
     expect(fakeAgent.prompts[0].text).toContain('mcp__open-science-activity__begin_activity_group')
+    expect(fakeAgent.prompts[0].text).toContain('Before each coherent tool group this turn')
 
     const reviewerServer = {
       type: 'http' as const,

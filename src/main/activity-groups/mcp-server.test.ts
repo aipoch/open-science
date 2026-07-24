@@ -33,7 +33,12 @@ describe('activity group MCP server', () => {
         arguments: { title: 'Inspect files' }
       })
     ).resolves.toMatchObject({
-      content: [{ type: 'text', text: 'Activity group declared: Inspect files' }]
+      content: [
+        {
+          type: 'text',
+          text: 'Activity group declared: Inspect files. Before starting another coherent tool group this turn, call begin_activity_group again with its own purpose title.'
+        }
+      ]
     })
 
     expect(ACTIVITY_GROUP_MCP_SERVER_NAME).toBe('open-science-activity')

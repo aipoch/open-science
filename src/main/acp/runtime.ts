@@ -286,7 +286,7 @@ const ACTIVITY_GROUP_SYSTEM_PROMPT_APPEND = [
   'The declaration is control metadata: it is not itself a visible step and does not replace the actual tool calls.',
   '</open_science_activity_group_instructions>'
 ].join('\n')
-const ACTIVITY_GROUP_TURN_PROMPT_REMINDER = `Before using any other tool this turn, first call \`${BEGIN_ACTIVITY_GROUP_TOOL_NAME}\` with one concise purpose title for the upcoming group. Call it once per coherent group, not once per tool.`
+const ACTIVITY_GROUP_TURN_PROMPT_REMINDER = `Before each coherent tool group this turn, call \`${BEGIN_ACTIVITY_GROUP_TOOL_NAME}\` with one concise purpose title immediately before that group's first tool. Repeat the declaration whenever the purpose changes; do not reuse the previous group. Call it once per group, not once per tool.`
 // Appends artifact tool guidance as system prompt metadata so user prompts stay untouched.
 const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
   '<open_science_artifact_instructions>',

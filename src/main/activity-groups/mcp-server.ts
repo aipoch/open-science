@@ -37,7 +37,12 @@ const createActivityGroupMcpServer = (): ModelContextProtocolServer => {
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
     },
     async ({ title }) => ({
-      content: [{ type: 'text', text: `Activity group declared: ${title}` }]
+      content: [
+        {
+          type: 'text',
+          text: `Activity group declared: ${title}. Before starting another coherent tool group this turn, call ${BEGIN_ACTIVITY_GROUP_TOOL_NAME} again with its own purpose title.`
+        }
+      ]
     })
   )
 
