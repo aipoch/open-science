@@ -4,7 +4,7 @@ import { constants } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
-import { promisify } from 'node:util'
+import { isDeepStrictEqual, promisify } from 'node:util'
 
 import { z } from 'zod'
 
@@ -2084,6 +2084,10 @@ class SettingsService {
   // Runs `claude auth login --claudeai` which opens the browser for OAuth. The CLI stores the
   // credentials in ~/.claude; the app never touches them. After success, runs a probe to validate.
   async loginClaudeShared(): Promise<ValidateProviderResult> {
+    const loginTarget = await this.repository.getSettings()
+    const targetProvider = loginTarget.providers.find(
+      (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
+    )
     this.invalidateClaudeSharedAuthStatus()
     const authStatus = await this.claudeSharedAuth.loginShared()
     this.invalidateClaudeSharedAuthStatus()
@@ -2094,34 +2098,40 @@ class SettingsService {
       return { ...result, applied: false, cancelled: true }
     }
 
+    if (targetProvider?.type !== 'claude-shared') return { ...result, applied: false }
+
     const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
+    const currentProvider = settings.providers.find(
       (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
     )
-    // The provider can be edited while the browser flow is open. Unless the stored record is still
-    // the shared subscription the login was started for, the outcome is stale and discarded.
-    if (provider?.type !== 'claude-shared') return { ...result, applied: false }
+    if (
+      settings.claudeSubscriptionProviderId !== loginTarget.claudeSubscriptionProviderId ||
+      !isDeepStrictEqual(currentProvider, targetProvider)
+    ) {
+      return { ...result, applied: false }
+    }
 
     if (result.ok) {
       result = await this.runClaudeSubscriptionProbe(
         this.resolveProvider(
-          provider,
-          settings.activeProviderId === provider.id ? settings.activeModel : undefined
+          targetProvider,
+          settings.activeProviderId === targetProvider.id ? settings.activeModel : undefined
         ),
         settings
       )
     }
 
-    await this.repository.upsertProvider(
+    const applied = await this.repository.updateClaudeSharedValidationIfUnchanged(
+      targetProvider,
+      loginTarget.claudeSubscriptionProviderId,
       result.ok
         ? {
-            ...provider,
             disconnectedAt: undefined,
             lastValidatedAt: Date.now(),
             lastValidationFailure: undefined
           }
         : {
-            ...provider,
+            disconnectedAt: targetProvider.disconnectedAt,
             lastValidatedAt: undefined,
             lastValidationFailure: {
               at: Date.now(),
@@ -2132,7 +2142,7 @@ class SettingsService {
           }
     )
 
-    return { ...result, applied: true }
+    return { ...result, applied }
   }
 
   async logoutClaudeShared(): Promise<ValidateProviderResult> {

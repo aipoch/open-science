@@ -4390,6 +4390,40 @@ describe('SettingsService: claude-shared login orchestration', () => {
     )
   })
 
+  it('discards a shared login result after the provider is edited and isolated mode is selected', async () => {
+    let finishProbe: (() => void) | undefined
+    const probe = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishProbe = resolve
+        })
+    )
+    const service = createService(undefined, {
+      claudeSharedAuth: sharedAuth({ loginOk: true }),
+      executeClaudeProbe: probe
+    })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await service.upsertProvider({ type: 'claude-shared', model: 'claude-opus-4-6' })
+
+    const login = service.loginClaudeShared()
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce())
+
+    await service.upsertProvider({ type: 'claude-shared', model: 'claude-sonnet-4-5' })
+    await service.upsertProvider({ type: 'claude-isolated' })
+    await service.setActiveProvider(CLAUDE_ISOLATED_PROVIDER_ID)
+    finishProbe?.()
+
+    await expect(login).resolves.toMatchObject({ ok: true, applied: false })
+    const settings = await repository.getSettings()
+    expect(settings.claudeSubscriptionProviderId).toBe(CLAUDE_ISOLATED_PROVIDER_ID)
+    expect(settings.activeProviderId).toBe(CLAUDE_ISOLATED_PROVIDER_ID)
+    const sharedProvider = settings.providers.find(
+      (provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID
+    )
+    expect(sharedProvider?.model).toBe('claude-sonnet-4-5')
+    expect(sharedProvider?.lastValidatedAt).toBeUndefined()
+  })
+
   it('loginClaudeShared returns applied:false when no shared provider record exists', async () => {
     const auth = sharedAuth({ loginOk: true })
     const service = createService(undefined, { claudeSharedAuth: auth })

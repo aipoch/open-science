@@ -43,4 +43,23 @@ describe('registerAfterInitialConnectorRefresh', () => {
     await expect(registration).resolves.toEqual({ ready: true })
     expect(registerRuntime).toHaveBeenCalledOnce()
   })
+
+  it('registers the runtime after a bounded wait when connector discovery hangs', async () => {
+    vi.useFakeTimers()
+    try {
+      const refresh = new Promise<void>(() => undefined)
+      const registerRuntime = vi.fn(() => ({ ready: true }))
+
+      const registration = registerAfterInitialConnectorRefresh(refresh, registerRuntime, 100)
+      await Promise.resolve()
+      expect(registerRuntime).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(100)
+
+      await expect(registration).resolves.toEqual({ ready: true })
+      expect(registerRuntime).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

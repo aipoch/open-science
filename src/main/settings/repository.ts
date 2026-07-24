@@ -1,9 +1,11 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, normalize, parse } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import type {
   AgentFrameworkId,
   ChatApiEndpoint,
+  ClaudeSubscriptionProviderId,
   ClaudeInfo,
   ProviderType,
   ProviderValidationFailure,
@@ -12,6 +14,7 @@ import type {
 } from '../../shared/settings'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
+  CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   SETTINGS_FILE_VERSION,
   claudeIsolatedProviderIdentity,
@@ -745,6 +748,35 @@ class SettingsRepository {
         (provider) => provider.id === CLAUDE_ISOLATED_PROVIDER_ID
       )
       if (index < 0 || settings.providers[index].keyRef !== expectedKeyRef) return settings
+
+      const providers = [...settings.providers]
+      providers[index] = { ...providers[index], ...patch }
+      applied = true
+
+      return { ...settings, providers }
+    })
+
+    return applied
+  }
+
+  async updateClaudeSharedValidationIfUnchanged(
+    expectedProvider: StoredProvider,
+    expectedPreferredMode: ClaudeSubscriptionProviderId | undefined,
+    patch: Pick<StoredProvider, 'disconnectedAt' | 'lastValidatedAt' | 'lastValidationFailure'>
+  ): Promise<boolean> {
+    let applied = false
+
+    await this.mutate((settings) => {
+      const index = settings.providers.findIndex(
+        (provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID
+      )
+      if (
+        index < 0 ||
+        settings.claudeSubscriptionProviderId !== expectedPreferredMode ||
+        !isDeepStrictEqual(settings.providers[index], expectedProvider)
+      ) {
+        return settings
+      }
 
       const providers = [...settings.providers]
       providers[index] = { ...providers[index], ...patch }
