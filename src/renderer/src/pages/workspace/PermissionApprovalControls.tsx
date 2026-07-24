@@ -613,7 +613,7 @@ const PermissionApprovalControls = ({
             <button
               type="button"
               data-testid="allow-primary"
-              className="inline-flex h-8 select-none items-center justify-center whitespace-nowrap bg-primary px-3 text-sm text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+              className="inline-flex h-8 select-none items-center justify-center gap-1 whitespace-nowrap bg-primary px-3 text-sm text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
               disabled={!allowOptionId}
               onClick={() => {
                 if (allowOptionId) onRespond(request.requestId, allowOptionId)
