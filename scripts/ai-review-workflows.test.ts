@@ -81,7 +81,7 @@ function simpleOutputs(path: string): Record<string, string> {
 
 type TargetOptions = {
   event?: 'pull_request_target' | 'workflow_dispatch'
-  dispatchReviewer?: 'both' | 'codex' | 'correctness' | 'architecture'
+  dispatchReviewer?: string
   automaticMode?: 'both' | 'correctness' | 'architecture' | 'disabled'
   enabled?: 'true' | 'false'
   isFork?: boolean
@@ -309,7 +309,9 @@ describe('dual Codex workflow contract', () => {
 
   it('supports automatic and manual reviewer switching', () => {
     expect(mainText).toContain("vars.CODEX_REVIEW_MODE || 'correctness'")
-    expect(mainText).toMatch(/options:\n\s+- both\n\s+- codex\n\s+- correctness\n\s+- architecture/)
+    expect(mainText).toMatch(
+      /reviewer:\n(?:\s+.*\n)*?\s+default: both\n(?:\s+.*\n)*?\s+options:\n\s+- both\n\s+- correctness\n\s+- architecture/
+    )
 
     expect(runTarget().outputs).toMatchObject({
       correctness_enabled: 'true',
@@ -334,9 +336,16 @@ describe('dual Codex workflow contract', () => {
       correctness_enabled: 'false',
       architecture_enabled: 'false'
     })
-    expect(
-      runTarget({ event: 'workflow_dispatch', dispatchReviewer: 'codex' }).outputs
-    ).toMatchObject({ correctness_enabled: 'true', architecture_enabled: 'true' })
+    expect(runTarget({ event: 'workflow_dispatch' }).outputs).toMatchObject({
+      correctness_enabled: 'true',
+      architecture_enabled: 'true'
+    })
+  })
+
+  it('rejects removed manual reviewer aliases', () => {
+    const result = runTarget({ event: 'workflow_dispatch', dispatchReviewer: 'codex' })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('Dispatch reviewer must be both, correctness, or architecture.')
   })
 
   it('keeps fork review policy independent from reviewer selection', () => {

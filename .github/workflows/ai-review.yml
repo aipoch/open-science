@@ -33,11 +33,10 @@ on:
       reviewer:
         description: Reviewer to run
         required: true
-        default: correctness
+        default: both
         type: choice
         options:
           - both
-          - codex
           - correctness
           - architecture
 
@@ -133,9 +132,13 @@ jobs:
           selected_mode="$CODEX_REVIEW_MODE"
           if [[ "$REVIEW_EVENT" == "workflow_dispatch" ]]; then
             selected_mode="$DISPATCH_REVIEWER"
-          fi
-          if [[ "$selected_mode" == "codex" ]]; then
-            selected_mode=both
+            case "$selected_mode" in
+              both|correctness|architecture) ;;
+              *)
+                echo "Dispatch reviewer must be both, correctness, or architecture." >&2
+                exit 1
+                ;;
+            esac
           fi
           if [[ "$ENABLE_CODEX_REVIEW" == "false" ]]; then
             selected_mode=disabled
