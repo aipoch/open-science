@@ -19,6 +19,7 @@ type WorkflowStep = {
 type WorkflowJob = {
   steps?: WorkflowStep[]
   if?: string
+  name?: string
   needs?: string | string[]
   permissions?: Record<string, string>
   secrets?: Record<string, string>
@@ -423,6 +424,9 @@ describe('dual Codex workflow contract', () => {
     const architecture = mainWorkflow.jobs.codex_architecture_review
     expect(correctness.uses).toBe('./.github/workflows/ai-codex-review.yml')
     expect(architecture.uses).toBe('./.github/workflows/ai-codex-review.yml')
+    expect(correctness.name).toBe('Correctness')
+    expect(architecture.name).toBe('Architecture')
+    expect(codexWorkflow.jobs.review.name).toBe('Run Codex')
     expect(correctness.permissions).toEqual({ contents: 'read' })
     expect(architecture.permissions).toEqual({ contents: 'read' })
     expect(correctness.with).toMatchObject({
