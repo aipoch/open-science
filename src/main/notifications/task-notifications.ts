@@ -117,7 +117,7 @@ export const describeTaskNotification = (
     }
 
     return {
-      title: 'Agent response complete',
+      title: 'Task completed',
       body: truncate(
         taskName
           ? `The agent finished responding to ${taskName}.`

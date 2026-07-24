@@ -95,14 +95,14 @@ describe('describeConnectorApprovalNotification', () => {
 describe('describeTaskNotification', () => {
   it('names the task from the prompt snippet when a turn completes', () => {
     expect(describeTaskNotification(stopEvent('end_turn'), 'Plot the curve')).toEqual({
-      title: 'Agent response complete',
+      title: 'Task completed',
       body: 'The agent finished responding to "Plot the curve".'
     })
   })
 
   it('falls back to a generic body when no prompt was tracked', () => {
     expect(describeTaskNotification(stopEvent('end_turn'))).toEqual({
-      title: 'Agent response complete',
+      title: 'Task completed',
       body: 'The agent finished responding.'
     })
   })
@@ -263,7 +263,7 @@ describe('TaskNotificationService', () => {
 
     expect(shown).toHaveLength(1)
     expect(shown[0]).toMatchObject({
-      title: 'Agent response complete',
+      title: 'Task completed',
       body: 'The agent finished responding to "Plot the curve".'
     })
   })
