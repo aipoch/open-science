@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { buildOpencodeConfig, opencodeFramework } from './opencode'
 
 describe('opencodeFramework.prepareModelConfig', () => {
-  it('writes the connector instructions file and wires it into opencode.json instructions', () => {
+  it('writes connector conventions and wires them into opencode.json instructions', () => {
     const config = opencodeFramework.prepareModelConfig(
       { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
       {
@@ -112,7 +112,13 @@ describe('opencodeFramework.prepareModelConfig', () => {
 
   it('pins the authoritative provider/model/baseURL (not just permission) in OPENCODE_CONFIG_CONTENT', () => {
     const config = opencodeFramework.prepareModelConfig(
-      { type: 'custom', baseUrl: 'https://gw.example/v1', model: 'deepseek-v4-pro', key: 'k' },
+      {
+        type: 'custom',
+        baseUrl: 'https://gw.example/v1',
+        model: 'deepseek-v4-pro',
+        contextWindow: 128_000,
+        key: 'k'
+      },
       { storageRoot: '/data', executablePath: '/bin/opencode' }
     )
 
@@ -121,12 +127,48 @@ describe('opencodeFramework.prepareModelConfig', () => {
     // repoint the endpoint or swap the model while inheriting the key ref.
     expect(content.model).toBe('anthropic/deepseek-v4-pro')
     expect(content.provider.anthropic.options.baseURL).toBe('https://gw.example/v1')
-    expect(content.provider.anthropic.models).toEqual({ 'deepseek-v4-pro': {} })
+    expect(content.provider.anthropic.models).toEqual({
+      'deepseek-v4-pro': { limit: { context: 128_000, output: 32_000 } }
+    })
     // Permission policy is still pinned.
     expect(content.permission['*']).toBe('ask')
     // The key rides the env as a reference only — never a plaintext literal in the pinned layer.
     expect(content.provider.anthropic.options.apiKey).toBe('{env:OPENCODE_APP_API_KEY}')
     expect(config.env?.OPENCODE_CONFIG_CONTENT).not.toContain('"k"')
+  })
+
+  it('gives the Anthropic AI SDK a /v1 base so it requests /v1/messages', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      {
+        type: 'custom',
+        baseUrl: 'https://gateway.example',
+        model: 'claude-opus-4-8',
+        key: 'k'
+      },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+
+    const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    expect(content.provider.anthropic.options.baseURL).toBe('https://gateway.example/v1')
+  })
+
+  it('caps the required output limit at a custom context window smaller than 32k', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      {
+        type: 'custom',
+        baseUrl: 'https://gateway.example',
+        model: 'small-context-model',
+        contextWindow: 16_000,
+        key: 'k'
+      },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+
+    const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    expect(content.provider.anthropic.models['small-context-model'].limit).toEqual({
+      context: 16_000,
+      output: 16_000
+    })
   })
 
   it('declares image capability in the pinned layer for a multimodal model', () => {
@@ -237,14 +279,17 @@ describe('buildOpencodeConfig', () => {
         type: 'custom',
         baseUrl: 'https://gw.example/v1',
         model: 'deepseek-v4-pro',
-        key: 'sk-secret'
+        key: 'sk-secret',
+        contextWindow: 128_000
       })
     )
 
     // A non-catalog model id is both selected and registered, so opencode treats it as a real model
     // instead of ignoring it and falling back to its own default.
     expect(config.model).toBe('anthropic/deepseek-v4-pro')
-    expect(config.provider.anthropic.models).toEqual({ 'deepseek-v4-pro': {} })
+    expect(config.provider.anthropic.models).toEqual({
+      'deepseek-v4-pro': { limit: { context: 128_000, output: 32_000 } }
+    })
     // The key is referenced via opencode env interpolation, never emitted as a plaintext literal.
     expect(config.provider.anthropic.options).toEqual({
       baseURL: 'https://gw.example/v1',

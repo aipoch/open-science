@@ -23,6 +23,7 @@ const emptySnapshot = (): AcpStateSnapshot => ({
   pendingPermissions: [],
   permissionProfiles: {},
   permissionGrants: {},
+  contextUsageBySession: {},
   promptInFlight: false,
   promptInFlightSessionIds: []
 })
@@ -329,6 +330,76 @@ describe('AcpRuntimeCoordinator', () => {
       sessionId: 'old-session',
       text: 'continue on Codex'
     })
+  })
+
+  it('invalidates the old framework context usage until the adopted session reports a new value', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+        sessionIds: [`agent-session-${created.length + 1}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    created[0].emitState({
+      contextUsageBySession: { [session.sessionId]: { used: 24000, size: 200000 } }
+    })
+    expect(coordinator.getSnapshot().contextUsageBySession).toEqual({
+      [session.sessionId]: { used: 24000, size: 200000 }
+    })
+
+    await coordinator.requestAgentFrameworkSwitch()
+    expect(coordinator.getSnapshot().contextUsageBySession).toEqual({})
+
+    await coordinator.resumeSession({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      previousFrameworkId: 'claude-code'
+    })
+    expect(coordinator.getSnapshot().contextUsageBySession).toEqual({})
+
+    created[1].emitState({
+      contextUsageBySession: { [session.sessionId]: { used: 18000, size: 128000 } }
+    })
+    expect(coordinator.getSnapshot().contextUsageBySession).toEqual({
+      [session.sessionId]: { used: 18000, size: 128000 }
+    })
+  })
+
+  it('hides a retiring framework context while its active prompt finishes', async () => {
+    const oldPrompt = createDeferred<{ stopReason: string }>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+        sessionIds: [`agent-session-${created.length + 1}`],
+        callbacks,
+        ...(created.length === 0 ? { prompt: () => oldPrompt.promise } : {})
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    created[0].emitState({
+      contextUsageBySession: { [session.sessionId]: { used: 24000, size: 200000 } }
+    })
+    const turn = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'continue' })
+
+    await coordinator.requestAgentFrameworkSwitch()
+    expect(coordinator.getSnapshot().contextUsageBySession).toEqual({})
+
+    created[0].emitState({
+      contextUsageBySession: { [session.sessionId]: { used: 26000, size: 200000 } }
+    })
+    expect(coordinator.getSnapshot().contextUsageBySession).toEqual({})
+
+    oldPrompt.resolve({ stopReason: 'end_turn' })
+    await turn
   })
 
   it('namespaces events and routes permission responses to their owning runtime', async () => {

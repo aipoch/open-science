@@ -252,8 +252,18 @@ describe('validate: error-body extraction', () => {
 })
 
 describe('validate: provider dispatch', () => {
-  it('returns ok for a 200 custom response', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({ status: 200 } as Response)
+  it('returns ok for a valid 200 Anthropic message', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'o' }],
+          usage: { input_tokens: 1, output_tokens: 1 }
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    )
 
     const result = await validateProvider(
       { type: 'custom', baseUrl: 'https://g/v1', key: 'k', model: 'm' },
@@ -261,6 +271,22 @@ describe('validate: provider dispatch', () => {
     )
 
     expect(result).toMatchObject({ ok: true, category: 'ok', status: 200 })
+  })
+
+  it('rejects an empty 200 Anthropic response instead of recording a false validation success', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+
+    const result = await validateProvider(
+      { type: 'custom', baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch }
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      category: 'unknown',
+      status: 200,
+      message: expect.stringContaining('valid Anthropic message')
+    })
   })
 
   it('requires an actual function call from a Chat Completions bridge provider', async () => {

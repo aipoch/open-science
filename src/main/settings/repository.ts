@@ -183,6 +183,11 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   const provider: StoredProvider = { id, type, name }
   const baseUrl = asString(value.baseUrl)
   const model = asString(value.model)
+  const rawContextWindow = asNumber(value.contextWindow)
+  const contextWindow =
+    rawContextWindow !== undefined && Number.isSafeInteger(rawContextWindow) && rawContextWindow > 0
+      ? rawContextWindow
+      : undefined
   const supportsImageInput = asBoolean(value.supportsImageInput)
   const region = asString(value.region)
   const keyRef = asString(value.keyRef)
@@ -218,6 +223,7 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
 
   if (baseUrl) provider.baseUrl = baseUrl
   if (model) provider.model = model
+  if (contextWindow !== undefined) provider.contextWindow = contextWindow
   if (supportsImageInput !== undefined) provider.supportsImageInput = supportsImageInput
   if (apiEndpoints.length > 0) provider.apiEndpoints = apiEndpoints
   if (vendorId) provider.vendorId = vendorId

@@ -96,11 +96,23 @@ export const ACP_PROMPT_FAILED_EVENT_TITLE = 'Prompt failed'
 // the agent context and replays a text-only transcript. Absent on ordinary events.
 export type AcpRecoverableFailure = 'context-overflow'
 
+// Current agent-context usage projected onto its logical app session. `used` is model input tokens plus
+// cache-read tokens; output/completion and cache-write tokens are excluded. `size` is the ACP-required
+// window bound to that same agent-context generation. Both expire when that context disconnects or is
+// replaced. Monetary cost is deliberately excluded: context tracking does not calculate billing.
+export type AcpContextUsage = {
+  used: number
+  size: number
+}
+
 export type AcpRuntimeEvent = {
   id: string
   timestamp: number
   kind: AcpRuntimeEventKind
   level: AcpRuntimeEventLevel
+  // Present only on a usage_update-derived event; the runtime records it per session and does not push
+  // the event into the visible conversation.
+  contextUsage?: AcpContextUsage
   // Set on an error event the app can auto-recover from, so the renderer compacts-and-retries instead
   // of surfacing a dead-end error.
   recoverable?: AcpRecoverableFailure
@@ -202,6 +214,9 @@ export type AcpStateSnapshot = {
   permissionProfiles: Record<string, SessionPermissionProfileState>
   // Per-session always-allow grants (from per-request "Always"), so the UI can show and revoke them.
   permissionGrants: Record<string, AcpPermissionGrant[]>
+  // Latest context-window usage for each logical app session's current agent-context generation.
+  // Missing means unknown or invalidated; framework switches and reconnects clear the old generation.
+  contextUsageBySession: Record<string, AcpContextUsage>
   promptInFlight: boolean
   promptInFlightSessionIds: string[]
 }

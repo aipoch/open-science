@@ -55,9 +55,8 @@ export type ModelConfigContext = {
   // Absolute path to the detected framework executable (claude / opencode).
   executablePath: string
   responsesBridge?: ResponsesBridgeConnection
-  // Combined instructions markdown (connector conventions + tools) for frameworks that lack on-demand
-  // skill loading; the adapter writes it and wires it into the agent's instruction mechanism so the
-  // agent learns host.mcp instead of reimplementing connector calls with raw HTTP. Empty ⇒ omitted.
+  // Compact connector conventions for frameworks that need host.mcp guidance in their baseline
+  // instructions. Detailed connector schemas live in on-demand `mcp-*` skills. Empty ⇒ omitted.
   instructions?: string
   // The user's reasoning-effort preference ('default'/undefined ⇒ don't override; the framework
   // injects nothing and the agent keeps its own default). Each framework maps the level onto its
@@ -152,6 +151,9 @@ export type ResolvedAgentBackend = {
   // Reasoning-effort level to apply per session via the ACP `thought_level` configOption, resolved
   // to the closest level the agent advertises. Undefined ⇒ the agent keeps its own default.
   sessionEffort?: ReasoningEffort
+  // Exact context-window limit for the selected upstream provider model. Framework adapters may
+  // report a fallback or bridge transport model instead, so the runtime treats this as authoritative.
+  contextWindow?: number
   authentication?: AgentAuthentication
   providerConfiguration?: AgentProviderConfiguration
   // A bridged backend owns one reference to its local loopback bridge. Runtime teardown releases it;

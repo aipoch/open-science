@@ -7,6 +7,7 @@ import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 import { expect, it, vi } from 'vitest'
 
+import { CODEX_BRIDGE_MODEL } from '../agent-framework/codex'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
 import { ReviewerMcpServer, type SubmitFindingsHandler } from '../reviewer/mcp-server'
 import { ResponsesBridge } from './responses-bridge'
@@ -95,6 +96,12 @@ it.runIf(runLiveContract)(
             id: 'chat-mcp-1',
             model: 'probe-model',
             choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }]
+          },
+          {
+            id: 'chat-mcp-1',
+            model: 'probe-model',
+            choices: [],
+            usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 }
           }
         ])
       }
@@ -115,6 +122,12 @@ it.runIf(runLiveContract)(
           id: 'chat-mcp-2',
           model: 'probe-model',
           choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+        },
+        {
+          id: 'chat-mcp-2',
+          model: 'probe-model',
+          choices: [],
+          usage: { prompt_tokens: 15, completion_tokens: 3, total_tokens: 18 }
         }
       ])
     }
@@ -149,7 +162,9 @@ it.runIf(runLiveContract)(
         MODEL_PROVIDER: 'probe',
         NO_BROWSER: '1',
         CODEX_CONFIG: JSON.stringify({
-          model: 'gpt-5.5',
+          model: CODEX_BRIDGE_MODEL,
+          model_context_window: 1_000_000,
+          model_auto_compact_token_limit: 950_000,
           model_provider: 'probe',
           model_providers: {
             probe: {
@@ -214,7 +229,11 @@ it.runIf(runLiveContract)(
               for (;;) {
                 const update = await session.nextUpdate()
                 if (update.kind === 'stop')
-                  return { updates, stopReason: update.response.stopReason }
+                  return {
+                    updates,
+                    response: update.response,
+                    stopReason: update.response.stopReason
+                  }
                 updates.push(update.notification)
               }
             })
@@ -233,6 +252,21 @@ it.runIf(runLiveContract)(
       )
       expect(JSON.stringify(result.updates)).toContain('mcp.probe-server.echo')
       expect(JSON.stringify(result.updates)).toContain('MCP_BRIDGE_OK')
+      expect(result.updates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'usage_update',
+              size: 950_000
+            })
+          })
+        ])
+      )
+      expect(result.response.usage).toMatchObject({
+        inputTokens: 15,
+        cachedReadTokens: 0,
+        outputTokens: 3
+      })
       expect(result.stopReason).toBe('end_turn')
     } catch (error) {
       throw new Error(`${String(error)}\n${stderr.join('')}`)
@@ -408,7 +442,9 @@ it.runIf(runLiveContract)(
         MODEL_PROVIDER: 'probe',
         NO_BROWSER: '1',
         CODEX_CONFIG: JSON.stringify({
-          model: 'gpt-5.5',
+          model: CODEX_BRIDGE_MODEL,
+          model_context_window: 1_000_000,
+          model_auto_compact_token_limit: 950_000,
           model_provider: 'probe',
           model_providers: {
             probe: {

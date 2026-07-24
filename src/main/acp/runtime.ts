@@ -31,6 +31,7 @@ import type {
   AcpPromptRequest,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
+  AcpContextUsage,
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
@@ -494,6 +495,9 @@ class AcpRuntime {
   private error: string | undefined
   private events: AcpRuntimeEvent[] = []
   private eventSequence = 0
+  // Latest context-window usage per app session, from ACP usage_update. Consumed by getSnapshot;
+  // entries appear once the active framework emits a usable context count.
+  private contextUsageBySession = new Map<string, AcpContextUsage>()
   private agentProcess: ChildProcessWithoutNullStreams | undefined
   // Latched by shutdown() on app quit. A connect can be mid-spawn (resolveSpawnConfig is async) when
   // quit fires, so this lets the post-spawn path kill a child that was created after killAgentProcess ran.
@@ -592,6 +596,9 @@ class AcpRuntime {
   // frameworks (Claude). Refreshed from the resolved backend on each connect.
   private pendingSessionModel: string | undefined
   private pendingSessionModelRequired = false
+  // The selected upstream model owns the denominator. Adapter values are fallback-only because a
+  // bridge can report its internal transport model (for example Codex gpt-5.5) instead.
+  private selectedModelContextWindow: number | undefined
   // Reasoning-effort level to apply per session via the ACP thought_level configOption; undefined
   // means "don't override" (the agent keeps its own default). Refreshed on each connect.
   private pendingSessionEffort: ReasoningEffort | undefined
@@ -692,6 +699,7 @@ class AcpRuntime {
       permissionGrants: Object.fromEntries(
         sessionIds.map((sessionId) => [sessionId, this.permissionBroker.listGrants(sessionId)])
       ),
+      contextUsageBySession: Object.fromEntries(this.contextUsageBySession),
       promptInFlight: promptInFlightSessionIds.length > 0,
       promptInFlightSessionIds
     }
@@ -1341,6 +1349,9 @@ class AcpRuntime {
 
     // The fresh agent session holds no history, so the accumulated media is gone; start its budget clean.
     this.sessionInlineImageBytes.delete(request.sessionId)
+    // A context reset creates a new agent-side conversation under the same app id. Do not carry the
+    // previous context size into the fresh conversation before its first usage_update arrives.
+    this.contextUsageBySession.delete(request.sessionId)
 
     // Release the failed turn's in-flight lock now. Its own `finally` clears it too, but that runs only
     // after async artifact cleanup, so the recovery resend that follows this reset would otherwise race
@@ -1678,6 +1689,14 @@ class AcpRuntime {
   // until the session goes idle. Because every provider shares one config dir, the reconnect resumes the
   // conversation on the new provider with full context. Called when the active provider changes.
   async requestProviderReconnect(): Promise<void> {
+    // The selected backend changed even if teardown must wait for an active prompt. Its old context
+    // measurement no longer describes the selected generation, so hide it immediately and let the
+    // replacement generation repopulate usage after reconnect/resume.
+    if (this.contextUsageBySession.size > 0) {
+      this.contextUsageBySession.clear()
+      this.emitState()
+    }
+
     if (this.hasBlockingActivity()) {
       this.pendingProviderReconnect = true
       // Arm the barrier so any concurrent createSession waits for the reconnect
@@ -1840,6 +1859,10 @@ class AcpRuntime {
       this.permissionBroker.cancelAll()
       this.clearReviewerSessionState()
       this.promptInFlightSessionIds.clear()
+      // Context usage belongs to this live agent-context generation. Invalidate it before teardown,
+      // including when a later session.dispose throws. A reconnect may resume the native context or
+      // replay history into a fresh one; only that generation's own usage_update can repopulate it.
+      this.contextUsageBySession.clear()
 
       for (const session of this.sessions.values()) {
         session.dispose()
@@ -1953,6 +1976,7 @@ class AcpRuntime {
       backendId: backend.backendId ?? '(unspecified)',
       sessionModel: backend.sessionModel ?? '(framework default)',
       sessionEffort: backend.sessionEffort ?? '(agent default)',
+      contextWindow: backend.contextWindow ?? '(adapter reported)',
       args: backend.args ?? [],
       executablePath: backend.executablePath,
       // Log env keys but not values (may contain credentials)
@@ -1992,6 +2016,7 @@ class AcpRuntime {
     this.pendingSessionModel = backend.sessionModel
     this.pendingSessionModelRequired = backend.sessionModelRequired ?? false
     this.pendingSessionEffort = backend.sessionEffort
+    this.selectedModelContextWindow = backend.contextWindow
     this.pendingAuthentication = backend.authentication
     this.pendingProviderConfiguration = backend.providerConfiguration
     this.responsesBridgeLease = backend.responsesBridgeLease
@@ -2136,6 +2161,11 @@ class AcpRuntime {
         const message = await Promise.race([activeSession.nextUpdate(), promptFailure])
 
         if (message.kind === 'stop') {
+          this.recordCodexPromptResponseContextUsage(
+            request.sessionId,
+            message.response,
+            promptTurn
+          )
           // Emit artifact metadata before stop so the renderer can attach files to the finished message.
           await this.emitArtifactRunEvent(request.sessionId, artifactRun)
           artifactEmitted = true
@@ -2153,6 +2183,11 @@ class AcpRuntime {
           })
           return message.response
         }
+
+        // A reset can adopt a fresh agent session under the same app id while this abandoned prompt
+        // is still unwinding. Ignore any update already queued by that old prompt generation; otherwise
+        // a late usage_update can repopulate the context measurement we deliberately invalidated.
+        if (this.currentPromptTurnBySession.get(request.sessionId) !== promptTurn) continue
 
         // Route the update under the app-facing id so a session adopted onto a new agent (after a
         // provider switch) still streams into the same conversation the renderer is watching. (No
@@ -2348,6 +2383,7 @@ class AcpRuntime {
     this.sessionProjectNames.delete(request.sessionId)
     this.sessionFrameworks.delete(request.sessionId)
     this.sessionBackendIds.delete(request.sessionId)
+    this.contextUsageBySession.delete(request.sessionId)
     this.permissionProfiles.delete(request.sessionId)
     this.artifactSessionIds.delete(request.sessionId)
     this.notebookRoutingIds.delete(request.sessionId)
@@ -3466,6 +3502,33 @@ class AcpRuntime {
     return { outcome: { outcome: 'selected', optionId: allowOption.optionId } }
   }
 
+  // App-managed codex-acp emits the exact per-request numerator during generation. A user-managed
+  // unpatched adapter emits its latest total instead, but Codex PromptResponse.usage is also a
+  // per-request (not per-turn accumulated) snapshot, so use it as a final compatibility correction.
+  private recordCodexPromptResponseContextUsage(
+    sessionId: string,
+    response: PromptResponse,
+    promptTurn: number
+  ): void {
+    if (
+      this.framework.id !== 'codex' ||
+      this.pendingProviderReconnect ||
+      this.currentPromptTurnBySession.get(sessionId) !== promptTurn
+    ) {
+      return
+    }
+
+    const usage = response.usage
+    const current = this.contextUsageBySession.get(sessionId)
+    if (!usage || !current) return
+
+    const used = usage.inputTokens + (usage.cachedReadTokens ?? 0)
+    if (!Number.isFinite(used) || used < 0 || current.used === used) return
+
+    this.contextUsageBySession.set(sessionId, { used, size: current.size })
+    this.emitState()
+  }
+
   // Normalizes low-level session notifications into runtime/workspace events.
   private handleSessionUpdate(notification: SessionNotification, appSessionId?: string): void {
     // When a session was adopted onto a replaced agent, the agent labels updates with its own id;
@@ -3488,6 +3551,21 @@ class AcpRuntime {
     }
 
     const event = toAcpRuntimeEvent(routed, this.nextEventId())
+
+    // usage_update carries the session's context-window usage, not conversation content: record it per
+    // session and emit state so the indicator updates, but never push it as a visible event.
+    if (event.contextUsage) {
+      // A provider switch can wait for this prompt to finish. Any updates from that superseded backend
+      // must stay hidden until disconnect replaces the agent-context generation.
+      if (this.pendingProviderReconnect) return
+
+      this.contextUsageBySession.set(routed.sessionId, {
+        ...event.contextUsage,
+        size: this.selectedModelContextWindow ?? event.contextUsage.size
+      })
+      this.emitState()
+      return
+    }
 
     // Tool results (e.g. WebFetch's claude.ai domain-safety preflight, a failed Bash command) stream as
     // tool_call_update content, which the session-update log omits — so a tool that runs and fails leaves
@@ -3616,6 +3694,7 @@ class AcpRuntime {
     this.sessionMcpServerNames.clear()
     this.codexMcpToolIdentities.clear()
     this.sessionProjectNames.clear()
+    this.contextUsageBySession.clear()
     this.artifactSessionIds.clear()
     this.notebookRoutingIds.clear()
     this.mcpHttpHost?.clear()

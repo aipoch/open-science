@@ -1,0 +1,50 @@
+diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
+--- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
++++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
+@@ -2353,7 +2353,7 @@ export class ClaudeAgent {
+                                     cache_creation_input_tokens: usage.cache_creation_input_tokens ?? prev.cache_creation_input_tokens,
+                                 };
+                             }
+-                            const nextUsage = totalTokens(lastAssistantUsage);
++                            const nextUsage = contextTokens(lastAssistantUsage);
+                             if (nextUsage !== lastAssistantTotalUsage) {
+                                 lastAssistantTotalUsage = nextUsage;
+                                 await sendUpdate({
+@@ -2465,7 +2465,7 @@ export class ClaudeAgent {
+                         // aligned with what the user's current selection is producing.
+                         if (message.type === "assistant" && message.parent_tool_use_id === null) {
+                             lastAssistantUsage = snapshotFromUsage(message.message.usage);
+-                            lastAssistantTotalUsage = totalTokens(lastAssistantUsage);
++                            lastAssistantTotalUsage = contextTokens(lastAssistantUsage);
+                             if (message.message.model && message.message.model !== "<synthetic>") {
+                                 lastAssistantModel = message.message.model;
+                             }
+@@ -4282,15 +4282,10 @@ function sessionUsage(session) {
+             session.accumulatedUsage.cachedWriteTokens,
+     };
+ }
+-/** Sum all four fields as a proxy for post-turn context occupancy: the current
+- *  turn's output becomes next turn's input. Per the Anthropic API, input_tokens
+- *  excludes cache tokens — cache_read and cache_creation are reported
+- *  separately — so summing all four is not double-counting. */
+-function totalTokens(usage) {
+-    return (usage.input_tokens +
+-        usage.output_tokens +
+-        usage.cache_read_input_tokens +
+-        usage.cache_creation_input_tokens);
++/** Report the current upstream request's model-input context. Cache reads are
++ *  part of that input; completion tokens and cache writes are not. */
++function contextTokens(usage) {
++    return usage.input_tokens + usage.cache_read_input_tokens;
+ }
+ /**
+  * Build the `data` payload attached to a `RequestError.internalError` when we
+@@ -4307,7 +4302,7 @@ function errorKindData(errorKind) {
+ }
+ /** Project a nullable API usage object into our non-null snapshot shape.
+  *  Both SDK message_start and assistant message `usage` have `number | null`
+- *  cache fields; we coerce absent values to 0 so `totalTokens` never hits
++ *  cache fields; we coerce absent values to 0 so `contextTokens` never hits
+  *  NaN. `input_tokens`/`output_tokens` are typed `number` by the SDK but
+  *  synthetic or third-party-backend stream events have been observed emitting
+  *  them as null/undefined — coerce those too so a malformed upstream event

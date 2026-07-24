@@ -1,6 +1,7 @@
 import * as acp from '@agentclientprotocol/sdk'
 import type {
   ContentBlock,
+  PromptResponse,
   SessionConfigOption,
   SessionModeState,
   SessionNotification
@@ -144,7 +145,7 @@ const startFakeAgent = (
       sessionId: string
       text: string
       prompt: ContentBlock[]
-    }) => Promise<void> | void
+    }) => Promise<PromptResponse | void> | PromptResponse | void
   } = {}
 ): {
   authRequests: unknown[]
@@ -277,7 +278,11 @@ const startFakeAgent = (
 
       prompts.push({ sessionId: ctx.params.sessionId, text })
       actions.push(`prompt:${text}`)
-      await options.onPrompt?.({ sessionId: ctx.params.sessionId, text, prompt: ctx.params.prompt })
+      const promptResponse = await options.onPrompt?.({
+        sessionId: ctx.params.sessionId,
+        text,
+        prompt: ctx.params.prompt
+      })
       // Stream one assistant chunk through the client callback path before stopping.
       await ctx.client.notify(acp.methods.client.session.update, {
         sessionId: ctx.params.sessionId,
@@ -290,8 +295,7 @@ const startFakeAgent = (
           }
         }
       })
-
-      return { stopReason: 'end_turn' }
+      return promptResponse ?? { stopReason: 'end_turn' }
     })
     .onNotification(acp.methods.agent.session.cancel, (ctx) => {
       cancelledSessions.push(ctx.params.sessionId)
@@ -476,6 +480,20 @@ const agentToAppSessionMap = (runtime: AcpRuntime): Map<string, string> =>
 
 const sessionFrameworksMap = (runtime: AcpRuntime): Map<string, string> =>
   (runtime as unknown as { sessionFrameworks: Map<string, string> }).sessionFrameworks
+
+const contextUsageMap = (runtime: AcpRuntime): Map<string, { used: number; size: number }> =>
+  (
+    runtime as unknown as {
+      contextUsageBySession: Map<string, { used: number; size: number }>
+    }
+  ).contextUsageBySession
+
+const handleSessionUpdate = (runtime: AcpRuntime, notification: SessionNotification): void =>
+  (
+    runtime as unknown as {
+      handleSessionUpdate: (value: SessionNotification) => void
+    }
+  ).handleSessionUpdate(notification)
 
 const reviewerSessionIds = (runtime: AcpRuntime): Set<string> =>
   (runtime as unknown as { reviewerSessionIds: Set<string> }).reviewerSessionIds
@@ -1511,6 +1529,23 @@ describe('ACP runtime session management', () => {
     // The fresh session still accepts prompts, so the conversation continues after the reset.
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'continue after compaction' })
     expect(receivedPrompts.at(-1)).toBeDefined()
+  })
+
+  it('clears the previous context usage before a context reset replacement reports usage', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['remote-session-1', 'remote-session-2'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    contextUsageMap(runtime).set(session.sessionId, { used: 6400, size: 128000 })
+
+    await runtime.resetSessionContext({ sessionId: session.sessionId, cwd: '/workspace' })
+
+    expect(runtime.getSnapshot().contextUsageBySession).toEqual({})
   })
 
   it('releases the in-flight prompt lock on reset so the recovery resend is not rejected', async () => {
@@ -3618,6 +3653,26 @@ describe('ACP runtime session management', () => {
     expect(reviewerSessionIds(runtime).size).toBe(0)
   })
 
+  it('invalidates context usage when its agent connection disconnects', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    contextUsageMap(runtime).set(session.sessionId, { used: 12000, size: 128000 })
+    expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+      [session.sessionId]: { used: 12000, size: 128000 }
+    })
+
+    await runtime.disconnect()
+
+    expect(runtime.getSnapshot().contextUsageBySession).toEqual({})
+  })
+
   it('clears a session MCP server names when the session is deleted', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['remote-session-1'])
@@ -4242,10 +4297,129 @@ describe('ACP runtime session management', () => {
     expect(sharedAgent.resumedSessions).toEqual([])
   })
 
-  it('defers a provider reconnect until an in-flight prompt finishes', async () => {
+  it('uses Codex input and cache-read tokens for context usage', async () => {
     const process = new FakeAgentProcess()
-    const gate = createDeferred()
-    startFakeAgent(process, ['s1'], { onPrompt: () => gate.promise })
+    const usageSent = createDeferred()
+    const finishPrompt = createDeferred()
+    startFakeAgent(process, ['s1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      onPrompt: async ({ sessionId }) => {
+        handleSessionUpdate(runtime, {
+          sessionId,
+          // Patched codex-acp reports only the current request's input plus cached input.
+          update: { sessionUpdate: 'usage_update', used: 15, size: 128000 }
+        })
+        usageSent.resolve()
+        await finishPrompt.promise
+
+        return {
+          stopReason: 'end_turn',
+          usage: {
+            totalTokens: 18,
+            inputTokens: 12,
+            cachedReadTokens: 3,
+            outputTokens: 3
+          }
+        }
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+    await usageSent.promise
+    const usageWhileGenerating = runtime.getSnapshot().contextUsageBySession
+    finishPrompt.resolve()
+    await prompt
+
+    expect(usageWhileGenerating).toEqual({
+      s1: { used: 15, size: 128000 }
+    })
+    expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+      s1: { used: 15, size: 128000 }
+    })
+  })
+
+  it.each([
+    ['Claude Code', claudeCodeFramework, 200_000],
+    ['OpenCode', opencodeFramework, 128_000],
+    ['Codex bridge', codexFramework, 258_400]
+  ] as const)(
+    'uses the selected model context window instead of the %s adapter window',
+    async (_name, framework, adapterWindow) => {
+      const process = new FakeAgentProcess()
+      startFakeAgent(process, ['s1'], {
+        modes:
+          framework.id === 'codex'
+            ? createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+            : undefined
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          executablePath: '/bin/agent',
+          env: {},
+          contextWindow: 1_000_000
+        }),
+        framework
+      })
+
+      await runtime.createSession({ cwd: '/workspace' })
+      handleSessionUpdate(runtime, {
+        sessionId: 's1',
+        update: { sessionUpdate: 'usage_update', used: 15, size: adapterWindow }
+      })
+
+      expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+        s1: { used: 15, size: 1_000_000 }
+      })
+    }
+  )
+
+  it('uses the latest Claude model request instead of accumulating the agent turn', async () => {
+    const process = new FakeAgentProcess()
+    const firstUsageSent = createDeferred()
+    const sendSecondUsage = createDeferred()
+    const secondUsageSent = createDeferred()
+    const finishPrompt = createDeferred()
+    startFakeAgent(process, ['s1'], {
+      onPrompt: async ({ sessionId }) => {
+        handleSessionUpdate(runtime, {
+          sessionId,
+          // First upstream model response: 12 input + 3 cache read.
+          update: { sessionUpdate: 'usage_update', used: 15, size: 200000 }
+        })
+        firstUsageSent.resolve()
+        await sendSecondUsage.promise
+        handleSessionUpdate(runtime, {
+          sessionId,
+          // A tool-followup model request replaces the first measurement: 19 input + 5 cache read.
+          update: { sessionUpdate: 'usage_update', used: 24, size: 200000 }
+        })
+        secondUsageSent.resolve()
+        await finishPrompt.promise
+
+        return {
+          stopReason: 'end_turn',
+          // claude-agent-acp accumulates PromptResponse.usage across the whole agent turn. The
+          // runtime must not let this overwrite the latest per-request usage_update.
+          usage: {
+            totalTokens: 60,
+            inputTokens: 31,
+            cachedReadTokens: 8,
+            cachedWriteTokens: 7,
+            outputTokens: 14
+          }
+        }
+      }
+    })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
@@ -4253,19 +4427,147 @@ describe('ACP runtime session management', () => {
     })
 
     await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+    await firstUsageSent.promise
+    expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+      s1: { used: 15, size: 200000 }
+    })
+
+    sendSecondUsage.resolve()
+    await secondUsageSent.promise
+    expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+      s1: { used: 24, size: 200000 }
+    })
+
+    finishPrompt.resolve()
+    await prompt
+
+    expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+      s1: { used: 24, size: 200000 }
+    })
+  })
+
+  it('corrects an unpatched external Codex total with its latest request usage at stop', async () => {
+    const process = new FakeAgentProcess()
+    const usageSent = createDeferred()
+    const finishPrompt = createDeferred()
+    startFakeAgent(process, ['s1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      onPrompt: async ({ sessionId }) => {
+        handleSessionUpdate(runtime, {
+          sessionId,
+          update: { sessionUpdate: 'usage_update', used: 18, size: 128000 }
+        })
+        usageSent.resolve()
+        await finishPrompt.promise
+        return {
+          stopReason: 'end_turn',
+          usage: {
+            totalTokens: 18,
+            inputTokens: 12,
+            cachedReadTokens: 3,
+            outputTokens: 3
+          }
+        }
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+    await usageSent.promise
+    expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+      s1: { used: 18, size: 128000 }
+    })
+
+    finishPrompt.resolve()
+    await prompt
+
+    expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+      s1: { used: 15, size: 128000 }
+    })
+  })
+
+  it('uses OpenCode native input and cache-read context usage', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 15, size: 128000 }
+    })
+
+    expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+      s1: { used: 15, size: 128000 }
+    })
+  })
+
+  it('defers a provider reconnect until an in-flight prompt finishes', async () => {
+    const process = new FakeAgentProcess()
+    const gate = createDeferred()
+    const usageSent = createDeferred()
+    startFakeAgent(process, ['s1'], {
+      onPrompt: async ({ sessionId }) => {
+        handleSessionUpdate(runtime, {
+          sessionId,
+          update: { sessionUpdate: 'usage_update', used: 6800, size: 128000 }
+        })
+        usageSent.resolve()
+        await gate.promise
+        return {
+          stopReason: 'end_turn',
+          usage: {
+            totalTokens: 6800,
+            inputTokens: 6000,
+            cachedReadTokens: 400,
+            cachedWriteTokens: 100,
+            outputTokens: 300
+          }
+        }
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    contextUsageMap(runtime).set('s1', { used: 6400, size: 128000 })
 
     // Start a prompt that stays in flight until the gate is released.
     const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+    await usageSent.promise
 
     // A provider switch requested mid-turn must NOT disconnect the running agent.
     await runtime.requestProviderReconnect()
     expect(process.killed).toBe(false)
+    expect(runtime.getSnapshot().contextUsageBySession).toEqual({})
+
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 7200, size: 128000 }
+    })
+    expect(runtime.getSnapshot().contextUsageBySession).toEqual({})
 
     // Once the turn finishes, the deferred reconnect is applied (agent torn down for a fresh spawn).
     gate.resolve()
     await prompt
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(process.killed).toBe(true)
+    expect(runtime.getSnapshot().contextUsageBySession).toEqual({})
   })
 
   it('retires a framework runtime only after its in-flight prompt finishes', async () => {

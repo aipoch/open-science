@@ -118,6 +118,7 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         permissionProfile="ask"
         permissionProfileState={undefined}
         permissionGrants={[]}
+        contextUsage={undefined}
         canChangePermissionProfile
         onDraftDocChange={vi.fn()}
         onSendMessage={vi.fn()}

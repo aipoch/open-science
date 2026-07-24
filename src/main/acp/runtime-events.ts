@@ -255,11 +255,17 @@ const toAcpRuntimeEvent = (
         text: update.sessionUpdate
       }
     case 'usage_update':
+      // Carry the real numbers on the event so the runtime can record context usage by session. The
+      // runtime consumes this and suppresses the event, so it never appears as conversation noise.
       return {
         ...base,
         kind: 'system',
-        title: 'Usage update',
-        text: 'Token usage changed'
+        title: 'Context usage update',
+        text: 'Context usage changed',
+        contextUsage: {
+          used: update.used,
+          size: update.size
+        }
       }
     case 'available_commands_update':
     case 'config_option_update':

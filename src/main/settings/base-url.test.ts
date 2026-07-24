@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  anthropicMessagesBase,
   normalizeAnthropicBaseUrl,
   openAiChatCompletionsUrl,
   openAiCompletionsBase
 } from './base-url'
+
+describe('anthropicMessagesBase', () => {
+  it('returns the versioned base expected by clients that append /messages', () => {
+    expect(anthropicMessagesBase('https://gateway.example')).toBe('https://gateway.example/v1')
+    expect(anthropicMessagesBase('https://gateway.example/v1')).toBe('https://gateway.example/v1')
+    expect(anthropicMessagesBase('https://gateway.example/v1/messages')).toBe(
+      'https://gateway.example/v1'
+    )
+  })
+})
 
 describe('normalizeAnthropicBaseUrl', () => {
   it('leaves a bare gateway root untouched', () => {

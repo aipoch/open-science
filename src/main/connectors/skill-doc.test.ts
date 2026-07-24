@@ -2,14 +2,17 @@ import { describe, it, expect } from 'vitest'
 import { renderConnectorInstructions, renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
 
 describe('renderConnectorInstructions', () => {
-  it('emits the host.mcp conventions once and each enabled connector, for opencode', () => {
+  it('keeps only shared host.mcp conventions in opencode baseline instructions', () => {
     const md = renderConnectorInstructions(['chemistry'])
 
     expect(md).toContain('host.mcp(')
     // The "do not reimplement with raw HTTP" rule is what steers opencode away from raw requests.
     expect(md).toMatch(/urllib|requests|httpx|fetch/)
-    expect(md).toContain('## chemistry')
-    expect(md).toContain('chemistry / pubchem_get_compounds')
+    expect(md).toContain('mcp-*')
+    expect(md).not.toContain('## chemistry')
+    expect(md).not.toContain('pubchem_get_compounds')
+    expect(md).not.toContain('```json')
+    expect(md.length).toBeLessThan(2_500)
     // Conventions appear once, not per connector.
     expect(
       md.match(/Reach this service ONLY from the REPL control-plane kernel/g)?.length ?? 0

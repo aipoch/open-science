@@ -62,6 +62,7 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     name: provider.name,
     baseUrl: provider.baseUrl ?? '',
     model: provider.model ?? '',
+    contextWindow: provider.contextWindow?.toString() ?? '',
     apiEndpoint: provider.apiEndpoints?.[0] ?? 'anthropic',
     supportsImageInput: provider.supportsImageInput,
     vendorId: provider.vendorId,
@@ -77,6 +78,12 @@ const toUpsertRequest = (
   name: value.name,
   baseUrl: value.baseUrl,
   model: value.model,
+  contextWindow:
+    value.type === 'custom'
+      ? value.contextWindow.trim()
+        ? Number(value.contextWindow)
+        : null
+      : undefined,
   apiEndpoints: [value.apiEndpoint],
   supportsImageInput: value.supportsImageInput,
   vendorId: value.vendorId,

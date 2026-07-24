@@ -259,7 +259,13 @@ describe('Responses-compatible bridge conversion', () => {
             }
           }
         ],
-        usage: { total_tokens: 4 }
+        usage: {
+          prompt_tokens: 3,
+          prompt_tokens_details: { cached_tokens: 1 },
+          completion_tokens: 2,
+          completion_tokens_details: { reasoning_tokens: 1 },
+          total_tokens: 5
+        }
       })
     ).toMatchObject({
       id: 'chat-1',
@@ -268,7 +274,13 @@ describe('Responses-compatible bridge conversion', () => {
         { type: 'message', content: [{ type: 'output_text', text: 'done' }] },
         { type: 'function_call', call_id: 'call-1', name: 'lookup', arguments: '{"id":1}' }
       ],
-      usage: { total_tokens: 4 }
+      usage: {
+        input_tokens: 3,
+        input_tokens_details: { cached_tokens: 1 },
+        output_tokens: 2,
+        output_tokens_details: { reasoning_tokens: 1 },
+        total_tokens: 5
+      }
     })
   })
 
@@ -569,6 +581,17 @@ describe('Responses-compatible bridge conversion', () => {
     ).not.toHaveProperty('reasoning_effort')
   })
 
+  it('requests streaming usage without forwarding Responses-only stream options', () => {
+    expect(
+      responsesToChatRequest({
+        model: 'model-a',
+        input: 'hi',
+        stream: true,
+        stream_options: { include_obfuscation: true }
+      })
+    ).toMatchObject({ stream_options: { include_usage: true } })
+  })
+
   it('surfaces a nested upstream error instead of hiding it behind HTTP status', () => {
     expect(
       upstreamErrorMessage('{"error":{"message":"Model deepseek-v4-flash does not exist"}}', 400)
@@ -588,6 +611,20 @@ describe('Responses-compatible bridge conversion', () => {
                 id: 'chat-1',
                 model: 'model-a',
                 choices: [{ index: 0, delta: { role: 'assistant', content: 'bridge-ok' } }]
+              }),
+            '',
+            'data: ' +
+              JSON.stringify({
+                id: 'chat-1',
+                model: 'model-a',
+                choices: [],
+                usage: {
+                  prompt_tokens: 3,
+                  prompt_tokens_details: { cached_tokens: 1 },
+                  completion_tokens: 2,
+                  completion_tokens_details: { reasoning_tokens: 1 },
+                  total_tokens: 5
+                }
               }),
             '',
             'data: [DONE]',
@@ -630,6 +667,7 @@ describe('Responses-compatible bridge conversion', () => {
       expect(upstreamRequest).toMatchObject({
         model: 'model-a',
         stream: true,
+        stream_options: { include_usage: true },
         messages: [
           { role: 'system', content: 'Be brief.' },
           { role: 'user', content: [{ type: 'text', text: 'hi' }] }
@@ -638,6 +676,20 @@ describe('Responses-compatible bridge conversion', () => {
       expect(output).toContain('response.output_text.delta')
       expect(output).toContain('bridge-ok')
       expect(output).toContain('response.completed')
+      const completed = output
+        .split('\n')
+        .filter((line) => line.startsWith('data: '))
+        .map((line) => JSON.parse(line.slice(6)) as Record<string, unknown>)
+        .find((event) => event.type === 'response.completed') as {
+        response: { usage: Record<string, unknown> }
+      }
+      expect(completed.response.usage).toEqual({
+        input_tokens: 3,
+        input_tokens_details: { cached_tokens: 1 },
+        output_tokens: 2,
+        output_tokens_details: { reasoning_tokens: 1 },
+        total_tokens: 5
+      })
     } finally {
       await bridge.close()
     }
