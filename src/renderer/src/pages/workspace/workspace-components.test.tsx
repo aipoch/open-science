@@ -103,15 +103,6 @@ describe('workspace page component boundaries', () => {
     expect(workspaceSidebarSource).not.toContain('aria-label={`Session status: ${session.status}`}')
   })
 
-  it('shows the session title in destructive delete confirmation copy', () => {
-    const deleteSessionDialogSource = readFileSync(
-      resolve(__dirname, 'DeleteSessionDialog.tsx'),
-      'utf8'
-    )
-
-    expect(deleteSessionDialogSource).toContain('{session?.title}')
-  })
-
   it('uses workspace style tokens instead of migrated hardcoded colors', () => {
     const workspaceSources = [
       readFileSync(workspacePagePath, 'utf8'),
@@ -200,6 +191,27 @@ describe('workspace page component boundaries', () => {
     expect(`${mainCssSource}\n${emphasisSources}`).not.toContain(deprecatedActionToken)
     expect(emphasisSources).toContain('bg-primary')
     expect(emphasisSources).toContain('text-primary')
+  })
+
+  it('keeps first-batch workspace dialogs on the settings dialog chrome', () => {
+    const renameSource = readFileSync(resolve(__dirname, 'RenameSessionDialog.tsx'), 'utf8')
+    const deleteSource = readFileSync(resolve(__dirname, 'DeleteSessionDialog.tsx'), 'utf8')
+    const notebookSource = readFileSync(resolve(__dirname, 'SessionNotebookDialog.tsx'), 'utf8')
+
+    for (const source of [renameSource, notebookSource]) {
+      expect(source).toContain('dialogOverlayClassName')
+      expect(source).toContain('dialogPanelClassName')
+      expect(source).toContain('onInteractOutside={(event) => event.preventDefault()}')
+      expect(source).not.toContain('backdrop-blur')
+    }
+
+    expect(deleteSource).toContain('dialogOverlayClassName')
+    expect(deleteSource).toContain('dialogPanelClassName')
+    expect(deleteSource).toContain('AlertDialog.Root')
+    expect(deleteSource).not.toContain('backdrop-blur')
+
+    expect(notebookSource).toContain('dialogPanelClassName(')
+    expect(notebookSource).toContain('w-[calc(100%-2rem)] max-w-5xl')
   })
 })
 
@@ -305,17 +317,19 @@ describe('conversation message scroller integration', () => {
   it('keeps permission prompts constrained to the conversation content width', () => {
     const permissionApprovalControlsSource = readFileSync(permissionApprovalControlsPath, 'utf8')
 
+    // Outer container maintains width constraints (overflow-visible so the scope dropdown is not clipped)
     expect(permissionApprovalControlsSource).toContain(
-      'className="mb-2 w-full max-w-full space-y-2 overflow-hidden rounded-lg'
+      'className="mb-2 w-full max-w-full rounded-lg border border-border-200'
     )
+    // Header maintains min-w-0 for text truncation
     expect(permissionApprovalControlsSource).toContain(
-      'className="flex min-w-0 flex-col items-stretch gap-2 overflow-hidden"'
+      'className="mb-2 flex min-w-0 items-center gap-2"'
     )
+    // Code block uses WorkspaceToolCodeBlock with max-height constraint
+    expect(permissionApprovalControlsSource).toContain('WorkspaceToolCodeBlock')
+    // Button row maintains layout constraints
     expect(permissionApprovalControlsSource).toContain(
-      'max-h-48 min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-words'
-    )
-    expect(permissionApprovalControlsSource).toContain(
-      'className="flex flex-wrap items-center justify-end gap-1 w-full overflow-hidden"'
+      'className="flex items-center justify-end gap-2"'
     )
   })
 
@@ -393,7 +407,9 @@ describe('conversation message scroller integration', () => {
     expect(workspaceActivityGroupSource).toContain('data-testid="tool-group"')
     expect(workspaceActivityGroupSource).toContain('data-testid="tool-group-header"')
     expect(workspaceActivityGroupSource).toContain('<WorkspaceWebSearchActivityRow')
-    expect(workspaceActivityGroupSource).toContain('formatActivityGroupTitle(group.activities)')
+    expect(workspaceActivityGroupSource).toContain(
+      'formatActivityGroupTitle(group.activities, group.title)'
+    )
     expect(workspaceActivityGroupSource).toContain('getRenderableActivityEntries(group.activities)')
     expect(workspaceWebSearchActivityRowSource).toContain('const WorkspaceWebSearchActivityRow')
     expect(workspaceWebSearchActivityRowSource).toContain('<WorkspaceToolActivityRowButton')

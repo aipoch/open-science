@@ -156,6 +156,18 @@ describe('settings repository', () => {
     expect(sanitizeSettings({}).notificationsEnabled).toBeUndefined()
   })
 
+  it('persists, sanitizes, and clears the close action preference', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.setClosePreference('minimize')
+    expect((await new SettingsRepository(root).getSettings()).closePreference).toBe('minimize')
+    expect(sanitizeSettings({ closePreference: 'invalid' }).closePreference).toBeUndefined()
+
+    await repository.setClosePreference(undefined)
+    expect((await repository.getSettings()).closePreference).toBeUndefined()
+  })
+
   it('persists the Codex adapter and paired native runtime across a sanitized read', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 

@@ -3,6 +3,12 @@ import { FolderInput, FolderOpen } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import {
+  dialogDescriptionClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import { StorageMigrationModal } from '@/pages/settings/StorageMigrationModal'
 
 type LegacyDataMoveDialogProps = {
@@ -87,12 +93,12 @@ const LegacyDataMoveDialog = ({
   return (
     <AlertDialog.Root open>
       <AlertDialog.Portal>
-        <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
-        <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(460px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog">
-          <AlertDialog.Title className="text-base font-semibold text-text-000">
+        <AlertDialog.Overlay className={dialogOverlayClassName} />
+        <AlertDialog.Content className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))]')}>
+          <AlertDialog.Title className={dialogTitleClassName}>
             Move your data to a visible folder?
           </AlertDialog.Title>
-          <AlertDialog.Description className="mt-2 text-sm leading-relaxed text-text-100">
+          <AlertDialog.Description className={dialogDescriptionClassName}>
             Your research data is in a hidden folder. Moving it into a visible OpenScience folder
             makes it easy to find and back up — your settings and history stay where they are.
           </AlertDialog.Description>

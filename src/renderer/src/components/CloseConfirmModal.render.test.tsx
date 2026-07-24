@@ -76,6 +76,29 @@ const findButtonByName = async (pattern: RegExp): Promise<HTMLButtonElement> => 
 }
 
 describe('CloseConfirmModal', () => {
+  it('uses shared settings dialog chrome for the close confirmation', async () => {
+    render()
+    act(() => {
+      emit({ requestId: 'r-style', variant: 'close-to-tray', sessions: [] })
+    })
+
+    await findByText(/Minimize or quit?/)
+
+    const overlay = Array.from(document.body.querySelectorAll<HTMLElement>('div')).find((element) =>
+      element.className.includes('bg-black/50')
+    )
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+
+    expect(overlay?.className).toContain('data-[state=open]:fade-in-0')
+    expect(overlay?.className).toContain('data-[state=closed]:fill-mode-forwards')
+    expect(dialog?.className).toContain('rounded-xl')
+    expect(dialog?.className).toContain('border-border')
+    expect(dialog?.className).toContain('bg-card')
+    expect(dialog?.className).toContain('shadow-dialog')
+    expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
+    expect(dialog?.className).toContain('data-[state=closed]:fill-mode-forwards')
+  })
+
   it('acks and shows the resolved project NAME (not the id main sent) plus the title', async () => {
     useProjectStore.setState({
       projects: [{ id: 'p1', name: 'My Analysis' } as never],
@@ -126,14 +149,38 @@ describe('CloseConfirmModal', () => {
     expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r4', choice: 'cancel' })
   })
 
-  it('replies quit / minimize from the close-to-tray buttons', async () => {
+  it('defaults to remembering the close-to-tray choice', async () => {
     render()
     act(() => {
       emit({ requestId: 'r2', variant: 'close-to-tray', sessions: [] })
     })
+    const remember = document.body.querySelector<HTMLInputElement>('input[type="checkbox"]')
+    expect(remember?.checked).toBe(true)
+
     const minimizeButton = await findButtonByName(/minimize to tray/i)
     act(() => minimizeButton.click())
-    expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r2', choice: 'minimize' })
+    expect(sendResponse).toHaveBeenCalledWith({
+      requestId: 'r2',
+      choice: 'minimize',
+      remember: true
+    })
+  })
+
+  it('does not remember the choice after the checkbox is cleared', async () => {
+    render()
+    act(() => {
+      emit({ requestId: 'r5', variant: 'close-to-tray', sessions: [] })
+    })
+    const remember = document.body.querySelector<HTMLInputElement>('input[type="checkbox"]')
+    act(() => remember?.click())
+
+    const quitButton = await findButtonByName(/^quit$/i)
+    act(() => quitButton.click())
+    expect(sendResponse).toHaveBeenCalledWith({
+      requestId: 'r5',
+      choice: 'quit',
+      remember: false
+    })
   })
 
   it('replies quit / cancel from the quit variant buttons', async () => {

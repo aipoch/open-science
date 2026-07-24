@@ -5,11 +5,17 @@ import type { ActiveSessionInfo } from '../shared/storage'
 import {
   WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL,
   WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL,
+  type CloseActionPreference,
   type CloseConfirmChoice,
   type CloseConfirmRequest,
   type CloseConfirmResponse,
   type CloseConfirmVariant
 } from '../shared/window-controls'
+
+export type NativeCloseConfirmResult = {
+  choice: CloseConfirmChoice
+  remember?: boolean
+}
 
 // Structural (Electron-free) plumbing so the coordinator is unit-testable; the Electron glue that
 // satisfies this is createElectronCloseConfirm below.
@@ -29,13 +35,21 @@ export type CloseConfirmDeps = {
   onRendererUnresponsive?: (cbs: { onHang: () => void; onRecover: () => void }) => () => void
   // Native fallback when the renderer can't answer (dead/hung, or no window at all). May reject;
   // the coordinator wraps it so a rejection never leaves the confirm unsettled.
-  nativeFallback: (variant: CloseConfirmVariant) => Promise<CloseConfirmChoice>
+  nativeFallback: (variant: CloseConfirmVariant) => Promise<NativeCloseConfirmResult>
+  // Read/write the saved Windows titlebar-close behavior. Persistence failures fall back to asking.
+  getClosePreference: () => Promise<CloseActionPreference | undefined>
+  setClosePreference: (preference: CloseActionPreference) => Promise<void>
   newRequestId: () => string
   // Grace period for the modal-mounted ack before falling back. Defaults to 500ms.
   ackTimeoutMs?: number
   // Grace period after an ACKed modal goes 'unresponsive' before falling back. Defaults to 10s so a
   // brief hang the renderer recovers from doesn't yank the modal out from under the user.
   hangGraceMs?: number
+}
+
+export type ClosePreferenceAccess = {
+  get: () => Promise<CloseActionPreference | undefined>
+  set: (preference: CloseActionPreference) => Promise<void>
 }
 
 const DEFAULT_ACK_TIMEOUT_MS = 500
@@ -53,14 +67,35 @@ export const createCloseConfirm = (
   const ackTimeoutMs = deps.ackTimeoutMs ?? DEFAULT_ACK_TIMEOUT_MS
   const hangGraceMs = deps.hangGraceMs ?? DEFAULT_HANG_GRACE_MS
 
-  return (variant, sessions) => {
-    if (variant === 'quit' && sessions.length === 0) return Promise.resolve('quit')
+  return async (variant, sessions) => {
+    if (variant === 'quit' && sessions.length === 0) return 'quit'
+
+    if (variant === 'close-to-tray') {
+      const preference = await deps.getClosePreference().catch(() => undefined)
+      if (preference) return preference
+    }
+
+    const persistPreference = async (
+      choice: CloseConfirmChoice,
+      remember = false
+    ): Promise<void> => {
+      if (variant === 'close-to-tray' && remember && (choice === 'minimize' || choice === 'quit')) {
+        await deps.setClosePreference(choice).catch(() => undefined)
+      }
+    }
 
     // Never let a fallback rejection leave the confirm unsettled: a stranded promise would pin the
     // caller's in-flight guard forever and permanently block quit. On failure, keep the app resident
     // for close-to-tray and proceed for quit.
-    const safeFallback = (): Promise<CloseConfirmChoice> =>
-      deps.nativeFallback(variant).catch(() => (variant === 'quit' ? 'quit' : 'minimize'))
+    const safeFallback = async (): Promise<CloseConfirmChoice> => {
+      try {
+        const result = await deps.nativeFallback(variant)
+        await persistPreference(result.choice, result.remember)
+        return result.choice
+      } catch {
+        return variant === 'quit' ? 'quit' : 'minimize'
+      }
+    }
 
     if (!deps.isRendererAvailable()) return safeFallback()
 
@@ -72,7 +107,7 @@ export const createCloseConfirm = (
       let fallbackStarted = false
       let hangTimer: ReturnType<typeof setTimeout> | undefined
 
-      const finish = (choice: CloseConfirmChoice): void => {
+      const finish = (choice: CloseConfirmChoice, remember = false): void => {
         if (settled) return
         settled = true
         clearTimeout(ackTimer)
@@ -80,7 +115,7 @@ export const createCloseConfirm = (
         offResponse()
         offGone()
         offHang?.()
-        resolve(choice)
+        void persistPreference(choice, remember).then(() => resolve(choice))
       }
 
       // Known limitation (cosmetic): when a fallback settles the confirm, a modal the renderer had
@@ -103,7 +138,7 @@ export const createCloseConfirm = (
           clearTimeout(ackTimer)
           return
         }
-        if (payload.choice) finish(payload.choice)
+        if (payload.choice) finish(payload.choice, payload.remember)
       })
 
       const offGone = deps.onRenderGone(startFallback)
@@ -138,7 +173,7 @@ export const createCloseConfirm = (
 const nativeFallback = async (
   getWindow: () => BrowserWindow | undefined,
   variant: CloseConfirmVariant
-): Promise<CloseConfirmChoice> => {
+): Promise<NativeCloseConfirmResult> => {
   const options =
     variant === 'quit'
       ? {
@@ -157,21 +192,27 @@ const nativeFallback = async (
           cancelId: 0,
           title: 'Open Science',
           message: 'Minimize to tray or quit?',
-          detail: 'Background work may still be running.'
+          detail: 'Background work may still be running.',
+          checkboxLabel: "Don't ask again",
+          checkboxChecked: true
         }
   const window = getWindow()
-  const { response } =
+  const { response, checkboxChecked } =
     window && !window.isDestroyed()
       ? await dialog.showMessageBox(window, options)
       : await dialog.showMessageBox(options)
-  if (variant === 'quit') return response === 1 ? 'quit' : 'cancel'
-  return response === 1 ? 'quit' : 'minimize'
+  if (variant === 'quit') return { choice: response === 1 ? 'quit' : 'cancel' }
+  return {
+    choice: response === 1 ? 'quit' : 'minimize',
+    remember: checkboxChecked
+  }
 }
 
 // Wires createCloseConfirm to Electron IPC + the current main window (via getWindow, since the window
 // can be recreated). Response listeners are per-confirm and removed when it settles.
 export const createElectronCloseConfirm = (
-  getWindow: () => BrowserWindow | undefined
+  getWindow: () => BrowserWindow | undefined,
+  preferences: ClosePreferenceAccess
 ): ((variant: CloseConfirmVariant, sessions: ActiveSessionInfo[]) => Promise<CloseConfirmChoice>) =>
   createCloseConfirm({
     // Reveal the window before asking: a tray/Ctrl+Q quit can arrive while the window is hidden
@@ -211,5 +252,7 @@ export const createElectronCloseConfirm = (
       }
     },
     nativeFallback: (variant) => nativeFallback(getWindow, variant),
+    getClosePreference: preferences.get,
+    setClosePreference: preferences.set,
     newRequestId: () => randomUUID()
   })

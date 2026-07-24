@@ -13,6 +13,7 @@ import {
 } from './responses-bridge'
 
 describe('Responses-compatible bridge conversion', () => {
+  const legacyReviewerMarker = '<open_science_reviewer_session>'
   it('maps instructions, messages, function calls, and tool results to Chat Completions', () => {
     const request = responsesToChatRequest({
       model: 'model-a',
@@ -975,6 +976,106 @@ describe('Responses-compatible bridge conversion', () => {
       expect(output).toContain('"name":"notebook_execute"')
       expect(output).toContain('"call_id":"call-notebook-1"')
       expect(output).not.toContain('"name":"mcp__open_science_notebook__notebook_execute"')
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('advertises reviewer MCP functions only for a trusted registered session key', async () => {
+    const upstreamRequests: Array<Record<string, unknown>> = []
+    const upstreamFetch = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return new Response(
+          [
+            `data: ${JSON.stringify({
+              id: 'chat-reviewer-scope',
+              model: 'model-a',
+              choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+            })}`,
+            '',
+            'data: [DONE]',
+            ''
+          ].join('\n'),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      }
+    )
+    const bridge = new ResponsesBridge(
+      {
+        baseUrl: 'https://vendor.example/v1',
+        namespacedTools: [
+          {
+            namespace: 'mcp__open_science_notebook',
+            name: 'notebook_execute',
+            parameters: { type: 'object' }
+          }
+        ],
+        reviewerScope: {
+          namespacedTools: [
+            {
+              namespace: 'mcp__open_science_reviewer',
+              name: 'read_turn',
+              parameters: { type: 'object' }
+            },
+            {
+              namespace: 'mcp__open_science_reviewer',
+              name: 'submit_findings',
+              parameters: { type: 'object' }
+            }
+          ]
+        }
+      },
+      upstreamFetch
+    )
+    const connection = await bridge.start()
+    const post = async (input: string, promptCacheKey: string): Promise<void> => {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          input,
+          prompt_cache_key: promptCacheKey,
+          stream: true,
+          tools: [
+            { type: 'function', name: 'exec_command', parameters: { type: 'object' } },
+            { type: 'local_shell' },
+            { type: 'tool_search' }
+          ],
+          tool_choice: { type: 'function', name: 'exec_command' }
+        })
+      })
+      await response.text()
+    }
+
+    try {
+      bridge.registerReviewerSession('never-observed-reviewer-session')
+      expect(bridge.unregisterReviewerSession('never-observed-reviewer-session')).toBe(false)
+
+      await post(`${legacyReviewerMarker} normal user content`, 'normal-session')
+      bridge.registerReviewerSession('reviewer-session')
+      await post('review this turn without a model-visible routing marker', 'reviewer-session')
+      expect(bridge.unregisterReviewerSession('reviewer-session')).toBe(true)
+
+      const toolNames = upstreamRequests.map((request) =>
+        ((request.tools ?? []) as Array<{ function?: { name?: string } }>).map(
+          (tool) => tool.function?.name
+        )
+      )
+      expect(toolNames[0]).toEqual(['exec_command', 'mcp__open_science_notebook__notebook_execute'])
+      expect(toolNames[1]).toEqual([
+        'mcp__open_science_reviewer__read_turn',
+        'mcp__open_science_reviewer__submit_findings'
+      ])
+      expect(upstreamRequests[0]?.tool_choice).toEqual({
+        type: 'function',
+        function: { name: 'exec_command' }
+      })
+      expect(upstreamRequests[1]?.tool_choice).toBe('auto')
     } finally {
       await bridge.close()
     }

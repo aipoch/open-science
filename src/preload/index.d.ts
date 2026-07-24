@@ -121,6 +121,7 @@ import type {
   SetPackageMirrorRequest,
   SetAgentFrameworkRequest,
   SetNotificationsEnabledRequest,
+  SetClosePreferenceRequest,
   SetReasoningEffortRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
@@ -243,6 +244,7 @@ interface OpenScienceAPI {
     setAgentFramework(request: SetAgentFrameworkRequest): Promise<SettingsSnapshot>
     setReasoningEffort(request: SetReasoningEffortRequest): Promise<SettingsSnapshot>
     setNotificationsEnabled(request: SetNotificationsEnabledRequest): Promise<SettingsSnapshot>
+    setClosePreference(request: SetClosePreferenceRequest): Promise<SettingsSnapshot>
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
     cancelCodexLogin(): Promise<void>
     loginIsolatedCodex(): Promise<ValidateProviderResult>
@@ -523,9 +525,9 @@ interface OpenScienceAPI {
     // Fires when Cmd+W / Ctrl+W is pressed; the renderer decides pane-vs-window.
     onCloseActivePane(listener: () => void): RemoveListener
     // Fires when main asks to confirm a close/quit; the renderer renders the modal and replies.
-    onCloseConfirmRequest(listener: (payload: CloseConfirmRequest) => void): RemoveListener
+    onCloseConfirmRequest?(listener: (payload: CloseConfirmRequest) => void): RemoveListener
     // Renderer -> main: modal-mounted ack, then the user's choice, keyed by requestId.
-    sendCloseConfirmResponse(payload: CloseConfirmResponse): void
+    sendCloseConfirmResponse?(payload: CloseConfirmResponse): void
   }
 }
 

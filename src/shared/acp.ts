@@ -104,6 +104,13 @@ export type AcpRuntimeEvent = {
   // Set on an error event the app can auto-recover from, so the renderer compacts-and-retries instead
   // of surfacing a dead-end error.
   recoverable?: AcpRecoverableFailure
+  // Set on an error event whose failure originates upstream of the app — the agent relayed a
+  // model/provider error (bad key, rate limit, quota, provider 5xx/overloaded, wrong model id). The
+  // renderer uses this to withhold the "Report error" affordance: a provider-side problem is the user's
+  // or provider's to resolve, not an app bug worth a GitHub issue. Absent (falsy) means the failure came
+  // from the ACP layer itself (our runtime) and stays reportable unless it is one of our own crafted,
+  // actionable reminder messages.
+  providerError?: boolean
   sessionId?: string
   messageId?: string
   role?: 'assistant' | 'user'
@@ -183,6 +190,9 @@ export type AcpPermissionGrant = {
 
 export type AcpStateSnapshot = {
   status: AcpConnectionStatus
+  // A coordinator may keep multiple framework generations alive. Callers handling one session should
+  // prefer its owning runtime status over the active generation's top-level compatibility status.
+  sessionConnectionStatuses?: Partial<Record<string, AcpConnectionStatus>>
   cwd: string
   sessionId?: string
   sessionIds: string[]

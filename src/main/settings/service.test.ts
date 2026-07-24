@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID, type ClaudeDetectResult } from '../../shared/settings'
 import type { CodexAuthControllerPort } from './codex-auth'
 import type { ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
+import type { UserSkillRepository } from '../skills/user-skill-repository'
+import type { ResponsesBridge } from './responses-bridge'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -28,6 +30,7 @@ vi.mock('electron', () => ({
 }))
 
 const { SettingsService } = await import('./service')
+const { ResponsesBridge: ResponsesBridgeClass } = await import('./responses-bridge')
 const { SettingsRepository } = await import('./repository')
 const { getAppClaudeConfigDir } = await import('./provider-env')
 const { SkillRegistry } = await import('../skills/registry')
@@ -1156,6 +1159,7 @@ describe('SettingsService: preflight & spawn config', () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
     const backend = await service.resolveActiveAgentBackend()
+    const selection = await service.captureActiveAgentBackendSelection()
 
     expect(backend.framework.id).toBe('codex')
     expect(backend.executablePath).toBe(adapterPath)
@@ -1168,6 +1172,20 @@ describe('SettingsService: preflight & spawn config', () => {
     })
     expect(backend.env.CODEX_API_KEY).toBeUndefined()
     expect(backend.authentication).toEqual({
+      methodId: 'api-key',
+      _meta: { 'api-key': { apiKey: 'test-key' } }
+    })
+
+    expect(selection).toEqual({ frameworkId: 'codex' })
+    expect(selection).not.toHaveProperty('key')
+
+    // The generation stays on Codex after global framework settings move elsewhere; credentials are
+    // decrypted again from the active provider only when another spawn is actually needed.
+    await repository.setAgentFramework('claude-code')
+    const pinnedBackend = await service.resolveAgentBackend(selection)
+    expect(pinnedBackend.framework.id).toBe('codex')
+    expect(pinnedBackend.backendId).toBe(`codex:${provider.id}`)
+    expect(pinnedBackend.authentication).toEqual({
       methodId: 'api-key',
       _meta: { 'api-key': { apiKey: 'test-key' } }
     })
@@ -1389,6 +1407,12 @@ describe('SettingsService: preflight & spawn config', () => {
           function: expect.objectContaining({
             name: 'mcp__open_science_artifacts__write_artifact_file'
           })
+        }),
+        expect.objectContaining({
+          type: 'function',
+          function: expect.objectContaining({
+            name: 'mcp__open_science_activity__begin_activity_group'
+          })
         })
       ])
     })
@@ -1408,6 +1432,182 @@ describe('SettingsService: preflight & spawn config', () => {
       'utf8'
     )
     expect(pubmedSkill).toContain('host.mcp')
+  })
+
+  it('keeps bridged Codex backends pinned to the provider target they were created for', async () => {
+    const localFetch = globalThis.fetch
+    const upstreamRequests: Array<{ url: string; authorization: string; model: unknown }> = []
+    const upstreamToolNames: string[][] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        const tools = Array.isArray(body.tools) ? body.tools : []
+        upstreamToolNames.push(
+          tools.map((tool) =>
+            String((tool as { function?: { name?: unknown } }).function?.name ?? '')
+          )
+        )
+        upstreamRequests.push({
+          url: String(url),
+          authorization: String((init?.headers as Record<string, string>)?.authorization ?? ''),
+          model: body.model
+        })
+        return new Response(
+          [
+            `data: ${JSON.stringify({
+              id: `chat-${upstreamRequests.length}`,
+              model: body.model,
+              choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+            })}`,
+            '',
+            'data: [DONE]',
+            ''
+          ].join('\n'),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      })
+    )
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, '', 'utf8')
+    const service = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
+    })
+    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.1.4' })
+    await repository.setAgentFramework('codex')
+    const first = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'Provider One',
+        apiEndpoints: ['openai'],
+        baseUrl: 'https://one.example/v1',
+        model: 'model-one',
+        key: 'key-one'
+      })
+    ).providers[0]
+    const second = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'Provider Two',
+        apiEndpoints: ['openai'],
+        baseUrl: 'https://two.example/v1',
+        model: 'model-two',
+        key: 'key-two'
+      })
+    ).providers.find((provider) => provider.name === 'Provider Two')!
+    for (const provider of (await repository.getSettings()).providers) {
+      await repository.upsertProvider({ ...provider, lastValidatedAt: Date.now() })
+    }
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
+
+    await service.setActiveProvider(first.id)
+    const firstBackend = await service.resolveActiveAgentBackend()
+    const firstBackendPeer = await service.resolveActiveAgentBackend()
+    await service.setActiveProvider(second.id)
+    const secondBackend = await service.resolveActiveAgentBackend()
+
+    expect(firstBackend.providerConfiguration?.baseUrl).not.toBe(
+      secondBackend.providerConfiguration?.baseUrl
+    )
+
+    const bridges = Array.from(
+      (
+        service as unknown as {
+          responsesBridges: Map<string, { bridge: ResponsesBridge }>
+        }
+      ).responsesBridges.values(),
+      (entry) => entry.bridge
+    )
+    bridges[0].registerReviewerSession('reviewer-one')
+    bridges[1].registerReviewerSession('reviewer-two')
+
+    const send = async (backend: typeof firstBackend, promptCacheKey: string): Promise<void> => {
+      const response = await localFetch(`${backend.providerConfiguration?.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: backend.providerConfiguration?.headers.authorization ?? '',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'gpt-5.5',
+          input: 'hello',
+          prompt_cache_key: promptCacheKey,
+          stream: true,
+          tools: [{ type: 'tool_search' }]
+        })
+      })
+      await response.text()
+    }
+    await send(firstBackend, 'reviewer-one')
+    await send(secondBackend, 'reviewer-two')
+
+    expect(upstreamRequests).toEqual([
+      {
+        url: 'https://one.example/v1/chat/completions',
+        authorization: 'Bearer key-one',
+        model: 'model-one'
+      },
+      {
+        url: 'https://two.example/v1/chat/completions',
+        authorization: 'Bearer key-two',
+        model: 'model-two'
+      }
+    ])
+    expect(upstreamToolNames).toEqual([
+      expect.arrayContaining(['mcp__open_science_reviewer__submit_findings']),
+      expect.arrayContaining(['mcp__open_science_reviewer__submit_findings'])
+    ])
+
+    const bridgePool = (
+      service as unknown as {
+        responsesBridges: Map<string, unknown>
+      }
+    ).responsesBridges
+    expect(bridgePool.size).toBe(2)
+    await firstBackend.responsesBridgeLease?.release()
+    expect(bridgePool.size).toBe(2)
+    await firstBackendPeer.responsesBridgeLease?.release()
+    expect(bridgePool.size).toBe(1)
+    await secondBackend.responsesBridgeLease?.release()
+    expect(bridgePool.size).toBe(0)
+  })
+
+  it('closes and evicts a responses bridge whose start fails', async () => {
+    const startError = new Error('bridge start failed')
+    const startSpy = vi.spyOn(ResponsesBridgeClass.prototype, 'start').mockRejectedValue(startError)
+    const closeSpy = vi.spyOn(ResponsesBridgeClass.prototype, 'close').mockResolvedValue(undefined)
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, '', 'utf8')
+    const service = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
+    })
+    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.1.4' })
+    await repository.setAgentFramework('codex')
+    const provider = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'Broken bridge provider',
+        apiEndpoints: ['openai'],
+        baseUrl: 'https://broken.example/v1',
+        model: 'model-one',
+        key: 'key-one'
+      })
+    ).providers[0]
+    const storedProvider = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({ ...storedProvider, lastValidatedAt: Date.now() })
+    await service.setActiveProvider(provider.id)
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
+
+    await expect(service.resolveActiveAgentBackend()).rejects.toBe(startError)
+
+    const bridgePool = (service as unknown as { responsesBridges: Map<string, unknown> })
+      .responsesBridges
+    expect(closeSpy).toHaveBeenCalledOnce()
+    expect(bridgePool.size).toBe(0)
+    startSpy.mockRestore()
+    closeSpy.mockRestore()
   })
 
   it('drives a native-Responses official vendor directly, without starting the bridge', async () => {
@@ -2001,8 +2201,7 @@ describe('SettingsService: skills', () => {
     expect(await exists(skillDir)).toBe(false)
 
     // Turn-forced: the disabled skill is materialized for this spawn only.
-    service.setTurnForcedSkillIds(['demo'])
-    await service.resolveActiveSpawnConfig()
+    await service.resolveActiveSpawnConfig({ forcedSkillIds: ['demo'] })
     expect(await exists(skillDir)).toBe(true)
 
     // The stored disabled set is untouched, so the skill still lists as disabled.
@@ -2010,7 +2209,6 @@ describe('SettingsService: skills', () => {
     expect(skills.find((skill) => skill.id === 'demo')?.enabled).toBe(false)
 
     // Clearing the force set removes it again on the next spawn.
-    service.clearTurnForcedSkillIds()
     await service.resolveActiveSpawnConfig()
     expect(await exists(skillDir)).toBe(false)
   })
@@ -2100,7 +2298,7 @@ describe('SettingsService: skills', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('reports only disabled picks as needing force-load and maps ids to names', async () => {
+  it('reports disabled picks and resolves agent-readable skill nudge names', async () => {
     const service = await createSkillService()
 
     await service.createSkill({ name: 'My Skill', description: 'Mine.', body: '# Mine' })
@@ -2110,10 +2308,35 @@ describe('SettingsService: skills', () => {
     expect(await service.skillsNeedingForceLoad(['demo', 'personal-my-skill'])).toEqual(['demo'])
     expect(await service.skillsNeedingForceLoad(['personal-my-skill'])).toEqual([])
 
-    // Names resolve in the given id order, skipping unknown ids.
-    expect(await service.skillNamesForIds(['personal-my-skill', 'demo', 'nope'])).toEqual([
-      'My Skill',
-      'Demo'
+    // Featured ids are the agent-facing frontmatter names, but user-skill ids carry an app prefix.
+    expect(await service.skillNudgeNamesForIds(['demo', 'personal-my-skill', 'nope'])).toEqual([
+      'demo',
+      'My Skill'
+    ])
+  })
+
+  it('uses the frontmatter name when nudging an imported skill', async () => {
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      skillRegistry: new SkillRegistry(await seedBundle()),
+      userSkills: {
+        list: () =>
+          Promise.resolve([
+            {
+              id: 'imported-data-explorer',
+              name: 'Data Explorer',
+              description: 'Explore imported data.',
+              source: 'imported' as const,
+              updatedAt: '2026-07-23T00:00:00.000Z',
+              sourceDir: join(storageRoot, 'skills', 'imported', 'data-explorer')
+            }
+          ])
+      } as unknown as UserSkillRepository
+    })
+
+    expect(await service.skillNudgeNamesForIds(['imported-data-explorer'])).toEqual([
+      'Data Explorer'
     ])
   })
 
@@ -2819,6 +3042,21 @@ describe('SettingsService: notifications preference', () => {
 
     expect(snapshot.notificationsEnabled).toBe(false)
     expect((await repository.getSettings()).notificationsEnabled).toBe(false)
+  })
+})
+
+describe('SettingsService: close preference', () => {
+  it('projects, persists, and resets the Windows titlebar-close behavior', async () => {
+    const service = createService()
+
+    expect(await service.getClosePreference()).toBeUndefined()
+
+    const saved = await service.setClosePreference('quit')
+    expect(saved.closePreference).toBe('quit')
+    expect(await service.getClosePreference()).toBe('quit')
+
+    const reset = await service.setClosePreference(undefined)
+    expect(reset.closePreference).toBeUndefined()
   })
 })
 

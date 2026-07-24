@@ -92,6 +92,57 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('consumes activity-group declarations without creating a visible tool step', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'group-event-1',
+        kind: 'tool',
+        toolCallId: 'group-call-1',
+        providerToolName: 'mcp__open-science-activity__begin_activity_group',
+        rawInput: { title: 'Inspect the implementation' },
+        status: 'pending'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'narration-event-1',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        text: 'I will inspect the implementation first.'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'group-event-2',
+        kind: 'tool',
+        toolCallId: 'group-call-1',
+        status: 'completed'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'tool-event-1',
+        kind: 'tool',
+        toolCallId: 'tool-read-1',
+        providerToolName: 'Read',
+        toolKind: 'read',
+        status: 'completed'
+      })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.activities).toEqual([
+      expect.objectContaining({ id: 'tool-read-1', activityGroupId: 'group-call-1' })
+    ])
+    expect(session.activityGroups).toEqual([
+      expect.objectContaining({
+        id: 'group-call-1',
+        title: 'Inspect the implementation',
+        activityIds: ['tool-read-1']
+      })
+    ])
+  })
+
   it('applies assistant image events without creating placeholder text', async () => {
     await applyWorkspaceRuntimeEvent(
       createEvent({
@@ -166,6 +217,9 @@ describe('workspace runtime events', () => {
       status: 'error',
       error: 'Network failed'
     })
+    // An opaque ACP-layer failure (no providerError tag, not app-crafted) stays reportable: the event
+    // path defers to the text tier rather than suppressing the button.
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(true)
   })
 
   const overflowEvent = (): AcpRuntimeEvent =>
@@ -210,6 +264,34 @@ describe('workspace runtime events', () => {
     expect(session.status).toBe('error')
     expect(session.compacting).toBeFalsy()
     expect(session.error).toContain('Request too large')
+    // A non-recovered overflow (providerError=false) is a client-side/size failure the text tier
+    // recognizes as expected — it must NOT be forced reportable by the event path.
+    expect(session.errorReportable).toBe(false)
+  })
+
+  it('hides the report button for a provider-tagged error even when its text looks reportable', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'run the analysis'
+    })
+
+    // providerError=true forces reportable=false regardless of the (opaque) message — the structural
+    // tag, not the text, decides for a model/provider failure.
+    const applied = await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-provider',
+        kind: 'error',
+        level: 'error',
+        providerError: true,
+        title: 'Prompt failed',
+        text: 'Internal error: upstream exploded'
+      })
+    )
+
+    expect(applied).toBe(true)
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('error')
+    expect(session.errorReportable).toBe(false)
   })
 
   it('surfaces a session-scoped agent warning as the waiting-indicator status, cleared on stop', async () => {

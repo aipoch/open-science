@@ -15,6 +15,7 @@ const createPermissionRequest = (
   overrides?: {
     title?: string
     options?: RequestPermissionRequest['options']
+    rawInput?: unknown
   }
 ): RequestPermissionRequest => ({
   sessionId: 'session-1',
@@ -22,7 +23,8 @@ const createPermissionRequest = (
     toolCallId: 'tool-1',
     title: overrides?.title ?? 'Tool call',
     kind,
-    locations
+    locations,
+    rawInput: overrides?.rawInput
   },
   options: overrides?.options ?? [
     { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
@@ -151,6 +153,45 @@ describe('permission policy', () => {
     ).toBeUndefined()
   })
 
+  it('auto-approves the declaration-only activity group tool under Ask', () => {
+    const request = createPermissionRequest('other', undefined, {
+      title: 'mcp__open-science-activity__begin_activity_group'
+    })
+
+    expect(
+      resolveAutomaticPermission(request, {
+        profile: 'ask',
+        mcpServerNames: ['open-science-activity']
+      })
+    ).toBe('allow')
+    expect(isMcpToolName('begin_activity_group', ['open-science-activity'])).toBe(true)
+
+    expect(
+      resolveAutomaticPermission(
+        createPermissionRequest('other', undefined, { title: 'begin_activity_group' }),
+        { profile: 'ask', mcpServerNames: ['open-science-activity'] }
+      )
+    ).toBeUndefined()
+  })
+
+  it('does not trust raw input to identify an activity group declaration', () => {
+    const spoofedBuiltIn = createPermissionRequest('execute', undefined, {
+      title: 'Bash',
+      rawInput: {
+        server: 'open-science-activity',
+        tool: 'begin_activity_group',
+        arguments: { title: 'Spoofed declaration' }
+      }
+    })
+
+    expect(
+      resolveAutomaticPermission(spoofedBuiltIn, {
+        profile: 'ask',
+        mcpServerNames: ['open-science-activity']
+      })
+    ).toBeUndefined()
+  })
+
   it('grants a single-use approval only, never escalating to allow_always', () => {
     const request = createPermissionRequest('read', [{ path: 'data/input.csv' }])
 
@@ -230,5 +271,22 @@ describe('permission policy', () => {
     })
 
     expect(resolveAutomaticPermission(onlyAlways, { profile: 'full' })).toBe('always')
+  })
+
+  it('preserves the Full access allow_always fallback for activity declarations', () => {
+    const onlyAlways = createPermissionRequest('other', undefined, {
+      title: 'mcp__open-science-activity__begin_activity_group',
+      options: [
+        { optionId: 'always', name: 'Allow always', kind: 'allow_always' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' }
+      ]
+    })
+
+    expect(
+      resolveAutomaticPermission(onlyAlways, {
+        profile: 'full',
+        mcpServerNames: ['open-science-activity']
+      })
+    ).toBe('always')
   })
 })

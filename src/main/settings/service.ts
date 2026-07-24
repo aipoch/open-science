@@ -3,10 +3,12 @@ import { access, chmod, mkdir, readdir, realpath, writeFile } from 'node:fs/prom
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 
 import { z } from 'zod'
+
+import type { CloseActionPreference } from '../../shared/window-controls'
 
 import type {
   ClaudeDetectResult,
@@ -73,6 +75,12 @@ import {
   providerEndpoints
 } from '../../shared/settings'
 import type { PackageMirror } from '../../shared/mirror'
+import {
+  buildActiveModelIncompatibleMessage,
+  CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
+  CLAUDE_EXECUTABLE_MISSING_MESSAGE,
+  NO_ACTIVE_PROVIDER_MESSAGE
+} from '../../shared/run-error-classification'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import {
@@ -147,7 +155,8 @@ import { buildProviderEnv, getAppClaudeConfigDir, type ResolvedProvider } from '
 import {
   ResponsesBridge,
   type ResponsesBridgeConnection,
-  type ResponsesBridgeNamespacedTool
+  type ResponsesBridgeNamespacedTool,
+  type ResponsesBridgeTarget
 } from './responses-bridge'
 import { SettingsRepository } from './repository'
 import { sanitizeCustomMcpServer } from './repository'
@@ -162,6 +171,12 @@ import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limit
 import { readSkillFile } from '../skills/skill-files'
 import { NOTEBOOK_MCP_SERVER_NAME, NOTEBOOK_RPC_TOOLS } from '../notebook/mcp-server'
 import { ARTIFACT_MCP_SERVER_NAME, writeArtifactFileToolSchema } from '../artifacts/mcp-server'
+import { beginActivityGroupToolSchema } from '../activity-groups/mcp-server'
+import {
+  ACTIVITY_GROUP_MCP_SERVER_NAME,
+  BEGIN_ACTIVITY_GROUP_TOOL_NAME
+} from '../../shared/activity-groups'
+import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
 import type {
   StoredConnectors,
   StoredCodexInfo,
@@ -181,6 +196,24 @@ import {
   type ClaudeIsolatedAuthControllerPort,
   type ClaudeIsolatedAuthStatus
 } from './claude-isolated-auth'
+
+export type AgentBackendSelection = {
+  frameworkId: AgentFrameworkId
+}
+
+export type AgentBackendResolutionContext = {
+  forcedSkillIds?: string[]
+}
+
+type ResponsesBridgePoolEntry = {
+  bridge: ResponsesBridge
+  connection: Promise<ResponsesBridgeConnection>
+  leaseCount: number
+}
+
+type LeasedResponsesBridgeConnection = ResponsesBridgeConnection & {
+  lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
+}
 
 const execFileAsync = promisify(execFile)
 
@@ -232,7 +265,21 @@ const CODEX_BRIDGE_ARTIFACT_TOOLS: ResponsesBridgeNamespacedTool[] = [
     }) as ResponsesBridgeNamespacedTool['parameters']
   }
 ]
-
+const CODEX_ACTIVITY_TOOL_NAMESPACE = `mcp__${ACTIVITY_GROUP_MCP_SERVER_NAME.replace(
+  /[^a-zA-Z0-9_]/g,
+  '_'
+)}`
+const CODEX_BRIDGE_ACTIVITY_TOOLS: ResponsesBridgeNamespacedTool[] = [
+  {
+    namespace: CODEX_ACTIVITY_TOOL_NAMESPACE,
+    name: BEGIN_ACTIVITY_GROUP_TOOL_NAME,
+    description:
+      'Declare the concise purpose of the next coherent group of tool calls. Call once before the first tool in that group, not once per step.',
+    parameters: z.toJSONSchema(z.object(beginActivityGroupToolSchema), {
+      target: 'draft-7'
+    }) as ResponsesBridgeNamespacedTool['parameters']
+  }
+]
 const isManagedCodexPath = (adapterPath: string, storageRoot: string): boolean =>
   adapterPath === managedCodexAdapterEntry(storageRoot)
 
@@ -386,12 +433,9 @@ class SettingsService {
   ) => Promise<ManagedCodexInstallOutcome>
   private readonly codexAuth: CodexAuthControllerPort
   private readonly claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort
-  private responsesBridge: ResponsesBridge | undefined
+  private readonly responsesBridges = new Map<string, ResponsesBridgePoolEntry>()
   private providerSequence = 0
   private readonly providerValidationGenerations = new Map<string, number>()
-  // Skills force-loaded for the current turn: subtracted from the stored disabled set at spawn time so
-  // a picked-but-disabled skill materializes for this prompt only, without mutating stored settings.
-  private turnForcedSkillIds = new Set<string>()
 
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
@@ -531,6 +575,7 @@ class SettingsService {
       packageMirror: settings.packageMirror,
       reasoningEffort: settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
       notificationsEnabled: settings.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
+      closePreference: settings.closePreference,
       agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       agentFrameworks: listAgentFrameworks().map((framework) => ({
         id: framework.id,
@@ -679,7 +724,9 @@ class SettingsService {
     // A live bridge never sees resolveActiveAgentBackend again until the next provider switch, so its
     // forwarding policy must be updated in place: an explicit level forwards, 'default' restores
     // stripping so Codex's own default effort never leaks upstream.
-    this.responsesBridge?.setForwardReasoningEffort(effort !== DEFAULT_REASONING_EFFORT)
+    for (const { bridge } of this.responsesBridges.values()) {
+      bridge.setForwardReasoningEffort(effort !== DEFAULT_REASONING_EFFORT)
+    }
 
     return this.getSettingsView()
   }
@@ -695,6 +742,18 @@ class SettingsService {
   // Sets the desktop-notification preference and returns the refreshed snapshot for the renderer.
   async setNotificationsEnabled(enabled: boolean): Promise<SettingsSnapshot> {
     await this.repository.setNotificationsEnabled(enabled)
+
+    return this.getSettingsView()
+  }
+
+  async getClosePreference(): Promise<CloseActionPreference | undefined> {
+    return (await this.repository.getSettings()).closePreference
+  }
+
+  async setClosePreference(
+    preference: CloseActionPreference | undefined
+  ): Promise<SettingsSnapshot> {
+    await this.repository.setClosePreference(preference)
 
     return this.getSettingsView()
   }
@@ -756,16 +815,6 @@ class SettingsService {
     return skills.map((skill) => this.toSkillView(skill, disabled))
   }
 
-  // Sets the skills to force-load for the current turn (picked in the composer). Cleared after the turn.
-  setTurnForcedSkillIds(ids: string[]): void {
-    this.turnForcedSkillIds = new Set(ids)
-  }
-
-  // Clears the turn-scoped force-load set so later spawns use the normal enabled set.
-  clearTurnForcedSkillIds(): void {
-    this.turnForcedSkillIds.clear()
-  }
-
   // Returns the subset of forced ids that are currently disabled in settings — i.e. the picks that need
   // a respawn to materialize. Enabled picks are already present and need no reconnect.
   async skillsNeedingForceLoad(forcedIds: string[]): Promise<string[]> {
@@ -775,10 +824,14 @@ class SettingsService {
     return forcedIds.filter((id) => disabled.has(id))
   }
 
-  // Maps skill ids to their display names in the given order, skipping unknown ids. Used for the nudge.
-  async skillNamesForIds(ids: string[]): Promise<string[]> {
+  // Resolves picker ids to the names the agent's Skill tool accepts. Bundled skills use their
+  // manifest id as frontmatter name, while personal/imported ids have an app-owned source prefix and
+  // must use the frontmatter name kept in the user skill catalog.
+  async skillNudgeNamesForIds(ids: string[]): Promise<string[]> {
     const skills = await this.skillCatalog()
-    const nameById = new Map(skills.map((skill) => [skill.id, skill.name]))
+    const nameById = new Map(
+      skills.map((skill) => [skill.id, skill.source === 'featured' ? skill.id : skill.name])
+    )
 
     return ids.map((id) => nameById.get(id)).filter((name): name is string => name !== undefined)
   }
@@ -2159,10 +2212,11 @@ class SettingsService {
   // its disabled state, mirroring the Claude provisioning path.
   private async materializeAgentSkills(
     settings: StoredSettings,
-    configRoot: string
+    configRoot: string,
+    forcedSkillIds: ReadonlySet<string>
   ): Promise<void> {
     const disabled = new Set(
-      (settings.disabledSkillIds ?? []).filter((id) => !this.turnForcedSkillIds.has(id))
+      (settings.disabledSkillIds ?? []).filter((id) => !forcedSkillIds.has(id))
     )
     const enabled = (await this.skillCatalog()).filter((skill) => !disabled.has(skill.id))
 
@@ -2410,8 +2464,18 @@ class SettingsService {
   }
 
   // Builds the spawn env for the active provider, read fresh so switching takes effect on reconnect.
-  async resolveActiveSpawnConfig(): Promise<AgentSpawnConfig> {
+  async resolveActiveSpawnConfig(
+    context: AgentBackendResolutionContext = {}
+  ): Promise<AgentSpawnConfig> {
     const settings = await this.repository.getSettings()
+
+    return this.resolveSpawnConfig(settings, new Set(context.forcedSkillIds ?? []))
+  }
+
+  private async resolveSpawnConfig(
+    settings: StoredSettings,
+    forcedSkillIds: ReadonlySet<string>
+  ): Promise<AgentSpawnConfig> {
     let executablePath = settings.claude?.resolvedPath
 
     // Trust the stored path only if it still exists. A user who uninstalled Claude leaves a stale path
@@ -2423,7 +2487,7 @@ class SettingsService {
     }
 
     if (!executablePath) {
-      throw new Error('Claude executable is not configured. Complete onboarding in settings.')
+      throw new Error(CLAUDE_EXECUTABLE_MISSING_MESSAGE)
     }
 
     const activeProvider = settings.activeProviderId
@@ -2431,7 +2495,7 @@ class SettingsService {
       : undefined
 
     if (!activeProvider) {
-      throw new Error('No active model provider is configured. Configure one in settings.')
+      throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
     }
 
     // Ensure the app-owned config dir exists (and app assets are injected) before the agent spawns. The
@@ -2440,7 +2504,7 @@ class SettingsService {
     // disabled set so a picked-but-disabled skill materializes for this prompt without mutating settings.
     const appConfigDir = getAppClaudeConfigDir(this.storageRoot)
     const disabledSkillIds = (settings.disabledSkillIds ?? []).filter(
-      (id) => !this.turnForcedSkillIds.has(id)
+      (id) => !forcedSkillIds.has(id)
     )
     await provisionAppClaudeConfigDir(appConfigDir, {
       skills: await this.skillCatalog(),
@@ -2463,13 +2527,51 @@ class SettingsService {
   // provider to their own native config (a generated opencode.json) via the framework adapter and get
   // it written to disk before spawn. The framework can be forced with OPEN_SCIENCE_AGENT_FRAMEWORK for
   // the spike until the settings selector lands.
-  async resolveActiveAgentBackend(): Promise<ResolvedAgentBackend> {
+  async resolveActiveAgentBackend(
+    context: AgentBackendResolutionContext = {}
+  ): Promise<ResolvedAgentBackend> {
     const settings = await this.repository.getSettings()
     const forced = process.env.OPEN_SCIENCE_AGENT_FRAMEWORK
     const frameworkId: AgentFrameworkId =
       forced === 'opencode' || forced === 'claude-code' || forced === 'codex'
         ? forced
         : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
+
+    return this.resolveAgentBackendFromSettings(settings, frameworkId, context)
+  }
+
+  // Captures only non-secret backend identity. Runtime generations resolve credentials again at spawn,
+  // so decrypted keys are not retained by the coordinator after AcpRuntime finishes authentication.
+  async captureActiveAgentBackendSelection(): Promise<AgentBackendSelection> {
+    const settings = await this.repository.getSettings()
+    const forced = process.env.OPEN_SCIENCE_AGENT_FRAMEWORK
+    const frameworkId: AgentFrameworkId =
+      forced === 'opencode' || forced === 'claude-code' || forced === 'codex'
+        ? forced
+        : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
+
+    return { frameworkId }
+  }
+
+  async resolveAgentBackend(
+    selection: AgentBackendSelection,
+    context: AgentBackendResolutionContext = {}
+  ): Promise<ResolvedAgentBackend> {
+    const stored = await this.repository.getSettings()
+    const settings: StoredSettings = {
+      ...stored,
+      agentFrameworkId: selection.frameworkId
+    }
+
+    return this.resolveAgentBackendFromSettings(settings, selection.frameworkId, context)
+  }
+
+  private async resolveAgentBackendFromSettings(
+    settings: StoredSettings,
+    frameworkId: AgentFrameworkId,
+    context: AgentBackendResolutionContext
+  ): Promise<ResolvedAgentBackend> {
+    const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
     const framework = getAgentFramework(frameworkId)
     // 'default' means "don't override": nothing is sent over ACP or framework config, so the agent
     // keeps its own default effort. A concrete level is delivered through two channels deliberately
@@ -2492,7 +2594,7 @@ class SettingsService {
       : undefined
 
     if (!activeProvider) {
-      throw new Error('No active model provider is configured. Configure one in settings.')
+      throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
     }
 
     if (
@@ -2504,9 +2606,7 @@ class SettingsService {
         framework
       )
     ) {
-      throw new Error(
-        `The active model isn't compatible with ${framework.displayName}. Open Settings → Model to pick a compatible model or switch the agent framework.`
-      )
+      throw new Error(buildActiveModelIncompatibleMessage(framework.displayName))
     }
 
     if (
@@ -2516,15 +2616,15 @@ class SettingsService {
         this.resolveActiveModel(activeProvider, settings.activeModel)
       )
     ) {
-      throw new Error(
-        'The active model is not supported over the Codex Chat Completions bridge. Pick another model in Settings → Model.'
-      )
+      throw new Error(CODEX_BRIDGE_UNSUPPORTED_MESSAGE)
     }
 
     if (framework.id === 'claude-code') {
-      await this.disableResponsesBridge()
       // Unchanged Claude path: skills provisioning + Anthropic-shaped env + local-auth handling.
-      const { envOverrides, executablePath } = await this.resolveActiveSpawnConfig()
+      const { envOverrides, executablePath } = await this.resolveSpawnConfig(
+        settings,
+        forcedSkillIds
+      )
 
       return {
         framework,
@@ -2559,7 +2659,7 @@ class SettingsService {
     // Shared mode exposes the user's normal Codex profile exactly as they own it. The app's skill
     // synchronizer deliberately stays out of ~/.codex so same-named user skills are never replaced.
     if (!(framework.id === 'codex' && provider.type === 'codex-shared')) {
-      await this.materializeAgentSkills(settings, skillsRoot)
+      await this.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
     }
     // The Chat Completions bridge only exists to let Codex (a Responses-only client) drive an
     // OpenAI Chat provider. A provider that also speaks native Responses is driven directly, so
@@ -2570,41 +2670,49 @@ class SettingsService {
       (provider.apiEndpoints?.includes('openai') ?? false) &&
       !(provider.apiEndpoints?.includes('responses') ?? false)
     const enabledConnectorIds = this.enabledConnectorIds(settings.connectors)
+    // A bridge may still serve a live Codex runtime from an earlier framework generation. Do not stop
+    // or retarget it merely because the newly selected framework/provider does not need one.
     const responsesBridge = needsResponsesBridge
       ? await this.ensureResponsesBridge(provider, enabledConnectorIds, sessionEffort !== undefined)
-      : await this.disableResponsesBridge()
-    const modelConfig = framework.prepareModelConfig(provider, {
-      storageRoot: this.storageRoot,
-      executablePath,
-      responsesBridge,
-      reasoningEffort: sessionEffort,
-      // Connector conventions + tools, so opencode uses host.mcp instead of raw HTTP (it has no skill
-      // docs like Claude). Enabled bundled connectors only.
-      instructions: renderConnectorInstructions(enabledConnectorIds)
-    })
-    await this.writeAgentConfigFiles(modelConfig.configFiles)
+      : undefined
+    try {
+      const modelConfig = framework.prepareModelConfig(provider, {
+        storageRoot: this.storageRoot,
+        executablePath,
+        responsesBridge,
+        reasoningEffort: sessionEffort,
+        // Connector conventions + tools, so opencode uses host.mcp instead of raw HTTP (it has no skill
+        // docs like Claude). Enabled bundled connectors only.
+        instructions: renderConnectorInstructions(enabledConnectorIds)
+      })
+      await this.writeAgentConfigFiles(modelConfig.configFiles)
 
-    // Protocol-driven frameworks apply an explicit model through the ACP session configOption. A Codex
-    // subscription with no explicit selection leaves this undefined so Codex uses the account default.
-    const sessionModel = modelConfig.sessionModel ?? provider.model
-    return {
-      framework,
-      backendId: `${framework.id}:${backendProviderId}`,
-      executablePath,
-      env: {
-        ...(modelConfig.env ?? {}),
-        ...(framework.id === 'codex' && settings.codex?.nativePath
-          ? { CODEX_PATH: settings.codex.nativePath }
-          : {})
-      },
-      args: modelConfig.args,
-      sessionModel,
-      ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type) && sessionModel
-        ? { sessionModelRequired: true }
-        : {}),
-      sessionEffort,
-      authentication: modelConfig.authentication,
-      providerConfiguration: modelConfig.providerConfiguration
+      // Protocol-driven frameworks apply an explicit model through the ACP session configOption. A Codex
+      // subscription with no explicit selection leaves this undefined so Codex uses the account default.
+      const sessionModel = modelConfig.sessionModel ?? provider.model
+      return {
+        framework,
+        backendId: `${framework.id}:${backendProviderId}`,
+        executablePath,
+        env: {
+          ...(modelConfig.env ?? {}),
+          ...(framework.id === 'codex' && settings.codex?.nativePath
+            ? { CODEX_PATH: settings.codex.nativePath }
+            : {})
+        },
+        args: modelConfig.args,
+        sessionModel,
+        ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type) && sessionModel
+          ? { sessionModelRequired: true }
+          : {}),
+        sessionEffort,
+        authentication: modelConfig.authentication,
+        providerConfiguration: modelConfig.providerConfiguration,
+        responsesBridgeLease: responsesBridge?.lease
+      }
+    } catch (error) {
+      await responsesBridge?.lease.release()
+      throw error
     }
   }
 
@@ -2612,7 +2720,7 @@ class SettingsService {
     provider: ResolvedProvider,
     enabledConnectorIds: string[],
     forwardReasoningEffort: boolean
-  ): Promise<ResponsesBridgeConnection> {
+  ): Promise<LeasedResponsesBridgeConnection> {
     // Resolve to the OpenAI base the bridge appends `/chat/completions` to: an official vendor's exact
     // versioned base, or a custom gateway root normalized to `<root>/v1`.
     const targetBaseUrl = openAiCompletionsBase(provider)
@@ -2623,7 +2731,14 @@ class SettingsService {
       key: provider.key,
       model: provider.model,
       forwardReasoningEffort,
-      namespacedTools: [...CODEX_BRIDGE_NOTEBOOK_TOOLS, ...CODEX_BRIDGE_ARTIFACT_TOOLS],
+      namespacedTools: [
+        ...CODEX_BRIDGE_NOTEBOOK_TOOLS,
+        ...CODEX_BRIDGE_ARTIFACT_TOOLS,
+        ...CODEX_BRIDGE_ACTIVITY_TOOLS
+      ],
+      reviewerScope: {
+        namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS
+      },
       connectorInstructions: enabledConnectorIds.map((id) => {
         const metadata = CONNECTOR_CATALOG.find((connector) => connector.id === id)
         return {
@@ -2635,19 +2750,68 @@ class SettingsService {
         }
       })
     }
-    if (!this.responsesBridge) {
-      this.responsesBridge = new ResponsesBridge(target)
+    const fingerprint = this.responsesBridgeFingerprint(target)
+    let entry = this.responsesBridges.get(fingerprint)
+    if (!entry) {
+      const bridge = new ResponsesBridge(target)
+      entry = { bridge, connection: bridge.start(), leaseCount: 0 }
+      this.responsesBridges.set(fingerprint, entry)
     } else {
-      this.responsesBridge.setTarget(target)
+      // Reasoning effort is a live global preference, not part of the bridge's pinned routing target.
+      entry.bridge.setForwardReasoningEffort(forwardReasoningEffort)
+    }
+    entry.leaseCount += 1
+
+    let connection: ResponsesBridgeConnection
+    try {
+      connection = await entry.connection
+    } catch (error) {
+      entry.leaseCount = Math.max(0, entry.leaseCount - 1)
+      if (entry.leaseCount === 0 && this.responsesBridges.get(fingerprint) === entry) {
+        this.responsesBridges.delete(fingerprint)
+        await entry.bridge.close().catch(() => undefined)
+      }
+      throw error
     }
 
-    return this.responsesBridge.start()
+    let released = false
+    const leasedEntry = entry
+    return {
+      ...connection,
+      lease: {
+        registerReviewerSession: (promptCacheKey) =>
+          leasedEntry.bridge.registerReviewerSession(promptCacheKey),
+        unregisterReviewerSession: (promptCacheKey) =>
+          leasedEntry.bridge.unregisterReviewerSession(promptCacheKey),
+        release: async () => {
+          if (released) return
+          released = true
+          leasedEntry.leaseCount = Math.max(0, leasedEntry.leaseCount - 1)
+          if (
+            leasedEntry.leaseCount > 0 ||
+            this.responsesBridges.get(fingerprint) !== leasedEntry
+          ) {
+            return
+          }
+          this.responsesBridges.delete(fingerprint)
+          await leasedEntry.bridge.close()
+        }
+      }
+    }
   }
 
-  private async disableResponsesBridge(): Promise<undefined> {
-    if (this.responsesBridge) await this.responsesBridge.close()
-    this.responsesBridge = undefined
-    return undefined
+  private responsesBridgeFingerprint(target: ResponsesBridgeTarget): string {
+    // forwardReasoningEffort is intentionally live mutable and therefore excluded from the pinned
+    // routing identity. Including it would split leases and prevent effort fan-out to existing bridges.
+    const pinnedTarget = {
+      baseUrl: target.baseUrl,
+      key: target.key,
+      model: target.model,
+      namespacedTools: target.namespacedTools,
+      reviewerScope: target.reviewerScope,
+      connectorInstructions: target.connectorInstructions
+    }
+    return createHash('sha256').update(JSON.stringify(pinnedTarget)).digest('hex')
   }
 
   // Locates the opencode binary: an explicitly stored path wins, else a best-effort PATH lookup.

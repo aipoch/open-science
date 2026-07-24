@@ -5,8 +5,7 @@ import type { ToolActivity } from '@/stores/session-store'
 import {
   buildToolActivityDetails,
   getToolDisplayName,
-  isEditActivity,
-  isNotebookExecuteActivity
+  isEditActivity
 } from './workspace-tool-activity-details'
 
 const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
@@ -163,20 +162,6 @@ describe('workspace tool activity details', () => {
     expect(details?.sections[1]).toMatchObject({ label: 'Output', text: '5 rows returned' })
   })
 
-  it('detects the notebook execute tool so its row can default to expanded', () => {
-    expect(
-      isNotebookExecuteActivity(
-        createActivity({ providerToolName: 'mcp__open-science-notebook__notebook_execute' })
-      )
-    ).toBe(true)
-    expect(
-      isNotebookExecuteActivity(
-        createActivity({ providerToolName: 'mcp__open-science-notebook__notebook_state' })
-      )
-    ).toBe(false)
-    expect(isNotebookExecuteActivity(createActivity({ providerToolName: 'Bash' }))).toBe(false)
-  })
-
   it('renders a notebook cell as Python code plus output, not the raw run summary', () => {
     const runSummary = {
       runId: 'notebook-run-1',
@@ -212,6 +197,76 @@ describe('workspace tool activity details', () => {
     expect((details?.sections[0] as { collapsible?: boolean }).collapsible).toBeFalsy()
   })
 
+  it('renders a Codex notebook activity from its dotted title and MCP arguments envelope', () => {
+    const runSummary = {
+      status: 'completed',
+      text: { stdout: '42\n', stderr: '', traceback: '' },
+      outputs: []
+    }
+    const activity = createActivity({
+      title: 'mcp.open-science-notebook.notebook_execute',
+      toolKind: 'execute',
+      rawInput: {
+        server: 'open-science-notebook',
+        tool: 'notebook_execute',
+        arguments: { kernelKind: 'python', code: 'print(42)' }
+      },
+      toolContent: [
+        { type: 'content', content: { type: 'text', text: JSON.stringify(runSummary) } }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Notebook cell')
+    expect(details?.sections[0]).toMatchObject({
+      kind: 'code',
+      label: 'Code',
+      language: 'python',
+      text: 'print(42)'
+    })
+    expect(details?.sections[1]).toMatchObject({ kind: 'code', label: 'Output', text: '42' })
+  })
+
+  it('renders an opencode single-underscore notebook tool as code, not raw JSON', () => {
+    // opencode names the tool <server>_<tool> (no mcp__ prefix); the activity must still render as
+    // a notebook cell rather than falling back to the run-summary envelope.
+    const activity = createActivity({
+      providerToolName: 'open-science-notebook_notebook_execute',
+      toolKind: 'execute',
+      rawInput: { code: 'print(1)' },
+      toolContent: []
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Notebook cell')
+    expect(details?.sections[0]).toMatchObject({
+      kind: 'code',
+      language: 'python',
+      text: 'print(1)'
+    })
+  })
+
+  it('labels a notebook cell with its clean kernel name, never the raw tool id', () => {
+    const runSummary = {
+      status: 'completed',
+      script: 'x = 1',
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: []
+    }
+    const activity = createActivity({
+      // The runtime may backfill an untitled call with the raw tool id; the row label ignores it.
+      title: 'mcp__open-science-notebook__notebook_execute',
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      rawInput: { code: 'x = 1' },
+      toolContent: [
+        { type: 'content', content: { type: 'text', text: JSON.stringify(runSummary) } }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Notebook cell')
+  })
+
   it('falls back to the run summary script when notebook input code is unavailable', () => {
     const runSummary = {
       status: 'failed',
@@ -236,6 +291,32 @@ describe('workspace tool activity details', () => {
     expect(details?.sections[1]?.kind === 'code' && details.sections[1].text).toContain(
       'ValueError: boom'
     )
+  })
+
+  it('uses the run summary kernel when notebook raw input is unavailable', () => {
+    const runSummary = {
+      status: 'completed',
+      kernelKind: 'r',
+      // Deliberately ambiguous: the code heuristic defaults this to Python without summary metadata.
+      script: 'print("from R")',
+      text: { stdout: '[1] "from R"\n', stderr: '', traceback: '', plain: [] }
+    }
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      toolKind: 'other',
+      toolContent: [
+        { type: 'content', content: { type: 'text', text: JSON.stringify(runSummary) } }
+      ]
+    })
+
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Notebook cell')
+    expect(details?.sections[0]).toMatchObject({
+      label: 'Code',
+      language: 'r',
+      text: 'print("from R")'
+    })
   })
 
   it('renders a repl_execute run as Agent SDK JavaScript code plus its echoed result', () => {

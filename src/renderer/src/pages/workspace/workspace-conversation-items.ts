@@ -20,15 +20,24 @@ type ConversationItem = ConversationMessageItem | ConversationActivityItem
 
 const KNOWN_TITLE_TOOL_NAMES = new Set(['ToolSearch'])
 
-// Claude Code namespaces MCP tools as mcp__<server>__<tool>; this is the notebook server's prefix.
-const NOTEBOOK_PROVIDER_TOOL_PREFIX = 'mcp__open-science-notebook__'
+// Claude Code namespaces MCP tools with `mcp__`; Codex records completed tools as dotted titles.
+// Both preserve the notebook server name, with Codex occasionally sanitizing its hyphens.
+const NOTEBOOK_PROVIDER_TOOL_PATTERN =
+  /^(?:mcp__|mcp\.)?open[-_]science[-_]notebook(?:__|\.)([^.]+)$/iu
+
+// Returns the notebook tool suffix (e.g. "notebook_execute") for a notebook MCP tool identity, or
+// undefined when the name is not a notebook tool. Framework-agnostic across the two server-name forms.
+const getNotebookToolSuffix = (toolName: string | undefined): string | undefined =>
+  NOTEBOOK_PROVIDER_TOOL_PATTERN.exec(toolName?.trim() ?? '')?.[1]
 
 // Maps a notebook MCP tool to a clean human label so rows read as notebook actions, not raw
-// mcp__open-science-notebook__* names. Returns undefined for non-notebook tools.
-const formatNotebookToolName = (providerToolName: string): string | undefined => {
-  if (!providerToolName.startsWith(NOTEBOOK_PROVIDER_TOOL_PREFIX)) return undefined
+// mcp__…__* names. Returns undefined for non-notebook tools.
+const formatNotebookToolName = (toolName: string): string | undefined => {
+  const suffix = getNotebookToolSuffix(toolName)
 
-  switch (providerToolName.slice(NOTEBOOK_PROVIDER_TOOL_PREFIX.length)) {
+  if (!suffix) return undefined
+
+  switch (suffix) {
     case 'notebook_execute':
       return 'Notebook cell'
     case 'notebook_state':
@@ -76,7 +85,12 @@ const formatActivityToolName = (activity: ToolActivity): string => {
   const providerToolName = trimDetail(activity.providerToolName)
   const title = trimDetail(activity.title)
 
-  if (providerToolName) return formatNotebookToolName(providerToolName) ?? providerToolName
+  const notebookToolName =
+    (providerToolName && formatNotebookToolName(providerToolName)) ??
+    (title && formatNotebookToolName(title))
+
+  if (notebookToolName) return notebookToolName
+  if (providerToolName) return providerToolName
   if (title && KNOWN_TITLE_TOOL_NAMES.has(title)) return title
 
   return formatToolKindName(activity.toolKind)
@@ -120,10 +134,10 @@ const createConversationItems = (session: ChatSession | undefined): Conversation
 }
 
 export {
-  NOTEBOOK_PROVIDER_TOOL_PREFIX,
   createConversationItems,
   formatActivityTitle,
   formatNotebookToolName,
+  getNotebookToolSuffix,
   isActivityActive
 }
 export type { ConversationItem }

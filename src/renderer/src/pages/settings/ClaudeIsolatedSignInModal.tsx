@@ -3,6 +3,13 @@ import { AlertDialog } from 'radix-ui'
 import { Check, Copy } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import {
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import { Input } from '@/components/ui/input'
 import type { ValidateProviderResult } from '../../../../shared/settings'
 
@@ -99,12 +106,12 @@ const ClaudeIsolatedSignInModalBody = ({
 
   return (
     <>
-      <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
-      <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(560px,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-bg-000 p-6 shadow-lg">
-        <AlertDialog.Title className="text-base font-semibold">
+      <AlertDialog.Overlay className={dialogOverlayClassName} />
+      <AlertDialog.Content className={dialogPanelClassName('w-[min(560px,92vw)]')}>
+        <AlertDialog.Title className={dialogTitleClassName}>
           Sign in with Anthropic
         </AlertDialog.Title>
-        <AlertDialog.Description className="mt-1 text-sm text-muted-foreground">
+        <AlertDialog.Description className={dialogDescriptionClassName}>
           Use a long-lived OAuth token from <code className="font-mono">claude setup-token</code>.
           The token is stored encrypted in your app-owned Claude config directory and never read
           from or written to <code className="font-mono">~/.claude</code>. See{' '}
@@ -170,7 +177,7 @@ const ClaudeIsolatedSignInModalBody = ({
           ) : null}
         </div>
 
-        <div className="mt-6 flex items-center justify-end gap-2">
+        <div className={dialogFooterClassName}>
           <AlertDialog.Cancel asChild>
             <Button type="button" variant="outline" disabled={isSubmitting}>
               Cancel

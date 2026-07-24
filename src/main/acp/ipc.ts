@@ -20,7 +20,8 @@ import type {
   AcpStateSnapshot
 } from '../../shared/acp'
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
-import { AcpRuntime } from './runtime'
+import { AcpRuntime, type AcpRuntimeCallbacks } from './runtime'
+import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { installAgentShutdownGuard } from './shutdown-guard'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository } from '../artifacts/repository'
@@ -68,7 +69,8 @@ const createManagedSessionWorkspace = async (): Promise<string> => {
   return workspace
 }
 
-// Creates the shared runtime instance used by all ACP IPC handlers and artifact claims.
+// Creates the runtime coordinator used by all ACP IPC handlers and artifact claims. Each child runtime
+// captures one framework generation so sessions on different frameworks can remain live concurrently.
 const createRuntime = ({
   mcpEntryPath,
   repository,
@@ -77,67 +79,70 @@ const createRuntime = ({
   notebookRpcServer,
   settingsService,
   taskNotifications
-}: AcpIpcOptions): AcpRuntime => {
+}: AcpIpcOptions): AcpRuntimeCoordinator => {
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
-
-  return new AcpRuntime({
-    appVersion: app.getVersion(),
-    // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
-    defaultCwd: homedir(),
-    // Resolve the active framework + provider credentials/model on every connect so framework and
-    // provider switches apply on reconnect.
-    resolveBackend: () => settingsService.resolveActiveAgentBackend(),
-    // Serves the artifact/notebook MCP over local http for frameworks that reject stdio MCP (opencode);
-    // Claude ignores it and keeps launching them over stdio.
-    mcpHttpHost: new AgentMcpHttpHost(),
-    // Turn-scoped skill force-load: the runtime uses these to respawn with a picked-but-disabled skill
-    // for one prompt and to build the steering nudge naming the picked skills.
-    skills: {
-      needForceLoad: (ids) => settingsService.skillsNeedingForceLoad(ids),
-      setTurnForced: (ids) => settingsService.setTurnForcedSkillIds(ids),
-      clearTurnForced: () => settingsService.clearTurnForcedSkillIds(),
-      namesForIds: (ids) => settingsService.skillNamesForIds(ids)
+  const defaultCwd = homedir()
+  const callbacks: AcpRuntimeCallbacks = {
+    onStateChanged: (state: AcpStateSnapshot) => broadcast('acp:state', state),
+    onEvent: (event: AcpRuntimeEvent) => {
+      broadcast('acp:event', event)
+      // Fire-and-forget: a notification hiccup must never stall the renderer event stream.
+      void taskNotifications?.handleRuntimeEvent(event)
     },
-    artifacts: {
-      // Reuse the session persistence root so chat state and generated files move together.
-      configRoot,
-      dataRoot,
-      projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
-      mcpEntryPath,
-      repository,
-      runRegistry
-    },
-    uploads: {
-      // Reuse the renderer upload repository so prompt content only references managed files.
-      repository: uploadRepository
-    },
-    notebook: {
-      projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
-      mcpEntryPath,
-      getRpcConnection: () => notebookRpcServer.ensureStarted(),
-      registerSessionAlias: (aliasSessionId, sessionId) =>
-        notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId)
-    },
-    callbacks: {
-      onStateChanged: (state: AcpStateSnapshot) => broadcast('acp:state', state),
-      onEvent: (event: AcpRuntimeEvent) => {
-        broadcast('acp:event', event)
-        // Fire-and-forget: a notification hiccup must never stall the renderer event stream.
-        void taskNotifications?.handleRuntimeEvent(event)
-      },
-      onPermissionRequest: (request: AcpPermissionRequest) => {
-        broadcast('acp:permission-request', request)
-        // A pending approval parks the turn; an unfocused user gets a desktop nudge.
-        void taskNotifications?.handlePermissionRequest(request)
-      }
+    onPermissionRequest: (request: AcpPermissionRequest) => {
+      broadcast('acp:permission-request', request)
+      // A pending approval parks the turn; an unfocused user gets a desktop nudge.
+      void taskNotifications?.handlePermissionRequest(request)
     }
-  })
+  }
+
+  return new AcpRuntimeCoordinator(
+    (runtimeCallbacks) => {
+      // Capture only the non-secret selection per generation. Credentials are resolved fresh at spawn
+      // and released by AcpRuntime after authentication instead of living in this coordinator closure.
+      const selection = settingsService.captureActiveAgentBackendSelection()
+      return new AcpRuntime({
+        appVersion: app.getVersion(),
+        // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
+        defaultCwd,
+        resolveBackend: async (context) =>
+          settingsService.resolveAgentBackend(await selection, context),
+        // HTTP MCP registrations are runtime-owned. Sharing one host would let an old runtime teardown
+        // clear routes belonging to sessions on the newly selected framework.
+        mcpHttpHost: new AgentMcpHttpHost(),
+        skills: {
+          needForceLoad: (ids) => settingsService.skillsNeedingForceLoad(ids),
+          namesForIds: (ids) => settingsService.skillNudgeNamesForIds(ids)
+        },
+        artifacts: {
+          configRoot,
+          dataRoot,
+          projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+          mcpEntryPath,
+          repository,
+          runRegistry
+        },
+        uploads: { repository: uploadRepository },
+        notebook: {
+          projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+          mcpEntryPath,
+          getRpcConnection: () => notebookRpcServer.ensureStarted(),
+          registerSessionAlias: (aliasSessionId, sessionId) =>
+            notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId)
+        },
+        activityGroups: { mcpEntryPath },
+        callbacks: runtimeCallbacks
+      })
+    },
+    callbacks,
+    defaultCwd
+  )
 }
 
-// Registers renderer-callable runtime commands on Electron IPC and returns the shared runtime so the
-// settings layer can drop the connection when the active provider changes.
-const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
+// Registers renderer-callable runtime commands on Electron IPC and returns the coordinator used by
+// settings, storage, reviewer, and shutdown integrations.
+const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator => {
   const runtime = createRuntime(options)
 
   ipcMain.handle('acp:get-state', () => runtime.getSnapshot())

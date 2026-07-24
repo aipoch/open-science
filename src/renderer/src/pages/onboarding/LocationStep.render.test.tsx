@@ -172,7 +172,20 @@ describe('LocationStep', () => {
     await clickButton(/browse/i)
     await clickButton(/finish/i)
 
-    expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull()
+    const overlay = Array.from(document.body.querySelectorAll<HTMLElement>('div')).find((element) =>
+      element.className.includes('bg-black/50')
+    )
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+
+    expect(dialog).not.toBeNull()
+    expect(overlay?.className).toContain('data-[state=open]:fade-in-0')
+    expect(overlay?.className).toContain('data-[state=closed]:fill-mode-forwards')
+    expect(overlay?.className).not.toContain('backdrop-blur')
+    expect(dialog?.className).toContain('rounded-xl')
+    expect(dialog?.className).toContain('border-border')
+    expect(dialog?.className).toContain('bg-card')
+    expect(dialog?.className).toContain('shadow-dialog')
+    expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
     expect(document.body.textContent).toContain('/mnt/data/OpenScience')
     // The dialog gates the relaunch; nothing has happened yet.
     expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()

@@ -81,7 +81,7 @@ const makeFakeReviewerSession = (
 const makeStubRuntime = (session: unknown, promptPrefix: string | undefined): AcpRuntime =>
   ({
     buildReviewerSession: async () => ({ session, promptPrefix }),
-    disposeReviewerSession: () => 0
+    disposeReviewerSession: () => ({ rejectedToolCalls: 0, reviewerBridgeScoped: undefined })
   }) as unknown as AcpRuntime
 
 // --- Reviewer MCP submit helper (mirrors orchestrator.test.ts) ---
@@ -257,6 +257,52 @@ describe('runReview — framework-neutral rubric delivery (promptPrefix)', () =>
 
     await client.$disconnect()
   })
+
+  it('fails closed when a completed bridged reviewer request was never session-scoped', async () => {
+    const runtime = {
+      buildReviewerSession: async (request: { mcpServers: unknown[] }) => {
+        const mcp = extractReviewerMcp(request.mcpServers)
+        let submitDone: Promise<void> | null = null
+        return {
+          session: {
+            sessionId: 'reviewer-session-1',
+            prompt: () => {
+              submitDone = callSubmitFindings(mcp.url, mcp.token, [
+                { status: 'pass', claim: 'Scoped claim', evidence: 'Scoped evidence' }
+              ])
+            },
+            nextUpdate: async () => {
+              if (submitDone) await submitDone
+              return { kind: 'stop', stopReason: 'end_turn' }
+            },
+            dispose: () => {}
+          }
+        }
+      },
+      disposeReviewerSession: () => ({
+        rejectedToolCalls: 0,
+        reviewerBridgeScoped: false
+      })
+    } as unknown as AcpRuntime
+    const client = createProjectDbClient(temporaryRoot!)
+    await ensureProjectSchema(client)
+    const repository = new ReviewRepository(() => Promise.resolve(client))
+
+    const review = await runReview({
+      sessionId: 'session-1',
+      turnMessageId: 'msg-2',
+      projectId: 'project-1',
+      getSession: () => makeSession(),
+      reviewRepository: repository,
+      acpRuntime: runtime,
+      artifactStorageRoot: temporaryRoot!
+    })
+
+    expect(review.lifecycle).toBe('error')
+    expect(review.errorMessage).toContain('reviewer-only tool scope')
+    expect(review.checks).toEqual([])
+    await client.$disconnect()
+  })
 })
 
 // The second promptPrefix concat site lives inside the module-local runScopedReview, reachable only
@@ -303,7 +349,7 @@ describe('runScopedReview — framework-neutral rubric delivery (fix-loop re-rev
         }
         return { session: makeFakeReviewerSession(scopedPromptSink), promptPrefix: scopedPrefix }
       },
-      disposeReviewerSession: () => 0,
+      disposeReviewerSession: () => ({ rejectedToolCalls: 0, reviewerBridgeScoped: undefined }),
       // The [Auditor] correction turn: append the auditor user turn + the agent's correction turn so
       // the fix loop resolves a new correctionTurnMessageId (msg-4-correction) for the scoped review.
       sendPrompt: async () => {

@@ -6,6 +6,7 @@
 
 import type { OfficialVendorId } from './provider-registry'
 import type { PackageMirror } from './mirror'
+import type { CloseActionPreference } from './window-controls'
 
 // Settings file schema version; bumped when the on-disk shape changes. v2 adds official-vendor
 // providers (vendorId/region) and a per-selection activeModel alongside activeProviderId.
@@ -272,6 +273,8 @@ export type SettingsSnapshot = {
   reasoningEffort: ReasoningEffort
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
   notificationsEnabled: boolean
+  // Saved Windows titlebar-close behavior. Undefined means ask every time.
+  closePreference?: CloseActionPreference
 }
 
 // Request to set (or clear, via omitted fields) the package-mirror configuration.
@@ -287,6 +290,10 @@ export type SetReasoningEffortRequest = {
 
 export type SetNotificationsEnabledRequest = {
   enabled: boolean
+}
+
+export type SetClosePreferenceRequest = {
+  preference?: CloseActionPreference
 }
 
 // The hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.

@@ -35,6 +35,7 @@ import {
   validateRemotePath
 } from '../../../../shared/remote-fs'
 import { Button } from '@/components/ui/button'
+import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -446,18 +447,6 @@ export function FileBrowserModal({
     })
   }, [open, host?.providerId])
 
-  // Escape key closes the modal.
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [open, onClose])
-
-  if (!open) return null
-
   const handleBack = (): void => {
     const prev = history[history.length - 1]
     if (!prev) return
@@ -539,9 +528,11 @@ export function FileBrowserModal({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[70] bg-black/50" />
+        <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[70]')} />
         <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-[70] flex w-[min(860px,calc(100vw-2rem))] h-[min(600px,calc(100vh-4rem))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-card text-foreground shadow-dialog overflow-hidden"
+          className={dialogPanelClassName(
+            'z-[70] flex w-[min(860px,calc(100vw-2rem))] h-[min(600px,calc(100vh-4rem))] flex-col overflow-hidden p-0'
+          )}
           aria-label="Remote file browser"
         >
           {/* Header: host chips + close */}

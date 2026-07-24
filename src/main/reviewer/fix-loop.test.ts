@@ -449,6 +449,29 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
       spawnAgent: () => asAgentProcess(process)
     })
 
+    let activityActive = false
+    const originalWithActivity = runtime.withActivity.bind(runtime)
+    const originalBuildReviewerSession = runtime.buildReviewerSession.bind(runtime)
+    const originalSendPrompt = runtime.sendPrompt.bind(runtime)
+    const activitySpy = vi.spyOn(runtime, 'withActivity').mockImplementation((options, work) =>
+      originalWithActivity(options, async (scopedRuntime) => {
+        activityActive = true
+        try {
+          return await work(scopedRuntime)
+        } finally {
+          activityActive = false
+        }
+      })
+    )
+    vi.spyOn(runtime, 'buildReviewerSession').mockImplementation((request) => {
+      expect(activityActive).toBe(true)
+      return originalBuildReviewerSession(request)
+    })
+    vi.spyOn(runtime, 'sendPrompt').mockImplementation((request) => {
+      expect(activityActive).toBe(true)
+      return originalSendPrompt(request)
+    })
+
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
@@ -475,6 +498,7 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
       s.sessionId.startsWith('reviewer-session')
     )
     expect(reviewerSessions).toHaveLength(2)
+    expect(activitySpy).toHaveBeenCalledOnce()
 
     // The original review's warn/fail check must now be resolved.
     const reviews = await repository.getReviewsForSession('session-1')

@@ -47,7 +47,7 @@ Every release ships a `SHA256SUMS.txt`. Verify your download before opening it:
 
 ```bash
 # macOS / Linux
-shasum -a 256 open-science-<version>-mac-arm64.dmg
+shasum -a 256 aipoch-open-science-<version>-mac-arm64.dmg
 # compare the output against the matching line in SHA256SUMS.txt
 ```
 
@@ -57,7 +57,7 @@ tying each installer to the exact commit and CI run that produced it. Verify it 
 the [GitHub CLI](https://cli.github.com/):
 
 ```bash
-gh attestation verify open-science-<version>-mac-arm64.dmg --repo aipoch/open-science
+gh attestation verify aipoch-open-science-<version>-mac-arm64.dmg --repo aipoch/open-science
 ```
 
 A passing check means the binary was built by this repository's Release workflow from

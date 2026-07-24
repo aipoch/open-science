@@ -179,7 +179,11 @@ const WorkspaceMessageScroller = ({
     activityExpansionOverrideState.sessionId === currentSessionId
       ? activityExpansionOverrideState.overrides
       : {}
-  const conversationItems = groupConversationItems(createConversationItems(activeSession))
+  const conversationItems = useMemo(
+    () =>
+      groupConversationItems(createConversationItems(activeSession), activeSession?.activityGroups),
+    [activeSession]
+  )
   const showAgentLoadingMessage = shouldShowAgentLoadingMessage(activeSession)
 
   // Counts the user turns after each message; the destructive-resend warning keys off turns, not

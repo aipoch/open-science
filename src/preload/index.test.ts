@@ -44,6 +44,7 @@ type PreloadApi = {
     installCodex: (request: unknown) => unknown
     setAgentFramework: (request: unknown) => unknown
     setNotificationsEnabled: (request: unknown) => unknown
+    setClosePreference: (request: unknown) => unknown
     uninstallClaude: () => unknown
     uninstallOpencode: () => unknown
     uninstallCodex: () => unknown
@@ -167,6 +168,12 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.settings.setNotificationsEnabled({ enabled: false }),
     channel: 'settings:set-notifications-enabled',
     args: [{ enabled: false }]
+  },
+  {
+    name: 'settings.setClosePreference → settings:set-close-preference',
+    invoke: (a) => a.settings.setClosePreference({ preference: 'minimize' }),
+    channel: 'settings:set-close-preference',
+    args: [{ preference: 'minimize' }]
   },
   {
     name: 'settings.uninstallClaude → settings:uninstall-claude (no args)',

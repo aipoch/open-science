@@ -60,7 +60,10 @@ const session = { id: 'session-1', cwd: '', messages: [] } as unknown as Persist
 // the test focused on the start-contract without needing a full reviewer drive.
 const acpRuntime = {
   buildReviewerSession: vi.fn().mockRejectedValue(new Error('build failed')),
-  disposeReviewerSession: vi.fn()
+  disposeReviewerSession: vi.fn(() => ({
+    rejectedToolCalls: 0,
+    reviewerBridgeScoped: undefined
+  }))
 } as unknown as AcpRuntime
 
 const makeRepo = (createReview: ReviewRepository['createReview']): ReviewRepository =>

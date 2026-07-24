@@ -282,4 +282,27 @@ describe('JobDetailModal — session jobs list view', () => {
     expect(container.querySelector('[data-testid="job-detail-back"]')).toBeTruthy()
     expect(container.querySelector('[data-testid="session-jobs-list"]')).toBeNull()
   })
+
+  it('returns to the session jobs list when the same modal is reopened', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({ job_id: 'job-reopen', intent: 'Reopen test', session_id: 'sess-1' })
+    useSessionJobStore.getState().applyUpdate(job)
+
+    act(() => {
+      root.render(<JobDetailModal open={true} sessionId="sess-1" onClose={vi.fn()} />)
+    })
+    const jobRow = container.querySelector('[data-testid="session-job-row"]') as HTMLButtonElement
+    act(() => jobRow.click())
+    expect(container.querySelector('[data-testid="job-detail-back"]')).toBeTruthy()
+
+    act(() => {
+      root.render(<JobDetailModal open={false} sessionId="sess-1" onClose={vi.fn()} />)
+    })
+    act(() => {
+      root.render(<JobDetailModal open={true} sessionId="sess-1" onClose={vi.fn()} />)
+    })
+
+    expect(container.querySelector('[data-testid="session-jobs-list"]')).toBeTruthy()
+    expect(container.querySelector('[data-testid="job-detail-back"]')).toBeNull()
+  })
 })

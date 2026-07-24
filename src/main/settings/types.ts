@@ -11,6 +11,7 @@ import type { OfficialVendorId } from '../../shared/provider-registry'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
+import type { CloseActionPreference } from '../../shared/window-controls'
 import type { AgentFrameworkId } from '../agent-framework'
 
 // Main-process-only stored shapes for settings.json. These carry the encrypted key reference and a
@@ -106,6 +107,8 @@ export type StoredSettings = {
   reasoningEffort?: ReasoningEffort
   // Desktop-notification preference for finished/failed agent tasks. Absent means enabled.
   notificationsEnabled?: boolean
+  // Windows titlebar-close behavior. Absent means ask every time.
+  closePreference?: CloseActionPreference
   // Detected opencode executable path + reported version (for the status card). Absent = detect on PATH.
   opencodePath?: string
   opencodeVersion?: string

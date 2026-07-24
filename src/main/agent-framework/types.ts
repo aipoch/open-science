@@ -69,11 +69,14 @@ export type ModelConfigContext = {
 // privacy). The framework decides HOW it is delivered — see SessionSetup.
 export type SessionSetupContext = {
   systemPromptAppends: string[]
+  // Short, high-priority reminders that must reach each turn when the framework carries the complete
+  // appends only in session metadata. Frameworks whose appends already ride each prompt may omit them.
+  turnPromptReminders?: string[]
 }
 
 // Framework-specific session configuration returned to the runtime. `meta` becomes the ACP `_meta`
 // on session/new and session/resume. `promptPrefix` is prepended to prompt content when the framework
-// cannot carry appends in session meta (opencode has no system-prompt preset).
+// cannot carry appends in session meta, or when a session-level append needs a per-turn reminder.
 export type SessionSetup = {
   meta?: Record<string, unknown>
   promptPrefix?: string
@@ -151,4 +154,11 @@ export type ResolvedAgentBackend = {
   sessionEffort?: ReasoningEffort
   authentication?: AgentAuthentication
   providerConfiguration?: AgentProviderConfiguration
+  // A bridged backend owns one reference to its local loopback bridge. Runtime teardown releases it;
+  // reviewer sessions register their Codex prompt_cache_key here so routing never depends on content.
+  responsesBridgeLease?: {
+    registerReviewerSession: (promptCacheKey: string) => void
+    unregisterReviewerSession: (promptCacheKey: string) => boolean
+    release: () => Promise<void>
+  }
 }

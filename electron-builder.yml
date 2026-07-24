@@ -78,7 +78,7 @@ extraResources:
 # afterPack ad-hoc-sign hook is a no-op off macOS (it returns early), so it is safe on this target.
 win:
   executableName: open-science
-  artifactName: ${name}-${version}-win-${arch}.${ext}
+  artifactName: aipoch-${name}-${version}-win-${arch}.${ext}
   # nsis = the installer; zip = a portable, no-install build. Offer both, mirroring mac (dmg + zip).
   target:
     - nsis
@@ -91,7 +91,7 @@ win:
     - from: build/windows-runtime-cache-uninstall.ps1
       to: windows-runtime-cache-uninstall.ps1
 nsis:
-  artifactName: ${name}-${version}-win-${arch}-setup.${ext}
+  artifactName: aipoch-${name}-${version}-win-${arch}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
@@ -99,7 +99,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   include: build/installer.nsh
 mac:
-  artifactName: ${name}-${version}-mac-${arch}.${ext}
+  artifactName: aipoch-${name}-${version}-mac-${arch}.${ext}
   # Minimum macOS to run the app (written to Info.plist LSMinimumSystemVersion). macOS 12 (Monterey)
   # and up; below this the OS refuses to launch. Independent of the CI build runner's macOS version.
   minimumSystemVersion: '12.0.0'
@@ -119,7 +119,7 @@ mac:
     - from: resources/bin/mac/${arch}/micromamba
       to: micromamba
 dmg:
-  artifactName: ${name}-${version}-mac-${arch}.${ext}
+  artifactName: aipoch-${name}-${version}-mac-${arch}.${ext}
 linux:
   # snap is intentionally omitted: building it on a stock GitHub runner needs snapcraft + LXD and
   # is flaky in CI. AppImage (portable, runs anywhere) + deb (Debian/Ubuntu) cover the common cases.
@@ -134,7 +134,9 @@ linux:
     - from: resources/bin/linux/${arch}/micromamba
       to: micromamba
 appImage:
-  artifactName: ${name}-${version}-linux-${arch}.${ext}
+  artifactName: aipoch-${name}-${version}-linux-${arch}.${ext}
+deb:
+  artifactName: aipoch-${name}_${version}_${arch}.${ext}
 npmRebuild: false
 # electron-updater feed. Win/Linux/macOS auto-update reads app-update.yml (generated from this block)
 # and fetches its feed from <url>. Win/Linux use the default `latest` channel (latest.yml /
