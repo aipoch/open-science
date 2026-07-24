@@ -33,6 +33,7 @@ type SettingsApi = {
   setAgentFramework: ReturnType<typeof vi.fn>
   setReasoningEffort: ReturnType<typeof vi.fn>
   setNotificationsEnabled: ReturnType<typeof vi.fn>
+  setClosePreference: ReturnType<typeof vi.fn>
   upsertProvider: ReturnType<typeof vi.fn>
   validateProvider: ReturnType<typeof vi.fn>
   cancelCodexLogin: ReturnType<typeof vi.fn>
@@ -145,6 +146,11 @@ beforeEach(() => {
       .fn()
       .mockImplementation((request: { enabled: boolean }) =>
         Promise.resolve({ ...snapshot([]), notificationsEnabled: request.enabled })
+      ),
+    setClosePreference: vi
+      .fn()
+      .mockImplementation((request: { preference?: 'minimize' | 'quit' }) =>
+        Promise.resolve({ ...snapshot([]), closePreference: request.preference })
       ),
     upsertProvider: vi.fn(),
     validateProvider: vi.fn(),
@@ -1299,5 +1305,36 @@ describe('settings store: setNotificationsEnabled', () => {
     await useSettingsStore.getState().load()
 
     expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+  })
+})
+
+describe('settings store: setClosePreference', () => {
+  it('forwards a saved action and can reset to ask every time', async () => {
+    await useSettingsStore.getState().setClosePreference('minimize')
+    expect(api.setClosePreference).toHaveBeenCalledWith({ preference: 'minimize' })
+    expect(useSettingsStore.getState().closePreference).toBe('minimize')
+
+    await useSettingsStore.getState().setClosePreference(undefined)
+    expect(api.setClosePreference).toHaveBeenLastCalledWith({ preference: undefined })
+    expect(useSettingsStore.getState().closePreference).toBeUndefined()
+  })
+
+  it('reverts to the previous preference when main rejects', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    useSettingsStore.setState({ closePreference: 'quit' })
+    api.setClosePreference.mockRejectedValue(new Error('ipc down'))
+
+    await useSettingsStore.getState().setClosePreference(undefined)
+
+    expect(useSettingsStore.getState().closePreference).toBe('quit')
+    expect(consoleError).toHaveBeenCalledWith('Failed to set close preference', expect.any(Error))
+  })
+
+  it('load() picks up a saved preference from the settings snapshot', async () => {
+    api.getSettings.mockResolvedValue({ ...snapshot([]), closePreference: 'minimize' })
+
+    await useSettingsStore.getState().load()
+
+    expect(useSettingsStore.getState().closePreference).toBe('minimize')
   })
 })

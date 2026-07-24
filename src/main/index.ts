@@ -139,7 +139,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // can reach them. It only wraps ipcMain.handle — no server, no cost until something serves.
       const rpcCapture = installRpcCapture(ipcMain)
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
-      const { runtime, notebook, shutdownCoordinator, taskNotifications } =
+      const { runtime, notebook, shutdownCoordinator, taskNotifications, settingsService } =
         await registerIpcHandlers({
           mainEntryPath,
           headless: webMode.headless
@@ -161,9 +161,16 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         routeSecondInstance,
         shutdownCoordinator,
         taskNotifications,
+        settingsService,
         // Running-work snapshot + confirm coordinator, bound here where runtime/notebook are in scope.
         detectActiveSessions: () => computeActiveSessions({ runtime, notebook }),
-        createConfirmClose: createElectronCloseConfirm,
+        createConfirmClose: (getWindow: () => InstanceType<typeof BrowserWindow> | undefined) =>
+          createElectronCloseConfirm(getWindow, {
+            get: () => settingsService.getClosePreference(),
+            set: async (preference) => {
+              await settingsService.setClosePreference(preference)
+            }
+          }),
         installAppLifecycle,
         log,
         webMode,

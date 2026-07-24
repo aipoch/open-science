@@ -31,6 +31,7 @@ import {
   type SetConnectorEnabledRequest,
   type SetNcbiCredentialsRequest,
   type SetPackageMirrorRequest,
+  type SetClosePreferenceRequest,
   type SetNotificationsEnabledRequest,
   type SetReasoningEffortRequest,
   type SetSkillEnabledRequest,
@@ -221,6 +222,18 @@ const registerSettingsIpcHandlers = ({
 
       log.info('set notifications enabled requested', { enabled: request.enabled })
       return service.setNotificationsEnabled(request.enabled)
+    }
+  )
+  ipcMain.handle(
+    'settings:set-close-preference',
+    async (_event, request: SetClosePreferenceRequest) => {
+      const preference = request?.preference
+      if (preference !== undefined && preference !== 'minimize' && preference !== 'quit') {
+        throw new Error(`Invalid close preference: ${String(preference)}`)
+      }
+
+      log.info('set close preference requested', { preference: preference ?? 'ask' })
+      return service.setClosePreference(preference)
     }
   )
   ipcMain.handle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>

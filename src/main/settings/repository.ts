@@ -24,6 +24,7 @@ import { isOfficialVendorId } from '../../shared/provider-registry'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
+import type { CloseActionPreference } from '../../shared/window-controls'
 import { createLogger } from '../logger'
 import {
   createEmptySettings,
@@ -470,6 +471,12 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     settings.notificationsEnabled = notificationsEnabled
   }
 
+  const closePreference = asString(value.closePreference)
+
+  if (closePreference === 'minimize' || closePreference === 'quit') {
+    settings.closePreference = closePreference
+  }
+
   const opencodePath = asString(value.opencodePath)
 
   if (opencodePath) {
@@ -748,6 +755,11 @@ class SettingsRepository {
   // immediately, without a restart.
   async setNotificationsEnabled(enabled: boolean): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, notificationsEnabled: enabled }))
+  }
+
+  // Persists the Windows titlebar-close behavior; undefined restores the confirmation dialog.
+  async setClosePreference(preference: CloseActionPreference | undefined): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, closePreference: preference }))
   }
 
   // Records the detected opencode executable path + version for later spawns + the settings status card.

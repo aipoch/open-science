@@ -3039,6 +3039,21 @@ describe('SettingsService: notifications preference', () => {
   })
 })
 
+describe('SettingsService: close preference', () => {
+  it('projects, persists, and resets the Windows titlebar-close behavior', async () => {
+    const service = createService()
+
+    expect(await service.getClosePreference()).toBeUndefined()
+
+    const saved = await service.setClosePreference('quit')
+    expect(saved.closePreference).toBe('quit')
+    expect(await service.getClosePreference()).toBe('quit')
+
+    const reset = await service.setClosePreference(undefined)
+    expect(reset.closePreference).toBeUndefined()
+  })
+})
+
 describe('SettingsService: listAgentHomeSkills framework routing', () => {
   // The agent-home skill import is framework-agnostic: claude-code scans `~/.claude/skills/`,
   // codex scans `~/.codex/skills/`, and opencode (which has no global skills convention) returns

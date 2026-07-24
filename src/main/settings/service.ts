@@ -8,6 +8,8 @@ import { promisify } from 'node:util'
 
 import { z } from 'zod'
 
+import type { CloseActionPreference } from '../../shared/window-controls'
+
 import type {
   ClaudeDetectResult,
   ClaudeInstallEvent,
@@ -553,6 +555,7 @@ class SettingsService {
       packageMirror: settings.packageMirror,
       reasoningEffort: settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
       notificationsEnabled: settings.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
+      closePreference: settings.closePreference,
       agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       agentFrameworks: listAgentFrameworks().map((framework) => ({
         id: framework.id,
@@ -719,6 +722,18 @@ class SettingsService {
   // Sets the desktop-notification preference and returns the refreshed snapshot for the renderer.
   async setNotificationsEnabled(enabled: boolean): Promise<SettingsSnapshot> {
     await this.repository.setNotificationsEnabled(enabled)
+
+    return this.getSettingsView()
+  }
+
+  async getClosePreference(): Promise<CloseActionPreference | undefined> {
+    return (await this.repository.getSettings()).closePreference
+  }
+
+  async setClosePreference(
+    preference: CloseActionPreference | undefined
+  ): Promise<SettingsSnapshot> {
+    await this.repository.setClosePreference(preference)
 
     return this.getSettingsView()
   }
