@@ -55,6 +55,22 @@ human-readable, JSON, and JSONL output never includes the local token.
 Use `--port <port>` to override the default port of `44100`. `--app-path <path>` selects a specific
 Open Science executable. Development builds also support `--config-root <path>`.
 
+### Linux AppImage sandbox fallback
+
+`open-science start` keeps Chromium sandboxing enabled by default. On some Linux hosts, an AppImage
+mounted with `nosuid` cannot use Chromium's SUID sandbox helper; Ubuntu may also restrict
+unprivileged user namespaces. In that case the command fails promptly with guidance instead of
+waiting for the service timeout.
+
+If the host cannot support sandboxed startup, an explicit rootless fallback is available:
+
+```bash
+open-science start --no-sandbox --no-open
+```
+
+`--no-sandbox` disables Chromium's process sandbox and reduces security. Use it only when necessary;
+the Debian package or a host configuration that supports Chromium sandboxing is preferred.
+
 ## Projects
 
 Create a project and list the projects available to task runs:

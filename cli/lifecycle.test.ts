@@ -1,6 +1,16 @@
+import { EventEmitter } from 'node:events'
+
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 
-import { statusCommand, stopCommand, terminateDaemon, urlCommand } from './index.mjs'
+import {
+  buildAppLaunchArgs,
+  formatStartupFailure,
+  statusCommand,
+  stopCommand,
+  terminateDaemon,
+  urlCommand,
+  waitForStartup
+} from './index.mjs'
 
 // A running daemon's on-disk state, as findServiceState would return it.
 const RUNNING_STATE = { pid: 4242, port: 44100, configRoot: '/tmp/os-config' }
@@ -90,6 +100,47 @@ describe('terminateDaemon', () => {
     const stopped = await terminateDaemon(7, { ...base, isAlive: () => true, forceKill })
     expect(stopped).toBe(false)
     expect(forceKill).toHaveBeenCalledWith(7)
+  })
+})
+
+describe('headless startup', () => {
+  it('forwards the explicit no-sandbox fallback to Electron', () => {
+    expect(buildAppLaunchArgs(['app-root'], { noSandbox: true }, 44100)).toEqual([
+      'app-root',
+      '--no-sandbox',
+      '--open-science-headless',
+      '--serve=44100'
+    ])
+    expect(buildAppLaunchArgs(['app-root'], {}, 44100)).not.toContain('--no-sandbox')
+  })
+
+  it('stops waiting as soon as the packaged app exits', async () => {
+    const child = new EventEmitter()
+    const deps = makeDeps({
+      findServiceState: vi.fn().mockImplementation(() => {
+        child.emit('exit', 1, null)
+        return Promise.resolve(undefined)
+      })
+    })
+
+    await expect(waitForStartup('/tmp/os-config', child, deps, 30_000)).resolves.toEqual({
+      kind: 'exit',
+      code: 1,
+      signal: null
+    })
+    expect(deps.sleep).not.toHaveBeenCalled()
+  })
+
+  it('explains the AppImage sandbox failure and the explicit security trade-off', () => {
+    const message = formatStartupFailure(
+      { kind: 'exit', code: 1, signal: null },
+      'FATAL:sandbox/linux/suid/client/setuid_sandbox_host.cc:166\nThe SUID sandbox helper binary was found, but is not configured correctly.',
+      { noSandbox: false }
+    )
+
+    expect(message).toContain('open-science start --no-sandbox')
+    expect(message).toContain('reduces security')
+    expect(message).toContain('AppImage')
   })
 })
 

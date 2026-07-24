@@ -27,6 +27,13 @@ describe('CLI argument parsing', () => {
     })
   })
 
+  it('parses the explicit no-sandbox start fallback', () => {
+    expect(parseCliArgs(['start', '--no-sandbox'])).toEqual({
+      command: 'start',
+      options: { open: true, json: false, noSandbox: true }
+    })
+  })
+
   it('parses status JSON output and rejects invalid options', () => {
     expect(parseCliArgs(['status', '--json'])).toEqual({
       command: 'status',
