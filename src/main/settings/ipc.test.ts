@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
+import {
+  CLAUDE_ISOLATED_PROVIDER_ID,
+  CLAUDE_SHARED_PROVIDER_ID,
+  CODEX_SUBSCRIPTION_PROVIDER_ID
+} from '../../shared/settings'
 import type { SettingsService } from './service'
 
 // Capture every ipcMain.handle registration so handlers can be invoked directly in the test.
@@ -346,6 +350,37 @@ describe('settings IPC handlers', () => {
     // Editing the live provider must respawn the agent so the new base URL / key / model take effect.
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
   })
+
+  it.each([
+    [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID, 'claude-isolated'],
+    [CLAUDE_ISOLATED_PROVIDER_ID, CLAUDE_SHARED_PROVIDER_ID, 'claude-shared']
+  ] as const)(
+    'drops the agent connection when active Claude mode changes from %s to %s',
+    async (previousProviderId, nextProviderId, nextType) => {
+      handlers.clear()
+      const service = createFakeService()
+      service.getSettingsView.mockResolvedValue({
+        claude: {},
+        activeProviderId: previousProviderId,
+        providers: []
+      })
+      service.upsertProvider.mockResolvedValue({
+        claude: {},
+        activeProviderId: nextProviderId,
+        providers: []
+      })
+      const onActiveProviderChanged = vi.fn()
+      registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+
+      await invoke('settings:upsert-provider', {
+        id: previousProviderId,
+        type: nextType,
+        name: 'Claude subscription'
+      })
+
+      expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+    }
+  )
 
   it('does not drop the connection when editing a non-active provider', async () => {
     handlers.clear()

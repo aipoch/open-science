@@ -239,7 +239,10 @@ const ProvidersPanel = ({
     setProviderTestError(undefined)
 
     try {
-      await loginSharedClaude()
+      const result = await loginSharedClaude()
+      if (!result.ok && !result.cancelled) {
+        setProviderTestError(result.message ?? 'Could not sign in to Claude. Try again.')
+      }
     } catch (error) {
       setProviderTestError(error instanceof Error ? error.message : 'Could not sign in to Claude.')
     } finally {

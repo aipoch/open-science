@@ -211,7 +211,75 @@ describe('ProvidersPanel: claude-isolated browser + paste race', () => {
   })
 })
 
-describe('ProvidersPanel: claude-shared disconnect', () => {
+describe('ProvidersPanel: claude-shared actions', () => {
+  it('surfaces a shared browser login failure inline', async () => {
+    useSettingsStore.setState({
+      ...useSettingsStore.getState(),
+      providers: [
+        {
+          id: 'builtin-claude-shared',
+          type: 'claude-shared',
+          name: 'Claude subscription',
+          models: [],
+          model: undefined,
+          maskedKey: undefined,
+          hasKey: false,
+          lastValidatedAt: undefined,
+          needsKey: false,
+          supportsImageInput: false
+        }
+      ],
+      loginSharedClaude: vi.fn().mockResolvedValue({
+        ok: false,
+        category: 'unknown'
+      }) as never
+    })
+
+    render()
+    const signIn = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Sign in with browser"]'
+    )
+    await act(async () => signIn?.click())
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not sign in to Claude. Try again.'
+    )
+  })
+
+  it('does not surface an error when shared browser login is explicitly cancelled', async () => {
+    useSettingsStore.setState({
+      ...useSettingsStore.getState(),
+      providers: [
+        {
+          id: 'builtin-claude-shared',
+          type: 'claude-shared',
+          name: 'Claude subscription',
+          models: [],
+          model: undefined,
+          maskedKey: undefined,
+          hasKey: false,
+          lastValidatedAt: undefined,
+          needsKey: false,
+          supportsImageInput: false
+        }
+      ],
+      loginSharedClaude: vi.fn().mockResolvedValue({
+        ok: false,
+        category: 'unknown',
+        message: 'Sign-in cancelled.',
+        cancelled: true
+      }) as never
+    })
+
+    render()
+    const signIn = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Sign in with browser"]'
+    )
+    await act(async () => signIn?.click())
+
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
   it('uses app-local wording when disconnect fails without a message', async () => {
     useSettingsStore.setState({
       ...useSettingsStore.getState(),

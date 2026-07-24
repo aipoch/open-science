@@ -145,12 +145,16 @@ const registerSettingsIpcHandlers = ({
   })
 
   ipcMain.handle('settings:upsert-provider', async (_event, request: UpsertProviderRequest) => {
+    const before = await service.getSettingsView()
     const snapshot = await service.upsertProvider(request)
 
     // Editing the currently-active provider in place must also refresh the agent. The live process
     // baked its base URL / key / model in at spawn time, so without this a credential or model edit
     // would silently keep hitting the pre-edit gateway until the next manual provider switch.
-    if (request.id && request.id === snapshot.activeProviderId) {
+    if (
+      request.id &&
+      (request.id === before.activeProviderId || request.id === snapshot.activeProviderId)
+    ) {
       onActiveProviderChanged?.()
     }
 
