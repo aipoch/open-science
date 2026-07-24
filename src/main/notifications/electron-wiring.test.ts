@@ -62,13 +62,13 @@ describe('buildTaskNotificationShow', () => {
       headless: false
     })
 
-    show({ title: 'Task completed', body: 'b', onClick })
+    show({ title: 'Agent response complete', body: 'b', onClick })
 
     const [notification] = Array.from(notifications)
     expect(notification?.show).toHaveBeenCalledTimes(1)
     expect(log.info).toHaveBeenCalledWith(
       'delivering task notification',
-      expect.objectContaining({ title: 'Task completed' })
+      expect.objectContaining({ title: 'Agent response complete' })
     )
 
     // The click handler stays live across the lifetime of the banner (not GC'd).

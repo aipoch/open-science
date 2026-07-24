@@ -95,15 +95,15 @@ describe('describeConnectorApprovalNotification', () => {
 describe('describeTaskNotification', () => {
   it('names the task from the prompt snippet when a turn completes', () => {
     expect(describeTaskNotification(stopEvent('end_turn'), 'Plot the curve')).toEqual({
-      title: 'Task completed',
-      body: '"Plot the curve" finished.'
+      title: 'Agent response complete',
+      body: 'The agent finished responding to "Plot the curve".'
     })
   })
 
   it('falls back to a generic body when no prompt was tracked', () => {
     expect(describeTaskNotification(stopEvent('end_turn'))).toEqual({
-      title: 'Task completed',
-      body: 'The agent finished your request.'
+      title: 'Agent response complete',
+      body: 'The agent finished responding.'
     })
   })
 
@@ -263,8 +263,8 @@ describe('TaskNotificationService', () => {
 
     expect(shown).toHaveLength(1)
     expect(shown[0]).toMatchObject({
-      title: 'Task completed',
-      body: '"Plot the curve" finished.'
+      title: 'Agent response complete',
+      body: 'The agent finished responding to "Plot the curve".'
     })
   })
 
@@ -274,7 +274,7 @@ describe('TaskNotificationService', () => {
     service.trackPrompt({ sessionId: 'session-1', text: 'First line\nSecond line' })
     await service.handleRuntimeEvent(stopEvent('end_turn'))
 
-    expect(shown[0]?.body).toBe('"First line" finished.')
+    expect(shown[0]?.body).toBe('The agent finished responding to "First line".')
   })
 
   it('does not notify while the app is focused', async () => {
@@ -513,7 +513,7 @@ describe('TaskNotificationService', () => {
     service.untrackPrompt('session-1', trackedB as NonNullable<typeof trackedB>)
     await service.handleRuntimeEvent(stopEvent('end_turn'))
 
-    expect(shown[0]?.body).toBe('"Prompt A" finished.')
+    expect(shown[0]?.body).toBe('The agent finished responding to "Prompt A".')
   })
 
   it('does not corrupt a still-running turn when rejections arrive in sequence', async () => {
@@ -530,7 +530,7 @@ describe('TaskNotificationService', () => {
     service.untrackPrompt('session-1', trackedC as NonNullable<typeof trackedC>)
     await service.handleRuntimeEvent(stopEvent('end_turn'))
 
-    expect(shown[0]?.body).toBe('"Prompt A" finished.')
+    expect(shown[0]?.body).toBe('The agent finished responding to "Prompt A".')
   })
 
   it('untrackPrompt is a no-op once a terminal event consumed the snippet', async () => {

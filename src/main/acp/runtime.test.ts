@@ -761,6 +761,9 @@ describe('ACP runtime session management', () => {
       })
     ])
     expect(JSON.stringify(fakeAgent.newSessions[0]._meta)).toContain(BEGIN_ACTIVITY_GROUP_TOOL_NAME)
+    expect(JSON.stringify(fakeAgent.newSessions[0]._meta)).toContain(
+      'Do not describe a tool-backed action as future work'
+    )
     expect(fakeAgent.prompts[0].text).toContain('mcp__open-science-activity__begin_activity_group')
     expect(fakeAgent.prompts[0].text).toContain('Before each coherent tool group this turn')
 
@@ -812,6 +815,9 @@ describe('ACP runtime session management', () => {
         expect.objectContaining({ name: ACTIVITY_GROUP_MCP_SERVER_NAME })
       ])
       expect(fakeAgent.prompts[0].text).toContain(BEGIN_ACTIVITY_GROUP_TOOL_NAME)
+      expect(fakeAgent.prompts[0].text).toContain(
+        'Do not describe a tool-backed action as future work'
+      )
     }
   )
   it('applies native Full access before the first prompt', async () => {

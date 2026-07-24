@@ -3,7 +3,7 @@ import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
 import type { ConnectorApprovalRequest } from '../../shared/settings'
 
-// What the user sees when a task reaches a terminal state while the app is unfocused.
+// What the user sees when an agent turn reaches a terminal state while the app is unfocused.
 export type TaskNotification = {
   title: string
   body: string
@@ -117,9 +117,11 @@ export const describeTaskNotification = (
     }
 
     return {
-      title: 'Task completed',
+      title: 'Agent response complete',
       body: truncate(
-        taskName ? `${taskName} finished.` : 'The agent finished your request.',
+        taskName
+          ? `The agent finished responding to ${taskName}.`
+          : 'The agent finished responding.',
         MAX_BODY_LENGTH
       )
     }

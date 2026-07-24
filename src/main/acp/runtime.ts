@@ -288,6 +288,14 @@ const ACTIVITY_GROUP_SYSTEM_PROMPT_APPEND = [
   '</open_science_activity_group_instructions>'
 ].join('\n')
 const ACTIVITY_GROUP_TURN_PROMPT_REMINDER = `Before each coherent tool group this turn, call \`${BEGIN_ACTIVITY_GROUP_TOOL_NAME}\` with one concise purpose title immediately before that group's first tool. Repeat the declaration whenever the purpose changes; do not reuse the previous group. Call it once per group, not once per tool.`
+// An end_turn is final from the runtime's perspective, so promised work must be a tool call in the
+// current turn or an explicit request for user input rather than text that implies later execution.
+const TURN_CONTINUITY_SYSTEM_PROMPT_APPEND = [
+  '<open_science_turn_continuity_instructions>',
+  'Do not describe a tool-backed action as future work and then end the turn. If you say you will download, install, run, edit, analyze, or otherwise perform an action that needs a tool, issue the corresponding tool call in this same turn.',
+  'If a required tool cannot be used or its operation fails, do not promise another attempt. Clearly state that the turn has stopped, what prevented progress, and what the user can do next.',
+  '</open_science_turn_continuity_instructions>'
+].join('\n')
 // Appends artifact tool guidance as system prompt metadata so user prompts stay untouched.
 const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
   '<open_science_artifact_instructions>',
@@ -3099,6 +3107,7 @@ class AcpRuntime {
     // Each append names MCP tools that only exist when that tooling is actually wired for this session;
     // omit it otherwise so the agent isn't told to use tools it wasn't given.
     return [
+      TURN_CONTINUITY_SYSTEM_PROMPT_APPEND,
       SKILLS_READ_GUARD_SYSTEM_PROMPT_APPEND,
       LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND,
       ...(this.activityGroupOptions && this.framework.acceptsStdioMcp
