@@ -1,10 +1,13 @@
 import { Dialog } from 'radix-ui'
-import { Check, Copy, ExternalLink, FolderOpen } from 'lucide-react'
+import { Check, Copy, ExternalLink, FolderOpen, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
+import { Button } from '@/components/ui/button'
 import {
+  dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -151,16 +154,32 @@ const ReportErrorDialog = ({
       <Dialog.Portal>
         <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content
+          onInteractOutside={(event) => event.preventDefault()}
           className={dialogPanelClassName(
             'flex max-h-[min(640px,calc(100vh-2rem))] w-[min(560px,calc(100vw-2rem))] flex-col'
           )}
         >
-          <Dialog.Title className={dialogTitleClassName}>Report this error</Dialog.Title>
-          <Dialog.Description className={dialogDescriptionClassName}>
-            This report is posted publicly on GitHub. Edit the error text below to remove anything
-            sensitive before sharing. Your runtime log stays on this device and is never attached
-            automatically.
-          </Dialog.Description>
+          <div className={dialogHeaderClassName}>
+            <div className="min-w-0">
+              <Dialog.Title className={dialogTitleClassName}>Report this error</Dialog.Title>
+              <Dialog.Description className={dialogDescriptionClassName}>
+                This report is posted publicly on GitHub. Edit the error text below to remove
+                anything sensitive before sharing. Your runtime log stays on this device and is
+                never attached automatically.
+              </Dialog.Description>
+            </div>
+            <Dialog.Close asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className={dialogCloseButtonClassName}
+                aria-label="Close"
+              >
+                <X className="size-4" aria-hidden="true" />
+              </Button>
+            </Dialog.Close>
+          </div>
 
           <label className="mt-4 text-[11px] font-medium uppercase tracking-wide text-text-300">
             Error details

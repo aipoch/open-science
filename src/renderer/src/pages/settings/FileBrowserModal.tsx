@@ -447,16 +447,6 @@ export function FileBrowserModal({
     })
   }, [open, host?.providerId])
 
-  // Escape key closes the modal.
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [open, onClose])
-
   const handleBack = (): void => {
     const prev = history[history.length - 1]
     if (!prev) return
