@@ -39,8 +39,7 @@ const permissionRequest = (title: string, sessionId = 'session-1'): AcpPermissio
   sessionId,
   toolCallId: 'tool-1',
   title,
-  options: [],
-  raw: {}
+  options: []
 })
 
 describe('describePermissionNotification', () => {

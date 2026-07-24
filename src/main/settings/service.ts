@@ -2968,6 +2968,9 @@ class SettingsService {
       throw new Error(buildActiveModelIncompatibleMessage(framework.displayName))
     }
 
+    const enabledConnectorIds = this.enabledConnectorIds(settings.connectors)
+    const connectorInstructions = renderConnectorInstructions(enabledConnectorIds)
+
     if (
       framework.id === 'codex' &&
       !isModelBridgeSupported(
@@ -2989,6 +2992,7 @@ class SettingsService {
         executablePath,
         env: envOverrides,
         sessionOptions,
+        ...(connectorInstructions ? { systemPromptAppends: [connectorInstructions] } : {}),
         sessionEffort,
         contextWindow
       }
@@ -3031,7 +3035,6 @@ class SettingsService {
       framework.id === 'codex' &&
       (provider.apiEndpoints?.includes('openai') ?? false) &&
       !(provider.apiEndpoints?.includes('responses') ?? false)
-    const enabledConnectorIds = this.enabledConnectorIds(settings.connectors)
     // A bridge may still serve a live Codex runtime from an earlier framework generation. Do not stop
     // or retarget it merely because the newly selected framework/provider does not need one.
     const responsesBridge = needsResponsesBridge
@@ -3045,7 +3048,7 @@ class SettingsService {
         reasoningEffort: sessionEffort,
         // Keep only connector calling conventions in OpenCode's baseline. Detailed tools are already
         // materialized as on-demand `mcp-*` skills above, avoiding a full catalog in every request.
-        instructions: renderConnectorInstructions(enabledConnectorIds)
+        instructions: connectorInstructions
       })
       await this.writeAgentConfigFiles(modelConfig.configFiles)
 
@@ -3063,6 +3066,9 @@ class SettingsService {
             : {})
         },
         args: modelConfig.args,
+        ...(framework.id === 'codex' && connectorInstructions
+          ? { systemPromptAppends: [connectorInstructions] }
+          : {}),
         sessionModel,
         ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type) && sessionModel
           ? { sessionModelRequired: true }

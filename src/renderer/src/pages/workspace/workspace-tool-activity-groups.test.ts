@@ -157,6 +157,12 @@ describe('formatActivityGroupTitle', () => {
     expect(formatActivityGroupTitle([])).toBe('Ran a tool')
   })
 
+  it('recognizes OpenCode Skill titles without provider metadata', () => {
+    expect(formatActivityGroupTitle([createActivity({ title: 'Loaded skill: mcp-pubmed' })])).toBe(
+      'Loaded a skill'
+    )
+  })
+
   it('drops the synthetic ToolSearch wrapper once concrete searches exist', () => {
     const title = formatActivityGroupTitle([toolSearchWrapper(), inferredSearchRow()])
 

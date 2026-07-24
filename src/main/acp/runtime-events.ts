@@ -10,6 +10,9 @@ import {
 // cannot flood it. Tuned to fit a typical error message (e.g. WebFetch's domain-safety preflight).
 const TOOL_FAILURE_TEXT_LIMIT = 300
 const MAX_RUNTIME_RAW_PAYLOAD_CHARS = 8_000
+const MAX_SKILL_NAME_CHARS = 200
+const SKILL_TOOL_TITLE_PATTERN = /^(?:run|loaded)\s+skill(?:\?|:|\s|$)/iu
+const SKILL_CONTENT_PATTERN = /^\s*<skill_content(?:\s|>)/iu
 
 // Narrows protocol extension values before reading provider-specific metadata.
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -23,6 +26,13 @@ const trimProviderValue = (value: unknown): string | undefined => {
 
   return trimmedValue ? trimmedValue : undefined
 }
+
+const containsControlCharacter = (value: string): boolean =>
+  [...value].some((character) => {
+    const codePoint = character.codePointAt(0)
+
+    return codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)
+  })
 
 // Keeps small JSON payloads for activity details while dropping values that would make runtime
 // snapshots expensive or impossible to structured-clone across IPC.
@@ -157,6 +167,65 @@ const extractToolFailureText = (content: ToolCallContent[] | undefined): string 
   return text.length > TOOL_FAILURE_TEXT_LIMIT ? `${text.slice(0, TOOL_FAILURE_TEXT_LIMIT)}…` : text
 }
 
+type ToolCallUpdate = Extract<
+  SessionNotification['update'],
+  { sessionUpdate: 'tool_call' | 'tool_call_update' }
+>
+
+// Native Skill calls return their instruction document as a tool result. It is agent context, not
+// user-facing output, so do not send it through the activity, IPC, or persistence pipelines.
+const isNativeSkillToolUpdate = (update: ToolCallUpdate): boolean => {
+  const title = trimProviderValue(update.title)
+  const providerToolName = extractProviderToolName(update)?.toLowerCase()
+  const containsSkillContent = update.content?.some(
+    (item) =>
+      item.type === 'content' &&
+      item.content.type === 'text' &&
+      SKILL_CONTENT_PATTERN.test(item.content.text)
+  )
+
+  return (
+    providerToolName === 'skill' ||
+    (title !== undefined && SKILL_TOOL_TITLE_PATTERN.test(title)) ||
+    containsSkillContent === true
+  )
+}
+
+// Keeps the single user-facing identity field from a native Skill call without retaining its input
+// object or instruction document. Generic follow-up titles are omitted so they cannot overwrite the
+// canonical name captured from the initial event in the renderer activity store.
+const projectToolTitle = (update: ToolCallUpdate): string | undefined => {
+  if (!isNativeSkillToolUpdate(update)) return update.title ?? undefined
+
+  const rawInput = isRecord(update.rawInput) ? update.rawInput : undefined
+  const skillName = trimProviderValue(rawInput?.name)
+
+  if (
+    skillName &&
+    skillName.length <= MAX_SKILL_NAME_CHARS &&
+    !containsControlCharacter(skillName)
+  ) {
+    return `Loaded skill: ${skillName}`
+  }
+
+  return trimProviderValue(update.title)?.toLowerCase() === 'skill'
+    ? undefined
+    : (update.title ?? undefined)
+}
+
+// Projects activity detail fields only for tools whose payload is safe and useful to show.
+const projectToolDetailPayload = (update: ToolCallUpdate): Partial<AcpRuntimeEvent> => {
+  if (isNativeSkillToolUpdate(update)) return {}
+
+  return {
+    toolContent: update.content ?? undefined,
+    toolLocations: update.locations ?? undefined,
+    rawInput: sanitizeRawToolPayload(update.rawInput),
+    rawOutput: sanitizeRawToolPayload(update.rawOutput),
+    ...extractTerminalMeta(update)
+  }
+}
+
 // Normalizes protocol session notifications into a renderer-friendly event shape.
 const toAcpRuntimeEvent = (
   notification: SessionNotification,
@@ -220,12 +289,8 @@ const toAcpRuntimeEvent = (
         toolCallId: update.toolCallId,
         providerToolName: extractProviderToolName(update),
         toolKind: update.kind,
-        toolContent: update.content,
-        toolLocations: update.locations,
-        rawInput: sanitizeRawToolPayload(update.rawInput),
-        rawOutput: sanitizeRawToolPayload(update.rawOutput),
-        ...extractTerminalMeta(update),
-        title: update.title,
+        ...projectToolDetailPayload(update),
+        title: projectToolTitle(update),
         status: update.status
       }
     case 'tool_call_update':
@@ -237,12 +302,8 @@ const toAcpRuntimeEvent = (
         toolCallId: update.toolCallId,
         providerToolName: extractProviderToolName(update),
         toolKind: update.kind ?? undefined,
-        toolContent: update.content ?? undefined,
-        toolLocations: update.locations ?? undefined,
-        rawInput: sanitizeRawToolPayload(update.rawInput),
-        rawOutput: sanitizeRawToolPayload(update.rawOutput),
-        ...extractTerminalMeta(update),
-        title: update.title ?? undefined,
+        ...projectToolDetailPayload(update),
+        title: projectToolTitle(update),
         status: update.status ?? undefined
       }
     case 'plan':

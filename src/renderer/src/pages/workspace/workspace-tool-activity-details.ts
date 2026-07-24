@@ -46,6 +46,8 @@ type ToolActivityDetails = {
 
 // Bounds very large tool payloads so a single read/execute row cannot flood the transcript.
 const MAX_CODE_CHARS = 20000
+const SKILL_ACTIVITY_TITLE_PATTERN = /^(?:run|loaded)\s+skill(?:\?|:|\s|$)/iu
+const LOADED_SKILL_NAME_PATTERN = /^loaded\s+skill:\s*(.+?)\s*$/iu
 
 // Human-readable fallbacks for ACP tool kinds when the provider tool name is unavailable.
 const TOOL_KIND_LABELS: Record<ToolKind, string> = {
@@ -112,6 +114,16 @@ const trimDetail = (value: string | null | undefined): string | undefined => {
 
   return trimmedValue ? trimmedValue : undefined
 }
+
+// Skill documents are internal agent instructions. Existing persisted sessions can contain their
+// old payloads, so keep native Skill activities as compact rows without an expandable detail view.
+const isSkillActivity = (activity: ToolActivity): boolean =>
+  activity.providerToolName?.trim().toLowerCase() === 'skill' ||
+  SKILL_ACTIVITY_TITLE_PATTERN.test(activity.title.trim())
+
+// The completion title is the only stable, user-safe Skill name that OpenCode provides.
+const getLoadedSkillName = (activity: ToolActivity): string | undefined =>
+  trimDetail(LOADED_SKILL_NAME_PATTERN.exec(activity.title)?.[1])
 
 // Converts supported ACP content block variants into displayable text snippets.
 const collectContentText = (content: ContentBlock): string[] => {
@@ -877,6 +889,7 @@ const buildFetchDetails = (activity: ToolActivity): ToolActivityDetails | undefi
 
 // Projects one tool activity into the structured, expandable detail model, or nothing for chips.
 const buildToolActivityDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+  if (isSkillActivity(activity)) return undefined
   // Saved files show a metadata summary instead of dumping their (possibly base64) content.
   if (isArtifactWriteActivity(activity)) return buildArtifactDetails(activity)
   // File edits prefer a diff view, falling back to raw input/output when no diff is provided.
@@ -898,7 +911,13 @@ const buildToolActivityDetails = (activity: ToolActivity): ToolActivityDetails |
   return buildGenericDetails(activity)
 }
 
-export { buildToolActivityDetails, getToolDisplayName, isEditActivity }
+export {
+  buildToolActivityDetails,
+  getLoadedSkillName,
+  getToolDisplayName,
+  isEditActivity,
+  isSkillActivity
+}
 export type {
   ToolActivityDetails,
   ToolCodeSection,

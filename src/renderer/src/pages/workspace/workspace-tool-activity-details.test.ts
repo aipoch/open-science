@@ -5,7 +5,8 @@ import type { ToolActivity } from '@/stores/session-store'
 import {
   buildToolActivityDetails,
   getToolDisplayName,
-  isEditActivity
+  isEditActivity,
+  isSkillActivity
 } from './workspace-tool-activity-details'
 
 const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
@@ -27,6 +28,22 @@ describe('workspace tool activity details', () => {
     ).toBe('Bash')
     expect(getToolDisplayName(createActivity({ toolKind: 'execute' }))).toBe('Terminal')
     expect(getToolDisplayName(createActivity({ toolKind: undefined }))).toBe('Tool')
+  })
+
+  it('keeps native Skill instruction documents out of expandable activity details', () => {
+    const activity = createActivity({
+      title: 'Loaded skill: mcp-pubmed',
+      rawInput: { name: 'mcp-pubmed' },
+      toolContent: [
+        {
+          type: 'content',
+          content: { type: 'text', text: '<skill_content>Internal instructions</skill_content>' }
+        }
+      ]
+    })
+
+    expect(isSkillActivity(activity)).toBe(true)
+    expect(buildToolActivityDetails(activity)).toBeUndefined()
   })
 
   it('builds command and output code sections for execute tools', () => {

@@ -146,6 +146,9 @@ export type ResolvedAgentBackend = {
   args?: string[]
   // Framework-native session options retained by the runtime and passed through buildSessionSetup.
   sessionOptions?: Record<string, unknown>
+  // Backend-resolved guidance appended to every session. Connector conventions use this channel for
+  // Claude and Codex; OpenCode keeps the same guidance in its generated instructions config.
+  systemPromptAppends?: string[]
   // Model to apply per session via the ACP `model` configOption, for frameworks that select the model
   // over the protocol rather than via env (opencode). Undefined ⇒ the framework's env/config drives it
   // (Claude uses ANTHROPIC_MODEL). Applied best-effort: skipped when the agent advertises no match.

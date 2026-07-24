@@ -14,20 +14,20 @@ import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 
 type PermissionApprovalControlsProps = {
   requests: AcpPermissionRequest[]
-  onRespond: (requestId: string, optionId?: string) => void
+  onRespond: (requestId: string, optionId?: string) => void | Promise<void>
   // Session locator for the notebook env badge; optional so the controls render standalone
   // (isolation tests, sessions without notebook context).
   notebookLookup?: NotebookSessionRequest
 }
 
 type PermissionOption = AcpPermissionRequest['options'][number]
-type PermissionScope = 'once' | 'conversation'
+type PermissionScope = 'once' | 'session'
 
 type ScopeOption = { scope: PermissionScope; label: string; subtitle: string }
 
 const SCOPE_OPTIONS: ScopeOption[] = [
   { scope: 'once', label: 'Once', subtitle: 'This call only' },
-  { scope: 'conversation', label: 'This conversation', subtitle: 'Until this chat ends' }
+  { scope: 'session', label: 'This conversation', subtitle: 'Until this conversation ends' }
 ]
 
 // The ACP option kind that backs each scope. A scope is only offered when the request
@@ -35,15 +35,26 @@ const SCOPE_OPTIONS: ScopeOption[] = [
 // would grant a wider (or narrower) permission than the label promises.
 const SCOPE_KIND: Record<PermissionScope, string> = {
   once: 'allow_once',
-  conversation: 'allow_always'
+  session: 'allow_always'
+}
+
+const getOptionScope = (option: PermissionOption): PermissionScope | undefined => {
+  if (option.scope === 'once' || option.scope === 'session') return option.scope
+  if (option.scope !== undefined) return undefined
+
+  const kind = option.kind.toLowerCase()
+  if (kind === SCOPE_KIND.once) return 'once'
+  if (kind === SCOPE_KIND.session) return 'session'
+  return undefined
 }
 
 // The subset of scopes the request can actually satisfy, derived from its exact option kinds.
 const getAvailableScopes = (options: PermissionOption[]): Set<PermissionScope> => {
-  const kinds = new Set(options.map((o) => o.kind.toLowerCase()))
   const scopes = new Set<PermissionScope>()
-  if (kinds.has(SCOPE_KIND.once)) scopes.add('once')
-  if (kinds.has(SCOPE_KIND.conversation)) scopes.add('conversation')
+  for (const option of options) {
+    const scope = getOptionScope(option)
+    if (scope) scopes.add(scope)
+  }
   return scopes
 }
 
@@ -51,7 +62,7 @@ const getAvailableScopes = (options: PermissionOption[]): Set<PermissionScope> =
 const getAllowOptionId = (
   options: PermissionOption[],
   scope: PermissionScope
-): string | undefined => options.find((o) => o.kind.toLowerCase() === SCOPE_KIND[scope])?.optionId
+): string | undefined => options.find((option) => getOptionScope(option) === scope)?.optionId
 
 // Returns the optionId to use for Deny, or undefined to cancel. Prefer the one-time reject so a
 // single Deny never silently applies a permanent `reject_always` just because the provider listed
@@ -63,7 +74,7 @@ const getDenyOptionId = (options: PermissionOption[]): string | undefined =>
 // The optionIds the Allow split-button can reach across both scopes (allow_once + allow_always).
 // The scope toggle chooses between them, so both count as reachable for the extra-options diff.
 const allowOptionIds = (options: PermissionOption[]): string[] =>
-  (['once', 'conversation'] as const)
+  (['once', 'session'] as const)
     .map((scope) => getAllowOptionId(options, scope))
     .filter((id): id is string => id !== undefined)
 
@@ -80,7 +91,10 @@ const getExtraOptions = (
 ): PermissionOption[] => {
   const reachable = new Set<string>(reachableAllowIds)
   if (denyOptionId) reachable.add(denyOptionId)
-  return options.filter((o) => !reachable.has(o.optionId))
+  return options.filter(
+    (option) =>
+      !reachable.has(option.optionId) && option.scope !== 'project' && option.scope !== 'global'
+  )
 }
 
 // Canonical, protocol-derived action word for a known option kind; undefined for unknown kinds.
@@ -380,10 +394,11 @@ const ScopeDropdown = ({
   const ref = useRef<HTMLDivElement>(null)
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
   const options = SCOPE_OPTIONS.filter(({ scope }) => available.has(scope))
+  const selectedIndex = options.findIndex(({ scope }) => scope === selected)
 
   useEffect(() => {
-    itemRefs.current[options.findIndex(({ scope }) => scope === selected)]?.focus()
-  }, [options, selected])
+    itemRefs.current[selectedIndex]?.focus()
+  }, [selectedIndex])
 
   useEffect(() => {
     // Listen on `click` (not `mousedown`) so it pairs with the chevron's onClick toggle: the
@@ -471,8 +486,10 @@ const PermissionApprovalControls = ({
   onRespond,
   notebookLookup
 }: PermissionApprovalControlsProps): React.JSX.Element | null => {
-  const [scope, setScope] = useState<PermissionScope>('conversation')
+  const [scope, setScope] = useState<PermissionScope>('session')
   const [scopeOpen, setScopeOpen] = useState(false)
+  const [submittingRequestId, setSubmittingRequestId] = useState<string | undefined>(undefined)
+  const submittingRequestIdRef = useRef<string | undefined>(undefined)
   const scopeTriggerRef = useRef<HTMLButtonElement>(null)
   const closeScopeMenu = useCallback((restoreTriggerFocus = false) => {
     setScopeOpen(false)
@@ -483,12 +500,10 @@ const PermissionApprovalControls = ({
   const request = requests[0]
 
   // Default the primary Allow action to the WIDEST in-session scope the request offers
-  // ('conversation', backed by allow_always), so a repeated tool doesn't re-prompt on every
+  // ('session', presented as this conversation), so a repeated tool doesn't re-prompt on every
   // call. Narrowing to a one-time approval ('once') is an explicit choice via the scope menu.
   const availableScopes = request ? getAvailableScopes(request.options) : new Set<PermissionScope>()
-  const defaultScope: PermissionScope = availableScopes.has('conversation')
-    ? 'conversation'
-    : 'once'
+  const defaultScope: PermissionScope = availableScopes.has('session') ? 'session' : 'once'
 
   // Reset per-request UI state (scope + open menu) whenever the displayed request changes,
   // so nothing leaks from the previously answered prompt.
@@ -498,6 +513,7 @@ const PermissionApprovalControls = ({
     setLastRequestId(requestId)
     setScope(defaultScope)
     setScopeOpen(false)
+    setSubmittingRequestId(undefined)
   }
 
   if (!request) return null
@@ -507,7 +523,29 @@ const PermissionApprovalControls = ({
   const permCode = extractPermissionCode(request)
   const allowOptionId = getAllowOptionId(request.options, effectiveScope)
   const denyOptionId = getDenyOptionId(request.options)
-  const scopeLabel = effectiveScope === 'once' ? 'for this call only' : 'for this conversation'
+  const scopeLabel = effectiveScope === 'once' ? 'once' : 'for this conversation'
+  const hasScopePicker = availableScopes.size > 1
+  const isSubmitting = submittingRequestId === request.requestId
+  const respondOnce = (optionId?: string): void => {
+    if (submittingRequestIdRef.current === request.requestId) return
+
+    const submittedRequestId = request.requestId
+    submittingRequestIdRef.current = submittedRequestId
+    setSubmittingRequestId(submittedRequestId)
+    setScopeOpen(false)
+
+    const releaseSubmission = (): void => {
+      if (submittingRequestIdRef.current !== submittedRequestId) return
+
+      submittingRequestIdRef.current = undefined
+      setSubmittingRequestId((current) => (current === submittedRequestId ? undefined : current))
+    }
+
+    Promise.resolve(onRespond(submittedRequestId, optionId)).then(
+      releaseSubmission,
+      releaseSubmission
+    )
+  }
 
   // Any option the Allow (either scope) / Deny controls can't reach — a non-canonical protocol
   // kind, or a second same-kind option — is surfaced as its own labeled button so a
@@ -611,7 +649,7 @@ const PermissionApprovalControls = ({
             matches the neighboring Button primitives) but kept as two segments so the chevron
             stays a separate tab stop with its own aria-haspopup semantics. */}
         <div className="relative flex items-stretch overflow-visible rounded-lg">
-          {scopeOpen && (
+          {hasScopePicker && scopeOpen && (
             <ScopeDropdown
               selected={effectiveScope}
               available={availableScopes}
@@ -624,32 +662,37 @@ const PermissionApprovalControls = ({
               type="button"
               data-testid="allow-primary"
               className="inline-flex h-8 select-none items-center justify-center gap-1 whitespace-nowrap bg-primary px-3 text-sm text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
-              disabled={!allowOptionId}
+              disabled={!allowOptionId || isSubmitting}
               onClick={() => {
-                if (allowOptionId) onRespond(request.requestId, allowOptionId)
+                if (allowOptionId) respondOnce(allowOptionId)
               }}
             >
               <span className="font-semibold">Allow</span>{' '}
               <span className="font-normal">{scopeLabel}</span>
             </button>
-            <div className="w-px bg-primary-foreground/25" />
-            <button
-              ref={scopeTriggerRef}
-              type="button"
-              data-testid="scope-chevron"
-              aria-label="Choose authorization scope"
-              aria-expanded={scopeOpen}
-              aria-haspopup="menu"
-              className="inline-flex h-8 select-none items-center justify-center bg-primary px-2 text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50"
-              onClick={(e) => {
-                // Stop propagation so this click doesn't reach the dropdown's document
-                // click-listener and immediately re-close the menu it just opened.
-                e.stopPropagation()
-                setScopeOpen((o) => !o)
-              }}
-            >
-              <ChevronDown className="size-4" />
-            </button>
+            {hasScopePicker ? (
+              <>
+                <div className="w-px bg-primary-foreground/25" />
+                <button
+                  ref={scopeTriggerRef}
+                  type="button"
+                  data-testid="scope-chevron"
+                  aria-label="Choose authorization scope"
+                  aria-expanded={scopeOpen}
+                  aria-haspopup="menu"
+                  className="inline-flex h-8 select-none items-center justify-center bg-primary px-2 text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50"
+                  disabled={isSubmitting}
+                  onClick={(e) => {
+                    // Stop propagation so this click doesn't reach the dropdown's document
+                    // click-listener and immediately re-close the menu it just opened.
+                    e.stopPropagation()
+                    setScopeOpen((o) => !o)
+                  }}
+                >
+                  <ChevronDown className="size-4" />
+                </button>
+              </>
+            ) : null}
           </div>
         </div>
         {/* Fallback buttons for any protocol option the Allow/Deny controls can't reach, so an
@@ -663,7 +706,8 @@ const PermissionApprovalControls = ({
             variant="outline"
             data-testid="extra-option"
             className="h-auto min-h-8 min-w-0 max-w-full shrink whitespace-normal break-words py-1"
-            onClick={() => onRespond(request.requestId, option.optionId)}
+            disabled={isSubmitting}
+            onClick={() => respondOnce(option.optionId)}
           >
             {getExtraOptionLabel(option)}
           </Button>
@@ -673,7 +717,8 @@ const PermissionApprovalControls = ({
           variant="outline"
           data-testid="deny-button"
           className="px-4"
-          onClick={() => onRespond(request.requestId, denyOptionId)}
+          disabled={isSubmitting}
+          onClick={() => respondOnce(denyOptionId)}
         >
           Deny
         </Button>

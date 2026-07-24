@@ -6,7 +6,8 @@ import {
   isMcpToolName,
   isWithinWorkspace,
   resolveAllowOptionId,
-  resolveAutomaticPermission
+  resolveAutomaticPermission,
+  resolveMcpProviderLeafIdentity
 } from './permission-policy'
 
 const createPermissionRequest = (
@@ -112,6 +113,13 @@ describe('permission policy', () => {
     expect(isMcpToolName('execute', ['open-science-notebook'])).toBe(true)
     expect(isMcpToolName('write', ['open-science-artifacts'])).toBe(true)
     expect(isMcpToolName('execute', ['some-other-server'])).toBe(false)
+    expect(resolveMcpProviderLeafIdentity('execute', ['open-science-notebook'])).toBe(
+      'open-science-notebook/notebook_execute'
+    )
+    expect(resolveMcpProviderLeafIdentity('write', ['open-science-artifacts'])).toBe(
+      'open-science-artifacts/write_artifact_file'
+    )
+    expect(resolveMcpProviderLeafIdentity('execute', ['some-other-server'])).toBeUndefined()
   })
 
   it('never auto-approves opencode-named MCP tools (<server>_<tool>) reporting a low-risk kind', () => {
@@ -262,7 +270,7 @@ describe('permission policy', () => {
     ).toBe('allow')
   })
 
-  it('falls back to allow_always for Full access only when no one-shot option is offered', () => {
+  it('does not create Agent-owned memory when Full access lacks a one-shot option', () => {
     const onlyAlways = createPermissionRequest('execute', undefined, {
       options: [
         { optionId: 'always', name: 'Allow always', kind: 'allow_always' },
@@ -270,10 +278,10 @@ describe('permission policy', () => {
       ]
     })
 
-    expect(resolveAutomaticPermission(onlyAlways, { profile: 'full' })).toBe('always')
+    expect(resolveAutomaticPermission(onlyAlways, { profile: 'full' })).toBeUndefined()
   })
 
-  it('preserves the Full access allow_always fallback for activity declarations', () => {
+  it('does not use an activity declaration remember option as a Full access fallback', () => {
     const onlyAlways = createPermissionRequest('other', undefined, {
       title: 'mcp__open-science-activity__begin_activity_group',
       options: [
@@ -287,6 +295,6 @@ describe('permission policy', () => {
         profile: 'full',
         mcpServerNames: ['open-science-activity']
       })
-    ).toBe('always')
+    ).toBeUndefined()
   })
 })

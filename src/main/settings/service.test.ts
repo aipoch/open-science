@@ -1641,6 +1641,10 @@ describe('SettingsService: preflight & spawn config', () => {
       methodId: 'api-key',
       _meta: { 'api-key': { apiKey: 'test-key' } }
     })
+    expect(backend.systemPromptAppends?.join('\n')).toContain(
+      'Load that skill before using a connector.'
+    )
+    expect(backend.systemPromptAppends?.join('\n')).toContain('host.mcp(')
 
     expect(selection).toEqual({ frameworkId: 'codex' })
     expect(selection).not.toHaveProperty('key')
@@ -3519,6 +3523,10 @@ describe('SettingsService: reasoning effort', () => {
 
     expect(backend.framework.id).toBe('claude-code')
     expect(backend.sessionEffort).toBe('low')
+    expect(backend.systemPromptAppends?.join('\n')).toContain(
+      'Load that skill before using a connector.'
+    )
+    expect(backend.systemPromptAppends?.join('\n')).toContain('host.mcp(')
   })
 
   it("leaves sessionEffort undefined when the level is 'default' or unset", async () => {

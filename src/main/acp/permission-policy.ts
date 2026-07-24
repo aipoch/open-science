@@ -26,10 +26,28 @@ type PermissionPolicyContext = {
 // self-identifying; the shorter Codex/opencode forms are checked against known session servers.
 const MCP_TOOL_PREFIX = 'mcp__'
 const CODEX_MCP_TOOL_PREFIX = 'mcp.'
-const MCP_PROVIDER_LEAF_NAMES: Record<string, readonly string[]> = {
-  'open-science-notebook': ['execute'],
-  'open-science-artifacts': ['write'],
-  'open-science-activity': ['begin_activity_group']
+const MCP_PROVIDER_LEAF_ALIASES: Record<string, Readonly<Record<string, string>>> = {
+  'open-science-notebook': { execute: 'notebook_execute' },
+  'open-science-artifacts': { write: 'write_artifact_file' },
+  'open-science-activity': { begin_activity_group: 'begin_activity_group' }
+}
+
+// Resolves provider leaf aliases only when the configured server set identifies exactly one app-owned
+// MCP tool. Ambiguous leaf names remain MCP for conservative policy, but are not stable enough to grant.
+const resolveMcpProviderLeafIdentity = (
+  name: string | null | undefined,
+  mcpServerNames: readonly string[]
+): string | undefined => {
+  if (!name) return undefined
+
+  const identities = new Set(
+    mcpServerNames.flatMap((server) => {
+      const tool = MCP_PROVIDER_LEAF_ALIASES[server]?.[name]
+      return tool ? [`${server}/${tool}`] : []
+    })
+  )
+
+  return identities.size === 1 ? identities.values().next().value : undefined
 }
 
 // Recognizes an MCP-originated tool name across frameworks (see MCP_TOOL_PREFIX): Claude's mcp__ prefix,
@@ -45,7 +63,7 @@ const isMcpToolName = (
         name === server ||
         name.startsWith(`${CODEX_MCP_TOOL_PREFIX}${server}.`) ||
         name.startsWith(`${server}_`) ||
-        MCP_PROVIDER_LEAF_NAMES[server]?.includes(name)
+        MCP_PROVIDER_LEAF_ALIASES[server]?.[name] != null
     ))
 
 // Tests whether a tool-reported path stays within the workspace after resolving relative paths.
@@ -94,12 +112,6 @@ const canConservativelyAutoApprove = (
 const resolveAllowOptionId = (params: RequestPermissionRequest): string | undefined =>
   params.options.find((option) => option.kind.toLowerCase() === 'allow_once')?.optionId
 
-// Full access approves anything the agent asks. Prefer a one-shot allow so the app keeps deciding each
-// call; fall back to allow_always only when the agent offers no one-shot option, so a run never stalls.
-const resolveFullAccessAllowOptionId = (params: RequestPermissionRequest): string | undefined =>
-  resolveAllowOptionId(params) ??
-  params.options.find((option) => option.kind.toLowerCase() === 'allow_always')?.optionId
-
 // Returns an option only when the application can make a provider-neutral decision. Full access is the
 // user's explicit, dialog-confirmed choice, so it auto-approves everything (for frameworks that delegate
 // permissions rather than bypassing natively — a native-bypass agent sends no requests here at all).
@@ -109,7 +121,7 @@ const resolveAutomaticPermission = (
   context: PermissionPolicyContext | undefined
 ): string | undefined => {
   if (context?.profile === 'full') {
-    return resolveFullAccessAllowOptionId(params)
+    return resolveAllowOptionId(params)
   }
 
   // The declaration exception must be bound to a server-qualified tool identity. rawInput is
@@ -139,6 +151,7 @@ export {
   canConservativelyAutoApprove,
   isMcpToolName,
   isWithinWorkspace,
+  resolveMcpProviderLeafIdentity,
   resolveAutomaticPermission,
   resolveAllowOptionId
 }

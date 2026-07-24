@@ -31,6 +31,14 @@ const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
 })
 
 describe('workspace conversation items', () => {
+  it('shows an OpenCode Skill name without exposing its content', () => {
+    expect(
+      formatActivityTitle(
+        createActivity({ title: 'Loaded skill: mcp-pubmed', status: 'completed' })
+      )
+    ).toBe('Loaded skill: mcp-pubmed')
+  })
+
   it('orders messages and activities by stable runtime sort index when timestamps match', () => {
     const session: ChatSession = {
       ...baseSession,

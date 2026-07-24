@@ -1,5 +1,7 @@
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 
+import { getLoadedSkillName, isSkillActivity } from './workspace-tool-activity-details'
+
 type ConversationMessageItem = {
   id: string
   type: 'message'
@@ -98,6 +100,16 @@ const formatActivityToolName = (activity: ToolActivity): string => {
 
 // Builds the status-sensitive text for non-search activity chips.
 const formatActivityTitle = (activity: ToolActivity): string => {
+  if (isSkillActivity(activity)) {
+    const skillName = getLoadedSkillName(activity)
+
+    if (activity.status === 'failed')
+      return skillName ? `Skill failed: ${skillName}` : 'Skill failed'
+    if (activity.status === 'completed')
+      return skillName ? `Loaded skill: ${skillName}` : 'Loaded skill'
+    return skillName ? `Loading skill: ${skillName}` : 'Loading skill'
+  }
+
   const toolName = formatActivityToolName(activity)
 
   if (activity.status === 'failed') return `Tool failed: ${toolName}`

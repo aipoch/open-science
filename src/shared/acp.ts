@@ -169,10 +169,14 @@ export const getAcpRuntimeEventText = (event: AcpRuntimeEvent): string | undefin
     ? undefined
     : event.text
 
+export type AcpPermissionScope = 'once' | 'session' | 'project' | 'global'
+export type AcpPermissionGrantScope = Exclude<AcpPermissionScope, 'once'>
+
 export type AcpPermissionOption = {
   optionId: string
   name: string
   kind: string
+  scope?: AcpPermissionScope
 }
 
 export type AcpPermissionRequest = {
@@ -189,15 +193,15 @@ export type AcpPermissionRequest = {
   toolLocations?: ToolCallLocation[]
   rawInput?: unknown
   options: AcpPermissionOption[]
-  raw: unknown
 }
 
-// A tool category the user chose to always-allow for the rest of a session. `categoryKey` is the
-// broker's opaque grouping key; `label`/`kind` are the display projection shown in the composer.
+// An Open Science-owned tool grant. `categoryKey` is the broker's opaque matcher key;
+// `label`/`kind` are the display projection and `scope` reserves future project/global ownership.
 export type AcpPermissionGrant = {
   categoryKey: string
   label: string
   kind: 'shell' | 'mcp' | 'tool'
+  scope: AcpPermissionGrantScope
 }
 
 export type AcpStateSnapshot = {
@@ -212,7 +216,7 @@ export type AcpStateSnapshot = {
   events: AcpRuntimeEvent[]
   pendingPermissions: AcpPermissionRequest[]
   permissionProfiles: Record<string, SessionPermissionProfileState>
-  // Per-session always-allow grants (from per-request "Always"), so the UI can show and revoke them.
+  // Open Science-owned grants by app conversation, so the UI can show and revoke them.
   permissionGrants: Record<string, AcpPermissionGrant[]>
   // Latest context-window usage for each logical app session's current agent-context generation.
   // Missing means unknown or invalidated; framework switches and reconnects clear the old generation.

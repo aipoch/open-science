@@ -34,7 +34,6 @@ const createPermissionRequest = (
   toolCallId: 'tool-1',
   title: 'Allow edit?',
   options: [],
-  raw: {},
   ...overrides
 })
 

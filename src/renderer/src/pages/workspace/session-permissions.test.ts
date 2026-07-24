@@ -9,8 +9,7 @@ const createPermissionRequest = (sessionId: string): AcpPermissionRequest => ({
   sessionId,
   toolCallId: `tool-${sessionId}`,
   title: `Permission for ${sessionId}`,
-  options: [],
-  raw: {}
+  options: []
 })
 
 describe('workspace session permissions', () => {

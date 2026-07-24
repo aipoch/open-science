@@ -218,7 +218,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const activePermissionProfileState = activeSession
     ? permissionProfiles?.[activeSession.id]
     : undefined
-  // Always-allow grants only exist for a bound session; new conversations have none yet.
+  // Session grants only exist for a bound Agent session; new conversations have none yet.
   const activePermissionGrants = activeSession ? (permissionGrants?.[activeSession.id] ?? []) : []
   const activeContextUsage = activeSession ? contextUsageBySession?.[activeSession.id] : undefined
   // Auto-review defaults off: an existing session is enabled only when explicitly turned on; a new
@@ -780,9 +780,8 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   }
 
   // Forwards visible permission decisions to the runtime bridge.
-  const respondToVisiblePermission = (requestId: string, optionId?: string): void => {
-    void respondToPermission(requestId, optionId)
-  }
+  const respondToVisiblePermission = (requestId: string, optionId?: string): Promise<void> =>
+    respondToPermission(requestId, optionId)
 
   // Runtime mode is changed before the durable session preference, so a failed capability check
   // leaves the current selection untouched. New conversations apply their choice during creation.
@@ -841,14 +840,14 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     void window.api.reviewer.run({ ...request, origin: 'manual' })
   }
 
-  // Revokes one always-allow grant for the visible session; new conversations have no grants.
+  // Revokes one app-owned grant for the visible Agent session; new conversations have no grants.
   const revokeActivePermissionGrant = (categoryKey: string): void => {
     if (!activeSession) return
 
     void revokePermissionGrant(activeSession.id, categoryKey)
   }
 
-  // Clears every always-allow grant for the visible session. Revokes are awaited in sequence so the
+  // Clears every app-owned grant for the visible Agent session. Revokes are awaited in sequence so the
   // final snapshot reflects the emptied set rather than a partial one racing back from the broker.
   const clearActivePermissionGrants = (): void => {
     if (!activeSession) return

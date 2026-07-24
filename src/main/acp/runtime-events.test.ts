@@ -203,6 +203,81 @@ describe('ACP runtime event normalization', () => {
     })
   })
 
+  it('omits native Skill instruction documents from activity events', () => {
+    const skillDocument = '<skill_content name="mcp-pubmed">Internal instructions</skill_content>'
+    const notification: SessionNotification = {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'skill-1',
+        title: 'Loaded skill: mcp-pubmed',
+        status: 'completed',
+        rawInput: { name: 'mcp-pubmed' },
+        rawOutput: { content: skillDocument },
+        content: [{ type: 'content', content: { type: 'text', text: skillDocument } }]
+      }
+    }
+
+    const event = toAcpRuntimeEvent(notification, 'event-skill', 1710000000004)
+
+    expect(event).toMatchObject({
+      kind: 'tool',
+      toolCallId: 'skill-1',
+      title: 'Loaded skill: mcp-pubmed',
+      status: 'completed'
+    })
+    expect(event).not.toHaveProperty('toolContent')
+    expect(event).not.toHaveProperty('rawInput')
+    expect(event).not.toHaveProperty('rawOutput')
+    expect(JSON.stringify(event)).not.toContain(skillDocument)
+
+    const genericUpdate = toAcpRuntimeEvent(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'skill-claude',
+          title: 'Skill',
+          status: 'completed',
+          _meta: { claudeCode: { toolName: 'Skill' } }
+        }
+      },
+      'event-claude-skill-update',
+      1710000000005
+    )
+    expect(genericUpdate.title).toBeUndefined()
+  })
+
+  it('keeps only the safe Skill name from Claude native Skill events', () => {
+    const skillDocument = '<skill_content name="mcp-pubmed">Internal instructions</skill_content>'
+    const notification: SessionNotification = {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'skill-claude',
+        title: 'Skill',
+        status: 'completed',
+        rawInput: { name: 'mcp-pubmed' },
+        rawOutput: { content: skillDocument },
+        content: [{ type: 'content', content: { type: 'text', text: skillDocument } }],
+        _meta: { claudeCode: { toolName: 'Skill' } }
+      }
+    }
+
+    const event = toAcpRuntimeEvent(notification, 'event-claude-skill', 1710000000004)
+
+    expect(event).toMatchObject({
+      kind: 'tool',
+      providerToolName: 'Skill',
+      title: 'Loaded skill: mcp-pubmed',
+      status: 'completed'
+    })
+    expect(event).not.toHaveProperty('toolContent')
+    expect(event).not.toHaveProperty('rawInput')
+    expect(event).not.toHaveProperty('rawOutput')
+    expect(JSON.stringify(event)).not.toContain(skillDocument)
+  })
+
   it('drops oversized raw tool payloads before runtime snapshots are broadcast', () => {
     const oversizedInput = { content: 'A'.repeat(10_000) }
     const oversizedOutput = { result: 'B'.repeat(10_000) }

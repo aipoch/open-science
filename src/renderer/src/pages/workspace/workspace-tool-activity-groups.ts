@@ -6,7 +6,7 @@ import {
   isActivityActive,
   type ConversationItem
 } from './workspace-conversation-items'
-import { isEditActivity } from './workspace-tool-activity-details'
+import { isEditActivity, isSkillActivity } from './workspace-tool-activity-details'
 import { hasWebSearchContentEvidence } from './workspace-web-search-details'
 
 type ConversationActivityGroupItem = {
@@ -185,7 +185,7 @@ const categorizeActivity = (
 
   // A notebook_execute call is one cell run; summarize it as such instead of a generic tool.
   if (getNotebookToolSuffix(providerName) === 'notebook_execute') return 'notebook'
-  if (providerName === 'skill') return 'skill'
+  if (isSkillActivity(activity)) return 'skill'
   if (providerName === 'save_artifacts' || providerName.includes('artifact')) return 'artifact'
   if (providerName === 'manage_packages' || providerName.includes('package')) return 'environment'
   if (providerName === 'request_network_access' || providerName.startsWith('request_network')) {
