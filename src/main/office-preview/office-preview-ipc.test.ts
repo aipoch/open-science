@@ -5,225 +5,153 @@ type TestSender = {
   once: (event: string, listener: () => void) => void
 }
 
-const handlers = new Map<string, (event: { sender: TestSender }, ...args: unknown[]) => unknown>()
-const listeners = new Map<string, (event: { sender: TestSender }, ...args: unknown[]) => unknown>()
-const windowHarness = vi.hoisted(() => ({
-  resizeListener: undefined as (() => void) | undefined,
-  isDestroyed: vi.fn(() => false),
-  getContentSize: vi.fn(() => [1400, 900] as [number, number]),
-  on: vi.fn((event: string, listener: () => void) => {
-    if (event === 'resize') windowHarness.resizeListener = listener
-  }),
-  removeListener: vi.fn()
-}))
+type TestEvent = { sender: TestSender }
+type TestHandler = (event: TestEvent, ...args: unknown[]) => unknown
+
+const handlers = new Map<string, TestHandler>()
+const listeners = new Map<string, TestHandler>()
 
 vi.mock('electron', () => ({
-  BrowserWindow: {
-    fromWebContents: vi.fn(() => windowHarness)
-  },
   ipcMain: {
-    handle: vi.fn(
-      (channel: string, handler: typeof handlers extends Map<string, infer T> ? T : never) => {
-        handlers.set(channel, handler)
-      }
-    ),
-    on: vi.fn(
-      (channel: string, listener: typeof listeners extends Map<string, infer T> ? T : never) => {
-        listeners.set(channel, listener)
-      }
-    )
+    handle: vi.fn((channel: string, handler: TestHandler) => handlers.set(channel, handler)),
+    on: vi.fn((channel: string, listener: TestHandler) => listeners.set(channel, listener))
   }
 }))
 
 const { registerOfficePreviewIpcHandlers } = await import('./office-preview-ipc')
 const { OfficePreviewOpenSupersededError } = await import('./office-preview-supervisor')
 
+type TestSupervisor = {
+  open: ReturnType<typeof vi.fn>
+  attachFrame: ReturnType<typeof vi.fn>
+  reportState: ReturnType<typeof vi.fn>
+  close: ReturnType<typeof vi.fn>
+  closeOwner: ReturnType<typeof vi.fn>
+}
+
+const createSupervisor = (): TestSupervisor => ({
+  open: vi.fn(),
+  attachFrame: vi.fn(),
+  reportState: vi.fn(),
+  close: vi.fn(),
+  closeOwner: vi.fn()
+})
+
 describe('registerOfficePreviewIpcHandlers', () => {
   beforeEach(() => {
     handlers.clear()
     listeners.clear()
-    windowHarness.resizeListener = undefined
-    windowHarness.isDestroyed.mockClear()
-    windowHarness.getContentSize.mockClear()
-    windowHarness.on.mockClear()
-    windowHarness.removeListener.mockClear()
   })
 
-  it('derives Office preview ownership from the sending webContents', async () => {
-    const supervisor = {
-      open: vi.fn().mockResolvedValue({ kind: 'started', sessionId: 'session-1' }),
-      setBounds: vi.fn(),
-      captureSnapshot: vi.fn().mockResolvedValue('data:image/png;base64,c25hcHNob3Q='),
-      resizeOwner: vi.fn(),
-      close: vi.fn().mockResolvedValue(undefined),
-      closeOwner: vi.fn().mockResolvedValue(undefined)
-    }
-    registerOfficePreviewIpcHandlers(supervisor)
-    let destroyed: (() => void) | undefined
-    let renderProcessGone: (() => void) | undefined
-    const event = {
-      sender: {
-        id: 7,
-        once: vi.fn((event: string, listener: () => void) => {
-          if (event === 'destroyed') destroyed = listener
-          if (event === 'render-process-gone') renderProcessGone = listener
-        })
-      }
-    }
+  it('derives ownership from the sender for open, attach, state, and close', async () => {
+    const supervisor = createSupervisor()
+    supervisor.open.mockResolvedValue({ kind: 'started', sessionId: 'session-1' })
+    supervisor.attachFrame.mockResolvedValue({ kind: 'attached', start: {} })
+    registerOfficePreviewIpcHandlers(supervisor as never)
+    const sender = { id: 7, once: vi.fn() }
+    const event = { sender }
     const request = {
-      source: 'artifact' as const,
-      path: 'project/session/report.xlsx',
-      name: 'report.xlsx',
-      extension: 'xlsx' as const,
-      attempt: 0
-    }
-    const bounds = {
-      x: 1,
-      y: 2,
-      width: 300,
-      height: 200,
-      visible: true,
-      sequence: 1,
-      viewportWidth: 1280,
-      viewportHeight: 800
-    }
-
-    await handlers.get('office-preview:open')?.(event, request)
-    listeners.get('office-preview:set-bounds')?.(event, 'session-1', bounds)
-    await handlers.get('office-preview:capture-snapshot')?.(event, 'session-1')
-    await handlers.get('office-preview:close')?.(event, 'session-1')
-
-    expect(supervisor.open).toHaveBeenCalledWith(7, request)
-    expect(supervisor.setBounds).toHaveBeenCalledWith(7, 'session-1', bounds)
-    expect(supervisor.captureSnapshot).toHaveBeenCalledWith(7, 'session-1')
-    expect(supervisor.close).toHaveBeenCalledWith(7, 'session-1')
-
-    windowHarness.resizeListener?.()
-    expect(supervisor.resizeOwner).toHaveBeenCalledWith(7, { width: 1400, height: 900 })
-
-    renderProcessGone?.()
-    await Promise.resolve()
-    expect(supervisor.closeOwner).toHaveBeenCalledWith(7)
-    expect(windowHarness.removeListener).toHaveBeenCalledWith('resize', expect.any(Function))
-
-    destroyed?.()
-    await Promise.resolve()
-    expect(supervisor.closeOwner).toHaveBeenCalledTimes(1)
-  })
-
-  it('returns an explicit cancellation for a superseded development remount', async () => {
-    const supervisor = {
-      open: vi.fn().mockRejectedValue(new OfficePreviewOpenSupersededError()),
-      setBounds: vi.fn(),
-      captureSnapshot: vi.fn(),
-      resizeOwner: vi.fn(),
-      close: vi.fn(),
-      closeOwner: vi.fn()
-    }
-    registerOfficePreviewIpcHandlers(supervisor)
-    const sender = { id: 8, once: vi.fn() }
-
-    await expect(
-      handlers.get('office-preview:open')?.(
-        { sender },
-        {
-          source: 'artifact',
-          path: 'report.xlsx',
-          name: 'report.xlsx',
-          extension: 'xlsx',
-          attempt: 0
-        }
-      )
-    ).resolves.toEqual({ kind: 'cancelled' })
-  })
-
-  it('ignores malformed one-way bounds messages', () => {
-    const supervisor = {
-      open: vi.fn(),
-      setBounds: vi.fn(),
-      captureSnapshot: vi.fn(),
-      resizeOwner: vi.fn(),
-      close: vi.fn(),
-      closeOwner: vi.fn()
-    }
-    registerOfficePreviewIpcHandlers(supervisor)
-    const event = { sender: { id: 7, once: vi.fn() } }
-    const listener = listeners.get('office-preview:set-bounds')
-
-    expect(() => listener?.(event, 'session-1', { x: 'invalid' })).not.toThrow()
-    expect(() => listener?.(event, 123, undefined)).not.toThrow()
-    expect(supervisor.setBounds).not.toHaveBeenCalled()
-  })
-
-  it('contains unexpected failures from the one-way bounds handler', () => {
-    const supervisor = {
-      open: vi.fn(),
-      setBounds: vi.fn(() => {
-        throw new Error('unexpected bounds failure')
-      }),
-      captureSnapshot: vi.fn(),
-      resizeOwner: vi.fn(),
-      close: vi.fn(),
-      closeOwner: vi.fn()
-    }
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    registerOfficePreviewIpcHandlers(supervisor)
-    const event = { sender: { id: 7, once: vi.fn() } }
-    const listener = listeners.get('office-preview:set-bounds')
-    let thrown: unknown
-
-    try {
-      listener?.(event, 'session-1', {
-        x: 640,
-        y: 72,
-        width: 620,
-        height: 708,
-        visible: true,
-        sequence: 1,
-        viewportWidth: 1280,
-        viewportHeight: 800
-      })
-    } catch (caught) {
-      thrown = caught
-    }
-    error.mockRestore()
-
-    expect(thrown).toBeUndefined()
-    expect(supervisor.setBounds).toHaveBeenCalledOnce()
-  })
-
-  it('contains owner resize failures inside the native window callback', async () => {
-    const failure = new Error('native resize failed')
-    const supervisor = {
-      open: vi.fn().mockResolvedValue({ kind: 'started', sessionId: 'session-1' }),
-      setBounds: vi.fn(),
-      captureSnapshot: vi.fn(),
-      resizeOwner: vi.fn(() => {
-        throw failure
-      }),
-      close: vi.fn(),
-      closeOwner: vi.fn()
-    }
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    registerOfficePreviewIpcHandlers(supervisor)
-    const event = { sender: { id: 7, once: vi.fn() } }
-
-    await handlers.get('office-preview:open')?.(event, {
       requestId: 'request-1',
       source: 'artifact',
-      path: 'report.xlsx',
+      path: 'project/session/report.xlsx',
       name: 'report.xlsx',
       extension: 'xlsx',
       attempt: 0
-    })
-    let thrown: unknown
-    try {
-      windowHarness.resizeListener?.()
-    } catch (caught) {
-      thrown = caught
     }
-    error.mockRestore()
+    const state = { sessionId: 'session-1', phase: 'ready' }
 
-    expect(thrown).toBeUndefined()
+    await handlers.get('office-preview:open')?.(event, request)
+    await handlers.get('office-preview:attach-frame')?.(event, 'session-1')
+    listeners.get('office-preview:report-state')?.(event, 'session-1', state)
+    await handlers.get('office-preview:close')?.(event, 'session-1')
+
+    expect(supervisor.open).toHaveBeenCalledWith(7, request)
+    expect(supervisor.attachFrame).toHaveBeenCalledWith(7, 'session-1')
+    expect(supervisor.reportState).toHaveBeenCalledWith(7, 'session-1', state)
+    expect(supervisor.close).toHaveBeenCalledWith(7, 'session-1')
+  })
+
+  it('closes an owner once when its renderer exits', async () => {
+    const supervisor = createSupervisor()
+    supervisor.open.mockResolvedValue({ kind: 'started', sessionId: 'session-1' })
+    registerOfficePreviewIpcHandlers(supervisor as never)
+    const exitListeners = new Map<string, () => void>()
+    const sender = {
+      id: 7,
+      once: vi.fn((event: string, listener: () => void) => exitListeners.set(event, listener))
+    }
+
+    await handlers.get('office-preview:open')?.(
+      { sender },
+      {
+        requestId: 'request-1',
+        source: 'artifact',
+        path: 'report.xlsx',
+        name: 'report.xlsx',
+        extension: 'xlsx',
+        attempt: 0
+      }
+    )
+    exitListeners.get('render-process-gone')?.()
+    exitListeners.get('destroyed')?.()
+    await Promise.resolve()
+
+    expect(supervisor.closeOwner).toHaveBeenCalledTimes(1)
+    expect(supervisor.closeOwner).toHaveBeenCalledWith(7)
+  })
+
+  it('ignores malformed frame and runtime-state messages', async () => {
+    const supervisor = createSupervisor()
+    registerOfficePreviewIpcHandlers(supervisor as never)
+    const event = { sender: { id: 7, once: vi.fn() } }
+
+    await handlers.get('office-preview:attach-frame')?.(event, 123)
+    listeners.get('office-preview:report-state')?.(event, 'session-1', {
+      sessionId: 'different-session',
+      phase: 'ready'
+    })
+    listeners.get('office-preview:report-state')?.(event, 'session-1', { phase: 'invalid' })
+    await handlers.get('office-preview:close')?.(event, undefined)
+
+    expect(supervisor.attachFrame).not.toHaveBeenCalled()
+    expect(supervisor.reportState).not.toHaveBeenCalled()
+    expect(supervisor.close).not.toHaveBeenCalled()
+  })
+
+  it('contains state-report failures inside the one-way IPC listener', () => {
+    const supervisor = createSupervisor()
+    supervisor.reportState.mockImplementation(() => {
+      throw new Error('state failure')
+    })
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    registerOfficePreviewIpcHandlers(supervisor as never)
+    const event = { sender: { id: 7, once: vi.fn() } }
+
+    expect(() =>
+      listeners.get('office-preview:report-state')?.(event, 'session-1', {
+        sessionId: 'session-1',
+        phase: 'ready'
+      })
+    ).not.toThrow()
+    expect(error).toHaveBeenCalled()
+    error.mockRestore()
+  })
+
+  it('returns cancellation when a development remount supersedes an open', async () => {
+    const supervisor = createSupervisor()
+    supervisor.open.mockRejectedValue(new OfficePreviewOpenSupersededError())
+    registerOfficePreviewIpcHandlers(supervisor as never)
+    const event = { sender: { id: 8, once: vi.fn() } }
+
+    await expect(
+      handlers.get('office-preview:open')?.(event, {
+        requestId: 'request-1',
+        source: 'artifact',
+        path: 'report.xlsx',
+        name: 'report.xlsx',
+        extension: 'xlsx',
+        attempt: 0
+      })
+    ).resolves.toEqual({ kind: 'cancelled' })
   })
 })

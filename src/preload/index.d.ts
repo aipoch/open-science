@@ -79,7 +79,7 @@ import type {
   SavePreviewStateRequest
 } from '../shared/preview-state'
 import type {
-  OfficePreviewBounds,
+  OfficePreviewAttachResult,
   OfficePreviewOpenRequest,
   OfficePreviewOpenResult,
   OfficePreviewRuntimeState
@@ -387,8 +387,8 @@ interface OpenScienceAPI {
   }
   officePreview: {
     open(request: OfficePreviewOpenRequest): Promise<OfficePreviewOpenResult>
-    setBounds(sessionId: string, bounds: OfficePreviewBounds): void
-    captureSnapshot(sessionId: string): Promise<string | undefined>
+    attachFrame(sessionId: string): Promise<OfficePreviewAttachResult | undefined>
+    reportState(sessionId: string, state: OfficePreviewRuntimeState): void
     close(sessionId: string): Promise<void>
     onState(listener: (state: OfficePreviewRuntimeState) => void): RemoveListener
   }

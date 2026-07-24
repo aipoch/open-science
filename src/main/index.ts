@@ -63,6 +63,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { registerIpcHandlers },
         { createMainWindow },
         { MANAGED_PREVIEW_SCHEME },
+        { OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG },
         { installMigrationQuitGuard, isMigrationInProgress },
         { createAppTray },
         { installAppLifecycle },
@@ -76,6 +77,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./ipc'),
         import('./windows'),
         import('./managed-preview-resources'),
+        import('./office-preview/office-preview-runtime-protocol'),
         import('./storage/migration-state'),
         import('./tray'),
         import('./app-lifecycle'),
@@ -91,7 +93,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // are visibly distinct from an installed build — and don't collide with it.
       app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
 
-      protocol.registerSchemesAsPrivileged([MANAGED_PREVIEW_SCHEME])
+      protocol.registerSchemesAsPrivileged([
+        MANAGED_PREVIEW_SCHEME,
+        OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG
+      ])
 
       await app.whenReady()
 

@@ -81,16 +81,16 @@ import type {
   SavePreviewStateRequest
 } from '../shared/preview-state'
 import type {
-  OfficePreviewBounds,
+  OfficePreviewAttachResult,
   OfficePreviewOpenRequest,
   OfficePreviewOpenResult,
   OfficePreviewRuntimeState
 } from '../shared/office-preview'
 import {
-  OFFICE_PREVIEW_CAPTURE_SNAPSHOT_CHANNEL,
+  OFFICE_PREVIEW_ATTACH_FRAME_CHANNEL,
   OFFICE_PREVIEW_CLOSE_CHANNEL,
   OFFICE_PREVIEW_OPEN_CHANNEL,
-  OFFICE_PREVIEW_SET_BOUNDS_CHANNEL,
+  OFFICE_PREVIEW_REPORT_STATE_CHANNEL,
   OFFICE_PREVIEW_STATE_CHANNEL
 } from '../shared/office-preview'
 import type {
@@ -424,8 +424,8 @@ type OpenScienceAPI = {
   }
   officePreview: {
     open: (request: OfficePreviewOpenRequest) => Promise<OfficePreviewOpenResult>
-    setBounds: (sessionId: string, bounds: OfficePreviewBounds) => void
-    captureSnapshot: (sessionId: string) => Promise<string | undefined>
+    attachFrame: (sessionId: string) => Promise<OfficePreviewAttachResult | undefined>
+    reportState: (sessionId: string, state: OfficePreviewRuntimeState) => void
     close: (sessionId: string) => Promise<void>
     onState: (listener: (state: OfficePreviewRuntimeState) => void) => RemoveListener
   }
@@ -893,13 +893,13 @@ const api: OpenScienceAPI = {
   officePreview: {
     open: (request) =>
       ipcRenderer.invoke(OFFICE_PREVIEW_OPEN_CHANNEL, request) as Promise<OfficePreviewOpenResult>,
-    // Bounds are transient layout notifications; no reply should accumulate on the resize hot path.
-    setBounds: (sessionId, bounds) =>
-      ipcRenderer.send(OFFICE_PREVIEW_SET_BOUNDS_CHANNEL, sessionId, bounds),
-    captureSnapshot: (sessionId) =>
-      ipcRenderer.invoke(OFFICE_PREVIEW_CAPTURE_SNAPSHOT_CHANNEL, sessionId) as Promise<
-        string | undefined
+    attachFrame: (sessionId) =>
+      ipcRenderer.invoke(OFFICE_PREVIEW_ATTACH_FRAME_CHANNEL, sessionId) as Promise<
+        OfficePreviewAttachResult | undefined
       >,
+    // Runtime phases are one-way notifications relayed from the sandboxed child frame.
+    reportState: (sessionId, state) =>
+      ipcRenderer.send(OFFICE_PREVIEW_REPORT_STATE_CHANNEL, sessionId, state),
     close: (sessionId) =>
       ipcRenderer.invoke(OFFICE_PREVIEW_CLOSE_CHANNEL, sessionId) as Promise<void>,
     onState: (listener) => onIpcMessage(OFFICE_PREVIEW_STATE_CHANNEL, listener)

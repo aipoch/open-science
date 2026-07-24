@@ -1,13 +1,18 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { flushSync } from 'react-dom'
 import { FileWarning } from 'lucide-react'
 
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
 import type {
-  OfficePreviewBounds,
   OfficePreviewErrorCode,
+  OfficePreviewHostMessage,
   OfficePreviewRequestedExtension,
   OfficePreviewRuntimeState
+} from '../../../../../../shared/office-preview'
+import {
+  isOfficePreviewRuntimeMessage,
+  OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
+  OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
+  OFFICE_PREVIEW_RUNTIME_ORIGIN
 } from '../../../../../../shared/office-preview'
 
 import { ManagedFileDownloadButton } from '../../ManagedFileDownloadButton'
@@ -15,7 +20,6 @@ import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
 import { usePreviewRuntime } from '../preview-runtime-context'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { officePreviewHostLeaseCoordinator } from './office-preview-lease'
-import { getOfficePreviewHostVisibility } from './office-preview-visibility'
 
 type OfficeHostState =
   | { kind: 'loading'; title?: string; description?: string }
@@ -93,113 +97,12 @@ const getDownloadOnlyErrorMessage = (
   return undefined
 }
 
-type OfficePreviewBoundsSnapshot = Omit<OfficePreviewBounds, 'sequence'>
-
-type OfficePreviewMeasurement = {
-  bounds: OfficePreviewBoundsSnapshot
-  obscuredByOverlay: boolean
-}
-
-type OfficePreviewSnapshot = {
+type OfficePreviewFrame = {
   sessionId: string
   url: string
 }
 
-const areHorizontalLayoutsEqual = (
-  left: OfficePreviewBoundsSnapshot['horizontalLayout'],
-  right: OfficePreviewBoundsSnapshot['horizontalLayout']
-): boolean =>
-  left === right ||
-  (left !== undefined &&
-    right !== undefined &&
-    left.splitGroupX === right.splitGroupX &&
-    left.splitGroupWidth === right.splitGroupWidth &&
-    left.panelX === right.panelX &&
-    left.panelWidth === right.panelWidth)
-
-const areBoundsSnapshotsEqual = (
-  left: OfficePreviewBoundsSnapshot | undefined,
-  right: OfficePreviewBoundsSnapshot
-): boolean =>
-  left !== undefined &&
-  left.x === right.x &&
-  left.y === right.y &&
-  left.width === right.width &&
-  left.height === right.height &&
-  left.visible === right.visible &&
-  left.occluded === right.occluded &&
-  left.viewportWidth === right.viewportWidth &&
-  left.viewportHeight === right.viewportHeight &&
-  areHorizontalLayoutsEqual(left.horizontalLayout, right.horizontalLayout)
-
-type OfficePreviewLayoutTargets = {
-  resizeTargets: Element[]
-  splitGroup?: HTMLElement
-  panel?: HTMLElement
-}
-
-// Sibling panels can move the preview without changing its own size, so observe the whole split group.
-const getOfficePreviewLayoutTargets = (host: HTMLElement): OfficePreviewLayoutTargets => {
-  const targets = new Set<Element>([host])
-  let panel: HTMLElement | undefined
-  let splitGroup: HTMLElement | undefined
-  let current = host.parentElement
-
-  while (current) {
-    if (!panel && current.dataset.slot === 'resizable-panel') panel = current
-    if (current.dataset.slot === 'resizable-panel-group') {
-      splitGroup = current
-      targets.add(current)
-      current
-        .querySelectorAll(':scope > [data-slot="resizable-panel"]')
-        .forEach((panel) => targets.add(panel))
-      break
-    }
-    current = current.parentElement
-  }
-
-  return {
-    resizeTargets: [...targets],
-    splitGroup,
-    panel: panel?.parentElement === splitGroup ? panel : undefined
-  }
-}
-
-const measureOfficePreviewBounds = (
-  host: HTMLElement,
-  visible: boolean,
-  layoutTargets: OfficePreviewLayoutTargets
-): OfficePreviewMeasurement => {
-  const rect = host.getBoundingClientRect()
-  const visibility = getOfficePreviewHostVisibility(host, rect)
-  const splitGroupRect = layoutTargets.splitGroup?.getBoundingClientRect()
-  const panelRect = layoutTargets.panel?.getBoundingClientRect()
-  const horizontalLayout =
-    splitGroupRect && panelRect
-      ? {
-          splitGroupX: Math.round(splitGroupRect.left),
-          splitGroupWidth: Math.max(0, Math.round(splitGroupRect.width)),
-          panelX: Math.round(panelRect.left),
-          panelWidth: Math.max(0, Math.round(panelRect.width))
-        }
-      : undefined
-
-  return {
-    bounds: {
-      x: Math.round(rect.left),
-      y: Math.round(rect.top),
-      width: Math.max(0, Math.round(rect.width)),
-      height: Math.max(0, Math.round(rect.height)),
-      visible: visible && visibility.visible,
-      viewportWidth: Math.max(1, Math.round(window.innerWidth)),
-      viewportHeight: Math.max(1, Math.round(window.innerHeight)),
-      ...(horizontalLayout ? { horizontalLayout } : {})
-    },
-    obscuredByOverlay: visible && visibility.obscuredByOverlay
-  }
-}
-
-// Owns only native-view coordination; Office bytes and vendor libraries stay in the child runtime.
+// Owns isolated iframe coordination; Office bytes and vendor libraries stay in the child runtime.
 export const OfficePreviewContent = ({
   item,
   source = 'artifact'
@@ -207,16 +110,16 @@ export const OfficePreviewContent = ({
   item: PreviewFileItem
   source?: PreviewFileSource
 }): React.JSX.Element => {
-  const hostRef = useRef<HTMLDivElement | null>(null)
   const hostId = useId()
+  const frameRef = useRef<HTMLIFrameElement | null>(null)
   const runtime = usePreviewRuntime()
   const attempt = runtime?.attempt ?? 0
   const extension = resolveOfficeExtension(item)
   const [ownsLease, setOwnsLease] = useState(false)
   const [state, setState] = useState<OfficeHostState>(OFFICE_CHECKING_STATE)
   const [sessionId, setSessionId] = useState<string | undefined>(undefined)
-  const [snapshot, setSnapshot] = useState<OfficePreviewSnapshot | undefined>(undefined)
-  const snapshotRequestSequenceRef = useRef(0)
+  const [frame, setFrame] = useState<OfficePreviewFrame | undefined>(undefined)
+  const [frameLoadGeneration, setFrameLoadGeneration] = useState(0)
 
   useEffect(
     () =>
@@ -224,6 +127,8 @@ export const OfficePreviewContent = ({
         setOwnsLease(active)
         setState(OFFICE_CHECKING_STATE)
         setSessionId(undefined)
+        setFrame(undefined)
+        setFrameLoadGeneration(0)
       }),
     []
   )
@@ -240,8 +145,10 @@ export const OfficePreviewContent = ({
       if (nextState.phase === 'ready') {
         setState({ kind: 'ready' })
       } else if (nextState.phase === 'error') {
-        // Main destroys terminal sessions, so release native-view observers at the same boundary.
+        // Main destroys terminal sessions, so remove the corresponding iframe at the same boundary.
         setSessionId(undefined)
+        setFrame(undefined)
+        setFrameLoadGeneration(0)
         setState({ kind: 'error', error: nextState.error })
       } else {
         setState({
@@ -280,7 +187,9 @@ export const OfficePreviewContent = ({
         }
 
         openedSessionId = result.sessionId
+        setFrameLoadGeneration(0)
         setSessionId(result.sessionId)
+        setFrame({ sessionId: result.sessionId, url: result.runtimeUrl })
         if (pendingState?.sessionId === result.sessionId) applyRuntimeState(pendingState)
         pendingState = undefined
       })
@@ -303,141 +212,64 @@ export const OfficePreviewContent = ({
   }, [attempt, extension, hostId, item.name, item.path, ownsLease, source])
 
   useEffect(() => {
-    if (!sessionId || state.kind !== 'ready') return
+    if (!frame || frame.sessionId !== sessionId || frameLoadGeneration === 0) return
 
     let active = true
-    const requestSequence = ++snapshotRequestSequenceRef.current
-    // Prime the cache so opening an overlay can replace the native view without a blank interval.
+    let attached = false
+    const handleMessage = (event: MessageEvent): void => {
+      if (
+        !active ||
+        event.source !== frameRef.current?.contentWindow ||
+        event.origin !== OFFICE_PREVIEW_RUNTIME_ORIGIN ||
+        !isOfficePreviewRuntimeMessage(event.data) ||
+        event.data.sessionId !== frame.sessionId
+      ) {
+        return
+      }
+
+      if (event.data.type === 'state' && attached) {
+        window.api.officePreview.reportState(frame.sessionId, event.data.state)
+      }
+    }
+
+    // The load boundary cannot be missed and guarantees the runtime listener exists before start.
+    window.addEventListener('message', handleMessage)
     void window.api.officePreview
-      .captureSnapshot(sessionId)
-      .then((url) => {
-        if (active && url && requestSequence === snapshotRequestSequenceRef.current) {
-          setSnapshot({ sessionId, url })
+      .attachFrame(frame.sessionId)
+      .then((result) => {
+        if (!active) return
+        if (!result || result.kind !== 'attached') {
+          setFrame(undefined)
+          setSessionId(undefined)
+          setFrameLoadGeneration(0)
+          setState({ kind: 'error', error: 'PREVIEW_PROCESS_NOT_ISOLATED' })
+          return
         }
+        attached = true
+        const message: OfficePreviewHostMessage = {
+          channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
+          version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
+          type: 'start',
+          sessionId: frame.sessionId,
+          start: result.start
+        }
+        frameRef.current?.contentWindow?.postMessage(message, OFFICE_PREVIEW_RUNTIME_ORIGIN)
       })
-      .catch(() => undefined)
+      .catch((error) => {
+        if (!active) return
+        console.error('Failed to attach isolated Office preview frame', error)
+        // IPC failures bypass the supervisor's normal unavailable result, so release explicitly.
+        void window.api.officePreview.close(frame.sessionId)
+        setFrame(undefined)
+        setSessionId(undefined)
+        setFrameLoadGeneration(0)
+        setState({ kind: 'error', error: 'RENDER_FAILED' })
+      })
     return () => {
       active = false
+      window.removeEventListener('message', handleMessage)
     }
-  }, [sessionId, state.kind])
-
-  useEffect(() => {
-    const host = hostRef.current
-    if (!host || !sessionId) return
-
-    let animationFrame: number | undefined
-    let isIntersecting = true
-    let sequence = 0
-    let lastBounds: OfficePreviewBoundsSnapshot | undefined
-    let lastOverlayObscured = false
-    let overlaySnapshotReady = false
-    let overlayGeneration = 0
-    let active = true
-    const layoutTargets = getOfficePreviewLayoutTargets(host)
-    const syncBounds = (): void => {
-      animationFrame = undefined
-      const measurement = measureOfficePreviewBounds(host, isIntersecting, layoutTargets)
-      if (measurement.obscuredByOverlay !== lastOverlayObscured) {
-        lastOverlayObscured = measurement.obscuredByOverlay
-        overlayGeneration += 1
-        overlaySnapshotReady = false
-        if (measurement.obscuredByOverlay) {
-          const currentOverlayGeneration = overlayGeneration
-          const requestSequence = ++snapshotRequestSequenceRef.current
-          // Keep the live native view in place until its exact current frame has replaced the cache.
-          void window.api.officePreview
-            .captureSnapshot(sessionId)
-            .then((url) => {
-              if (!active || currentOverlayGeneration !== overlayGeneration) return
-              if (url && requestSequence === snapshotRequestSequenceRef.current) {
-                // This is a native-view handoff: commit the matching DOM frame before parking the
-                // WebContentsView, otherwise Chromium can expose the previous cached page for one paint.
-                flushSync(() => setSnapshot({ sessionId, url }))
-              }
-              overlaySnapshotReady = true
-              scheduleBounds()
-            })
-            .catch(() => {
-              if (!active || currentOverlayGeneration !== overlayGeneration) return
-              overlaySnapshotReady = true
-              scheduleBounds()
-            })
-        }
-      }
-      const nextBounds =
-        measurement.obscuredByOverlay && !overlaySnapshotReady
-          ? { ...measurement.bounds, visible: true }
-          : measurement.obscuredByOverlay
-            ? { ...measurement.bounds, occluded: true }
-            : measurement.bounds
-      if (areBoundsSnapshotsEqual(lastBounds, nextBounds)) return
-
-      lastBounds = nextBounds
-      sequence += 1
-      window.api.officePreview.setBounds(sessionId, { ...nextBounds, sequence })
-    }
-    const scheduleBounds = (): void => {
-      if (animationFrame !== undefined) return
-      animationFrame = window.requestAnimationFrame(syncBounds)
-    }
-    const flushBounds = (): void => {
-      if (animationFrame !== undefined) {
-        window.cancelAnimationFrame(animationFrame)
-        animationFrame = undefined
-      }
-      syncBounds()
-    }
-    const resizeObserver =
-      typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(scheduleBounds)
-    layoutTargets.resizeTargets.forEach((target) => resizeObserver?.observe(target))
-    const intersectionObserver =
-      typeof IntersectionObserver === 'undefined'
-        ? undefined
-        : new IntersectionObserver((entries) => {
-            isIntersecting = entries.some((entry) => entry.target === host && entry.isIntersecting)
-            scheduleBounds()
-          })
-    intersectionObserver?.observe(host)
-    const mutationObserver =
-      typeof MutationObserver === 'undefined'
-        ? undefined
-        : new MutationObserver((records) => {
-            const hostLayoutChanged = records.some(
-              (record) =>
-                record.type === 'attributes' &&
-                record.target instanceof Element &&
-                (record.target === host || record.target.contains(host))
-            )
-            if (hostLayoutChanged) {
-              // Modal/full-screen class changes happen during React's commit. Flush native geometry
-              // in the same microtask so the old WebContentsView bounds never reach the next paint.
-              flushBounds()
-              return
-            }
-            scheduleBounds()
-          })
-    mutationObserver?.observe(document.body, {
-      attributes: true,
-      attributeFilter: ['aria-hidden', 'class', 'data-state', 'hidden', 'open', 'style'],
-      childList: true,
-      subtree: true
-    })
-    window.addEventListener('resize', scheduleBounds)
-    window.addEventListener('scroll', scheduleBounds, true)
-    document.addEventListener('visibilitychange', scheduleBounds)
-    syncBounds()
-
-    return () => {
-      active = false
-      resizeObserver?.disconnect()
-      intersectionObserver?.disconnect()
-      mutationObserver?.disconnect()
-      window.removeEventListener('resize', scheduleBounds)
-      window.removeEventListener('scroll', scheduleBounds, true)
-      document.removeEventListener('visibilitychange', scheduleBounds)
-      if (animationFrame !== undefined) window.cancelAnimationFrame(animationFrame)
-    }
-  }, [sessionId])
+  }, [frame, frameLoadGeneration, sessionId])
 
   if (state.kind === 'too-large') {
     return (
@@ -471,26 +303,32 @@ export const OfficePreviewContent = ({
     )
   }
 
-  const visibleSnapshot =
-    state.kind === 'ready' && snapshot?.sessionId === sessionId ? snapshot : undefined
-
   return (
     <div
-      ref={hostRef}
       data-office-preview-state={state.kind}
       className="relative size-full overflow-hidden bg-bg-000"
     >
-      {state.kind === 'loading' ? (
-        <PreviewLoadingContent title={state.title} description={state.description} />
-      ) : null}
-      {visibleSnapshot ? (
-        <img
-          data-office-preview-snapshot
-          src={visibleSnapshot.url}
-          alt=""
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 size-full object-fill select-none"
+      {frame && frame.sessionId === sessionId ? (
+        <iframe
+          ref={frameRef}
+          data-office-preview-frame
+          title={`Preview of ${item.name}`}
+          src={frame.url}
+          onLoad={() => {
+            if (frame.sessionId !== sessionId) return
+            // A same-document frame reload needs a fresh process check and start capability.
+            setState({ kind: 'loading', title: 'Starting Office preview' })
+            setFrameLoadGeneration((generation) => generation + 1)
+          }}
+          sandbox="allow-scripts allow-same-origin"
+          referrerPolicy="no-referrer"
+          className="absolute inset-0 size-full border-0 bg-transparent"
         />
+      ) : null}
+      {state.kind === 'loading' ? (
+        <div className="absolute inset-0 z-10 bg-bg-000">
+          <PreviewLoadingContent title={state.title} description={state.description} />
+        </div>
       ) : null}
     </div>
   )

@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { app, BrowserWindow, ipcMain, Notification, webContents } from 'electron'
+import { app, BrowserWindow, ipcMain, net, Notification, protocol, webContents } from 'electron'
 
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
@@ -45,8 +45,15 @@ import {
 import { registerManagedPreviewIpcHandlers } from './managed-preview-ipc'
 import { registerManagedPreviewProtocol } from './managed-preview-protocol'
 import { ManagedPreviewResources } from './managed-preview-resources'
-import { createElectronOfficePreviewViewFactory } from './office-preview/electron-office-preview-view'
+import {
+  createOfficePreviewFrameProcessResolver,
+  createOfficePreviewProcessMemoryReader
+} from './office-preview/office-preview-electron'
 import { registerOfficePreviewIpcHandlers } from './office-preview/office-preview-ipc'
+import {
+  createOfficePreviewRuntimeUrl,
+  registerOfficePreviewRuntimeProtocol
+} from './office-preview/office-preview-runtime-protocol'
 import { OfficePreviewSupervisor } from './office-preview/office-preview-supervisor'
 import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { registerRuntimeIpcHandlers } from './notebook/runtime-ipc'
@@ -508,13 +515,19 @@ const registerIpcHandlers = async ({
   })
   registerManagedPreviewIpcHandlers(previewResources)
   registerManagedPreviewProtocol(previewResources)
-  const createOfficePreviewView = createElectronOfficePreviewViewFactory({
-    preloadPath: join(__dirname, '../preload/office-preview.js'),
-    runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html'),
-    devServerUrl: process.env['ELECTRON_RENDERER_URL'],
-    registerPreviewProtocol: (targetProtocol, isResourceAllowed) =>
-      registerManagedPreviewProtocol(previewResources, targetProtocol, { isResourceAllowed })
-  })
+  registerOfficePreviewRuntimeProtocol(
+    {
+      runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html'),
+      devServerUrl: process.env['ELECTRON_RENDERER_URL'],
+      fetchRuntime: (targetUrl, request) =>
+        net.fetch(targetUrl, {
+          // Runtime assets are public application files. Forwarding custom-protocol headers or its
+          // abort signal makes Chromium treat the local fetch as a cross-site renderer request.
+          method: request.method
+        })
+    },
+    protocol
+  )
   const officePreviewSupervisor = new OfficePreviewSupervisor({
     inspectResource: ({ source, path }) => previewResources.inspect({ source, path }),
     acquireResource: (ownerId, request, snapshot, maxBytes) =>
@@ -524,8 +537,10 @@ const registerIpcHandlers = async ({
         { snapshot, maxBytes }
       ),
     releaseResource: (ownerId, resourceId) => previewResources.release(ownerId, { resourceId }),
-    createView: createOfficePreviewView,
     createSessionId: randomUUID,
+    createRuntimeUrl: createOfficePreviewRuntimeUrl,
+    resolveFrameProcess: createOfficePreviewFrameProcessResolver(webContents),
+    getProcessMemoryUsageBytes: createOfficePreviewProcessMemoryReader(app),
     publishState: (ownerId, state) =>
       webContents.fromId(ownerId)?.send(OFFICE_PREVIEW_STATE_CHANNEL, state)
   })

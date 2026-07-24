@@ -1,7 +1,6 @@
 import type {
   OfficePreviewAdmissionError,
-  OfficePreviewBounds,
-  OfficePreviewHorizontalLayout,
+  OfficePreviewAttachResult,
   OfficePreviewOpenRequest,
   OfficePreviewOpenResult,
   OfficePreviewResourceSnapshot,
@@ -9,28 +8,16 @@ import type {
   OfficePreviewRuntimeStart,
   OfficePreviewRuntimeState
 } from '../../shared/office-preview'
-import { isOfficePreviewBounds, OFFICE_PREVIEW_MAX_FILE_BYTES } from '../../shared/office-preview'
 import {
+  getOfficePreviewTimeoutMs,
+  OFFICE_PREVIEW_MAX_FILE_BYTES,
   OFFICE_PREVIEW_PROCESS_MEMORY_LIMIT_BYTES,
   OFFICE_PREVIEW_PROCESS_MEMORY_POLL_MS
 } from '../../shared/office-preview'
-import { getOfficePreviewTimeoutMs } from '../../shared/office-preview'
 
-type OfficePreviewChildView = {
-  ownerId: number
-  start: (message: OfficePreviewRuntimeStart) => Promise<void>
-  setBounds: (bounds: { x: number; y: number; width: number; height: number }) => void
-  setVisible: (visible: boolean) => void
-  captureSnapshot?: () => Promise<string | undefined>
-  close: () => void
-  getMemoryUsageBytes?: () => number | Promise<number>
-}
-
-type CreateOfficePreviewViewOptions = {
-  parentOwnerId: number
-  sessionId: string
-  onState: (state: OfficePreviewRuntimeState) => void
-  onGone: () => Promise<void>
+type OfficePreviewFrameProcess = {
+  frameProcessId: number
+  parentProcessId: number
 }
 
 type OfficePreviewSupervisorDependencies = {
@@ -42,112 +29,27 @@ type OfficePreviewSupervisorDependencies = {
     maxBytes: number
   ) => Promise<OfficePreviewRuntimeResource>
   releaseResource: (ownerId: number, resourceId: string) => void | Promise<void>
-  createView: (options: CreateOfficePreviewViewOptions) => OfficePreviewChildView
   createSessionId: () => string
+  createRuntimeUrl: (sessionId: string) => string
+  resolveFrameProcess: (
+    parentOwnerId: number,
+    runtimeUrl: string
+  ) => OfficePreviewFrameProcess | undefined
+  getProcessMemoryUsageBytes?: (processId: number) => number | Promise<number>
   publishState?: (parentOwnerId: number, state: OfficePreviewRuntimeState) => void
 }
 
 type OfficePreviewSession = {
   parentOwnerId: number
   requestId: string
+  runtimeUrl: string
+  start: OfficePreviewRuntimeStart
   ready: boolean
-  requestedOccluded: boolean
-  requestedVisible: boolean
-  resource: OfficePreviewRuntimeResource
+  frameProcessId?: number
+  parentProcessId?: number
   timeout?: ReturnType<typeof setTimeout>
   memoryPoll?: ReturnType<typeof setInterval>
   memoryPollInFlight?: boolean
-  lastAppliedBounds?: OfficePreviewNativeBounds
-  lastAppliedVisible: boolean
-  lastBoundsSequence: number
-  latestOwnerViewport?: OfficePreviewViewport
-  layoutReference?: OfficePreviewLayoutReference
-  view: OfficePreviewChildView
-}
-
-type OfficePreviewNativeBounds = {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
-type OfficePreviewViewport = {
-  width: number
-  height: number
-}
-
-type OfficePreviewLayoutReference = {
-  bounds: OfficePreviewNativeBounds
-  viewport: OfficePreviewViewport
-  horizontalLayout?: OfficePreviewHorizontalLayout
-}
-
-const normalizeOfficePreviewViewport = (
-  viewport: OfficePreviewViewport
-): OfficePreviewViewport | undefined => {
-  if (
-    !Number.isFinite(viewport.width) ||
-    !Number.isFinite(viewport.height) ||
-    viewport.width <= 0 ||
-    viewport.height <= 0
-  ) {
-    return undefined
-  }
-
-  return {
-    width: Math.max(1, Math.round(viewport.width)),
-    height: Math.max(1, Math.round(viewport.height))
-  }
-}
-
-const areOfficePreviewViewportsEqual = (
-  left: OfficePreviewViewport,
-  right: OfficePreviewViewport
-): boolean => left.width === right.width && left.height === right.height
-
-// Projects the last renderer layout into a newer native viewport without accumulating resize drift.
-const projectOfficePreviewBounds = (
-  reference: OfficePreviewLayoutReference,
-  viewport: OfficePreviewViewport
-): OfficePreviewNativeBounds => {
-  const rightInset = reference.viewport.width - (reference.bounds.x + reference.bounds.width)
-  const bottomInset = reference.viewport.height - (reference.bounds.y + reference.bounds.height)
-  let x: number
-  let right: number
-
-  if (reference.horizontalLayout && reference.horizontalLayout.splitGroupWidth > 0) {
-    const layout = reference.horizontalLayout
-    const splitGroupRightInset =
-      reference.viewport.width - (layout.splitGroupX + layout.splitGroupWidth)
-    const targetSplitGroupWidth = Math.max(
-      0,
-      viewport.width - splitGroupRightInset - layout.splitGroupX
-    )
-    const panelLeftRatio = (layout.panelX - layout.splitGroupX) / layout.splitGroupWidth
-    const panelRightRatio =
-      (layout.panelX + layout.panelWidth - layout.splitGroupX) / layout.splitGroupWidth
-    const hostLeftInset = reference.bounds.x - layout.panelX
-    const hostRightInset =
-      layout.panelX + layout.panelWidth - (reference.bounds.x + reference.bounds.width)
-
-    x = Math.round(layout.splitGroupX + targetSplitGroupWidth * panelLeftRatio + hostLeftInset)
-    right = Math.round(
-      layout.splitGroupX + targetSplitGroupWidth * panelRightRatio - hostRightInset
-    )
-  } else {
-    const horizontalScale = viewport.width / reference.viewport.width
-    x = Math.round(reference.bounds.x * horizontalScale)
-    right = Math.round(viewport.width - rightInset)
-  }
-
-  const bottom = Math.round(viewport.height - bottomInset)
-  return {
-    x,
-    y: reference.bounds.y,
-    width: Math.max(0, right - x),
-    height: Math.max(0, bottom - reference.bounds.y)
-  }
 }
 
 class OfficePreviewOpenSupersededError extends Error {
@@ -188,114 +90,61 @@ class OfficePreviewSupervisor {
     if (activeSessionId) await this.close(parentOwnerId, activeSessionId)
     assertCurrentGeneration()
 
-    // Reject from authoritative metadata before allocating any preview execution environment.
-    const resource = await this.dependencies.inspectResource(request)
+    // Reject from authoritative metadata before creating a file capability or frame URL.
+    const snapshot = await this.dependencies.inspectResource(request)
     assertCurrentGeneration()
-    if (resource.size > OFFICE_PREVIEW_MAX_FILE_BYTES) {
+    if (snapshot.size > OFFICE_PREVIEW_MAX_FILE_BYTES) {
       return {
         kind: 'unavailable',
         reason: 'FILE_TOO_LARGE',
-        size: resource.size,
+        size: snapshot.size,
         limit: OFFICE_PREVIEW_MAX_FILE_BYTES
       }
     }
 
     const sessionId = this.dependencies.createSessionId()
-    const view = this.dependencies.createView({
-      parentOwnerId,
-      sessionId,
-      onState: (state) => {
-        const session = this.sessions.get(sessionId)
-        if (!session || state.sessionId !== sessionId) return
-
-        if (state.phase === 'ready') {
-          session.ready = true
-          if (session.timeout) clearTimeout(session.timeout)
-          session.timeout = undefined
-          const shouldDraw = session.requestedVisible || session.requestedOccluded
-          session.view.setVisible(shouldDraw)
-          session.lastAppliedVisible = shouldDraw
-        }
-        this.publishState(parentOwnerId, request.requestId, state)
-        if (state.phase === 'error') void this.close(parentOwnerId, sessionId)
-      },
-      onGone: async () => {
-        if (!this.sessions.has(sessionId)) return
-
-        this.publishState(parentOwnerId, request.requestId, {
-          sessionId,
-          phase: 'error',
-          error: 'PREVIEW_PROCESS_CRASHED'
-        })
-        await this.close(parentOwnerId, sessionId)
-      }
-    })
-    view.setVisible(false)
-
-    let acquired: OfficePreviewRuntimeResource | undefined
-    let sessionRegistered = false
+    let resource: OfficePreviewRuntimeResource | undefined
     try {
-      acquired = await this.dependencies.acquireResource(
-        view.ownerId,
+      resource = await this.dependencies.acquireResource(
+        parentOwnerId,
         request,
-        resource,
+        snapshot,
         OFFICE_PREVIEW_MAX_FILE_BYTES
       )
       assertCurrentGeneration()
+      const runtimeUrl = this.dependencies.createRuntimeUrl(sessionId)
+      const start: OfficePreviewRuntimeStart = {
+        sessionId,
+        resource,
+        extension: request.extension,
+        name: request.name,
+        attempt: request.attempt
+      }
       const session: OfficePreviewSession = {
         parentOwnerId,
         requestId: request.requestId,
-        ready: false,
-        requestedOccluded: false,
-        requestedVisible: true,
-        lastAppliedVisible: false,
-        lastBoundsSequence: 0,
-        resource: acquired,
-        view
+        runtimeUrl,
+        start,
+        ready: false
       }
       this.sessions.set(sessionId, session)
-      sessionRegistered = true
       this.activeSessionByParent.set(parentOwnerId, sessionId)
       this.publishState(parentOwnerId, request.requestId, {
         sessionId,
         phase: 'starting',
         title: 'Starting Office preview'
       })
-      session.timeout = setTimeout(
-        () => {
-          const active = this.sessions.get(sessionId)
-          if (!active || active.ready) return
+      this.armReadinessTimeout(sessionId, session)
 
-          this.publishState(parentOwnerId, request.requestId, {
-            sessionId,
-            phase: 'error',
-            error: 'PREVIEW_TIMEOUT'
-          })
-          void this.close(parentOwnerId, sessionId)
-        },
-        getOfficePreviewTimeoutMs(resource.size, request.attempt)
-      )
-      if (view.getMemoryUsageBytes) {
-        session.memoryPoll = setInterval(() => {
-          void this.checkMemoryUsage(sessionId)
-        }, OFFICE_PREVIEW_PROCESS_MEMORY_POLL_MS)
-      }
-      await view.start({
+      return {
+        kind: 'started',
         sessionId,
-        resource: acquired,
-        extension: request.extension,
-        name: request.name,
-        attempt: request.attempt
-      })
-      assertCurrentGeneration()
-    } catch (error) {
-      const session = this.sessions.get(sessionId)
-      if (session) {
-        await this.close(parentOwnerId, sessionId)
-      } else if (!sessionRegistered) {
-        view.close()
-        if (acquired) await this.dependencies.releaseResource(view.ownerId, acquired.id)
+        runtimeUrl,
+        size: snapshot.size,
+        limit: OFFICE_PREVIEW_MAX_FILE_BYTES
       }
+    } catch (error) {
+      if (resource) await this.dependencies.releaseResource(parentOwnerId, resource.id)
       if (isFileTooLargeAdmissionError(error)) {
         return {
           kind: 'unavailable',
@@ -306,83 +155,143 @@ class OfficePreviewSupervisor {
       }
       throw error
     }
+  }
 
-    return {
-      kind: 'started',
-      sessionId,
-      size: resource.size,
-      limit: OFFICE_PREVIEW_MAX_FILE_BYTES
+  async attachFrame(
+    parentOwnerId: number,
+    sessionId: string
+  ): Promise<OfficePreviewAttachResult | undefined> {
+    const session = this.sessions.get(sessionId)
+    if (!session || session.parentOwnerId !== parentOwnerId) return undefined
+
+    // Fail closed unless Chromium assigned the runtime frame to a different renderer process.
+    let process: OfficePreviewFrameProcess | undefined
+    try {
+      process = this.dependencies.resolveFrameProcess(parentOwnerId, session.runtimeUrl)
+    } catch {
+      process = undefined
     }
+    if (
+      !process ||
+      process.frameProcessId <= 0 ||
+      process.parentProcessId <= 0 ||
+      process.frameProcessId === process.parentProcessId ||
+      (session.frameProcessId !== undefined && session.frameProcessId !== process.frameProcessId)
+    ) {
+      this.publishState(parentOwnerId, session.requestId, {
+        sessionId,
+        phase: 'error',
+        error: 'PREVIEW_PROCESS_NOT_ISOLATED'
+      })
+      await this.close(parentOwnerId, sessionId)
+      return { kind: 'unavailable', reason: 'PREVIEW_PROCESS_NOT_ISOLATED' }
+    }
+
+    session.frameProcessId = process.frameProcessId
+    session.parentProcessId = process.parentProcessId
+    // Reloading an already-ready OOPIF creates a new runtime document that must become ready again.
+    this.armReadinessTimeout(sessionId, session)
+    if (!session.memoryPoll && this.dependencies.getProcessMemoryUsageBytes) {
+      session.memoryPoll = setInterval(() => {
+        void this.checkMemoryUsage(sessionId)
+      }, OFFICE_PREVIEW_PROCESS_MEMORY_POLL_MS)
+    }
+    return { kind: 'attached', start: session.start }
+  }
+
+  reportState(parentOwnerId: number, sessionId: string, state: OfficePreviewRuntimeState): void {
+    const session = this.sessions.get(sessionId)
+    if (
+      !session ||
+      session.parentOwnerId !== parentOwnerId ||
+      session.frameProcessId === undefined ||
+      state.sessionId !== sessionId
+    ) {
+      return
+    }
+
+    if (state.phase === 'ready') {
+      session.ready = true
+      if (session.timeout) clearTimeout(session.timeout)
+      session.timeout = undefined
+    }
+    this.publishState(parentOwnerId, session.requestId, state)
+    if (state.phase === 'error') void this.close(parentOwnerId, sessionId)
   }
 
   async close(parentOwnerId: number, sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId)
     if (!session || session.parentOwnerId !== parentOwnerId) return
 
-    // Delete first so concurrent teardown paths cannot dispose the same process or capability twice.
+    // Remove ownership first so concurrent timeout, crash, and React cleanup calls are idempotent.
     this.sessions.delete(sessionId)
     if (this.activeSessionByParent.get(parentOwnerId) === sessionId) {
       this.activeSessionByParent.delete(parentOwnerId)
     }
     if (session.timeout) clearTimeout(session.timeout)
     if (session.memoryPoll) clearInterval(session.memoryPoll)
-    try {
-      try {
-        session.view.setVisible(false)
-      } catch {
-        // A crashed renderer can destroy the native view before supervisor cleanup runs.
-      }
-      try {
-        session.view.close()
-      } catch {
-        // Capability release remains mandatory even when the native view is already gone.
-      }
-    } finally {
-      await this.dependencies.releaseResource(session.view.ownerId, session.resource.id)
-    }
+    await this.dependencies.releaseResource(parentOwnerId, session.start.resource.id)
   }
 
   async closeOwner(parentOwnerId: number): Promise<void> {
-    this.openGenerationByParent.set(parentOwnerId, ++this.nextOpenGeneration)
-    const ownedSessionIds = [...this.sessions.entries()]
-      .filter(([, session]) => session.parentOwnerId === parentOwnerId)
-      .map(([sessionId]) => sessionId)
-    await Promise.all(ownedSessionIds.map((sessionId) => this.close(parentOwnerId, sessionId)))
+    this.openGenerationByParent.delete(parentOwnerId)
+    const sessionId = this.activeSessionByParent.get(parentOwnerId)
+    if (sessionId) await this.close(parentOwnerId, sessionId)
   }
 
-  async captureSnapshot(parentOwnerId: number, sessionId: string): Promise<string | undefined> {
-    const session = this.sessions.get(sessionId)
-    if (
-      !session ||
-      !session.ready ||
-      session.parentOwnerId !== parentOwnerId ||
-      !session.view.captureSnapshot
-    ) {
-      return undefined
-    }
-
-    // Snapshot failures are visual degradation only and must not terminate the live preview session.
-    try {
-      return await session.view.captureSnapshot()
-    } catch {
-      return undefined
-    }
+  private armReadinessTimeout(sessionId: string, session: OfficePreviewSession): void {
+    if (session.timeout) clearTimeout(session.timeout)
+    session.ready = false
+    session.timeout = setTimeout(
+      () => {
+        const active = this.sessions.get(sessionId)
+        if (!active || active.ready) return
+        this.publishState(active.parentOwnerId, active.requestId, {
+          sessionId,
+          phase: 'error',
+          error: 'PREVIEW_TIMEOUT'
+        })
+        void this.close(active.parentOwnerId, sessionId)
+      },
+      getOfficePreviewTimeoutMs(session.start.resource.size, session.start.attempt)
+    )
   }
 
   private async checkMemoryUsage(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId)
-    if (!session?.view.getMemoryUsageBytes || session.memoryPollInFlight) return
+    if (
+      !session ||
+      session.frameProcessId === undefined ||
+      !this.dependencies.getProcessMemoryUsageBytes ||
+      session.memoryPollInFlight
+    ) {
+      return
+    }
 
     session.memoryPollInFlight = true
     try {
-      const memoryUsage = await session.view.getMemoryUsageBytes()
+      // Re-resolve the frame on every poll so a crashed or replaced OOPIF cannot retain the session.
+      const process = this.dependencies.resolveFrameProcess(
+        session.parentOwnerId,
+        session.runtimeUrl
+      )
       if (
-        this.sessions.get(sessionId) !== session ||
-        memoryUsage < OFFICE_PREVIEW_PROCESS_MEMORY_LIMIT_BYTES
+        !process ||
+        process.frameProcessId !== session.frameProcessId ||
+        process.parentProcessId !== session.parentProcessId ||
+        process.frameProcessId === process.parentProcessId
       ) {
+        this.publishState(session.parentOwnerId, session.requestId, {
+          sessionId,
+          phase: 'error',
+          error: 'PREVIEW_PROCESS_CRASHED'
+        })
+        await this.close(session.parentOwnerId, sessionId)
         return
       }
 
+      const usage = await this.dependencies.getProcessMemoryUsageBytes(session.frameProcessId)
+      if (usage < OFFICE_PREVIEW_PROCESS_MEMORY_LIMIT_BYTES) return
       this.publishState(session.parentOwnerId, session.requestId, {
         sessionId,
         phase: 'error',
@@ -390,117 +299,10 @@ class OfficePreviewSupervisor {
       })
       await this.close(session.parentOwnerId, sessionId)
     } catch {
-      // Process exits are reported through the child-view lifecycle listeners.
+      // Process metrics are advisory; a transient metrics failure must not terminate a valid preview.
     } finally {
-      session.memoryPollInFlight = false
-    }
-  }
-
-  setBounds(parentOwnerId: number, sessionId: string, bounds: OfficePreviewBounds): void {
-    const session = this.sessions.get(sessionId)
-    if (!session || session.parentOwnerId !== parentOwnerId) return
-    if (!isOfficePreviewBounds(bounds) || bounds.sequence <= session.lastBoundsSequence) return
-
-    const normalized: OfficePreviewNativeBounds = {
-      x: Math.round(bounds.x),
-      y: Math.round(bounds.y),
-      width: Math.max(0, Math.round(bounds.width)),
-      height: Math.max(0, Math.round(bounds.height))
-    }
-    session.lastBoundsSequence = bounds.sequence
-    const layoutReference: OfficePreviewLayoutReference = {
-      bounds: normalized,
-      viewport: {
-        width: Math.max(1, Math.round(bounds.viewportWidth)),
-        height: Math.max(1, Math.round(bounds.viewportHeight))
-      },
-      ...(bounds.horizontalLayout
-        ? {
-            horizontalLayout: {
-              splitGroupX: Math.round(bounds.horizontalLayout.splitGroupX),
-              splitGroupWidth: Math.max(0, Math.round(bounds.horizontalLayout.splitGroupWidth)),
-              panelX: Math.round(bounds.horizontalLayout.panelX),
-              panelWidth: Math.max(0, Math.round(bounds.horizontalLayout.panelWidth))
-            }
-          }
-        : {})
-    }
-    session.layoutReference = layoutReference
-    const requestedVisible = bounds.visible && normalized.width > 0 && normalized.height > 0
-    const requestedOccluded =
-      !requestedVisible && bounds.occluded === true && normalized.width > 0 && normalized.height > 0
-    const targetViewport = session.latestOwnerViewport
-    this.applyBounds(
-      sessionId,
-      session,
-      targetViewport && !areOfficePreviewViewportsEqual(targetViewport, layoutReference.viewport)
-        ? projectOfficePreviewBounds(layoutReference, targetViewport)
-        : normalized,
-      requestedVisible,
-      requestedOccluded
-    )
-  }
-
-  // Keeps the native surface moving while the host renderer is delayed by an OS live-resize loop.
-  resizeOwner(parentOwnerId: number, viewport: OfficePreviewViewport): void {
-    const sessionId = this.activeSessionByParent.get(parentOwnerId)
-    const normalizedViewport = normalizeOfficePreviewViewport(viewport)
-    if (!sessionId || !normalizedViewport) return
-
-    const session = this.sessions.get(sessionId)
-    if (!session) return
-
-    session.latestOwnerViewport = normalizedViewport
-    const reference = session.layoutReference
-    if (!reference) return
-
-    this.applyBounds(
-      sessionId,
-      session,
-      projectOfficePreviewBounds(reference, normalizedViewport),
-      session.requestedVisible,
-      session.requestedOccluded
-    )
-  }
-
-  private applyBounds(
-    sessionId: string,
-    session: OfficePreviewSession,
-    bounds: OfficePreviewNativeBounds,
-    visible: boolean,
-    occluded = false
-  ): void {
-    try {
-      // Keep overlay-covered renderers alive at their current viewport size. Moving the native view
-      // fully outside the parent avoids z-order conflicts without firing Chromium's hidden lifecycle.
-      const appliedBounds = occluded ? { ...bounds, x: -Math.max(1, bounds.width) } : bounds
-      const previous = session.lastAppliedBounds
-      if (
-        !previous ||
-        previous.x !== appliedBounds.x ||
-        previous.y !== appliedBounds.y ||
-        previous.width !== appliedBounds.width ||
-        previous.height !== appliedBounds.height
-      ) {
-        session.view.setBounds(appliedBounds)
-        session.lastAppliedBounds = appliedBounds
-      }
-
-      session.requestedVisible = visible
-      session.requestedOccluded = occluded
-      const shouldDraw = visible || occluded
-      if (session.lastAppliedVisible === shouldDraw) return
-
-      // Frame-based Office renderers remain drawable before ready so their first paint cannot stall.
-      session.view.setVisible(shouldDraw)
-      session.lastAppliedVisible = shouldDraw
-    } catch {
-      this.publishState(session.parentOwnerId, session.requestId, {
-        sessionId,
-        phase: 'error',
-        error: 'RENDER_FAILED'
-      })
-      void this.close(session.parentOwnerId, sessionId)
+      const active = this.sessions.get(sessionId)
+      if (active) active.memoryPollInFlight = false
     }
   }
 
@@ -514,9 +316,4 @@ class OfficePreviewSupervisor {
 }
 
 export { OfficePreviewOpenSupersededError, OfficePreviewSupervisor }
-export type {
-  CreateOfficePreviewViewOptions,
-  OfficePreviewChildView,
-  OfficePreviewViewport,
-  OfficePreviewSupervisorDependencies
-}
+export type { OfficePreviewFrameProcess, OfficePreviewSupervisorDependencies }

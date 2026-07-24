@@ -65,8 +65,8 @@ type PreloadApi = {
     uninstall: () => unknown
   }
   officePreview: {
-    setBounds: (sessionId: string, bounds: unknown) => void
-    captureSnapshot: (sessionId: string) => Promise<string | undefined>
+    attachFrame: (sessionId: string) => Promise<unknown>
+    reportState: (sessionId: string, state: unknown) => void
   }
 }
 
@@ -270,31 +270,18 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
     expect(invokeMock.mock.calls[0]?.[1]).toBe(sampleInstall)
   })
 
-  it('sends Office preview bounds without creating an unused reply promise', () => {
-    const bounds = {
-      x: 640,
-      y: 72,
-      width: 480,
-      height: 720,
-      visible: true,
-      sequence: 1,
-      viewportWidth: 1280,
-      viewportHeight: 800
-    }
+  it('attaches the OOPIF and reports runtime state over the narrow Office bridge', async () => {
+    invokeMock.mockResolvedValueOnce({ kind: 'attached' })
+    await api.officePreview.attachFrame('office-session-1')
+    api.officePreview.reportState('office-session-1', {
+      sessionId: 'office-session-1',
+      phase: 'ready'
+    })
 
-    api.officePreview.setBounds('office-session-1', bounds)
-
-    expect(sendMock).toHaveBeenCalledWith('office-preview:set-bounds', 'office-session-1', bounds)
-    expect(invokeMock).not.toHaveBeenCalled()
-  })
-
-  it('requests an Office preview snapshot over invoke IPC', async () => {
-    invokeMock.mockResolvedValueOnce('data:image/png;base64,c25hcHNob3Q=')
-
-    await expect(api.officePreview.captureSnapshot('office-session-1')).resolves.toBe(
-      'data:image/png;base64,c25hcHNob3Q='
-    )
-
-    expect(invokeMock).toHaveBeenCalledWith('office-preview:capture-snapshot', 'office-session-1')
+    expect(invokeMock).toHaveBeenCalledWith('office-preview:attach-frame', 'office-session-1')
+    expect(sendMock).toHaveBeenCalledWith('office-preview:report-state', 'office-session-1', {
+      sessionId: 'office-session-1',
+      phase: 'ready'
+    })
   })
 })

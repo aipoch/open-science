@@ -1,5 +1,10 @@
+import { OFFICE_PREVIEW_RUNTIME_SCHEME } from './office-preview/office-preview-runtime-protocol'
+
 const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
-const PREVIEW_PROTOCOL = 'open-science-preview:'
+const ALLOWED_PREVIEW_PROTOCOLS = new Set([
+  'open-science-preview:',
+  `${OFFICE_PREVIEW_RUNTIME_SCHEME}:`
+])
 
 const getProtocol = (url: string): string | undefined => {
   try {
@@ -37,7 +42,7 @@ const isAllowedMainFrameNavigation = (url: string, currentUrl: string): boolean 
 const isAllowedFrameNavigation = (url: string, isMainFrame: boolean, currentUrl = ''): boolean =>
   isMainFrame
     ? isAllowedMainFrameNavigation(url, currentUrl)
-    : getProtocol(url) === PREVIEW_PROTOCOL
+    : ALLOWED_PREVIEW_PROTOCOLS.has(getProtocol(url) ?? '')
 
 // Decides whether a window-open request (target="_blank" / window.open) may be handed to the OS. It
 // gates on the protocol allowlist alone, deliberately NOT on the initiating referrer: app links use

@@ -10,8 +10,7 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve('src/preload/index.ts'),
-          'office-preview': resolve('src/preload/office-preview.ts')
+          index: resolve('src/preload/index.ts')
         }
       }
     }

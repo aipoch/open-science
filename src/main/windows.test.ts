@@ -163,6 +163,12 @@ describe('window navigation policy', () => {
     expect(
       policy?.isAllowedFrameNavigation('open-science-preview://resource/report.html', false)
     ).toBe(true)
+    expect(
+      policy?.isAllowedFrameNavigation(
+        'open-science-office-preview://runtime/office-preview.html?sessionId=session-1',
+        false
+      )
+    ).toBe(true)
     expect(policy?.isAllowedFrameNavigation('https://example.com/exfiltrate', false)).toBe(false)
     expect(
       policy?.isAllowedFrameNavigation(
