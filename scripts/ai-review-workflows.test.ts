@@ -865,6 +865,42 @@ exit 1
     expect(readFileSync(githubOutput, 'utf8')).toContain('**Verdict: mergeable**')
   })
 
+  it('accepts the Task alias reported for Claude subagents', () => {
+    const root = createFixtureRoot('ai-review-claude-task-tool-')
+    const executionFile = join(root, 'execution.jsonl')
+    const githubOutput = join(root, 'github-output')
+    writeJsonLines(executionFile, [
+      {
+        type: 'system',
+        subtype: 'init',
+        tools: [
+          'Task',
+          'Bash',
+          'Glob',
+          'Grep',
+          'Read',
+          'StructuredOutput',
+          'mcp__codegraph__codegraph_explore'
+        ]
+      },
+      { type: 'result', subtype: 'success', structured_output: claudeStructuredOutput() }
+    ])
+
+    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        EXECUTION_FILE: executionFile,
+        CODEGRAPH_ENABLED: 'true',
+        GITHUB_OUTPUT: githubOutput
+      }
+    })
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(readFileSync(githubOutput, 'utf8')).toContain('**Verdict: mergeable**')
+  })
+
   it('feeds a short task prompt through stdin instead of injecting pull request code', () => {
     const contextStep = getNamedStep('claude_review', 'Build Claude review prompt')
     const reviewStep = getNamedStep('claude_review', 'Run Claude architecture review')

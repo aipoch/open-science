@@ -592,8 +592,8 @@ jobs:
             exit 1
           fi
           if ! jq -s -e --argjson codegraph "${CODEGRAPH_ENABLED:-false}" '
-            ["Agent", "Bash", "Glob", "Grep", "Read", "StructuredOutput"] as $required |
-            ($required +
+            ["Bash", "Glob", "Grep", "Read", "StructuredOutput"] as $required |
+            ($required + ["Agent", "Task"] +
               (if $codegraph then ["mcp__codegraph__codegraph_explore"] else [] end)) as $allowed |
             any(.[];
               .type == "system" and
@@ -601,6 +601,7 @@ jobs:
               (.tools | type == "array") and
               (.tools as $tools |
                 all($required[]; . as $tool | ($tools | index($tool) != null)) and
+                (($tools | index("Agent") != null) or ($tools | index("Task") != null)) and
                 all($tools[]; . as $tool | ($allowed | index($tool) != null))))
           ' "$EXECUTION_FILE" > /dev/null; then
             echo "Claude exposed an unexpected tool set." >&2
