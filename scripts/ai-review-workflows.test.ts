@@ -130,7 +130,7 @@ printf '%s' "$PR_JSON"
         EVENT_PR_NUMBER: event === 'pull_request_target' ? '392' : '',
         FORK_REVIEW_MODE: options.forkMode ?? 'manual',
         ENABLE_CODEX_REVIEW: options.enabled ?? 'true',
-        CODEX_REVIEW_MODE: options.automaticMode ?? 'both',
+        CODEX_REVIEW_MODE: options.automaticMode ?? 'correctness',
         DISPATCH_REVIEWER: options.dispatchReviewer ?? 'both',
         REVIEW_EVENT: event,
         GITHUB_OUTPUT: output
@@ -307,10 +307,14 @@ describe('dual Codex workflow contract', () => {
   })
 
   it('supports automatic and manual reviewer switching', () => {
-    expect(mainText).toContain("vars.CODEX_REVIEW_MODE || 'both'")
+    expect(mainText).toContain("vars.CODEX_REVIEW_MODE || 'correctness'")
     expect(mainText).toMatch(/options:\n\s+- both\n\s+- codex\n\s+- correctness\n\s+- architecture/)
 
     expect(runTarget().outputs).toMatchObject({
+      correctness_enabled: 'true',
+      architecture_enabled: 'false'
+    })
+    expect(runTarget({ automaticMode: 'both' }).outputs).toMatchObject({
       correctness_enabled: 'true',
       architecture_enabled: 'true'
     })

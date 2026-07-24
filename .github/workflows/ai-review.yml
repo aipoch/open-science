@@ -4,7 +4,7 @@ name: AI PR Review
 # - Secrets: OPENAI_API_KEY and CODEX_BASE_URL
 #   (the URL may omit the trailing slash or include the full /v1/responses endpoint)
 # Set ENABLE_CODEX_REVIEW=false to disable all automated reviewers. Set CODEX_REVIEW_MODE to both,
-# correctness, architecture, or disabled for automatic pull request events (default: both).
+# correctness, architecture, or disabled for automatic pull request events (default: correctness).
 # CODEX_REVIEW_MODEL and CODEX_REVIEW_EFFORT provide shared defaults. Override either reviewer with
 # CODEX_CORRECTNESS_MODEL / CODEX_CORRECTNESS_EFFORT or
 # CODEX_ARCHITECTURE_MODEL / CODEX_ARCHITECTURE_EFFORT (effort defaults to high).
@@ -31,7 +31,7 @@ on:
       reviewer:
         description: Reviewer to run
         required: true
-        default: both
+        default: correctness
         type: choice
         options:
           - both
@@ -72,7 +72,7 @@ jobs:
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           FORK_REVIEW_MODE: ${{ vars.FORK_REVIEW_MODE || 'manual' }}
           ENABLE_CODEX_REVIEW: ${{ vars.ENABLE_CODEX_REVIEW || 'true' }}
-          CODEX_REVIEW_MODE: ${{ vars.CODEX_REVIEW_MODE || 'both' }}
+          CODEX_REVIEW_MODE: ${{ vars.CODEX_REVIEW_MODE || 'correctness' }}
           DISPATCH_REVIEWER: ${{ github.event.inputs.reviewer }}
           REVIEW_EVENT: ${{ github.event_name }}
         shell: bash
