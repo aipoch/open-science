@@ -108,19 +108,20 @@ const resolveAutomaticPermission = (
   params: RequestPermissionRequest,
   context: PermissionPolicyContext | undefined
 ): string | undefined => {
+  if (context?.profile === 'full') {
+    return resolveFullAccessAllowOptionId(params)
+  }
+
+  // The declaration exception must be bound to a server-qualified tool identity. rawInput is
+  // agent-controlled arguments and cannot prove which tool the permission request will execute.
   if (
     context?.mcpServerNames?.includes(ACTIVITY_GROUP_MCP_SERVER_NAME) &&
     isActivityGroupToolEvent({
       title: params.toolCall.title ?? undefined,
-      providerToolName: extractProviderToolName(params.toolCall),
-      rawInput: params.toolCall.rawInput
+      providerToolName: extractProviderToolName(params.toolCall)
     })
   ) {
     return resolveAllowOptionId(params)
-  }
-
-  if (context?.profile === 'full') {
-    return resolveFullAccessAllowOptionId(params)
   }
 
   if (
