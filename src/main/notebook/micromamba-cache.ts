@@ -29,6 +29,7 @@ export type MicromambaCacheDeps = {
   platform?: NodeJS.Platform
   env?: NodeJS.ProcessEnv
   canonicalize?: (path: string) => string
+  hardenOwnership?: (path: string) => void
   prepare?: (
     path: string,
     ownership: CacheOwnership
@@ -78,11 +79,45 @@ export const micromambaCacheLockKey = (
 
 const powershellLiteral = (value: string): string => value.replaceAll("'", "''")
 
+export const windowsCacheAclHardeningScript = (path: string): string => {
+  const literal = powershellLiteral(path)
+  return (
+    `$path='${literal}'; ` +
+    '$current=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; ' +
+    "$system=[System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'); " +
+    "$administrators=[System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'); " +
+    '$inheritance=[System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor ' +
+    '[System.Security.AccessControl.InheritanceFlags]::ObjectInherit; ' +
+    '$propagation=[System.Security.AccessControl.PropagationFlags]::None; ' +
+    '$allow=[System.Security.AccessControl.AccessControlType]::Allow; ' +
+    '$acl=[System.Security.AccessControl.DirectorySecurity]::new(); ' +
+    '$acl.SetOwner($current); ' +
+    '$acl.SetAccessRuleProtection($true,$false); ' +
+    '@($current,$system,$administrators) | ForEach-Object { ' +
+    '$rule=[System.Security.AccessControl.FileSystemAccessRule]::new(' +
+    '$_,[System.Security.AccessControl.FileSystemRights]::FullControl,' +
+    '$inheritance,$propagation,$allow); ' +
+    '[void]$acl.AddAccessRule($rule) }; ' +
+    '[System.IO.Directory]::SetAccessControl($path,$acl)'
+  )
+}
+
+export const hardenWindowsCacheAcl = (path: string): void => {
+  if (process.platform !== 'win32') return
+  execFileSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-Command', windowsCacheAclHardeningScript(path)],
+    { encoding: 'utf8', windowsHide: true }
+  )
+}
+
 export type WindowsCacheAcl = {
   OwnerSid?: string
   CurrentSid?: string
   Rules?: Array<{ Sid?: string; Rights?: string; Type?: string }>
 }
+
+type WindowsCacheAclRule = NonNullable<WindowsCacheAcl['Rules']>[number]
 
 // Keep this complete dangerous-rights set in sync with windows-runtime-cache-uninstall.ps1.
 // A foreign principal that can write, delete, change permissions, or take ownership can replace
@@ -117,6 +152,38 @@ export const isTrustedWindowsCacheAcl = (acl: WindowsCacheAcl): boolean => {
   )
 }
 
+export const windowsCacheAclReadScript = (path: string): string => {
+  const literal = powershellLiteral(path)
+  return (
+    `$acl=[System.IO.Directory]::GetAccessControl('${literal}'); ` +
+    `$current=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; ` +
+    `$owner=$acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value; ` +
+    `$rules=$acl.GetAccessRules($true,$true,` +
+    `[System.Security.Principal.SecurityIdentifier]) | ForEach-Object { ` +
+    `[pscustomobject]@{Sid=$_.IdentityReference.Value; ` +
+    `Rights=$_.FileSystemRights.ToString(); Type=$_.AccessControlType.ToString()} }; ` +
+    `[pscustomobject]@{OwnerSid=$owner; CurrentSid=$current; Rules=$rules} | ` +
+    'ConvertTo-Json -Compress -Depth 4'
+  )
+}
+
+export const readWindowsCacheAcl = (path: string): WindowsCacheAcl => {
+  const script = windowsCacheAclReadScript(path)
+  const raw = execFileSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-Command', script],
+    {
+      encoding: 'utf8',
+      windowsHide: true
+    }
+  )
+  const acl = JSON.parse(raw) as Omit<WindowsCacheAcl, 'Rules'> & {
+    Rules?: WindowsCacheAclRule | WindowsCacheAclRule[]
+  }
+  const rules = !acl.Rules ? [] : Array.isArray(acl.Rules) ? acl.Rules : [acl.Rules]
+  return { ...acl, Rules: rules }
+}
+
 // A marker proves only that the marker contents are self-consistent. On Windows, a cache outside
 // the profile must also be owned by the current user and must not grant broad principals write
 // access. PowerShell is part of every supported Windows installation; failures fail closed.
@@ -124,35 +191,7 @@ const defaultVerifyOwnership = (path: string, userIdentity: string): boolean => 
   void userIdentity
   if (process.platform !== 'win32') return true
   try {
-    const literal = powershellLiteral(path)
-    const script =
-      `$acl=Get-Acl -LiteralPath '${literal}'; ` +
-      `$current=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; ` +
-      `$owner=([System.Security.Principal.NTAccount]$acl.Owner).Translate(` +
-      `[System.Security.Principal.SecurityIdentifier]).Value; ` +
-      `$rules=$acl.Access | ForEach-Object { $sid=''; try { $sid=$_.IdentityReference.Translate(` +
-      `[System.Security.Principal.SecurityIdentifier]).Value } catch {}; ` +
-      `[pscustomobject]@{Sid=$sid; ` +
-      `Rights=$_.FileSystemRights.ToString(); Type=$_.AccessControlType.ToString()} }; ` +
-      `[pscustomobject]@{OwnerSid=$owner; CurrentSid=$current; Rules=$rules} | ` +
-      'ConvertTo-Json -Compress -Depth 4'
-    const raw = execFileSync(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command', script],
-      {
-        encoding: 'utf8',
-        windowsHide: true
-      }
-    )
-    const acl = JSON.parse(raw) as {
-      OwnerSid?: string
-      CurrentSid?: string
-      Rules?:
-        | { Sid?: string; Rights?: string; Type?: string }
-        | Array<{ Sid?: string; Rights?: string; Type?: string }>
-    }
-    const rules = !acl.Rules ? [] : Array.isArray(acl.Rules) ? acl.Rules : [acl.Rules]
-    return isTrustedWindowsCacheAcl({ ...acl, Rules: rules })
+    return isTrustedWindowsCacheAcl(readWindowsCacheAcl(path))
   } catch {
     return false
   }
@@ -161,6 +200,7 @@ const defaultVerifyOwnership = (path: string, userIdentity: string): boolean => 
 const defaultPrepare = (
   path: string,
   ownership: CacheOwnership,
+  hardenOwnership: (path: string) => void,
   verifyOwnership: (path: string, userIdentity: string) => boolean
 ): MicromambaCachePreparation => {
   let created = false
@@ -190,6 +230,11 @@ const defaultPrepare = (
       }
       mkdirSync(path, { mode: 0o700 })
       created = true
+      try {
+        hardenOwnership(path)
+      } catch (error) {
+        return reject(`cache ACL could not be hardened (${errorDetail(error)})`)
+      }
     }
 
     const markerPath = win32.join(path, '.open-science-cache.json')
@@ -317,10 +362,12 @@ export const selectMicromambaCache = (
   const env = deps.env ?? process.env
   const canonicalize = deps.canonicalize ?? canonicalizeExisting
   const { canonicalRoot, userIdentity, leaf, compactLeaf } = cacheIdentity(root, env, canonicalize)
+  const hardenOwnership = deps.hardenOwnership ?? hardenWindowsCacheAcl
   const verifyOwnership = deps.verifyOwnership ?? defaultVerifyOwnership
   const prepare =
     deps.prepare ??
-    ((path: string, ownership: CacheOwnership) => defaultPrepare(path, ownership, verifyOwnership))
+    ((path: string, ownership: CacheOwnership) =>
+      defaultPrepare(path, ownership, hardenOwnership, verifyOwnership))
   const candidates = candidatePaths(canonicalRoot, leaf, compactLeaf, env, canonicalize)
   const rejections: string[] = []
 

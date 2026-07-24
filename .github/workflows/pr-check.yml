@@ -74,6 +74,12 @@ jobs:
       - name: Check CLI package
         run: npm run check:cli-package
 
+      # This exercises the production DACL writer and verifier on a real Windows filesystem. Keep
+      # it hard-gated even while the general Windows suite remains advisory.
+      - name: Test Windows micromamba cache ACL
+        if: matrix.os == 'windows-latest'
+        run: npx vitest run src/main/notebook/micromamba-cache-acl.integration.test.ts
+
       # Full test suite + coverage gate on macOS (thresholds live in vitest.config.ts).
       - name: Test (with coverage)
         if: matrix.os == 'macos-14'

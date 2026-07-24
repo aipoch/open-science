@@ -12,6 +12,8 @@ import {
   selectMicromambaCache,
   WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES,
   WINDOWS_MAX_USABLE_PATH,
+  windowsCacheAclHardeningScript,
+  windowsCacheAclReadScript,
   type MicromambaCacheDeps
 } from './micromamba-cache'
 
@@ -263,6 +265,31 @@ describe('removeMicromambaCacheForRoot', () => {
 })
 
 describe('isTrustedWindowsCacheAcl', () => {
+  it('builds a literal-safe least-privilege ACL hardening command', () => {
+    const script = windowsCacheAclHardeningScript("C:\\Users\\O'Brien\\cache")
+
+    expect(script).toContain("$path='C:\\Users\\O''Brien\\cache'")
+    expect(script).toContain('$acl.SetOwner($current)')
+    expect(script).toContain('$acl.SetAccessRuleProtection($true,$false)')
+    expect(script).toContain('S-1-5-18')
+    expect(script).toContain('S-1-5-32-544')
+    expect(script).toContain('FileSystemRights]::FullControl')
+    expect(script).toContain('[System.IO.Directory]::SetAccessControl($path,$acl)')
+    expect(script).not.toMatch(/Everyone|Authenticated Users|S-1-1-0|S-1-5-11/i)
+    expect(script).not.toMatch(/Set-Acl/i)
+  })
+
+  it('reads ACLs without relying on PowerShell security module autoloading', () => {
+    const script = windowsCacheAclReadScript("C:\\Users\\O'Brien\\cache")
+
+    expect(script).toContain(
+      "$acl=[System.IO.Directory]::GetAccessControl('C:\\Users\\O''Brien\\cache')"
+    )
+    expect(script).toContain('$acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value')
+    expect(script).toContain('$acl.GetAccessRules($true,$true,')
+    expect(script).not.toMatch(/Get-Acl/i)
+  })
+
   it('allows writes only for the current user and trusted system principals', () => {
     const current = 'S-1-5-21-1000'
     expect(
