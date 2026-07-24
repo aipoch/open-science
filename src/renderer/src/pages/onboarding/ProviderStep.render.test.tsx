@@ -79,6 +79,28 @@ const readyClaudeEnvironment = (): void => {
   })
 }
 
+const switchToIsolatedClaudeSignIn = async (): Promise<void> => {
+  await selectOption('Provider type', 'Claude subscription')
+  await selectOption('Claude authentication', 'Sign in separately')
+}
+
+const submitClaudeFallbackToken = async (token: string): Promise<void> => {
+  const modal = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+  const input = modal?.querySelector<HTMLInputElement>('[aria-label="Claude setup token"]')
+  if (!input) throw new Error('Claude setup token input not found')
+
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input, token)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+
+  const signIn = Array.from(modal?.querySelectorAll('button') ?? []).find(
+    (button) => button.textContent?.trim() === 'Sign in'
+  )
+  await act(async () => signIn?.click())
+}
+
 describe('ProviderStep', () => {
   it('defers required-field errors until the first submit attempt', async () => {
     readyClaudeEnvironment()
@@ -117,46 +139,39 @@ describe('ProviderStep', () => {
     expect(onBack).toHaveBeenCalledOnce()
   })
 
-  it('verifies a pasted Claude setup-token before activating and advancing', async () => {
+  it('runs the isolated Claude browser sign-in before activating and advancing', async () => {
     const persistProvider = vi.fn().mockResolvedValue('builtin-claude-isolated')
-    const loginIsolatedClaude = vi
+    const loginIsolatedClaudeBrowser = vi
       .fn()
       .mockResolvedValue({ ok: true, category: 'ok', applied: true })
     const setActiveProvider = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
       persistProvider,
-      loginIsolatedClaude,
+      loginIsolatedClaudeBrowser,
       setActiveProvider
     })
     readyClaudeEnvironment()
     const onAdvance = vi.fn()
 
     await renderStep({ onAdvance })
-    await selectOption('Provider type', 'Claude subscription')
-    const input = container.querySelector<HTMLInputElement>('[aria-label="Claude setup token"]')
-    if (!input) throw new Error('Claude setup token input not found')
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-      setter?.call(input, 'sk-ant-valid')
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await clickButton(/test & continue/i)
+    await switchToIsolatedClaudeSignIn()
+    await clickButton(/sign in & continue/i)
 
     expect(persistProvider).toHaveBeenCalledOnce()
-    expect(loginIsolatedClaude).toHaveBeenCalledWith('sk-ant-valid')
+    expect(loginIsolatedClaudeBrowser).toHaveBeenCalledOnce()
     expect(setActiveProvider).toHaveBeenCalledWith('builtin-claude-isolated')
     expect(onAdvance).toHaveBeenCalledOnce()
   })
 
-  it('shows a rejected Claude setup-token and stays on the provider step', async () => {
+  it('shows the fallback modal after a rejected isolated Claude browser sign-in', async () => {
     const setActiveProvider = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
       persistProvider: vi.fn().mockResolvedValue('builtin-claude-isolated'),
-      loginIsolatedClaude: vi.fn().mockResolvedValue({
+      loginIsolatedClaudeBrowser: vi.fn().mockResolvedValue({
         ok: false,
         category: 'auth',
         applied: true,
-        message: 'Claude rejected the setup token. Run `claude setup-token` again.'
+        message: 'Claude rejected the sign-in. Try again.'
       }),
       setActiveProvider
     })
@@ -164,19 +179,107 @@ describe('ProviderStep', () => {
     const onAdvance = vi.fn()
 
     await renderStep({ onAdvance })
-    await selectOption('Provider type', 'Claude subscription')
-    const input = container.querySelector<HTMLInputElement>('[aria-label="Claude setup token"]')
-    if (!input) throw new Error('Claude setup token input not found')
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-      setter?.call(input, 'sk-ant-expired')
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await clickButton(/test & continue/i)
+    await switchToIsolatedClaudeSignIn()
+    await clickButton(/sign in & continue/i)
 
     expect(setActiveProvider).not.toHaveBeenCalled()
     expect(onAdvance).not.toHaveBeenCalled()
-    expect(container.textContent).toContain('Claude rejected the setup token')
+    expect(container.textContent).toContain('Claude rejected the sign-in')
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain('Step 1')
+  })
+
+  it('lets a pasted token cancel the browser flow and advance', async () => {
+    let resolveBrowserLogin!: (result: ValidateProviderResult) => void
+    const browserLogin = new Promise<ValidateProviderResult>((resolve) => {
+      resolveBrowserLogin = resolve
+    })
+    const cancelIsolatedClaudeLogin = vi.fn().mockImplementation(async () => {
+      resolveBrowserLogin({
+        ok: false,
+        category: 'unknown',
+        applied: false,
+        cancelled: true
+      })
+    })
+    const loginIsolatedClaude = vi
+      .fn()
+      .mockResolvedValue({ ok: true, category: 'ok', applied: true })
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      persistProvider: vi.fn().mockResolvedValue('builtin-claude-isolated'),
+      loginIsolatedClaudeBrowser: vi.fn(() => browserLogin),
+      loginIsolatedClaude,
+      cancelIsolatedClaudeLogin,
+      setActiveProvider
+    })
+    readyClaudeEnvironment()
+    const onAdvance = vi.fn()
+
+    await renderStep({ onAdvance })
+    await switchToIsolatedClaudeSignIn()
+    await clickButton(/sign in & continue/i)
+    await submitClaudeFallbackToken('sk-ant-pasted')
+
+    expect(cancelIsolatedClaudeLogin).toHaveBeenCalledOnce()
+    expect(loginIsolatedClaude).toHaveBeenCalledWith('sk-ant-pasted')
+    expect(setActiveProvider).toHaveBeenCalledWith('builtin-claude-isolated')
+    expect(onAdvance).toHaveBeenCalledOnce()
+  })
+
+  it('does not advance when a pasted Claude token result was not applied', async () => {
+    let resolveBrowserLogin!: (result: ValidateProviderResult) => void
+    const cancelIsolatedClaudeLogin = vi.fn().mockImplementation(async () => {
+      resolveBrowserLogin({
+        ok: false,
+        category: 'unknown',
+        applied: false,
+        cancelled: true
+      })
+    })
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      persistProvider: vi.fn().mockResolvedValue('builtin-claude-isolated'),
+      loginIsolatedClaudeBrowser: vi.fn(
+        () =>
+          new Promise<ValidateProviderResult>((resolve) => {
+            resolveBrowserLogin = resolve
+          })
+      ),
+      loginIsolatedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok', applied: false }),
+      cancelIsolatedClaudeLogin,
+      setActiveProvider
+    })
+    readyClaudeEnvironment()
+    const onAdvance = vi.fn()
+
+    await renderStep({ onAdvance })
+    await switchToIsolatedClaudeSignIn()
+    await clickButton(/sign in & continue/i)
+    await submitClaudeFallbackToken('sk-ant-stale')
+
+    expect(setActiveProvider).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      'provider changed'
+    )
+  })
+
+  it('runs shared Claude browser sign-in before activating and advancing', async () => {
+    const persistProvider = vi.fn().mockResolvedValue('builtin-claude-shared')
+    const loginSharedClaude = vi.fn().mockResolvedValue({ ok: true, category: 'ok', applied: true })
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ persistProvider, loginSharedClaude, setActiveProvider })
+    readyClaudeEnvironment()
+    const onAdvance = vi.fn()
+
+    await renderStep({ onAdvance })
+    await selectOption('Provider type', 'Claude subscription')
+    await clickButton(/sign in & continue/i)
+
+    expect(persistProvider).toHaveBeenCalledOnce()
+    expect(loginSharedClaude).toHaveBeenCalledOnce()
+    expect(setActiveProvider).toHaveBeenCalledWith('builtin-claude-shared')
+    expect(onAdvance).toHaveBeenCalledOnce()
   })
 
   it('prefills the existing Codex subscription profile for Codex on mount', async () => {
@@ -312,6 +415,44 @@ describe('ProviderStep', () => {
     expect(cancelCodexLogin).toHaveBeenCalledOnce()
 
     // afterEach unmounts again on an already-unmounted root; remount a blank tree to keep it safe.
+    root = createRoot(container)
+  })
+
+  it('cancels an in-flight isolated Claude sign-in when the step unmounts', async () => {
+    const cancelIsolatedClaudeLogin = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      persistProvider: vi.fn().mockResolvedValue('builtin-claude-isolated'),
+      loginIsolatedClaudeBrowser: vi.fn(() => new Promise<ValidateProviderResult>(() => undefined)),
+      cancelIsolatedClaudeLogin
+    })
+    readyClaudeEnvironment()
+
+    await renderStep()
+    await switchToIsolatedClaudeSignIn()
+    await clickButton(/sign in & continue/i)
+
+    expect(cancelIsolatedClaudeLogin).not.toHaveBeenCalled()
+    await act(async () => root.unmount())
+    expect(cancelIsolatedClaudeLogin).toHaveBeenCalledOnce()
+    root = createRoot(container)
+  })
+
+  it('cancels an in-flight shared Claude sign-in when the step unmounts', async () => {
+    const cancelSharedClaudeLogin = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      persistProvider: vi.fn().mockResolvedValue('builtin-claude-shared'),
+      loginSharedClaude: vi.fn(() => new Promise<ValidateProviderResult>(() => undefined)),
+      cancelSharedClaudeLogin
+    })
+    readyClaudeEnvironment()
+
+    await renderStep()
+    await selectOption('Provider type', 'Claude subscription')
+    await clickButton(/sign in & continue/i)
+
+    expect(cancelSharedClaudeLogin).not.toHaveBeenCalled()
+    await act(async () => root.unmount())
+    expect(cancelSharedClaudeLogin).toHaveBeenCalledOnce()
     root = createRoot(container)
   })
 })

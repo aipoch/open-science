@@ -18,12 +18,7 @@ export const SETTINGS_FILE_VERSION = 2
 // OAuth login via `claude auth login`); claude-isolated uses an app-owned CLAUDE_CONFIG_DIR
 // (setup-token paste, no ~/.claude touch).
 export type ProviderType =
-  | 'custom'
-  | 'claude-shared'
-  | 'claude-isolated'
-  | 'official'
-  | 'codex-shared'
-  | 'codex-isolated'
+  'custom' | 'claude-shared' | 'claude-isolated' | 'official' | 'codex-shared' | 'codex-isolated'
 
 export const CODEX_SHARED_PROVIDER_ID = 'builtin-codex-shared'
 export const CODEX_ISOLATED_PROVIDER_ID = 'builtin-codex-isolated'

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import {
   CardContent,
   CardDescription,
@@ -10,9 +9,10 @@ import {
   CardTitle
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
-import type { UpsertProviderRequest } from '../../../../shared/settings'
+import type { UpsertProviderRequest, ValidateProviderResult } from '../../../../shared/settings'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
+import { ClaudeIsolatedSignInModal } from '../settings/ClaudeIsolatedSignInModal'
 import { ProviderForm } from '../settings/ProviderForm'
 import {
   createEmptyProviderFormValue,
@@ -22,6 +22,9 @@ import {
   type ProviderFormValue
 } from '../settings/provider-form-value'
 import { describeValidation } from '../settings/validation-message'
+
+const isBrowserSignInProvider = (type: ProviderFormValue['type']): boolean =>
+  type === 'codex-isolated' || type === 'claude-isolated' || type === 'claude-shared'
 
 // Converts a form value into the upsert request the main process expects.
 const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
@@ -63,27 +66,35 @@ const ProviderStep = ({
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
   const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
   const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
+  const loginIsolatedClaudeBrowser = useSettingsStore((state) => state.loginIsolatedClaudeBrowser)
   const loginIsolatedClaude = useSettingsStore((state) => state.loginIsolatedClaude)
+  const cancelIsolatedClaudeLogin = useSettingsStore((state) => state.cancelIsolatedClaudeLogin)
+  const loginSharedClaude = useSettingsStore((state) => state.loginSharedClaude)
+  const cancelSharedClaudeLogin = useSettingsStore((state) => state.cancelSharedClaudeLogin)
 
   const [isSaving, setIsSaving] = useState(false)
+  const [isClaudeSignInOpen, setIsClaudeSignInOpen] = useState(false)
+  const claudeProviderIdRef = useRef<string | undefined>(undefined)
+  const manualClaudePasteWonRef = useRef(false)
   // Required-field errors stay hidden until the user first tries to submit, so an untouched form is
   // not littered with "required" messages. A `*` on each label signals the requirement up front.
   const [showProviderErrors, setShowProviderErrors] = useState(false)
   const [validationMessage, setValidationMessage] = useState<string | undefined>(undefined)
   const [validationOk, setValidationOk] = useState(false)
-  // Keep the setup token outside ProviderFormValue: it is a one-time credential submitted to the
-  // isolated Claude login action, not provider configuration that should survive this step.
-  const [claudeSetupToken, setClaudeSetupToken] = useState('')
   // Mirrors the Settings teardown: a pending isolated sign-in lives in the main process for up to
   // five minutes, and its guard rejects a second attempt as "already in progress". If the wizard
   // unmounts mid-flow (app quit, relaunch, forced navigation), cancel it so the next attempt starts
   // clean. The ref is written only from event handlers/effects, never during render.
   const codexLoginPendingRef = useRef(false)
+  const claudeLoginPendingRef = useRef(false)
+  const claudeSharedLoginPendingRef = useRef(false)
   useEffect(
     () => () => {
       if (codexLoginPendingRef.current) void cancelCodexLogin()
+      if (claudeLoginPendingRef.current) void cancelIsolatedClaudeLogin()
+      if (claudeSharedLoginPendingRef.current) void cancelSharedClaudeLogin()
     },
-    [cancelCodexLogin]
+    [cancelCodexLogin, cancelIsolatedClaudeLogin, cancelSharedClaudeLogin]
   )
 
   // Codex starts with its subscription provider, but an existing draft always wins when navigating
@@ -100,6 +111,40 @@ const ProviderStep = ({
 
   // Onboarding always creates a provider, so required fields must be filled before it can continue.
   const formErrors = getProviderFormErrors(formValue)
+
+  const handleClaudeTokenFallback = async (token: string): Promise<ValidateProviderResult> => {
+    manualClaudePasteWonRef.current = true
+    await cancelIsolatedClaudeLogin()
+
+    try {
+      const result = await loginIsolatedClaude(token)
+      if (result.applied === false) {
+        const message =
+          'The Claude provider changed during sign-in. Review the selection and try again.'
+        setValidationOk(false)
+        setValidationMessage(message)
+        return { ...result, ok: false, message }
+      }
+
+      setValidationOk(result.ok)
+      setValidationMessage(describeValidation(result))
+
+      if (result.ok) {
+        if (claudeProviderIdRef.current) {
+          await setActiveProvider(claudeProviderIdRef.current)
+        }
+        setIsClaudeSignInOpen(false)
+        onAdvance()
+      }
+
+      return result
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not save the Claude token.'
+      setValidationOk(false)
+      setValidationMessage(message)
+      return { ok: false, category: 'unknown', message }
+    }
+  }
 
   const handleSaveProvider = async (): Promise<void> => {
     // First submit attempt surfaces any missing required fields instead of testing an incomplete draft.
@@ -164,20 +209,57 @@ const ProviderStep = ({
       }
 
       if (formValue.type === 'claude-isolated') {
-        // Create the fixed provider record first, then verify the one-time setup token against that
-        // exact record. This matches Settings while keeping onboarding's single submit action.
-        const trimmedToken = claudeSetupToken.trim()
-        if (!trimmedToken) {
+        manualClaudePasteWonRef.current = false
+        const providerId = await persistProvider(toUpsertRequest(formValue))
+        claudeProviderIdRef.current = providerId
+        claudeLoginPendingRef.current = true
+        setIsClaudeSignInOpen(true)
+        const validation = await loginIsolatedClaudeBrowser().finally(() => {
+          claudeLoginPendingRef.current = false
+        })
+
+        if (manualClaudePasteWonRef.current) return
+
+        if (validation.cancelled) {
+          setIsClaudeSignInOpen(false)
           setValidationOk(false)
-          setValidationMessage('Paste the token printed by `claude setup-token` to continue.')
+          setValidationMessage(undefined)
           return
         }
 
-        const providerId = await persistProvider(toUpsertRequest(formValue))
-        const validation = await loginIsolatedClaude(trimmedToken)
+        if (validation.applied === false) {
+          setIsClaudeSignInOpen(false)
+          setValidationOk(false)
+          setValidationMessage(
+            'The Claude provider changed during sign-in. Review the selection and try again.'
+          )
+          return
+        }
 
-        // A successful but discarded validation was not recorded on the provider, so activating it
-        // would let onboarding finish with an unverified credential.
+        setValidationOk(validation.ok)
+        setValidationMessage(describeValidation(validation))
+
+        if (validation.ok) {
+          setIsClaudeSignInOpen(false)
+          if (providerId) await setActiveProvider(providerId)
+          onAdvance()
+        }
+        return
+      }
+
+      if (formValue.type === 'claude-shared') {
+        const providerId = await persistProvider(toUpsertRequest(formValue))
+        claudeSharedLoginPendingRef.current = true
+        const validation = await loginSharedClaude().finally(() => {
+          claudeSharedLoginPendingRef.current = false
+        })
+
+        if (validation.cancelled) {
+          setValidationOk(false)
+          setValidationMessage(undefined)
+          return
+        }
+
         if (validation.applied === false) {
           setValidationOk(false)
           setValidationMessage(
@@ -190,7 +272,6 @@ const ProviderStep = ({
         setValidationMessage(describeValidation(validation))
 
         if (validation.ok) {
-          setClaudeSetupToken('')
           if (providerId) await setActiveProvider(providerId)
           onAdvance()
         }
@@ -250,21 +331,10 @@ const ProviderStep = ({
             showClaudeIsolated={agentFrameworkId === 'claude-code'}
           />
           {formValue.type === 'claude-isolated' ? (
-            <div className="mt-4 space-y-2">
-              <label className="text-xs font-medium" htmlFor="wizard-claude-setup-token">
-                Paste the token from <code className="font-mono">claude setup-token</code>
-              </label>
-              <Input
-                id="wizard-claude-setup-token"
-                aria-label="Claude setup token"
-                value={claudeSetupToken}
-                onChange={(event) => setClaudeSetupToken(event.target.value)}
-                placeholder="sk-ant-..."
-                autoComplete="off"
-                spellCheck={false}
-                disabled={isSaving}
-              />
-            </div>
+            <p className="mt-4 text-sm text-muted-foreground">
+              Sign in with your browser to connect your Claude subscription. We&apos;ll open Claude
+              in your browser to authorize, then bring you right back.
+            </p>
           ) : null}
           {validationMessage ? (
             <p
@@ -281,6 +351,14 @@ const ProviderStep = ({
           <Button type="button" variant="outline" onClick={() => void cancelCodexLogin()}>
             Cancel sign-in
           </Button>
+        ) : isSaving && formValue.type === 'claude-isolated' ? (
+          <Button type="button" variant="outline" onClick={() => void cancelIsolatedClaudeLogin()}>
+            Cancel sign-in
+          </Button>
+        ) : isSaving && formValue.type === 'claude-shared' ? (
+          <Button type="button" variant="outline" onClick={() => void cancelSharedClaudeLogin()}>
+            Cancel sign-in
+          </Button>
         ) : (
           <Button type="button" variant="outline" onClick={onBack}>
             Back
@@ -293,14 +371,20 @@ const ProviderStep = ({
           className="px-4"
         >
           {isSaving
-            ? formValue.type === 'codex-isolated'
+            ? isBrowserSignInProvider(formValue.type)
               ? 'Waiting for sign-in…'
               : 'Testing connection…'
-            : formValue.type === 'codex-isolated'
+            : isBrowserSignInProvider(formValue.type)
               ? 'Sign in & continue'
               : 'Test & continue'}
         </Button>
       </CardFooter>
+      <ClaudeIsolatedSignInModal
+        open={isClaudeSignInOpen}
+        onOpenChange={setIsClaudeSignInOpen}
+        onSubmit={handleClaudeTokenFallback}
+        browserSignInPending={isSaving && isClaudeSignInOpen}
+      />
     </>
   )
 }

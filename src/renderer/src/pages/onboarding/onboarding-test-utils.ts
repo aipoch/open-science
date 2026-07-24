@@ -157,6 +157,8 @@ const resetOnboardingStores = (): {
     setAgentFramework: vi.fn().mockResolvedValue(undefined),
     completeOnboarding: vi.fn().mockResolvedValue(undefined),
     cancelCodexLogin: vi.fn().mockResolvedValue(undefined),
+    cancelIsolatedClaudeLogin: vi.fn().mockResolvedValue(undefined),
+    cancelSharedClaudeLogin: vi.fn().mockResolvedValue(undefined),
     saveAndActivateProvider: vi
       .fn()
       .mockResolvedValue({ providerId: 'p1', validation: { ok: true, category: 'ok' } })
