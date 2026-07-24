@@ -1,4 +1,5 @@
 import type { LinkSafetyModalProps } from 'streamdown'
+import { FocusScope } from '@radix-ui/react-focus-scope'
 import { Check, Copy, ExternalLink, X } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -83,24 +84,6 @@ const LinkSafetyModal = ({
     }
   }, [isMounted])
 
-  useEffect(() => {
-    if (!isOpen) {
-      return
-    }
-
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        closeModal()
-      }
-    }
-
-    document.addEventListener('keydown', onKeyDown)
-
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [closeModal, isOpen])
-
   const copyLink = useCallback(async (): Promise<void> => {
     if (!navigator.clipboard?.writeText) {
       return
@@ -125,73 +108,83 @@ const LinkSafetyModal = ({
     <Fragment>
       <div
         aria-hidden="true"
-        className={cn(dialogOverlayClassName, 'break-normal')}
+        className={cn(dialogOverlayClassName, 'z-[80] pointer-events-auto break-normal')}
         data-state={isOpen ? 'open' : 'closed'}
         data-streamdown="link-safety-modal"
       />
-      <div
-        className={dialogPanelClassName(
-          'flex h-auto max-h-[min(90vh,640px)] w-[min(420px,calc(100vw-3rem))] flex-col overflow-hidden p-0'
-        )}
-        data-state={isOpen ? 'open' : 'closed'}
-        data-streamdown="link-safety-panel"
-        inert={!isOpen}
-        ref={panelRef}
-        aria-label="Open external link?"
-        aria-hidden={!isOpen}
-        aria-modal="true"
-        role="dialog"
-      >
-        <div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className={dialogCloseButtonClassName}
-            onClick={closeModal}
-            aria-label="Close"
-          >
-            <X className="size-4" strokeWidth={2} aria-hidden />
-          </Button>
-        </div>
-
-        <div className="sd-link-safety-body">
-          <p className="sd-link-safety-description">You are about to visit an external website.</p>
-
-          <div
-            className={url.length > 100 ? 'sd-link-safety-url max-scroll' : 'sd-link-safety-url'}
-          >
-            {url}
-          </div>
-
-          <div className="sd-link-safety-actions">
-            <button type="button" onClick={() => void copyLink()}>
-              {copied && isOpen ? (
-                <>
-                  <Check className="size-3.5" aria-hidden />
-                  Copied
-                </>
-              ) : (
-                <>
-                  <Copy className="size-3.5" aria-hidden />
-                  Copy link
-                </>
-              )}
-            </button>
-            <button
+      <FocusScope asChild loop trapped={isOpen}>
+        <div
+          className={dialogPanelClassName(
+            'z-[80] pointer-events-auto flex h-auto max-h-[min(90vh,640px)] w-[min(420px,calc(100vw-3rem))] flex-col overflow-hidden p-0'
+          )}
+          data-state={isOpen ? 'open' : 'closed'}
+          data-streamdown="link-safety-panel"
+          inert={!isOpen}
+          ref={panelRef}
+          aria-label="Open external link?"
+          aria-hidden={!isOpen}
+          aria-modal="true"
+          role="dialog"
+          onKeyDownCapture={(event) => {
+            if (event.key !== 'Escape' || !isOpen) return
+            event.preventDefault()
+            event.stopPropagation()
+            closeModal()
+          }}
+        >
+          <div>
+            <Button
               type="button"
-              className="sd-link-safety-primary"
-              onClick={() => {
-                onConfirm()
-                closeModal()
-              }}
+              variant="ghost"
+              size="icon-sm"
+              className={dialogCloseButtonClassName}
+              onClick={closeModal}
+              aria-label="Close"
             >
-              <ExternalLink className="size-3.5" aria-hidden />
-              Open link
-            </button>
+              <X className="size-4" strokeWidth={2} aria-hidden />
+            </Button>
+          </div>
+
+          <div className="sd-link-safety-body">
+            <p className="sd-link-safety-description">
+              You are about to visit an external website.
+            </p>
+
+            <div
+              className={url.length > 100 ? 'sd-link-safety-url max-scroll' : 'sd-link-safety-url'}
+            >
+              {url}
+            </div>
+
+            <div className="sd-link-safety-actions">
+              <button type="button" onClick={() => void copyLink()}>
+                {copied && isOpen ? (
+                  <>
+                    <Check className="size-3.5" aria-hidden />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="size-3.5" aria-hidden />
+                    Copy link
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                className="sd-link-safety-primary"
+                onClick={() => {
+                  onConfirm()
+                  closeModal()
+                }}
+              >
+                <ExternalLink className="size-3.5" aria-hidden />
+                Open link
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      </FocusScope>
     </Fragment>,
     document.body
   )

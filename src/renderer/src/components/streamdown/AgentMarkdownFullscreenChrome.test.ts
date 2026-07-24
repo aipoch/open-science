@@ -25,5 +25,34 @@ describe('AgentMarkdown fullscreen chrome', () => {
     expect(mermaidFullscreenBlock).toContain("[data-fullscreen-state='closing']")
     expect(mermaidFullscreenBlock).toContain('sd-fullscreen-overlay-out')
     expect(mermaidFullscreenBlock).toContain('sd-fullscreen-panel-out')
+    expect(mermaidFullscreenBlock).toContain('z-[80]!')
+    expect(mermaidFullscreenBlock).toContain('z-[82]!')
+    expect(mermaidFullscreenBlock).toContain('pointer-events: auto !important')
+    expect(mermaidFullscreenBlock).toContain('pointer-events: none !important')
+  })
+
+  it('uses theme-aware shared chrome for table fullscreen without changing table rendering', () => {
+    const css = readFileSync(resolve(__dirname, '../../assets/agent-markdown.css'), 'utf8')
+    const blockEnd = css.indexOf('/* Mermaid fullscreen portal')
+    const blockStart = css.lastIndexOf("[data-streamdown='table-fullscreen'] {", blockEnd)
+    const tableFullscreenBlock = css.slice(blockStart, blockEnd)
+
+    expect(tableFullscreenBlock).toContain('background: rgb(0 0 0 / 50%) !important')
+    expect(tableFullscreenBlock).toContain('bg-card text-foreground shadow-dialog')
+    expect(tableFullscreenBlock).toContain("[data-fullscreen-state='closing']")
+    expect(tableFullscreenBlock).toContain('& > div:first-child {')
+    expect(tableFullscreenBlock).toContain('@apply border-border bg-card;')
+    expect(tableFullscreenBlock).toContain('& > div:last-child {')
+    expect(tableFullscreenBlock).toContain('@apply bg-card px-4')
+    expect(tableFullscreenBlock).toContain('z-[80]!')
+    expect(tableFullscreenBlock).toContain('pointer-events: auto !important')
+    expect(tableFullscreenBlock).toContain('pointer-events: none !important')
+  })
+
+  it('disables both fullscreen animations when reduced motion is requested', () => {
+    const css = readFileSync(resolve(__dirname, '../../assets/agent-markdown.css'), 'utf8')
+    const reducedMotionBlock = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'))
+
+    expect(reducedMotionBlock).toContain("[data-streamdown='table-fullscreen']")
   })
 })

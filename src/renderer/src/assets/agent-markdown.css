@@ -271,19 +271,39 @@
   }
 
   [data-streamdown='table-fullscreen'] {
+    @apply z-[80]!;
+    pointer-events: auto !important;
+    animation: sd-fullscreen-overlay-in 150ms ease-out;
+    background: rgb(0 0 0 / 50%) !important;
+
+    &[data-fullscreen-state='closing'] {
+      pointer-events: none !important;
+      animation: sd-fullscreen-overlay-out 150ms ease-in forwards;
+
+      & > div[role='presentation'] {
+        animation: sd-fullscreen-panel-out 150ms ease-in forwards;
+      }
+    }
+
     & .relative {
       @apply relative z-50 overflow-visible;
     }
 
     & > div[role='presentation'] {
       @apply h-[min(90vh,880px)] max-h-[min(90vh,880px)] w-[min(960px,calc(100vw-3rem))];
+      animation: sd-fullscreen-panel-in 150ms ease-out;
+      @apply rounded-xl border-border bg-card text-foreground shadow-dialog;
+
+      & > div:first-child {
+        @apply border-border bg-card;
+      }
 
       & > div:first-child::before {
         content: 'Table';
       }
 
       & > div:last-child {
-        @apply px-4 pb-4 pt-0;
+        @apply bg-card px-4 pb-4 pt-0;
       }
     }
 
@@ -311,13 +331,14 @@
     > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not(
       [data-streamdown]
     ) {
-    @apply flex! items-center justify-center p-6 break-normal;
+    @apply z-[80]! flex! items-center justify-center p-6 break-normal;
+    pointer-events: auto !important;
     animation: sd-fullscreen-overlay-in 150ms ease-out;
     background: rgb(0 0 0 / 50%) !important;
     backdrop-filter: none;
 
     &[data-fullscreen-state='closing'] {
-      pointer-events: none;
+      pointer-events: none !important;
       animation: sd-fullscreen-overlay-out 150ms ease-in forwards;
 
       & > div[role='presentation'] {
@@ -326,7 +347,7 @@
     }
 
     & > button {
-      @apply fixed! top-5! right-5! left-auto! bottom-auto! z-[62]! m-0! inline-flex! size-8! cursor-pointer items-center justify-center rounded-lg border border-border bg-card! p-0 text-muted-foreground shadow-dialog transition-colors duration-150;
+      @apply fixed! top-5! right-5! left-auto! bottom-auto! z-[82]! m-0! inline-flex! size-8! cursor-pointer items-center justify-center rounded-lg border border-border bg-card! p-0 text-muted-foreground shadow-dialog transition-colors duration-150;
       transform: none;
 
       &:hover {
@@ -394,6 +415,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  [data-streamdown='table-fullscreen'],
+  [data-streamdown='table-fullscreen'] > div[role='presentation'],
   body
     > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not([data-streamdown]),
   body

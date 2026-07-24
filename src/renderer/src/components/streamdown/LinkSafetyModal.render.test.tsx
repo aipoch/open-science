@@ -54,6 +54,8 @@ describe('LinkSafetyModal', () => {
     expect(overlay?.className).toContain('bg-black/50')
     expect(overlay?.className).toContain('data-[state=open]:fade-in-0')
     expect(overlay?.className).toContain('data-[state=closed]:fill-mode-forwards')
+    expect(overlay?.className).toContain('z-[80]')
+    expect(overlay?.className).toContain('pointer-events-auto')
     expect(panel?.className).toContain('rounded-xl')
     expect(panel?.className).toContain('border-border')
     expect(panel?.className).toContain('bg-card')
@@ -61,6 +63,8 @@ describe('LinkSafetyModal', () => {
     expect(panel?.className).toContain('data-[state=open]:zoom-in-95')
     expect(panel?.className).toContain('data-[state=closed]:fill-mode-forwards')
     expect(panel?.className).toContain('data-[state=closed]:pointer-events-none')
+    expect(panel?.className).toContain('z-[80]')
+    expect(panel?.className).toContain('pointer-events-auto')
 
     act(() => {
       overlay?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -79,6 +83,8 @@ describe('LinkSafetyModal', () => {
 
   it('closes exactly once when Escape bubbles from inside the panel', () => {
     const onClose = vi.fn()
+    const parentEscapeHandler = vi.fn()
+    document.addEventListener('keydown', parentEscapeHandler)
 
     act(() => {
       root.render(
@@ -98,6 +104,9 @@ describe('LinkSafetyModal', () => {
     })
 
     expect(onClose).toHaveBeenCalledTimes(1)
+    expect(parentEscapeHandler).not.toHaveBeenCalled()
+
+    document.removeEventListener('keydown', parentEscapeHandler)
   })
 
   it('keeps the closing modal mounted and scroll-locked until its exit animation ends', () => {
