@@ -151,8 +151,11 @@ describe('ProviderForm field switching', () => {
     // API-key field. The authentication mode selector is shown.
     expect(container.querySelector('[aria-label="Provider name"]')).toBeNull()
     expect(container.querySelector('[aria-label="API key"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Model"]')).not.toBeNull()
     expect(container.textContent).toContain('Claude authentication')
     expect(container.textContent).toContain('Sign in separately')
+    expect(container.textContent).toContain('claude setup-token')
+    expect(container.textContent).toContain('nothing is read from or written to')
   })
 
   it('surfaces the provider-type picker with the current selection', () => {

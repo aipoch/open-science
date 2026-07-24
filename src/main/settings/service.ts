@@ -243,6 +243,8 @@ const CLAUDE_PROBE_TIMEOUT_MS = 20_000
 // is a card that says "expires in a year" for a credential that actually expires sooner.
 const SETUP_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000
 const CLAUDE_SHARED_AUTH_STATUS_TTL_MS = 5_000
+const CLAUDE_SHARED_DISCONNECTED_MESSAGE =
+  'Claude is disconnected from Open Science. Sign in again to use your shared Claude profile.'
 const CODEX_INSTALL_TARGET: InstallTarget = {
   npmPackage: '@agentclientprotocol/codex-acp',
   // Codex exposes no supported shell installer; InstallCodexRequest cannot select this branch.
@@ -1736,18 +1738,21 @@ class SettingsService {
       if (existing?.expiresAt !== undefined) {
         provider.expiresAt = existing.expiresAt
       }
-      credentialsChanged = false
-      const model = request.model?.trim() || existing?.model
+      const model =
+        request.model === undefined ? existing?.model : request.model.trim() || undefined
+      credentialsChanged = model !== existing?.model
 
       if (model) provider.model = model
     } else if (request.type === 'claude-shared') {
       // claude-shared credentials live in ~/.claude, managed by the CLI. No token or expiry to
       // carry over; only the optional model override is stored on the record.
       provider.apiEndpoints = ['anthropic']
-      credentialsChanged = false
-      const model = request.model?.trim() || existing?.model
+      const model =
+        request.model === undefined ? existing?.model : request.model.trim() || undefined
+      credentialsChanged = model !== existing?.model
 
       if (model) provider.model = model
+      if (existing?.disconnectedAt !== undefined) provider.disconnectedAt = existing.disconnectedAt
     } else if (request.type === 'official') {
       // Base URL and model catalog come from the registry; the provider only stores which vendor
       // (and, for multi-region vendors, which endpoint) plus the key.
@@ -1985,7 +1990,7 @@ class SettingsService {
     if (!provider) return { ...result, applied: false }
 
     if (result.ok) {
-      result = await this.runClaudeIsolatedProbe(
+      result = await this.runClaudeSubscriptionProbe(
         this.resolveProvider(
           provider,
           settings.activeProviderId === provider.id ? settings.activeModel : undefined
@@ -2077,7 +2082,7 @@ class SettingsService {
     this.invalidateClaudeSharedAuthStatus()
     const authStatus = await this.claudeSharedAuth.loginShared()
     this.invalidateClaudeSharedAuthStatus()
-    const result = this.claudeSharedAuthValidationResult(authStatus)
+    let result = this.claudeSharedAuthValidationResult(authStatus)
 
     // A user-cancel: don't write a failure marker and surface the cancellation to the caller.
     if (authStatus.cancelled) {
@@ -2092,10 +2097,21 @@ class SettingsService {
     // the shared subscription the login was started for, the outcome is stale and discarded.
     if (provider?.type !== 'claude-shared') return { ...result, applied: false }
 
+    if (result.ok) {
+      result = await this.runClaudeSubscriptionProbe(
+        this.resolveProvider(
+          provider,
+          settings.activeProviderId === provider.id ? settings.activeModel : undefined
+        ),
+        settings
+      )
+    }
+
     await this.repository.upsertProvider(
       result.ok
         ? {
             ...provider,
+            disconnectedAt: undefined,
             lastValidatedAt: Date.now(),
             lastValidationFailure: undefined
           }
@@ -2122,10 +2138,16 @@ class SettingsService {
     )
 
     if (provider) {
+      const disconnectedAt = Date.now()
       await this.repository.upsertProvider({
         ...provider,
+        disconnectedAt,
         lastValidatedAt: undefined,
-        lastValidationFailure: undefined
+        lastValidationFailure: {
+          at: disconnectedAt,
+          category: 'auth',
+          message: CLAUDE_SHARED_DISCONNECTED_MESSAGE
+        }
       })
     }
 
@@ -2133,6 +2155,38 @@ class SettingsService {
   }
 
   async getClaudeSharedStatus(): Promise<ValidateProviderResult> {
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
+    )
+
+    if (provider?.type !== 'claude-shared') {
+      return {
+        ok: false,
+        category: 'unknown',
+        message: 'Claude subscription provider is not configured.'
+      }
+    }
+
+    return this.validateClaudeSharedProvider(
+      this.resolveProvider(
+        provider,
+        settings.activeProviderId === provider.id ? settings.activeModel : undefined
+      ),
+      settings,
+      provider
+    )
+  }
+
+  private async validateClaudeSharedProvider(
+    provider: ResolvedProvider,
+    settings: StoredSettings,
+    storedProvider?: StoredProvider
+  ): Promise<ValidateProviderResult> {
+    if (storedProvider?.disconnectedAt !== undefined) {
+      return { ok: false, category: 'auth', message: CLAUDE_SHARED_DISCONNECTED_MESSAGE }
+    }
+
     const status = await this.claudeSharedAuth.getStatus()
     this.claudeSharedAuthStatusCache = {
       authenticated: status.authenticated,
@@ -2146,7 +2200,7 @@ class SettingsService {
       )
     }
 
-    return { ok: true, category: 'ok' }
+    return this.runClaudeSubscriptionProbe(provider, settings)
   }
 
   private claudeSharedAuthValidationResult(
@@ -2186,7 +2240,7 @@ class SettingsService {
       }
     }
 
-    return this.runClaudeIsolatedProbe(
+    return this.runClaudeSubscriptionProbe(
       this.resolveProvider(
         provider,
         settings.activeProviderId === provider.id ? settings.activeModel : undefined
@@ -2262,7 +2316,13 @@ class SettingsService {
             'Not signed in. Use Sign in to connect your ChatGPT account.'
           )
         : resolved.provider.type === 'claude-shared'
-          ? await this.getClaudeSharedStatus()
+          ? await this.validateClaudeSharedProvider(
+              resolved.provider,
+              settings,
+              resolved.storedId
+                ? settings.providers.find((provider) => provider.id === resolved.storedId)
+                : undefined
+            )
           : resolved.provider.type === 'claude-isolated'
             ? await this.getClaudeIsolatedStatus()
             : await validateProvider(resolved.provider, {
@@ -2731,6 +2791,10 @@ class SettingsService {
       throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
     }
 
+    if (activeProvider.type === 'claude-shared' && activeProvider.disconnectedAt !== undefined) {
+      throw new Error(CLAUDE_SHARED_DISCONNECTED_MESSAGE)
+    }
+
     // Ensure the app-owned config dir exists (and app assets are injected) before the agent spawns. The
     // enabled skill set (featured + imported + personal) is materialized here, so a toggle/create/import
     // takes effect on the next spawn. Any skill force-loaded for the current turn is subtracted from the
@@ -3190,7 +3254,10 @@ class SettingsService {
   // claude-shared needs a cached live profile check; all key-backed providers must still decrypt.
   private async isProviderKeyUsable(provider: StoredProvider): Promise<boolean> {
     if (isCodexSubscriptionProvider(provider.type)) return true
-    if (provider.type === 'claude-shared') return this.getClaudeSharedAuthStatus()
+    if (provider.type === 'claude-shared') {
+      if (provider.disconnectedAt !== undefined) return false
+      return this.getClaudeSharedAuthStatus()
+    }
 
     return Boolean(provider.keyRef) && tryDecryptKey(provider.keyRef) !== undefined
   }
@@ -3383,7 +3450,7 @@ class SettingsService {
     )
   }
 
-  private async runClaudeIsolatedProbe(
+  private async runClaudeSubscriptionProbe(
     provider: ResolvedProvider,
     settings: StoredSettings
   ): Promise<ValidateProviderResult> {
@@ -3397,11 +3464,13 @@ class SettingsService {
       }
     }
 
-    const appConfigDir = getAppClaudeConfigDir(this.storageRoot)
-    await provisionAppClaudeConfigDir(appConfigDir, {
-      skills: await this.skillCatalog(),
-      disabledSkillIds: settings.disabledSkillIds
-    })
+    if (provider.type !== 'claude-shared') {
+      const appConfigDir = getAppClaudeConfigDir(this.storageRoot)
+      await provisionAppClaudeConfigDir(appConfigDir, {
+        skills: await this.skillCatalog(),
+        disabledSkillIds: settings.disabledSkillIds
+      })
+    }
     const envOverrides = buildProviderEnv(provider, {
       storageRoot: this.storageRoot,
       claudeExecutablePath: executablePath
@@ -3417,17 +3486,30 @@ class SettingsService {
         return {
           ok: false,
           category: 'timeout',
-          message: 'Claude token validation timed out. Try again.'
+          message:
+            provider.type === 'claude-shared'
+              ? 'Claude shared-profile validation timed out. Try again.'
+              : 'Claude token validation timed out. Try again.'
         }
       }
 
       const category = classifyClaudeProbeFailure(error)
-      const messages = {
-        auth: 'Claude rejected the setup token. Run `claude setup-token` again and paste a new token.',
-        network:
-          'Claude could not reach Anthropic while validating the token. Check your network and try again.',
-        unknown: 'Claude could not run the token validation probe. Re-detect Claude and try again.'
-      } as const
+      const messages =
+        provider.type === 'claude-shared'
+          ? {
+              auth: 'Claude rejected the shared profile. Sign in again and retry.',
+              network:
+                'Claude could not reach Anthropic while validating the shared profile. Check your network and try again.',
+              unknown:
+                'Claude could not run the shared-profile validation probe. Re-detect Claude and try again.'
+            }
+          : {
+              auth: 'Claude rejected the setup token. Run `claude setup-token` again and paste a new token.',
+              network:
+                'Claude could not reach Anthropic while validating the token. Check your network and try again.',
+              unknown:
+                'Claude could not run the token validation probe. Re-detect Claude and try again.'
+            }
 
       return { ok: false, category, message: messages[category] }
     }

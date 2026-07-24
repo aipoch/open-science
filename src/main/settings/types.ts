@@ -52,6 +52,10 @@ export type StoredProvider = {
   // Recorded when a validation fails; cleared on the next success or a credential change. Kept so the
   // "unverified" warning survives a restart.
   lastValidationFailure?: ProviderValidationFailure
+  // claude-shared credentials live in the user's global profile and cannot be removed safely by the
+  // app. This timestamp records an app-local disconnect so Open Science stops using that profile
+  // until the user explicitly signs in again.
+  disconnectedAt?: number
 }
 
 // A user-added custom MCP server. Phase 1 = stdio (local command). Phase 2 adds the remote
