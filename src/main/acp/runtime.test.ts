@@ -2119,6 +2119,35 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('forwards resolved Claude session options on create and resume', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'], { supportsResume: true })
+    const sessionOptions = {
+      settings: '/app/claude/settings.json',
+      plugins: [{ type: 'local', path: '/app/claude', skipMcpDiscovery: true }]
+    }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/agent',
+        env: {},
+        sessionOptions
+      })
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.resumeSession({ sessionId: 'remote-session-2', cwd: '/workspace' })
+
+    expect(fakeAgent.newSessions[0]._meta).toMatchObject({
+      claudeCode: { options: { ...sessionOptions, settingSources: ['user'] } }
+    })
+    expect(fakeAgent.resumedSessions[0]._meta).toMatchObject({
+      claudeCode: { options: { ...sessionOptions, settingSources: ['user'] } }
+    })
+  })
+
   it('delivers the large-data-file guidance to opencode as a prompt prefix', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['oc-session'])

@@ -602,6 +602,7 @@ class AcpRuntime {
   // Reasoning-effort level to apply per session via the ACP thought_level configOption; undefined
   // means "don't override" (the agent keeps its own default). Refreshed on each connect.
   private pendingSessionEffort: ReasoningEffort | undefined
+  private pendingSessionOptions: Record<string, unknown> | undefined
   // The latest configOptions each session reported — seeded from session/new and refreshed after a
   // model switch (effort rungs are model-dependent, so the original set goes stale). The live effort
   // path resolves against this, never against the possibly-outdated session/new response.
@@ -2017,6 +2018,7 @@ class AcpRuntime {
     this.pendingSessionModelRequired = backend.sessionModelRequired ?? false
     this.pendingSessionEffort = backend.sessionEffort
     this.selectedModelContextWindow = backend.contextWindow
+    this.pendingSessionOptions = backend.sessionOptions
     this.pendingAuthentication = backend.authentication
     this.pendingProviderConfiguration = backend.providerConfiguration
     this.responsesBridgeLease = backend.responsesBridgeLease
@@ -2131,7 +2133,8 @@ class AcpRuntime {
       // session preset carry the complete guidance as a prompt prefix.
       const { promptPrefix } = this.framework.buildSessionSetup({
         systemPromptAppends: this.getSystemPromptAppends(),
-        turnPromptReminders: this.getTurnPromptReminders()
+        turnPromptReminders: this.getTurnPromptReminders(),
+        sessionOptions: this.pendingSessionOptions
       })
       const nudgedText = await this.applySkillNudge(request.text, forced)
       // A history preamble (transcript replayed after a context reset) leads, then the framework guidance
@@ -3113,13 +3116,12 @@ class AcpRuntime {
   }
 
   // Builds the ACP `_meta` argument for session/new and session/resume, delegating the framework-specific
-  // shape to the active framework. For Claude this is the claudeCode.settingSources restriction (pins the
-  // app-owned config dir so a workspace ~/.claude env block can't override the active provider endpoint)
-  // plus the system-prompt preset carrying the appends; opencode returns no meta and delivers the appends
-  // as a prompt prefix instead.
+  // shape to the active framework. Claude applies its settingSources restriction, resolved backend
+  // options, and system-prompt appends; opencode returns no meta and uses a prompt prefix instead.
   private buildSessionMetaArg(): { _meta?: Record<string, unknown> } {
     const setup = this.framework.buildSessionSetup({
-      systemPromptAppends: this.getSystemPromptAppends()
+      systemPromptAppends: this.getSystemPromptAppends(),
+      sessionOptions: this.pendingSessionOptions
     })
 
     return setup.meta ? { _meta: setup.meta } : {}
@@ -3856,7 +3858,8 @@ class AcpRuntime {
     const reviewerCwd = await mkdtemp(join(tmpdir(), 'open-science-reviewer-'))
 
     const setup = this.framework.buildSessionSetup({
-      systemPromptAppends: request.systemPromptAppend ? [request.systemPromptAppend] : []
+      systemPromptAppends: request.systemPromptAppend ? [request.systemPromptAppend] : [],
+      sessionOptions: this.pendingSessionOptions
     })
     const reviewerMeta: Record<string, unknown> = {
       ...(setup.meta ?? {}),

@@ -303,10 +303,14 @@ const CODEX_BRIDGE_ACTIVITY_TOOLS: ResponsesBridgeNamespacedTool[] = [
 const isManagedCodexPath = (adapterPath: string, storageRoot: string): boolean =>
   adapterPath === managedCodexAdapterEntry(storageRoot)
 
-type ExecuteClaudeProbe = (executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>
+type ExecuteClaudeProbe = (
+  executablePath: string,
+  env: NodeJS.ProcessEnv,
+  runtimeArgs?: string[]
+) => Promise<void>
 
-const executeClaudeProbe: ExecuteClaudeProbe = async (executablePath, env) => {
-  await execFileAsync(executablePath, ['-p', 'ok'], {
+const executeClaudeProbe: ExecuteClaudeProbe = async (executablePath, env, runtimeArgs = []) => {
+  await execFileAsync(executablePath, [...runtimeArgs, '-p', 'ok'], {
     env,
     timeout: CLAUDE_PROBE_TIMEOUT_MS,
     // On Windows the detected claude is a `claude.cmd` shim, which execFile can't launch without a
@@ -383,6 +387,7 @@ export type AgentSpawnConfig = {
   envOverrides: Record<string, string>
   executablePath: string
   contextWindow?: number
+  sessionOptions?: Record<string, unknown>
 }
 
 // Outcome of uninstalling a managed runtime. `activeBackendAffected` is true only when the removed
@@ -399,8 +404,8 @@ export type SettingsServiceOptions = {
   detectDeps?: ClaudeDetectDeps
   opencodeDetectDeps?: OpencodeDetectDeps
   codexDetectDeps?: CodexDetectDeps
-  // The machine's own Claude config dir, read by legacy code paths and the claude-isolated
-  // provider for skill scanning. Injectable so tests don't touch the real ~/.claude.
+  // The machine's own Claude config dir, used by the shared provider for auth/spawn and scanned as a
+  // user skill source. Injectable so tests don't touch the real ~/.claude.
   userClaudeDir?: string
   // The machine's own Codex config dir, scanned for the "From your agent home" skill source.
   // Injectable for the same reason as userClaudeDir.
@@ -2523,6 +2528,26 @@ class SettingsService {
     await syncConnectorSkillDocs(join(configRoot, 'skills'), this.enabledConnectorIds(connectors))
   }
 
+  private async provisionClaudeRuntimeConfig(
+    settings: StoredSettings,
+    forcedSkillIds: ReadonlySet<string> = new Set()
+  ): Promise<string> {
+    const configDir = getAppClaudeConfigDir(this.storageRoot)
+    const disabledSkillIds = (settings.disabledSkillIds ?? []).filter(
+      (id) => !forcedSkillIds.has(id)
+    )
+
+    await provisionAppClaudeConfigDir(configDir, {
+      skills: await this.skillCatalog(),
+      disabledSkillIds
+    })
+
+    const connectors = await this.getConnectors()
+    await syncConnectorSkillDocs(join(configDir, 'skills'), this.enabledConnectorIds(connectors))
+
+    return configDir
+  }
+
   // Bundled connectors the user hasn't turned off (default-on), for skill and baseline delivery.
   private enabledConnectorIds(connectors: StoredConnectors | undefined): string[] {
     const disabled = new Set(connectors?.disabledConnectorIds ?? [])
@@ -2795,26 +2820,31 @@ class SettingsService {
       throw new Error(CLAUDE_SHARED_DISCONNECTED_MESSAGE)
     }
 
-    // Ensure the app-owned config dir exists (and app assets are injected) before the agent spawns. The
-    // enabled skill set (featured + imported + personal) is materialized here, so a toggle/create/import
-    // takes effect on the next spawn. Any skill force-loaded for the current turn is subtracted from the
-    // disabled set so a picked-but-disabled skill materializes for this prompt without mutating settings.
-    const appConfigDir = getAppClaudeConfigDir(this.storageRoot)
-    const disabledSkillIds = (settings.disabledSkillIds ?? []).filter(
-      (id) => !forcedSkillIds.has(id)
-    )
-    await provisionAppClaudeConfigDir(appConfigDir, {
-      skills: await this.skillCatalog(),
-      disabledSkillIds
-    })
+    // Provision the app-owned runtime bundle. Shared auth reads credentials from ~/.claude while the
+    // ACP session injects this bundle as a local plugin plus highest-priority settings layer.
+    const appConfigDir = await this.provisionClaudeRuntimeConfig(settings, forcedSkillIds)
 
     const provider = this.resolveProvider(activeProvider, settings.activeModel)
     const envOverrides = buildProviderEnv(provider, {
       storageRoot: this.storageRoot,
-      claudeExecutablePath: executablePath
+      claudeExecutablePath: executablePath,
+      userClaudeConfigDir: this.userClaudeDir
     })
 
-    return { envOverrides, executablePath, contextWindow: provider.contextWindow }
+    const sessionOptions =
+      activeProvider.type === 'claude-shared'
+        ? {
+            settings: join(appConfigDir, 'settings.json'),
+            plugins: [{ type: 'local', path: appConfigDir, skipMcpDiscovery: true }]
+          }
+        : undefined
+
+    return {
+      envOverrides,
+      executablePath,
+      sessionOptions,
+      contextWindow: provider.contextWindow
+    }
   }
 
   // Resolves the active agent backend for one connect: the selected framework plus its spawn inputs.
@@ -2915,17 +2945,16 @@ class SettingsService {
     }
 
     if (framework.id === 'claude-code') {
-      // Unchanged Claude path: skills provisioning + Anthropic-shaped env + local-auth handling.
-      const { envOverrides, executablePath, contextWindow } = await this.resolveSpawnConfig(
-        settings,
-        forcedSkillIds
-      )
+      // Claude path: app-owned runtime provisioning + Anthropic-shaped env + local-auth handling.
+      const { envOverrides, executablePath, sessionOptions, contextWindow } =
+        await this.resolveSpawnConfig(settings, forcedSkillIds)
 
       return {
         framework,
         backendId: `${framework.id}:${activeProvider.id}`,
         executablePath,
         env: envOverrides,
+        sessionOptions,
         sessionEffort,
         contextWindow
       }
@@ -3464,21 +3493,25 @@ class SettingsService {
       }
     }
 
-    if (provider.type !== 'claude-shared') {
-      const appConfigDir = getAppClaudeConfigDir(this.storageRoot)
-      await provisionAppClaudeConfigDir(appConfigDir, {
-        skills: await this.skillCatalog(),
-        disabledSkillIds: settings.disabledSkillIds
-      })
-    }
+    const appConfigDir = await this.provisionClaudeRuntimeConfig(settings)
     const envOverrides = buildProviderEnv(provider, {
       storageRoot: this.storageRoot,
-      claudeExecutablePath: executablePath
+      claudeExecutablePath: executablePath,
+      userClaudeConfigDir: this.userClaudeDir
     })
     const env = buildAgentSpawnEnv(augmentedPathEnv(process.env), envOverrides, executablePath)
 
     try {
-      await this.executeClaudeProbe(executablePath, env)
+      if (provider.type === 'claude-shared') {
+        await this.executeClaudeProbe(executablePath, env, [
+          '--settings',
+          join(appConfigDir, 'settings.json'),
+          '--plugin-dir',
+          appConfigDir
+        ])
+      } else {
+        await this.executeClaudeProbe(executablePath, env)
+      }
 
       return { ok: true, category: 'ok' }
     } catch (error) {

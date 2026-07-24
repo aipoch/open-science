@@ -29,30 +29,30 @@ export type ResolvedProvider = {
 }
 
 export type ProviderEnvOptions = {
-  // App storage root; every provider runs under one app-owned CLAUDE_CONFIG_DIR beneath it.
+  // App storage root; isolated and API-key providers run under one app-owned CLAUDE_CONFIG_DIR.
   storageRoot: string
   // Absolute path to the detected claude executable.
   claudeExecutablePath: string
+  // Shared Claude profile directory. Defaults to ~/.claude; injectable so callers can provision and
+  // spawn against exactly the same directory without touching the real user profile in tests.
+  userClaudeConfigDir?: string
 }
 
-// The single app-owned config directory every provider uses. Stable across provider switches so claude
-// keeps one session store, its skills/plugins/commands, and auth — instead of toggling between the
-// user's ~/.claude and a per-provider isolated dir (which lost history and customizations on switch).
+// The app-owned config directory used by isolated subscriptions and API-key providers. Stable across
+// those provider switches so Claude keeps one session store and one managed asset set.
 const getAppClaudeConfigDir = (storageRoot: string): string => join(storageRoot, 'claude')
 
 // The user's default ~/.claude directory, used by claude-shared to satisfy the CLAUDE_CONFIG_DIR
 // guard in agent-process.ts while still reading credentials from the standard location.
 const getUserClaudeConfigDir = (): string => join(homedir(), '.claude')
 
-// Builds spawn env overrides for one provider. All providers share the app-owned CLAUDE_CONFIG_DIR;
-// a provider only supplies credentials (endpoint / token / model). Empty/omitted fields are simply
-// not set so callers can merge this over process.env without erasing unrelated variables.
-//
-// Exception: claude-shared uses the default ~/.claude (no CLAUDE_CONFIG_DIR override), mirroring how
-// codex-shared uses the default CODEX_HOME.
+// Builds spawn env overrides for one provider. A provider supplies credentials (endpoint / token /
+// model) plus an explicit config directory. Empty/omitted fields are not set so callers can merge this
+// over process.env without erasing unrelated variables. claude-shared uses the user's normal profile,
+// while every other provider uses the app-owned directory.
 const buildProviderEnv = (
   provider: ResolvedProvider,
-  { storageRoot, claudeExecutablePath }: ProviderEnvOptions
+  { storageRoot, claudeExecutablePath, userClaudeConfigDir }: ProviderEnvOptions
 ): Record<string, string> => {
   const env: Record<string, string> = {
     CLAUDE_CODE_EXECUTABLE: claudeExecutablePath
@@ -62,7 +62,7 @@ const buildProviderEnv = (
   // config dir to prevent silent credential leaks. For claude-shared we satisfy the guard with the
   // user's real ~/.claude, so the spawned agent reads the shared credentials already stored there.
   if (provider.type === 'claude-shared') {
-    env.CLAUDE_CONFIG_DIR = getUserClaudeConfigDir()
+    env.CLAUDE_CONFIG_DIR = userClaudeConfigDir ?? getUserClaudeConfigDir()
   } else {
     env.CLAUDE_CONFIG_DIR = getAppClaudeConfigDir(storageRoot)
   }

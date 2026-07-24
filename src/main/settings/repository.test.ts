@@ -101,6 +101,35 @@ describe('settings repository', () => {
     })
   })
 
+  it('remembers the last activated Claude mode after switching to another provider', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.upsertProvider(
+      provider({
+        id: 'builtin-claude-isolated',
+        type: 'claude-isolated',
+        name: 'Claude subscription'
+      })
+    )
+    await repository.upsertProvider(
+      provider({
+        id: 'builtin-claude-shared',
+        type: 'claude-shared',
+        name: 'Claude subscription'
+      })
+    )
+    await repository.upsertProvider(provider())
+
+    await repository.setActiveProvider('builtin-claude-isolated')
+    await repository.setActiveProvider('p1')
+
+    await expect(new SettingsRepository(root).getSettings()).resolves.toMatchObject({
+      activeProviderId: 'p1',
+      claudeSubscriptionProviderId: 'builtin-claude-isolated'
+    })
+  })
+
   it('migrates two legacy Codex subscription cards into one active-mode provider', () => {
     const settings = sanitizeSettings({
       activeProviderId: 'builtin-codex-isolated',

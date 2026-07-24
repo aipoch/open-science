@@ -798,7 +798,10 @@ class SettingsRepository {
       return {
         ...settings,
         activeProviderId: id,
-        activeModel: id === undefined ? undefined : model
+        activeModel: id === undefined ? undefined : model,
+        ...(id !== undefined && isClaudeSubscriptionProviderId(id)
+          ? { claudeSubscriptionProviderId: id }
+          : {})
       }
     })
   }

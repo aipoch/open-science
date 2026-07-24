@@ -106,7 +106,11 @@ const createService = (
     codexAuth?: CodexAuthControllerPort
     claudeIsolatedAuth?: ClaudeIsolatedAuthControllerPort
     claudeSharedAuth?: ClaudeSharedAuthControllerPort
-    executeClaudeProbe?: (executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>
+    executeClaudeProbe?: (
+      executablePath: string,
+      env: NodeJS.ProcessEnv,
+      runtimeArgs?: string[]
+    ) => Promise<void>
     userClaudeDir?: string
     userCodexDir?: string
   } = {}
@@ -2742,6 +2746,68 @@ describe('SettingsService: skills', () => {
     expect(await exists(skillDir)).toBe(false)
   })
 
+  it('provisions Open Science assets into the shared Claude runtime directory', async () => {
+    const userClaudeDir = join(storageRoot, 'shared-claude')
+    const userSkillDir = join(userClaudeDir, 'skills', 'os-user-owned')
+    const userConnectorDir = join(userClaudeDir, 'skills', 'mcp-pubmed')
+    const appClaudeDir = getAppClaudeConfigDir(storageRoot)
+    const customConnectorDir = join(appClaudeDir, 'skills', 'mcp-custom-server')
+    await mkdir(userSkillDir, { recursive: true })
+    await mkdir(userConnectorDir, { recursive: true })
+    await mkdir(customConnectorDir, { recursive: true })
+    await writeFile(join(userSkillDir, 'SKILL.md'), '# User skill', 'utf8')
+    await writeFile(join(userConnectorDir, 'SKILL.md'), '# User connector skill', 'utf8')
+    await writeFile(join(customConnectorDir, 'SKILL.md'), '# Custom connector doc', 'utf8')
+    await writeFile(
+      join(userClaudeDir, 'settings.json'),
+      JSON.stringify({ model: 'keep-user-model' }),
+      'utf8'
+    )
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      userClaudeDir,
+      skillRegistry: new SkillRegistry(await seedBundle())
+    })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await service.upsertProvider({ type: 'claude-shared' })
+    await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID)
+
+    const managedSkillDir = join(appClaudeDir, 'skills', 'os-demo')
+    const managedSkillFile = join(managedSkillDir, 'SKILL.md')
+    try {
+      const config = await service.resolveActiveSpawnConfig()
+
+      expect(config.envOverrides.CLAUDE_CONFIG_DIR).toBe(userClaudeDir)
+      expect(config.sessionOptions).toEqual({
+        settings: join(appClaudeDir, 'settings.json'),
+        plugins: [{ type: 'local', path: appClaudeDir, skipMcpDiscovery: true }]
+      })
+      expect(await readFile(managedSkillFile, 'utf8')).toContain('demo body')
+      expect(await readFile(join(userSkillDir, 'SKILL.md'), 'utf8')).toBe('# User skill')
+      expect(await readFile(join(userConnectorDir, 'SKILL.md'), 'utf8')).toBe(
+        '# User connector skill'
+      )
+      expect(
+        await readFile(join(appClaudeDir, 'skills', 'mcp-pubmed', 'SKILL.md'), 'utf8')
+      ).toContain('name: mcp-pubmed')
+      expect(await readFile(join(customConnectorDir, 'SKILL.md'), 'utf8')).toBe(
+        '# Custom connector doc'
+      )
+      expect(JSON.parse(await readFile(join(userClaudeDir, 'settings.json'), 'utf8'))).toEqual({
+        model: 'keep-user-model'
+      })
+      const appSettings = JSON.parse(await readFile(join(appClaudeDir, 'settings.json'), 'utf8'))
+      expect(appSettings.disableBundledSkills).toBe(true)
+      expect(appSettings.permissions.deny).toEqual(
+        expect.arrayContaining([expect.stringMatching(/^Read/)])
+      )
+    } finally {
+      await chmod(managedSkillFile, 0o644).catch(() => undefined)
+      await chmod(managedSkillDir, 0o755).catch(() => undefined)
+    }
+  })
+
   it('materializes enabled skills into the app-owned CODEX_HOME before spawn', async () => {
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
@@ -4314,7 +4380,13 @@ describe('SettingsService: claude-shared login orchestration', () => {
     expect(provider?.lastValidatedAt).toBeGreaterThan(0)
     expect(probe).toHaveBeenCalledWith(
       execPath,
-      expect.objectContaining({ ANTHROPIC_MODEL: 'claude-opus-4-6' })
+      expect.objectContaining({ ANTHROPIC_MODEL: 'claude-opus-4-6' }),
+      [
+        '--settings',
+        join(getAppClaudeConfigDir(storageRoot), 'settings.json'),
+        '--plugin-dir',
+        getAppClaudeConfigDir(storageRoot)
+      ]
     )
   })
 
@@ -4355,7 +4427,13 @@ describe('SettingsService: claude-shared login orchestration', () => {
     expect(result).toMatchObject({ ok: false, category: 'unknown', applied: true })
     expect(probe).toHaveBeenCalledWith(
       execPath,
-      expect.objectContaining({ ANTHROPIC_MODEL: 'claude-bad-model' })
+      expect.objectContaining({ ANTHROPIC_MODEL: 'claude-bad-model' }),
+      [
+        '--settings',
+        join(getAppClaudeConfigDir(storageRoot), 'settings.json'),
+        '--plugin-dir',
+        getAppClaudeConfigDir(storageRoot)
+      ]
     )
     expect(
       (await service.getSettingsView()).providers.find(
@@ -4438,7 +4516,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
     await expect(service.loginClaudeShared()).resolves.toMatchObject({ ok: true, applied: true })
     await expect(service.resolveActiveSpawnConfig()).resolves.toMatchObject({
       envOverrides: expect.objectContaining({
-        CLAUDE_CONFIG_DIR: expect.stringContaining('.claude')
+        CLAUDE_CONFIG_DIR: join(storageRoot, 'no-user-claude')
       })
     })
     expect(

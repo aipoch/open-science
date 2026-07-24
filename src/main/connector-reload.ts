@@ -10,3 +10,13 @@ export const wireConnectorReload = (
   refreshConnectorSkillDocs().finally(() => {
     requestSkillsReload()
   })
+
+// Lets unrelated IPC registration proceed while the initial connector sync runs, but keeps ACP
+// registration behind that barrier so the first session cannot observe a partial skills snapshot.
+export const registerAfterInitialConnectorRefresh = async <T>(
+  initialRefresh: Promise<unknown>,
+  registerRuntime: () => T
+): Promise<T> => {
+  await initialRefresh
+  return registerRuntime()
+}

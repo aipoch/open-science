@@ -4,14 +4,15 @@ import { join } from 'node:path'
 import { ClaudeCodeSkillMaterializer, type SkillMaterializer } from '../skills/materializer'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 
-// The app owns its Claude config directory (`<storageRoot>/claude`), shared by every provider and kept
-// separate from the user's `~/.claude`. This module ensures that directory exists and injects the app's
-// OWN skills before the agent spawns. It never reads from or copies anything out of ~/.claude.
+// The app owns `<storageRoot>/claude` and provisions its settings and skills there. Isolated/API-key
+// providers use it as CLAUDE_CONFIG_DIR; shared auth keeps CLAUDE_CONFIG_DIR=~/.claude and loads this
+// directory as a session-local plugin/settings layer, so the user's profile is never modified.
 
-// Subdirs claude loads app-scoped assets from. App-owned; never synced with ~/.claude.
+// Subdirs Claude loads app-scoped assets from.
 const APP_ASSET_SUBDIRS = ['skills', 'plugins', 'commands'] as const
+const APP_PLUGIN_MANIFEST_DIR = '.claude-plugin'
 
-// The agent's own file tools must not read (or search) the app config dir — it holds the materialized
+// The agent's own file tools must not read (or search) the app config dir — it holds materialized
 // skill files, whose (bundled / MCP) contents must never be surfaced verbatim into the conversation.
 // Skill *loading* is internal to the agent and unaffected by these tool-level deny rules. The kernel
 // (bash/subprocess) is guarded separately; see the notebook audit hook and read-guard spec.
@@ -44,9 +45,10 @@ const configDenyRules = (configDir: string): string[] => {
   return GUARDED_FILE_TOOLS.map((tool) => `${tool}(//${abs}/**)`)
 }
 
-// Writes/merges `<configDir>/settings.json` for the app-owned user scope (the agent runs with
-// settingSources: ['user']). Two things are enforced here, preserving unrelated settings already
-// present: the permissions.deny guard rules (file-tool fence, plus the current DENIED_BUILTIN_TOOLS,
+// Writes/merges `<configDir>/settings.json` for the app-owned runtime scope. Isolated providers load it
+// as their user settings; shared mode injects it through the SDK's highest-priority settings option.
+// Two things are enforced here, preserving unrelated settings already present: the permissions.deny
+// guard rules (file-tool fence, plus the current DENIED_BUILTIN_TOOLS,
 // after pruning any stale module-owned MANAGED_BUILTIN_TOOLS entries), and disableBundledSkills so
 // Claude Code's own bundled skills/workflows (dataviz, deep-research, …) never leak in — the app
 // injects its OWN curated skill set into `<configDir>/skills`, which disableBundledSkills leaves
@@ -96,7 +98,14 @@ const provisionAppClaudeConfigDir = async (
 ): Promise<void> => {
   await mkdir(configDir, { recursive: true })
   await Promise.all(
-    APP_ASSET_SUBDIRS.map((sub) => mkdir(join(configDir, sub), { recursive: true }))
+    [...APP_ASSET_SUBDIRS, APP_PLUGIN_MANIFEST_DIR].map((sub) =>
+      mkdir(join(configDir, sub), { recursive: true })
+    )
+  )
+  await writeFile(
+    join(configDir, APP_PLUGIN_MANIFEST_DIR, 'plugin.json'),
+    `${JSON.stringify({ name: 'open-science' }, null, 2)}\n`,
+    'utf8'
   )
 
   await writeAppSettings(configDir)

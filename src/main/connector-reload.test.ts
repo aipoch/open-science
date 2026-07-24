@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { wireConnectorReload } from './connector-reload'
+import { registerAfterInitialConnectorRefresh, wireConnectorReload } from './connector-reload'
 
 // Exercises the REAL wiring used by ipc.ts's onConnectorsChanged (not a reimplementation): the skills
 // reload must run on BOTH settle paths, so if the source ever regressed `.finally` to `.then` these
@@ -23,5 +23,24 @@ describe('wireConnectorReload', () => {
     // the behavior a `.then` chain would drop, which is why the source uses `.finally`.
     await expect(wireConnectorReload(refresh, reload)).rejects.toThrow('sync failed')
     expect(reload).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('registerAfterInitialConnectorRefresh', () => {
+  it('does not expose the runtime until the initial connector docs are ready', async () => {
+    let finishRefresh: (() => void) | undefined
+    const refresh = new Promise<void>((resolve) => {
+      finishRefresh = resolve
+    })
+    const registerRuntime = vi.fn(() => ({ ready: true }))
+
+    const registration = registerAfterInitialConnectorRefresh(refresh, registerRuntime)
+    await Promise.resolve()
+    expect(registerRuntime).not.toHaveBeenCalled()
+
+    finishRefresh?.()
+
+    await expect(registration).resolves.toEqual({ ready: true })
+    expect(registerRuntime).toHaveBeenCalledOnce()
   })
 })
