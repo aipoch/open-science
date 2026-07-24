@@ -200,6 +200,26 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain('Run command?')
   })
 
+  it('shows the title for a non-Bash execute request with no command preview', () => {
+    // A non-Bash execute request whose command lives only in the title: extractPermissionCode
+    // has no Bash fallback here, so the title is the only place the command can appear — the
+    // generic "Run command?" header must not leave the prompt opaque.
+    const executeTitleOnly: AcpPermissionRequest = {
+      requestId: 'exec-title-1',
+      sessionId: 'session-1',
+      toolCallId: 'tool-exec-title',
+      title: 'python scripts/run_pipeline.py --full',
+      toolKind: 'execute',
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
+      raw: {}
+    }
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls requests={[executeTitleOnly]} onRespond={() => undefined} />
+    )
+    expect(html).toContain('Run command?')
+    expect(html).toContain('python scripts/run_pipeline.py --full')
+  })
+
   it('serializes prompts by rendering only the first pending request', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls

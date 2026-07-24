@@ -408,17 +408,19 @@ const PermissionApprovalControls = ({
 
   // The title often carries the actual target (e.g. provider "Write" with title
   // "Write report.md"). Surface it as a detail line when it adds information the header
-  // doesn't, and isn't already shown verbatim by the code card. Skipped for notebook and
-  // shell prompts: there the title is just the tool identifier or the command itself.
+  // doesn't, and isn't already shown verbatim by the code card. Skipped for notebook
+  // prompts: there the title is just the tool identifier. For shell prompts the header is
+  // generic ("Run command?"), so when no code preview renders the command — e.g. a non-Bash
+  // execute request whose command lives only in the title — the title must stay visible,
+  // otherwise the user approves an opaque execution request.
   const headerName = request.providerToolName ?? request.title
-  const titleDetail =
-    !isNotebook &&
-    !isShell &&
-    request.title &&
-    request.title !== headerName &&
-    request.title !== permCode?.code
-      ? request.title
-      : undefined
+  const titleDetail = ((): string | undefined => {
+    if (isNotebook || !request.title || request.title === permCode?.code) return undefined
+    if (isShell) {
+      return !permCode && request.title !== request.providerToolName ? request.title : undefined
+    }
+    return request.title !== headerName ? request.title : undefined
+  })()
 
   return (
     <div className="mb-2 flex w-full max-w-full flex-col gap-4 rounded-xl border border-border bg-card p-5 text-xs leading-5 text-card-foreground shadow-dialog outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
