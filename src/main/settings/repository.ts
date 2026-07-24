@@ -762,6 +762,8 @@ class SettingsRepository {
   async updateClaudeSharedValidationIfUnchanged(
     expectedProvider: StoredProvider,
     expectedPreferredMode: ClaudeSubscriptionProviderId | undefined,
+    expectedActiveProviderId: string | undefined,
+    expectedActiveModel: string | undefined,
     patch: Pick<StoredProvider, 'disconnectedAt' | 'lastValidatedAt' | 'lastValidationFailure'>
   ): Promise<boolean> {
     let applied = false
@@ -773,6 +775,8 @@ class SettingsRepository {
       if (
         index < 0 ||
         settings.claudeSubscriptionProviderId !== expectedPreferredMode ||
+        settings.activeProviderId !== expectedActiveProviderId ||
+        settings.activeModel !== expectedActiveModel ||
         !isDeepStrictEqual(settings.providers[index], expectedProvider)
       ) {
         return settings

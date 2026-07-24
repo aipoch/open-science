@@ -164,8 +164,9 @@ const registerSettingsIpcHandlers = ({
     const before = await service.getSettingsView()
     const snapshot = await service.deleteProvider(request.id)
 
-    // The live process still holds the decrypted key until it reconnects.
-    if (before.activeProviderId === request.id) onActiveProviderChanged?.()
+    // The live process still holds the deleted provider configuration until it reconnects. Compare
+    // snapshots because deleting either collapsed Claude id can also remove its active sibling.
+    if (before.activeProviderId !== snapshot.activeProviderId) onActiveProviderChanged?.()
 
     return snapshot
   })

@@ -1836,14 +1836,15 @@ class SettingsService {
     if (isClaudeSubscriptionProvider(provider.type)) {
       const outgoingId =
         provider.type === 'claude-shared' ? CLAUDE_ISOLATED_PROVIDER_ID : CLAUDE_SHARED_PROVIDER_ID
-      const outgoingWasActive = settings.activeProviderId === outgoingId
+      const collapsedCardWasActive =
+        settings.activeProviderId === provider.id || settings.activeProviderId === outgoingId
 
       await this.repository.upsertProvider(provider)
 
-      // Move an active collapsed card to the selected mode while retaining its compatible Claude
-      // model choice. An inactive sibling remains inactive.
-      if (outgoingWasActive) {
-        await this.repository.setActiveProvider(provider.id, settings.activeModel)
+      // Move an active collapsed card to the selected mode and use that mode's saved model/default.
+      // An inactive sibling remains inactive.
+      if (collapsedCardWasActive) {
+        await this.repository.setActiveProvider(provider.id, this.resolveActiveModel(provider))
       }
 
       return this.getSettingsView()
@@ -2125,6 +2126,8 @@ class SettingsService {
     const applied = await this.repository.updateClaudeSharedValidationIfUnchanged(
       targetProvider,
       loginTarget.claudeSubscriptionProviderId,
+      loginTarget.activeProviderId,
+      loginTarget.activeModel,
       result.ok
         ? {
             disconnectedAt: undefined,
@@ -2299,6 +2302,10 @@ class SettingsService {
       return { ok: false, category: 'unknown', message: 'No provider to validate.' }
     }
 
+    const storedValidationTarget = resolved.storedId
+      ? settings.providers.find((provider) => provider.id === resolved.storedId)
+      : undefined
+
     const validationGeneration = resolved.storedId
       ? (this.providerValidationGenerations.get(resolved.storedId) ?? 0) + 1
       : undefined
@@ -2375,24 +2382,38 @@ class SettingsService {
 
       // Success stamps the validated time and clears any prior failure. A failure keeps the provider
       // but records why, so the list can flag it and the model pickers exclude it until it passes.
-      await this.repository.upsertProvider(
-        result.ok
-          ? {
-              ...stored,
-              lastValidatedAt: Date.now(),
-              lastValidationFailure: undefined
+      const validationPatch = result.ok
+        ? {
+            lastValidatedAt: Date.now(),
+            lastValidationFailure: undefined
+          }
+        : {
+            lastValidatedAt: undefined,
+            lastValidationFailure: {
+              at: Date.now(),
+              category: result.category,
+              status: result.status,
+              message: result.message
             }
-          : {
-              ...stored,
-              lastValidatedAt: undefined,
-              lastValidationFailure: {
-                at: Date.now(),
-                category: result.category,
-                status: result.status,
-                message: result.message
-              }
-            }
-      )
+          }
+
+      if (stored.type === 'claude-shared') {
+        if (storedValidationTarget?.type !== 'claude-shared') {
+          return { ...result, applied: false }
+        }
+
+        const applied = await this.repository.updateClaudeSharedValidationIfUnchanged(
+          storedValidationTarget,
+          settings.claudeSubscriptionProviderId,
+          settings.activeProviderId,
+          settings.activeModel,
+          validationPatch
+        )
+
+        return { ...result, applied }
+      }
+
+      await this.repository.upsertProvider({ ...stored, ...validationPatch })
 
       return { ...result, applied: true }
     }

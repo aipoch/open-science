@@ -4334,7 +4334,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
 
     const snapshot = await service.upsertProvider({
       type: 'claude-shared',
-      model: 'claude-sonnet-4-5'
+      model: 'claude-opus-4-6'
     })
 
     expect(snapshot.providers.map((provider) => provider.id)).toEqual(
@@ -4344,7 +4344,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       snapshot.providers.find((provider) => provider.id === CLAUDE_ISOLATED_PROVIDER_ID)?.hasKey
     ).toBe(true)
     expect(snapshot.activeProviderId).toBe(CLAUDE_SHARED_PROVIDER_ID)
-    expect(snapshot.activeModel).toBe('claude-sonnet-4-5')
+    expect(snapshot.activeModel).toBe('claude-opus-4-6')
 
     const switchedBack = await service.upsertProvider({ type: 'claude-isolated' })
     expect(switchedBack.providers.map((provider) => provider.id)).toEqual(
@@ -4355,6 +4355,13 @@ describe('SettingsService: claude-shared login orchestration', () => {
     ).toBe(true)
     expect(switchedBack.activeProviderId).toBe(CLAUDE_ISOLATED_PROVIDER_ID)
     expect(switchedBack.activeModel).toBe('claude-sonnet-4-5')
+
+    const switchedToDefault = await service.upsertProvider({
+      type: 'claude-shared',
+      model: ''
+    })
+    expect(switchedToDefault.activeProviderId).toBe(CLAUDE_SHARED_PROVIDER_ID)
+    expect(switchedToDefault.activeModel).toBeUndefined()
   })
 
   it('loginClaudeShared records verified marker and returns applied:true', async () => {
@@ -4502,6 +4509,37 @@ describe('SettingsService: claude-shared login orchestration', () => {
     ).toContain('shared-profile validation probe')
   })
 
+  it('does not re-verify shared Claude after it is disconnected during validation', async () => {
+    let finishProbe: (() => void) | undefined
+    const probe = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishProbe = resolve
+        })
+    )
+    const auth = sharedAuth()
+    vi.mocked(auth.getStatus).mockResolvedValue({ supported: true, authenticated: true })
+    const service = createService(undefined, {
+      claudeSharedAuth: auth,
+      executeClaudeProbe: probe
+    })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await service.upsertProvider({ type: 'claude-shared' })
+
+    const validation = service.validateProvider({ providerId: CLAUDE_SHARED_PROVIDER_ID })
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce())
+    await service.logoutClaudeShared()
+    finishProbe?.()
+
+    await expect(validation).resolves.toMatchObject({ ok: true, applied: false })
+    const provider = (await repository.getSettings()).providers.find(
+      (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
+    )
+    expect(provider?.disconnectedAt).toBeGreaterThan(0)
+    expect(provider?.lastValidatedAt).toBeUndefined()
+    expect(provider?.lastValidationFailure?.category).toBe('auth')
+  })
+
   it('does not replace a verified shared login with a cancellation failure', async () => {
     const auth = sharedAuth({ loginOk: true })
     const loginShared = vi.mocked(auth.loginShared)
@@ -4602,11 +4640,13 @@ describe('SettingsService: claude-shared login orchestration', () => {
     expect(changed.providers.find((provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID)).toEqual(
       expect.objectContaining({ model: 'claude-sonnet-4-5', lastValidatedAt: undefined })
     )
+    await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID, 'claude-sonnet-4-5')
 
     const cleared = await service.upsertProvider({ type: 'claude-shared', model: '' })
     expect(
       cleared.providers.find((provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID)?.model
     ).toBeUndefined()
+    expect(cleared.activeModel).toBeUndefined()
   })
 
   it('cancelClaudeLogin delegates to the shared auth controller', () => {

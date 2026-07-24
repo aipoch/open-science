@@ -338,6 +338,26 @@ describe('settings IPC handlers', () => {
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
   })
 
+  it('drops the agent connection when grouped Claude deletion removes the active sibling', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    service.getSettingsView.mockResolvedValue({
+      activeProviderId: CLAUDE_SHARED_PROVIDER_ID,
+      providers: []
+    })
+    service.deleteProvider.mockResolvedValue({
+      claude: {},
+      activeProviderId: undefined,
+      providers: []
+    })
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+
+    await invoke('settings:delete-provider', { id: CLAUDE_ISOLATED_PROVIDER_ID })
+
+    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+  })
+
   it('drops the agent connection when the edited provider is the active one', async () => {
     handlers.clear()
     const service = createFakeService()
