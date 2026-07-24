@@ -243,7 +243,7 @@ const ReportErrorDialog = ({
           </label>
 
           {revealMessage ? (
-            <p className="mt-2 text-xs text-red-700" role="alert">
+            <p className="mt-2 text-xs text-red-700 dark:text-red-400" role="alert">
               {revealMessage}
             </p>
           ) : null}

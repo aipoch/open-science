@@ -29,9 +29,9 @@ type ReviewerCardProps = {
 
 // Status badge styles (pass/warn/fail).
 const STATUS_BADGE_STYLES: Record<string, string> = {
-  fail: 'text-red-700 bg-red-50 border border-red-200',
-  warn: 'text-yellow-700 bg-yellow-50 border border-yellow-200',
-  pass: 'text-green-700 bg-green-50 border border-green-200'
+  fail: 'text-red-700 bg-red-50 border border-red-200 dark:text-red-300 dark:bg-red-950/20 dark:border-red-800/50',
+  warn: 'text-yellow-700 bg-yellow-50 border border-yellow-200 dark:text-yellow-300 dark:bg-yellow-950/20 dark:border-yellow-800/50',
+  pass: 'text-green-700 bg-green-50 border border-green-200 dark:text-green-300 dark:bg-green-950/20 dark:border-green-800/50'
 }
 
 // ── Shared item card layout ──────────────────────────────────────────────────
@@ -85,7 +85,7 @@ const ItemCard = ({
       {/* Re-flag marker: shown when this claim was re-flagged in the fix loop. */}
       {reflagCount != null && reflagCount > 0 && (
         <span
-          className="shrink-0 rounded px-1 py-0.5 text-[11px] text-yellow-600 border border-yellow-200 bg-yellow-50"
+          className="shrink-0 rounded px-1 py-0.5 text-[11px] text-yellow-600 border border-yellow-200 bg-yellow-50 dark:text-yellow-400 dark:border-yellow-800/50 dark:bg-yellow-950/20"
           data-testid="reviewer-reflag-marker"
         >
           re-flagged ×{reflagCount}
@@ -226,7 +226,8 @@ export const ReviewerCard = ({
     if (isRunning) return <Loader className="h-3 w-3 animate-spin text-text-400" />
     if (isError) return <AlertTriangle className="h-3 w-3 text-yellow-500" />
     if (isStale) return <AlertTriangle className="h-3 w-3 text-amber-500" />
-    if (isComplete && !hasWarnOrFail) return <ShieldCheck className="h-3 w-3 text-green-600" />
+    if (isComplete && !hasWarnOrFail)
+      return <ShieldCheck className="h-3 w-3 text-green-600 dark:text-green-400" />
     if (isComplete && hasWarnOrFail) return <AlertTriangle className="h-3 w-3 text-red-500" />
     return <Loader className="h-3 w-3 text-text-400" />
   })()
@@ -253,7 +254,12 @@ export const ReviewerCard = ({
         {statusIcon}
         <span className="font-medium text-text-200">Reviewer</span>
         <span className="mx-1 text-text-400">&middot;</span>
-        <span className={cn('text-text-300', isComplete && hasWarnOrFail && 'text-red-600')}>
+        <span
+          className={cn(
+            'text-text-300',
+            isComplete && hasWarnOrFail && 'text-red-600 dark:text-red-400'
+          )}
+        >
           {summaryText()}
         </span>
         {/* Total check count — shown for any completed review (pass or flagged), never for zero checks. */}
@@ -269,7 +275,7 @@ export const ReviewerCard = ({
         {isCapReached && (
           <>
             <span className="mx-1 text-text-400">&middot;</span>
-            <span className="text-yellow-600">fix limit reached</span>
+            <span className="text-yellow-600 dark:text-yellow-400">fix limit reached</span>
           </>
         )}
         {canExpand && (
@@ -288,17 +294,19 @@ export const ReviewerCard = ({
           including earlier turns that the composer's "Request review" (last-turn only) cannot reach. */}
       {isStale && (
         <div
-          className="mt-2 flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1"
+          className="mt-2 flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 dark:border-amber-800/50 dark:bg-amber-950/20"
           data-testid="reviewer-stale-notice"
         >
-          <span className="text-[11px] text-amber-800">Turn changed after this review ran.</span>
+          <span className="text-[11px] text-amber-800 dark:text-amber-300">
+            Turn changed after this review ran.
+          </span>
           {onRerun && (
             <button
               type="button"
               // Disable immediately on click so a double-click (or an impatient second click before the
               // review flips to 'running') can't launch two reviews; main also dedups concurrent runs.
               disabled={rerunRequested}
-              className="shrink-0 rounded border border-amber-300 px-2 py-0.5 text-[11px] text-amber-800 hover:bg-amber-100 transition-colors disabled:cursor-default disabled:opacity-50"
+              className="shrink-0 rounded border border-amber-300 px-2 py-0.5 text-[11px] text-amber-800 hover:bg-amber-100 transition-colors disabled:cursor-default disabled:opacity-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-900/40"
               onClick={() => {
                 setRerunRequested(true)
                 // Release the latch if no review actually started (e.g. the session couldn't load), so

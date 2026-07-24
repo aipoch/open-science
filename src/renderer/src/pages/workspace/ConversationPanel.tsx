@@ -293,7 +293,7 @@ const ConversationPanel = ({
                     Compacting conversation to fit the context limit…
                   </div>
                 ) : actionError || activeSession?.status === 'error' ? (
-                  <div className="mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700">
+                  <div className="mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
                     {/* Transient action errors and a run failure can coexist; show each on its own row
                         so the run's report affordance is never suppressed by a transient error. */}
                     {actionError ? (
@@ -310,7 +310,7 @@ const ConversationPanel = ({
                           <button
                             type="button"
                             onClick={openReportDialog}
-                            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100"
+                            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
                             aria-label="Report this error"
                           >
                             <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />

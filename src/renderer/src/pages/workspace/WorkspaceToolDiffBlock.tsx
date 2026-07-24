@@ -40,8 +40,8 @@ const WorkspaceToolDiffBlock = ({ section }: WorkspaceToolDiffBlockProps): React
             className={cn(
               'block px-3',
               line.type === 'added'
-                ? 'bg-emerald-500/10 text-emerald-700'
-                : 'bg-rose-500/10 text-rose-700'
+                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                : 'bg-rose-500/10 text-rose-700 dark:text-rose-400'
             )}
           >
             <span aria-hidden="true" className="mr-2 select-none opacity-70">

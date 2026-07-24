@@ -17,13 +17,13 @@ type CompletedJobCardProps = {
 function getStatusDisplay(job: JobSummary): { label: string; colorClass: string } {
   switch (job.status) {
     case 'success':
-      return { label: 'finished', colorClass: 'text-green-600' }
+      return { label: 'finished', colorClass: 'text-green-600 dark:text-green-400' }
     case 'failed':
-      return { label: 'failed', colorClass: 'text-red-600' }
+      return { label: 'failed', colorClass: 'text-red-600 dark:text-red-400' }
     case 'timeout':
-      return { label: 'timed out', colorClass: 'text-red-600' }
+      return { label: 'timed out', colorClass: 'text-red-600 dark:text-red-400' }
     case 'error':
-      return { label: 'error', colorClass: 'text-red-600' }
+      return { label: 'error', colorClass: 'text-red-600 dark:text-red-400' }
     default:
       return { label: job.status, colorClass: 'text-muted-foreground' }
   }

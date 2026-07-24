@@ -34,10 +34,17 @@ const formatBlockRef = (check: ReviewCheck): string | null => {
 // Icon component for a check status.
 const StatusIcon = ({ status }: { status: ReviewCheck['status'] }): React.JSX.Element => {
   if (status === 'fail')
-    return <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600" aria-hidden />
+    return (
+      <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" aria-hidden />
+    )
   if (status === 'warn')
     return <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-yellow-500" aria-hidden />
-  return <CheckCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-600" aria-hidden />
+  return (
+    <CheckCircle
+      className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-600 dark:text-green-400"
+      aria-hidden
+    />
+  )
 }
 
 // One row in the unified checks list.
@@ -58,9 +65,9 @@ const CheckRow = ({
   }, [isActive])
 
   const statusStyles: Record<string, string> = {
-    fail: 'text-red-700 bg-red-50 border border-red-200',
-    warn: 'text-yellow-700 bg-yellow-50 border border-yellow-200',
-    pass: 'text-green-700 bg-green-50 border border-green-200'
+    fail: 'text-red-700 bg-red-50 border border-red-200 dark:text-red-300 dark:bg-red-950/20 dark:border-red-800/50',
+    warn: 'text-yellow-700 bg-yellow-50 border border-yellow-200 dark:text-yellow-300 dark:bg-yellow-950/20 dark:border-yellow-800/50',
+    pass: 'text-green-700 bg-green-50 border border-green-200 dark:text-green-300 dark:bg-green-950/20 dark:border-green-800/50'
   }
 
   const locatorRef = formatBlockRef(check)
@@ -143,7 +150,7 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
   // tool entry: collapsible row with real tool name + one-line summary + status dot
   const statusDot =
     entry.status === 'ok' ? (
-      <span className="shrink-0 text-[10px] text-green-600">● ok</span>
+      <span className="shrink-0 text-[10px] text-green-600 dark:text-green-400">● ok</span>
     ) : entry.status === 'error' ? (
       <span className="shrink-0 text-[10px] text-red-500">● error</span>
     ) : null
@@ -201,7 +208,7 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
                   <span
                     className={cn(
                       'block',
-                      entry.exitCode === 0 ? 'text-green-600' : 'text-red-500'
+                      entry.exitCode === 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500'
                     )}
                   >
                     {`exit ${entry.exitCode}`}
@@ -277,7 +284,7 @@ const SessionReviewerPanel = ({
         {review.stale && (
           <p
             data-testid="reviewer-stale-notice"
-            className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800"
+            className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/20 dark:text-amber-300"
           >
             This turn changed after the review ran (e.g. an artifact was edited). The result below
             may be out of date — re-run the review to refresh it.

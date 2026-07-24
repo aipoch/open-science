@@ -113,8 +113,8 @@ const permissionProfiles: Array<{
 // Borderless capsule colors per level: ask stays neutral, auto is blue, full warns in amber.
 const profileCapsuleClassName: Record<PermissionProfileId, string> = {
   ask: 'bg-bg-200 text-text-100',
-  auto: 'bg-blue-500/10 text-blue-600',
-  full: 'bg-amber-500/10 text-amber-600'
+  auto: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+  full: 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
 }
 
 const ComposerAgentControlsMenu = ({
@@ -251,7 +251,10 @@ const ComposerAgentControlsMenu = ({
                   >
                     {/* Full access reads as a warning row: amber icon/title, softer amber description. */}
                     <ProfileIcon
-                      className={cn('size-4 shrink-0', isFull ? 'text-amber-600' : 'text-text-200')}
+                      className={cn(
+                        'size-4 shrink-0',
+                        isFull ? 'text-amber-600 dark:text-amber-400' : 'text-text-200'
+                      )}
                       strokeWidth={2}
                       aria-hidden="true"
                     />
@@ -259,7 +262,7 @@ const ComposerAgentControlsMenu = ({
                       <span
                         className={cn(
                           'block text-[13px] font-medium leading-5',
-                          isFull && 'text-amber-600'
+                          isFull && 'text-amber-600 dark:text-amber-400'
                         )}
                       >
                         {candidate.label}
@@ -267,7 +270,7 @@ const ComposerAgentControlsMenu = ({
                       <span
                         className={cn(
                           'block text-[11px] leading-4',
-                          isFull ? 'text-amber-600/70' : 'text-text-300'
+                          isFull ? 'text-amber-600/70 dark:text-amber-400/70' : 'text-text-300'
                         )}
                       >
                         {isDisabled
@@ -437,7 +440,7 @@ const ComposerAgentControlsMenu = ({
           >
             <div className={dialogHeaderClassName}>
               <div className="flex min-w-0 items-start gap-3">
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
                   <AlertTriangle className="size-5" strokeWidth={2} aria-hidden="true" />
                 </span>
                 <div className="min-w-0">

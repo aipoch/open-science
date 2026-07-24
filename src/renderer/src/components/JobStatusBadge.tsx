@@ -5,31 +5,38 @@ import type { ComputeJobStatus } from '../../../shared/compute'
 const STATUS_STYLE: Record<ComputeJobStatus, { label: string; className: string }> = {
   queued: {
     label: 'Queued',
-    className: 'bg-slate-100 text-slate-600 border-slate-200'
+    className:
+      'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-950/40 dark:text-slate-400 dark:border-slate-800/50'
   },
   submitted: {
     label: 'Queued',
-    className: 'bg-slate-100 text-slate-600 border-slate-200'
+    className:
+      'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-950/40 dark:text-slate-400 dark:border-slate-800/50'
   },
   running: {
     label: 'Running',
-    className: 'bg-amber-50 text-amber-700 border-amber-200'
+    className:
+      'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/20 dark:text-amber-300 dark:border-amber-800/50'
   },
   success: {
     label: 'Done',
-    className: 'bg-green-50 text-green-700 border-green-200'
+    className:
+      'bg-green-50 text-green-700 border-green-200 dark:bg-green-950/20 dark:text-green-300 dark:border-green-800/50'
   },
   failed: {
     label: 'Failed',
-    className: 'bg-red-50 text-red-700 border-red-200'
+    className:
+      'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/20 dark:text-red-300 dark:border-red-800/50'
   },
   timeout: {
     label: 'Timeout',
-    className: 'bg-red-50 text-red-700 border-red-200'
+    className:
+      'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/20 dark:text-red-300 dark:border-red-800/50'
   },
   error: {
     label: 'Error',
-    className: 'bg-red-50 text-red-700 border-red-200'
+    className:
+      'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/20 dark:text-red-300 dark:border-red-800/50'
   }
 }
 

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useUpdateStore } from '@/stores/update-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useThemeStore } from '@/stores/theme-store'
 import { GeneralPanel } from './GeneralPanel'
 
 vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
@@ -170,6 +171,32 @@ describe('GeneralPanel notifications', () => {
 
     expect(settingsApi.setNotificationsEnabled).toHaveBeenCalledWith({ enabled: false })
     expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+  })
+})
+
+describe('GeneralPanel appearance', () => {
+  it('toggles dark mode on <html> and reflects the theme store', async () => {
+    useThemeStore.setState({ theme: 'light' })
+    document.documentElement.classList.remove('dark')
+
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    const toggle = container.querySelector(
+      '[aria-label="Toggle dark mode"]'
+    ) as HTMLButtonElement | null
+    expect(toggle).not.toBeNull()
+    expect(toggle?.getAttribute('data-state')).toBe('unchecked')
+
+    await act(async () => {
+      toggle?.click()
+    })
+    await flush()
+
+    expect(useThemeStore.getState().theme).toBe('dark')
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
   })
 })
 
