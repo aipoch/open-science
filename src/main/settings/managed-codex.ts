@@ -118,6 +118,22 @@ const CODEX_ACP_CONTEXT_USAGE_REPLACEMENT = [
   '        : lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0);'
 ].join('\n')
 
+const CODEX_ADAPTER_REPLACE_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const
+
+const renameWithTransientLockRetry = async (source: string, destination: string): Promise<void> => {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rename(source, destination)
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code
+      const retryDelay = CODEX_ADAPTER_REPLACE_RETRY_DELAYS_MS[attempt]
+      if ((code !== 'EPERM' && code !== 'EBUSY') || retryDelay === undefined) throw error
+      await new Promise<void>((resolve) => setTimeout(resolve, retryDelay))
+    }
+  }
+}
+
 // codex-acp receives a per-request tokenUsage.last snapshot but publishes totalTokens as ACP
 // context usage. Patch the pinned self-contained adapter so `used` excludes output and reasoning.
 // The registry integrity pin fixes the input bundle; the guards make a future source drift fail
@@ -153,7 +169,7 @@ export const ensureManagedCodexContextUsage = async (adapterPath: string): Promi
     const { mode } = await stat(adapterPath)
     await writeFile(temporaryPath, patched)
     await chmod(temporaryPath, mode & 0o7777)
-    await rename(temporaryPath, adapterPath)
+    await renameWithTransientLockRetry(temporaryPath, adapterPath)
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => undefined)
   }

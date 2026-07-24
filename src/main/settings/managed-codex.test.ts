@@ -13,12 +13,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 //   onDestBackup: throw EPERM when dest contains .backup- (destination→backup, upgrade path)
 //   onRestore: throw EPERM when src contains .backup- (backup→destination restore)
 //   cp: throw EPERM from cp() to exercise the copy-failure→backup-restore branch
+//   adapterReplaceFailures: transiently lock the destination during temp→adapter publication
 const fsFaults = vi.hoisted(() => ({
   renameOnStagedMove: false,
   renameOnStagedMoveEio: false,
   renameOnDestBackup: false,
   renameOnRestore: false,
   cpFailure: false,
+  adapterReplaceFailures: 0,
+  adapterReplaceFailureCode: 'EPERM' as 'EPERM' | 'EBUSY',
   pauseNextWrite: false,
   partialWritePublished: undefined as (() => void) | undefined,
   resumeWrite: undefined as Promise<void> | undefined
@@ -44,6 +47,17 @@ vi.mock('node:fs/promises', async (importActual) => {
       if (fsFaults.renameOnRestore && src.includes('.backup-')) {
         fsFaults.renameOnRestore = false
         throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' })
+      }
+      if (
+        fsFaults.adapterReplaceFailures > 0 &&
+        src.endsWith('.tmp') &&
+        dest.endsWith('index.js')
+      ) {
+        fsFaults.adapterReplaceFailures -= 1
+        const code = fsFaults.adapterReplaceFailureCode
+        throw Object.assign(new Error(`${code}: destination is temporarily locked, rename`), {
+          code
+        })
       }
       return actual.rename(src, dest)
     }),
@@ -1209,6 +1223,36 @@ describe('patchCodexAcpContextUsageSource', () => {
 
         await expect(access(adapterPath, constants.X_OK)).resolves.toBeUndefined()
       } finally {
+        await rm(patchRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each(['EPERM', 'EBUSY'] as const)(
+    'retries an atomic adapter replace after a transient %s destination lock',
+    async (errorCode) => {
+      const patchRoot = await mkdtemp(join(tmpdir(), 'managed-codex-patch-lock-'))
+      try {
+        const adapterPath = join(patchRoot, 'index.js')
+        await writeFile(
+          adapterPath,
+          [
+            '  createUsageUpdate(params) {',
+            '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
+            '  }'
+          ].join('\n')
+        )
+        fsFaults.adapterReplaceFailureCode = errorCode
+        fsFaults.adapterReplaceFailures = 1
+
+        await ensureManagedCodexContextUsage(adapterPath)
+
+        expect(await readFile(adapterPath, 'utf8')).toContain(
+          'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
+        )
+      } finally {
+        fsFaults.adapterReplaceFailures = 0
+        fsFaults.adapterReplaceFailureCode = 'EPERM'
         await rm(patchRoot, { recursive: true, force: true })
       }
     }
