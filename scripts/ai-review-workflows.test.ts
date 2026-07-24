@@ -448,6 +448,7 @@ describe('AI review workflow contract', () => {
     expect(telemetryStep.if).toBe('${{ always() }}')
     expect(telemetryStep.run).toContain('Claude model turns')
     expect(telemetryStep.run).toContain('cache_read_input_tokens')
+    expect(telemetryStep.run).toContain('Claude init MCP servers')
     expect(telemetryStep.run).toContain('GITHUB_STEP_SUMMARY')
   })
 
@@ -838,6 +839,30 @@ exit 1
 
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain('exposed an unexpected tool set')
+  })
+
+  it('allows a configured CodeGraph MCP server to defer its tool until use', () => {
+    const root = createFixtureRoot('ai-review-claude-deferred-mcp-')
+    const executionFile = join(root, 'execution.jsonl')
+    const githubOutput = join(root, 'github-output')
+    writeJsonLines(executionFile, [
+      { type: 'system', subtype: 'init', tools: claudeReviewTools, mcp_servers: ['codegraph'] },
+      { type: 'result', subtype: 'success', structured_output: claudeStructuredOutput() }
+    ])
+
+    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        EXECUTION_FILE: executionFile,
+        CODEGRAPH_ENABLED: 'true',
+        GITHUB_OUTPUT: githubOutput
+      }
+    })
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(readFileSync(githubOutput, 'utf8')).toContain('**Verdict: mergeable**')
   })
 
   it('feeds a short task prompt through stdin instead of injecting pull request code', () => {
