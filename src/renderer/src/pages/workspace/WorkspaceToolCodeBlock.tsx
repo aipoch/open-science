@@ -48,9 +48,15 @@ const WorkspaceToolCodeBlock = ({
   const highlightKey = createHighlightKey(source, language)
 
   const copyCode = useCallback(async () => {
-    await navigator.clipboard.writeText(source)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (!navigator.clipboard) return
+
+    try {
+      await navigator.clipboard.writeText(source)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard access can be denied outside a trusted user gesture; leave the control usable.
+    }
   }, [source])
 
   useEffect(() => {

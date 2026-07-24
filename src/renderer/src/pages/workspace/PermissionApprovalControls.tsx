@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import { cn } from '@/lib/utils'
-import { isNotebookExecuteToolName, resolveNotebookLanguage } from './notebook-tool-names'
+import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 
 type PermissionApprovalControlsProps = {
@@ -102,22 +102,17 @@ type PermissionCode = { code: string; language?: string }
 // code. Requiring the notebook server segment (not just the suffix) keeps a lookalike tool from
 // another MCP server — e.g. a `notebook_execute` that takes a production target — on the generic
 // JSON path so all its arguments stay reviewable. Shared with the transcript renderer.
-const isNotebookExecuteTool = isNotebookExecuteToolName
-
 // Resolves a request's notebook tool name from EITHER identity field. The broker can send a
 // namespaced title (mcp.open-science-notebook.notebook_execute) alongside a bare leaf
 // providerToolName (notebook_execute); only the namespaced field carries the server segment the
 // identity check needs, so we return whichever field matches (or undefined for non-notebook tools).
-const resolveNotebookToolName = (request: AcpPermissionRequest): string | undefined => {
-  if (isNotebookExecuteTool(request.providerToolName)) return request.providerToolName ?? undefined
-  if (isNotebookExecuteTool(request.title)) return request.title ?? undefined
-  return undefined
-}
+const resolveNotebookToolName = (request: AcpPermissionRequest): string | undefined =>
+  resolveNotebookRunToolName(request.providerToolName, request.title)
 
 // Derives displayable code and language from the tool's raw input.
 const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | undefined => {
   const raw = request.rawInput
-  const input =
+  const rawInput =
     raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
 
   const isExecute = request.toolKind === 'execute' || request.providerToolName === 'Bash'
@@ -128,6 +123,12 @@ const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | 
   // runs also report kind:execute, and their namespaced identity may live only in `title`.
   const notebookToolName = resolveNotebookToolName(request)
   if (notebookToolName) {
+    const input =
+      rawInput.arguments &&
+      typeof rawInput.arguments === 'object' &&
+      !Array.isArray(rawInput.arguments)
+        ? (rawInput.arguments as Record<string, unknown>)
+        : rawInput
     for (const key of ['code', 'command', 'script'] as const) {
       const v = input[key]
       if (typeof v === 'string' && v.trim()) {
@@ -143,7 +144,7 @@ const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | 
   // command may live only in title). Only trust title-as-bash for providerToolName === 'Bash';
   // other MCP execute tools (arbitrary servers, diverse semantics) must not assume shell syntax.
   if (isExecute) {
-    const cmd = input.command
+    const cmd = rawInput.command
     if (typeof cmd === 'string' && cmd.trim()) return { code: cmd, language: 'bash' }
     if (request.providerToolName === 'Bash' && request.title?.trim()) {
       return { code: request.title, language: 'bash' }
@@ -152,7 +153,7 @@ const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | 
 
   // All other tools: pretty-print input as JSON.
   try {
-    const serialized = JSON.stringify(input, null, 2)
+    const serialized = JSON.stringify(rawInput, null, 2)
     if (serialized && serialized !== '{}') return { code: serialized, language: 'json' }
   } catch {
     /* non-serializable */
@@ -243,9 +244,15 @@ const ScopeDropdown = ({
   selected: PermissionScope
   available: Set<PermissionScope>
   onSelect: (scope: PermissionScope) => void
-  onClose: () => void
+  onClose: (restoreTriggerFocus?: boolean) => void
 }): React.JSX.Element => {
   const ref = useRef<HTMLDivElement>(null)
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const options = SCOPE_OPTIONS.filter(({ scope }) => available.has(scope))
+
+  useEffect(() => {
+    itemRefs.current[options.findIndex(({ scope }) => scope === selected)]?.focus()
+  }, [options, selected])
 
   useEffect(() => {
     // Listen on `click` (not `mousedown`) so it pairs with the chevron's onClick toggle: the
@@ -255,7 +262,10 @@ const ScopeDropdown = ({
     }
     // Escape dismisses the menu, matching the keyboard affordance implied by aria-haspopup.
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose(true)
+      }
     }
     document.addEventListener('click', onDocClick)
     document.addEventListener('keydown', onKeyDown)
@@ -272,34 +282,55 @@ const ScopeDropdown = ({
       aria-label="Authorization scope"
       className="absolute bottom-full right-0 z-10 mb-1 min-w-[216px] rounded-lg border border-border-200 bg-bg-000 p-1 shadow-md"
     >
-      {SCOPE_OPTIONS.filter(({ scope }) => available.has(scope)).map(
-        ({ scope, label, subtitle }) => (
-          <button
-            key={scope}
-            type="button"
-            role="menuitemradio"
-            aria-checked={selected === scope}
-            className={cn(
-              'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-200',
-              selected === scope && 'bg-bg-100'
-            )}
-            onClick={() => {
+      {options.map(({ scope, label, subtitle }, index) => (
+        <button
+          key={scope}
+          ref={(item) => {
+            itemRefs.current[index] = item
+          }}
+          type="button"
+          role="menuitemradio"
+          aria-checked={selected === scope}
+          className={cn(
+            'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-200',
+            selected === scope && 'bg-bg-100'
+          )}
+          onClick={() => {
+            onSelect(scope)
+            onClose()
+          }}
+          onKeyDown={(event) => {
+            const lastIndex = options.length - 1
+            let nextIndex: number | undefined
+
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
               onSelect(scope)
               onClose()
-            }}
-          >
-            {/* Label column: left-aligned flush to padding so both rows line up */}
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="text-[12px] font-medium text-text-000">{label}</span>
-              <span className="text-[11px] leading-tight text-text-300">{subtitle}</span>
-            </div>
-            {/* Check column: right side, fixed slot so selection never shifts the label */}
-            <span className="flex w-3.5 shrink-0 justify-center text-primary">
-              {selected === scope ? <Check className="size-3.5" strokeWidth={2.5} /> : null}
-            </span>
-          </button>
-        )
-      )}
+              return
+            }
+            if (event.key === 'ArrowDown') nextIndex = index === lastIndex ? 0 : index + 1
+            if (event.key === 'ArrowUp') nextIndex = index === 0 ? lastIndex : index - 1
+            if (event.key === 'Home') nextIndex = 0
+            if (event.key === 'End') nextIndex = lastIndex
+
+            if (nextIndex !== undefined) {
+              event.preventDefault()
+              itemRefs.current[nextIndex]?.focus()
+            }
+          }}
+        >
+          {/* Label column: left-aligned flush to padding so both rows line up */}
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="text-[12px] font-medium text-text-000">{label}</span>
+            <span className="text-[11px] leading-tight text-text-300">{subtitle}</span>
+          </div>
+          {/* Check column: right side, fixed slot so selection never shifts the label */}
+          <span className="flex w-3.5 shrink-0 justify-center text-primary">
+            {selected === scope ? <Check className="size-3.5" strokeWidth={2.5} /> : null}
+          </span>
+        </button>
+      ))}
     </div>
   )
 }
@@ -310,7 +341,11 @@ const PermissionApprovalControls = ({
 }: PermissionApprovalControlsProps): React.JSX.Element | null => {
   const [scope, setScope] = useState<PermissionScope>('once')
   const [scopeOpen, setScopeOpen] = useState(false)
-  const closeScopeMenu = useCallback(() => setScopeOpen(false), [])
+  const scopeTriggerRef = useRef<HTMLButtonElement>(null)
+  const closeScopeMenu = useCallback((restoreTriggerFocus = false) => {
+    setScopeOpen(false)
+    if (restoreTriggerFocus) queueMicrotask(() => scopeTriggerRef.current?.focus())
+  }, [])
 
   // Show only the oldest pending request; the rest stay queued.
   const request = requests[0]
@@ -424,6 +459,7 @@ const PermissionApprovalControls = ({
             </button>
             <div className="w-px bg-primary/30" />
             <button
+              ref={scopeTriggerRef}
               type="button"
               data-testid="scope-chevron"
               aria-label="Choose authorization scope"

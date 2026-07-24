@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -90,6 +93,65 @@ afterEach(() => {
 })
 
 describe('StoragePanel', () => {
+  it('uses shared settings dialog chrome for data-location confirmations', async () => {
+    ;(
+      window as unknown as { api: { storage: { pickDirectory: ReturnType<typeof vi.fn> } } }
+    ).api.storage.pickDirectory.mockResolvedValue('/mnt/existing')
+    ;(
+      window as unknown as { api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } } }
+    ).api.storage.inspectDataRoot.mockResolvedValue({
+      kind: 'adopt',
+      dataRoot: '/mnt/existing/OpenScience'
+    })
+
+    await act(async () => {
+      root.render(<StoragePanel />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      clickButton((button) => button.textContent?.trim() === 'Change location')
+      await Promise.resolve()
+    })
+
+    const warningOverlay = Array.from(document.body.querySelectorAll<HTMLElement>('div')).find(
+      (element) => element.className.includes('bg-black/50')
+    )
+    const warningDialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+
+    expect(warningOverlay?.className).toContain('data-[state=open]:fade-in-0')
+    expect(warningDialog?.className).toContain('rounded-xl')
+    expect(warningDialog?.className).toContain('border-border')
+    expect(warningDialog?.className).toContain('bg-card')
+    expect(warningDialog?.className).toContain('shadow-dialog')
+    expect(warningDialog?.className).toContain('data-[state=open]:zoom-in-95')
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Continue')
+        ?.click()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      clickButton((button) => button.textContent?.includes('Browse') ?? false)
+      await Promise.resolve()
+    })
+    clickButton((button) => button.textContent?.trim() === 'Use this folder')
+
+    const adoptDialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    expect(adoptDialog?.className).toContain('rounded-xl')
+    expect(adoptDialog?.className).toContain('border-border')
+    expect(adoptDialog?.className).toContain('bg-card')
+    expect(adoptDialog?.className).toContain('data-[state=open]:zoom-in-95')
+
+    const source = readFileSync(resolve(__dirname, 'StoragePanel.tsx'), 'utf8')
+    expect(source).toContain('dialogOverlayClassName')
+    expect(source).toContain('dialogPanelClassName')
+    expect(source).not.toContain('backdrop-blur')
+  })
+
   it('shows a loading state before the data location resolves', () => {
     act(() => {
       root.render(<StoragePanel />)

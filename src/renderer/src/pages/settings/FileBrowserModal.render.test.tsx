@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost } from '../../../../shared/compute'
@@ -105,6 +106,22 @@ describe('FileBrowserModal', () => {
     })
     // Modal content is rendered in a portal; check document.body
     expect(document.body.textContent).toContain('biowulf')
+  })
+
+  it('calls onClose once when Escape is pressed', async () => {
+    const onClose = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <FileBrowserModal open={true} onClose={onClose} initialProviderId="ssh:biowulf" />
+      )
+    })
+
+    act(() => {
+      fireEvent.keyDown(document, { key: 'Escape' })
+    })
+
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('navigates to initialPath on open instead of scratchRoot', async () => {

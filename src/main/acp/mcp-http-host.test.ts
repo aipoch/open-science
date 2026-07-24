@@ -74,6 +74,51 @@ describe('AgentMcpHttpHost', () => {
     expect(files.map((file) => file.name)).toContain('note.txt')
   })
 
+  it('accepts a JSON-stringified artifact source from an MCP model call', async () => {
+    root = await mkdtemp(join(tmpdir(), 'mcp-http-host-'))
+    const projectName = 'default-project'
+    const artifactSessionId = 'artifact-session-1'
+    const runId = 'artifact-run-1'
+    const currentRunFile = join(root, 'current-run.json')
+    await writeFile(currentRunFile, JSON.stringify({ runId }), 'utf8')
+
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    host.registerArtifact(artifactSessionId, {
+      storageRoot: root,
+      projectName,
+      sessionId: artifactSessionId,
+      currentRunFile,
+      allowedImportRoots: [root]
+    })
+
+    const client = new Client({ name: 'test-client', version: '0.0.0' })
+    const transport = new StreamableHTTPClientTransport(
+      new URL(host.urlFor('artifact', artifactSessionId)),
+      { requestInit: { headers: { authorization: `Bearer ${token}` } } }
+    )
+    await client.connect(transport)
+
+    const result = await client.callTool({
+      name: 'write_artifact_file',
+      arguments: {
+        filename: 'report.md',
+        mimeType: 'text/markdown',
+        source: JSON.stringify({ kind: 'inline', content: '# Report' })
+      }
+    })
+    expect(JSON.stringify(result.content)).toContain('report.md')
+
+    await client.close()
+
+    const files = await new ArtifactRepository(root).listPendingRunFiles({
+      projectName,
+      sessionId: artifactSessionId,
+      runId
+    })
+    expect(files.map((file) => file.name)).toContain('report.md')
+  })
+
   it('rejects requests without the bearer token', async () => {
     host = new AgentMcpHttpHost()
     const { endpoint } = await host.ensureStarted()

@@ -1,6 +1,17 @@
+import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 
 import { Button } from '@/components/ui/button'
+import {
+  dialogCloseButtonClassName,
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import type { ChatSession } from '@/stores/session-store'
 
 type DeleteSessionDialogProps = {
@@ -8,9 +19,6 @@ type DeleteSessionDialogProps = {
   onCancel: () => void
   onConfirmDelete: () => void
 }
-
-const deleteDialogCancelButtonClassName =
-  'border-border-200 bg-bg-000 text-text-000 hover:bg-bg-200 hover:text-text-000'
 
 const deleteDialogConfirmButtonClassName =
   'border-transparent bg-danger-000 text-white hover:bg-danger-000/90 hover:text-white'
@@ -20,42 +28,60 @@ const DeleteSessionDialog = ({
   session,
   onCancel,
   onConfirmDelete
-}: DeleteSessionDialogProps): React.JSX.Element => (
-  <AlertDialog.Root
-    open={Boolean(session)}
-    onOpenChange={(open) => {
-      if (!open) onCancel()
-    }}
-  >
-    <AlertDialog.Portal>
-      <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
-      <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog">
-        <AlertDialog.Title className="text-base font-semibold text-text-000">
-          Delete Session?
-        </AlertDialog.Title>
-        <AlertDialog.Description className="mt-2 text-sm leading-relaxed text-text-100">
-          This will permanently delete &quot;{session?.title}&quot;. Artifacts created in this
-          session will remain in the project. This action cannot be undone.
-        </AlertDialog.Description>
-        <div className="mt-6 flex justify-end gap-2">
-          <AlertDialog.Cancel asChild>
-            <Button type="button" variant="outline" className={deleteDialogCancelButtonClassName}>
-              Cancel
-            </Button>
-          </AlertDialog.Cancel>
-          <AlertDialog.Action asChild>
+}: DeleteSessionDialogProps): React.JSX.Element => {
+  const dialogSession = useRetainedDialogValue(session)
+
+  return (
+    <AlertDialog.Root
+      open={Boolean(session)}
+      onOpenChange={(open) => {
+        if (!open) onCancel()
+      }}
+    >
+      <AlertDialog.Portal>
+        <AlertDialog.Overlay className={dialogOverlayClassName} />
+        <AlertDialog.Content className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))]')}>
+          <div className={dialogHeaderClassName}>
+            <div className="min-w-0">
+              <AlertDialog.Title className={dialogTitleClassName}>
+                Delete Session?
+              </AlertDialog.Title>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                This will permanently delete &quot;{dialogSession?.title}&quot;. Artifacts created
+                in this session will remain in the project. This action cannot be undone.
+              </AlertDialog.Description>
+            </div>
             <Button
               type="button"
-              className={deleteDialogConfirmButtonClassName}
-              onClick={onConfirmDelete}
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Close"
+              className={dialogCloseButtonClassName}
+              onClick={onCancel}
             >
-              Delete
+              <X className="size-4" aria-hidden="true" />
             </Button>
-          </AlertDialog.Action>
-        </div>
-      </AlertDialog.Content>
-    </AlertDialog.Portal>
-  </AlertDialog.Root>
-)
+          </div>
+          <div className={dialogFooterClassName}>
+            <AlertDialog.Cancel asChild>
+              <Button type="button" variant="outline">
+                Cancel
+              </Button>
+            </AlertDialog.Cancel>
+            <AlertDialog.Action asChild>
+              <Button
+                type="button"
+                className={deleteDialogConfirmButtonClassName}
+                onClick={onConfirmDelete}
+              >
+                Delete
+              </Button>
+            </AlertDialog.Action>
+          </div>
+        </AlertDialog.Content>
+      </AlertDialog.Portal>
+    </AlertDialog.Root>
+  )
+}
 
 export { DeleteSessionDialog }

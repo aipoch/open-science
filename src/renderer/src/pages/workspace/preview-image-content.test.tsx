@@ -214,4 +214,91 @@ describe('PreviewImageContent', () => {
     expect(container.textContent).toContain("isn't in your current storage location")
     expect(container.textContent).not.toContain('no longer available')
   })
+
+  it('renders accessible zoom controls alongside the image', async () => {
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<PreviewImageContent path="/workspace/photo.png" name="photo.png" />)
+    })
+
+    expect(container.querySelector('[aria-label="Zoom in"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Zoom out"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Reset zoom"]')).not.toBeNull()
+  })
+
+  it('scales the transformed content when zooming in', async () => {
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<PreviewImageContent path="/workspace/photo.png" name="photo.png" />)
+    })
+
+    const transformed = container.querySelector<HTMLElement>('.react-transform-component')
+    const readScale = (): number =>
+      Number.parseFloat(/scale\(([\d.]+)\)/.exec(transformed?.style.transform ?? '')?.[1] ?? 'NaN')
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await act(async () => {
+      const deadline = Date.now() + 2000
+      let previous = Number.NaN
+      while (Date.now() < deadline && !(readScale() > 1 && readScale() === previous)) {
+        previous = readScale()
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      }
+    })
+
+    expect(readScale()).toBeGreaterThan(1.2)
+  })
+
+  it('applies zoom instantly when the user prefers reduced motion', async () => {
+    const matchMedia = vi.fn((query: string) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn()
+    }))
+    vi.stubGlobal('matchMedia', matchMedia)
+
+    try {
+      root = createRoot(container)
+      await act(async () => {
+        root.render(<PreviewImageContent path="/workspace/photo.png" name="photo.png" />)
+      })
+
+      const transformed = container.querySelector<HTMLElement>('.react-transform-component')
+      const readScale = (): number =>
+        Number.parseFloat(
+          /scale\(([\d.]+)\)/.exec(transformed?.style.transform ?? '')?.[1] ?? 'NaN'
+        )
+
+      await act(async () => {
+        container
+          .querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')
+          ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      })
+
+      expect(readScale()).toBeGreaterThan(1.6)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('preserves the decode-failure fallback behind the zoom wrapper', async () => {
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<PreviewImageContent path="/workspace/photo.png" name="photo.png" />)
+    })
+
+    await act(async () => {
+      container.querySelector('img')?.dispatchEvent(new Event('error'))
+    })
+
+    expect(container.querySelector('[aria-label="Zoom in"]')).toBeNull()
+    expect(container.textContent).toContain("Image couldn't be loaded for preview")
+    expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })
+  })
 })

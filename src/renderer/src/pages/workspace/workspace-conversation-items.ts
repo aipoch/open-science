@@ -20,20 +20,20 @@ type ConversationItem = ConversationMessageItem | ConversationActivityItem
 
 const KNOWN_TITLE_TOOL_NAMES = new Set(['ToolSearch'])
 
-// MCP tools are namespaced as mcp__<server>__<tool>. Claude Code keeps the hyphenated server name
-// (open-science-notebook); the Codex/gpt bridge sanitizes hyphens to underscores
-// (open_science_notebook). Match both forms so notebook rows are detected regardless of framework.
-const NOTEBOOK_PROVIDER_TOOL_PATTERN = /^mcp__open[-_]science[-_]notebook__(.+)$/iu
+// Claude Code namespaces MCP tools with `mcp__`; Codex records completed tools as dotted titles.
+// Both preserve the notebook server name, with Codex occasionally sanitizing its hyphens.
+const NOTEBOOK_PROVIDER_TOOL_PATTERN =
+  /^(?:mcp__|mcp\.)?open[-_]science[-_]notebook(?:__|\.)([^.]+)$/iu
 
 // Returns the notebook tool suffix (e.g. "notebook_execute") for a notebook MCP tool identity, or
 // undefined when the name is not a notebook tool. Framework-agnostic across the two server-name forms.
-const getNotebookToolSuffix = (providerToolName: string | undefined): string | undefined =>
-  NOTEBOOK_PROVIDER_TOOL_PATTERN.exec(providerToolName?.trim() ?? '')?.[1]
+const getNotebookToolSuffix = (toolName: string | undefined): string | undefined =>
+  NOTEBOOK_PROVIDER_TOOL_PATTERN.exec(toolName?.trim() ?? '')?.[1]
 
 // Maps a notebook MCP tool to a clean human label so rows read as notebook actions, not raw
 // mcp__…__* names. Returns undefined for non-notebook tools.
-const formatNotebookToolName = (providerToolName: string): string | undefined => {
-  const suffix = getNotebookToolSuffix(providerToolName)
+const formatNotebookToolName = (toolName: string): string | undefined => {
+  const suffix = getNotebookToolSuffix(toolName)
 
   if (!suffix) return undefined
 
@@ -85,7 +85,12 @@ const formatActivityToolName = (activity: ToolActivity): string => {
   const providerToolName = trimDetail(activity.providerToolName)
   const title = trimDetail(activity.title)
 
-  if (providerToolName) return formatNotebookToolName(providerToolName) ?? providerToolName
+  const notebookToolName =
+    (providerToolName && formatNotebookToolName(providerToolName)) ??
+    (title && formatNotebookToolName(title))
+
+  if (notebookToolName) return notebookToolName
+  if (providerToolName) return providerToolName
   if (title && KNOWN_TITLE_TOOL_NAMES.has(title)) return title
 
   return formatToolKindName(activity.toolKind)

@@ -197,6 +197,36 @@ describe('workspace tool activity details', () => {
     expect((details?.sections[0] as { collapsible?: boolean }).collapsible).toBeFalsy()
   })
 
+  it('renders a Codex notebook activity from its dotted title and MCP arguments envelope', () => {
+    const runSummary = {
+      status: 'completed',
+      text: { stdout: '42\n', stderr: '', traceback: '' },
+      outputs: []
+    }
+    const activity = createActivity({
+      title: 'mcp.open-science-notebook.notebook_execute',
+      toolKind: 'execute',
+      rawInput: {
+        server: 'open-science-notebook',
+        tool: 'notebook_execute',
+        arguments: { kernelKind: 'python', code: 'print(42)' }
+      },
+      toolContent: [
+        { type: 'content', content: { type: 'text', text: JSON.stringify(runSummary) } }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Notebook cell')
+    expect(details?.sections[0]).toMatchObject({
+      kind: 'code',
+      label: 'Code',
+      language: 'python',
+      text: 'print(42)'
+    })
+    expect(details?.sections[1]).toMatchObject({ kind: 'code', label: 'Output', text: '42' })
+  })
+
   it('renders an opencode single-underscore notebook tool as code, not raw JSON', () => {
     // opencode names the tool <server>_<tool> (no mcp__ prefix); the activity must still render as
     // a notebook cell rather than falling back to the run-summary envelope.

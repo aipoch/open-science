@@ -201,7 +201,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const [sessionToViewNotebook, setSessionToViewNotebook] = useState<ChatSession | undefined>(
     undefined
   )
-  const [jobListModalSessionId, setJobListModalSessionId] = useState<string | undefined>(undefined)
+  const [jobListModal, setJobListModal] = useState({ open: false, sessionId: '' })
   // The selected session is the only conversation rendered in the center panel.
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId),
@@ -933,7 +933,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             isRequestReviewDisabled={isRequestReviewDisabled}
             canEditMessage={canEditMessage}
             onSendEditedMessage={sendEditedMessage}
-            onOpenJobList={setJobListModalSessionId}
+            onOpenJobList={(sessionId) => setJobListModal({ open: true, sessionId })}
           />
 
           <ResizableHandle
@@ -977,13 +977,12 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
         onClose={() => setSessionToViewNotebook(undefined)}
       />
 
-      {jobListModalSessionId ? (
-        <JobDetailModal
-          open
-          sessionId={jobListModalSessionId}
-          onClose={() => setJobListModalSessionId(undefined)}
-        />
-      ) : null}
+      <JobDetailModal
+        key={jobListModal.sessionId}
+        open={jobListModal.open}
+        sessionId={jobListModal.sessionId}
+        onClose={() => setJobListModal((modal) => ({ ...modal, open: false }))}
+      />
     </main>
   )
 }

@@ -30,6 +30,15 @@ import { AlertDialog } from 'radix-ui'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogCloseButtonClassName,
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -422,24 +431,39 @@ const ComposerAgentControlsMenu = ({
 
       <AlertDialog.Root open={confirmFullAccess} onOpenChange={setConfirmFullAccess}>
         <AlertDialog.Portal>
-          <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
-          <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overscroll-contain rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog">
-            <div className="flex items-start gap-3">
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
-                <AlertTriangle className="size-5" strokeWidth={2} aria-hidden="true" />
-              </span>
-              <div className="min-w-0">
-                <AlertDialog.Title className="text-base font-semibold">
-                  Enable Full access?
-                </AlertDialog.Title>
-                <AlertDialog.Description className="mt-2 text-sm leading-relaxed text-text-100">
-                  The agent can run commands, change files, execute notebook code, and make network
-                  requests without asking first. Authentication failures and execution errors can
-                  still stop the run.
-                </AlertDialog.Description>
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
+          <AlertDialog.Content
+            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] overscroll-contain')}
+          >
+            <div className={dialogHeaderClassName}>
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+                  <AlertTriangle className="size-5" strokeWidth={2} aria-hidden="true" />
+                </span>
+                <div className="min-w-0">
+                  <AlertDialog.Title className={dialogTitleClassName}>
+                    Enable Full access?
+                  </AlertDialog.Title>
+                  <AlertDialog.Description className={dialogDescriptionClassName}>
+                    The agent can run commands, change files, execute notebook code, and make
+                    network requests without asking first. Authentication failures and execution
+                    errors can still stop the run.
+                  </AlertDialog.Description>
+                </div>
               </div>
+              <AlertDialog.Cancel asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Close"
+                  className={dialogCloseButtonClassName}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </AlertDialog.Cancel>
             </div>
-            <div className="mt-6 flex justify-end gap-2">
+            <div className={dialogFooterClassName}>
               <AlertDialog.Cancel asChild>
                 <Button
                   type="button"

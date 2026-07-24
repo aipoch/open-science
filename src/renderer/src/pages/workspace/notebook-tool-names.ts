@@ -52,6 +52,12 @@ const matchNotebookRunTool = (toolName: string | undefined | null): string | und
 const isNotebookExecuteToolName = (toolName: string | undefined | null): boolean =>
   matchNotebookRunTool(toolName) !== undefined
 
+// Resolves the namespaced tool identity from the optional fields ACP providers expose. Codex keeps
+// it in the dotted title while other providers commonly use providerToolName.
+const resolveNotebookRunToolName = (
+  ...toolNames: Array<string | undefined | null>
+): string | undefined => toolNames.find((toolName) => isNotebookExecuteToolName(toolName))?.trim()
+
 // Canonical kernel kinds, shared with the main process. 'repl' is JavaScript.
 type NotebookKernelKind = 'python' | 'r' | 'repl' | 'bash'
 
@@ -117,6 +123,7 @@ export {
   NOTEBOOK_SERVER_SEGMENT,
   matchNotebookRunTool,
   isNotebookExecuteToolName,
+  resolveNotebookRunToolName,
   resolveNotebookLanguage,
   type NotebookKernelKind
 }

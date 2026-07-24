@@ -2,6 +2,7 @@ import { X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
 
+import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { ResizablePanel } from '@/components/ui/resizable'
 import { cn } from '@/lib/utils'
 import type { PreviewFileItem, PreviewItem } from '@/stores/preview-workbench-store'
@@ -241,10 +242,10 @@ const PreviewFilePanel = ({
   return (
     <>
       {isFullScreenOpen ? (
-        <button
-          type="button"
-          className="fixed inset-0 z-[60] cursor-default bg-black/50"
-          aria-label={`Close full screen preview of ${item.title}`}
+        <div
+          aria-hidden="true"
+          data-state="open"
+          className={`${dialogOverlayClassName} z-[60] cursor-default`}
           onClick={closeFullScreen}
         />
       ) : null}
@@ -257,12 +258,16 @@ const PreviewFilePanel = ({
         id={isFullScreenOpen ? undefined : getPreviewPanelId(item.id)}
         aria-labelledby={isFullScreenOpen ? undefined : getPreviewTabId(item.id)}
         tabIndex={isFullScreenOpen ? -1 : 0}
-        className={cn(
-          'flex min-h-0 flex-col overflow-hidden bg-bg-000',
+        data-state={isFullScreenOpen ? 'open' : undefined}
+        className={
           isFullScreenOpen
-            ? 'fixed left-1/2 top-1/2 z-[61] h-[90vh] w-[90vw] max-w-none -translate-x-1/2 -translate-y-1/2 overscroll-contain rounded-md text-text-000 shadow-dialog'
-            : 'h-full w-full rounded-md shadow-card'
-        )}
+            ? dialogPanelClassName(
+                'z-[61] flex h-[90vh] w-[90vw] max-w-none min-h-0 flex-col overflow-hidden overscroll-contain p-0'
+              )
+            : cn(
+                'flex h-full min-h-0 w-full flex-col overflow-hidden rounded-md bg-bg-000 shadow-card'
+              )
+        }
       >
         <PreviewFileSurface
           item={item}

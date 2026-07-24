@@ -69,6 +69,28 @@ afterEach(() => {
 })
 
 describe('LegacyDataMoveDialog', () => {
+  it('uses shared settings dialog chrome without changing the move choices', async () => {
+    installApi()
+    await renderDialog()
+
+    const overlay = Array.from(document.body.querySelectorAll<HTMLElement>('div')).find((element) =>
+      element.className.includes('bg-black/50')
+    )
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+
+    expect(overlay?.className).toContain('data-[state=open]:fade-in-0')
+    expect(overlay?.className).toContain('data-[state=closed]:fill-mode-forwards')
+    expect(overlay?.className).not.toContain('backdrop-blur')
+    expect(dialog?.className).toContain('rounded-xl')
+    expect(dialog?.className).toContain('border-border')
+    expect(dialog?.className).toContain('bg-card')
+    expect(dialog?.className).toContain('shadow-dialog')
+    expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
+    expect(document.body.textContent).toContain('Move to OpenScience')
+    expect(document.body.textContent).toContain('Choose another folder')
+    expect(document.body.textContent).toContain('Keep it in the current folder')
+  })
+
   it('shows both paths and the three choices', async () => {
     installApi()
     await renderDialog()

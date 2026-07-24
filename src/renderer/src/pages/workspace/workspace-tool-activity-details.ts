@@ -2,7 +2,7 @@ import type { ContentBlock, ToolCallContent, ToolKind } from '@agentclientprotoc
 
 import { formatByteSize } from '@/lib/utils'
 import type { ToolActivity } from '@/stores/session-store'
-import { isNotebookExecuteToolName, resolveNotebookLanguage } from './notebook-tool-names'
+import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
 
 type ToolCodeSection = {
   kind: 'code'
@@ -495,8 +495,19 @@ const toNotebookKernelKind = (value: unknown): NotebookKernelKindLike | undefine
 // Matches both server-name forms (Claude Code's hyphenated open-science-notebook and the
 // responses bridge's underscore-sanitized open_science_notebook) via the shared matcher, which
 // also requires the server segment to match exactly so lookalike server names are excluded.
+const getNotebookRunToolName = (activity: ToolActivity): string | undefined =>
+  resolveNotebookRunToolName(trimDetail(activity.providerToolName), trimDetail(activity.title))
+
+const getNotebookInput = (activity: ToolActivity): Record<string, unknown> => {
+  if (!isRecord(activity.rawInput)) return {}
+
+  // Codex preserves the MCP envelope on completed activities. The actual notebook input lives in
+  // `arguments`, while other providers expose those arguments directly.
+  return isRecord(activity.rawInput.arguments) ? activity.rawInput.arguments : activity.rawInput
+}
+
 const isNotebookKernelRunActivity = (activity: ToolActivity): boolean =>
-  isNotebookExecuteToolName(trimDetail(activity.providerToolName))
+  getNotebookRunToolName(activity) !== undefined
 
 // Resolves the kernel's Shiki language from input, run summary, tool name, and code heuristics.
 // Returns the language string directly (no intermediate NotebookKernelKindLike round-trip).
@@ -505,11 +516,7 @@ const getNotebookLanguage = (
   activity: ToolActivity,
   summary: Record<string, unknown> | undefined
 ): string => {
-  const rawInput = activity.rawInput
-  const input =
-    rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)
-      ? (rawInput as Record<string, unknown>)
-      : {}
+  const input = getNotebookInput(activity)
   const inputKernel = ['kernelKind', 'kernel', 'language'].reduce<
     NotebookKernelKindLike | undefined
   >((found, key) => found ?? toNotebookKernelKind(input[key]), undefined)
@@ -522,7 +529,7 @@ const getNotebookLanguage = (
       : typeof summary?.script === 'string'
         ? summary.script
         : undefined
-  return resolveNotebookLanguage(activity.providerToolName, resolvedInput, code)
+  return resolveNotebookLanguage(getNotebookRunToolName(activity), resolvedInput, code)
 }
 
 // Reads the notebook run summary the execute tool returns as JSON content (or raw output).
@@ -546,9 +553,10 @@ const getNotebookCode = (
   activity: ToolActivity,
   summary: Record<string, unknown> | undefined
 ): string | undefined => {
-  if (isRecord(activity.rawInput)) {
+  const input = getNotebookInput(activity)
+  if (Object.keys(input).length > 0) {
     for (const key of ['code', 'command', 'script'] as const) {
-      const value = activity.rawInput[key]
+      const value = input[key]
 
       if (typeof value === 'string') {
         const trimmed = trimDetail(value)
@@ -646,11 +654,7 @@ const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | und
 
   // Derive display name from language: python/r are cells, javascript (repl) is Agent SDK, bash is shell.
   const displayName =
-    language === 'javascript'
-      ? 'Agent SDK'
-      : language === 'bash'
-        ? 'Shell'
-        : 'Notebook cell'
+    language === 'javascript' ? 'Agent SDK' : language === 'bash' ? 'Shell' : 'Notebook cell'
 
   return {
     displayName,
