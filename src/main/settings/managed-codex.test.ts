@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { Readable } from 'node:stream'
@@ -1187,6 +1188,31 @@ describe('patchCodexAcpContextUsageSource', () => {
       await rm(patchRoot, { recursive: true, force: true })
     }
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'preserves executable access when patching an installed adapter',
+    async () => {
+      const patchRoot = await mkdtemp(join(tmpdir(), 'managed-codex-patch-mode-'))
+      try {
+        const adapterPath = join(patchRoot, 'index.js')
+        await writeFile(
+          adapterPath,
+          [
+            '  createUsageUpdate(params) {',
+            '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
+            '  }'
+          ].join('\n')
+        )
+        await chmod(adapterPath, 0o755)
+
+        await ensureManagedCodexContextUsage(adapterPath)
+
+        await expect(access(adapterPath, constants.X_OK)).resolves.toBeUndefined()
+      } finally {
+        await rm(patchRoot, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('keeps concurrent context-usage checks from observing a partially patched adapter', async () => {
     const patchRoot = await mkdtemp(join(tmpdir(), 'managed-codex-patch-race-'))

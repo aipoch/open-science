@@ -11,6 +11,7 @@ import {
   readdir,
   rename,
   rm,
+  stat,
   writeFile,
   type FileHandle
 } from 'node:fs/promises'
@@ -149,7 +150,9 @@ export const ensureManagedCodexContextUsage = async (adapterPath: string): Promi
 
   const temporaryPath = `${adapterPath}.${randomUUID()}.tmp`
   try {
+    const { mode } = await stat(adapterPath)
     await writeFile(temporaryPath, patched)
+    await chmod(temporaryPath, mode & 0o7777)
     await rename(temporaryPath, adapterPath)
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => undefined)
