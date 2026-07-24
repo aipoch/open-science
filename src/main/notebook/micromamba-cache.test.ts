@@ -11,6 +11,7 @@ import {
   removeMicromambaCacheForRoot,
   selectMicromambaCache,
   WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES,
+  WINDOWS_MAX_USABLE_PATH,
   type MicromambaCacheDeps
 } from './micromamba-cache'
 
@@ -75,6 +76,27 @@ describe('selectMicromambaCache', () => {
     expect(prepare).toHaveBeenCalledTimes(2)
   })
 
+  it('uses a compact profile cache when the volume root is untrusted and the legacy leaf is too long', () => {
+    const prepare = vi.fn((path: string) =>
+      path.startsWith('E:\\') ? undefined : win32.normalize(path)
+    )
+    const selected = selectMicromambaCache(
+      'E:\\open science\\OpenScience\\runtime',
+      DEFAULT_MAX_CACHE_RELATIVE_PATH,
+      windowsDeps({
+        env: {
+          USERNAME: 'peipeidamowang',
+          USERPROFILE: 'C:\\Users\\peipeidamowang'
+        },
+        prepare
+      })
+    )
+
+    expect(selected.path).toMatch(/^C:\\Users\\peipeidamowang\\os[0-9a-hjkmnp-tv-z]{8}$/)
+    expect(selected.path.length + DEFAULT_MAX_CACHE_RELATIVE_PATH).toBe(WINDOWS_MAX_USABLE_PATH)
+    expect(prepare).toHaveBeenCalledTimes(2)
+  })
+
   it('rejects candidates that are writable but do not fit the actual pack budget', () => {
     expect(() =>
       selectMicromambaCache(
@@ -82,7 +104,7 @@ describe('selectMicromambaCache', () => {
         250,
         windowsDeps({ env: { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\a-very-long-profile' } })
       )
-    ).toThrow(/shorter (?:Windows user profile|data-root)/i)
+    ).toThrow(/Candidate diagnostics:/i)
     expect(() =>
       selectMicromambaCache(
         'D:\\OpenScience\\runtime',
@@ -90,6 +112,39 @@ describe('selectMicromambaCache', () => {
         windowsDeps({ env: { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\a-very-long-profile' } })
       )
     ).not.toThrow(/LongPathsEnabled|administrator/i)
+  })
+
+  it('reports why every Windows cache candidate was rejected', () => {
+    const profile = 'C:\\Users\\peipeidamowang-with-a-long-profile'
+    let message = ''
+    try {
+      selectMicromambaCache(
+        'E:\\open science\\OpenScience\\runtime',
+        DEFAULT_MAX_CACHE_RELATIVE_PATH,
+        windowsDeps({
+          env: { USERNAME: 'peipeidamowang', USERPROFILE: profile },
+          prepare: (path) => ({
+            rejection: path.startsWith('E:\\')
+              ? 'ownership or permissions are not trusted'
+              : 'cache marker is missing or unreadable'
+          })
+        })
+      )
+    } catch (error) {
+      message = (error as Error).message
+    }
+
+    expect(message).toContain('Candidate diagnostics:')
+    expect(message).toMatch(/E:\\osp[0-9a-f]{10}: ownership or permissions are not trusted/)
+    expect(message).toMatch(
+      /C:\\Users\\peipeidamowang-with-a-long-profile\\osp[0-9a-f]{10}: exceeds the Windows path budget/
+    )
+    expect(message).toMatch(
+      /C:\\Users\\peipeidamowang-with-a-long-profile\\os[0-9a-hjkmnp-tv-z]{8}: exceeds the Windows path budget/
+    )
+    expect(message).not.toContain('unavailable, untrusted, or not writable')
+    expect(message).not.toContain('restrict write access')
+    expect(message).not.toMatch(/shorter data-root/i)
   })
 
   it('rejects an untrusted candidate and tries the profile location', () => {
@@ -187,6 +242,23 @@ describe('removeMicromambaCacheForRoot', () => {
     })
 
     expect(remove).not.toHaveBeenCalled()
+  })
+
+  it('removes a correctly marked compact profile cache', () => {
+    const removed: string[] = []
+    removeMicromambaCacheForRoot(root, {
+      platform: 'win32',
+      env,
+      canonicalize: (path) => win32.normalize(path),
+      verifyOwnership: () => true,
+      inspect: () => ({ directory: true, symbolicLink: false, marker }),
+      remove: (path) => removed.push(path)
+    })
+
+    expect(removed).toHaveLength(3)
+    expect(removed).toContainEqual(
+      expect.stringMatching(/^C:\\Users\\alice\\os[0-9a-hjkmnp-tv-z]{8}$/)
+    )
   })
 })
 

@@ -21,6 +21,32 @@ function Get-CacheLeaf([string]$RuntimeRoot, [string]$UserIdentity) {
   }
 }
 
+function Get-CompactCacheLeaf([string]$RuntimeRoot, [string]$UserIdentity) {
+  $key = $UserIdentity.ToLowerInvariant() + [char]0 + $RuntimeRoot.ToLowerInvariant()
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($key)
+    $digest = $sha.ComputeHash($bytes)
+    $alphabet = '0123456789abcdefghjkmnpqrstvwxyz'
+    $encoded = ''
+    $value = 0
+    $bits = 0
+    foreach ($byte in $digest[0..4]) {
+      $value = ($value -shl 8) -bor $byte
+      $bits += 8
+      while ($bits -ge 5) {
+        $bits -= 5
+        $encoded += $alphabet[($value -shr $bits) -band 31]
+        $value = $value -band ((1 -shl $bits) - 1)
+      }
+    }
+    return 'os' + $encoded
+  }
+  finally {
+    $sha.Dispose()
+  }
+}
+
 function Test-TrustedCache([string]$Path, [string]$CanonicalRoot, [string]$UserIdentity) {
   $item = Get-Item -LiteralPath $Path -Force
   if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
@@ -84,9 +110,11 @@ foreach ($root in $roots) {
   try {
     $canonicalRoot = Get-CanonicalPath $root
     $leaf = Get-CacheLeaf $canonicalRoot $userIdentity
+    $compactLeaf = Get-CompactCacheLeaf $canonicalRoot $userIdentity
     $candidates = @(
       (Join-Path ([System.IO.Path]::GetPathRoot($canonicalRoot)) $leaf),
-      (Join-Path $env:USERPROFILE $leaf)
+      (Join-Path $env:USERPROFILE $leaf),
+      (Join-Path $env:USERPROFILE $compactLeaf)
     ) | Select-Object -Unique
     foreach ($candidate in $candidates) {
       try {

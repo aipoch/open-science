@@ -13,6 +13,11 @@ export type MicromambaCache = {
   lockKey: string
 }
 
+export type MicromambaCachePreparation = {
+  path?: string
+  rejection?: string
+}
+
 type CacheOwnership = {
   canonicalRoot: string
   userIdentity: string
@@ -24,7 +29,10 @@ export type MicromambaCacheDeps = {
   platform?: NodeJS.Platform
   env?: NodeJS.ProcessEnv
   canonicalize?: (path: string) => string
-  prepare?: (path: string, ownership: CacheOwnership) => string | undefined
+  prepare?: (
+    path: string,
+    ownership: CacheOwnership
+  ) => string | MicromambaCachePreparation | undefined
   verifyOwnership?: (path: string, userIdentity: string) => boolean
 }
 
@@ -154,14 +162,32 @@ const defaultPrepare = (
   path: string,
   ownership: CacheOwnership,
   verifyOwnership: (path: string, userIdentity: string) => boolean
-): string | undefined => {
+): MicromambaCachePreparation => {
   let created = false
+  const reject = (rejection: string): MicromambaCachePreparation => {
+    if (created) {
+      try {
+        rmSync(path, { recursive: true, force: true })
+      } catch {
+        // Preserve the original rejection; cleanup is best-effort for a directory this call created.
+      }
+    }
+    return { rejection }
+  }
+  const errorDetail = (error: unknown): string => {
+    if (!(error instanceof Error)) return 'unknown error'
+    const code = (error as NodeJS.ErrnoException).code
+    return code ? `${code}: ${error.message}` : error.message
+  }
   try {
     try {
       const stat = lstatSync(path)
-      if (!stat.isDirectory() || stat.isSymbolicLink()) return undefined
+      if (!stat.isDirectory()) return reject('path exists but is not a directory')
+      if (stat.isSymbolicLink()) return reject('path is a symbolic link or reparse point')
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return undefined
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        return reject(`path could not be inspected (${errorDetail(error)})`)
+      }
       mkdirSync(path, { mode: 0o700 })
       created = true
     }
@@ -175,68 +201,102 @@ const defaultPrepare = (
     if (created) {
       writeFileSync(markerPath, `${JSON.stringify(expected)}\n`, { encoding: 'utf8', mode: 0o600 })
     } else {
-      const marker = JSON.parse(readFileSync(markerPath, 'utf8')) as typeof expected
+      let marker: typeof expected
+      try {
+        marker = JSON.parse(readFileSync(markerPath, 'utf8')) as typeof expected
+      } catch (error) {
+        return reject(`cache marker is missing or unreadable (${errorDetail(error)})`)
+      }
       if (
         marker.schema !== expected.schema ||
         marker.canonicalRoot !== expected.canonicalRoot ||
         marker.userIdentity !== expected.userIdentity
       ) {
-        return undefined
+        return reject('cache marker does not match the current runtime root and Windows user')
       }
     }
 
     const physical = realpathSync.native(path)
-    if (windowsKey(physical) !== windowsKey(path)) return undefined
+    if (windowsKey(physical) !== windowsKey(path)) {
+      return reject(`path resolves to an unexpected physical location (${physical})`)
+    }
     if (
       ownership.profileBoundary &&
       !isInside(realpathSync.native(ownership.profileBoundary), physical)
     ) {
-      return undefined
+      return reject('path resolves outside the Windows user profile')
     }
     if (!verifyOwnership(physical, ownership.userIdentity)) {
-      throw new Error('Managed runtime cache ownership is not trusted.')
+      return reject('ownership or permissions are not trusted')
     }
 
     const probe = win32.join(physical, `.write-test-${randomUUID()}`)
     writeFileSync(probe, '')
     rmSync(probe, { force: true })
-    return physical
-  } catch {
-    if (created) rmSync(path, { recursive: true, force: true })
-    return undefined
+    return { path: physical }
+  } catch (error) {
+    return reject(`cache preparation failed (${errorDetail(error)})`)
   }
 }
 
 const fitsBudget = (cacheRoot: string, maxCacheRelativePath: number): boolean =>
   cacheRoot.length + maxCacheRelativePath <= WINDOWS_MAX_USABLE_PATH
 
+const BASE32_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz'
+
+const compactCacheHash = (digest: Buffer): string => {
+  let value = 0
+  let bits = 0
+  let encoded = ''
+  for (const byte of digest.subarray(0, 5)) {
+    value = (value << 8) | byte
+    bits += 8
+    while (bits >= 5) {
+      bits -= 5
+      encoded += BASE32_ALPHABET[(value >>> bits) & 31]
+      value &= (1 << bits) - 1
+    }
+  }
+  return encoded
+}
+
 const cacheIdentity = (
   root: string,
   env: NodeJS.ProcessEnv,
   canonicalize: (path: string) => string
-): { canonicalRoot: string; userIdentity: string; leaf: string } => {
+): { canonicalRoot: string; userIdentity: string; leaf: string; compactLeaf: string } => {
   const userIdentity = [env.USERDOMAIN, env.USERNAME].filter(Boolean).join('\\')
   if (!userIdentity) {
     throw new Error('Cannot determine the Windows user identity for the managed runtime cache.')
   }
   const canonicalRoot = win32.normalize(canonicalize(root))
-  const hash = createHash('sha256')
+  const digest = createHash('sha256')
     .update(`${userIdentity.toLowerCase()}\0${windowsKey(canonicalRoot)}`)
-    .digest('hex')
-    .slice(0, 10)
-  return { canonicalRoot, userIdentity, leaf: `osp${hash}` }
+    .digest()
+  return {
+    canonicalRoot,
+    userIdentity,
+    leaf: `osp${digest.toString('hex').slice(0, 10)}`,
+    compactLeaf: `os${compactCacheHash(digest)}`
+  }
 }
 
 const candidatePaths = (
   canonicalRoot: string,
   leaf: string,
+  compactLeaf: string,
   env: NodeJS.ProcessEnv,
   canonicalize: (path: string) => string
 ): Array<{ path: string; profileBoundary?: string }> => {
   const profile = env.USERPROFILE ? win32.normalize(canonicalize(env.USERPROFILE)) : undefined
   return [
     { path: win32.join(win32.parse(canonicalRoot).root, leaf) },
-    ...(profile ? [{ path: win32.join(profile, leaf), profileBoundary: profile }] : [])
+    ...(profile
+      ? [
+          { path: win32.join(profile, leaf), profileBoundary: profile },
+          { path: win32.join(profile, compactLeaf), profileBoundary: profile }
+        ]
+      : [])
   ]
 }
 
@@ -256,33 +316,51 @@ export const selectMicromambaCache = (
 
   const env = deps.env ?? process.env
   const canonicalize = deps.canonicalize ?? canonicalizeExisting
-  const { canonicalRoot, userIdentity, leaf } = cacheIdentity(root, env, canonicalize)
+  const { canonicalRoot, userIdentity, leaf, compactLeaf } = cacheIdentity(root, env, canonicalize)
   const verifyOwnership = deps.verifyOwnership ?? defaultVerifyOwnership
   const prepare =
     deps.prepare ??
     ((path: string, ownership: CacheOwnership) => defaultPrepare(path, ownership, verifyOwnership))
-  const candidates = candidatePaths(canonicalRoot, leaf, env, canonicalize)
+  const candidates = candidatePaths(canonicalRoot, leaf, compactLeaf, env, canonicalize)
+  const rejections: string[] = []
 
   for (const candidate of candidates) {
-    if (!fitsBudget(candidate.path, maxCacheRelativePath)) continue
-    const physical = prepare(candidate.path, {
+    if (!fitsBudget(candidate.path, maxCacheRelativePath)) {
+      const excess = candidate.path.length + maxCacheRelativePath - WINDOWS_MAX_USABLE_PATH
+      rejections.push(`${candidate.path}: exceeds the Windows path budget by ${excess} characters`)
+      continue
+    }
+    const prepared = prepare(candidate.path, {
       canonicalRoot,
       userIdentity,
       profileBoundary: candidate.profileBoundary,
       platform
     })
-    if (
-      !physical ||
-      !fitsBudget(physical, maxCacheRelativePath) ||
-      (deps.prepare !== undefined && !verifyOwnership(physical, userIdentity))
-    )
+    const preparation = typeof prepared === 'string' ? { path: prepared } : prepared
+    const physical = preparation?.path
+    if (!physical) {
+      rejections.push(
+        `${candidate.path}: ${preparation?.rejection ?? 'cache preparation returned no usable path'}`
+      )
       continue
+    }
+    if (!fitsBudget(physical, maxCacheRelativePath)) {
+      const excess = physical.length + maxCacheRelativePath - WINDOWS_MAX_USABLE_PATH
+      rejections.push(
+        `${physical}: physical path exceeds the Windows path budget by ${excess} characters`
+      )
+      continue
+    }
+    if (deps.prepare !== undefined && !verifyOwnership(physical, userIdentity)) {
+      rejections.push(`${physical}: ownership or permissions are not trusted`)
+      continue
+    }
     return { path: physical, lockKey: micromambaCacheLockKey(physical, { platform, canonicalize }) }
   }
 
   throw new Error(
     'No trusted writable package cache fits the managed runtime path budget. ' +
-      'Choose a shorter Windows user profile or data-root path.'
+      `Candidate diagnostics: ${rejections.join('; ')}.`
   )
 }
 
@@ -320,6 +398,7 @@ export const removeMicromambaCacheForRoot = (
   for (const candidate of candidatePaths(
     identity.canonicalRoot,
     identity.leaf,
+    identity.compactLeaf,
     env,
     canonicalize
   )) {
