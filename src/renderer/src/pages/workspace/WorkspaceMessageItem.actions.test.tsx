@@ -43,6 +43,7 @@ const renderItem = async (
   message: ChatMessage,
   options: {
     canEditMessage?: boolean
+    canCopyMarkdown?: boolean
     onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
     subsequentTurns?: number
   } = {}
@@ -56,6 +57,7 @@ const renderItem = async (
         onOpenSkillMention={noop}
         onPreviewMentionArtifact={noop}
         canEditMessage={options.canEditMessage ?? false}
+        canCopyMarkdown={options.canCopyMarkdown ?? false}
         onSendEditedMessage={options.onSendEditedMessage}
         subsequentTurns={options.subsequentTurns ?? 0}
       />
@@ -276,5 +278,43 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(getDialog()).toBeNull()
     // The editor stays open so the adjusted draft is not lost.
     expect(getEditor()).not.toBeNull()
+  })
+})
+
+describe('WorkspaceMessageItem agent markdown copy', () => {
+  it('copies the original markdown and confirms only after the clipboard write succeeds', async () => {
+    vi.useFakeTimers()
+    try {
+      const markdown = '## Findings\n\n- Original **Markdown**'
+      await renderItem(createMessage({ role: 'agent', content: markdown }), {
+        canCopyMarkdown: true
+      })
+
+      await click(getButton('Copy as Markdown'))
+
+      expect(writeText).toHaveBeenCalledWith(markdown)
+      expect(container.querySelector('[aria-label="Markdown copied"]')).not.toBeNull()
+
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      expect(container.querySelector('[aria-label="Copy as Markdown"]')).not.toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not confirm markdown copy when the clipboard write fails', async () => {
+    writeText.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+    await renderItem(createMessage({ role: 'agent', content: '# Findings' }), {
+      canCopyMarkdown: true
+    })
+
+    await click(getButton('Copy as Markdown'))
+
+    expect(writeText).toHaveBeenCalledWith('# Findings')
+    expect(container.querySelector('[aria-label="Markdown copied"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Copy as Markdown"]')).not.toBeNull()
   })
 })
