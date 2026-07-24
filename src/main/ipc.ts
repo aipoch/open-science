@@ -381,6 +381,9 @@ const registerIpcHandlers = async ({
       })
   })
   jobPoller.start()
+  // Drain queued jobs that were pending when the process last exited. Called after the poller starts
+  // so the poller's onJobUpdated hook is wired before any dispatch fires.
+  void computeService.drainQueuedJobs()
   // Augment computeService with getEnabledComputeHosts so the RPC server can serve list_compute.
   // Must preserve ComputeService's prototype methods (list/getDetails/submitJob/...) — see the helper.
   const computeServiceWithRegistry = attachEnabledComputeHosts(computeService, hostsRegistry)

@@ -16,6 +16,20 @@ import type { SshRunner } from './ssh-runner'
 import type { ScpRunner } from './scp-runner'
 import { computeProviderId, type ComputeJob } from '../../shared/compute'
 
+// Polls `predicate` until it returns true or `timeoutMs` elapses. Replaces fixed `setTimeout` waits
+// for async dispatch, which flake under CI load when the work outruns the hard-coded delay.
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 2000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  throw new Error(`waitFor timed out after ${timeoutMs}ms`)
+}
+
 // Mock the job-dispatcher module to prevent real SSH dispatches
 vi.mock('./job-dispatcher', async () => {
   const actual = await vi.importActual('./job-dispatcher')
@@ -155,6 +169,39 @@ describe('ConcurrencyManager integration with ComputeService', () => {
 
     const job2 = await jobRepo.get(result2.job_id)
     expect(job2?.status).toBe('queued')
+  })
+
+  it('broadcasts a job-updated event when a job is created in queued status', async () => {
+    const providerId = computeProviderId('test-host')
+    await service.setSessionConcurrencyLimit('session-1', 1)
+
+    // First job is submitted (dispatch broadcasts happen via the dispatcher, mocked here).
+    await service.submitJob(
+      providerId,
+      'job 1',
+      'echo one',
+      {},
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+
+    onJobUpdatedSpy.mockClear()
+
+    // Second job queues — the renderer store only learns about jobs via job-updated broadcasts,
+    // so a queued job MUST broadcast on creation or it never appears on the notebook bar.
+    const result2 = await service.submitJob(
+      providerId,
+      'job 2',
+      'echo two',
+      {},
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+    expect(result2.status).toBe('queued')
+
+    const broadcastForQueued = onJobUpdatedSpy.mock.calls.find(
+      ([job]) => job?.job_id === result2.job_id
+    )
+    expect(broadcastForQueued).toBeDefined()
+    expect(broadcastForQueued?.[0].status).toBe('queued')
   })
 
   it('should submit job with status=queued when provider ceiling reached', async () => {
@@ -378,6 +425,51 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     expect(status.active_count).toBe(2)
     expect(status.queued_count).toBe(1)
     expect(status.provider_ceilings[providerId]).toBe(10) // default ceiling
+  })
+
+  it('queued job is dispatched on drainOnStartup when no active jobs', async () => {
+    const providerId = computeProviderId('test-host')
+
+    // Set provider ceiling to 1 so the second submission queues
+    await hostRepo.updateConcurrencyLimit(providerId, 1)
+
+    // Submit first job (should be submitted — fills the single slot)
+    const result1 = await service.submitJob(
+      providerId,
+      'job 1',
+      'echo one',
+      {},
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+    expect(result1.status).toBe('submitted')
+
+    // Submit second job from a different session (should queue because provider ceiling is hit)
+    const result2 = await service.submitJob(
+      providerId,
+      'job 2',
+      'echo two',
+      {},
+      { sessionId: 'session-2', projectId: 'project-1' }
+    )
+    expect(result2.status).toBe('queued')
+
+    // Simulate restart: mark job-1 as done externally (as if the app exited while it was running)
+    await jobRepo.update(result1.job_id, {
+      status: 'success',
+      finishedAt: new Date(),
+      exitCode: 0
+    })
+
+    // No active jobs remain — call drainQueuedJobs to simulate startup drain
+    await service.drainQueuedJobs()
+
+    // Wait for async dispatch to promote job-2 to 'submitted' — poll rather than a fixed delay so the
+    // test does not flake if dispatch is slower under CI load.
+    await waitFor(async () => (await jobRepo.get(result2.job_id))?.status === 'submitted')
+
+    // job-2 should now be submitted
+    const job2Updated = await jobRepo.get(result2.job_id)
+    expect(job2Updated?.status).toBe('submitted')
   })
 
   it('should not dispatch queued job if status is not terminal', async () => {

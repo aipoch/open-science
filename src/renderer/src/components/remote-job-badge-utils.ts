@@ -14,3 +14,11 @@ export const jobElapsedMs = (job: JobSummary, now: number): number => {
   const start = job.started_at ?? job.created_at
   return now - start
 }
+
+// Right-aligned label for a job row / tooltip entry. A queued job has not started running on the
+// remote host, so an elapsed time would be misleading — it shows the literal status "queued"
+// instead. Every other status shows its elapsed duration.
+export const jobRowDuration = (job: JobSummary, now: number): string => {
+  if (job.status === 'queued') return 'queued'
+  return formatDuration(jobElapsedMs(job, now))
+}

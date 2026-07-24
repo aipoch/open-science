@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Zap } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 
 import type { JobSummary } from '../../../shared/compute'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useSessionJobStore } from '@/stores/session-job-store'
-import { formatDuration, jobElapsedMs } from './remote-job-badge-utils'
+import { formatDuration, jobElapsedMs, jobRowDuration } from './remote-job-badge-utils'
 
 // Badge props — sessionId is used to scope the running job list to the active session.
 type RemoteJobBadgeProps = {
@@ -13,11 +14,28 @@ type RemoteJobBadgeProps = {
 }
 
 // Amber capsule badge placed on the notebook bar right side (design.md §4).
-// Shows running count + elapsed time when jobs are running; shows gray "N jobs" when all finished.
-// Hidden only when session has no jobs at all.
-// Hover reveals a tooltip listing each running job's host + intent + duration.
-export const RemoteJobBadge = ({ sessionId, onOpenJobList }: RemoteJobBadgeProps): React.JSX.Element | null => {
-  const allJobsForSession = useSessionJobStore((state) => state.allJobsForSession)
+// While any job is in-flight it shows the active counts + elapsed time ("N running · M queued ·
+// elapsed"); queued jobs (waiting for a concurrency slot) keep the badge amber so they are never
+// hidden. Shows a gray "N jobs" once every job is terminal, and is hidden only when the session has
+// no jobs at all. Hover reveals a tooltip listing each in-flight job's host + intent + duration
+// (queued rows show "queued" instead of an elapsed time).
+export const RemoteJobBadge = ({
+  sessionId,
+  onOpenJobList
+}: RemoteJobBadgeProps): React.JSX.Element | null => {
+  // Subscribe to THIS session's jobs only. applyUpdate replaces the whole jobsById map on every
+  // broadcast, so subscribing to the stable allJobsForSession fn ref (as before) never re-rendered.
+  // useShallow compares the filtered+sorted array element-by-element: a broadcast for ANOTHER session
+  // keeps this slice's object references unchanged → no re-render, while any add or status change in
+  // THIS session produces a different element and re-renders immediately. The 1s elapsed-time tick
+  // below drives fresh durations independently of this subscription.
+  const allJobs = useSessionJobStore(
+    useShallow((state) =>
+      Array.from(state.jobsById.values())
+        .filter((j) => j.session_id === sessionId)
+        .sort((a, b) => b.created_at - a.created_at)
+    )
+  )
   const [now, setNow] = useState(() => Date.now())
 
   // Tick every second to keep elapsed times fresh.
@@ -26,10 +44,12 @@ export const RemoteJobBadge = ({ sessionId, onOpenJobList }: RemoteJobBadgeProps
     return () => clearInterval(id)
   }, [])
 
-  const allJobs = allJobsForSession(sessionId)
-
-  // Count active jobs (running + submitted) for display
-  const activeJobs = allJobs.filter((j) => j.status === 'running' || j.status === 'submitted')
+  // Running jobs are dispatched to the remote host (running or submitted there);
+  // queued jobs are waiting locally for a free concurrency slot. Both are in-flight and
+  // keep the badge amber. Terminal jobs (success/failed/timeout/error) only count toward "N jobs".
+  const runningJobs = allJobs.filter((j) => j.status === 'running' || j.status === 'submitted')
+  const queuedJobs = allJobs.filter((j) => j.status === 'queued')
+  const activeJobs = [...runningJobs, ...queuedJobs]
 
   // Hidden only when session has no jobs at all.
   if (allJobs.length === 0) return null
@@ -37,7 +57,7 @@ export const RemoteJobBadge = ({ sessionId, onOpenJobList }: RemoteJobBadgeProps
   const isActive = activeJobs.length > 0
 
   if (isActive) {
-    // Active state: amber badge with "N running · elapsed"
+    // Active state: amber badge with "N running [· N queued] · elapsed".
     const oldest = activeJobs.reduce<JobSummary>((a, b) => {
       const aStart = a.started_at ?? a.created_at
       const bStart = b.started_at ?? b.created_at
@@ -46,6 +66,11 @@ export const RemoteJobBadge = ({ sessionId, onOpenJobList }: RemoteJobBadgeProps
 
     const elapsedMs = jobElapsedMs(oldest, now)
     const elapsedStr = formatDuration(elapsedMs)
+
+    // Count segments — only non-zero groups appear, joined with " · ".
+    const segments: string[] = []
+    if (runningJobs.length > 0) segments.push(`${runningJobs.length} running`)
+    if (queuedJobs.length > 0) segments.push(`${queuedJobs.length} queued`)
 
     return (
       <TooltipProvider>
@@ -66,11 +91,11 @@ export const RemoteJobBadge = ({ sessionId, onOpenJobList }: RemoteJobBadgeProps
                 gap: '4px',
                 cursor: onOpenJobList ? 'pointer' : 'default'
               }}
-              aria-label={`${activeJobs.length} running remote job${activeJobs.length !== 1 ? 's' : ''}`}
+              aria-label={`${segments.join(', ')} remote job${activeJobs.length !== 1 ? 's' : ''}`}
             >
               <Zap size={11} />
               <span>
-                {activeJobs.length} running · {elapsedStr}
+                {segments.join(' · ')} · {elapsedStr}
               </span>
             </button>
           </TooltipTrigger>
@@ -85,7 +110,7 @@ export const RemoteJobBadge = ({ sessionId, onOpenJobList }: RemoteJobBadgeProps
                   <span className="text-[11px] opacity-70 shrink-0">{job.display_name}</span>
                   <span className="text-[11px] flex-1 truncate">{job.intent}</span>
                   <span className="text-[11px] opacity-60 shrink-0 ml-1">
-                    {formatDuration(jobElapsedMs(job, now))}
+                    {jobRowDuration(job, now)}
                   </span>
                 </div>
               ))}
