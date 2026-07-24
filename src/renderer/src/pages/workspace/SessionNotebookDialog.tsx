@@ -256,7 +256,7 @@ const SessionNotebookContent = ({
         <p
           className={cn(
             'min-w-0 truncate text-xs',
-            exportError ? 'text-danger-000' : 'text-emerald-600'
+            exportError ? 'text-danger-000' : 'text-emerald-600 dark:text-emerald-400'
           )}
           role={exportError ? 'alert' : 'status'}
         >

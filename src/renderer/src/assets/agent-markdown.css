@@ -3,41 +3,77 @@
 @source '../../../../node_modules/streamdown/dist';
 
 @theme inline {
-  /* Streamdown / agent markdown palette */
-  --color-sd-border: #e5e1da;
-  --color-sd-ink: #1a1a1a;
-  --color-sd-muted: #6b655c;
-  --color-sd-hover: #f5f2f0;
-  --color-sd-hover-alt: #f7f6f2;
-  --color-sd-surface: #ffffff;
-  --color-sd-surface-subtle: #f7f4ee;
-  --color-sd-surface-warm: #faf8f4;
-  --color-sd-table-head: hsl(45 12% 93%);
-  --color-sd-code-bg: #f5f2f0;
-  --color-sd-link: #b95538;
-  --color-sd-link-strong: #c95f3f;
-  --color-sd-prose-muted: #6f655a;
-  --color-sd-prose-lead: #3f3f3f;
-  --color-sd-prose-quote: #2f2a25;
-  --color-sd-prose-code: #1f1b17;
-  --color-sd-prose-pre: #f8f4ee;
-  --color-sd-prose-pre-bg: #29241f;
-  --color-sd-prose-th: #d8cfc3;
-  --color-sd-prose-td: #e8e0d6;
-  --color-sd-prose-hr: #e4ded5;
-  --color-sd-prose-bullet: #8a7c6c;
-  --color-sd-highlight: #f3dfb0;
-  --color-sd-inline-code: #f0ebe3;
-  --color-sd-scrollbar-track: #ebe6e1;
-  --color-sd-scrollbar-thumb: #c4bbb0;
-  --shadow-sd-menu: 0 4px 12px rgb(30 28 24 / 12%);
-  --shadow-sd-menu-lg: 0 4px 12px rgb(30 28 24 / 18%);
-  --shadow-sd-panel: 0 18px 48px rgb(30 28 24 / 18%);
-  --shadow-sd-close: 0 1px 4px rgb(30 28 24 / 12%);
+  /* Streamdown / agent markdown palette. Each utility resolves through a var() so the values below
+     (defined per-theme in :root / .dark) can flip for dark mode instead of being inlined as literals. */
+  --color-sd-border: var(--sd-border);
+  --color-sd-ink: var(--sd-ink);
+  --color-sd-muted: var(--sd-muted);
+  --color-sd-hover: var(--sd-hover);
+  --color-sd-hover-alt: var(--sd-hover-alt);
+  --color-sd-surface: var(--sd-surface);
+  --color-sd-surface-subtle: var(--sd-surface-subtle);
+  --color-sd-surface-warm: var(--sd-surface-warm);
+  --color-sd-table-head: var(--sd-table-head);
+  --color-sd-code-bg: var(--sd-code-bg);
+  --color-sd-link: var(--sd-link);
+  --color-sd-link-strong: var(--sd-link-strong);
+  --color-sd-prose-muted: var(--sd-prose-muted);
+  --color-sd-prose-lead: var(--sd-prose-lead);
+  --color-sd-prose-quote: var(--sd-prose-quote);
+  --color-sd-prose-code: var(--sd-prose-code);
+  --color-sd-prose-pre: var(--sd-prose-pre);
+  --color-sd-prose-pre-bg: var(--sd-prose-pre-bg);
+  --color-sd-prose-th: var(--sd-prose-th);
+  --color-sd-prose-td: var(--sd-prose-td);
+  --color-sd-prose-hr: var(--sd-prose-hr);
+  --color-sd-prose-bullet: var(--sd-prose-bullet);
+  --color-sd-highlight: var(--sd-highlight);
+  --color-sd-inline-code: var(--sd-inline-code);
+  --color-sd-scrollbar-track: var(--sd-scrollbar-track);
+  --color-sd-scrollbar-thumb: var(--sd-scrollbar-thumb);
+  /* Routed through var() so .dark can deepen these (see :root / .dark below). */
+  --shadow-sd-menu: var(--sd-shadow-menu);
+  --shadow-sd-menu-lg: var(--sd-shadow-menu-lg);
+  --shadow-sd-panel: var(--sd-shadow-panel);
+  --shadow-sd-close: var(--sd-shadow-close);
   --radius-sd-panel: 14px;
 }
 
 :root {
+  /* Light-theme streamdown elevation. */
+  --sd-shadow-menu: 0 4px 12px rgb(30 28 24 / 12%);
+  --sd-shadow-menu-lg: 0 4px 12px rgb(30 28 24 / 18%);
+  --sd-shadow-panel: 0 18px 48px rgb(30 28 24 / 18%);
+  --sd-shadow-close: 0 1px 4px rgb(30 28 24 / 12%);
+
+  /* Light values for the streamdown palette (mapped into utilities by @theme inline above). */
+  --sd-border: #e5e1da;
+  --sd-ink: #1a1a1a;
+  --sd-muted: #6b655c;
+  --sd-hover: #f5f2f0;
+  --sd-hover-alt: #f7f6f2;
+  --sd-surface: #ffffff;
+  --sd-surface-subtle: #f7f4ee;
+  --sd-surface-warm: #faf8f4;
+  --sd-table-head: hsl(45 12% 93%);
+  --sd-code-bg: #f5f2f0;
+  --sd-link: #b95538;
+  --sd-link-strong: #c95f3f;
+  --sd-prose-muted: #6f655a;
+  --sd-prose-lead: #3f3f3f;
+  --sd-prose-quote: #2f2a25;
+  --sd-prose-code: #1f1b17;
+  --sd-prose-pre: #f8f4ee;
+  --sd-prose-pre-bg: #29241f;
+  --sd-prose-th: #d8cfc3;
+  --sd-prose-td: #e8e0d6;
+  --sd-prose-hr: #e4ded5;
+  --sd-prose-bullet: #8a7c6c;
+  --sd-highlight: #f3dfb0;
+  --sd-inline-code: #f0ebe3;
+  --sd-scrollbar-track: #ebe6e1;
+  --sd-scrollbar-thumb: #c4bbb0;
+
   /* Streamdown portal chrome (referenced by third-party inline styles) */
   --sd-modal-mask: rgb(30 28 24 / 45%);
   --sd-modal-panel-bg: var(--color-sd-surface);
@@ -46,6 +82,43 @@
   --sd-modal-panel-shadow: var(--shadow-sd-panel);
   --sd-modal-title: var(--color-sd-ink);
   --sd-modal-muted: var(--color-sd-muted);
+}
+
+.dark {
+  /* Deeper streamdown elevation so dropdowns/panels read as raised on dark surfaces. */
+  --sd-shadow-menu: 0 4px 12px rgb(0 0 0 / 0.5);
+  --sd-shadow-menu-lg: 0 6px 16px rgb(0 0 0 / 0.55);
+  --sd-shadow-panel: 0 18px 48px rgb(0 0 0 / 0.6);
+  --sd-shadow-close: 0 1px 4px rgb(0 0 0 / 0.5);
+
+  /* Dark values for the streamdown palette: dark surfaces, near-white ink, a lighter link, and a
+     bright-on-dark code block. Kept in step with the app's .dark tokens in main.css. */
+  --sd-border: #3a3931;
+  --sd-ink: #e8e6df;
+  --sd-muted: #a8a49a;
+  --sd-hover: #2f2e27;
+  --sd-hover-alt: #33322b;
+  --sd-surface: #26251f;
+  --sd-surface-subtle: #201f1a;
+  --sd-surface-warm: #2b2a23;
+  --sd-table-head: hsl(48 3% 22%);
+  --sd-code-bg: #201f1a;
+  --sd-link: #e08a6a;
+  --sd-link-strong: #ec9a78;
+  --sd-prose-muted: #a29a8d;
+  --sd-prose-lead: #c9c5bb;
+  --sd-prose-quote: #cfcabf;
+  --sd-prose-code: #e8e6df;
+  --sd-prose-pre: #e8e4da;
+  --sd-prose-pre-bg: #17160f;
+  --sd-prose-th: #45443a;
+  --sd-prose-td: #3a3931;
+  --sd-prose-hr: #3a3931;
+  --sd-prose-bullet: #8a8172;
+  --sd-highlight: #6b5a2f;
+  --sd-inline-code: #33322b;
+  --sd-scrollbar-track: #26251f;
+  --sd-scrollbar-thumb: #4a4840;
 }
 
 @layer components {
@@ -73,7 +146,7 @@
     }
 
     [data-streamdown='mermaid-block-actions'] .relative > .absolute {
-      @apply fixed! z-[200] m-0! min-w-[7.5rem] w-max overflow-hidden rounded-md border border-sd-border bg-white! shadow-sd-menu break-normal;
+      @apply fixed! z-[200] m-0! min-w-[7.5rem] w-max overflow-hidden rounded-md border border-sd-border bg-sd-surface! shadow-sd-menu break-normal;
       top: var(--sd-menu-top, 0) !important;
       right: var(--sd-menu-right, 0) !important;
       left: auto !important;
@@ -97,7 +170,7 @@
     .agent-markdown-root [data-streamdown='mermaid-block-actions'] .relative > .absolute,
     [data-streamdown='table-fullscreen'] .relative > .absolute
   ) {
-    @apply fixed! m-0! overflow-hidden rounded-md border border-sd-border bg-white! shadow-sd-menu-lg break-normal;
+    @apply fixed! m-0! overflow-hidden rounded-md border border-sd-border bg-sd-surface! shadow-sd-menu-lg break-normal;
     top: var(--sd-menu-top, 0) !important;
     right: var(--sd-menu-right, 0) !important;
     left: auto !important;
@@ -116,7 +189,7 @@
     > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not([data-streamdown])
     .relative
     > .absolute {
-    @apply absolute! right-0! left-auto! z-[200] m-0 min-w-[7.5rem] w-max overflow-hidden rounded-md border border-sd-border bg-white! shadow-sd-menu-lg break-normal;
+    @apply absolute! right-0! left-auto! z-[200] m-0 min-w-[7.5rem] w-max overflow-hidden rounded-md border border-sd-border bg-sd-surface! shadow-sd-menu-lg break-normal;
     top: auto !important;
     bottom: calc(100% + 4px) !important;
   }
@@ -133,7 +206,7 @@
       > .absolute
       button
   ) {
-    @apply block! box-border w-full! min-w-32! bg-white! px-3 py-2 text-left text-sm leading-5 text-sd-ink! whitespace-nowrap! break-normal! transition-colors duration-150;
+    @apply block! box-border w-full! min-w-32! bg-sd-surface! px-3 py-2 text-left text-sm leading-5 text-sd-ink! whitespace-nowrap! break-normal! transition-colors duration-150;
     word-break: keep-all !important;
 
     &:hover {
@@ -143,10 +216,10 @@
 
   /* Inline chat table format menu (plain DOM portal — avoids scroll clipping). */
   .sd-table-format-menu {
-    @apply fixed z-[10000] min-w-32 overflow-hidden rounded-md border border-sd-border bg-white shadow-sd-menu-lg;
+    @apply fixed z-[10000] min-w-32 overflow-hidden rounded-md border border-sd-border bg-sd-surface shadow-sd-menu-lg;
 
     & > button {
-      @apply block box-border w-full min-w-32 cursor-pointer border-0 bg-white px-3 py-2 text-left text-sm leading-5 whitespace-nowrap text-sd-ink transition-colors duration-150;
+      @apply block box-border w-full min-w-32 cursor-pointer border-0 bg-sd-surface px-3 py-2 text-left text-sm leading-5 whitespace-nowrap text-sd-ink transition-colors duration-150;
 
       &:hover {
         @apply bg-sd-hover;
@@ -177,11 +250,11 @@
     backdrop-filter: none;
 
     & > div[role='presentation'] {
-      @apply flex flex-col overflow-hidden border border-sd-border bg-white shadow-sd-panel;
+      @apply flex flex-col overflow-hidden border border-sd-border bg-sd-surface shadow-sd-panel;
       border-radius: var(--sd-modal-panel-radius);
 
       & > div:first-child {
-        @apply relative z-40 flex shrink-0 items-center overflow-visible border-b border-sd-border bg-white px-4 py-[0.7rem];
+        @apply relative z-40 flex shrink-0 items-center overflow-visible border-b border-sd-border bg-sd-surface px-4 py-[0.7rem];
         border-radius: var(--sd-modal-panel-radius) var(--sd-modal-panel-radius) 0 0;
 
         &::before {
@@ -200,7 +273,7 @@
       }
 
       & > div:last-child {
-        @apply relative z-[1] min-h-0 flex-1 overflow-auto bg-white p-4;
+        @apply relative z-[1] min-h-0 flex-1 overflow-auto bg-sd-surface p-4;
       }
     }
   }
@@ -488,7 +561,7 @@
   }
 
   :is([data-streamdown='code-block-actions'], [data-streamdown='mermaid-block-actions']) {
-    @apply pointer-events-auto gap-1 rounded-lg border border-sd-border bg-white/90 px-1 py-0.5 shadow-sm backdrop-blur-sm;
+    @apply pointer-events-auto gap-1 rounded-lg border border-sd-border bg-sd-surface/90 px-1 py-0.5 shadow-sm backdrop-blur-sm;
   }
 
   [data-streamdown='mermaid-block-actions'] .relative > .absolute {
@@ -507,7 +580,9 @@
     @apply text-xs italic text-sd-muted;
   }
 
-  /* Inline SVG charts only — never stretch Streamdown UI icons/menus. */
+  /* Inline SVG charts only — never stretch Streamdown UI icons/menus. Intentionally keeps a white
+     canvas in dark mode too: agent-produced plots (matplotlib/plotly exports) draw dark ink and text
+     on a transparent ground, so a dark surface would make them unreadable. */
   svg:not(
     :is(
       [data-streamdown='link-safety-modal'] *,

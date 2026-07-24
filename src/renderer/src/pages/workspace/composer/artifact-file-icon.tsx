@@ -36,10 +36,10 @@ const iconForExtension = (extension: string): { Icon: LucideIcon; color: string 
       return { Icon: FileText, color: 'text-red-500' }
     case 'csv':
     case 'tsv':
-      return { Icon: FileSpreadsheet, color: 'text-green-600' }
+      return { Icon: FileSpreadsheet, color: 'text-green-600 dark:text-green-400' }
     case 'xls':
     case 'xlsx':
-      return { Icon: FileSpreadsheet, color: 'text-emerald-600' }
+      return { Icon: FileSpreadsheet, color: 'text-emerald-600 dark:text-emerald-400' }
     case 'ppt':
     case 'pptx':
       return { Icon: Presentation, color: 'text-orange-500' }

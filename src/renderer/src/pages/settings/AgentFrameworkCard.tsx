@@ -207,7 +207,10 @@ const AgentFrameworkCard = ({
                 )
               ) : repair ? (
                 // A detected-but-broken runtime (preflight failed) is not "not installed".
-                <Badge variant="outline" className="border-amber-500/40 text-amber-600">
+                <Badge
+                  variant="outline"
+                  className="border-amber-500/40 text-amber-600 dark:text-amber-400"
+                >
                   Needs repair
                 </Badge>
               ) : (

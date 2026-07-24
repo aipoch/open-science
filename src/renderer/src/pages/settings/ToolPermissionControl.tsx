@@ -20,7 +20,7 @@ export function ToolPermissionControl({
     const base =
       'grid h-6 w-7 place-items-center rounded-md transition-colors motion-reduce:transition-none'
     if (active) {
-      return `${base} bg-card shadow-sm ${allow ? 'text-emerald-600' : 'text-foreground'}`
+      return `${base} bg-card shadow-sm ${allow ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`
     }
     return `${base} text-muted-foreground hover:text-foreground`
   }

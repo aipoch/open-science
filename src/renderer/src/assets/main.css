@@ -53,10 +53,12 @@
   --color-skill-chip: var(--skill-chip);
   --color-skill-chip-foreground: var(--skill-chip-foreground);
   --color-rail-card-bg: hsl(var(--rail-card-bg));
-  --shadow-card: 0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04);
-  --shadow-card-opaque: 0 0 0 1px rgb(10 10 10 / 0.08), 0 8px 28px rgb(10 10 10 / 0.1);
-  --shadow-menu: 0 2px 8px rgb(0 0 0 / 0.08);
-  --shadow-dialog: 0 8px 32px rgb(10 10 10 / 12%);
+  /* Routed through var() so .dark can strengthen elevation — subtle black shadows vanish on dark
+     surfaces, so the dark theme uses higher-opacity values (defined in :root / .dark below). */
+  --shadow-card: var(--shadow-card-value);
+  --shadow-card-opaque: var(--shadow-card-opaque-value);
+  --shadow-menu: var(--shadow-menu-value);
+  --shadow-dialog: var(--shadow-dialog-value);
   --z-index-modal: 50;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -65,7 +67,13 @@
 }
 
 :root {
+  color-scheme: light;
   --radius: 0.5rem;
+  /* Light-theme elevation (referenced by the shadow-* utilities via @theme inline). */
+  --shadow-card-value: 0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04);
+  --shadow-card-opaque-value: 0 0 0 1px rgb(10 10 10 / 0.08), 0 8px 28px rgb(10 10 10 / 0.1);
+  --shadow-menu-value: 0 2px 8px rgb(0 0 0 / 0.08);
+  --shadow-dialog-value: 0 8px 32px rgb(10 10 10 / 12%);
   --bg-10: hsl(60 14% 99%);
   --bg-000: hsl(0 0% 100%);
   --bg-200: hsl(60 11% 95%);
@@ -113,6 +121,63 @@
   --border: #dededa;
   --input: #dededa;
   --ring: oklch(0.58 0.11 184);
+}
+
+/* Dark theme: warm, low-chroma dark surfaces that keep the app's paper feel rather than a cold
+   pure-neutral gray. Activated by the `.dark` class on <html> (see @custom-variant above); every
+   token here overrides its :root light counterpart, so utilities like bg-background / text-foreground
+   flip automatically. Relative lightness ordering is preserved (bg-000 is the "raised" surface, the
+   bg-2/3/400 ramp gets progressively lighter for depth) so existing layering reads the same. */
+.dark {
+  color-scheme: dark;
+  /* Stronger, deeper shadows + a faint light ring so cards/menus read as raised against dark surfaces. */
+  --shadow-card-value: 0 0 0 1px rgb(0 0 0 / 0.5), 0 4px 24px rgb(0 0 0 / 0.45);
+  --shadow-card-opaque-value: 0 0 0 1px rgb(0 0 0 / 0.6), 0 8px 28px rgb(0 0 0 / 0.55);
+  --shadow-menu-value: 0 2px 8px rgb(0 0 0 / 0.5);
+  --shadow-dialog-value: 0 8px 32px rgb(0 0 0 / 0.6);
+  --bg-10: hsl(60 3% 10%);
+  --bg-000: hsl(48 4% 15%);
+  --bg-200: hsl(50 3% 18%);
+  --bg-300: hsl(48 3% 22%);
+  --bg-400: hsl(46 3% 28%);
+  --border-ink-channel: 48 8% 82%;
+  --text-000: hsl(48 12% 92%);
+  --text-100: hsl(45 5% 62%);
+  --text-300: hsl(45 4% 50%);
+  --rail-card-bg: 48 4% 15%;
+  --danger-000: hsl(0 70% 72%);
+  --danger-900: hsl(0 35% 20%);
+  /* Brighter code-highlight hues so keywords/strings/numbers keep enough contrast on the dark surface. */
+  --syntax-keyword: hsl(215 75% 72%);
+  --syntax-string: hsl(140 45% 62%);
+  --syntax-number: hsl(280 60% 74%);
+  --action-panel-toggle: hsl(45 5% 68%);
+  --surface-control-hover: hsl(48 4% 24%);
+  --message-user-text: hsl(48 12% 92%);
+  --mention-chip: hsl(140 30% 22%);
+  --mention-chip-foreground: hsl(140 45% 72%);
+  --skill-chip: hsl(217 45% 26%);
+  --skill-chip-foreground: hsl(214 90% 80%);
+  --background: #1a1a18;
+  --foreground: #e8e6df;
+  --card: #26251f;
+  --card-foreground: #e8e6df;
+  --popover: #26251f;
+  --popover-foreground: #e8e6df;
+  --primary: oklch(0.72 0.1 184);
+  --primary-foreground: oklch(0.18 0.03 190);
+  --secondary: #33322b;
+  --secondary-foreground: #e8e6df;
+  --muted: #33322b;
+  --muted-foreground: #a8a49a;
+  --accent: oklch(0.78 0.11 82);
+  --accent-foreground: oklch(0.2 0.03 62);
+  --destructive: oklch(0.68 0.19 25);
+  --session-running: oklch(0.7 0.11 184);
+  --session-waiting: oklch(0.74 0.14 68);
+  --border: #3a3931;
+  --input: #3a3931;
+  --ring: oklch(0.66 0.1 184);
 }
 
 @layer base {

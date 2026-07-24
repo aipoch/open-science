@@ -1,4 +1,10 @@
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './api-map.generated'
+import { applyTheme, resolveInitialTheme } from '@/lib/theme'
+
+// Apply the saved theme before the (async) web API install and the app import below, so the page
+// doesn't paint in light mode and then flip to dark. The Electron renderer does the same at the top
+// of main.tsx; the web build reaches main.tsx only after an async round trip, so it must apply here.
+applyTheme(resolveInitialTheme())
 
 type BootstrapInfo = {
   platform: string
