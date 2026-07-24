@@ -36,7 +36,6 @@ const App = (): React.JSX.Element | null => {
   const loadProjects = useProjectStore((state) => state.loadProjects)
   const isSettingsLoaded = useSettingsStore((state) => state.isLoaded)
   const onboardingCompletedAt = useSettingsStore((state) => state.onboardingCompletedAt)
-  const isEnvironmentRepairOpen = useSettingsStore((state) => state.isEnvironmentRepairOpen)
   const loadSettings = useSettingsStore((state) => state.load)
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
   const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
@@ -129,16 +128,19 @@ const App = (): React.JSX.Element | null => {
     void loadProjects()
   }, [loadProjects])
 
-  // Load settings/preflight once so the startup gate can decide between onboarding and the app.
+  // Hydrate the persisted framework before checking it. Running these concurrently can make a
+  // Codex/OpenCode result look stale against the renderer's initial Claude selection and discard the
+  // only launch check that would surface a Home repair action.
   useEffect(() => {
-    void loadSettings()
-  }, [loadSettings])
+    let active = true
+    void loadSettings().then(() => {
+      if (active) void checkEnvironment()
+    })
 
-  // Required host capabilities are re-checked on every launch. Completed users remain on Home while
-  // this runs; a required failure becomes an inline alert instead of flashing the setup page.
-  useEffect(() => {
-    void checkEnvironment()
-  }, [checkEnvironment])
+    return () => {
+      active = false
+    }
+  }, [checkEnvironment, loadSettings])
 
   // Settings carry the persisted first-run marker. No environment result is awaited here: existing
   // users proceed directly to Home while the launch check runs in the background.
@@ -148,8 +150,7 @@ const App = (): React.JSX.Element | null => {
 
   if (
     resolveStartupView({
-      onboardingDone: onboardingCompletedAt !== undefined,
-      repairRequested: isEnvironmentRepairOpen
+      onboardingDone: onboardingCompletedAt !== undefined
     }) === 'onboarding'
   ) {
     return <OnboardingWizard />

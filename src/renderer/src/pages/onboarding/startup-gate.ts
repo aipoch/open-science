@@ -6,8 +6,7 @@ export type StartupView = 'onboarding' | 'app'
 
 export type StartupGateInput = {
   onboardingDone: boolean
-  repairRequested: boolean
 }
 
 export const resolveStartupView = (input: StartupGateInput): StartupView =>
-  !input.onboardingDone || input.repairRequested ? 'onboarding' : 'app'
+  input.onboardingDone ? 'app' : 'onboarding'

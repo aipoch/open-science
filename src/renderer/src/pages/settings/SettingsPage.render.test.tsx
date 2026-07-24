@@ -92,6 +92,14 @@ const installApi = (): void => {
       openFile: vi.fn().mockResolvedValue({ opened: true }),
       revealInFolder: vi.fn().mockResolvedValue({ revealed: true })
     },
+    storage: {
+      getInfo: vi.fn().mockResolvedValue({
+        dataRoot: '/Users/x/.open-science',
+        isDefault: true,
+        usage: { categories: [], totalBytes: 0 },
+        availableBytes: 1_000_000_000
+      })
+    },
     cli: {
       getStatus: vi.fn().mockResolvedValue({
         installed: false,
@@ -226,6 +234,170 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('nav [aria-current="page"]')?.textContent?.trim()).toBe(
       'Agent'
     )
+  })
+
+  it('shows Repair for the failed selected runtime even when it has no detected path', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      claudeReady: false,
+      opencodeReady: false,
+      codexReady: false,
+      agentFrameworkId: 'claude-code',
+      agentReady: false,
+      activeProviderReady: false
+    })
+    useSettingsStore.setState({
+      environmentCheck: {
+        checkedAt: 1,
+        platform: 'darwin',
+        architecture: 'arm64',
+        ready: false,
+        canAutoInstall: false,
+        agentFrameworkId: 'claude-code',
+        runtime: { found: false },
+        checks: [
+          {
+            id: 'agent',
+            label: 'Claude runtime',
+            status: 'failed',
+            summary: 'Claude is missing.',
+            detail: 'No executable was found on PATH.'
+          }
+        ]
+      }
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await openAgentPanel()
+
+    expect(document.body.querySelector('[aria-label="Repair Claude Agent"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Repair OpenCode"]')).toBeNull()
+    expect(document.body.textContent).toContain('Claude is missing.')
+    expect(document.body.textContent).toContain('No executable was found on PATH.')
+  })
+
+  it('shows every failed Codex component in the Agent repair notice', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: {},
+      opencode: {},
+      codex: { resolvedPath: '/usr/local/bin/codex-acp' },
+      providers: [],
+      agentFrameworkId: 'codex',
+      agentFrameworks: [{ id: 'codex', displayName: 'Codex', supportsSkills: false }]
+    })
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      claudeReady: false,
+      opencodeReady: false,
+      codexReady: false,
+      agentFrameworkId: 'codex',
+      agentReady: false,
+      activeProviderReady: false
+    })
+    useSettingsStore.setState({
+      agentFrameworkId: 'codex',
+      environmentCheck: {
+        checkedAt: 1,
+        platform: 'darwin',
+        architecture: 'arm64',
+        ready: false,
+        canAutoInstall: false,
+        agentFrameworkId: 'codex',
+        runtime: { found: false },
+        checks: [
+          {
+            id: 'agent',
+            label: 'Codex native CLI',
+            status: 'failed',
+            summary: 'Native Codex CLI is not installed.'
+          },
+          {
+            id: 'agent',
+            label: 'Codex ACP adapter',
+            status: 'failed',
+            summary: 'Codex ACP adapter is not installed.'
+          }
+        ]
+      }
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await openAgentPanel()
+
+    const repairNotice = document.body.querySelector('[aria-label="Agent runtime repair issues"]')
+    expect(repairNotice?.textContent).toContain('Native Codex CLI is not installed.')
+    expect(repairNotice?.textContent).toContain('Codex ACP adapter is not installed.')
+  })
+
+  it('shows system and installation-network blockers above the Agent cards', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      claudeReady: false,
+      opencodeReady: false,
+      codexReady: false,
+      agentFrameworkId: 'claude-code',
+      agentReady: false,
+      activeProviderReady: false
+    })
+    useSettingsStore.setState({
+      environmentCheck: {
+        checkedAt: 1,
+        platform: 'darwin',
+        architecture: 'arm64',
+        ready: false,
+        canAutoInstall: false,
+        agentFrameworkId: 'claude-code',
+        runtime: { found: false },
+        checks: [
+          {
+            id: 'system',
+            label: 'System compatibility',
+            status: 'failed',
+            summary: 'This host has no app-managed runtime package.'
+          },
+          {
+            id: 'install-network',
+            label: 'Installation network',
+            status: 'failed',
+            summary: 'Neither trusted registry is reachable.'
+          }
+        ]
+      }
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await openAgentPanel()
+
+    const blocker = document.body.querySelector('[aria-label="Agent installation blockers"]')
+    expect(blocker?.textContent).toContain('System compatibility')
+    expect(blocker?.textContent).toContain('This host has no app-managed runtime package.')
+    expect(blocker?.textContent).toContain('Installation network')
+    expect(blocker?.textContent).toContain('Neither trusted registry is reachable.')
+
+    const claudeInstallTrigger = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Install Claude Agent"]'
+    )
+    expect(claudeInstallTrigger).not.toBeNull()
+    openRadixMenu(claudeInstallTrigger)
+    const claudeManaged = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('App-managed download'))
+    expect(claudeManaged?.getAttribute('data-disabled')).toBe('')
+
+    await act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    openRadixMenu(document.body.querySelector<HTMLButtonElement>('[aria-label="Install OpenCode"]'))
+    const opencodeManaged = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('App-managed download'))
+    expect(opencodeManaged?.getAttribute('data-disabled')).toBeNull()
   })
 
   it('keeps the Agent sub-item expanded once the Model branch is opened', async () => {
@@ -531,6 +703,86 @@ describe('SettingsPage layout', () => {
     expect(useSettingsStore.getState().pendingSkillId).toBeUndefined()
   })
 
+  it('opens directly on a requested settings panel and consumes the target', async () => {
+    useSettingsStore.setState({ pendingSettingsPanel: 'storage' })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(navButton('Storage')?.getAttribute('aria-current')).toBe('page')
+    expect(useSettingsStore.getState().pendingSettingsPanel).toBeUndefined()
+  })
+
+  it('pushes Agent after storage recovery so Back returns to Storage', async () => {
+    const failedStorage = {
+      checkedAt: 1,
+      platform: 'darwin',
+      architecture: 'arm64',
+      checks: [
+        {
+          id: 'storage' as const,
+          label: 'App storage permission',
+          status: 'failed' as const,
+          summary: 'Open Science cannot write to its private data folder.'
+        }
+      ],
+      ready: false,
+      canAutoInstall: false,
+      agentFrameworkId: 'claude-code' as const,
+      runtime: { found: false }
+    }
+    const repairedStorage = {
+      ...failedStorage,
+      checkedAt: 2,
+      checks: [
+        {
+          id: 'storage' as const,
+          label: 'App storage permission',
+          status: 'passed' as const,
+          summary: 'Open Science can write to its private data folder.'
+        },
+        {
+          id: 'agent' as const,
+          label: 'Claude runtime',
+          status: 'failed' as const,
+          summary: 'Claude is missing.'
+        }
+      ]
+    }
+    const checkEnvironment = vi.fn().mockImplementation(async () => {
+      useSettingsStore.setState({ environmentCheck: repairedStorage })
+      return repairedStorage
+    })
+    useSettingsStore.setState({
+      pendingSettingsPanel: 'storage',
+      environmentCheck: failedStorage,
+      checkEnvironment
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const checkAgain = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Check again'
+    )
+    await act(async () => checkAgain?.click())
+    const continueToAgent = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Continue to repair Agent')
+    await act(async () => continueToAgent?.click())
+
+    expect(navButton('Agent')?.getAttribute('aria-current')).toBe('page')
+    const back = document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')
+    expect(back?.disabled).toBe(false)
+    await act(async () => back?.click())
+    expect(navButton('Storage')?.getAttribute('aria-current')).toBe('page')
+  })
+
   it('blocks key storage in the provider form when encryption is unavailable', async () => {
     // The store loads encryptionAvailable from this call when the dialog opens.
     ;(
@@ -758,6 +1010,56 @@ describe('SettingsPage uninstall confirmation', () => {
     expect(setAgentFramework).toHaveBeenCalledWith({ id: 'opencode' })
   })
 
+  it('locks every framework card until a confirmed Settings switch finishes', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    api.settings.getPreflight = vi
+      .fn()
+      .mockResolvedValue({ claudeReady: true, opencodeReady: true, activeProviderReady: true })
+    const readySnapshot = {
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
+      providers: [],
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: bothFrameworks,
+      claudeManaged: true,
+      opencodeManaged: false
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue(readySnapshot)
+    let resolveSwitch: ((snapshot: typeof readySnapshot) => void) | undefined
+    api.settings.setAgentFramework = vi.fn().mockImplementation(
+      () =>
+        new Promise<typeof readySnapshot>((resolve) => {
+          resolveSwitch = resolve
+        })
+    )
+    const checkEnvironment = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ checkEnvironment })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await openAgentPanel()
+    const opencodeRadio = document.body.querySelector<HTMLElement>('[aria-label="Use OpenCode"]')
+    await act(async () => opencodeRadio?.click())
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    await act(async () => findButton(dialog!, 'Switch')?.click())
+
+    expect(
+      document.body.querySelector('[aria-label="Use Claude Agent"]')?.getAttribute('aria-disabled')
+    ).toBe('true')
+    expect(
+      document.body.querySelector('[aria-label="Use OpenCode"]')?.getAttribute('aria-disabled')
+    ).toBe('true')
+    expect(checkEnvironment).not.toHaveBeenCalled()
+
+    await act(async () =>
+      resolveSwitch?.({
+        ...readySnapshot,
+        agentFrameworkId: 'opencode'
+      })
+    )
+
+    expect(checkEnvironment).toHaveBeenCalledWith({ force: true })
+  })
+
   // An inactive but managed Claude (OpenCode active) whose Uninstall would otherwise be enabled.
   const inactiveManagedClaudeSnapshot = {
     claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
@@ -901,6 +1203,8 @@ describe('SettingsPage Codex framework', () => {
       agentFrameworkId: 'codex'
     })
     api.settings.setAgentFramework = setAgentFramework
+    const checkEnvironment = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ checkEnvironment })
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -922,6 +1226,7 @@ describe('SettingsPage Codex framework', () => {
     )
     await act(async () => confirm?.click())
     expect(setAgentFramework).toHaveBeenCalledWith({ id: 'codex' })
+    expect(checkEnvironment).toHaveBeenCalledWith({ force: true })
   })
 
   it('routes the default app-managed install action to installCodex', async () => {
@@ -945,11 +1250,11 @@ describe('SettingsPage Codex framework', () => {
       agentReady: true,
       activeProviderReady: false
     })
-    const installCodex = vi
-      .fn()
-      .mockResolvedValue({ installId: 'codex-test', ok: false, error: 'stopped for test' })
+    const installCodex = vi.fn().mockResolvedValue({ installId: 'codex-test', ok: true })
     api.settings.installCodex = installCodex
     api.settings.onInstallLog = vi.fn().mockReturnValue(() => undefined)
+    const checkEnvironment = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ checkEnvironment })
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -968,8 +1273,13 @@ describe('SettingsPage Codex framework', () => {
     ).find((item) => item.textContent?.includes('App-managed download (recommended)'))
     expect(managedItem).toBeDefined()
     clickRadixMenuItem(managedItem)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
 
     expect(installCodex).toHaveBeenCalledWith({ source: 'managed' })
+    expect(checkEnvironment).toHaveBeenCalledWith({ force: true })
   })
 
   it('groups cards by install state and re-detects every framework from the section action', async () => {
@@ -1000,6 +1310,8 @@ describe('SettingsPage Codex framework', () => {
     api.settings.detectClaude = detectClaude
     api.settings.detectOpencode = detectOpencode
     api.settings.detectCodex = detectCodex
+    const checkEnvironment = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ checkEnvironment })
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -1022,6 +1334,7 @@ describe('SettingsPage Codex framework', () => {
     expect(detectClaude).toHaveBeenCalledTimes(1)
     expect(detectOpencode).toHaveBeenCalledTimes(1)
     expect(detectCodex).toHaveBeenCalledTimes(1)
+    expect(checkEnvironment).toHaveBeenCalledTimes(1)
   })
 
   it('routes isolated subscription sign-out from the provider list', async () => {

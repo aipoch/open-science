@@ -122,6 +122,10 @@ describe('EnvironmentStep', () => {
     expect(continueButton()?.disabled).toBe(true)
     expect(container.textContent).toContain('Complete every required item above to continue.')
     expect(container.textContent).toContain('Not enough free disk space.')
+    expect(container.textContent).toContain(
+      'Resolve the items marked Action needed, then choose Check again.'
+    )
+    expect(container.textContent).not.toContain('manual tab')
   })
 
   it('blocks Continue while a check is in flight or no result has landed yet', async () => {

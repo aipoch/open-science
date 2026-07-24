@@ -156,7 +156,6 @@ const resetOnboardingStores = (): {
     installOpencode: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
     setAgentFramework: vi.fn().mockResolvedValue(undefined),
     completeOnboarding: vi.fn().mockResolvedValue(undefined),
-    closeEnvironmentRepair: vi.fn(),
     cancelCodexLogin: vi.fn().mockResolvedValue(undefined),
     saveAndActivateProvider: vi
       .fn()

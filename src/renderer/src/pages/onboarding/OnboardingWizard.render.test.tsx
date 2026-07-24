@@ -10,7 +10,6 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { OnboardingWizard } from './OnboardingWizard'
 import {
   clickButton,
-  environment,
   fillRequiredProviderFields,
   readyClaudeState,
   resetOnboardingStores,
@@ -205,77 +204,5 @@ describe('OnboardingWizard flow', () => {
     expect(container.textContent).toContain('Disk is full.')
     expect(container.textContent).toContain('/mnt/data/OpenScience')
     expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
-  })
-})
-
-describe('OnboardingWizard recovery', () => {
-  const recoveryState = (ready: boolean): void => {
-    useSettingsStore.setState({
-      onboardingCompletedAt: 1234,
-      preflight: {
-        claudeReady: ready,
-        opencodeReady: false,
-        codexReady: false,
-        agentFrameworkId: 'claude-code',
-        agentReady: ready,
-        activeProviderReady: true
-      },
-      environmentCheck: environment(ready)
-    })
-  }
-
-  it('uses a focused single-page repair screen without the five-step tracker', async () => {
-    recoveryState(false)
-
-    await renderWizard()
-
-    expect(container.textContent).toContain('Open Science needs attention')
-    expect(currentSection('Prepare environment')).not.toBeNull()
-    expect(currentSection('Configure model')).toBeNull()
-    expect(container.textContent).toContain('Automatic detection')
-    expect(container.textContent).toContain('Manual setup')
-    // Recovery only reopens the repair surface, so the step tracker does not apply.
-    expect(container.querySelector('ol[aria-label="Setup progress"]')).toBeNull()
-  })
-
-  it('returns a repaired completed user to the app without opening model setup', async () => {
-    const closeEnvironmentRepair = vi.fn()
-    recoveryState(true)
-    useSettingsStore.setState({ closeEnvironmentRepair })
-
-    await renderWizard()
-
-    const returnButton = Array.from(container.querySelectorAll('button')).find((button) =>
-      /return to open science/i.test(button.textContent ?? '')
-    )
-    await act(async () => returnButton?.click())
-
-    expect(closeEnvironmentRepair).toHaveBeenCalledOnce()
-    expect(currentSection('Configure model')).toBeNull()
-  })
-
-  it('does not auto-switch the framework for a returning (recovery) user', async () => {
-    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
-    recoveryState(false)
-    useSettingsStore.setState({
-      setAgentFramework,
-      agentFrameworks: [
-        { id: 'claude-code', displayName: 'Claude Code', supportsSkills: true },
-        { id: 'opencode', displayName: 'OpenCode', supportsSkills: true }
-      ],
-      preflight: {
-        claudeReady: false,
-        opencodeReady: true,
-        codexReady: false,
-        agentFrameworkId: 'claude-code',
-        agentReady: false,
-        activeProviderReady: true
-      }
-    })
-
-    await renderWizard()
-
-    // A returning user's saved framework always wins; the prefer-installed auto-pick stays off.
-    expect(setAgentFramework).not.toHaveBeenCalled()
   })
 })

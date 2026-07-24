@@ -24,6 +24,7 @@ import { UpdateCapsule } from '@/components/UpdateCapsule'
 import { APP } from '../../../../shared/app-config'
 import type { Project } from '../../../../shared/projects'
 import type { EnvironmentCheckItem, EnvironmentCheckResult } from '../../../../shared/settings'
+import { getEnvironmentRepairPanel } from '../settings/settings-navigation'
 
 import { DeleteProjectDialog } from './DeleteProjectDialog'
 import { ProjectFormDialog } from './ProjectFormDialog'
@@ -83,8 +84,9 @@ const HomePage = (): React.JSX.Element => {
   const openSession = useNavigationStore((state) => state.openSession)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
-  const openEnvironmentRepair = useSettingsStore((state) => state.openEnvironmentRepair)
+  const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
   const requiredEnvironmentFailures = getRequiredEnvironmentFailures(environmentCheck)
+  const environmentRepairPanel = getEnvironmentRepairPanel(requiredEnvironmentFailures)
 
   const [formState, setFormState] = useState<ProjectFormState | null>(null)
   const [nameDraft, setNameDraft] = useState('')
@@ -228,10 +230,10 @@ const HomePage = (): React.JSX.Element => {
           </div>
           <div className="flex items-center gap-2">
             <UpdateCapsule />
-            {requiredEnvironmentFailures.length > 0 ? (
+            {requiredEnvironmentFailures.length > 0 && environmentRepairPanel ? (
               <button
                 type="button"
-                onClick={openEnvironmentRepair}
+                onClick={() => openSettingsToPanel(environmentRepairPanel)}
                 className="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-000/35 bg-danger-900 px-2.5 text-xs font-medium text-danger-000 transition-colors duration-150 ease-out hover:border-danger-000/55 hover:bg-danger-900/80"
                 aria-label="Open environment repair"
               >

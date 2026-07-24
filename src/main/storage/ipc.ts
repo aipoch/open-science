@@ -2,9 +2,14 @@ import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { app, dialog, ipcMain } from 'electron'
+import { app, dialog, ipcMain, shell } from 'electron'
 
-import type { DataRootInspection, MigrationOutcome, MigrationProgress } from '../../shared/storage'
+import type {
+  DataRootInspection,
+  MigrationOutcome,
+  MigrationProgress,
+  RevealAppStorageResult
+} from '../../shared/storage'
 import {
   computeDefaultDataRoot,
   dataRootForPicked,
@@ -127,6 +132,19 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
       legacyDataMovePrompt,
       usage: await computeStorageUsage(dataRoot),
       availableBytes: available
+    }
+  })
+
+  ipcMain.handle('storage:reveal-app-storage', async (): Promise<RevealAppStorageResult> => {
+    // The renderer supplies no path: main resolves the single trusted config root at invocation time.
+    try {
+      const error = await shell.openPath(resolveConfigRoot())
+      return error ? { revealed: false, error } : { revealed: true }
+    } catch (error) {
+      return {
+        revealed: false,
+        error: error instanceof Error ? error.message : 'Could not reveal application storage.'
+      }
     }
   })
 

@@ -60,7 +60,9 @@ const continueButton = (): HTMLButtonElement | undefined =>
 
 const installFromManagedSource = async (frameworkName: string): Promise<void> => {
   openRadixMenu(
-    document.body.querySelector<HTMLButtonElement>(`[aria-label="Install ${frameworkName}"]`)
+    document.body.querySelector<HTMLButtonElement>(
+      `[aria-label="Install ${frameworkName}"], [aria-label="Repair ${frameworkName}"]`
+    )
   )
   const managed = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
     (item) => item.textContent?.includes('App-managed download (recommended)')
@@ -469,6 +471,43 @@ describe('AgentStep', () => {
     expect(installClaude).toHaveBeenCalledWith('managed', 'npmmirror')
   })
 
+  it('surfaces an installer rejection without an unhandled event promise', async () => {
+    const installClaude = vi.fn().mockRejectedValue(new Error('Installer process could not start.'))
+    const detectClaude = vi.fn().mockResolvedValue({ found: false })
+    const detectOpencode = vi.fn().mockResolvedValue(undefined)
+    const detectCodex = vi.fn().mockResolvedValue(undefined)
+    const checkEnvironment = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: threeFrameworks,
+      installClaude,
+      detectClaude,
+      detectOpencode,
+      detectCodex,
+      checkEnvironment,
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        codexReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false)
+    })
+
+    await renderStep()
+    await installFromManagedSource('Claude Agent')
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Installer process could not start.'
+    )
+
+    await clickButton(/^re-detect$/i)
+
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
   it('re-detects all frameworks and refreshes the environment gate', async () => {
     const detectClaude = vi.fn().mockResolvedValue({ found: false })
     const detectOpencode = vi.fn().mockResolvedValue(undefined)
@@ -511,6 +550,32 @@ describe('AgentStep', () => {
 
     expect(checkEnvironment).toHaveBeenCalledOnce()
     expect(container.textContent).toContain('Codex detection failed.')
+  })
+
+  it('clears a previous detection failure when a later repair succeeds', async () => {
+    const detectClaude = vi.fn().mockResolvedValue({ found: false })
+    const detectOpencode = vi.fn().mockResolvedValue(undefined)
+    const detectCodex = vi.fn().mockRejectedValueOnce(new Error('Codex detection failed.'))
+    const checkEnvironment = vi.fn().mockResolvedValue(undefined)
+    const installClaude = vi.fn().mockResolvedValue({ installId: 'repair-1', ok: true })
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: threeFrameworks,
+      detectClaude,
+      detectOpencode,
+      detectCodex,
+      checkEnvironment,
+      installClaude,
+      environmentCheck: environment(false)
+    })
+
+    await renderStep()
+    await clickButton(/re-detect/i)
+    expect(container.textContent).toContain('Codex detection failed.')
+
+    await installFromManagedSource('Claude Agent')
+
+    expect(container.textContent).not.toContain('Codex detection failed.')
   })
 
   it('shows an environment-check failure that keeps Continue disabled', async () => {

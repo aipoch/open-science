@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
+import type { SettingsPanelId } from './settings-navigation'
 import { useComputeStore } from '@/stores/compute-store'
 import { AgentPanel } from './AgentPanel'
 import { ProvidersPanel } from './ProvidersPanel'
@@ -82,20 +83,6 @@ const toUpsertRequest = (
   region: value.region,
   key: value.key || undefined
 })
-
-// Left-nav panels, grouped in the sidebar. "Capabilities" holds agent extensions (Skills); "Workspace"
-// holds environment/config (Model manages providers, its Agent sub-panel manages agent frameworks,
-// General holds app settings incl. logs).
-type SettingsPanelId =
-  | 'model'
-  | 'agent'
-  | 'skills'
-  | 'connectors'
-  | 'compute'
-  | 'general'
-  | 'storage'
-  | 'network'
-  | 'runtimes'
 
 type SettingsPanel = {
   id: SettingsPanelId
@@ -176,7 +163,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
   const pendingSkillId = useSettingsStore((state) => state.pendingSkillId)
   const consumePendingSkill = useSettingsStore((state) => state.consumePendingSkill)
-  const pendingComputePanel = useSettingsStore((state) => state.pendingComputePanel)
+  const pendingSettingsPanel = useSettingsStore((state) => state.pendingSettingsPanel)
+  const consumePendingSettingsPanel = useSettingsStore((state) => state.consumePendingSettingsPanel)
 
   // Settings navigation history (browser-like back/forward). Panel switches and drill-downs push a
   // new location; the active panel and open sub-views are derived from the current entry.
@@ -233,24 +221,22 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
     setSeededSkillId(undefined)
   }
 
-  // When opened from the Files panel "Add SSH host…" link, seed the history straight to the Compute
-  // panel. Follows the same derive-state-during-render pattern as pendingSkillId.
-  const [seededComputePanel, setSeededComputePanel] = useState(false)
-  if (open && pendingComputePanel && !seededComputePanel) {
-    setSeededComputePanel(true)
-    setHistory([{ ...INITIAL_LOCATION, panel: 'compute', compute: { kind: 'list' } }])
+  // External entry points seed one shared panel target. The consumed target cannot override a later
+  // manual navigation when the dialog is reopened normally.
+  const [seededSettingsPanel, setSeededSettingsPanel] = useState<SettingsPanelId | undefined>()
+  if (open && pendingSettingsPanel !== undefined && pendingSettingsPanel !== seededSettingsPanel) {
+    setSeededSettingsPanel(pendingSettingsPanel)
+    setAgentMenuExpanded(pendingSettingsPanel === 'model' || pendingSettingsPanel === 'agent')
+    setHistory([{ ...INITIAL_LOCATION, panel: pendingSettingsPanel }])
     setHistoryIndex(0)
   }
-  if (!open && seededComputePanel) {
-    setSeededComputePanel(false)
+  if (!open && seededSettingsPanel !== undefined) {
+    setSeededSettingsPanel(undefined)
   }
 
-  // Clear the store's pending compute panel flag after it has been applied.
   useEffect(() => {
-    if (pendingComputePanel) {
-      useSettingsStore.setState({ pendingComputePanel: undefined })
-    }
-  }, [pendingComputePanel])
+    if (pendingSettingsPanel !== undefined) consumePendingSettingsPanel()
+  }, [pendingSettingsPanel, consumePendingSettingsPanel])
   // Clear the store's pending flag after it has been applied, so a later normal open starts fresh.
   useEffect(() => {
     if (pendingSkillId !== undefined) consumePendingSkill()
@@ -313,6 +299,10 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
     setHistory((entries) => [...entries.slice(0, historyIndex + 1), location])
     setHistoryIndex((index) => index + 1)
   }
+
+  // Internal panel transitions must use this dialog's history instead of reseeding an external
+  // entry point, so Back returns to the recovery panel the user just completed.
+  const navigatePanel = (panel: SettingsPanelId): void => navigate({ ...INITIAL_LOCATION, panel })
 
   // Navigates within the skills panel (list/detail/create/edit/import) as a history entry.
   const navigateSkills = (skills: SkillsView): void =>
@@ -581,11 +571,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                         onClick={() => {
                           // Entering the Model branch expands its sub-item (sticky — see above).
                           if (id === 'model' || id === 'agent') setAgentMenuExpanded(true)
-                          navigate({
-                            panel: id,
-                            skills: { kind: 'list' },
-                            model: { kind: 'list' }
-                          })
+                          navigatePanel(id)
                         }}
                         className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
                           parent ? 'h-7 text-[13px] ' : ''
@@ -769,7 +755,12 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                     <ComputePanel onNavigate={navigateCompute} />
                   )
                 ) : activePanel === 'storage' ? (
-                  <StoragePanel />
+                  <StoragePanel
+                    onContinueToAgent={() => {
+                      setAgentMenuExpanded(true)
+                      navigatePanel('agent')
+                    }}
+                  />
                 ) : activePanel === 'runtimes' ? (
                   <RuntimesPanel
                     title="Notebook runtimes"

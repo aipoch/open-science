@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { RefreshCw } from 'lucide-react'
+import { RefreshCw, TriangleAlert } from 'lucide-react'
 
 // Import the bare Mono/Color components straight from their modules: each icon's entry point
 // eagerly attaches its Avatar/Combine companions, which drag in @lobehub/ui (antd-style + an
@@ -83,6 +83,8 @@ const AgentPanel = ({
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
+  const selectedEnvironmentCheck =
+    environmentCheck?.agentFrameworkId === agentFrameworkId ? environmentCheck : undefined
 
   // Track whether an ACP prompt is currently running so the uninstall (a destructive teardown) can be
   // blocked while a task uses the runtime. Settings fails closed until the first snapshot arrives;
@@ -119,10 +121,12 @@ const AgentPanel = ({
   const [pendingSwitch, setPendingSwitch] = useState<AgentFrameworkId | null>(null)
   const [isSwitching, setIsSwitching] = useState(false)
   const [frameworkDetectionError, setFrameworkDetectionError] = useState<string | undefined>()
+  const [installActionError, setInstallActionError] = useState<string | undefined>()
   const onboardingAutoSelectAttempted = useRef(false)
   const onboardingSwitchInFlight = useRef(false)
   const onboardingUserIntentVersion = useRef(0)
   const onboardingPendingSwitch = useRef<OnboardingSwitchRequest | null>(null)
+  const settingsSwitchInFlight = useRef(false)
 
   // Removes the app-managed runtime for the framework awaiting confirmation, then closes the dialog.
   // The store applies the refreshed snapshot (which may auto-switch the active framework) and main
@@ -170,7 +174,7 @@ const AgentPanel = ({
 
         // If the user changed their mind during the IPC, immediately apply the newer queued target.
         if (request.intentVersion !== onboardingUserIntentVersion.current) continue
-        await checkEnvironment()
+        await checkEnvironment({ force: true })
       }
     } finally {
       onboardingSwitchInFlight.current = false
@@ -195,12 +199,28 @@ const AgentPanel = ({
       return
     }
 
-    if (target !== agentFrameworkId) setPendingSwitch(target)
+    if (target !== agentFrameworkId) {
+      setFrameworkDetectionError(undefined)
+      setInstallActionError(undefined)
+      setPendingSwitch(target)
+    }
   }
 
-  const confirmSwitch = (): void => {
-    if (pendingSwitch) void setAgentFramework(pendingSwitch)
+  const confirmSwitch = async (): Promise<void> => {
+    const target = pendingSwitch
     setPendingSwitch(null)
+    if (!target || settingsSwitchInFlight.current) return
+
+    settingsSwitchInFlight.current = true
+    setIsSwitching(true)
+    try {
+      await setAgentFramework(target)
+      // Framework detection updates the cards; the full pass owns the Home repair alert.
+      await checkEnvironment({ force: true })
+    } finally {
+      settingsSwitchInFlight.current = false
+      setIsSwitching(false)
+    }
   }
 
   const activeFramework = agentFrameworks.find((framework) => framework.id === agentFrameworkId)
@@ -246,10 +266,11 @@ const AgentPanel = ({
   const isDetectingAnyFramework = isDetectingClaude || isDetectingOpencode || isDetectingCodex
   const handleDetectAllFrameworks = async (): Promise<void> => {
     setFrameworkDetectionError(undefined)
+    setInstallActionError(undefined)
     // A non-selected runtime may be broken independently of the framework the user is configuring.
     // Wait for every detector, then refresh the selected environment even when one detector rejected.
     const results = await Promise.allSettled([detectClaude(), detectOpencode(), detectCodex()])
-    if (isOnboarding) await checkEnvironment()
+    await checkEnvironment({ force: true })
 
     const failure = results.find(
       (result): result is PromiseRejectedResult => result.status === 'rejected'
@@ -308,7 +329,9 @@ const AgentPanel = ({
       onInstall: (source) =>
         installClaude(
           source,
-          isOnboarding && source === 'managed' ? environmentCheck?.recommendedRegistry : undefined
+          isOnboarding && source === 'managed'
+            ? selectedEnvironmentCheck?.recommendedRegistry
+            : undefined
         )
     },
     {
@@ -364,17 +387,61 @@ const AgentPanel = ({
   const installedFrameworks = frameworkCards.filter((card) => card.ready)
   const availableFrameworks = frameworkCards.filter((card) => !card.ready)
 
+  // Environment blockers disable only the sources they invalidate. Official scripts remain a
+  // usable fallback when managed registry access or the local managed installer is unavailable.
+  const blockedInstallSources: Partial<Record<ClaudeInstallSource, string>> = {}
+  const installBlockers =
+    selectedEnvironmentCheck?.checks.filter(
+      (check) =>
+        check.status === 'failed' && (check.id === 'system' || check.id === 'install-network')
+    ) ?? []
+  const agentCheckFailures =
+    selectedEnvironmentCheck?.checks.filter(
+      (check) => check.id === 'agent' && check.status === 'failed'
+    ) ?? []
+  const failedCheckIds = new Set(
+    selectedEnvironmentCheck?.checks
+      .filter((check) => check.status === 'failed')
+      .map((check) => check.id) ?? []
+  )
+  if (failedCheckIds.has('system')) {
+    blockedInstallSources.managed = 'System requirements not met'
+  }
+  if (failedCheckIds.has('install-network')) {
+    blockedInstallSources.managed ??= 'Installation network unavailable'
+    blockedInstallSources.npm = 'Installation network unavailable'
+  }
+
   // First-run installation selects the newly-ready runtime and refreshes the environment gate.
   // Settings keeps its existing behavior: install only, then let the user choose explicitly.
   const installFramework = async (
     card: FrameworkCardModel,
     source: ClaudeInstallSource
   ): Promise<void> => {
+    setInstallActionError(undefined)
+    setFrameworkDetectionError(undefined)
     const intentVersion = isOnboarding
       ? (onboardingUserIntentVersion.current += 1)
       : onboardingUserIntentVersion.current
-    const result = await card.onInstall(source)
-    if (!isOnboarding || !result?.ok) return
+    let result: ClaudeInstallResult | undefined
+    try {
+      result = await card.onInstall(source)
+    } catch (error) {
+      // The store already preserves runtime logs/error for real IPC failures. This panel-level
+      // message also covers unexpected caller failures without leaking an unhandled event promise.
+      setInstallActionError(
+        error instanceof Error ? error.message : 'The installer could not be started.'
+      )
+      return
+    }
+    if (!result?.ok) return
+
+    // Settings repairs the currently-selected runtime in place. Re-run every environment check so
+    // Home and the repair badges reflect the authoritative post-install state immediately.
+    if (!isOnboarding) {
+      await checkEnvironment({ force: true })
+      return
+    }
 
     // A newer card click wins even if it lands between install completion and this switch.
     if (intentVersion !== onboardingUserIntentVersion.current) return
@@ -391,6 +458,12 @@ const AgentPanel = ({
       name={card.name}
       description={card.description}
       ready={card.ready}
+      needsRepair={
+        selectedEnvironmentCheck?.agentFrameworkId === card.frameworkId &&
+        selectedEnvironmentCheck.checks.some(
+          (check) => check.id === 'agent' && check.status === 'failed'
+        )
+      }
       version={card.version}
       path={card.path}
       sourceLabel={card.sourceLabel}
@@ -398,7 +471,12 @@ const AgentPanel = ({
       notReadyHint={card.notReadyHint}
       active={agentFrameworkId === card.frameworkId}
       onSelect={() => requestSwitch(card.frameworkId)}
-      selectDisabled={anyInstalling || isUninstalling || (isOnboarding && isDetectingAnyFramework)}
+      selectDisabled={
+        anyInstalling ||
+        isUninstalling ||
+        (!isOnboarding && isSwitching) ||
+        (isOnboarding && isDetectingAnyFramework)
+      }
       uninstallCommand={card.uninstallCommand}
       managed={card.managed}
       isUninstalling={isUninstalling && pendingUninstall === card.key}
@@ -408,8 +486,9 @@ const AgentPanel = ({
       showUninstall={!isOnboarding}
       installSources={card.installSources}
       install={card.install}
-      installRunning={anyInstalling}
+      installRunning={anyInstalling || (!isOnboarding && isSwitching)}
       npmAvailable={npmAvailable}
+      blockedInstallSources={card.frameworkId === agentFrameworkId ? blockedInstallSources : {}}
       onInstall={(source) => void installFramework(card, source)}
     />
   )
@@ -441,10 +520,53 @@ const AgentPanel = ({
         }
       >
         <div className="space-y-5">
-          {frameworkDetectionError || (isOnboarding && environmentCheckError) ? (
+          {frameworkDetectionError || installActionError || environmentCheckError ? (
             <p className="text-sm text-destructive" role="alert">
-              {(isOnboarding && environmentCheckError) || frameworkDetectionError}
+              {installActionError || environmentCheckError || frameworkDetectionError}
             </p>
+          ) : null}
+          {agentCheckFailures.length > 0 ? (
+            <div
+              aria-label="Agent runtime repair issues"
+              className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
+            >
+              {agentCheckFailures.map((failure, index) => (
+                <div key={`${failure.label}-${index}`} className="flex items-start gap-2">
+                  <TriangleAlert
+                    className="mt-0.5 size-4 shrink-0 text-amber-600"
+                    aria-hidden="true"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">{failure.summary}</p>
+                    {failure.detail ? (
+                      <p className="text-xs leading-5 text-muted-foreground">{failure.detail}</p>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {installBlockers.length > 0 ? (
+            <div
+              aria-label="Agent installation blockers"
+              className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
+            >
+              {installBlockers.map((blocker) => (
+                <div key={blocker.id} className="flex items-start gap-2">
+                  <TriangleAlert
+                    className="mt-0.5 size-4 shrink-0 text-amber-600"
+                    aria-hidden="true"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">{blocker.label}</p>
+                    <p className="text-xs leading-5 text-muted-foreground">{blocker.summary}</p>
+                    {blocker.detail ? (
+                      <p className="text-xs leading-5 text-muted-foreground">{blocker.detail}</p>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : null}
           {isOnboarding ? null : <ModelFrameworkCompatibilityAlert />}
           {installedFrameworks.length > 0 ? (

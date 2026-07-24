@@ -16,7 +16,6 @@ import { EnvironmentStep } from './EnvironmentStep'
 import { LocationStep, type LocationDraft } from './LocationStep'
 import { NotebookStep } from './NotebookStep'
 import { ProviderStep } from './ProviderStep'
-import { RecoveryStep } from './RecoveryStep'
 
 // Location is last: it doubles as the wizard's Finish step, so the confirm-restart dialog can
 // show only once the provider is already validated.
@@ -76,17 +75,13 @@ const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element =
 
 // First-run gate: inspect the host, install the agent runtime, configure and validate a model
 // provider, optionally set up the notebook runtime, then choose where data lives — one focused
-// step each. For completed users App can re-open only the repair surface (RecoveryStep) when a
-// required dependency later disappears.
+// step each. Completed users repair later environment regressions from the relevant Settings panel.
 const OnboardingWizard = (): React.JSX.Element => {
-  const onboardingCompletedAt = useSettingsStore((state) => state.onboardingCompletedAt)
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
   const isCheckingEnvironment = useSettingsStore((state) => state.isCheckingEnvironment)
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
 
-  // A completed user re-opened only for a regressed required check: environment repair, no steps.
-  const isRecovery = onboardingCompletedAt !== undefined
   // First-time setup always starts on the visible environment summary, even when every check has
   // already passed. The user explicitly continues to agent setup after reviewing it.
 
@@ -169,31 +164,25 @@ const OnboardingWizard = (): React.JSX.Element => {
           className="mt-12 grid grid-cols-[240px_minmax(0,1fr)] gap-10"
         >
           <section aria-labelledby="onboarding-introduction-title" className="pt-2">
-            <p className="text-[11px] font-medium text-text-100">
-              {isRecovery ? 'NEEDS ATTENTION' : 'FIRST-TIME SETUP'}
-            </p>
+            <p className="text-[11px] font-medium text-text-100">FIRST-TIME SETUP</p>
             <h1
               id="onboarding-introduction-title"
               className="mt-2 font-serif text-[28px] leading-[1.15] font-medium text-text-000"
             >
-              {isRecovery ? 'Open Science needs attention' : 'Set up your research workspace.'}
+              Set up your research workspace.
             </h1>
             <p className="mt-3 max-w-60 text-sm leading-5 text-text-100">
-              {isRecovery
-                ? 'A required environment check changed since your last launch. Repair it to continue.'
-                : 'A quick host check confirms this computer is ready, you connect the model you want to use, then you choose where your data lives.'}
+              A quick host check confirms this computer is ready, you connect the model you want to
+              use, then you choose where your data lives.
             </p>
-            {/* Recovery only reopens the repair surface, so the step tracker does not apply. */}
-            {!isRecovery ? <OnboardingProgress step={step} /> : null}
+            <OnboardingProgress step={step} />
           </section>
 
           {/* One stable work surface keeps the setup steps aligned as their content changes. */}
           <Card className="min-h-[420px] gap-0 rounded-lg bg-bg-000 py-0 shadow-card ring-1 ring-border-200">
             {/* Each step owns its validation gate and advances only through its callback. The shell
                 owns cross-step drafts so Back/Continue never discards provider or location input. */}
-            {isRecovery ? (
-              <RecoveryStep />
-            ) : step === 'environment' ? (
+            {step === 'environment' ? (
               <EnvironmentStep onContinue={() => setStep('agent')} />
             ) : step === 'agent' ? (
               <AgentStep

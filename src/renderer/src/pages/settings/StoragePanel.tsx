@@ -1,13 +1,15 @@
 import { AlertDialog } from 'radix-ui'
-import { ChevronRight, FolderInput, FolderOpen } from 'lucide-react'
+import { CheckCircle2, ChevronRight, FolderInput, FolderOpen, RefreshCw } from 'lucide-react'
 import { useRef, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { DataRootWarning } from '@/components/DataRootWarning'
+import { useSettingsStore } from '@/stores/settings-store'
 import type { DataRootKind, StorageInfo, UsageCategoryKey } from '../../../../shared/storage'
 import { SettingsSection } from './SettingsLayout'
+import { isAgentRepairCheck } from './settings-navigation'
 import { StorageMigrationModal } from './StorageMigrationModal'
 
 // Formats a byte count as a human-readable size (1000-based, one decimal place).
@@ -52,8 +54,21 @@ const PATH_PILL =
 // interrupt+restart when needed, and drives the actual move); a folder that already contains our
 // data offers "Use this folder" instead, which only switches the dataRoot pointer and relaunches -
 // no files are moved. An invalid target shows an inline error and disables both actions.
-const StoragePanel = (): React.JSX.Element => {
+type StoragePanelProps = {
+  onContinueToAgent?: () => void
+}
+
+const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Element => {
+  const environmentCheck = useSettingsStore((state) => state.environmentCheck)
+  const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
+  const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
   const [info, setInfo] = useState<StorageInfo | null>(null)
+  const initialStorageFailure = environmentCheck?.checks.some(
+    (check) => check.id === 'storage' && check.status === 'failed'
+  )
+  const [hasRecheckedStorage, setHasRecheckedStorage] = useState(false)
+  const [isCheckingStorage, setIsCheckingStorage] = useState(false)
+  const [revealError, setRevealError] = useState<string | undefined>()
   const [newPath, setNewPath] = useState('')
   // The classification of `newPath` (a PARENT the user typed/picked), keyed by the exact path it
   // was computed for so a stale response for an already-superseded path never drives the action
@@ -82,6 +97,41 @@ const StoragePanel = (): React.JSX.Element => {
   useEffect(() => {
     void window.api.storage.getInfo().then(setInfo)
   }, [])
+
+  const storageCheck = environmentCheck?.checks.find((check) => check.id === 'storage')
+  const storagePassed = storageCheck?.status === 'passed'
+  const storageRepairActive = Boolean(initialStorageFailure || hasRecheckedStorage)
+  const agentRepairRequired =
+    storagePassed &&
+    Boolean(
+      environmentCheck?.checks.some(
+        (check) => check.status === 'failed' && isAgentRepairCheck(check.id)
+      )
+    )
+
+  const handleRevealAppStorage = async (): Promise<void> => {
+    setRevealError(undefined)
+    try {
+      const result = await window.api.storage.revealAppStorage()
+      if (!result.revealed) setRevealError(result.error ?? 'Could not reveal application storage.')
+    } catch (error) {
+      setRevealError(
+        error instanceof Error ? error.message : 'Could not reveal application storage.'
+      )
+    }
+  }
+
+  const handleCheckStorage = async (): Promise<void> => {
+    setIsCheckingStorage(true)
+    setRevealError(undefined)
+    try {
+      // A user-requested retry must observe changes made after any background launch check began.
+      await checkEnvironment({ force: true })
+    } finally {
+      setHasRecheckedStorage(true)
+      setIsCheckingStorage(false)
+    }
+  }
 
   // Classifies a candidate path (move / adopt / invalid) so the action button and helper text can
   // route correctly; an empty path clears the classification instead of calling the IPC.
@@ -172,10 +222,71 @@ const StoragePanel = (): React.JSX.Element => {
 
   return (
     <div className="space-y-5 p-5">
+      {storageRepairActive && storageCheck ? (
+        <SettingsSection
+          title="Application storage"
+          description="Open Science needs write access to its private configuration directory."
+          aria-label="Application storage"
+        >
+          <div className="space-y-3 rounded-lg border border-border bg-muted/40 p-3">
+            <div className="flex items-start gap-2">
+              {storagePassed ? (
+                <CheckCircle2
+                  className="mt-0.5 size-4 shrink-0 text-emerald-600"
+                  aria-hidden="true"
+                />
+              ) : null}
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground">{storageCheck.summary}</p>
+                {storageCheck.detail ? (
+                  <pre className="mt-1 whitespace-pre-wrap break-all font-mono text-xs text-muted-foreground">
+                    {storageCheck.detail}
+                  </pre>
+                ) : null}
+              </div>
+            </div>
+            {revealError ? (
+              <p className="text-xs text-destructive" role="alert">
+                {revealError}
+              </p>
+            ) : null}
+            {environmentCheckError ? (
+              <p className="text-xs text-destructive" role="alert">
+                {environmentCheckError}
+              </p>
+            ) : null}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" variant="outline" onClick={() => void handleRevealAppStorage()}>
+                <FolderOpen className="size-4" aria-hidden="true" />
+                {window.api.platform === 'darwin' ? 'Reveal in Finder' : 'Reveal in folder'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isCheckingStorage}
+                onClick={() => void handleCheckStorage()}
+              >
+                <RefreshCw
+                  className={cn('size-4', isCheckingStorage && 'animate-spin')}
+                  aria-hidden="true"
+                />
+                {isCheckingStorage ? 'Checking…' : 'Check again'}
+              </Button>
+              {agentRepairRequired ? (
+                <Button type="button" onClick={onContinueToAgent}>
+                  Continue to repair Agent
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </SettingsSection>
+      ) : null}
+
       <SettingsSection
         title="Data location"
         description="Where Open Science stores your projects, artifacts, and other app data on this device."
         aria-label="Data location"
+        separated={storageRepairActive}
         action={
           info !== null && !isEditing ? (
             <Button type="button" variant="outline" onClick={() => setWarnOpen(true)}>

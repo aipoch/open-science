@@ -14,6 +14,7 @@ const sentWindows: {
 }[] = []
 const appRelaunch = vi.fn()
 const appExit = vi.fn()
+const openPath = vi.fn<(path: string) => Promise<string>>().mockResolvedValue('')
 // Home is mutable so a few tests can point it at a real temp dir (legacy-in-place detection reads
 // the config root under home); it defaults to /home/user so every other test is unaffected.
 const electronHome = { path: '/home/user' }
@@ -26,6 +27,7 @@ vi.mock('electron', () => ({
   },
   BrowserWindow: { getAllWindows: () => sentWindows },
   dialog: { showOpenDialog: (...args: unknown[]) => showOpenDialog(...args) },
+  shell: { openPath: (path: string) => openPath(path) },
   app: { getPath: () => electronHome.path, isPackaged: true, relaunch: appRelaunch, exit: appExit }
 }))
 
@@ -95,6 +97,7 @@ beforeEach(async () => {
   showOpenDialog.mockReset()
   appRelaunch.mockClear()
   appExit.mockClear()
+  openPath.mockClear()
   sentWindows.length = 0
   currentParent = await mkdtemp(join(tmpdir(), 'ds-storage-ipc-current-'))
   dataRoot = dataRootFor(currentParent)
@@ -117,6 +120,7 @@ describe('storage IPC handlers', () => {
 
     for (const channel of [
       'storage:get-info',
+      'storage:reveal-app-storage',
       'storage:detect-active',
       'storage:pick-directory',
       'storage:migrate',
@@ -128,6 +132,25 @@ describe('storage IPC handlers', () => {
     ]) {
       expect(handlers.has(channel)).toBe(true)
     }
+  })
+
+  it('reveals the main-resolved config root without accepting a renderer path', async () => {
+    registerStorageIpcHandlers(fakeDeps())
+
+    await expect(invoke('storage:reveal-app-storage', '/untrusted/path')).resolves.toEqual({
+      revealed: true
+    })
+    expect(openPath).toHaveBeenCalledWith(join('/home/user', '.open-science'))
+  })
+
+  it('converts a rejected reveal into a renderer-safe failure result', async () => {
+    openPath.mockRejectedValueOnce(new Error('shell unavailable'))
+    registerStorageIpcHandlers(fakeDeps())
+
+    await expect(invoke('storage:reveal-app-storage')).resolves.toEqual({
+      revealed: false,
+      error: 'shell unavailable'
+    })
   })
 
   it('get-info reports isDefault true when the data root falls back to the computed default', async () => {

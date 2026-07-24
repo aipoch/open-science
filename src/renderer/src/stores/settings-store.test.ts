@@ -419,6 +419,51 @@ describe('settings store: environment check', () => {
     await first
   })
 
+  it('starts a fresh same-framework check when the caller must observe a completed repair', async () => {
+    const staleResult: EnvironmentCheckResult = {
+      checkedAt: 10,
+      platform: 'darwin',
+      architecture: 'arm64',
+      checks: [
+        {
+          id: 'agent',
+          label: 'Claude runtime',
+          status: 'failed',
+          summary: 'Claude is missing.'
+        }
+      ],
+      ready: false,
+      canAutoInstall: true,
+      agentFrameworkId: 'claude-code',
+      runtime: { found: false }
+    }
+    const repairedResult: EnvironmentCheckResult = {
+      ...staleResult,
+      checkedAt: 20,
+      checks: [],
+      ready: true,
+      canAutoInstall: false,
+      runtime: { found: true, path: '/bin/claude' }
+    }
+    const resolvers: Array<(value: EnvironmentCheckResult) => void> = []
+    api.checkEnvironment.mockImplementation(
+      () => new Promise<EnvironmentCheckResult>((resolve) => resolvers.push(resolve))
+    )
+
+    const staleCheck = useSettingsStore.getState().checkEnvironment()
+    const repairCheck = useSettingsStore.getState().checkEnvironment({ force: true })
+
+    expect(api.checkEnvironment).toHaveBeenCalledTimes(2)
+
+    resolvers[1]?.(repairedResult)
+    await repairCheck
+    resolvers[0]?.(staleResult)
+    await staleCheck
+
+    expect(useSettingsStore.getState().environmentCheck?.checkedAt).toBe(20)
+    expect(useSettingsStore.getState().environmentCheck?.ready).toBe(true)
+  })
+
   it('re-issues the check when the framework auto-switches mid-flight and does not stick on the stale result', async () => {
     const claudeResult: EnvironmentCheckResult = {
       checkedAt: 1,
@@ -819,6 +864,18 @@ describe('settings store: openSettingsToSkill', () => {
     useSettingsStore.getState().closeSettings()
     expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
     expect(useSettingsStore.getState().pendingSkillId).toBeUndefined()
+  })
+})
+
+describe('settings store: openSettingsToPanel', () => {
+  it('opens the requested panel and clears an unconsumed target on close', () => {
+    useSettingsStore.getState().openSettingsToPanel('storage')
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
+    expect(useSettingsStore.getState().pendingSettingsPanel).toBe('storage')
+
+    useSettingsStore.getState().closeSettings()
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
+    expect(useSettingsStore.getState().pendingSettingsPanel).toBeUndefined()
   })
 })
 

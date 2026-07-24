@@ -27,6 +27,11 @@ export type StorageInfo = {
   availableBytes: number
 }
 
+export type RevealAppStorageResult = {
+  revealed: boolean
+  error?: string
+}
+
 export type ActiveSessionInfo = {
   // The owning project's id (the artifact/notebook storage key). main doesn't hold the human
   // project name or session title — the renderer maps this id + sessionId to display strings.

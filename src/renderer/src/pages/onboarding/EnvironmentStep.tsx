@@ -11,18 +11,8 @@ import {
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
-import type { EnvironmentCheckId } from '../../../../shared/settings'
 import { useSettingsStore } from '@/stores/settings-store'
 import { EnvironmentSetupCard } from './EnvironmentSetupCard'
-
-// Step ① owns only the host checks — the agent runtime row lives on the Agent step and the
-// optional notebook Python row on the Notebook step.
-const HOST_CHECK_IDS: readonly EnvironmentCheckId[] = [
-  'system',
-  'storage',
-  'secure-storage',
-  'install-network'
-]
 
 type EnvironmentStepProps = {
   onContinue: () => void
@@ -70,16 +60,7 @@ const EnvironmentStep = ({ onContinue }: EnvironmentStepProps): React.JSX.Elemen
 
       <CardContent className="flex-1 px-6 py-5">
         <section aria-label="Prepare environment" className="space-y-5">
-          <EnvironmentSetupCard
-            environment={environmentCheck}
-            isChecking={isCheckingEnvironment}
-            isInstalling={false}
-            installLogs={[]}
-            error={environmentCheckError}
-            onCheck={() => void checkEnvironment()}
-            visibleCheckIds={HOST_CHECK_IDS}
-            hideIntro
-          />
+          <EnvironmentSetupCard environment={environmentCheck} error={environmentCheckError} />
         </section>
       </CardContent>
       <CardFooter className="mt-auto items-center justify-between gap-4 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">

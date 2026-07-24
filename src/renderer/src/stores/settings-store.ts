@@ -10,6 +10,7 @@ import {
 } from '../../../shared/settings'
 import type { PackageMirror } from '../../../shared/mirror'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
+import type { SettingsPanelId } from '../pages/settings/settings-navigation'
 import type {
   ClaudeDetectResult,
   ClaudeInfo,
@@ -122,11 +123,10 @@ type SettingsStoreData = {
   // Per-runtime install state, keyed by framework id. Each runtime's install writes only to its own
   // slice so its progress/logs/error render in its own card alone — never mirrored onto the others.
   installStates: Record<AgentFrameworkId, RuntimeInstallState>
-  // Explicit repair navigation. Completed users stay on Home during background checks and enter the
-  // environment page only after choosing the required-item alert.
-  isEnvironmentRepairOpen: boolean
   // Whether the settings dialog is open (rendered at the app root, over Home/Workspace).
   isSettingsOpen: boolean
+  // Panel requested by an external entry point; Settings consumes it after seeding navigation.
+  pendingSettingsPanel?: SettingsPanelId
   // Skill to land on when the dialog opens from a skill mention; consumed once its detail is seeded.
   pendingSkillId?: string
   // Configured package mirror (conda/pip); undefined means public hosts (unconfigured).
@@ -135,14 +135,12 @@ type SettingsStoreData = {
   reasoningEffort: ReasoningEffort
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
   notificationsEnabled: boolean
-  // When true, the settings dialog opens directly to the Compute panel.
-  pendingComputePanel?: boolean
 }
 
 type SettingsStore = SettingsStoreData & {
   load: () => Promise<void>
   refreshPreflight: () => Promise<Preflight>
-  checkEnvironment: () => Promise<EnvironmentCheckResult | undefined>
+  checkEnvironment: (options?: { force?: boolean }) => Promise<EnvironmentCheckResult | undefined>
   detectClaude: () => Promise<ClaudeDetectResult>
   // Detects the opencode executable and refreshes its status card.
   detectOpencode: () => Promise<void>
@@ -161,8 +159,6 @@ type SettingsStore = SettingsStoreData & {
   uninstallCodex: () => Promise<void>
   // Clears the transient logs/progress/error for one runtime (or every runtime when omitted).
   clearInstallLogs: (runtime?: AgentFrameworkId) => void
-  openEnvironmentRepair: () => void
-  closeEnvironmentRepair: () => void
   // Persists the draft (create/update) without testing it, returning the affected provider id. The
   // Settings page uses this to return to the list immediately, then tests in the background.
   persistProvider: (request: UpsertProviderRequest) => Promise<string>
@@ -197,11 +193,14 @@ type SettingsStore = SettingsStoreData & {
   setNotificationsEnabled: (enabled: boolean) => Promise<void>
   deleteProvider: (providerId: string) => Promise<void>
   openSettings: () => void
+  openSettingsToPanel: (panel: SettingsPanelId) => void
   closeSettings: () => void
   // Opens the dialog straight onto a skill's detail page (used by clickable skill mentions).
   openSettingsToSkill: (skillId: string) => void
   // Opens the dialog straight to the Compute panel (used by Files panel "Add SSH host…" link).
   openSettingsToCompute: () => void
+  // Clears the requested panel after Settings has seeded its local navigation history.
+  consumePendingSettingsPanel: () => void
   // Clears the pending skill once its detail view has been seeded, so a later open starts fresh.
   consumePendingSkill: () => void
   // Loads the bundled-skill list (enabled state included) from the main process.
@@ -326,13 +325,12 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
     opencode: createInitialRuntimeInstallState(),
     codex: createInitialRuntimeInstallState()
   },
-  isEnvironmentRepairOpen: false,
   isSettingsOpen: false,
+  pendingSettingsPanel: undefined,
   pendingSkillId: undefined,
   packageMirror: undefined,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
-  notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
-  pendingComputePanel: undefined
+  notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED
 })
 
 // Applies a fresh main-process snapshot to the renderer cache.
@@ -546,13 +544,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // Full startup inspection: main owns filesystem/network/runtime probes; the renderer caches only
   // their structured, non-secret result. Refresh settings/preflight afterwards because detection may
   // have discovered and persisted a Claude installation that appeared since the previous launch.
-  checkEnvironment: async () => {
+  checkEnvironment: async (options) => {
     // React Strict Mode intentionally re-runs mount effects in development. Reuse the in-flight pass
     // only when it targets the currently-selected framework: an auto-switch (e.g. Claude -> a detected
     // OpenCode) changes the target mid-flight, and that call must issue its own probe rather than reuse
     // the previous framework's, or Continue stays disabled on a result that no longer matches.
     const framework = get().agentFrameworkId
-    if (get().isCheckingEnvironment && get().checkingFramework === framework) {
+    if (!options?.force && get().isCheckingEnvironment && get().checkingFramework === framework) {
       return get().environmentCheck
     }
 
@@ -695,10 +693,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       }
       return { installStates }
     }),
-
-  openEnvironmentRepair: () => set({ isEnvironmentRepairOpen: true }),
-
-  closeEnvironmentRepair: () => set({ isEnvironmentRepairOpen: false }),
 
   // Persists a provider draft (create/update) and refreshes derived state, without testing it.
   persistProvider: async (request) => {
@@ -911,14 +905,21 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   openSettings: () => set({ isSettingsOpen: true }),
 
+  openSettingsToPanel: (panel) =>
+    set({ isSettingsOpen: true, pendingSettingsPanel: panel, pendingSkillId: undefined }),
+
   // Clearing the pending skill on close stops a later normal open from jumping back to a stale skill.
   closeSettings: () =>
-    set({ isSettingsOpen: false, pendingSkillId: undefined, pendingComputePanel: undefined }),
+    set({ isSettingsOpen: false, pendingSkillId: undefined, pendingSettingsPanel: undefined }),
 
-  openSettingsToSkill: (skillId) => set({ isSettingsOpen: true, pendingSkillId: skillId }),
+  openSettingsToSkill: (skillId) =>
+    set({ isSettingsOpen: true, pendingSkillId: skillId, pendingSettingsPanel: undefined }),
 
-  // Opens the dialog directly to the Compute panel.
-  openSettingsToCompute: () => set({ isSettingsOpen: true, pendingComputePanel: true }),
+  // Keep the domain-specific caller API while routing it through the shared panel target.
+  openSettingsToCompute: () =>
+    set({ isSettingsOpen: true, pendingSettingsPanel: 'compute', pendingSkillId: undefined }),
+
+  consumePendingSettingsPanel: () => set({ pendingSettingsPanel: undefined }),
 
   consumePendingSkill: () => set({ pendingSkillId: undefined }),
 

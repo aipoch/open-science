@@ -30,6 +30,8 @@ type AgentFrameworkCardProps = {
   description: React.ReactNode
   // Preflight-passed runtimes are selectable and sit in the Installed group.
   ready: boolean
+  // The selected runtime failed the full environment check, even if detection found no path.
+  needsRepair: boolean
   // Detected version, rendered as a muted `vX.Y.Z` right after the name.
   version?: string
   // Resolved runtime/adapter path; its presence also gates the Uninstall control.
@@ -68,6 +70,7 @@ type AgentFrameworkCardProps = {
   // card's Uninstall while ANY install runs; it also locks this card's Install menu.
   installRunning: boolean
   npmAvailable: boolean
+  blockedInstallSources: Partial<Record<ClaudeInstallSource, string>>
   onInstall: (source: ClaudeInstallSource) => void
 }
 
@@ -82,6 +85,7 @@ const InstallSourceMenu = ({
   installing,
   disabled,
   npmAvailable,
+  blockedInstallSources,
   onInstall
 }: {
   name: string
@@ -90,6 +94,7 @@ const InstallSourceMenu = ({
   installing: boolean
   disabled: boolean
   npmAvailable: boolean
+  blockedInstallSources: Partial<Record<ClaudeInstallSource, string>>
   onInstall: (source: ClaudeInstallSource) => void
 }): React.JSX.Element => {
   const Icon = label === 'Repair' ? Wrench : Download
@@ -118,16 +123,18 @@ const InstallSourceMenu = ({
           // Sources needing npm are disabled (not hidden) when npm is missing, so the option stays
           // discoverable with its unavailability spelled out.
           const npmMissing = item.requiresNpm && !npmAvailable
+          const unavailableReason =
+            blockedInstallSources[item.id] ?? (npmMissing ? 'npm not found' : undefined)
           return (
             <DropdownMenuItem
               key={item.id}
-              disabled={npmMissing}
+              disabled={Boolean(unavailableReason)}
               onSelect={() => onInstall(item.id)}
               className="flex flex-col items-start gap-0.5"
             >
               <span>
                 {item.label}
-                {npmMissing ? ' (npm not found)' : ''}
+                {unavailableReason ? ` (${unavailableReason})` : ''}
               </span>
               {item.description ? (
                 <span className="text-xs text-muted-foreground">{item.description}</span>
@@ -153,6 +160,7 @@ const AgentFrameworkCard = ({
   name,
   description,
   ready,
+  needsRepair,
   version,
   path,
   sourceLabel,
@@ -172,12 +180,14 @@ const AgentFrameworkCard = ({
   install,
   installRunning,
   npmAvailable,
+  blockedInstallSources,
   onInstall
 }: AgentFrameworkCardProps): React.JSX.Element => {
   const [showLog, setShowLog] = useState(false)
 
   // A runtime with a resolved path (even a broken one) shows its path/link and the Uninstall control.
   const found = Boolean(path)
+  const repair = needsRepair || found
 
   const installing = install.isInstalling
   const installLogs = install.installLogs
@@ -264,7 +274,7 @@ const AgentFrameworkCard = ({
                 ) : (
                   <Badge variant="secondary">Installed</Badge>
                 )
-              ) : found ? (
+              ) : repair ? (
                 // A detected-but-broken runtime (preflight failed) is not "not installed".
                 <Badge variant="outline" className="border-amber-500/40 text-amber-600">
                   Needs repair
@@ -317,11 +327,12 @@ const AgentFrameworkCard = ({
               ) : (
                 <InstallSourceMenu
                   name={name}
-                  label={found ? 'Repair' : 'Install'}
+                  label={repair ? 'Repair' : 'Install'}
                   sources={installSources}
                   installing={installing}
                   disabled={installLocked}
                   npmAvailable={npmAvailable}
+                  blockedInstallSources={blockedInstallSources}
                   onInstall={onInstall}
                 />
               )}

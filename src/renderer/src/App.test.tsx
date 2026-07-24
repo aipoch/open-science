@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => {
     settings: {
       isLoaded: false,
       onboardingCompletedAt: undefined as number | undefined,
-      isEnvironmentRepairOpen: false,
       isSettingsOpen: false,
       isSettingsLoaded: true,
       enqueueApproval: vi.fn(),
@@ -147,8 +146,9 @@ describe('App startup routing', () => {
     document.body.appendChild(container)
     mocks.settings.isLoaded = false
     mocks.settings.onboardingCompletedAt = undefined
-    mocks.settings.isEnvironmentRepairOpen = false
     mocks.settings.isSettingsOpen = false
+    mocks.settings.load.mockReset().mockResolvedValue(undefined)
+    mocks.settings.checkEnvironment.mockReset().mockResolvedValue(undefined)
     mocks.navigation.view = 'home'
     mocks.startupView = 'home'
     mocks.sessionPersistenceReady = true
@@ -223,6 +223,25 @@ describe('App startup routing', () => {
     expect(mocks.settings.load).toHaveBeenCalled()
     expect(mocks.settings.checkEnvironment).toHaveBeenCalled()
     expect(mocks.getInfo).toHaveBeenCalled()
+  })
+
+  it('waits for persisted settings before checking the selected agent environment', async () => {
+    let resolveSettings: (() => void) | undefined
+    mocks.settings.load.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSettings = resolve
+        })
+    )
+
+    await render()
+
+    expect(mocks.settings.load).toHaveBeenCalledOnce()
+    expect(mocks.settings.checkEnvironment).not.toHaveBeenCalled()
+
+    await act(async () => resolveSettings?.())
+
+    expect(mocks.settings.checkEnvironment).toHaveBeenCalledOnce()
   })
 
   it('renders Workspace and exposes a missing data-root recovery dialog', async () => {

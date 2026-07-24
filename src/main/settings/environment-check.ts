@@ -194,7 +194,7 @@ const runEnvironmentCheck = async ({
           detail:
             error instanceof Error
               ? error.message
-              : 'Use the manual setup tab to install a compatible agent runtime.'
+              : 'Install a compatible agent runtime, then choose Check again.'
         }
       }
     }),

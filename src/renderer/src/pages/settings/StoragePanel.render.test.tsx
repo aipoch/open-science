@@ -4,9 +4,22 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { StoragePanel } from './StoragePanel'
+import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import type { EnvironmentCheckResult } from '../../../../shared/settings'
 
 let container: HTMLDivElement
 let root: Root
+
+const environment = (checks: EnvironmentCheckResult['checks']): EnvironmentCheckResult => ({
+  checkedAt: 1,
+  platform: 'darwin',
+  architecture: 'arm64',
+  checks,
+  ready: checks.every((check) => check.status !== 'failed'),
+  canAutoInstall: false,
+  agentFrameworkId: 'claude-code',
+  runtime: { found: false }
+})
 
 // Richer usage sample matching the brief: two zero-byte categories, and a runtime category with
 // expandable children (mirrors the mock's "Conda environments" breakdown).
@@ -57,6 +70,7 @@ const openEditor = async (): Promise<void> => {
 }
 
 beforeEach(() => {
+  useSettingsStore.setState(createInitialSettingsState())
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -69,6 +83,7 @@ beforeEach(() => {
         usage: { categories: [], totalBytes: 35_600_000 },
         availableBytes: 500_000_000_000
       }),
+      revealAppStorage: vi.fn().mockResolvedValue({ revealed: true }),
       pickDirectory: vi.fn().mockResolvedValue(null),
       inspectDataRoot: vi
         .fn()
@@ -90,6 +105,225 @@ afterEach(() => {
 })
 
 describe('StoragePanel', () => {
+  it('shows the exact application-storage failure and reveals the trusted config root', async () => {
+    const detail = '/home/u/.open-science — EACCES: permission denied'
+    useSettingsStore.setState({
+      environmentCheck: environment([
+        {
+          id: 'storage',
+          label: 'App storage permission',
+          status: 'failed',
+          summary: 'Open Science cannot write to its private data folder.',
+          detail
+        }
+      ])
+    })
+
+    await act(async () => root.render(<StoragePanel />))
+
+    expect(container.textContent).toContain('Application storage')
+    expect(container.textContent).toContain(detail)
+    const reveal = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Reveal')
+    )
+    await act(async () => reveal?.click())
+
+    expect(window.api.storage.revealAppStorage).toHaveBeenCalledWith()
+  })
+
+  it('waits for an explicit Continue action after storage passes but Agent still fails', async () => {
+    const repairedEnvironment = environment([
+      {
+        id: 'storage',
+        label: 'App storage permission',
+        status: 'passed',
+        summary: 'Open Science can write to its private data folder.',
+        detail: '/home/u/.open-science'
+      },
+      {
+        id: 'agent',
+        label: 'Claude runtime',
+        status: 'failed',
+        summary: 'Claude is missing.'
+      }
+    ])
+    const checkEnvironment = vi.fn().mockImplementation(async () => {
+      useSettingsStore.setState({ environmentCheck: repairedEnvironment })
+      return repairedEnvironment
+    })
+    const onContinueToAgent = vi.fn()
+    useSettingsStore.setState({
+      environmentCheck: environment([
+        {
+          id: 'storage',
+          label: 'App storage permission',
+          status: 'failed',
+          summary: 'Open Science cannot write to its private data folder.',
+          detail: '/home/u/.open-science — EACCES: permission denied'
+        }
+      ]),
+      checkEnvironment
+    } as never)
+
+    await act(async () => root.render(<StoragePanel onContinueToAgent={onContinueToAgent} />))
+    const recheck = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Check again'
+    )
+    await act(async () => recheck?.click())
+
+    expect(onContinueToAgent).not.toHaveBeenCalled()
+    const continueButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Continue to repair Agent'
+    )
+    expect(continueButton).toBeDefined()
+
+    await act(async () => continueButton?.click())
+    expect(onContinueToAgent).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a full-check failure visible after Check again', async () => {
+    const checkEnvironment = vi.fn().mockImplementation(async () => {
+      useSettingsStore.setState({ environmentCheckError: 'Environment probe failed.' })
+      return undefined
+    })
+    useSettingsStore.setState({
+      environmentCheck: environment([
+        {
+          id: 'storage',
+          label: 'App storage permission',
+          status: 'failed',
+          summary: 'Open Science cannot write to its private data folder.',
+          detail: '/home/u/.open-science — EACCES: permission denied'
+        }
+      ]),
+      checkEnvironment
+    })
+
+    await act(async () => root.render(<StoragePanel />))
+    const recheck = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Check again'
+    )
+    await act(async () => recheck?.click())
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Environment probe failed.'
+    )
+  })
+
+  it('follows later authoritative environment updates after a storage recheck', async () => {
+    const repairedWithAgentFailure = environment([
+      {
+        id: 'storage',
+        label: 'App storage permission',
+        status: 'passed',
+        summary: 'Open Science can write to its private data folder.'
+      },
+      {
+        id: 'agent',
+        label: 'Claude runtime',
+        status: 'failed',
+        summary: 'Claude is missing.'
+      }
+    ])
+    const checkEnvironment = vi.fn().mockImplementation(async () => {
+      useSettingsStore.setState({ environmentCheck: repairedWithAgentFailure })
+      return repairedWithAgentFailure
+    })
+    useSettingsStore.setState({
+      environmentCheck: environment([
+        {
+          id: 'storage',
+          label: 'App storage permission',
+          status: 'failed',
+          summary: 'Open Science cannot write to its private data folder.'
+        }
+      ]),
+      checkEnvironment
+    })
+
+    await act(async () => root.render(<StoragePanel />))
+    const recheck = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Check again'
+    )
+    await act(async () => recheck?.click())
+    expect(container.textContent).toContain('Continue to repair Agent')
+
+    await act(async () => {
+      useSettingsStore.setState({
+        environmentCheck: environment([
+          {
+            id: 'storage',
+            label: 'App storage permission',
+            status: 'passed',
+            summary: 'Open Science can write to its private data folder.'
+          }
+        ])
+      })
+    })
+
+    expect(container.textContent).not.toContain('Continue to repair Agent')
+  })
+
+  it('shows a rejected reveal call inline', async () => {
+    useSettingsStore.setState({
+      environmentCheck: environment([
+        {
+          id: 'storage',
+          label: 'App storage permission',
+          status: 'failed',
+          summary: 'Open Science cannot write to its private data folder.'
+        }
+      ])
+    })
+    window.api.storage.revealAppStorage = vi
+      .fn()
+      .mockRejectedValue(new Error('The folder could not be opened.'))
+
+    await act(async () => root.render(<StoragePanel />))
+    const reveal = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Reveal')
+    )
+    await act(async () => reveal?.click())
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'The folder could not be opened.'
+    )
+  })
+
+  it('disables Check again and shows progress while the full check is running', async () => {
+    let finishCheck: (() => void) | undefined
+    const checkEnvironment = vi.fn(
+      () =>
+        new Promise<undefined>((resolve) => {
+          finishCheck = () => resolve(undefined)
+        })
+    )
+    useSettingsStore.setState({
+      environmentCheck: environment([
+        {
+          id: 'storage',
+          label: 'App storage permission',
+          status: 'failed',
+          summary: 'Open Science cannot write to its private data folder.'
+        }
+      ]),
+      checkEnvironment
+    })
+
+    await act(async () => root.render(<StoragePanel />))
+    const recheck = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Check again'
+    )
+    act(() => recheck?.click())
+
+    const checking = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Checking…'
+    )
+    expect(checking?.disabled).toBe(true)
+
+    await act(async () => finishCheck?.())
+  })
+
   it('shows a loading state before the data location resolves', () => {
     act(() => {
       root.render(<StoragePanel />)
