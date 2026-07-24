@@ -453,18 +453,31 @@ describe('AI review workflow contract', () => {
   })
 
   it('keeps CodeGraph opt-in and supplies it through a trusted MCP config', () => {
+    const optionsStep = getNamedStep('claude_review', 'Resolve Claude review options')
     const installStep = getNamedStep('claude_review', 'Install CodeGraph')
     const indexStep = getNamedStep('claude_review', 'Build CodeGraph index')
     const runtimeStep = getNamedStep('claude_review', 'Build Claude runtime configuration')
     const reviewStep = getNamedStep('claude_review', 'Run Claude architecture review')
+    const extractStep = getNamedStep('claude_review', 'Extract Claude review')
+    const codegraphEnabled = '${{ steps.claude_options.outputs.codegraph_enabled }}'
 
-    expect(installStep.if).toContain("github.event.inputs.enable_codegraph == 'true'")
-    expect(installStep.if).toContain("vars.ENABLE_CLAUDE_CODEGRAPH == 'true'")
+    expect(optionsStep.env?.CODEGRAPH_ENABLED).toContain(
+      "github.event.inputs.enable_codegraph == 'true'"
+    )
+    expect(optionsStep.env?.CODEGRAPH_ENABLED).toContain("vars.ENABLE_CLAUDE_CODEGRAPH == 'true'")
+    expect(reviewWorkflow.match(/github\.event\.inputs\.enable_codegraph == 'true'/g)).toHaveLength(
+      1
+    )
+    expect(reviewWorkflow.match(/vars\.ENABLE_CLAUDE_CODEGRAPH == 'true'/g)).toHaveLength(1)
+    expect(installStep.if).toBe("${{ steps.claude_options.outputs.codegraph_enabled == 'true' }}")
     expect(installStep.run).toContain('@colbymchenry/codegraph@1.5.0')
     expect(installStep.run).not.toContain('codegraph install')
-    expect(indexStep.if).toContain("github.event.inputs.enable_codegraph == 'true'")
+    expect(indexStep.if).toBe("${{ steps.claude_options.outputs.codegraph_enabled == 'true' }}")
     expect(indexStep.env?.CODEGRAPH_TELEMETRY).toBe('0')
     expect(indexStep.run).toContain('codegraph init')
+    expect(runtimeStep.env?.CODEGRAPH_ENABLED).toBe(codegraphEnabled)
+    expect(reviewStep.env?.CODEGRAPH_ENABLED).toBe(codegraphEnabled)
+    expect(extractStep.env?.CODEGRAPH_ENABLED).toBe(codegraphEnabled)
     expect(runtimeStep.run).toContain('args: ["serve", "--mcp"]')
     expect(reviewStep.run).toContain('--mcp-config "$CLAUDE_MCP_CONFIG_FILE"')
   })
@@ -576,6 +589,11 @@ describe('AI review workflow contract', () => {
 
     expect(installStep.run).toContain('@anthropic-ai/claude-code@2.1.218')
     expect(installStep.run).not.toContain('--ignore-scripts')
+    expect(installStep.run).toContain('claude --help')
+    expect(installStep.run).toContain('--agents')
+    expect(installStep.run).toContain('--disable-slash-commands')
+    expect(installStep.run).toContain('--mcp-config')
+    expect(installStep.run).toContain('--setting-sources')
     expect(step.env?.CLAUDE_MODEL).toBe("${{ vars.CLAUDE_REVIEW_MODEL || 'claude-sonnet-5' }}")
     expect(step.env?.ANTHROPIC_API_KEY).toBe('${{ secrets.ANTHROPIC_AUTH_TOKEN }}')
     expect(step.run).toContain('--output-format stream-json')

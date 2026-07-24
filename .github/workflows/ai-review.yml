@@ -231,6 +231,15 @@ jobs:
           } > "$prompt_file"
           echo "prompt_file=$prompt_file" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve Claude review options
+        id: claude_options
+        env:
+          CODEGRAPH_ENABLED: >-
+            ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.enable_codegraph == 'true') ||
+                (github.event_name != 'workflow_dispatch' && vars.ENABLE_CLAUDE_CODEGRAPH == 'true') }}
+        shell: bash
+        run: echo "codegraph_enabled=${CODEGRAPH_ENABLED:-false}" >> "$GITHUB_OUTPUT"
+
       - name: Install Claude CLI
         shell: bash
         working-directory: ${{ runner.temp }}
@@ -241,11 +250,23 @@ jobs:
           : > "$NPM_CONFIG_USERCONFIG"
           npm install -g --registry=https://registry.npmjs.org/ \
             @anthropic-ai/claude-code@2.1.218
+          claude_help="$(claude --help)"
+          for required_flag in \
+            --agents \
+            --disable-slash-commands \
+            --json-schema \
+            --mcp-config \
+            --setting-sources \
+            --settings \
+            --strict-mcp-config; do
+            if ! grep -Fq -- "$required_flag" <<< "$claude_help"; then
+              echo "Installed Claude CLI does not support $required_flag." >&2
+              exit 1
+            fi
+          done
 
       - name: Install CodeGraph
-        if: >-
-          ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.enable_codegraph == 'true') ||
-              (github.event_name != 'workflow_dispatch' && vars.ENABLE_CLAUDE_CODEGRAPH == 'true') }}
+        if: ${{ steps.claude_options.outputs.codegraph_enabled == 'true' }}
         shell: bash
         working-directory: ${{ runner.temp }}
         env:
@@ -257,9 +278,7 @@ jobs:
             @colbymchenry/codegraph@1.5.0
 
       - name: Build CodeGraph index
-        if: >-
-          ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.enable_codegraph == 'true') ||
-              (github.event_name != 'workflow_dispatch' && vars.ENABLE_CLAUDE_CODEGRAPH == 'true') }}
+        if: ${{ steps.claude_options.outputs.codegraph_enabled == 'true' }}
         env:
           CODEGRAPH_DIR: .codegraph-review
           CODEGRAPH_NO_DAEMON: '1'
@@ -279,9 +298,7 @@ jobs:
       - name: Build Claude runtime configuration
         id: claude_runtime
         env:
-          CODEGRAPH_ENABLED: >-
-            ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.enable_codegraph == 'true') ||
-                (github.event_name != 'workflow_dispatch' && vars.ENABLE_CLAUDE_CODEGRAPH == 'true') }}
+          CODEGRAPH_ENABLED: ${{ steps.claude_options.outputs.codegraph_enabled }}
           SUBAGENT_EFFORT: ${{ vars.CLAUDE_REVIEW_SUBAGENT_EFFORT || 'medium' }}
           SUBAGENT_MAX_TURNS: ${{ vars.CLAUDE_REVIEW_SUBAGENT_MAX_TURNS || '8' }}
         shell: bash
@@ -416,9 +433,7 @@ jobs:
           CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION: '2'
           CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '2'
           CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: '1'
-          CODEGRAPH_ENABLED: >-
-            ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.enable_codegraph == 'true') ||
-                (github.event_name != 'workflow_dispatch' && vars.ENABLE_CLAUDE_CODEGRAPH == 'true') }}
+          CODEGRAPH_ENABLED: ${{ steps.claude_options.outputs.codegraph_enabled }}
           CLAUDE_REVIEW_SCHEMA: >-
             {"type":"object","properties":{"verdict":{"type":"string","enum":["mergeable","needs changes"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"priority":{"type":"string","enum":["P0","P1","P2","P3"]},"title":{"type":"string"},"path":{"type":"string"},"line":{"type":"integer","minimum":1},"impact":{"type":"string"},"recommendation":{"type":"string"}},"required":["priority","title","path","line","impact","recommendation"],"additionalProperties":false}}},"required":["verdict","summary","findings"],"additionalProperties":false}
         shell: bash
@@ -585,9 +600,7 @@ jobs:
         id: extract_claude
         env:
           EXECUTION_FILE: ${{ steps.run_claude.outputs.execution_file }}
-          CODEGRAPH_ENABLED: >-
-            ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.enable_codegraph == 'true') ||
-                (github.event_name != 'workflow_dispatch' && vars.ENABLE_CLAUDE_CODEGRAPH == 'true') }}
+          CODEGRAPH_ENABLED: ${{ steps.claude_options.outputs.codegraph_enabled }}
         shell: bash
         run: |
           set -euo pipefail
