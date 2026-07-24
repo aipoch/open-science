@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Download, LoaderCircle, X } from 'lucide-react'
+import { Download, LoaderCircle, Upload, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -82,6 +82,7 @@ type SessionNotebookContentProps = {
   onClose: () => void
   onExport: (kernel: NotebookKernelKind) => Promise<void>
   onExportAll: () => Promise<string | undefined>
+  onImport: () => Promise<void>
 }
 
 // Pure presentational body of the dialog: header summary, empty/loading/error/populated states,
@@ -94,13 +95,16 @@ const SessionNotebookContent = ({
   error,
   onClose,
   onExport,
-  onExportAll
+  onExportAll,
+  onImport
 }: SessionNotebookContentProps): React.JSX.Element => {
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
   const [exporting, setExporting] = useState(false)
   const [exportingAll, setExportingAll] = useState(false)
   const [exportError, setExportError] = useState<string>()
   const [exportSuccess, setExportSuccess] = useState<string>()
+  const [importing, setImporting] = useState(false)
+  const [importError, setImportError] = useState<string>()
   const shortId = sessionId.slice(0, 8)
   const agents = runs.some((run) => run.source === 'agent') ? 1 : 0
   // Only python/r runs are "cells" in the notebook sense; repl/bash are control-plane/shell runs
@@ -124,8 +128,9 @@ const SessionNotebookContent = ({
     ? activeKind
     : (KERNEL_KIND_ORDER.find((kind) => kindsWithRuns.has(kind)) ?? visibleKinds[0] ?? 'python')
   const visibleRuns = runs.filter((run) => resolveRunKernelKind(run) === effectiveActiveKind)
-  const busy = exporting || exportingAll
+  const busy = exporting || exportingAll || importing
   const exportDisabled = status !== 'ready' || runs.length === 0 || busy
+  const importDisabled = status !== 'ready' || busy
 
   // The main button's "current tab" = the kernel whose .ipynb will be saved. repl/bash tabs fold
   // into the most recent data kernel so the file still has a real kernelspec; sessions that never
@@ -164,6 +169,18 @@ const SessionNotebookContent = ({
       setExportError(getErrorMessage(exportFailure))
     } finally {
       setExportingAll(false)
+    }
+  }
+
+  const handleImport = async (): Promise<void> => {
+    setImporting(true)
+    setImportError(undefined)
+    try {
+      await onImport()
+    } catch (importFailure) {
+      setImportError(getErrorMessage(importFailure))
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -254,13 +271,27 @@ const SessionNotebookContent = ({
         <p
           className={cn(
             'min-w-0 truncate text-xs',
-            exportError ? 'text-danger-000' : 'text-emerald-600'
+            importError || exportError ? 'text-danger-000' : 'text-emerald-600'
           )}
-          role={exportError ? 'alert' : 'status'}
+          role={importError || exportError ? 'alert' : 'status'}
         >
-          {exportError ?? exportSuccess}
+          {importError ?? exportError ?? exportSuccess}
         </p>
         <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            disabled={importDisabled}
+            onClick={() => void handleImport()}
+            className="flex items-center justify-center gap-1.5 rounded px-2 py-1 text-xs text-text-200 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Import .ipynb"
+          >
+            {importing ? (
+              <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+            ) : (
+              <Upload className="size-3.5" aria-hidden="true" />
+            )}
+            {importing ? 'Importing…' : 'Import .ipynb'}
+          </button>
           {/* Secondary action: only when there's more than one data kernel to write, otherwise
               it would just duplicate the main button. The "Download all (N)" label surfaces the
               count so the user knows how many files they're about to create. */}
@@ -432,6 +463,17 @@ const SessionNotebookDialog = ({
                   return `Saved ${result.files.length} notebooks to ${result.directory}`
                 }
                 return undefined
+              }}
+              onImport={async () => {
+                const request = {
+                  sessionId: session.id,
+                  projectName: session.projectId,
+                  workspaceCwd: session.cwd ?? ''
+                }
+                const result = await window.api.notebook.importIpynb(request)
+                if (!result.imported) return
+                setRuns(await loadSessionNotebookRuns(window.api.notebook, request))
+                setStatus('ready')
               }}
             />
           ) : null}

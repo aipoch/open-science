@@ -14,7 +14,14 @@ export type NotebookRunInputKind = 'cell' | 'terminal'
 // died (crash / force-quit) while the run was in flight — reconciled from a stale 'running' on the
 // next startup. 'cancelled' = the run was deliberately aborted (e.g. a force-stop disable).
 export type NotebookRunStatus =
-  'queued' | 'running' | 'completed' | 'failed' | 'timeout' | 'interrupted' | 'cancelled'
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'timeout'
+  | 'interrupted'
+  | 'cancelled'
+  | 'imported'
 
 // Languages a notebook kernel can run in this phase; each runs as a persistent exec-loop process
 // (no ipykernel/IRkernel involved).
@@ -267,6 +274,14 @@ export type ExportNotebookAllResult =
       // confirm "saved <count> notebooks to <dir>" in the footer banner.
       directory: string
       files: Array<{ kernel: 'python' | 'r'; filePath: string }>
+    }
+
+export type ImportNotebookResult =
+  | { imported: false }
+  | {
+      imported: true
+      cellCount: number
+      skippedCellCount: number
     }
 
 // Starts a streamed code write into a notebook cell.
