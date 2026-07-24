@@ -15,8 +15,9 @@ import volcengineLogo from '@/assets/provider-icons/volcengine.svg'
 import type { OfficialVendorId } from '../../../../shared/provider-registry'
 
 // Official vendor brand marks, bundled as assets. Both Kimi providers (the general Moonshot platform
-// and Kimi For Coding) share the one Kimi mark, and both GLM providers (pay-as-you-go Zhipu and the
-// GLM Coding Plan) share the one GLM mark. Any vendor without an entry falls back to a neutral glyph
+// and Kimi For Coding) share the one Kimi mark, both GLM providers (pay-as-you-go Zhipu and the GLM
+// Coding Plan) share the one GLM mark, and both StepFun providers (pay-as-you-go StepFun and the Step
+// Plan subscription) share the one StepFun mark. Any vendor without an entry falls back to a neutral glyph
 // rather than a made-up logo. Custom uses a plus-in-circle.
 const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   openai: openaiLogo,
@@ -24,6 +25,7 @@ const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   deepseek: deepseekLogo,
   minimax: minimaxLogo,
   stepfun: stepfunLogo,
+  stepplan: stepfunLogo,
   zhipu: zhipuLogo,
   glmcodingplan: zhipuLogo,
   kimi: kimiLogo,

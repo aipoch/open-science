@@ -19,6 +19,7 @@ export type OfficialVendorId =
   | 'kimiforcode'
   | 'minimax'
   | 'stepfun'
+  | 'stepplan'
   | 'xiaomimimo'
   | 'sensenova'
   | 'volcengine'
@@ -316,6 +317,29 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       { id: 'step-3.5-flash', contextWindow: 262_144 }
     ],
     // step-3.7-flash is multimodal (vision); step-3.5-flash is text-only.
+    multimodal: { multimodalModels: ['step-3.7-flash'] }
+  },
+  {
+    id: 'stepplan',
+    label: 'Step Plan',
+    // StepFun's Step Plan is a quota-based subscription (platform.stepfun.com/plan-subscribe) that
+    // routes under `/step_plan` on the mainland-China host: Anthropic /v1/messages and the
+    // OpenAI-compatible /v1/chat/completions. `baseUrl` is the `/step_plan` root the Anthropic client
+    // appends /v1/messages to; `openaiBaseUrl` is the /step_plan/v1 base clients append
+    // /chat/completions to. Quota plans ship a fixed catalog and expose no live model list.
+    apiEndpoints: ['anthropic', 'openai'],
+    baseUrl: 'https://api.stepfun.com/step_plan',
+    openaiBaseUrl: 'https://api.stepfun.com/step_plan/v1',
+    apiKeyUrl: 'https://platform.stepfun.com/plan-subscribe',
+    // step-router-v1 auto-switches between deepseek-v4-pro and step-3.7-flash; step-3.5-flash-2603 is
+    // the high-frequency-agent build. step-3.7-flash leads as the recommended flagship default.
+    models: [
+      { id: 'step-3.7-flash', contextWindow: 262_144 },
+      { id: 'step-3.5-flash', contextWindow: 262_144 },
+      { id: 'step-3.5-flash-2603', contextWindow: 262_144 },
+      { id: 'step-router-v1', contextWindow: 262_144 }
+    ],
+    // Only the step-3.7-flash flagship is multimodal (vision); the agent/code builds are text-only.
     multimodal: { multimodalModels: ['step-3.7-flash'] }
   },
   {
