@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { FileWarning } from 'lucide-react'
 
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
@@ -14,7 +15,7 @@ import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
 import { usePreviewRuntime } from '../preview-runtime-context'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { officePreviewHostLeaseCoordinator } from './office-preview-lease'
-import { isOfficePreviewHostVisible } from './office-preview-visibility'
+import { getOfficePreviewHostVisibility } from './office-preview-visibility'
 
 type OfficeHostState =
   | { kind: 'loading'; title?: string; description?: string }
@@ -94,6 +95,16 @@ const getDownloadOnlyErrorMessage = (
 
 type OfficePreviewBoundsSnapshot = Omit<OfficePreviewBounds, 'sequence'>
 
+type OfficePreviewMeasurement = {
+  bounds: OfficePreviewBoundsSnapshot
+  obscuredByOverlay: boolean
+}
+
+type OfficePreviewSnapshot = {
+  sessionId: string
+  url: string
+}
+
 const areHorizontalLayoutsEqual = (
   left: OfficePreviewBoundsSnapshot['horizontalLayout'],
   right: OfficePreviewBoundsSnapshot['horizontalLayout']
@@ -116,6 +127,7 @@ const areBoundsSnapshotsEqual = (
   left.width === right.width &&
   left.height === right.height &&
   left.visible === right.visible &&
+  left.occluded === right.occluded &&
   left.viewportWidth === right.viewportWidth &&
   left.viewportHeight === right.viewportHeight &&
   areHorizontalLayoutsEqual(left.horizontalLayout, right.horizontalLayout)
@@ -157,8 +169,9 @@ const measureOfficePreviewBounds = (
   host: HTMLElement,
   visible: boolean,
   layoutTargets: OfficePreviewLayoutTargets
-): OfficePreviewBoundsSnapshot => {
+): OfficePreviewMeasurement => {
   const rect = host.getBoundingClientRect()
+  const visibility = getOfficePreviewHostVisibility(host, rect)
   const splitGroupRect = layoutTargets.splitGroup?.getBoundingClientRect()
   const panelRect = layoutTargets.panel?.getBoundingClientRect()
   const horizontalLayout =
@@ -172,14 +185,17 @@ const measureOfficePreviewBounds = (
       : undefined
 
   return {
-    x: Math.round(rect.left),
-    y: Math.round(rect.top),
-    width: Math.max(0, Math.round(rect.width)),
-    height: Math.max(0, Math.round(rect.height)),
-    visible: visible && isOfficePreviewHostVisible(host, rect),
-    viewportWidth: Math.max(1, Math.round(window.innerWidth)),
-    viewportHeight: Math.max(1, Math.round(window.innerHeight)),
-    ...(horizontalLayout ? { horizontalLayout } : {})
+    bounds: {
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      width: Math.max(0, Math.round(rect.width)),
+      height: Math.max(0, Math.round(rect.height)),
+      visible: visible && visibility.visible,
+      viewportWidth: Math.max(1, Math.round(window.innerWidth)),
+      viewportHeight: Math.max(1, Math.round(window.innerHeight)),
+      ...(horizontalLayout ? { horizontalLayout } : {})
+    },
+    obscuredByOverlay: visible && visibility.obscuredByOverlay
   }
 }
 
@@ -199,6 +215,8 @@ export const OfficePreviewContent = ({
   const [ownsLease, setOwnsLease] = useState(false)
   const [state, setState] = useState<OfficeHostState>(OFFICE_CHECKING_STATE)
   const [sessionId, setSessionId] = useState<string | undefined>(undefined)
+  const [snapshot, setSnapshot] = useState<OfficePreviewSnapshot | undefined>(undefined)
+  const snapshotRequestSequenceRef = useRef(0)
 
   useEffect(
     () =>
@@ -285,6 +303,25 @@ export const OfficePreviewContent = ({
   }, [attempt, extension, hostId, item.name, item.path, ownsLease, source])
 
   useEffect(() => {
+    if (!sessionId || state.kind !== 'ready') return
+
+    let active = true
+    const requestSequence = ++snapshotRequestSequenceRef.current
+    // Prime the cache so opening an overlay can replace the native view without a blank interval.
+    void window.api.officePreview
+      .captureSnapshot(sessionId)
+      .then((url) => {
+        if (active && url && requestSequence === snapshotRequestSequenceRef.current) {
+          setSnapshot({ sessionId, url })
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [sessionId, state.kind])
+
+  useEffect(() => {
     const host = hostRef.current
     if (!host || !sessionId) return
 
@@ -292,10 +329,47 @@ export const OfficePreviewContent = ({
     let isIntersecting = true
     let sequence = 0
     let lastBounds: OfficePreviewBoundsSnapshot | undefined
+    let lastOverlayObscured = false
+    let overlaySnapshotReady = false
+    let overlayGeneration = 0
+    let active = true
     const layoutTargets = getOfficePreviewLayoutTargets(host)
     const syncBounds = (): void => {
       animationFrame = undefined
-      const nextBounds = measureOfficePreviewBounds(host, isIntersecting, layoutTargets)
+      const measurement = measureOfficePreviewBounds(host, isIntersecting, layoutTargets)
+      if (measurement.obscuredByOverlay !== lastOverlayObscured) {
+        lastOverlayObscured = measurement.obscuredByOverlay
+        overlayGeneration += 1
+        overlaySnapshotReady = false
+        if (measurement.obscuredByOverlay) {
+          const currentOverlayGeneration = overlayGeneration
+          const requestSequence = ++snapshotRequestSequenceRef.current
+          // Keep the live native view in place until its exact current frame has replaced the cache.
+          void window.api.officePreview
+            .captureSnapshot(sessionId)
+            .then((url) => {
+              if (!active || currentOverlayGeneration !== overlayGeneration) return
+              if (url && requestSequence === snapshotRequestSequenceRef.current) {
+                // This is a native-view handoff: commit the matching DOM frame before parking the
+                // WebContentsView, otherwise Chromium can expose the previous cached page for one paint.
+                flushSync(() => setSnapshot({ sessionId, url }))
+              }
+              overlaySnapshotReady = true
+              scheduleBounds()
+            })
+            .catch(() => {
+              if (!active || currentOverlayGeneration !== overlayGeneration) return
+              overlaySnapshotReady = true
+              scheduleBounds()
+            })
+        }
+      }
+      const nextBounds =
+        measurement.obscuredByOverlay && !overlaySnapshotReady
+          ? { ...measurement.bounds, visible: true }
+          : measurement.obscuredByOverlay
+            ? { ...measurement.bounds, occluded: true }
+            : measurement.bounds
       if (areBoundsSnapshotsEqual(lastBounds, nextBounds)) return
 
       lastBounds = nextBounds
@@ -305,6 +379,13 @@ export const OfficePreviewContent = ({
     const scheduleBounds = (): void => {
       if (animationFrame !== undefined) return
       animationFrame = window.requestAnimationFrame(syncBounds)
+    }
+    const flushBounds = (): void => {
+      if (animationFrame !== undefined) {
+        window.cancelAnimationFrame(animationFrame)
+        animationFrame = undefined
+      }
+      syncBounds()
     }
     const resizeObserver =
       typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(scheduleBounds)
@@ -318,7 +399,23 @@ export const OfficePreviewContent = ({
           })
     intersectionObserver?.observe(host)
     const mutationObserver =
-      typeof MutationObserver === 'undefined' ? undefined : new MutationObserver(scheduleBounds)
+      typeof MutationObserver === 'undefined'
+        ? undefined
+        : new MutationObserver((records) => {
+            const hostLayoutChanged = records.some(
+              (record) =>
+                record.type === 'attributes' &&
+                record.target instanceof Element &&
+                (record.target === host || record.target.contains(host))
+            )
+            if (hostLayoutChanged) {
+              // Modal/full-screen class changes happen during React's commit. Flush native geometry
+              // in the same microtask so the old WebContentsView bounds never reach the next paint.
+              flushBounds()
+              return
+            }
+            scheduleBounds()
+          })
     mutationObserver?.observe(document.body, {
       attributes: true,
       attributeFilter: ['aria-hidden', 'class', 'data-state', 'hidden', 'open', 'style'],
@@ -331,6 +428,7 @@ export const OfficePreviewContent = ({
     syncBounds()
 
     return () => {
+      active = false
       resizeObserver?.disconnect()
       intersectionObserver?.disconnect()
       mutationObserver?.disconnect()
@@ -373,6 +471,9 @@ export const OfficePreviewContent = ({
     )
   }
 
+  const visibleSnapshot =
+    state.kind === 'ready' && snapshot?.sessionId === sessionId ? snapshot : undefined
+
   return (
     <div
       ref={hostRef}
@@ -381,6 +482,15 @@ export const OfficePreviewContent = ({
     >
       {state.kind === 'loading' ? (
         <PreviewLoadingContent title={state.title} description={state.description} />
+      ) : null}
+      {visibleSnapshot ? (
+        <img
+          data-office-preview-snapshot
+          src={visibleSnapshot.url}
+          alt=""
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 size-full object-fill select-none"
+        />
       ) : null}
     </div>
   )

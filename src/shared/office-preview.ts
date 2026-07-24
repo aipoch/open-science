@@ -3,6 +3,7 @@ export const OFFICE_PREVIEW_PROCESS_MEMORY_LIMIT_BYTES = 1_536 * 1024 * 1024
 export const OFFICE_PREVIEW_PROCESS_MEMORY_POLL_MS = 1_000
 export const OFFICE_PREVIEW_OPEN_CHANNEL = 'office-preview:open'
 export const OFFICE_PREVIEW_SET_BOUNDS_CHANNEL = 'office-preview:set-bounds'
+export const OFFICE_PREVIEW_CAPTURE_SNAPSHOT_CHANNEL = 'office-preview:capture-snapshot'
 export const OFFICE_PREVIEW_CLOSE_CHANNEL = 'office-preview:close'
 export const OFFICE_PREVIEW_STATE_CHANNEL = 'office-preview:state'
 export const OFFICE_PREVIEW_RUNTIME_START_CHANNEL = 'office-preview-runtime:start'
@@ -105,6 +106,7 @@ export type OfficePreviewBounds = {
   width: number
   height: number
   visible: boolean
+  occluded?: boolean
   sequence: number
   viewportWidth: number
   viewportHeight: number
@@ -143,6 +145,7 @@ export const isOfficePreviewBounds = (value: unknown): value is OfficePreviewBou
     isFiniteNumber(bounds.height) &&
     bounds.height >= 0 &&
     typeof bounds.visible === 'boolean' &&
+    (bounds.occluded === undefined || typeof bounds.occluded === 'boolean') &&
     Number.isSafeInteger(bounds.sequence) &&
     (bounds.sequence ?? 0) > 0 &&
     isFiniteNumber(bounds.viewportWidth) &&

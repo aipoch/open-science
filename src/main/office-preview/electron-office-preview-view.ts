@@ -62,6 +62,11 @@ const createElectronOfficePreviewViewFactory = (
       view.webContents.session.on('will-download', preventDownload)
       const platformView = view as unknown as PlatformView
       parentOwnerByChild.set(view.webContents.id, parentOwnerId)
+      // Capture while hidden so a DOM snapshot can replace the native surface under app overlays.
+      platformView.captureSnapshot = async () => {
+        const image = await view.webContents.capturePage(undefined, { stayHidden: true })
+        return image.isEmpty() ? undefined : image.toDataURL()
+      }
       platformView.setPreviewResourceId = (resourceId) => {
         previewResourceId = resourceId
       }

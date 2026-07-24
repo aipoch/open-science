@@ -9,6 +9,7 @@ describe('createOfficePreviewViewFactory', () => {
     const send = vi.fn()
     const close = vi.fn()
     const setBackgroundColor = vi.fn()
+    const captureSnapshot = vi.fn().mockResolvedValue('data:image/png;base64,c25hcHNob3Q=')
     const listeners = new Map<string, (...args: unknown[]) => void>()
     const webContents = {
       id: 91,
@@ -25,6 +26,7 @@ describe('createOfficePreviewViewFactory', () => {
       webContents,
       setBounds: vi.fn(),
       setVisible: vi.fn(),
+      captureSnapshot,
       setBackgroundColor
     }
     let runtimeStateListener:
@@ -58,6 +60,7 @@ describe('createOfficePreviewViewFactory', () => {
     }
 
     await child.start(start)
+    const snapshot = await child.captureSnapshot?.()
     runtimeStateListener?.(92, { sessionId: 'session-1', phase: 'ready' })
     runtimeStateListener?.(91, { sessionId: 'session-1', phase: 'ready' })
 
@@ -65,6 +68,8 @@ describe('createOfficePreviewViewFactory', () => {
     expect(setBackgroundColor).toHaveBeenCalledWith('#00000000')
     expect(loadRuntime).toHaveBeenCalledWith(webContents)
     expect(send).toHaveBeenCalledWith('office-preview-runtime:start', start)
+    expect(snapshot).toBe('data:image/png;base64,c25hcHNob3Q=')
+    expect(captureSnapshot).toHaveBeenCalledOnce()
     expect(onState).toHaveBeenCalledTimes(1)
 
     const preventDefault = vi.fn()

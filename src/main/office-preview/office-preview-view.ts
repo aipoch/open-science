@@ -18,6 +18,7 @@ type PlatformView = {
   webContents: PlatformWebContents
   setBounds: (bounds: { x: number; y: number; width: number; height: number }) => void
   setVisible: (visible: boolean) => void
+  captureSnapshot?: () => Promise<string | undefined>
   setBackgroundColor?: (color: string) => void
   setPreviewResourceId?: (resourceId: string) => void
   dispose?: () => void
@@ -93,6 +94,7 @@ const createOfficePreviewViewFactory = (
       },
       setBounds: (bounds) => view.setBounds(bounds),
       setVisible: (visible) => view.setVisible(visible),
+      captureSnapshot: view.captureSnapshot ? () => view.captureSnapshot!() : undefined,
       getMemoryUsageBytes: dependencies.getMemoryUsageBytes
         ? () => dependencies.getMemoryUsageBytes!(contents)
         : undefined,

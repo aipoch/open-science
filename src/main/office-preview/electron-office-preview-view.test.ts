@@ -14,6 +14,10 @@ const mocks = vi.hoisted(() => {
     loadURL: vi.fn().mockResolvedValue(undefined),
     loadFile: vi.fn().mockResolvedValue(undefined),
     getOSProcessId: vi.fn(() => 451),
+    capturePage: vi.fn().mockResolvedValue({
+      isEmpty: vi.fn(() => false),
+      toDataURL: vi.fn(() => 'data:image/png;base64,c25hcHNob3Q=')
+    }),
     session: {
       setPermissionRequestHandler: vi.fn(),
       setPermissionCheckHandler: vi.fn(),
@@ -117,6 +121,15 @@ describe('createElectronOfficePreviewViewFactory', () => {
       'http://localhost:5173/office-preview.html'
     )
     expect(await child.getMemoryUsageBytes?.()).toBe(12_345 * 1024)
+    expect(await child.captureSnapshot?.()).toBe('data:image/png;base64,c25hcHNob3Q=')
+    expect(mocks.childContents.capturePage).toHaveBeenCalledWith(undefined, { stayHidden: true })
+    const emptyToDataURL = vi.fn(() => 'data:image/png;base64,')
+    mocks.childContents.capturePage.mockResolvedValueOnce({
+      isEmpty: vi.fn(() => true),
+      toDataURL: emptyToDataURL
+    })
+    expect(await child.captureSnapshot?.()).toBeUndefined()
+    expect(emptyToDataURL).not.toHaveBeenCalled()
     const permissionHandler = mocks.childContents.session.setPermissionRequestHandler.mock
       .calls[0]?.[0] as (
       _contents: unknown,

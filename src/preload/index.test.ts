@@ -66,6 +66,7 @@ type PreloadApi = {
   }
   officePreview: {
     setBounds: (sessionId: string, bounds: unknown) => void
+    captureSnapshot: (sessionId: string) => Promise<string | undefined>
   }
 }
 
@@ -285,5 +286,15 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
 
     expect(sendMock).toHaveBeenCalledWith('office-preview:set-bounds', 'office-session-1', bounds)
     expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  it('requests an Office preview snapshot over invoke IPC', async () => {
+    invokeMock.mockResolvedValueOnce('data:image/png;base64,c25hcHNob3Q=')
+
+    await expect(api.officePreview.captureSnapshot('office-session-1')).resolves.toBe(
+      'data:image/png;base64,c25hcHNob3Q='
+    )
+
+    expect(invokeMock).toHaveBeenCalledWith('office-preview:capture-snapshot', 'office-session-1')
   })
 })

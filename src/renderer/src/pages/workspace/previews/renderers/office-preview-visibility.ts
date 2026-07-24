@@ -1,6 +1,19 @@
-// Native WebContentsView instances do not participate in DOM clipping or z-index, so hide the
-// child unless its host is fully visible and is not covered by another modal or overlay.
-const isOfficePreviewHostVisible = (host: HTMLElement, rect: DOMRect): boolean => {
+type OfficePreviewHostVisibility = {
+  visible: boolean
+  obscuredByOverlay: boolean
+}
+
+const HIDDEN_VISIBILITY: OfficePreviewHostVisibility = {
+  visible: false,
+  obscuredByOverlay: false
+}
+
+// Native WebContentsView instances do not participate in DOM clipping or z-index, so visibility
+// decisions use explicit overlay geometry instead of document-wide pointer-event hit testing.
+const getOfficePreviewHostVisibility = (
+  host: HTMLElement,
+  rect: DOMRect
+): OfficePreviewHostVisibility => {
   if (
     document.visibilityState === 'hidden' ||
     !host.isConnected ||
@@ -11,35 +24,45 @@ const isOfficePreviewHostVisible = (host: HTMLElement, rect: DOMRect): boolean =
     rect.right > window.innerWidth ||
     rect.bottom > window.innerHeight
   ) {
-    return false
+    return HIDDEN_VISIBILITY
   }
 
+  const containingModal = host.closest<HTMLElement>(
+    '[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]'
+  )
   for (let ancestor = host.parentElement; ancestor; ancestor = ancestor.parentElement) {
     const style = window.getComputedStyle(ancestor)
     const clips = [style.overflow, style.overflowX, style.overflowY].some((value) =>
       /^(auto|clip|hidden|scroll)$/.test(value)
     )
-    if (!clips) continue
-    const ancestorRect = ancestor.getBoundingClientRect()
-    if (
-      rect.left < ancestorRect.left ||
-      rect.top < ancestorRect.top ||
-      rect.right > ancestorRect.right ||
-      rect.bottom > ancestorRect.bottom
-    ) {
-      return false
+    if (clips) {
+      const ancestorRect = ancestor.getBoundingClientRect()
+      if (
+        rect.left < ancestorRect.left ||
+        rect.top < ancestorRect.top ||
+        rect.right > ancestorRect.right ||
+        rect.bottom > ancestorRect.bottom
+      ) {
+        return HIDDEN_VISIBILITY
+      }
     }
+
+    // A fixed modal establishes the preview's active visual boundary. Ancestors from its former
+    // panel position must not make the viewport-sized surface appear clipped.
+    if (ancestor === containingModal) break
   }
 
-  const activeModal = Array.from(
+  const obscuredByModal = Array.from(
     document.querySelectorAll<HTMLElement>(
       '[role="dialog"], [role="alertdialog"], [aria-modal="true"]'
     )
-  ).find((element) => {
+  ).some((element) => {
     const style = window.getComputedStyle(element)
-    return style.display !== 'none' && style.visibility !== 'hidden'
+    return style.display !== 'none' && style.visibility !== 'hidden' && !element.contains(host)
   })
-  if (activeModal && !activeModal.contains(host)) return false
+  if (obscuredByModal) {
+    return { visible: false, obscuredByOverlay: true }
+  }
 
   const overlaySelector = [
     '[role="menu"]',
@@ -53,11 +76,7 @@ const isOfficePreviewHostVisible = (host: HTMLElement, rect: DOMRect): boolean =
   ).some((element) => {
     if (element === host || element.contains(host) || host.contains(element)) return false
     const style = window.getComputedStyle(element)
-    if (
-      style.display === 'none' ||
-      style.visibility === 'hidden' ||
-      style.pointerEvents === 'none'
-    ) {
+    if (style.display === 'none' || style.visibility === 'hidden') {
       return false
     }
     const overlayRect = element.getBoundingClientRect()
@@ -70,26 +89,13 @@ const isOfficePreviewHostVisible = (host: HTMLElement, rect: DOMRect): boolean =
       overlayRect.bottom > rect.top
     )
   })
-  if (overlappingOverlay) return false
+  if (overlappingOverlay) return { visible: false, obscuredByOverlay: true }
 
-  // react-resizable-panels disables pointer events on the active panel while dragging its separator.
-  // The DOM hit test then cannot see this host even though the native preview remains visible.
-  const panel = host.closest<HTMLElement>('[data-panel]')
-  const isPanelResizeActive =
-    panel !== null &&
-    window.getComputedStyle(panel).pointerEvents === 'none' &&
-    document.querySelector('[data-separator="active"]') !== null
-  if (isPanelResizeActive) return true
-
-  const elementsFromPoint = document.elementsFromPoint?.bind(document)
-  if (!elementsFromPoint) return true
-  const centerX = rect.left + rect.width / 2
-  const centerY = rect.top + rect.height / 2
-  const topElement = elementsFromPoint(centerX, centerY).find((element) => {
-    const style = window.getComputedStyle(element)
-    return style.pointerEvents !== 'none' && style.visibility !== 'hidden'
-  })
-  return !topElement || topElement === host || host.contains(topElement)
+  return { visible: true, obscuredByOverlay: false }
 }
 
-export { isOfficePreviewHostVisible }
+const isOfficePreviewHostVisible = (host: HTMLElement, rect: DOMRect): boolean =>
+  getOfficePreviewHostVisibility(host, rect).visible
+
+export { getOfficePreviewHostVisibility, isOfficePreviewHostVisible }
+export type { OfficePreviewHostVisibility }

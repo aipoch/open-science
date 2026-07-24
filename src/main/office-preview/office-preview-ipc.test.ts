@@ -53,6 +53,7 @@ describe('registerOfficePreviewIpcHandlers', () => {
     const supervisor = {
       open: vi.fn().mockResolvedValue({ kind: 'started', sessionId: 'session-1' }),
       setBounds: vi.fn(),
+      captureSnapshot: vi.fn().mockResolvedValue('data:image/png;base64,c25hcHNob3Q='),
       resizeOwner: vi.fn(),
       close: vi.fn().mockResolvedValue(undefined),
       closeOwner: vi.fn().mockResolvedValue(undefined)
@@ -89,10 +90,12 @@ describe('registerOfficePreviewIpcHandlers', () => {
 
     await handlers.get('office-preview:open')?.(event, request)
     listeners.get('office-preview:set-bounds')?.(event, 'session-1', bounds)
+    await handlers.get('office-preview:capture-snapshot')?.(event, 'session-1')
     await handlers.get('office-preview:close')?.(event, 'session-1')
 
     expect(supervisor.open).toHaveBeenCalledWith(7, request)
     expect(supervisor.setBounds).toHaveBeenCalledWith(7, 'session-1', bounds)
+    expect(supervisor.captureSnapshot).toHaveBeenCalledWith(7, 'session-1')
     expect(supervisor.close).toHaveBeenCalledWith(7, 'session-1')
 
     windowHarness.resizeListener?.()
@@ -112,6 +115,7 @@ describe('registerOfficePreviewIpcHandlers', () => {
     const supervisor = {
       open: vi.fn().mockRejectedValue(new OfficePreviewOpenSupersededError()),
       setBounds: vi.fn(),
+      captureSnapshot: vi.fn(),
       resizeOwner: vi.fn(),
       close: vi.fn(),
       closeOwner: vi.fn()
@@ -137,6 +141,7 @@ describe('registerOfficePreviewIpcHandlers', () => {
     const supervisor = {
       open: vi.fn(),
       setBounds: vi.fn(),
+      captureSnapshot: vi.fn(),
       resizeOwner: vi.fn(),
       close: vi.fn(),
       closeOwner: vi.fn()
@@ -156,6 +161,7 @@ describe('registerOfficePreviewIpcHandlers', () => {
       setBounds: vi.fn(() => {
         throw new Error('unexpected bounds failure')
       }),
+      captureSnapshot: vi.fn(),
       resizeOwner: vi.fn(),
       close: vi.fn(),
       closeOwner: vi.fn()
@@ -191,6 +197,7 @@ describe('registerOfficePreviewIpcHandlers', () => {
     const supervisor = {
       open: vi.fn().mockResolvedValue({ kind: 'started', sessionId: 'session-1' }),
       setBounds: vi.fn(),
+      captureSnapshot: vi.fn(),
       resizeOwner: vi.fn(() => {
         throw failure
       }),

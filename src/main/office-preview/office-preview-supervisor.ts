@@ -21,6 +21,7 @@ type OfficePreviewChildView = {
   start: (message: OfficePreviewRuntimeStart) => Promise<void>
   setBounds: (bounds: { x: number; y: number; width: number; height: number }) => void
   setVisible: (visible: boolean) => void
+  captureSnapshot?: () => Promise<string | undefined>
   close: () => void
   getMemoryUsageBytes?: () => number | Promise<number>
 }
@@ -50,6 +51,7 @@ type OfficePreviewSession = {
   parentOwnerId: number
   requestId: string
   ready: boolean
+  requestedOccluded: boolean
   requestedVisible: boolean
   resource: OfficePreviewRuntimeResource
   timeout?: ReturnType<typeof setTimeout>
@@ -210,8 +212,9 @@ class OfficePreviewSupervisor {
           session.ready = true
           if (session.timeout) clearTimeout(session.timeout)
           session.timeout = undefined
-          session.view.setVisible(session.requestedVisible)
-          session.lastAppliedVisible = session.requestedVisible
+          const shouldDraw = session.requestedVisible || session.requestedOccluded
+          session.view.setVisible(shouldDraw)
+          session.lastAppliedVisible = shouldDraw
         }
         this.publishState(parentOwnerId, request.requestId, state)
         if (state.phase === 'error') void this.close(parentOwnerId, sessionId)
@@ -243,6 +246,7 @@ class OfficePreviewSupervisor {
         parentOwnerId,
         requestId: request.requestId,
         ready: false,
+        requestedOccluded: false,
         requestedVisible: true,
         lastAppliedVisible: false,
         lastBoundsSequence: 0,
@@ -346,6 +350,25 @@ class OfficePreviewSupervisor {
     await Promise.all(ownedSessionIds.map((sessionId) => this.close(parentOwnerId, sessionId)))
   }
 
+  async captureSnapshot(parentOwnerId: number, sessionId: string): Promise<string | undefined> {
+    const session = this.sessions.get(sessionId)
+    if (
+      !session ||
+      !session.ready ||
+      session.parentOwnerId !== parentOwnerId ||
+      !session.view.captureSnapshot
+    ) {
+      return undefined
+    }
+
+    // Snapshot failures are visual degradation only and must not terminate the live preview session.
+    try {
+      return await session.view.captureSnapshot()
+    } catch {
+      return undefined
+    }
+  }
+
   private async checkMemoryUsage(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId)
     if (!session?.view.getMemoryUsageBytes || session.memoryPollInFlight) return
@@ -404,6 +427,8 @@ class OfficePreviewSupervisor {
     }
     session.layoutReference = layoutReference
     const requestedVisible = bounds.visible && normalized.width > 0 && normalized.height > 0
+    const requestedOccluded =
+      !requestedVisible && bounds.occluded === true && normalized.width > 0 && normalized.height > 0
     const targetViewport = session.latestOwnerViewport
     this.applyBounds(
       sessionId,
@@ -411,7 +436,8 @@ class OfficePreviewSupervisor {
       targetViewport && !areOfficePreviewViewportsEqual(targetViewport, layoutReference.viewport)
         ? projectOfficePreviewBounds(layoutReference, targetViewport)
         : normalized,
-      requestedVisible
+      requestedVisible,
+      requestedOccluded
     )
   }
 
@@ -432,7 +458,8 @@ class OfficePreviewSupervisor {
       sessionId,
       session,
       projectOfficePreviewBounds(reference, normalizedViewport),
-      session.requestedVisible
+      session.requestedVisible,
+      session.requestedOccluded
     )
   }
 
@@ -440,27 +467,33 @@ class OfficePreviewSupervisor {
     sessionId: string,
     session: OfficePreviewSession,
     bounds: OfficePreviewNativeBounds,
-    visible: boolean
+    visible: boolean,
+    occluded = false
   ): void {
     try {
+      // Keep overlay-covered renderers alive at their current viewport size. Moving the native view
+      // fully outside the parent avoids z-order conflicts without firing Chromium's hidden lifecycle.
+      const appliedBounds = occluded ? { ...bounds, x: -Math.max(1, bounds.width) } : bounds
       const previous = session.lastAppliedBounds
       if (
         !previous ||
-        previous.x !== bounds.x ||
-        previous.y !== bounds.y ||
-        previous.width !== bounds.width ||
-        previous.height !== bounds.height
+        previous.x !== appliedBounds.x ||
+        previous.y !== appliedBounds.y ||
+        previous.width !== appliedBounds.width ||
+        previous.height !== appliedBounds.height
       ) {
-        session.view.setBounds(bounds)
-        session.lastAppliedBounds = bounds
+        session.view.setBounds(appliedBounds)
+        session.lastAppliedBounds = appliedBounds
       }
 
       session.requestedVisible = visible
-      if (session.lastAppliedVisible === visible) return
+      session.requestedOccluded = occluded
+      const shouldDraw = visible || occluded
+      if (session.lastAppliedVisible === shouldDraw) return
 
       // Frame-based Office renderers remain drawable before ready so their first paint cannot stall.
-      session.view.setVisible(visible)
-      session.lastAppliedVisible = visible
+      session.view.setVisible(shouldDraw)
+      session.lastAppliedVisible = shouldDraw
     } catch {
       this.publishState(session.parentOwnerId, session.requestId, {
         sessionId,

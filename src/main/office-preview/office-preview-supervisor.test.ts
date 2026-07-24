@@ -133,6 +133,46 @@ describe('OfficePreviewSupervisor', () => {
     })
   })
 
+  it('captures only a session owned by the requesting parent renderer', async () => {
+    const view = {
+      ownerId: 91,
+      start: vi.fn().mockResolvedValue(undefined),
+      setBounds: vi.fn(),
+      setVisible: vi.fn(),
+      captureSnapshot: vi.fn().mockResolvedValue('data:image/png;base64,c25hcHNob3Q='),
+      close: vi.fn()
+    }
+    let viewOptions: Record<string, unknown> | undefined
+    const supervisor = new OfficePreviewSupervisor({
+      inspectResource: vi.fn().mockResolvedValue({ size: 1024, version: 1 }),
+      acquireResource: vi.fn().mockResolvedValue({
+        id: 'resource-1',
+        url: 'open-science-preview://resource-1/report.xlsx',
+        size: 1024,
+        mimeType: 'application/octet-stream',
+        version: 1
+      }),
+      releaseResource: vi.fn(),
+      createView: vi.fn((options) => {
+        viewOptions = options as unknown as Record<string, unknown>
+        return view
+      }),
+      createSessionId: () => 'session-1'
+    })
+
+    await supervisor.open(7, request)
+
+    await expect(supervisor.captureSnapshot(8, 'session-1')).resolves.toBeUndefined()
+    await expect(supervisor.captureSnapshot(7, 'session-1')).resolves.toBeUndefined()
+    ;(
+      viewOptions?.onState as ((state: { sessionId: string; phase: 'ready' }) => void) | undefined
+    )?.({ sessionId: 'session-1', phase: 'ready' })
+    await expect(supervisor.captureSnapshot(7, 'session-1')).resolves.toBe(
+      'data:image/png;base64,c25hcHNob3Q='
+    )
+    expect(view.captureSnapshot).toHaveBeenCalledOnce()
+  })
+
   it('closes a session idempotently and releases its child-owned capability', async () => {
     const resource = {
       id: 'resource-1',
@@ -353,6 +393,60 @@ describe('OfficePreviewSupervisor', () => {
     expect(view.setBounds).toHaveBeenCalledTimes(1)
     expect(view.setBounds).toHaveBeenCalledWith({ x: 10, y: 21, width: 500, height: 301 })
     expect(view.setVisible).toHaveBeenLastCalledWith(true)
+  })
+
+  it('parks an overlay-occluded view offscreen without changing its visible lifecycle', async () => {
+    const view = {
+      ownerId: 91,
+      start: vi.fn().mockResolvedValue(undefined),
+      setBounds: vi.fn(),
+      setVisible: vi.fn(),
+      close: vi.fn()
+    }
+    const supervisor = new OfficePreviewSupervisor({
+      inspectResource: vi.fn().mockResolvedValue({ size: 1024, version: 1 }),
+      acquireResource: vi.fn().mockResolvedValue({
+        id: 'resource-1',
+        url: 'open-science-preview://resource-1/report.xlsx',
+        size: 1024,
+        mimeType: 'application/octet-stream',
+        version: 1
+      }),
+      releaseResource: vi.fn(),
+      createView: vi.fn().mockReturnValue(view),
+      createSessionId: () => 'session-1'
+    })
+    const visibleBounds = {
+      x: 640,
+      y: 72,
+      width: 620,
+      height: 708,
+      visible: true,
+      viewportWidth: 1280,
+      viewportHeight: 800
+    }
+
+    await supervisor.open(7, request)
+    supervisor.setBounds(7, 'session-1', { ...visibleBounds, sequence: 1 })
+    view.setBounds.mockClear()
+    view.setVisible.mockClear()
+
+    supervisor.setBounds(7, 'session-1', {
+      ...visibleBounds,
+      visible: false,
+      occluded: true,
+      sequence: 2
+    })
+
+    const parkedBounds = view.setBounds.mock.calls.at(-1)?.[0]
+    expect(parkedBounds).toEqual(expect.objectContaining({ y: 72, width: 620, height: 708 }))
+    expect(parkedBounds.x + parkedBounds.width).toBeLessThanOrEqual(0)
+    expect(view.setVisible).not.toHaveBeenCalled()
+
+    supervisor.setBounds(7, 'session-1', { ...visibleBounds, sequence: 3 })
+
+    expect(view.setBounds).toHaveBeenLastCalledWith({ x: 640, y: 72, width: 620, height: 708 })
+    expect(view.setVisible).not.toHaveBeenCalled()
   })
 
   it('deduplicates exact bounds and rejects stale renderer sequences', async () => {

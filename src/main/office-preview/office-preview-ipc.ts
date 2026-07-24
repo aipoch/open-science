@@ -3,6 +3,7 @@ import { BrowserWindow, ipcMain } from 'electron'
 import type { OfficePreviewOpenRequest } from '../../shared/office-preview'
 import {
   isOfficePreviewBounds,
+  OFFICE_PREVIEW_CAPTURE_SNAPSHOT_CHANNEL,
   OFFICE_PREVIEW_CLOSE_CHANNEL,
   OFFICE_PREVIEW_OPEN_CHANNEL,
   OFFICE_PREVIEW_SET_BOUNDS_CHANNEL
@@ -12,7 +13,7 @@ import { OfficePreviewOpenSupersededError } from './office-preview-supervisor'
 
 type OfficePreviewSupervisorPort = Pick<
   OfficePreviewSupervisor,
-  'open' | 'setBounds' | 'resizeOwner' | 'close' | 'closeOwner'
+  'open' | 'setBounds' | 'captureSnapshot' | 'resizeOwner' | 'close' | 'closeOwner'
 >
 
 const registerOfficePreviewIpcHandlers = (supervisor: OfficePreviewSupervisorPort): void => {
@@ -66,6 +67,10 @@ const registerOfficePreviewIpcHandlers = (supervisor: OfficePreviewSupervisorPor
     } catch (error) {
       console.error('Failed to update Office preview bounds', error)
     }
+  })
+  ipcMain.handle(OFFICE_PREVIEW_CAPTURE_SNAPSHOT_CHANNEL, (event, sessionId: unknown) => {
+    if (typeof sessionId !== 'string' || !sessionId) return undefined
+    return supervisor.captureSnapshot(event.sender.id, sessionId)
   })
   ipcMain.handle(OFFICE_PREVIEW_CLOSE_CHANNEL, (event, sessionId: string) =>
     supervisor.close(event.sender.id, sessionId)

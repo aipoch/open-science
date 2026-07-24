@@ -38,6 +38,7 @@ describe('OfficePreviewRenderer', () => {
     | undefined
   const open = vi.fn()
   const setBounds = vi.fn()
+  const captureSnapshot = vi.fn()
   const close = vi.fn()
   const removeStateListener = vi.fn()
   const emitState = (state: {
@@ -51,6 +52,9 @@ describe('OfficePreviewRenderer', () => {
   }
 
   beforeEach(() => {
+    ;(
+      globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = true
     vi.resetAllMocks()
     stateListener = undefined
     open.mockResolvedValue({
@@ -60,6 +64,7 @@ describe('OfficePreviewRenderer', () => {
       limit: 40 * 1024 * 1024
     })
     setBounds.mockResolvedValue(undefined)
+    captureSnapshot.mockResolvedValue('data:image/png;base64,c25hcHNob3Q=')
     close.mockResolvedValue(undefined)
     Object.defineProperty(window, 'api', {
       configurable: true,
@@ -67,6 +72,7 @@ describe('OfficePreviewRenderer', () => {
         officePreview: {
           open,
           setBounds,
+          captureSnapshot,
           close,
           onState: vi.fn((listener) => {
             stateListener = listener
@@ -110,6 +116,31 @@ describe('OfficePreviewRenderer', () => {
     expect(isOfficePreviewHostVisible(host, visibleRect)).toBe(false)
     dialog.remove()
 
+    const containingDialog = document.createElement('div')
+    containingDialog.setAttribute('role', 'dialog')
+    containingDialog.setAttribute('aria-modal', 'true')
+    containingDialog.appendChild(host)
+    document.body.appendChild(containingDialog)
+    expect(isOfficePreviewHostVisible(host, visibleRect)).toBe(true)
+
+    const clippedPanel = document.createElement('div')
+    clippedPanel.style.overflow = 'hidden'
+    Object.defineProperty(clippedPanel, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ ...visibleRect, right: 60, bottom: 60, width: 50, height: 50 })
+    })
+    document.body.appendChild(clippedPanel)
+    clippedPanel.appendChild(containingDialog)
+    expect(isOfficePreviewHostVisible(host, visibleRect)).toBe(true)
+
+    const nestedDialog = document.createElement('div')
+    nestedDialog.setAttribute('role', 'dialog')
+    document.body.appendChild(nestedDialog)
+    expect(isOfficePreviewHostVisible(host, visibleRect)).toBe(false)
+    nestedDialog.remove()
+    document.body.appendChild(host)
+    containingDialog.remove()
+
     const menu = document.createElement('div')
     menu.setAttribute('role', 'menu')
     Object.defineProperty(menu, 'getBoundingClientRect', {
@@ -119,7 +150,33 @@ describe('OfficePreviewRenderer', () => {
     document.body.appendChild(menu)
     expect(isOfficePreviewHostVisible(host, visibleRect)).toBe(false)
     menu.remove()
+
+    const remoteMenu = document.createElement('div')
+    remoteMenu.setAttribute('role', 'menu')
+    Object.defineProperty(remoteMenu, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        ...visibleRect,
+        left: 200,
+        right: 260,
+        x: 200,
+        width: 60,
+        top: 10,
+        bottom: 30,
+        height: 20
+      })
+    })
+    document.body.style.pointerEvents = 'none'
+    document.body.appendChild(remoteMenu)
+    Object.defineProperty(document, 'elementsFromPoint', {
+      configurable: true,
+      value: vi.fn(() => [remoteMenu])
+    })
+    expect(isOfficePreviewHostVisible(host, visibleRect)).toBe(true)
+    remoteMenu.remove()
+    document.body.style.pointerEvents = ''
     host.remove()
+    clippedPanel.remove()
   })
 
   it('keeps a native preview host visible while its resizable panel is being dragged', () => {
@@ -158,6 +215,9 @@ describe('OfficePreviewRenderer', () => {
   afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()
+    document.body.style.pointerEvents = ''
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('opens an isolated preview session without reading Office bytes in the parent renderer', async () => {
@@ -309,6 +369,74 @@ describe('OfficePreviewRenderer', () => {
     group.remove()
   })
 
+  it('flushes modal layout mutations before the next paint', async () => {
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+    let mutationCallback: MutationCallback | undefined
+    class TestMutationObserver {
+      constructor(callback: MutationCallback) {
+        mutationCallback = callback
+      }
+
+      observe = vi.fn()
+      disconnect = vi.fn()
+      takeRecords = vi.fn(() => [])
+    }
+    vi.stubGlobal('MutationObserver', TestMutationObserver)
+    let rect = {
+      left: 700,
+      top: 72,
+      right: 1180,
+      bottom: 780,
+      width: 480,
+      height: 708,
+      x: 700,
+      y: 72,
+      toJSON: () => ({})
+    } as DOMRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => rect)
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+
+    await act(async () => {
+      root.render(<OfficePreviewRenderer item={createItem()} />)
+      await flushMicrotasks()
+    })
+    setBounds.mockClear()
+    rect = {
+      ...rect,
+      left: 64,
+      top: 40,
+      right: 1216,
+      bottom: 760,
+      width: 1152,
+      height: 720,
+      x: 64,
+      y: 40
+    }
+
+    mutationCallback?.(
+      [
+        {
+          type: 'attributes',
+          target: container,
+          attributeName: 'class'
+        } as unknown as MutationRecord
+      ],
+      {} as MutationObserver
+    )
+
+    expect(setBounds).toHaveBeenCalledWith(
+      'office-session-1',
+      expect.objectContaining({ x: 64, y: 40, width: 1152, height: 720, sequence: 2 })
+    )
+    expect(frames).toHaveLength(0)
+  })
+
   it('shows the authoritative file-check stage while opening the isolated runtime', async () => {
     open.mockReturnValue(new Promise(() => undefined))
 
@@ -361,6 +489,215 @@ describe('OfficePreviewRenderer', () => {
     })
     expect(container.querySelector('[data-preview-status="loading"]')).toBeNull()
     expect(container.querySelector('[data-office-preview-state="ready"]')).not.toBeNull()
+  })
+
+  it('shows a captured frame while an overlay intersects the native preview', async () => {
+    const frames: FrameRequestCallback[] = []
+    const requestFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        frames.push(callback)
+        return frames.length
+      })
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+    let mutationCallback: MutationCallback | undefined
+    class TestMutationObserver {
+      constructor(callback: MutationCallback) {
+        mutationCallback = callback
+      }
+      observe = vi.fn()
+      disconnect = vi.fn()
+      takeRecords = vi.fn(() => [])
+    }
+    vi.stubGlobal('MutationObserver', TestMutationObserver)
+    const hostRect = {
+      left: 600,
+      top: 80,
+      right: 1000,
+      bottom: 680,
+      width: 400,
+      height: 600,
+      x: 600,
+      y: 80,
+      toJSON: () => ({})
+    } as DOMRect
+    const getRect = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(() => hostRect)
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+
+    await act(async () => {
+      root.render(<OfficePreviewRenderer item={createItem()} />)
+      await flushMicrotasks()
+    })
+    await act(async () => {
+      emitState({ sessionId: 'office-session-1', phase: 'ready' })
+      await flushMicrotasks()
+    })
+
+    expect(captureSnapshot).toHaveBeenCalledWith('office-session-1')
+    expect(
+      container
+        .querySelector<HTMLImageElement>('[data-office-preview-snapshot]')
+        ?.getAttribute('src')
+    ).toBe('data:image/png;base64,c25hcHNob3Q=')
+
+    const menu = document.createElement('div')
+    menu.setAttribute('role', 'menu')
+    document.body.appendChild(menu)
+    await act(async () => {
+      mutationCallback?.([], {} as MutationObserver)
+      frames.shift()?.(0)
+      await flushMicrotasks()
+      frames.shift()?.(0.5)
+      await flushMicrotasks()
+    })
+
+    expect(setBounds).toHaveBeenLastCalledWith(
+      'office-session-1',
+      expect.objectContaining({ visible: false })
+    )
+    expect(
+      container
+        .querySelector<HTMLImageElement>('[data-office-preview-snapshot]')
+        ?.getAttribute('src')
+    ).toBe('data:image/png;base64,c25hcHNob3Q=')
+
+    open.mockResolvedValueOnce({
+      kind: 'started',
+      sessionId: 'office-session-2',
+      size: 2048,
+      limit: 40 * 1024 * 1024
+    })
+    captureSnapshot.mockImplementation((sessionId: string) =>
+      sessionId === 'office-session-2'
+        ? new Promise<string | undefined>(() => undefined)
+        : Promise.resolve('data:image/png;base64,c25hcHNob3Q=')
+    )
+    await act(async () => {
+      root.render(
+        <OfficePreviewRenderer
+          item={createItem({
+            id: 'office-2',
+            path: '/artifacts/second.docx',
+            name: 'second.docx'
+          })}
+        />
+      )
+      await flushMicrotasks()
+    })
+
+    expect(container.querySelector('[data-office-preview-snapshot]')).toBeNull()
+
+    menu.remove()
+    await act(async () => {
+      mutationCallback?.([], {} as MutationObserver)
+      frames.shift()?.(1)
+      await flushMicrotasks()
+    })
+
+    expect(setBounds).toHaveBeenLastCalledWith(
+      'office-session-2',
+      expect.objectContaining({ visible: true })
+    )
+    expect(container.querySelector('[data-office-preview-snapshot]')).toBeNull()
+
+    getRect.mockRestore()
+    requestFrame.mockRestore()
+    cancelFrame.mockRestore()
+  })
+
+  it('commits the latest snapshot before occluding the native preview', async () => {
+    const frames: FrameRequestCallback[] = []
+    const requestFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        frames.push(callback)
+        return frames.length
+      })
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+    let mutationCallback: MutationCallback | undefined
+    class TestMutationObserver {
+      constructor(callback: MutationCallback) {
+        mutationCallback = callback
+      }
+      observe = vi.fn()
+      disconnect = vi.fn()
+      takeRecords = vi.fn(() => [])
+    }
+    vi.stubGlobal('MutationObserver', TestMutationObserver)
+    const rect = {
+      left: 600,
+      top: 80,
+      right: 1000,
+      bottom: 680,
+      width: 400,
+      height: 600,
+      x: 600,
+      y: 80,
+      toJSON: () => ({})
+    } as DOMRect
+    const getRect = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(() => rect)
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+
+    let resolveOverlaySnapshot: ((url: string) => void) | undefined
+    captureSnapshot
+      .mockResolvedValueOnce('data:image/png;base64,aW5pdGlhbA==')
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveOverlaySnapshot = resolve
+          })
+      )
+    const snapshotsAtOcclusion: Array<string | null> = []
+    setBounds.mockImplementation((_sessionId, bounds: { visible: boolean }) => {
+      if (!bounds.visible) {
+        snapshotsAtOcclusion.push(
+          container
+            .querySelector<HTMLImageElement>('[data-office-preview-snapshot]')
+            ?.getAttribute('src') ?? null
+        )
+      }
+    })
+
+    await act(async () => {
+      root.render(<OfficePreviewRenderer item={createItem()} />)
+      await flushMicrotasks()
+    })
+    await act(async () => {
+      emitState({ sessionId: 'office-session-1', phase: 'ready' })
+      await flushMicrotasks()
+    })
+    snapshotsAtOcclusion.length = 0
+
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    document.body.appendChild(dialog)
+    await act(async () => {
+      mutationCallback?.([], {} as MutationObserver)
+      frames.shift()?.(0)
+      await flushMicrotasks()
+    })
+
+    expect(snapshotsAtOcclusion).toEqual([])
+
+    await act(async () => {
+      resolveOverlaySnapshot?.('data:image/png;base64,Y3VycmVudA==')
+      await flushMicrotasks()
+      frames.shift()?.(1)
+      await flushMicrotasks()
+    })
+
+    expect(snapshotsAtOcclusion).toEqual(['data:image/png;base64,Y3VycmVudA=='])
+
+    dialog.remove()
+    getRect.mockRestore()
+    requestFrame.mockRestore()
+    cancelFrame.mockRestore()
   })
 
   it('shows a download-only fallback when the authoritative file size exceeds 40 MiB', async () => {
