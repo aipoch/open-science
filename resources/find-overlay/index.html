@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Find in window</title>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --border: #d8d8dc;
+        --text: #1a1a1a;
+        --muted: #6b6b72;
+        --hover: #ececee;
+        color-scheme: light;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1f1f23;
+          --border: #3a3a42;
+          --text: #f2f2f3;
+          --muted: #a0a0a8;
+          --hover: #2e2e35;
+          color-scheme: dark;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        -webkit-user-select: none;
+        user-select: none;
+        overflow: hidden;
+      }
+      .bar {
+        display: flex;
+        height: 100%;
+        align-items: center;
+        gap: 4px;
+        padding: 0 8px;
+      }
+      .icon {
+        width: 16px;
+        height: 16px;
+        color: var(--muted);
+        flex: none;
+      }
+      /* Plain text field — visible characters, no password masking. */
+      input {
+        flex: 1 1 auto;
+        min-width: 0;
+        height: 28px;
+        border: 0;
+        background: transparent;
+        padding: 0 4px;
+        font-size: 13px;
+        color: var(--text);
+        outline: none;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      input::placeholder {
+        color: var(--muted);
+      }
+      .count {
+        min-width: 48px;
+        flex: none;
+        text-align: center;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        color: var(--muted);
+      }
+      .divider {
+        width: 1px;
+        height: 20px;
+        background: var(--border);
+        flex: none;
+      }
+      .btn {
+        display: inline-flex;
+        width: 28px;
+        height: 28px;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--muted);
+        cursor: default;
+      }
+      .btn:hover {
+        background: var(--hover);
+        color: var(--text);
+      }
+      .btn svg {
+        width: 16px;
+        height: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bar" role="search" aria-label="Find in window">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+      <input
+        id="find-overlay-query"
+        type="text"
+        autocomplete="off"
+        autocapitalize="off"
+        autocorrect="off"
+        spellcheck="false"
+        aria-label="Find text"
+        placeholder="Find"
+      />
+      <span class="count" id="find-overlay-count">0 / 0</span>
+      <span class="divider" aria-hidden="true"></span>
+      <button
+        type="button"
+        class="btn"
+        id="find-overlay-prev"
+        aria-label="Previous match"
+        title="Previous match (Shift+Enter)"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <polyline points="18 15 12 9 6 15"></polyline>
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="btn"
+        id="find-overlay-next"
+        aria-label="Next match"
+        title="Next match (Enter)"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="btn"
+        id="find-overlay-close"
+        aria-label="Close find"
+        title="Close (Esc)"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+    <script type="module" src="./findOverlay.js"></script>
+  </body>
+</html>

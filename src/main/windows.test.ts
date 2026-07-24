@@ -4,6 +4,7 @@ import {
   CLOSE_ACTIVE_PANE_CHANNEL,
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
   CLOSE_ACTIVE_PANE_UNREADY_CHANNEL,
+  WINDOW_FIND_READY_CHANNEL,
   type KeyChordInput
 } from '../shared/window-controls'
 
@@ -12,6 +13,20 @@ const { openExternalMock, ipcMainOnMock, ipcMainRemoveListenerMock } = vi.hoiste
   openExternalMock: vi.fn(),
   ipcMainOnMock: vi.fn(),
   ipcMainRemoveListenerMock: vi.fn()
+}))
+
+// The overlay manager is a collaborator with its own deep test suite; here we only need to observe
+// that the chord/Escape wiring drives it, so the real module is replaced with a spy object.
+const { findOverlayMock } = vi.hoisted(() => ({
+  findOverlayMock: {
+    open: vi.fn(),
+    close: vi.fn(),
+    destroy: vi.fn(),
+    isOpen: vi.fn(() => false)
+  }
+}))
+vi.mock('./find-overlay', () => ({
+  createFindOverlayManager: () => findOverlayMock
 }))
 
 // Captured window-open handler so tests can drive it directly, mirroring how Electron invokes it on a
@@ -93,7 +108,7 @@ class FakeBrowserWindow {
 
 vi.mock('electron', () => ({
   // isPackaged=true skips the dev title-suffix branch, keeping the fake focused on the open + close handlers.
-  app: { isPackaged: true },
+  app: { isPackaged: true, getAppPath: () => '/app' },
   BrowserWindow: class {
     constructor() {
       currentWindow = new FakeBrowserWindow()
@@ -101,6 +116,7 @@ vi.mock('electron', () => ({
       return currentWindow as unknown as object
     }
   },
+  WebContentsView: class {},
   ipcMain: { on: ipcMainOnMock, removeListener: ipcMainRemoveListenerMock },
   shell: { openExternal: openExternalMock }
 }))
@@ -116,6 +132,17 @@ const { createMainWindow } = await import('./windows')
 const closeChord = (overrides: Partial<KeyChordInput> = {}): KeyChordInput => ({
   type: 'keyDown',
   key: 'w',
+  control: process.platform !== 'darwin',
+  meta: process.platform === 'darwin',
+  alt: false,
+  shift: false,
+  isAutoRepeat: false,
+  ...overrides
+})
+
+const findChord = (overrides: Partial<KeyChordInput> = {}): KeyChordInput => ({
+  type: 'keyDown',
+  key: 'f',
   control: process.platform !== 'darwin',
   meta: process.platform === 'darwin',
   alt: false,
@@ -226,6 +253,10 @@ describe('close chord interception', () => {
     currentWindow = undefined
     ipcMainOnMock.mockReset()
     ipcMainRemoveListenerMock.mockReset()
+    findOverlayMock.open.mockClear()
+    findOverlayMock.close.mockClear()
+    findOverlayMock.destroy.mockClear()
+    findOverlayMock.isOpen.mockReturnValue(false)
   })
 
   // Fires an ipcMain handshake signal that main registered via ipcMain.on, spoofing the sender as this
@@ -242,6 +273,9 @@ describe('close chord interception', () => {
 
   const signalRendererGone = (window: FakeBrowserWindow): void =>
     fireHandshake(window, CLOSE_ACTIVE_PANE_UNREADY_CHANNEL)
+
+  const signalWindowFindReady = (window: FakeBrowserWindow): void =>
+    fireHandshake(window, WINDOW_FIND_READY_CHANNEL)
 
   // Drives one of the captured webContents lifecycle handlers (render-process-gone, unresponsive, ...).
   const fireWebContentsEvent = (
@@ -287,6 +321,39 @@ describe('close chord interception', () => {
     expect(preventDefault).toHaveBeenCalled()
     expect(window.sendMock).toHaveBeenCalledWith(CLOSE_ACTIVE_PANE_CHANNEL)
     expect(window.closeMock).not.toHaveBeenCalled()
+  })
+
+  it('opens the find overlay only after the Workspace listener is ready', () => {
+    createMainWindow()
+    const window = currentWindow!
+
+    signalWindowFindReady(window)
+    const preventDefault = fireInput(window, findChord())
+
+    expect(preventDefault).toHaveBeenCalled()
+    expect(findOverlayMock.open).toHaveBeenCalledTimes(1)
+    // The overlay is opened directly in main now; no OPEN message is sent to the renderer.
+    expect(window.sendMock).not.toHaveBeenCalled()
+    expect(window.closeMock).not.toHaveBeenCalled()
+  })
+
+  it('closes the find overlay on Escape while it is open, regardless of input focus', () => {
+    createMainWindow()
+    const window = currentWindow!
+    findOverlayMock.isOpen.mockReturnValue(true)
+
+    const preventDefault = fireInput(window, {
+      type: 'keyDown',
+      key: 'Escape',
+      control: false,
+      meta: false,
+      alt: false,
+      shift: false,
+      isAutoRepeat: false
+    })
+
+    expect(preventDefault).toHaveBeenCalled()
+    expect(findOverlayMock.close).toHaveBeenCalledTimes(1)
   })
 
   it('re-arms the direct-close fallback after a top-level navigation clears renderer readiness', () => {

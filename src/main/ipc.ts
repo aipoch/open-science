@@ -31,6 +31,7 @@ import { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } from './lifecyc
 import { registerLifecycleIpcHandlers } from './lifecycle-broadcast'
 import { registerLogsIpcHandlers } from './logs-ipc'
 import { registerWindowIpcHandlers } from './window-ipc'
+import { registerWindowFindIpcHandlers } from './window-find-ipc'
 import { TaskNotificationService } from './notifications/task-notifications'
 import {
   buildConnectorApprovalBroadcast,
@@ -485,6 +486,7 @@ const registerIpcHandlers = async ({
   registerGithubIpcHandlers()
   registerCliInstallIpcHandlers()
   registerWindowIpcHandlers()
+  registerWindowFindIpcHandlers()
   const updateService = registerUpdateIpcHandlers()
   startUpdateScheduler(updateService)
   const runtime = registerAcpIpcHandlers({

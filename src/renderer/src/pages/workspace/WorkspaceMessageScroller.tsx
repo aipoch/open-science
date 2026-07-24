@@ -110,6 +110,12 @@ const WorkspaceMessageScroller = ({
   onSendEditedMessage
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const currentSessionId = activeSession?.id
+  // The whole-window find bar is an Electron overlay owned by main; the Workspace only needs to tell
+  // main it is mounted and searchable so Cmd/Ctrl+F is intercepted (and re-arm UNREADY on unmount).
+  useEffect(() => {
+    const stop = window.api?.window?.announceWindowFindReady?.()
+    return () => stop?.()
+  }, [])
   const getReviewForTurn = useReviewStore((state) => state.getReviewForTurn)
   const loadReviewsForSession = useReviewStore((state) => state.loadReviewsForSession)
 

@@ -6,6 +6,25 @@ import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// pdfjs-dist references DOMMatrix at module load, which jsdom does not provide. This suite exercises
+// click/scroll behavior, not PDF rendering, so stub the library to keep the import graph loadable.
+vi.mock('pdfjs-dist', () => {
+  class PDFDataRangeTransport {
+    requestAllRanges(): void {
+      /* no-op */
+    }
+  }
+  return {
+    getDocument: () => ({
+      promise: Promise.resolve({ numPages: 0, destroy: () => undefined }),
+      destroy: () => undefined
+    }),
+    GlobalWorkerOptions: { workerSrc: '' },
+    PDFDataRangeTransport,
+    version: 'test'
+  }
+})
+
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
 }))
@@ -37,6 +56,7 @@ vi.mock('@/lib/utils', () => ({
 }))
 
 const upsertAndActivateItem = vi.fn()
+const announceWindowFindReady = vi.fn(() => () => undefined)
 
 vi.mock('@/stores/preview-workbench-store', () => ({
   usePreviewWorkbenchStore: {
@@ -84,6 +104,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
   beforeEach(() => {
     upsertAndActivateItem.mockClear()
+    announceWindowFindReady.mockClear()
     container = document.createElement('div')
     document.body.appendChild(container)
     window.api = {
@@ -106,6 +127,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
           .mockResolvedValue({ content: '', encoding: 'utf8', size: 0, truncated: false }),
         openFile: vi.fn().mockResolvedValue(undefined),
         finalizeRunArtifacts: vi.fn()
+      },
+      window: {
+        announceWindowFindReady
       }
     } as unknown as Window['api']
   })
@@ -178,6 +202,24 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       size: 2048,
       mtimeMs: 1710000000100
     })
+  })
+
+  it('announces whole-window find readiness to main when the Workspace mounts', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle' })}
+          canEditMessage={false}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    // The find bar is an Electron overlay owned by main; the Workspace's only job is to announce it is
+    // mounted and searchable so main intercepts Cmd/Ctrl+F.
+    expect(announceWindowFindReady).toHaveBeenCalledTimes(1)
   })
 
   it('does not write to the preview store for non-managed-file artifacts', async () => {

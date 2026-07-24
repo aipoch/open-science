@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   ipcMain,
   shell,
+  WebContentsView,
   type BrowserWindowConstructorOptions,
   type IpcMainEvent
 } from 'electron'
@@ -10,17 +11,25 @@ import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { isAllowedExternalNavigation, isAllowedFrameNavigation } from './navigation-policy'
+import { createFindOverlayManager, type FindOverlayDeps } from './find-overlay'
+import { registerFindOverlayOwner } from './find-overlay-registry'
 import {
   CLOSE_ACTIVE_PANE_CHANNEL,
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
   CLOSE_ACTIVE_PANE_UNREADY_CHANNEL,
+  WINDOW_FIND_READY_CHANNEL,
+  WINDOW_FIND_UNREADY_CHANNEL,
   isCloseWindowChord,
+  isFindInPageChord,
   type CloseClassification,
   type CloseConfirmChoice
 } from '../shared/window-controls'
 
 const rendererEntry = join(__dirname, '../renderer/index.html')
 const preloadEntry = join(__dirname, '../preload/index.js')
+// The find overlay is a static page (no bundler entry) shipped under resources/, so it resolves the
+// same way in dev (project root) and packaged (asar root) via app.getAppPath().
+const findOverlayEntry = join(app.getAppPath(), 'resources/find-overlay/index.html')
 
 const loadRenderer = (window: BrowserWindow): void => {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -97,6 +106,7 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
   //     its subscription instead of having to re-handshake.
   // When either fails, main closes the window itself so the chord always does something.
   let rendererListenerReady = false
+  let windowFindListenerReady = false
   let rendererResponsive = true
   const onListenerReady = (event: IpcMainEvent): void => {
     if (event.sender !== window.webContents) return
@@ -110,17 +120,31 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
   const onListenerGone = (event: IpcMainEvent): void => {
     if (event.sender === window.webContents) rendererListenerReady = false
   }
+  const onWindowFindReady = (event: IpcMainEvent): void => {
+    if (event.sender !== window.webContents) return
+    windowFindListenerReady = true
+    rendererResponsive = true
+  }
+  const onWindowFindGone = (event: IpcMainEvent): void => {
+    if (event.sender === window.webContents) windowFindListenerReady = false
+  }
   ipcMain.on(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)
   ipcMain.on(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onListenerGone)
+  ipcMain.on(WINDOW_FIND_READY_CHANNEL, onWindowFindReady)
+  ipcMain.on(WINDOW_FIND_UNREADY_CHANNEL, onWindowFindGone)
   // A top-level document swap replaces the mounted hook, which must re-subscribe; a dead render process
   // took its listener with it. Both revoke readiness until the next READY handshake. Gate on the main
   // frame and a real document change so a dynamic preview iframe loading (or a same-document hash /
   // pushState navigation) — neither of which remounts the hook — does not falsely disarm the forward.
   window.webContents.on('did-start-navigation', (details) => {
-    if (details.isMainFrame && !details.isSameDocument) rendererListenerReady = false
+    if (details.isMainFrame && !details.isSameDocument) {
+      rendererListenerReady = false
+      windowFindListenerReady = false
+    }
   })
   window.webContents.on('render-process-gone', () => {
     rendererListenerReady = false
+    windowFindListenerReady = false
   })
   window.webContents.on('unresponsive', () => {
     rendererResponsive = false
@@ -131,6 +155,22 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
   window.on('closed', () => {
     ipcMain.removeListener(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)
     ipcMain.removeListener(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onListenerGone)
+    ipcMain.removeListener(WINDOW_FIND_READY_CHANNEL, onWindowFindReady)
+    ipcMain.removeListener(WINDOW_FIND_UNREADY_CHANNEL, onWindowFindGone)
+    findOverlay.destroy()
+  })
+
+  // The whole-window find bar lives in its own WebContentsView overlay, so its own query text is never
+  // part of the main window's page search. The overlay talks to main via the window-find IPC channels;
+  // main opens/closes it here in response to the chord and Escape.
+  const findOverlay = createFindOverlayManager({
+    // The structural dep narrows BrowserWindow to just the find-overlay surface; Electron's
+    // contentView.addChildView is typed against the base View (no webContents), so bridge the gap here.
+    mainWindow: window as unknown as FindOverlayDeps['mainWindow'],
+    createView: (opts) => new WebContentsView(opts),
+    preloadPath: preloadEntry,
+    overlayHtmlPath: findOverlayEntry,
+    registerOwner: registerFindOverlayOwner
   })
 
   // Intercept Cmd+W / Ctrl+W before the default menu "Close" role fires. preventDefault here also
@@ -144,6 +184,22 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
   // the pane and its ack lands after the timeout, main would then also close the window. We accept one
   // lost keystroke during a renderer crash over that regression.
   window.webContents.on('before-input-event', (event, input) => {
+    if (isFindInPageChord(input, process.platform)) {
+      if (windowFindListenerReady && rendererResponsive) {
+        event.preventDefault()
+        findOverlay.open()
+      }
+      return
+    }
+
+    // Escape closes an open find bar even when focus has wandered into the main content — the overlay's
+    // own handler covers the input-focused case, this covers the rest.
+    if (input.type === 'keyDown' && input.key === 'Escape' && findOverlay.isOpen()) {
+      event.preventDefault()
+      findOverlay.close()
+      return
+    }
+
     if (!isCloseWindowChord(input, process.platform)) return
 
     event.preventDefault()

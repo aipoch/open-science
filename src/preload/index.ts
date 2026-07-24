@@ -211,12 +211,20 @@ import type {
 } from '../shared/reviewer'
 import { REVIEWER_IPC } from '../shared/reviewer'
 import {
+  announceWindowFindReady,
   subscribeCloseActivePane,
   WINDOW_CLOSE_CHANNEL,
   WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL,
   WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL,
+  WINDOW_FIND_CLEAR_CHANNEL,
+  WINDOW_FIND_CLOSE_CHANNEL,
+  WINDOW_FIND_REQUEST_CHANNEL,
+  WINDOW_FIND_RESULT_CHANNEL,
+  WINDOW_FIND_SHOW_CHANNEL,
   type CloseConfirmRequest,
-  type CloseConfirmResponse
+  type CloseConfirmResponse,
+  type WindowFindRequest,
+  type WindowFindResult
 } from '../shared/window-controls'
 
 type RemoveListener = () => void
@@ -630,6 +638,15 @@ type OpenScienceAPI = {
     close: () => Promise<void>
     // Fires when Cmd+W / Ctrl+W is pressed; the renderer decides pane-vs-window.
     onCloseActivePane: (listener: () => void) => RemoveListener
+    // Electron-only whole-window find. These are absent in the localhost Web UI, where the browser
+    // owns Cmd/Ctrl+F instead. The find bar itself is an Electron overlay; the Workspace only announces
+    // readiness, and the overlay subscribes to show events / requests searches via these.
+    findInPage?: (request: WindowFindRequest) => void
+    clearFind?: () => void
+    announceWindowFindReady?: () => RemoveListener
+    onFindInPageResult?: (listener: AcpListener<WindowFindResult>) => RemoveListener
+    onShowWindowFind?: (listener: () => void) => RemoveListener
+    closeFind?: () => void
     // Fires when main asks to confirm a close/quit; the renderer renders the modal and replies.
     onCloseConfirmRequest?: (listener: (payload: CloseConfirmRequest) => void) => RemoveListener
     // Renderer -> main: modal-mounted ack, then the user's choice, keyed by requestId.
@@ -1208,6 +1225,17 @@ const api: OpenScienceAPI = {
         },
         listener
       ),
+    findInPage: (request) => ipcRenderer.send(WINDOW_FIND_REQUEST_CHANNEL, request),
+    clearFind: () => ipcRenderer.send(WINDOW_FIND_CLEAR_CHANNEL),
+    // The Workspace announces it is mounted and searchable so main knows whether to intercept
+    // Cmd/Ctrl+F. Returns a teardown that announces UNREADY on unmount.
+    announceWindowFindReady: () =>
+      announceWindowFindReady({ send: (channel) => ipcRenderer.send(channel) }),
+    onFindInPageResult: (listener) => onIpcMessage(WINDOW_FIND_RESULT_CHANNEL, listener),
+    // Overlay-only surface: main signals the bar was shown (focus + restore remembered query), and the
+    // overlay asks main to hide it. The localhost Web UI never loads this overlay, so both stay optional.
+    onShowWindowFind: (listener) => onIpcMessage(WINDOW_FIND_SHOW_CHANNEL, listener),
+    closeFind: () => ipcRenderer.send(WINDOW_FIND_CLOSE_CHANNEL),
     onCloseConfirmRequest: (listener) =>
       onIpcMessage(WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL, listener),
     sendCloseConfirmResponse: (payload) =>

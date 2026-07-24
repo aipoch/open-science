@@ -4,6 +4,9 @@ import {
   CLOSE_ACTIVE_PANE_CHANNEL,
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
   CLOSE_ACTIVE_PANE_UNREADY_CHANNEL,
+  WINDOW_FIND_READY_CHANNEL,
+  WINDOW_FIND_UNREADY_CHANNEL,
+  announceWindowFindReady,
   isCloseWindowChord,
   subscribeCloseActivePane,
   type KeyChordInput
@@ -102,5 +105,29 @@ describe('subscribeCloseActivePane', () => {
     expect(send).toHaveBeenCalledWith(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL)
     // Teardown must not re-announce readiness, which would leave main forwarding into a gone listener.
     expect(send).not.toHaveBeenCalledWith(CLOSE_ACTIVE_PANE_READY_CHANNEL)
+  })
+})
+
+describe('announceWindowFindReady', () => {
+  // In the overlay-window architecture main opens the find bar directly (no OPEN message), so the
+  // Workspace only needs to announce that it is mounted and can be searched — READY on mount, UNREADY on
+  // teardown — so main knows whether Cmd/Ctrl+F should be intercepted at all. The helper's signature
+  // (Pick<'send'>) guarantees it cannot subscribe to anything.
+  it('announces readiness immediately', () => {
+    const send = vi.fn()
+
+    announceWindowFindReady({ send })
+
+    expect(send).toHaveBeenCalledWith(WINDOW_FIND_READY_CHANNEL)
+  })
+
+  it('announces teardown when the returned unsubscribe runs', () => {
+    const send = vi.fn()
+
+    const unsubscribe = announceWindowFindReady({ send })
+    send.mockClear()
+    unsubscribe()
+
+    expect(send).toHaveBeenCalledWith(WINDOW_FIND_UNREADY_CHANNEL)
   })
 })

@@ -200,7 +200,12 @@ import type {
   ReviewRunResult,
   ReviewUpdateEvent
 } from '../shared/reviewer'
-import type { CloseConfirmRequest, CloseConfirmResponse } from '../shared/window-controls'
+import type {
+  CloseConfirmRequest,
+  CloseConfirmResponse,
+  WindowFindRequest,
+  WindowFindResult
+} from '../shared/window-controls'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -583,6 +588,14 @@ interface OpenScienceAPI {
     close(): Promise<void>
     // Fires when Cmd+W / Ctrl+W is pressed; the renderer decides pane-vs-window.
     onCloseActivePane(listener: () => void): RemoveListener
+    findInPage?(request: WindowFindRequest): void
+    clearFind?(): void
+    // Announces the Workspace is mounted (READY) and returns a teardown that announces UNREADY.
+    announceWindowFindReady?(): RemoveListener
+    onFindInPageResult?(listener: AcpListener<WindowFindResult>): RemoveListener
+    // Overlay-only: main signals the bar was shown; the overlay asks main to hide it.
+    onShowWindowFind?(listener: () => void): RemoveListener
+    closeFind?(): void
     // Fires when main asks to confirm a close/quit; the renderer renders the modal and replies.
     onCloseConfirmRequest?(listener: (payload: CloseConfirmRequest) => void): RemoveListener
     // Renderer -> main: modal-mounted ack, then the user's choice, keyed by requestId.

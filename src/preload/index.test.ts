@@ -10,11 +10,12 @@
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-const { invokeMock, sendMock, exposeMock, getPathForFileMock } = vi.hoisted(() => ({
+const { invokeMock, sendMock, exposeMock, getPathForFileMock, onMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   sendMock: vi.fn(),
   exposeMock: vi.fn(),
-  getPathForFileMock: vi.fn()
+  getPathForFileMock: vi.fn(),
+  onMock: vi.fn()
 }))
 
 vi.mock('electron', () => ({
@@ -22,7 +23,7 @@ vi.mock('electron', () => ({
   webUtils: { getPathForFile: getPathForFileMock },
   ipcRenderer: {
     invoke: invokeMock,
-    on: vi.fn(),
+    on: onMock,
     off: vi.fn(),
     send: sendMock,
     removeListener: vi.fn()
@@ -87,6 +88,13 @@ type PreloadApi = {
     stageLocalFile: (file: File, request: unknown) => Promise<unknown>
     claimLocalFile: (request: unknown) => Promise<void>
   }
+  window: {
+    findInPage?: (request: unknown) => void
+    clearFind?: () => void
+    closeFind?: () => void
+    onShowWindowFind?: (listener: () => void) => unknown
+    announceWindowFindReady?: () => unknown
+  }
 }
 
 let api: PreloadApi
@@ -108,6 +116,32 @@ afterEach(() => {
   invokeMock.mockClear()
   sendMock.mockClear()
   getPathForFileMock.mockReset()
+})
+
+describe('preload bridge — window find IPC channels', () => {
+  it('forwards find and clear requests without exposing a raw Electron object', () => {
+    const request = { requestId: 1, text: 'protein', findNext: true, forward: true }
+
+    api.window.findInPage?.(request)
+    api.window.clearFind?.()
+
+    expect(sendMock).toHaveBeenNthCalledWith(1, 'window:find-in-page', request)
+    expect(sendMock).toHaveBeenNthCalledWith(2, 'window:clear-find-in-page')
+  })
+
+  it('forwards the overlay close request and subscribes to the show event from main', () => {
+    api.window.closeFind?.()
+    api.window.onShowWindowFind?.(() => undefined)
+
+    expect(sendMock).toHaveBeenCalledWith('window:find-close')
+    expect(onMock).toHaveBeenCalledWith('window:find-show', expect.any(Function))
+  })
+
+  it('announces Workspace find readiness to main on mount', () => {
+    api.window.announceWindowFindReady?.()
+
+    expect(sendMock).toHaveBeenCalledWith('shortcut:window-find-ready')
+  })
 })
 
 // Each case: invoke a bridge method with sample args, then assert the exact channel + forwarded args.

@@ -21,6 +21,36 @@ export const CLOSE_ACTIVE_PANE_READY_CHANNEL = 'shortcut:close-active-pane-ready
 // direct-close fallback so a stale "ready" flag never makes it swallow the chord into a gone listener.
 export const CLOSE_ACTIVE_PANE_UNREADY_CHANNEL = 'shortcut:close-active-pane-unready'
 
+// Renderer -> main: the Workspace find listener is mounted or unmounted. Main preserves the browser's
+// normal Cmd/Ctrl+F behavior outside Workspace rather than swallowing the chord into a missing UI.
+export const WINDOW_FIND_READY_CHANNEL = 'shortcut:window-find-ready'
+export const WINDOW_FIND_UNREADY_CHANNEL = 'shortcut:window-find-unready'
+
+// Renderer -> main requests and main -> renderer result events for Electron's native whole-window find.
+export const WINDOW_FIND_REQUEST_CHANNEL = 'window:find-in-page'
+export const WINDOW_FIND_CLEAR_CHANNEL = 'window:clear-find-in-page'
+export const WINDOW_FIND_RESULT_CHANNEL = 'window:find-in-page-result'
+
+// Main -> overlay: the find bar was just shown — focus the field and re-run the remembered query.
+export const WINDOW_FIND_SHOW_CHANNEL = 'window:find-show'
+
+// Overlay -> main: the user closed the find bar — hide the overlay and release the main-window focus.
+export const WINDOW_FIND_CLOSE_CHANNEL = 'window:find-close'
+
+export type WindowFindRequest = {
+  requestId: number
+  text: string
+  findNext: boolean
+  forward: boolean
+}
+
+export type WindowFindResult = {
+  requestId: number
+  activeMatchOrdinal: number
+  matches: number
+  finalUpdate: boolean
+}
+
 // The minimal IPC surface the renderer handshake needs, kept structural so the wiring can be unit-tested
 // without loading preload or importing electron.
 export type CloseActivePaneBridge = {
@@ -42,6 +72,17 @@ export const subscribeCloseActivePane = (
     removeListener()
     bridge.send(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL)
   }
+}
+
+// In the overlay-window architecture main opens the find bar itself (no OPEN message reaches the
+// renderer), so the Workspace only needs to tell main that it is mounted and searchable. This announces
+// READY on mount and UNREADY on teardown, so main can keep intercepting Cmd/Ctrl+F only while a
+// searchable Workspace is actually present.
+export const announceWindowFindReady = (
+  bridge: Pick<CloseActivePaneBridge, 'send'>
+): (() => void) => {
+  bridge.send(WINDOW_FIND_READY_CHANNEL)
+  return () => bridge.send(WINDOW_FIND_UNREADY_CHANNEL)
 }
 
 // The subset of Electron's before-input-event Input that the chord test needs. Kept structural so the
@@ -66,6 +107,17 @@ export const isCloseWindowChord = (input: KeyChordInput, platform: string): bool
   if (input.type !== 'keyDown') return false
   if (input.isAutoRepeat) return false
   if (input.key.toLowerCase() !== 'w') return false
+  if (input.alt || input.shift) return false
+
+  return platform === 'darwin' ? input.meta && !input.control : input.control && !input.meta
+}
+
+// Matches the platform find chord. Shift is deliberately rejected: Cmd/Ctrl+Shift+F remains available
+// to any future feature that needs that distinct accelerator.
+export const isFindInPageChord = (input: KeyChordInput, platform: string): boolean => {
+  if (input.type !== 'keyDown') return false
+  if (input.isAutoRepeat) return false
+  if (input.key.toLowerCase() !== 'f') return false
   if (input.alt || input.shift) return false
 
   return platform === 'darwin' ? input.meta && !input.control : input.control && !input.meta
