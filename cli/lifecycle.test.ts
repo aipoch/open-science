@@ -131,6 +131,24 @@ describe('headless startup', () => {
     expect(deps.sleep).not.toHaveBeenCalled()
   })
 
+  it('keeps waiting after a successful second-instance handoff', async () => {
+    const child = new EventEmitter()
+    const findServiceState = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        child.emit('exit', 0, null)
+        return Promise.resolve(undefined)
+      })
+      .mockResolvedValue(RUNNING_STATE)
+    const deps = makeDeps({ findServiceState })
+
+    await expect(waitForStartup('/tmp/os-config', child, deps, 30_000)).resolves.toEqual({
+      kind: 'ready',
+      state: RUNNING_STATE
+    })
+    expect(findServiceState).toHaveBeenCalledTimes(2)
+  })
+
   it('explains the AppImage sandbox failure and the explicit security trade-off', () => {
     const message = formatStartupFailure(
       { kind: 'exit', code: 1, signal: null },

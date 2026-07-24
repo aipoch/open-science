@@ -215,6 +215,9 @@ export const waitForStartup = async (
   let cleanup = () => {}
   const childFailure = new Promise((resolveFailure) => {
     const onExit = (code, signal) => {
+      // An already-running desktop app receives --serve through Electron's second-instance relay.
+      // The relay exits successfully before the primary app has necessarily written service state.
+      if (code === 0 && signal === null) return
       abortController.abort()
       resolveFailure({ kind: 'exit', code, signal })
     }
