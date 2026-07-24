@@ -300,21 +300,20 @@ const useNotebookEnvironment = (
 
 // Header cluster for notebook prompts: kernel-language badge, the session's bound environment
 // (once the runtime has spawned or recorded one), and an info tooltip explaining where the code
-// runs and what an approval covers, with the raw tool identity kept reachable now that the header
-// shows a friendly question instead of the tool name.
+// runs and what an approval covers, phrased for the current kernel language.
 const NotebookHeaderBadges = ({
   lookup,
   language,
-  riskLabel,
   rawIdentity
 }: {
   lookup: NotebookSessionRequest | undefined
   language: string
-  riskLabel: string
   rawIdentity: string | undefined
 }): React.JSX.Element => {
   const kernelKind = language === 'python' ? 'python' : language === 'r' ? 'r' : undefined
   const envName = useNotebookEnvironment(lookup, kernelKind)
+  // Display form for the tooltip sentence: javascript/r read better capitalized.
+  const languageLabel = language === 'javascript' ? 'JavaScript' : language === 'r' ? 'R' : language
 
   return (
     <span className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -340,12 +339,7 @@ const NotebookHeaderBadges = ({
               </button>
             </TooltipTrigger>
             <TooltipContent className="max-w-72 whitespace-normal">
-              <span className="block">
-                {riskLabel}. Runs in this session&apos;s notebook runtime
-                {envName ? ` (${envName})` : ''}; allowing for this conversation auto-approves later
-                calls to this tool without asking again.
-              </span>
-              <span className="mt-0.5 block break-all opacity-70">{rawIdentity}</span>
+              {`Runs in this session's notebook environment${envName ? ` (${envName})` : ''}. Grants cover any ${languageLabel} call until this chat ends.`}
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
@@ -557,7 +551,6 @@ const PermissionApprovalControls = ({
           <NotebookHeaderBadges
             lookup={notebookLookup}
             language={permLanguage}
-            riskLabel={getPermissionRiskLabel(request)}
             rawIdentity={request.providerToolName ?? request.title}
           />
         ) : (
