@@ -176,6 +176,30 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain('Command execution</span>')
   })
 
+  it('keeps the tool identity visible for execute-kind MCP requests', () => {
+    // An MCP tool reporting kind:'execute' (write_artifact_file) must not collapse into the
+    // generic "Run command?" shell wording — the provider name is the only identity left when
+    // the request carries no previewable command payload.
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            ...permissionRequest,
+            title: 'mcp.open-science-artifacts.write_artifact_file',
+            providerToolName: 'write_artifact_file',
+            isMcp: true,
+            toolKind: 'execute',
+            rawInput: undefined
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+
+    expect(html).toContain('Run write_artifact_file?')
+    expect(html).not.toContain('Run command?')
+  })
+
   it('serializes prompts by rendering only the first pending request', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls

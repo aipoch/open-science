@@ -392,9 +392,14 @@ const PermissionApprovalControls = ({
   // Header asks a friendly action question; raw tool identifiers (namespaced MCP names like
   // mcp__open-science-notebook__notebook_execute) are illegible in a sentence, so notebook and
   // shell runs get plain-language phrasing. The provider name only heads the prompt for other
-  // tools, where it is typically a short readable name (Write, Edit).
+  // tools, where it is typically a short readable name (Write, Edit). MCP requests are never
+  // collapsed into the shell wording: the broker preserves MCP identity even for kind:'execute'
+  // tools (e.g. open-science-artifacts_write_artifact_file), and the provider/title is the only
+  // place that identity stays visible when there is no code preview.
   const isNotebook = resolveNotebookToolName(request) !== undefined
-  const isShell = request.toolKind === 'execute' || request.providerToolName === 'Bash'
+  const isShell =
+    request.isMcp !== true &&
+    (request.toolKind === 'execute' || request.providerToolName === 'Bash')
   const headerTitle = isNotebook
     ? 'Run notebook code?'
     : isShell
@@ -451,8 +456,9 @@ const PermissionApprovalControls = ({
         />
       )}
 
-      {/* Allow / Deny button row */}
-      <div className="flex items-center justify-end gap-2">
+      {/* Allow / Deny button row; wraps so long provider-supplied option labels can never
+          push the primary Allow/Deny controls out of view. */}
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {/* Split Allow button: main action + scope chevron; the menu anchors to this group's right edge.
             Styled like the shared Button (default size, including flex centering so the label baseline
             matches the neighboring Button primitives) but kept as two segments so the chevron
@@ -499,13 +505,16 @@ const PermissionApprovalControls = ({
           </div>
         </div>
         {/* Fallback buttons for any protocol option the Allow/Deny controls can't reach, so an
-            unrecognized or ambiguous same-kind option stays selectable rather than disappearing. */}
+            unrecognized or ambiguous same-kind option stays selectable rather than disappearing.
+            Provider-controlled labels can be long: override the Button's shrink-0/whitespace-nowrap
+            so the label wraps inside the card instead of overflowing it. */}
         {extraOptions.map((option) => (
           <Button
             key={option.optionId}
             type="button"
             variant="outline"
             data-testid="extra-option"
+            className="h-auto min-h-8 min-w-0 max-w-full shrink whitespace-normal break-words py-1"
             onClick={() => onRespond(request.requestId, option.optionId)}
           >
             {getExtraOptionLabel(option)}

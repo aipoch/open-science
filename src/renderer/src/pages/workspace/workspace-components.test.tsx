@@ -329,7 +329,7 @@ describe('conversation message scroller integration', () => {
     expect(permissionApprovalControlsSource).toContain('WorkspaceToolCodeBlock')
     // Button row maintains layout constraints
     expect(permissionApprovalControlsSource).toContain(
-      'className="flex items-center justify-end gap-2"'
+      'className="flex flex-wrap items-center justify-end gap-2"'
     )
   })
 
