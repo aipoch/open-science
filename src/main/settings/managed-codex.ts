@@ -145,7 +145,15 @@ export const ensureManagedCodexContextUsage = async (adapterPath: string): Promi
   const source = await readFile(adapterPath, 'utf8')
   const patched = patchCodexAcpContextUsageSource(source)
 
-  if (patched !== source) await writeFile(adapterPath, patched)
+  if (patched === source) return
+
+  const temporaryPath = `${adapterPath}.${randomUUID()}.tmp`
+  try {
+    await writeFile(temporaryPath, patched)
+    await rename(temporaryPath, adapterPath)
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined)
+  }
 }
 
 type PackageResolution = { tarball: string; integrity: string }
