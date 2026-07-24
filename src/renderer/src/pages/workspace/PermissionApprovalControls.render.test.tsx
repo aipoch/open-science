@@ -137,10 +137,10 @@ const secondPermissionRequest: AcpPermissionRequest = {
 }
 
 describe('PermissionApprovalControls', () => {
-  it('renders the Allow button with the narrowest default scope (once), not standing access', () => {
+  it('renders the Allow button with the conversation scope by default', () => {
     const html = renderControls()
-    expect(html).toContain('for this call only')
-    expect(html).not.toContain('for this conversation')
+    expect(html).toContain('for this conversation')
+    expect(html).not.toContain('for this call only')
     expect(html).toContain('data-testid="allow-primary"')
     expect(html).toContain('data-testid="deny-button"')
     expect(html).toContain('data-testid="scope-chevron"')
@@ -174,6 +174,50 @@ describe('PermissionApprovalControls', () => {
 
     expect(html).toContain('MCP tool access</span>')
     expect(html).not.toContain('Command execution</span>')
+  })
+
+  it('keeps the tool identity visible for execute-kind MCP requests', () => {
+    // An MCP tool reporting kind:'execute' (write_artifact_file) must not collapse into the
+    // generic "Run command?" shell wording — the provider name is the only identity left when
+    // the request carries no previewable command payload.
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            ...permissionRequest,
+            title: 'mcp.open-science-artifacts.write_artifact_file',
+            providerToolName: 'write_artifact_file',
+            isMcp: true,
+            toolKind: 'execute',
+            rawInput: undefined
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+
+    expect(html).toContain('Run write_artifact_file?')
+    expect(html).not.toContain('Run command?')
+  })
+
+  it('shows the title for a non-Bash execute request with no command preview', () => {
+    // A non-Bash execute request whose command lives only in the title: extractPermissionCode
+    // has no Bash fallback here, so the title is the only place the command can appear — the
+    // generic "Run command?" header must not leave the prompt opaque.
+    const executeTitleOnly: AcpPermissionRequest = {
+      requestId: 'exec-title-1',
+      sessionId: 'session-1',
+      toolCallId: 'tool-exec-title',
+      title: 'python scripts/run_pipeline.py --full',
+      toolKind: 'execute',
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
+      raw: {}
+    }
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls requests={[executeTitleOnly]} onRespond={() => undefined} />
+    )
+    expect(html).toContain('Run command?')
+    expect(html).toContain('python scripts/run_pipeline.py --full')
   })
 
   it('serializes prompts by rendering only the first pending request', () => {
@@ -273,7 +317,7 @@ describe('PermissionApprovalControls', () => {
       <PermissionApprovalControls requests={[brokerShape]} onRespond={() => undefined} />
     )
     expect(html).toContain('Run notebook cell')
-    expect(html).toContain('Notebook execution</span>')
+    expect(html).toContain('data-testid="permission-tool-info"')
     expect(html).toContain('data-language="python"')
     expect(html).toContain('print(&quot;hi&quot;)')
     // Must not misclassify as a shell command showing the namespaced title.
@@ -297,22 +341,45 @@ describe('PermissionApprovalControls', () => {
       <PermissionApprovalControls requests={[opencodeShape]} onRespond={() => undefined} />
     )
     expect(html).toContain('Run notebook cell')
-    expect(html).toContain('Notebook execution</span>')
+    expect(html).toContain('data-testid="permission-tool-info"')
     expect(html).toContain('data-language="python"')
     expect(html).not.toContain('data-language="bash"')
   })
 
-  it('labels a fully-namespaced notebook request as Notebook execution', () => {
-    // The risk badge must agree with the code-card header for real mcp__<server>__notebook_execute
-    // names, not fall through to the generic MCP label.
+  it('labels a fully-namespaced notebook request with the notebook badge cluster, not MCP', () => {
+    // The header cluster must agree with the code-card header for real
+    // mcp__<server>__notebook_execute names, not fall through to the generic MCP label.
     const html = renderToStaticMarkup(
       <PermissionApprovalControls
         requests={[{ ...notebookPermissionRequest, isMcp: true }]}
         onRespond={() => undefined}
       />
     )
-    expect(html).toContain('Notebook execution</span>')
+    expect(html).toContain('data-testid="permission-language-badge"')
+    expect(html).toContain('data-testid="permission-tool-info"')
     expect(html).not.toContain('MCP tool access</span>')
+  })
+
+  it('shows the kernel language badge for notebook prompts, matching the code highlight', () => {
+    const pythonHtml = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[notebookPermissionRequest]}
+        onRespond={() => undefined}
+      />
+    )
+    expect(pythonHtml).toContain('>python</span>')
+
+    // The badge follows the inferred code language even without an explicit kernel field.
+    const rHtml = renderToStaticMarkup(
+      <PermissionApprovalControls requests={[rNotebookRequest]} onRespond={() => undefined} />
+    )
+    expect(rHtml).toContain('>r</span>')
+
+    // repl_execute pins JavaScript even though its code looks generic.
+    const replHtml = renderToStaticMarkup(
+      <PermissionApprovalControls requests={[replRequest]} onRespond={() => undefined} />
+    )
+    expect(replHtml).toContain('>javascript</span>')
   })
 
   it('renders no code block when rawInput is absent', () => {

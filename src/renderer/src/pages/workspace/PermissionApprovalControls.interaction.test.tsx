@@ -38,23 +38,24 @@ afterEach(() => {
 })
 
 describe('PermissionApprovalControls interactions', () => {
-  it('default Allow button uses the narrowest scope (this call only), not the standing grant', () => {
-    // Least-privilege: the easiest click must be the one-time approval, not a persistent grant.
+  it('default Allow button uses the conversation scope so a repeated tool does not re-prompt', () => {
+    // The easiest click approves for the whole conversation; narrowing to a one-time
+    // approval is an explicit choice via the scope menu.
     act(() => {
       root.render(<PermissionApprovalControls requests={[baseRequest]} onRespond={vi.fn()} />)
     })
-    expect(container.textContent).toContain('this call only')
-    expect(container.textContent).not.toContain('this conversation')
+    expect(container.textContent).toContain('this conversation')
+    expect(container.textContent).not.toContain('this call only')
   })
 
-  it('Allow with default scope calls onRespond with the allow_once optionId', () => {
+  it('Allow with default scope calls onRespond with the allow_always optionId', () => {
     const onRespond = vi.fn()
     act(() => {
       root.render(<PermissionApprovalControls requests={[baseRequest]} onRespond={onRespond} />)
     })
     const allowBtn = container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement
     act(() => allowBtn.click())
-    expect(onRespond).toHaveBeenCalledWith('req-1', 'opt-once')
+    expect(onRespond).toHaveBeenCalledWith('req-1', 'opt-always')
   })
 
   it('switching to Once updates button label and calls allow_once optionId', () => {
@@ -196,17 +197,19 @@ describe('PermissionApprovalControls interactions', () => {
     const items = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
     )
+    // The menu opens with focus on the currently selected scope (conversation by default).
+    expect(document.activeElement).toBe(items[1])
+
+    // ArrowDown wraps from the last item back to the first.
+    act(() => {
+      items[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    })
     expect(document.activeElement).toBe(items[0])
 
     act(() => {
-      items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     })
-    expect(document.activeElement).toBe(items[1])
-
-    act(() => {
-      items[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    })
-    expect(container.textContent).toContain('this conversation')
+    expect(container.textContent).toContain('this call only')
     expect(container.querySelector('[role="menuitemradio"]')).toBeNull()
 
     act(() => chevron.click())
@@ -260,23 +263,23 @@ describe('PermissionApprovalControls interactions', () => {
   })
 
   it('resets scope, open menu, and expand state when the next request is shown', () => {
-    // Switch req-1 to Conversation (away from the default Once) and leave the menu open, then swap
+    // Switch req-1 to Once (away from the default Conversation) and leave the menu open, then swap
     // to a fresh request to verify all state resets.
     act(() => {
       root.render(<PermissionApprovalControls requests={[baseRequest]} onRespond={vi.fn()} />)
     })
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
     act(() => chevron.click())
-    const convItem = Array.from(container.querySelectorAll('[role="menuitemradio"]')).find((el) =>
-      el.textContent?.includes('This conversation')
+    const onceItem = Array.from(container.querySelectorAll('[role="menuitemradio"]')).find(
+      (el) => el.textContent?.includes('Once') && !el.textContent?.includes('conversation')
     ) as HTMLElement
-    act(() => convItem.click())
+    act(() => onceItem.click())
     // Collapse the code card so we can prove it re-expands for the next request.
     const toggle = container.querySelector(
       '[data-testid="permission-code-toggle"]'
     ) as HTMLButtonElement
     act(() => toggle.click())
-    expect(container.textContent).toContain('this conversation')
+    expect(container.textContent).toContain('this call only')
     expect(container.querySelector('[data-testid="tool-code-block"]')).toBeNull()
 
     // Rerender with a different request as the head of the queue.
@@ -289,9 +292,9 @@ describe('PermissionApprovalControls interactions', () => {
     act(() => {
       root.render(<PermissionApprovalControls requests={[nextRequest]} onRespond={vi.fn()} />)
     })
-    // Scope reset to the default (once), menu closed, card re-expanded.
-    expect(container.textContent).toContain('this call only')
-    expect(container.textContent).not.toContain('this conversation')
+    // Scope reset to the default (conversation), menu closed, card re-expanded.
+    expect(container.textContent).toContain('this conversation')
+    expect(container.textContent).not.toContain('this call only')
     expect(container.querySelector('[role="menuitemradio"]')).toBeNull()
     const nextToggle = container.querySelector(
       '[data-testid="permission-code-toggle"]'
@@ -312,5 +315,63 @@ describe('PermissionApprovalControls interactions', () => {
     act(() => chevron.click())
     expect(container.querySelector('[role="menuitemradio"]')).not.toBeNull()
     expect(chevron.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('falls back to the Settings runtime name for the env badge before any kernel ran', async () => {
+    // No live kernel and no run history: the badge must still name the enabled runtime from
+    // Settings → Runtimes (the app-managed default wins over user-registered envs).
+    const notebookRequest: AcpPermissionRequest = {
+      requestId: 'req-env',
+      sessionId: 'session-env-fallback',
+      toolCallId: 'tool-env',
+      title: 'mcp__open-science-notebook__notebook_execute',
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      rawInput: { kernelKind: 'python', code: 'print(1)' },
+      options: [{ optionId: 'opt-once', name: 'Allow once', kind: 'allow_once' }],
+      raw: {}
+    }
+    ;(window as { api?: unknown }).api = {
+      notebook: {
+        state: async () => ({ environments: [], runs: [] })
+      },
+      runtime: {
+        listEnvironments: async () => ({
+          python: [
+            {
+              language: 'python',
+              provenance: 'app-managed',
+              envId: '/envs/default-python',
+              interpreterPath: '/envs/default-python/bin/python',
+              label: 'default-python',
+              runnable: true
+            }
+          ],
+          r: []
+        }),
+        getEnablement: async () => ({ enabled: {}, installAuthorized: {} })
+      }
+    }
+    try {
+      act(() => {
+        root.render(
+          <PermissionApprovalControls
+            requests={[notebookRequest]}
+            onRespond={vi.fn()}
+            notebookLookup={{ sessionId: 'session-env-fallback', workspaceCwd: '' }}
+          />
+        )
+      })
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      expect(container.querySelector('[data-testid="permission-env-badge"]')?.textContent).toBe(
+        'default-python'
+      )
+      expect(
+        container.querySelector('[data-testid="permission-language-badge"]')?.textContent
+      ).toBe('python')
+    } finally {
+      delete (window as { api?: unknown }).api
+    }
   })
 })

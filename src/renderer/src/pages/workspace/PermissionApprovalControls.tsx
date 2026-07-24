@@ -1,7 +1,13 @@
-import { Check, ChevronDown, ChevronRight } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Info } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { AcpPermissionRequest } from '../../../../shared/acp'
+import type { NotebookSessionRequest } from '../../../../shared/notebook'
+import { isEnvEnabled } from '../../../../shared/notebook-runtime'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { dialogTitleClassName } from '@/components/ui/dialog-chrome'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
@@ -9,6 +15,9 @@ import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 type PermissionApprovalControlsProps = {
   requests: AcpPermissionRequest[]
   onRespond: (requestId: string, optionId?: string) => void
+  // Session locator for the notebook env badge; optional so the controls render standalone
+  // (isolation tests, sessions without notebook context).
+  notebookLookup?: NotebookSessionRequest
 }
 
 type PermissionOption = AcpPermissionRequest['options'][number]
@@ -178,25 +187,25 @@ const PermissionCodeSection = ({
   const [expanded, setExpanded] = useState(true)
 
   return (
-    <div className="w-full overflow-hidden rounded-[14px] bg-bg-200/70 px-1.5 py-1">
+    <div className="w-full overflow-hidden rounded-lg bg-muted/60 px-2 py-1.5">
       <button
         type="button"
         data-testid="permission-code-toggle"
         aria-expanded={expanded}
-        className="flex w-full items-center gap-2 rounded-lg py-[5px] pl-1.5 pr-2.5 text-[13px] transition-colors hover:bg-bg-300"
+        className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-[13px] transition-colors hover:bg-muted"
         onClick={() => setExpanded((e) => !e)}
       >
         <span
           className={cn(
-            'inline-flex w-4 shrink-0 items-center justify-center text-text-100 transition-transform duration-200',
+            'inline-flex w-4 shrink-0 items-center justify-center text-muted-foreground transition-transform duration-200',
             expanded && 'rotate-90'
           )}
         >
           <ChevronRight className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
         </span>
-        <span className="min-w-0 truncate text-left font-medium text-text-000">{title}</span>
+        <span className="min-w-0 truncate text-left font-medium text-foreground">{title}</span>
         {language ? (
-          <span className="ml-auto shrink-0 whitespace-nowrap text-[12px] text-text-100">
+          <span className="ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground">
             {language}
           </span>
         ) : null}
@@ -232,6 +241,128 @@ const getPermissionRiskLabel = (request: AcpPermissionRequest): string => {
     default:
       return 'Tool access'
   }
+}
+
+// Per-session env-name lookups, cached so every prompt in the same chat reuses a single read.
+// Keyed by sessionId + kernel kind so a python badge and an R badge never share a stale answer.
+const notebookEnvCache = new Map<string, Promise<string | undefined>>()
+
+// Resolves the environment a session's notebook kernels run in, best-known first: the live kernel
+// matching the requested kind, then any live env, then the most recent run's recorded env, and
+// finally the enabled runtime from Settings → Runtimes (what a kernel started now would bind).
+// Sessions with no notebook history and no bridge (tests) resolve to undefined — no badge.
+const lookupNotebookEnvironment = async (
+  request: NotebookSessionRequest,
+  kernelKind: 'python' | 'r'
+): Promise<string | undefined> => {
+  const notebookApi = window.api?.notebook
+  if (notebookApi) {
+    try {
+      const state = await notebookApi.state(request)
+      const live =
+        state.environments.find((e) => e.kind === kernelKind && e.environment)?.environment ??
+        state.environments.find((e) => e.environment)?.environment
+      if (live) return live
+      for (let i = state.runs.length - 1; i >= 0; i -= 1) {
+        const env = state.runs[i].environment
+        if (env) return env
+      }
+    } catch {
+      /* no notebook for this session yet — fall through to the Settings default */
+    }
+  }
+
+  const runtimeApi = window.api?.runtime
+  if (!runtimeApi) return undefined
+  try {
+    const [lists, enablement] = await Promise.all([
+      runtimeApi.listEnvironments(),
+      runtimeApi.getEnablement(kernelKind)
+    ])
+    const enabled = lists[kernelKind].filter((env) => isEnvEnabled(env, enablement))
+    // Mirror the session's default binding: the app-managed env wins over user-registered ones.
+    const fallback = enabled.find((env) => env.provenance === 'app-managed') ?? enabled[0]
+    return fallback?.label
+  } catch {
+    return undefined
+  }
+}
+
+const useNotebookEnvironment = (
+  lookup: NotebookSessionRequest | undefined,
+  kernelKind: 'python' | 'r' | undefined
+): string | undefined => {
+  const [envName, setEnvName] = useState<string | undefined>()
+  const lookupKey = lookup ? `${lookup.projectName ?? ''}:${lookup.sessionId}` : undefined
+  useEffect(() => {
+    if (!lookup || !lookupKey || !kernelKind) return
+    let cancelled = false
+    const key = `${lookupKey}:${kernelKind}`
+    let cached = notebookEnvCache.get(key)
+    if (!cached) {
+      cached = lookupNotebookEnvironment(lookup, kernelKind)
+      notebookEnvCache.set(key, cached)
+    }
+    void cached.then((name) => {
+      if (!cancelled) setEnvName(name)
+    })
+    return () => {
+      cancelled = true
+    }
+    // lookup is a fresh object per render; the primitive key is the real dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lookupKey, kernelKind])
+  return kernelKind ? envName : undefined
+}
+
+// Header cluster for notebook prompts: kernel-language badge, the session's bound environment
+// (once the runtime has spawned or recorded one), and an info tooltip explaining where the code
+// runs and what an approval covers, phrased for the current kernel language.
+const NotebookHeaderBadges = ({
+  lookup,
+  language,
+  rawIdentity
+}: {
+  lookup: NotebookSessionRequest | undefined
+  language: string
+  rawIdentity: string | undefined
+}): React.JSX.Element => {
+  const kernelKind = language === 'python' ? 'python' : language === 'r' ? 'r' : undefined
+  const envName = useNotebookEnvironment(lookup, kernelKind)
+  // Display form for the tooltip sentence: javascript/r read better capitalized.
+  const languageLabel = language === 'javascript' ? 'JavaScript' : language === 'r' ? 'R' : language
+
+  return (
+    <span className="ml-auto flex shrink-0 items-center gap-1.5">
+      <Badge variant="secondary" data-testid="permission-language-badge">
+        {language}
+      </Badge>
+      {envName ? (
+        <Badge variant="secondary" data-testid="permission-env-badge">
+          {envName}
+        </Badge>
+      ) : null}
+      {rawIdentity ? (
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label="Tool details"
+                data-testid="permission-tool-info"
+                className="flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <Info className="size-3.5" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-72 whitespace-normal">
+              {`Runs in this session's notebook environment${envName ? ` (${envName})` : ''}. Grants cover any ${languageLabel} call until this chat ends.`}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      ) : null}
+    </span>
+  )
 }
 
 // Popover listing the two available scope choices.
@@ -280,7 +411,7 @@ const ScopeDropdown = ({
       ref={ref}
       role="menu"
       aria-label="Authorization scope"
-      className="absolute bottom-full right-0 z-10 mb-1 min-w-[216px] rounded-lg border border-border-200 bg-bg-000 p-1 shadow-md"
+      className="absolute bottom-full right-0 z-10 mb-1.5 min-w-44 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu outline-none"
     >
       {options.map(({ scope, label, subtitle }, index) => (
         <button
@@ -292,8 +423,8 @@ const ScopeDropdown = ({
           role="menuitemradio"
           aria-checked={selected === scope}
           className={cn(
-            'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-200',
-            selected === scope && 'bg-bg-100'
+            'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-muted',
+            selected === scope && 'bg-muted'
           )}
           onClick={() => {
             onSelect(scope)
@@ -322,8 +453,8 @@ const ScopeDropdown = ({
         >
           {/* Label column: left-aligned flush to padding so both rows line up */}
           <div className="flex min-w-0 flex-1 flex-col">
-            <span className="text-[12px] font-medium text-text-000">{label}</span>
-            <span className="text-[11px] leading-tight text-text-300">{subtitle}</span>
+            <span className="text-xs font-medium text-foreground">{label}</span>
+            <span className="text-[11px] leading-tight text-muted-foreground">{subtitle}</span>
           </div>
           {/* Check column: right side, fixed slot so selection never shifts the label */}
           <span className="flex w-3.5 shrink-0 justify-center text-primary">
@@ -337,9 +468,10 @@ const ScopeDropdown = ({
 
 const PermissionApprovalControls = ({
   requests,
-  onRespond
+  onRespond,
+  notebookLookup
 }: PermissionApprovalControlsProps): React.JSX.Element | null => {
-  const [scope, setScope] = useState<PermissionScope>('once')
+  const [scope, setScope] = useState<PermissionScope>('conversation')
   const [scopeOpen, setScopeOpen] = useState(false)
   const scopeTriggerRef = useRef<HTMLButtonElement>(null)
   const closeScopeMenu = useCallback((restoreTriggerFocus = false) => {
@@ -350,11 +482,13 @@ const PermissionApprovalControls = ({
   // Show only the oldest pending request; the rest stay queued.
   const request = requests[0]
 
-  // Default the primary Allow action to the NARROWEST scope the request offers, so the single
-  // easiest click grants the least standing access (a one-time approval). Widening to
-  // 'conversation' (allow_always) requires an explicit choice via the scope menu.
+  // Default the primary Allow action to the WIDEST in-session scope the request offers
+  // ('conversation', backed by allow_always), so a repeated tool doesn't re-prompt on every
+  // call. Narrowing to a one-time approval ('once') is an explicit choice via the scope menu.
   const availableScopes = request ? getAvailableScopes(request.options) : new Set<PermissionScope>()
-  const defaultScope: PermissionScope = availableScopes.has('once') ? 'once' : 'conversation'
+  const defaultScope: PermissionScope = availableScopes.has('conversation')
+    ? 'conversation'
+    : 'once'
 
   // Reset per-request UI state (scope + open menu) whenever the displayed request changes,
   // so nothing leaks from the previously answered prompt.
@@ -384,59 +518,99 @@ const PermissionApprovalControls = ({
     denyOptionId
   )
 
-  // The header shows the provider name; the title often carries the actual target (e.g. provider
-  // "Write" with title "Write report.md"). Surface the title as a detail line when it adds
-  // information the header doesn't, and isn't already shown verbatim by the code card.
+  // Header asks a friendly action question; raw tool identifiers (namespaced MCP names like
+  // mcp__open-science-notebook__notebook_execute) are illegible in a sentence, so notebook and
+  // shell runs get plain-language phrasing. The provider name only heads the prompt for other
+  // tools, where it is typically a short readable name (Write, Edit). MCP requests are never
+  // collapsed into the shell wording: the broker preserves MCP identity even for kind:'execute'
+  // tools (e.g. open-science-artifacts_write_artifact_file), and the provider/title is the only
+  // place that identity stays visible when there is no code preview.
+  const notebookToolName = resolveNotebookToolName(request)
+  const isNotebook = notebookToolName !== undefined
+  const isShell =
+    request.isMcp !== true &&
+    (request.toolKind === 'execute' || request.providerToolName === 'Bash')
+  const headerTitle = isNotebook
+    ? 'Run notebook code?'
+    : isShell
+      ? 'Run command?'
+      : `Run ${request.providerToolName ?? request.title}?`
+
+  // The title often carries the actual target (e.g. provider "Write" with title
+  // "Write report.md"). Surface it as a detail line when it adds information the header
+  // doesn't, and isn't already shown verbatim by the code card. Skipped for notebook
+  // prompts: there the title is just the tool identifier. For shell prompts the header is
+  // generic ("Run command?"), so when no code preview renders the command — e.g. a non-Bash
+  // execute request whose command lives only in the title — the title must stay visible,
+  // otherwise the user approves an opaque execution request.
   const headerName = request.providerToolName ?? request.title
-  const titleDetail =
-    request.title && request.title !== headerName && request.title !== permCode?.code
-      ? request.title
-      : undefined
+  const titleDetail = ((): string | undefined => {
+    if (isNotebook || !request.title || request.title === permCode?.code) return undefined
+    if (isShell) {
+      return !permCode && request.title !== request.providerToolName ? request.title : undefined
+    }
+    return request.title !== headerName ? request.title : undefined
+  })()
+
+  // Kernel language for the notebook header badge: the code preview's language when there is one,
+  // otherwise resolved from the tool identity alone (repl/bash suffixes, python default), so the
+  // badge always agrees with what the code block would highlight.
+  const permLanguage = notebookToolName
+    ? (permCode?.language ?? resolveNotebookLanguage(notebookToolName, undefined, undefined))
+    : undefined
 
   return (
-    <div className="mb-2 w-full max-w-full rounded-lg border border-border-200 bg-bg-000 px-3 py-2 text-[12px] leading-5 text-text-000 shadow-sm">
-      {/* Header: tool name + risk label */}
-      <div className="mb-2 flex min-w-0 items-center gap-2">
-        <span className="font-semibold truncate">
-          Run {request.providerToolName ?? request.title}?
-        </span>
-        <span className="ml-auto shrink-0 rounded px-1.5 py-0.5 text-[11px] bg-bg-100 text-text-300">
-          {getPermissionRiskLabel(request)}
-        </span>
+    <div className="mb-2 flex w-full max-w-full flex-col gap-4 rounded-xl border border-border bg-card p-5 text-xs leading-5 text-card-foreground shadow-dialog outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
+      {/* Header: action question + risk label (notebook prompts get language/env badges + tooltip) */}
+      <div className="flex min-w-0 items-center gap-2">
+        <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>{headerTitle}</span>
+        {notebookToolName && permLanguage ? (
+          <NotebookHeaderBadges
+            lookup={notebookLookup}
+            language={permLanguage}
+            rawIdentity={request.providerToolName ?? request.title}
+          />
+        ) : (
+          <Badge variant="secondary" className="ml-auto">
+            {getPermissionRiskLabel(request)}
+          </Badge>
+        )}
       </div>
 
       {/* Full request title (the target being authorized) when the header alone doesn't show it. */}
       {titleDetail ? (
-        <div className="mb-2 break-all text-[11px] text-text-300">{titleDetail}</div>
+        <div className="break-all text-xs text-muted-foreground">{titleDetail}</div>
       ) : null}
 
       {/* Affected file targets — the canonical location field, shown so read/edit/delete
           prompts always reveal the path being authorized. Wraps to keep full values readable. */}
       {request.toolLocations?.length ? (
-        <div className="mb-2 flex flex-wrap gap-x-2 gap-y-0.5 break-all text-[11px] text-text-300">
+        <div className="flex flex-wrap gap-x-2 gap-y-0.5 break-all text-xs text-muted-foreground">
           {request.toolLocations.map((location) => (
             <span key={location.path}>{location.path}</span>
           ))}
         </div>
       ) : null}
 
-      {/* Activity-style card showing the code that will run */}
+      {/* Activity-style card showing the code that will run.
+          Keyed by requestId so the collapsed/expanded state never carries over between prompts. */}
       {permCode && (
-        <div className="mb-2">
-          {/* Keyed by requestId so the collapsed/expanded state never carries over between prompts. */}
-          <PermissionCodeSection
-            key={requestId}
-            title={getPermissionActionTitle(request)}
-            code={permCode.code}
-            language={permCode.language}
-          />
-        </div>
+        <PermissionCodeSection
+          key={requestId}
+          title={getPermissionActionTitle(request)}
+          code={permCode.code}
+          language={permCode.language}
+        />
       )}
 
-      {/* Allow / Deny button row */}
-      <div className="flex items-center justify-end gap-2">
-        {/* Split Allow button: main action + scope chevron; the menu anchors to this group's right edge */}
-        <div className="relative flex items-stretch overflow-visible rounded-md">
+      {/* Allow / Deny button row; wraps so long provider-supplied option labels can never
+          push the primary Allow/Deny controls out of view. */}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {/* Split Allow button: main action + scope chevron; the menu anchors to this group's right edge.
+            Styled like the shared Button (default size, including flex centering so the label baseline
+            matches the neighboring Button primitives) but kept as two segments so the chevron
+            stays a separate tab stop with its own aria-haspopup semantics. */}
+        <div className="relative flex items-stretch overflow-visible rounded-lg">
           {scopeOpen && (
             <ScopeDropdown
               selected={effectiveScope}
@@ -445,19 +619,20 @@ const PermissionApprovalControls = ({
               onClose={closeScopeMenu}
             />
           )}
-          <div className="flex items-stretch overflow-hidden rounded-md">
+          <div className="flex items-stretch overflow-hidden rounded-lg">
             <button
               type="button"
               data-testid="allow-primary"
-              className="bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground hover:bg-primary/80 disabled:opacity-40"
+              className="inline-flex h-8 select-none items-center justify-center gap-1 whitespace-nowrap bg-primary px-3 text-sm text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
               disabled={!allowOptionId}
               onClick={() => {
                 if (allowOptionId) onRespond(request.requestId, allowOptionId)
               }}
             >
-              Allow {scopeLabel}
+              <span className="font-semibold">Allow</span>{' '}
+              <span className="font-normal">{scopeLabel}</span>
             </button>
-            <div className="w-px bg-primary/30" />
+            <div className="w-px bg-primary-foreground/25" />
             <button
               ref={scopeTriggerRef}
               type="button"
@@ -465,7 +640,7 @@ const PermissionApprovalControls = ({
               aria-label="Choose authorization scope"
               aria-expanded={scopeOpen}
               aria-haspopup="menu"
-              className="bg-primary px-2 py-1.5 text-primary-foreground hover:bg-primary/80"
+              className="inline-flex h-8 select-none items-center justify-center bg-primary px-2 text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50"
               onClick={(e) => {
                 // Stop propagation so this click doesn't reach the dropdown's document
                 // click-listener and immediately re-close the menu it just opened.
@@ -473,31 +648,35 @@ const PermissionApprovalControls = ({
                 setScopeOpen((o) => !o)
               }}
             >
-              <ChevronDown className="size-3.5" />
+              <ChevronDown className="size-4" />
             </button>
           </div>
         </div>
         {/* Fallback buttons for any protocol option the Allow/Deny controls can't reach, so an
-            unrecognized or ambiguous same-kind option stays selectable rather than disappearing. */}
+            unrecognized or ambiguous same-kind option stays selectable rather than disappearing.
+            Provider-controlled labels can be long: override the Button's shrink-0/whitespace-nowrap
+            so the label wraps inside the card instead of overflowing it. */}
         {extraOptions.map((option) => (
-          <button
+          <Button
             key={option.optionId}
             type="button"
+            variant="outline"
             data-testid="extra-option"
-            className="rounded-md border border-border-200 bg-bg-000 px-3 py-1.5 text-[12px] text-text-100 hover:bg-bg-100"
+            className="h-auto min-h-8 min-w-0 max-w-full shrink whitespace-normal break-words py-1"
             onClick={() => onRespond(request.requestId, option.optionId)}
           >
             {getExtraOptionLabel(option)}
-          </button>
+          </Button>
         ))}
-        <button
+        <Button
           type="button"
+          variant="outline"
           data-testid="deny-button"
-          className="rounded-md border border-border-200 bg-bg-000 px-3 py-1.5 text-[12px] text-text-100 hover:bg-bg-100"
+          className="px-4"
           onClick={() => onRespond(request.requestId, denyOptionId)}
         >
           Deny
-        </button>
+        </Button>
       </div>
     </div>
   )

@@ -319,17 +319,17 @@ describe('conversation message scroller integration', () => {
 
     // Outer container maintains width constraints (overflow-visible so the scope dropdown is not clipped)
     expect(permissionApprovalControlsSource).toContain(
-      'className="mb-2 w-full max-w-full rounded-lg border border-border-200'
+      'className="mb-2 flex w-full max-w-full flex-col gap-4 rounded-xl border border-border bg-card'
     )
     // Header maintains min-w-0 for text truncation
     expect(permissionApprovalControlsSource).toContain(
-      'className="mb-2 flex min-w-0 items-center gap-2"'
+      'className="flex min-w-0 items-center gap-2"'
     )
     // Code block uses WorkspaceToolCodeBlock with max-height constraint
     expect(permissionApprovalControlsSource).toContain('WorkspaceToolCodeBlock')
     // Button row maintains layout constraints
     expect(permissionApprovalControlsSource).toContain(
-      'className="flex items-center justify-end gap-2"'
+      'className="flex flex-wrap items-center justify-end gap-2"'
     )
   })
 
