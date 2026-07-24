@@ -203,6 +203,28 @@ describe('ACP runtime event normalization', () => {
     })
   })
 
+  it('drops oversized raw tool payloads before runtime snapshots are broadcast', () => {
+    const oversizedInput = { content: 'A'.repeat(10_000) }
+    const oversizedOutput = { result: 'B'.repeat(10_000) }
+    const notification: SessionNotification = {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'tool-large',
+        kind: 'execute',
+        status: 'completed',
+        rawInput: oversizedInput,
+        rawOutput: oversizedOutput
+      }
+    }
+
+    const event = toAcpRuntimeEvent(notification, 'event-large-tool', 1710000000005)
+
+    expect(event.rawInput).toBeUndefined()
+    expect(event.rawOutput).toBeUndefined()
+    expect(event.raw).toBeUndefined()
+  })
+
   it('extracts streamed terminal output and exit code from tool metadata', () => {
     const notification: SessionNotification = {
       sessionId: 'session-1',
