@@ -1,13 +1,7 @@
-import { homedir } from 'node:os'
-import { join } from 'node:path'
-
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
 import { spawnClaudeCli, waitForAbortableOperation } from './claude-cli-process'
+import { getUserClaudeConfigDir } from './provider-env'
 import { augmentedPathEnv } from './shell-path'
-
-// ~/.claude is where `claude auth login --claudeai` writes credentials. Always set CLAUDE_CONFIG_DIR
-// to this path so auth/status/logout are consistent regardless of what the parent process inherited.
-const sharedClaudeConfigDir = (): string => join(homedir(), '.claude')
 
 // Claude-shared auth lifecycle: browser OAuth via `claude auth login --claudeai`. Mirrors
 // CodexAuthController in shape (getStatus / loginShared / cancelLogin / logoutShared) but calls
@@ -45,7 +39,7 @@ const checkAuthStatus = async (
           resolveClaudeExecutableForSpawn(claudePath),
           ['auth', 'status', '--json'],
           {
-            env: { ...augmentedPathEnv(process.env), CLAUDE_CONFIG_DIR: sharedClaudeConfigDir() },
+            env: { ...augmentedPathEnv(process.env), CLAUDE_CONFIG_DIR: getUserClaudeConfigDir() },
             signal: abort.signal as AbortSignal
           }
         )
@@ -116,7 +110,7 @@ const runBrowserLogin = async (
             env: (() => {
               const env: NodeJS.ProcessEnv = {
                 ...augmentedPathEnv(process.env),
-                CLAUDE_CONFIG_DIR: sharedClaudeConfigDir()
+                CLAUDE_CONFIG_DIR: getUserClaudeConfigDir()
               }
               // Suppress flags that prevent browser OAuth from opening; same pattern as claude-isolated-auth.
               delete env.NO_BROWSER
@@ -248,7 +242,10 @@ export class ClaudeSharedAuthController {
             resolveClaudeExecutableForSpawn(claudePath),
             ['auth', 'logout'],
             {
-              env: { ...augmentedPathEnv(process.env), CLAUDE_CONFIG_DIR: sharedClaudeConfigDir() },
+              env: {
+                ...augmentedPathEnv(process.env),
+                CLAUDE_CONFIG_DIR: getUserClaudeConfigDir()
+              },
               signal: abort.signal as AbortSignal
             }
           )

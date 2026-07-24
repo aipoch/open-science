@@ -157,7 +157,12 @@ import { encryptKey, isEncryptionAvailable, maskKey, tryDecryptKey } from './cry
 import { augmentedPathEnv } from './shell-path'
 import { computePreflight } from './preflight'
 import { listProviderModels } from './list-models'
-import { buildProviderEnv, getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
+import {
+  buildProviderEnv,
+  getAppClaudeConfigDir,
+  getUserClaudeConfigDir,
+  type ResolvedProvider
+} from './provider-env'
 import {
   ResponsesBridge,
   type ResponsesBridgeConnection,
@@ -236,6 +241,7 @@ const CLAUDE_PROBE_TIMEOUT_MS = 20_000
 // subscription has already revoked surfaces as a validation failure on first use, so the worst case
 // is a card that says "expires in a year" for a credential that actually expires sooner.
 const SETUP_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000
+const CLAUDE_SHARED_AUTH_STATUS_TTL_MS = 5_000
 const CODEX_INSTALL_TARGET: InstallTarget = {
   npmPackage: '@agentclientprotocol/codex-acp',
   // Codex exposes no supported shell installer; InstallCodexRequest cannot select this branch.
@@ -449,6 +455,10 @@ class SettingsService {
   private readonly codexAuth: CodexAuthControllerPort
   private readonly claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort
   private readonly claudeSharedAuth: ClaudeSharedAuthControllerPort
+  private claudeSharedAuthStatusCache: { authenticated: boolean; checkedAt: number } | undefined
+  private claudeSharedAuthStatusGeneration = 0
+  private claudeSharedAuthStatusPromise:
+    { generation: number; promise: Promise<boolean> } | undefined
   private readonly responsesBridges = new Map<string, ResponsesBridgePoolEntry>()
   private providerSequence = 0
   private readonly providerValidationGenerations = new Map<string, number>()
@@ -485,7 +495,7 @@ class SettingsService {
       managedAdapterPath,
       managedCodexPath: managedNativePath
     }
-    this.userClaudeDir = options.userClaudeDir ?? join(homedir(), '.claude')
+    this.userClaudeDir = options.userClaudeDir ?? getUserClaudeConfigDir()
     this.userCodexDir = options.userCodexDir ?? join(homedir(), '.codex')
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
     this.userSkills = options.userSkills ?? new UserSkillRepository(this.storageRoot)
@@ -1115,10 +1125,10 @@ class SettingsService {
             this.resolveActiveModel(activeProvider, settings.activeModel)
           ))
       : false
-    const activeSharedCredentialsUsable =
-      activeProvider?.type === 'claude-shared' && activeProvider.lastValidatedAt !== undefined
-        ? (await this.claudeSharedAuth.getStatus()).authenticated
-        : undefined
+    const activeProviderKeyUsable =
+      activeProvider && activeProvider.lastValidatedAt !== undefined
+        ? await this.isProviderKeyUsable(activeProvider)
+        : false
 
     return computePreflight({
       settings,
@@ -1127,9 +1137,7 @@ class SettingsService {
       codexPathExists,
       agentFrameworkId,
       isProviderKeyUsable: (provider) =>
-        provider.type === 'claude-shared' && provider.id === activeProvider?.id
-          ? activeSharedCredentialsUsable === true
-          : this.isProviderKeyUsable(provider),
+        provider.id === activeProvider?.id && activeProviderKeyUsable,
       activeProviderCompatible
     })
   }
@@ -2055,7 +2063,9 @@ class SettingsService {
   // Runs `claude auth login --claudeai` which opens the browser for OAuth. The CLI stores the
   // credentials in ~/.claude; the app never touches them. After success, runs a probe to validate.
   async loginClaudeShared(): Promise<ValidateProviderResult> {
+    this.invalidateClaudeSharedAuthStatus()
     const authStatus = await this.claudeSharedAuth.loginShared()
+    this.invalidateClaudeSharedAuthStatus()
     const result = this.claudeSharedAuthValidationResult(authStatus)
 
     // A user-cancel: don't write a failure marker and surface the cancellation to the caller.
@@ -2094,7 +2104,9 @@ class SettingsService {
   }
 
   async logoutClaudeShared(): Promise<ValidateProviderResult> {
+    this.invalidateClaudeSharedAuthStatus()
     const status = await this.claudeSharedAuth.logoutShared()
+    this.invalidateClaudeSharedAuthStatus()
 
     if (status.message) {
       return {
@@ -2122,6 +2134,10 @@ class SettingsService {
 
   async getClaudeSharedStatus(): Promise<ValidateProviderResult> {
     const status = await this.claudeSharedAuth.getStatus()
+    this.claudeSharedAuthStatusCache = {
+      authenticated: status.authenticated,
+      checkedAt: Date.now()
+    }
 
     if (!status.authenticated) {
       return this.claudeSharedAuthValidationResult(
@@ -3135,11 +3151,46 @@ class SettingsService {
     return false
   }
 
-  // Credentials usable without a live profile check: Codex subscriptions are adapter-managed;
-  // claude-isolated/custom/official need a decryptable key. Active claude-shared is checked live in
-  // getPreflight and must fall through to false here because it intentionally stores no keyRef.
-  private isProviderKeyUsable(provider: StoredProvider): boolean {
+  private invalidateClaudeSharedAuthStatus(): void {
+    this.claudeSharedAuthStatusCache = undefined
+    this.claudeSharedAuthStatusGeneration += 1
+  }
+
+  private async getClaudeSharedAuthStatus(): Promise<boolean> {
+    const cached = this.claudeSharedAuthStatusCache
+    if (cached && Date.now() - cached.checkedAt < CLAUDE_SHARED_AUTH_STATUS_TTL_MS) {
+      return cached.authenticated
+    }
+    const generation = this.claudeSharedAuthStatusGeneration
+    const pending = this.claudeSharedAuthStatusPromise
+    if (pending?.generation === generation) return pending.promise
+
+    const promise = this.claudeSharedAuth
+      .getStatus()
+      .then((status) => {
+        if (this.claudeSharedAuthStatusGeneration === generation) {
+          this.claudeSharedAuthStatusCache = {
+            authenticated: status.authenticated,
+            checkedAt: Date.now()
+          }
+        }
+        return status.authenticated
+      })
+      .finally(() => {
+        if (this.claudeSharedAuthStatusPromise?.promise === promise) {
+          this.claudeSharedAuthStatusPromise = undefined
+        }
+      })
+
+    this.claudeSharedAuthStatusPromise = { generation, promise }
+    return promise
+  }
+
+  // Resolves credential usability at the provider seam. Codex subscriptions are adapter-managed;
+  // claude-shared needs a cached live profile check; all key-backed providers must still decrypt.
+  private async isProviderKeyUsable(provider: StoredProvider): Promise<boolean> {
     if (isCodexSubscriptionProvider(provider.type)) return true
+    if (provider.type === 'claude-shared') return this.getClaudeSharedAuthStatus()
 
     return Boolean(provider.keyRef) && tryDecryptKey(provider.keyRef) !== undefined
   }

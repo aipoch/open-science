@@ -92,4 +92,4 @@ const buildProviderEnv = (
   return env
 }
 
-export { buildProviderEnv, getAppClaudeConfigDir }
+export { buildProviderEnv, getAppClaudeConfigDir, getUserClaudeConfigDir }

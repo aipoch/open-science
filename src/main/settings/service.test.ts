@@ -1159,6 +1159,199 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(claudeSharedAuth.getStatus).toHaveBeenCalledOnce()
   })
 
+  it('briefly caches shared Claude auth status and rechecks it after the cache expires', async () => {
+    let now = 1_000
+    const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => now)
+
+    try {
+      const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
+        getStatus: vi.fn().mockResolvedValue({
+          supported: true,
+          authenticated: true
+        }),
+        loginShared: vi.fn(),
+        cancelLogin: vi.fn(),
+        logoutShared: vi.fn()
+      }
+      const service = createService(undefined, { claudeSharedAuth })
+      await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+      await repository.upsertProvider({
+        id: CLAUDE_SHARED_PROVIDER_ID,
+        type: 'claude-shared',
+        name: 'Claude subscription',
+        lastValidatedAt: 1
+      })
+      await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID)
+
+      await service.getPreflight()
+      await service.getPreflight()
+
+      expect(claudeSharedAuth.getStatus).toHaveBeenCalledOnce()
+
+      now += 5_001
+      await service.getPreflight()
+
+      expect(claudeSharedAuth.getStatus).toHaveBeenCalledTimes(2)
+    } finally {
+      dateNow.mockRestore()
+    }
+  })
+
+  it('shares one in-flight shared Claude status check across concurrent preflights', async () => {
+    let resolveStatus:
+      ((status: { supported: boolean; authenticated: boolean }) => void) | undefined
+    const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
+      getStatus: vi.fn(
+        () =>
+          new Promise<{ supported: boolean; authenticated: boolean }>((resolve) => {
+            resolveStatus = resolve
+          })
+      ),
+      loginShared: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutShared: vi.fn()
+    }
+    const service = createService(undefined, { claudeSharedAuth })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.upsertProvider({
+      id: CLAUDE_SHARED_PROVIDER_ID,
+      type: 'claude-shared',
+      name: 'Claude subscription',
+      lastValidatedAt: 1
+    })
+    await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID)
+
+    const first = service.getPreflight()
+    const second = service.getPreflight()
+    await vi.waitFor(() => expect(claudeSharedAuth.getStatus).toHaveBeenCalled())
+
+    expect(claudeSharedAuth.getStatus).toHaveBeenCalledOnce()
+    resolveStatus?.({ supported: true, authenticated: true })
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ activeProviderReady: true }),
+      expect.objectContaining({ activeProviderReady: true })
+    ])
+  })
+
+  it('does not cache a shared Claude status that resolves after login invalidation', async () => {
+    let resolveStaleStatus:
+      ((status: { supported: boolean; authenticated: boolean }) => void) | undefined
+    const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
+      getStatus: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<{ supported: boolean; authenticated: boolean }>((resolve) => {
+              resolveStaleStatus = resolve
+            })
+        )
+        .mockResolvedValueOnce({ supported: true, authenticated: true }),
+      loginShared: vi.fn().mockResolvedValue({ supported: true, authenticated: true }),
+      cancelLogin: vi.fn(),
+      logoutShared: vi.fn()
+    }
+    const service = createService(undefined, { claudeSharedAuth })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.upsertProvider({
+      id: CLAUDE_SHARED_PROVIDER_ID,
+      type: 'claude-shared',
+      name: 'Claude subscription',
+      lastValidatedAt: 1
+    })
+    await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID)
+
+    const stalePreflight = service.getPreflight()
+    await vi.waitFor(() => expect(claudeSharedAuth.getStatus).toHaveBeenCalledOnce())
+    await service.loginClaudeShared()
+    resolveStaleStatus?.({ supported: true, authenticated: false })
+    await expect(stalePreflight).resolves.toMatchObject({ activeProviderReady: false })
+
+    await expect(service.getPreflight()).resolves.toMatchObject({ activeProviderReady: true })
+    expect(claudeSharedAuth.getStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('invalidates a stale shared Claude status after browser login', async () => {
+    const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
+      getStatus: vi
+        .fn()
+        .mockResolvedValueOnce({ supported: true, authenticated: false })
+        .mockResolvedValueOnce({ supported: true, authenticated: true }),
+      loginShared: vi.fn().mockResolvedValue({ supported: true, authenticated: true }),
+      cancelLogin: vi.fn(),
+      logoutShared: vi.fn()
+    }
+    const service = createService(undefined, { claudeSharedAuth })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.upsertProvider({
+      id: CLAUDE_SHARED_PROVIDER_ID,
+      type: 'claude-shared',
+      name: 'Claude subscription',
+      lastValidatedAt: 1
+    })
+    await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID)
+
+    await expect(service.getPreflight()).resolves.toMatchObject({ activeProviderReady: false })
+    await service.loginClaudeShared()
+    await expect(service.getPreflight()).resolves.toMatchObject({ activeProviderReady: true })
+
+    expect(claudeSharedAuth.getStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('reuses an explicit shared Claude status check in the next preflight', async () => {
+    const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
+      getStatus: vi.fn().mockResolvedValue({ supported: true, authenticated: true }),
+      loginShared: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutShared: vi.fn()
+    }
+    const service = createService(undefined, { claudeSharedAuth })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.upsertProvider({
+      id: CLAUDE_SHARED_PROVIDER_ID,
+      type: 'claude-shared',
+      name: 'Claude subscription',
+      lastValidatedAt: 1
+    })
+    await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID)
+
+    await expect(service.getClaudeSharedStatus()).resolves.toMatchObject({ ok: true })
+    await expect(service.getPreflight()).resolves.toMatchObject({ activeProviderReady: true })
+
+    expect(claudeSharedAuth.getStatus).toHaveBeenCalledOnce()
+  })
+
+  it('does not reuse an authenticated shared Claude cache after logout', async () => {
+    const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
+      getStatus: vi
+        .fn()
+        .mockResolvedValueOnce({ supported: true, authenticated: true })
+        .mockResolvedValueOnce({ supported: true, authenticated: false }),
+      loginShared: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutShared: vi.fn().mockResolvedValue({ supported: true, authenticated: false })
+    }
+    const service = createService(undefined, { claudeSharedAuth })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.upsertProvider({
+      id: CLAUDE_SHARED_PROVIDER_ID,
+      type: 'claude-shared',
+      name: 'Claude subscription',
+      lastValidatedAt: 1
+    })
+    await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID)
+
+    await expect(service.getPreflight()).resolves.toMatchObject({ activeProviderReady: true })
+    await service.logoutClaudeShared()
+    const loggedOutProvider = (await repository.getSettings()).providers.find(
+      (provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID
+    )
+    if (!loggedOutProvider) throw new Error('shared Claude provider not found')
+    await repository.upsertProvider({ ...loggedOutProvider, lastValidatedAt: 2 })
+
+    await expect(service.getPreflight()).resolves.toMatchObject({ activeProviderReady: false })
+    expect(claudeSharedAuth.getStatus).toHaveBeenCalledTimes(2)
+  })
+
   it('does not report claude ready when the recorded binary exists but fails --version', async () => {
     // Executable-but-corrupt runtime: execPath is a real file (X_OK passes) yet `--version` fails.
     // Preflight must validate via --version like the env check, so this must NOT pass as ready.
