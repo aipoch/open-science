@@ -120,14 +120,16 @@ function reviewEnv(overrides: Record<string, string> = {}): Record<string, strin
   return {
     PR_NUMBER: '7',
     REVIEW_HEAD_SHA: 'sha1',
-    CLAUDE_RESULT: 'success',
-    CLAUDE_POST_RESULT: 'success',
-    CLAUDE_POSTED: 'true',
-    CLAUDE_REVIEW_BODY: reviewBody('## Claude Architecture Review', 'mergeable'),
-    CODEX_RESULT: 'skipped',
-    CODEX_POST_RESULT: 'skipped',
-    CODEX_POSTED: '',
-    CODEX_REVIEW_BODY: '',
+    CORRECTNESS_REQUIRED: 'true',
+    CORRECTNESS_RESULT: 'success',
+    CORRECTNESS_POST_RESULT: 'success',
+    CORRECTNESS_POSTED: 'true',
+    CORRECTNESS_REVIEW_BODY: reviewBody('## Codex Correctness Review', 'mergeable'),
+    ARCHITECTURE_REQUIRED: 'false',
+    ARCHITECTURE_RESULT: 'skipped',
+    ARCHITECTURE_POST_RESULT: 'skipped',
+    ARCHITECTURE_POSTED: '',
+    ARCHITECTURE_REVIEW_BODY: '',
     ...overrides
   }
 }
@@ -148,10 +150,11 @@ describe('apply_review_outcome', () => {
       reviewContext(),
       github,
       reviewEnv({
-        CODEX_RESULT: 'success',
-        CODEX_POST_RESULT: 'success',
-        CODEX_POSTED: 'true',
-        CODEX_REVIEW_BODY: reviewBody('## Codex Correctness Review', 'mergeable')
+        ARCHITECTURE_REQUIRED: 'true',
+        ARCHITECTURE_RESULT: 'success',
+        ARCHITECTURE_POST_RESULT: 'success',
+        ARCHITECTURE_POSTED: 'true',
+        ARCHITECTURE_REVIEW_BODY: reviewBody('## Codex Architecture Review', 'mergeable')
       })
     )
 
@@ -165,7 +168,24 @@ describe('apply_review_outcome', () => {
       'apply_review_outcome',
       reviewContext(),
       github,
-      reviewEnv({ CODEX_RESULT: 'failure' })
+      reviewEnv({ ARCHITECTURE_REQUIRED: 'true', ARCHITECTURE_RESULT: 'failure' })
+    )
+    expect(added).toEqual([])
+    expect(removed).toEqual(['ready-to-merge'])
+  })
+
+  it('fails closed when a selected reviewer is skipped by its review limit', async () => {
+    const { github, added, removed } = makeGithub({ labels: ['ready-to-merge'] })
+    await runJob(
+      'apply_review_outcome',
+      reviewContext(),
+      github,
+      reviewEnv({
+        CORRECTNESS_RESULT: 'skipped',
+        CORRECTNESS_POST_RESULT: 'skipped',
+        CORRECTNESS_POSTED: '',
+        CORRECTNESS_REVIEW_BODY: ''
+      })
     )
     expect(added).toEqual([])
     expect(removed).toEqual(['ready-to-merge'])
@@ -177,7 +197,7 @@ describe('apply_review_outcome', () => {
       'apply_review_outcome',
       reviewContext(),
       github,
-      reviewEnv({ CLAUDE_POSTED: 'false' })
+      reviewEnv({ CORRECTNESS_POSTED: 'false' })
     )
     expect(added).toEqual([])
     expect(removed).toEqual(['ready-to-merge'])
@@ -190,7 +210,7 @@ describe('apply_review_outcome', () => {
       reviewContext(),
       github,
       reviewEnv({
-        CLAUDE_REVIEW_BODY: reviewBody('## Claude Architecture Review', 'needs changes')
+        CORRECTNESS_REVIEW_BODY: reviewBody('## Codex Correctness Review', 'needs changes')
       })
     )
     expect(added).toEqual([])
@@ -203,7 +223,7 @@ describe('apply_review_outcome', () => {
       'apply_review_outcome',
       reviewContext(),
       github,
-      reviewEnv({ CLAUDE_REVIEW_BODY: 'review unavailable' })
+      reviewEnv({ CORRECTNESS_REVIEW_BODY: 'review unavailable' })
     )
     expect(added).toEqual([])
     expect(removed).toEqual(['ready-to-merge'])

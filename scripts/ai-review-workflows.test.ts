@@ -1,14 +1,10 @@
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 
 import { load } from 'js-yaml'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-
-// Contract and behavior tests for ai-review.yml. Inline github-script blocks are executed directly
-// so the tests exercise the code that ships instead of a reimplementation.
-const reviewWorkflow = readFileSync(join(process.cwd(), '.github/workflows/ai-review.yml'), 'utf8')
 
 type WorkflowStep = {
   id?: string
@@ -16,18 +12,20 @@ type WorkflowStep = {
   name?: string
   run?: string
   uses?: string
-  'working-directory'?: string
   env?: Record<string, string>
   with?: Record<string, string>
 }
 
 type WorkflowJob = {
-  steps: WorkflowStep[]
+  steps?: WorkflowStep[]
   if?: string
   needs?: string | string[]
+  permissions?: Record<string, string>
+  secrets?: Record<string, string>
+  uses?: string
+  with?: Record<string, string>
   outputs?: Record<string, string>
   'timeout-minutes'?: number
-  concurrency?: { group: string; 'cancel-in-progress': boolean }
 }
 
 type Workflow = {
@@ -35,91 +33,45 @@ type Workflow = {
   jobs: Record<string, WorkflowJob>
 }
 
-const parsedWorkflow = load(reviewWorkflow) as Workflow
+const mainText = readFileSync(join(process.cwd(), '.github/workflows/ai-review.yml'), 'utf8')
+const codexText = readFileSync(join(process.cwd(), '.github/workflows/ai-codex-review.yml'), 'utf8')
+const publisherText = readFileSync(
+  join(process.cwd(), '.github/workflows/ai-post-review.yml'),
+  'utf8'
+)
+const mainWorkflow = load(mainText) as Workflow
+const codexWorkflow = load(codexText) as Workflow
+const publisherWorkflow = load(publisherText) as Workflow
 const fixtureRoots: string[] = []
-const claudeReviewTools = ['Agent', 'Bash', 'Glob', 'Grep', 'Read', 'StructuredOutput']
 
 afterEach(() => {
   for (const root of fixtureRoots.splice(0)) rmSync(root, { force: true, recursive: true })
 })
 
-function createFixtureRoot(prefix: string): string {
+function fixtureRoot(prefix: string): string {
   const root = mkdtempSync(join(tmpdir(), prefix))
   fixtureRoots.push(root)
   return root
 }
 
-function getRunStep(jobName: string, stepId: string): string {
-  const step = parsedWorkflow.jobs[jobName].steps.find(({ id }) => id === stepId)
-  if (!step?.run) throw new Error(`Missing run step ${jobName}.${stepId}`)
-  return step.run
-}
-
-function getNamedStep(jobName: string, stepName: string): WorkflowStep {
-  const step = parsedWorkflow.jobs[jobName].steps.find(({ name }) => name === stepName)
-  if (!step) throw new Error(`Missing step ${jobName}.${stepName}`)
-  return step
-}
-
-function writeExecutable(path: string, contents: string): void {
+function executable(path: string, contents: string): void {
   writeFileSync(path, contents)
   chmodSync(path, 0o755)
 }
 
-function writeJsonLines(path: string, events: unknown[]): void {
-  writeFileSync(path, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`)
+function getStep(workflow: Workflow, jobName: string, stepName: string): WorkflowStep {
+  const step = workflow.jobs[jobName]?.steps?.find(({ name }) => name === stepName)
+  if (!step) throw new Error(`Missing step ${jobName}.${stepName}`)
+  return step
 }
 
-function claudeFinding(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    priority: 'P1',
-    title: 'Runtime ownership can drift',
-    path: 'src/main/acp/runtime.ts',
-    line: 100,
-    impact: 'A session can use the wrong runtime.',
-    recommendation: 'Validate ownership before sending.',
-    ...overrides
-  }
+function getRun(workflow: Workflow, jobName: string, stepName: string): string {
+  const run = getStep(workflow, jobName, stepName).run
+  if (!run) throw new Error(`Missing run script ${jobName}.${stepName}`)
+  return run
 }
 
-function claudeStructuredOutput(
-  findings: Record<string, unknown>[] = [],
-  verdict = findings.length > 0 ? 'needs changes' : 'mergeable'
-): Record<string, unknown> {
-  return {
-    verdict,
-    summary: findings.length > 0 ? 'Architecture changes are required.' : 'No issues found.',
-    findings
-  }
-}
-
-function git(cwd: string, ...args: string[]): void {
-  execFileSync('git', args, { cwd, stdio: 'ignore' })
-}
-
-function createMergeCommit(
-  files: Record<string, string | Buffer>,
-  baseFiles: Record<string, string | Buffer> = {}
-): string {
-  const root = createFixtureRoot('ai-review-context-')
-  git(root, 'init', '-b', 'main')
-  git(root, 'config', 'user.name', 'Test')
-  git(root, 'config', 'user.email', 'test@example.com')
-  writeFileSync(join(root, 'README.md'), 'base\n')
-  for (const [path, contents] of Object.entries(baseFiles))
-    writeFileSync(join(root, path), contents)
-  git(root, 'add', '.')
-  git(root, 'commit', '-m', 'base')
-  git(root, 'checkout', '-b', 'feature')
-  for (const [path, contents] of Object.entries(files)) writeFileSync(join(root, path), contents)
-  git(root, 'add', '.')
-  git(root, 'commit', '-m', 'feature')
-  git(root, 'checkout', 'main')
-  git(root, 'merge', '--no-ff', 'feature', '-m', 'merge')
-  return root
-}
-
-function readSimpleOutputs(path: string): Record<string, string> {
+function simpleOutputs(path: string): Record<string, string> {
   return Object.fromEntries(
     readFileSync(path, 'utf8')
       .trim()
@@ -128,84 +80,186 @@ function readSimpleOutputs(path: string): Record<string, string> {
   )
 }
 
-type ReviewComment = {
-  id: number
-  body: string | null
-  user: { login: string }
+type TargetOptions = {
+  event?: 'pull_request_target' | 'workflow_dispatch'
+  dispatchReviewer?: string
+  automaticMode?: 'both' | 'correctness' | 'architecture' | 'disabled'
+  enabled?: 'true' | 'false'
+  isFork?: boolean
+  forkMode?: 'disabled' | 'manual' | 'automatic'
 }
 
-function runCodexReviewGate(
-  existingReviews: number,
-  additionalComments: ReviewComment[] = [],
-  maxReviews = '20'
-): Record<string, string> {
-  const root = createFixtureRoot('ai-review-gate-')
-  const binDir = join(root, 'bin')
-  const githubOutput = join(root, 'github-output')
-  mkdirSync(binDir)
-
-  writeExecutable(
-    join(binDir, 'gh'),
+function runTarget(options: TargetOptions = {}): {
+  status: number | null
+  stderr: string
+  outputs: Record<string, string>
+} {
+  const root = fixtureRoot('dual-codex-target-')
+  const bin = join(root, 'bin')
+  const output = join(root, 'github-output')
+  mkdirSync(bin)
+  executable(
+    join(bin, 'gh'),
     `#!/usr/bin/env bash
 set -euo pipefail
-[[ "$1" == "api" ]]
-[[ "$2" == "--paginate" ]]
-[[ "$3" == "repos/$GH_REPO/issues/349/comments?per_page=100" ]]
-[[ "$4" == "--jq" ]]
-printf '%s' "$REVIEW_COMMENTS_JSON" | jq -r "$5"
+[[ "$1" == 'pr' && "$2" == 'view' ]]
+[[ " $* " == *' --repo aipoch/open-science '* ]]
+printf '%s' "$PR_JSON"
 `
   )
-
-  const comments: ReviewComment[] = [
-    ...Array.from({ length: existingReviews }, (_, id) => ({
-      id,
-      body: '<!-- ai-review:codex -->\nreview body',
-      user: { login: 'github-actions[bot]' }
-    })),
-    ...additionalComments
-  ]
-
-  const result = spawnSync('bash', ['-c', getRunStep('codex_review_gate', 'gate')], {
-    cwd: root,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      PATH: `${binDir}:${process.env.PATH}`,
-      REVIEW_COMMENTS_JSON: JSON.stringify(comments),
-      GH_TOKEN: 'test-token',
-      GH_REPO: 'aipoch/open-science',
-      PR_NUMBER: '349',
-      CODEX_REVIEW_MAX_ROUNDS: maxReviews,
-      GITHUB_OUTPUT: githubOutput,
-      GITHUB_STEP_SUMMARY: join(root, 'summary')
+  const event = options.event ?? 'pull_request_target'
+  const result = spawnSync(
+    'bash',
+    ['-c', getRun(mainWorkflow, 'review_target', 'Resolve pull request metadata')],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        PR_JSON: JSON.stringify({
+          number: 392,
+          headRefName: 'ci/dual-codex-review',
+          headRefOid: 'head-sha',
+          baseRefOid: 'base-sha',
+          title: 'ci(review): replace Claude with dual Codex reviews',
+          isCrossRepository: options.isFork ?? false,
+          state: 'OPEN',
+          mergeCommit: null
+        }),
+        GH_REPO: 'aipoch/open-science',
+        DISPATCH_PR_NUMBER: event === 'workflow_dispatch' ? '392' : '',
+        EVENT_PR_NUMBER: event === 'pull_request_target' ? '392' : '',
+        FORK_REVIEW_MODE: options.forkMode ?? 'manual',
+        ENABLE_CODEX_REVIEW: options.enabled ?? 'true',
+        CODEX_REVIEW_MODE: options.automaticMode ?? 'correctness',
+        DISPATCH_REVIEWER: options.dispatchReviewer ?? 'both',
+        REVIEW_EVENT: event,
+        GITHUB_OUTPUT: output
+      }
     }
-  })
-
-  if (result.status !== 0) {
-    throw new Error(`Codex review gate failed:\n${result.stdout}\n${result.stderr}`)
+  )
+  return {
+    status: result.status,
+    stderr: result.stderr,
+    outputs: result.status === 0 ? simpleOutputs(output) : {}
   }
-  return readSimpleOutputs(githubOutput)
 }
 
-async function runPostCodexFeedback(
-  existingReviews: number,
-  currentHeadSha = 'head-sha',
-  maxReviews = '20'
-): Promise<string[]> {
-  const script = getNamedStep('post_codex_feedback', 'Post Codex correctness review').with?.script
-  if (!script) throw new Error('Missing post_codex_feedback script')
+type ReviewComment = { body: string | null; user: { login: string } }
 
-  const marker = '<!-- ai-review:codex -->'
-  const comments = Array.from({ length: existingReviews }, () => ({
-    body: marker,
-    user: { login: 'github-actions[bot]' }
-  }))
+function runGate(
+  comments: ReviewComment[],
+  { correctness = 'true', architecture = 'true', max = '20' } = {}
+): { status: number | null; stderr: string; outputs: Record<string, string>; summary: string } {
+  const root = fixtureRoot('dual-codex-gate-')
+  const bin = join(root, 'bin')
+  const output = join(root, 'github-output')
+  const summary = join(root, 'summary')
+  mkdirSync(bin)
+  executable(
+    join(bin, 'gh'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == 'api' && "$2" == '--paginate' && "$3" == '--slurp' ]]
+printf '%s' "$COMMENTS_PAGES_JSON"
+`
+  )
+  const result = spawnSync(
+    'bash',
+    ['-c', getRun(mainWorkflow, 'codex_review_gate', 'Check Codex review counts')],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        COMMENTS_PAGES_JSON: JSON.stringify([comments]),
+        GH_REPO: 'aipoch/open-science',
+        PR_NUMBER: '392',
+        CORRECTNESS_ENABLED: correctness,
+        ARCHITECTURE_ENABLED: architecture,
+        CODEX_REVIEW_MAX_ROUNDS: max,
+        GITHUB_OUTPUT: output,
+        GITHUB_STEP_SUMMARY: summary
+      }
+    }
+  )
+  return {
+    status: result.status,
+    stderr: result.stderr,
+    outputs: result.status === 0 ? simpleOutputs(output) : {},
+    summary: result.status === 0 ? readFileSync(summary, 'utf8') : ''
+  }
+}
+
+function runReviewInputs(scope: 'correctness' | 'architecture'): {
+  prompt: string
+  instructions: string
+  schema: Record<string, unknown>
+  outputs: Record<string, string>
+} {
+  const root = fixtureRoot(`dual-codex-${scope}-inputs-`)
+  const output = join(root, 'github-output')
+  const result = spawnSync(
+    'bash',
+    ['-c', getRun(codexWorkflow, 'review', 'Build Codex review inputs')],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        RUNNER_TEMP: root,
+        PR_BRANCH: 'ci/dual-codex-review',
+        PR_DIFF_BASE: 'base-sha',
+        PR_TITLE: 'ci(review): replace Claude with dual Codex reviews',
+        REVIEW_SCOPE: scope,
+        REVIEW_SHA: 'review-sha',
+        GITHUB_OUTPUT: output
+      }
+    }
+  )
+  expect(result.status, result.stderr).toBe(0)
+  const outputs = simpleOutputs(output)
+  return {
+    prompt: readFileSync(outputs.prompt_file, 'utf8'),
+    instructions: readFileSync(outputs.instructions_file, 'utf8'),
+    schema: JSON.parse(readFileSync(outputs.schema_file, 'utf8')) as Record<string, unknown>,
+    outputs
+  }
+}
+
+async function normalize(raw: string, header: string): Promise<string> {
+  const script = getStep(codexWorkflow, 'review', 'Normalize Codex review').with?.script
+  if (!script) throw new Error('Missing normalization script')
+  let body = ''
+  const core = {
+    setOutput: vi.fn((name: string, value: string) => {
+      if (name === 'review_body') body = value
+    })
+  }
+  const processStub = { env: { CODEX_FINAL_MESSAGE: raw, REVIEW_HEADER: header } }
+  const run = new Function('core', 'process', `return (async () => {\n${script}\n})()`)
+  await run(core, processStub)
+  return body
+}
+
+function writeJsonLines(path: string, events: unknown[]): void {
+  writeFileSync(path, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`)
+}
+
+async function runPublisher({
+  currentHead = 'head-sha',
+  comments = [] as ReviewComment[],
+  maxRounds = '20'
+} = {}): Promise<{ postedBodies: string[]; output: string }> {
+  const script = getStep(publisherWorkflow, 'publish', 'Post Codex review').with?.script
+  if (!script) throw new Error('Missing publisher script')
   const postedBodies: string[] = []
+  let output = ''
   const github = {
     rest: {
-      pulls: {
-        get: vi.fn(async () => ({ data: { head: { sha: currentHeadSha } } }))
-      },
+      pulls: { get: vi.fn(async () => ({ data: { head: { sha: currentHead } } })) },
       issues: {
         listComments: vi.fn(),
         createComment: vi.fn(async ({ body }: { body: string }) => postedBodies.push(body))
@@ -214,15 +268,21 @@ async function runPostCodexFeedback(
     paginate: vi.fn(async () => comments)
   }
   const context = { repo: { owner: 'aipoch', repo: 'open-science' } }
-  const core = { notice: vi.fn(), setOutput: vi.fn() }
+  const core = {
+    notice: vi.fn(),
+    setOutput: vi.fn((name: string, value: string) => {
+      if (name === 'posted') output = value
+    })
+  }
   const processStub = {
     env: {
-      CODEX_REVIEW_BODY:
-        '## Codex Correctness Review\n**Verdict: mergeable**\n\n**No actionable findings.**',
-      PR_NUMBER: '349',
+      REVIEW_BODY: '## Codex Architecture Review\n\n**Verdict: mergeable**',
+      REVIEW_HEADER: '## Codex Architecture Review',
+      REVIEW_MARKER: '<!-- ai-review:codex-architecture -->',
+      PR_NUMBER: '392',
       REVIEW_HEAD_SHA: 'head-sha',
       REVIEW_RUN_ID: '1234',
-      CODEX_REVIEW_MAX_ROUNDS: maxReviews
+      CODEX_REVIEW_MAX_ROUNDS: maxRounds
     }
   }
   const run = new Function(
@@ -233,359 +293,259 @@ async function runPostCodexFeedback(
     `return (async () => {\n${script}\n})()`
   )
   await run(github, context, core, processStub)
-  return postedBodies
+  return { postedBodies, output }
 }
 
-async function runPostClaudeFeedback(currentHeadSha = 'head-sha'): Promise<string[]> {
-  const script = getNamedStep('post_claude_feedback', 'Post Claude architecture review').with
-    ?.script
-  if (!script) throw new Error('Missing post_claude_feedback script')
+describe('dual Codex workflow contract', () => {
+  it('parses all three workflows as YAML', () => {
+    expect(() => load(mainText)).not.toThrow()
+    expect(() => load(codexText)).not.toThrow()
+    expect(() => load(publisherText)).not.toThrow()
+  })
 
-  const postedBodies: string[] = []
-  const github = {
-    rest: {
-      pulls: {
-        get: vi.fn(async () => ({ data: { head: { sha: currentHeadSha } } }))
-      },
-      issues: {
-        createComment: vi.fn(async ({ body }: { body: string }) => postedBodies.push(body))
+  it('removes Claude, Anthropic, and CodeGraph runtime configuration', () => {
+    const all = `${mainText}\n${codexText}\n${publisherText}`
+    expect(all).not.toMatch(/Claude|CLAUDE|Anthropic|ANTHROPIC|CodeGraph|CODEGRAPH/)
+  })
+
+  it('supports automatic and manual reviewer switching', () => {
+    expect(mainText).toContain("vars.CODEX_REVIEW_MODE || 'correctness'")
+    expect(mainText).toMatch(
+      /reviewer:\n(?:\s+.*\n)*?\s+default: both\n(?:\s+.*\n)*?\s+options:\n\s+- both\n\s+- correctness\n\s+- architecture/
+    )
+
+    expect(runTarget().outputs).toMatchObject({
+      correctness_enabled: 'true',
+      architecture_enabled: 'false'
+    })
+    expect(runTarget({ automaticMode: 'both' }).outputs).toMatchObject({
+      correctness_enabled: 'true',
+      architecture_enabled: 'true'
+    })
+    expect(runTarget({ automaticMode: 'architecture' }).outputs).toMatchObject({
+      correctness_enabled: 'false',
+      architecture_enabled: 'true'
+    })
+    expect(
+      runTarget({
+        event: 'workflow_dispatch',
+        automaticMode: 'architecture',
+        dispatchReviewer: 'correctness'
+      }).outputs
+    ).toMatchObject({ correctness_enabled: 'true', architecture_enabled: 'false' })
+    expect(runTarget({ enabled: 'false' }).outputs).toMatchObject({
+      correctness_enabled: 'false',
+      architecture_enabled: 'false'
+    })
+    expect(runTarget({ event: 'workflow_dispatch' }).outputs).toMatchObject({
+      correctness_enabled: 'true',
+      architecture_enabled: 'true'
+    })
+  })
+
+  it('rejects removed manual reviewer aliases', () => {
+    const result = runTarget({ event: 'workflow_dispatch', dispatchReviewer: 'codex' })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('Dispatch reviewer must be both, correctness, or architecture.')
+  })
+
+  it('keeps fork review policy independent from reviewer selection', () => {
+    expect(runTarget({ isFork: true, forkMode: 'manual' }).outputs.review_allowed).toBe('false')
+    expect(
+      runTarget({
+        event: 'workflow_dispatch',
+        dispatchReviewer: 'architecture',
+        isFork: true,
+        forkMode: 'manual'
+      }).outputs.review_allowed
+    ).toBe('true')
+    expect(runTarget({ isFork: true, forkMode: 'automatic' }).outputs.review_allowed).toBe('true')
+  })
+
+  it('rejects an invalid automatic review mode', () => {
+    const root = fixtureRoot('dual-codex-invalid-mode-')
+    const result = spawnSync(
+      'bash',
+      ['-c', getRun(mainWorkflow, 'review_target', 'Resolve pull request metadata')],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          FORK_REVIEW_MODE: 'manual',
+          CODEX_REVIEW_MODE: 'claude',
+          ENABLE_CODEX_REVIEW: 'true'
+        }
       }
-    }
-  }
-  const context = { repo: { owner: 'aipoch', repo: 'open-science' } }
-  const core = { notice: vi.fn(), setOutput: vi.fn() }
-  const processStub = {
-    env: {
-      REVIEW_BODY: '## Claude Architecture Review\n**Verdict: mergeable**',
-      PR_NUMBER: '349',
-      REVIEW_HEAD_SHA: 'head-sha',
-      REVIEW_RUN_ID: '1234'
-    }
-  }
-  const run = new Function(
-    'github',
-    'context',
-    'core',
-    'process',
-    `return (async () => {\n${script}\n})()`
-  )
-  await run(github, context, core, processStub)
-  return postedBodies
-}
-
-async function normalizeCodexReview(rawReview: string): Promise<string> {
-  const script = getNamedStep('codex_review', 'Normalize Codex review').with?.script
-  if (!script) throw new Error('Missing Codex review normalization script')
-
-  let reviewBody = ''
-  const core = {
-    setOutput: vi.fn((name: string, value: string) => {
-      if (name === 'review_body') reviewBody = value
-    })
-  }
-  const processStub = { env: { CODEX_FINAL_MESSAGE: rawReview } }
-  const run = new Function('core', 'process', `return (async () => {\n${script}\n})()`)
-  await run(core, processStub)
-  return reviewBody
-}
-
-describe('AI review workflow contract', () => {
-  it('is valid YAML', () => {
-    expect(() => load(reviewWorkflow)).not.toThrow()
+    )
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('CODEX_REVIEW_MODE must be')
   })
 
-  it('keeps the verdict format consumed by the outcome job in both normalizers', () => {
-    expect(getRunStep('claude_review', 'extract_claude')).toContain(
-      '"**Verdict: \\(.verdict)**\\n\\n"'
-    )
-    expect(getNamedStep('codex_review', 'Normalize Codex review').with?.script).toContain(
-      '`**Verdict: ${result.verdict}**`'
-    )
-  })
-
-  it('applies labels only after both reviewer publish jobs have settled', () => {
-    const outcome = parsedWorkflow.jobs.apply_review_outcome
-    const step = getNamedStep(
-      'apply_review_outcome',
-      'Apply ready-to-merge from published review outputs'
-    )
-
-    expect(outcome.if).toContain('always()')
-    expect(outcome.needs).toEqual([
-      'review_target',
-      'claude_review',
-      'post_claude_feedback',
-      'codex_review',
-      'post_codex_feedback'
-    ])
-    expect(step.env).toMatchObject({
-      CLAUDE_POSTED: '${{ needs.post_claude_feedback.outputs.posted }}',
-      CODEX_POSTED: '${{ needs.post_codex_feedback.outputs.posted }}'
-    })
-    expect(parsedWorkflow.jobs.post_claude_feedback.outputs?.posted).toBe(
-      '${{ steps.post.outputs.posted }}'
-    )
-    expect(parsedWorkflow.jobs.post_codex_feedback.outputs?.posted).toBe(
-      '${{ steps.post.outputs.posted }}'
-    )
-  })
-
-  it('retries transient GitHub API failures while publishing reviews and labels', () => {
-    const steps = [
-      getNamedStep('post_claude_feedback', 'Post Claude architecture review'),
-      getNamedStep('post_codex_feedback', 'Post Codex correctness review'),
-      getNamedStep('apply_review_outcome', 'Apply ready-to-merge from published review outputs')
+  it('counts correctness and architecture review rounds independently', () => {
+    const comments: ReviewComment[] = [
+      ...Array.from({ length: 19 }, () => ({
+        body: '<!-- ai-review:codex -->\n## Codex Correctness Review',
+        user: { login: 'github-actions[bot]' }
+      })),
+      ...Array.from({ length: 20 }, () => ({
+        body: '<!-- ai-review:codex-architecture -->\n## Codex Architecture Review',
+        user: { login: 'github-actions[bot]' }
+      })),
+      {
+        body: '<!-- ai-review:codex-architecture -->',
+        user: { login: 'contributor' }
+      }
     ]
-
-    for (const step of steps) expect(step.with?.retries).toBe(3)
+    const result = runGate(comments)
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.outputs).toMatchObject({
+      correctness_should_run: 'true',
+      architecture_should_run: 'false'
+    })
+    expect(result.summary).toContain('correctness review round 20 of 20')
+    expect(result.summary).toContain('architecture review skipped')
   })
 
-  it('supports disabled, manual, and automatic fork review modes', () => {
-    const targetStep = getNamedStep('review_target', 'Resolve pull request metadata')
-
-    expect(targetStep.env?.FORK_REVIEW_MODE).toBe("${{ vars.FORK_REVIEW_MODE || 'manual' }}")
-    expect(targetStep.run).toContain('disabled|manual|automatic')
-    expect(targetStep.run).toContain('isCrossRepository')
-    expect(parsedWorkflow.jobs.claude_review.if).toContain(
-      "needs.review_target.outputs.fork_mode == 'automatic'"
-    )
-    expect(parsedWorkflow.jobs.codex_review_gate.if).toContain(
-      "needs.review_target.outputs.fork_mode != 'disabled'"
-    )
+  it('skips an unselected reviewer without consuming its round', () => {
+    const result = runGate([], { correctness: 'false', architecture: 'true', max: '0' })
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.outputs).toMatchObject({
+      correctness_should_run: 'false',
+      architecture_should_run: 'true'
+    })
+    expect(result.summary).not.toContain('correctness review round')
+    expect(result.summary).toContain('architecture review round 1 (unlimited)')
   })
 
-  it('externalizes review models to repository variables', () => {
-    expect(reviewWorkflow).toContain("vars.CLAUDE_REVIEW_MODEL || 'claude-sonnet-5'")
-    expect(reviewWorkflow).toContain("vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol'")
+  it('invokes the reusable Codex workflow twice with independent backends', () => {
+    const correctness = mainWorkflow.jobs.codex_correctness_review
+    const architecture = mainWorkflow.jobs.codex_architecture_review
+    expect(correctness.uses).toBe('./.github/workflows/ai-codex-review.yml')
+    expect(architecture.uses).toBe('./.github/workflows/ai-codex-review.yml')
+    expect(correctness.permissions).toEqual({ contents: 'read' })
+    expect(architecture.permissions).toEqual({ contents: 'read' })
+    expect(correctness.with).toMatchObject({
+      scope: 'correctness',
+      model: "${{ vars.CODEX_CORRECTNESS_MODEL || vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}",
+      effort: "${{ vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_REVIEW_EFFORT || 'high' }}"
+    })
+    expect(correctness.secrets).toEqual({
+      OPENAI_API_KEY: '${{ secrets.CODEX_CORRECTNESS_API_KEY || secrets.OPENAI_API_KEY }}',
+      CODEX_BASE_URL: '${{ secrets.CODEX_CORRECTNESS_BASE_URL || secrets.CODEX_BASE_URL }}'
+    })
+    expect(architecture.with).toMatchObject({
+      scope: 'architecture',
+      model: "${{ vars.CODEX_ARCHITECTURE_MODEL || vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}",
+      effort: "${{ vars.CODEX_ARCHITECTURE_EFFORT || vars.CODEX_REVIEW_EFFORT || 'high' }}"
+    })
+    expect(architecture.secrets).toEqual({
+      OPENAI_API_KEY: '${{ secrets.CODEX_ARCHITECTURE_API_KEY || secrets.OPENAI_API_KEY }}',
+      CODEX_BASE_URL: '${{ secrets.CODEX_ARCHITECTURE_BASE_URL || secrets.CODEX_BASE_URL }}'
+    })
   })
 
-  it('exposes workflow_dispatch inputs for the pull request and selected reviewer', () => {
-    expect(reviewWorkflow).toContain('workflow_dispatch:')
-    expect(reviewWorkflow).toContain('pull_request_number')
-    expect(reviewWorkflow).toContain('enable_codegraph')
-    expect(reviewWorkflow).toMatch(/reviewer:\n\s+description: Reviewer to run/)
-    expect(reviewWorkflow).toMatch(/options:\n\s+- both\n\s+- claude\n\s+- codex/)
+  it('gives each Codex reviewer a distinct, non-overlapping focus', () => {
+    const correctness = runReviewInputs('correctness')
+    const architecture = runReviewInputs('architecture')
+    expect(correctness.outputs.review_header).toBe('## Codex Correctness Review')
+    expect(correctness.instructions).toContain('Branch name valid: true')
+    expect(correctness.prompt).toContain('correctness, security, regression')
+    expect(architecture.outputs.review_header).toBe('## Codex Architecture Review')
+    expect(architecture.instructions).not.toContain('Branch name valid')
+    expect(architecture.prompt).toContain('Focus exclusively on architecture and integration')
+    expect(architecture.prompt).toContain('IPC ownership')
+    expect(correctness.schema).toHaveProperty('properties')
   })
 
-  it('runs again when a pull request receives new commits', () => {
-    expect(reviewWorkflow).toContain('types: [opened, synchronize, reopened]')
-  })
-
-  it('lets manual dispatch select either reviewer subject to the configured fork mode', () => {
-    const dispatchGuards = reviewWorkflow.match(/github\.event_name == 'workflow_dispatch'/g)
-    expect(dispatchGuards?.length).toBeGreaterThanOrEqual(3)
-    expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'both'/g)?.length).toBe(2)
-    expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'claude'/g)?.length).toBe(1)
-    expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'codex'/g)?.length).toBe(1)
-    expect(reviewWorkflow).toContain("needs.review_target.outputs.fork_mode != 'disabled'")
-  })
-
-  it('keeps pull_request_target checkout on the GitHub merge ref', () => {
-    const expectedRef =
-      "${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', needs.review_target.outputs.number) || needs.review_target.outputs.review_sha }}"
-    for (const job of ['claude_review', 'codex_review']) {
-      expect(getNamedStep(job, 'Checkout pull request review commit').with?.ref).toBe(expectedRef)
-      expect(getNamedStep(job, 'Resolve review comparison base').run).toContain(
-        'git rev-parse HEAD^1'
-      )
+  it('keeps both Codex reviewers static and read-only', () => {
+    const inputs = getRun(codexWorkflow, 'review', 'Build Codex review inputs')
+    const run = getRun(codexWorkflow, 'review', 'Run Codex review')
+    for (const command of ['install dependencies', 'lint', 'tests', 'typecheck', 'build']) {
+      expect(inputs).toContain(command)
     }
+    expect(run).toContain('--config \'default_permissions=":read-only"\'')
+    expect(run).toContain('--ephemeral')
+    expect(run).toContain('--ignore-rules')
+    expect(run).toContain('--output-schema "$CODEX_SCHEMA_FILE"')
   })
 
-  it('passes --repo to gh pr view so it works before checkout on a clean runner', () => {
-    expect(reviewWorkflow).toContain('--repo "${{ github.repository }}"')
+  it('captures raw JSONL without mirroring it into the Actions log', () => {
+    const run = getRun(codexWorkflow, 'review', 'Run Codex review')
+    expect(run).toContain('--json')
+    expect(run).toContain('> "$execution_file"')
+    expect(run).not.toContain('tee "$execution_file"')
   })
 
-  it('lets Claude use Bash only through its built-in read-only command classifier', () => {
-    const step = getNamedStep('claude_review', 'Run Claude architecture review')
-    const command = step.run
-
-    expect(command).toContain("tools='Read,Glob,Grep,Bash,Agent'")
-    expect(command).toContain('--tools "$tools"')
-    expect(command).toContain('--effort "$CLAUDE_REVIEW_EFFORT"')
-    expect(step.env?.CLAUDE_REVIEW_EFFORT).toBe("${{ vars.CLAUDE_REVIEW_EFFORT || 'high' }}")
-    expect(command).toContain('--permission-mode dontAsk')
-    expect(command).toContain("allowed_tools='Read,Glob,Grep,Agent,StructuredOutput'")
-    expect(command).toContain('--allowedTools "$allowed_tools"')
-    expect(command).not.toContain('--permission-mode bypassPermissions')
-    expect(command).not.toContain('--max-turns')
-    expect(parsedWorkflow.jobs.claude_review['timeout-minutes']).toBe(30)
-    expect(command).toContain('--setting-sources ""')
-    expect(command).toContain('--settings "$CLAUDE_SETTINGS_FILE"')
-    expect(command).toContain('--agents "$CLAUDE_REVIEW_AGENTS"')
-    expect(command).toContain('--disable-slash-commands')
-    expect(step.env).toMatchObject({
-      CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: '1',
-      CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1'
-    })
-    expect(command).not.toContain('--safe-mode')
-    expect(command).toContain('--strict-mcp-config')
-    expect(command).not.toMatch(/--allowedTools[^\n]*Bash/)
-    expect(reviewWorkflow).toContain('Build Claude review prompt')
-    expect(reviewWorkflow).toContain('post_claude_feedback')
-  })
-
-  it('bounds Claude subagent parallelism and records lifecycle hooks', () => {
-    const runtimeStep = getNamedStep('claude_review', 'Build Claude runtime configuration')
-    const reviewStep = getNamedStep('claude_review', 'Run Claude architecture review')
-    const telemetryStep = getNamedStep('claude_review', 'Report Claude review telemetry')
-
-    expect(reviewStep.env).toMatchObject({
-      CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION: '2',
-      CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '2',
-      CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: '1'
-    })
-    expect(runtimeStep.run).toContain('SessionStart')
-    expect(runtimeStep.run).toContain('PostToolUse')
-    expect(runtimeStep.run).toContain('SubagentStart')
-    expect(runtimeStep.run).toContain('SubagentStop')
-    expect(runtimeStep.run).toContain('SessionEnd')
-    expect(runtimeStep.env).toMatchObject({
-      SUBAGENT_EFFORT: "${{ vars.CLAUDE_REVIEW_SUBAGENT_EFFORT || 'medium' }}",
-      SUBAGENT_MAX_TURNS: "${{ vars.CLAUDE_REVIEW_SUBAGENT_MAX_TURNS || '8' }}"
-    })
-    expect(runtimeStep.run).toContain('effort: $effort')
-    expect(runtimeStep.run).toContain('maxTurns: $max_turns')
-    expect(telemetryStep.if).toBe('${{ always() }}')
-    expect(telemetryStep.run).toContain('Claude model turns')
-    expect(telemetryStep.run).toContain('cache_read_input_tokens')
-    expect(telemetryStep.run).toContain('Claude init MCP servers')
-    expect(telemetryStep.run).toContain('GITHUB_STEP_SUMMARY')
-  })
-
-  it('keeps CodeGraph opt-in and supplies it through a trusted MCP config', () => {
-    const optionsStep = getNamedStep('claude_review', 'Resolve Claude review options')
-    const installStep = getNamedStep('claude_review', 'Install CodeGraph')
-    const indexStep = getNamedStep('claude_review', 'Build CodeGraph index')
-    const runtimeStep = getNamedStep('claude_review', 'Build Claude runtime configuration')
-    const reviewStep = getNamedStep('claude_review', 'Run Claude architecture review')
-    const extractStep = getNamedStep('claude_review', 'Extract Claude review')
-    const codegraphEnabled = '${{ steps.claude_options.outputs.codegraph_enabled }}'
-
-    expect(optionsStep.env?.CODEGRAPH_ENABLED).toContain(
-      "github.event.inputs.enable_codegraph == 'true'"
+  it('runs the real workflow shell against a fake Codex CLI', () => {
+    const root = fixtureRoot('dual-codex-exec-')
+    const bin = join(root, 'bin')
+    const argsFile = join(root, 'args.json')
+    const stdinFile = join(root, 'stdin.txt')
+    const output = join(root, 'github-output')
+    const instructions = join(root, 'instructions.txt')
+    const prompt = join(root, 'prompt.txt')
+    const schema = join(root, 'schema.json')
+    mkdirSync(bin)
+    writeFileSync(instructions, 'Review safely.\n')
+    writeFileSync(prompt, 'Review this pull request.\n')
+    writeFileSync(schema, '{}\n')
+    executable(
+      join(bin, 'codex'),
+      `#!/usr/bin/env bash
+set -euo pipefail
+jq -cn --args '$ARGS.positional' -- "$@" > "$CAPTURE_ARGS"
+args=("$@")
+output_file=''
+for (( index = 0; index < \${#args[@]}; index++ )); do
+  if [[ "\${args[index]}" == '--output-last-message' ]]; then
+    output_file="\${args[index + 1]}"
+  fi
+done
+cat > "$CAPTURE_STDIN"
+printf '%s' '{"verdict":"mergeable","summary":"No issues found.","findings":[]}' > "$output_file"
+printf '%s\n' \\
+  '{"type":"thread.started","thread_id":"thread-1"}' \\
+  '{"type":"turn.started"}' \\
+  '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":8,"output_tokens":2,"reasoning_output_tokens":1}}'
+`
     )
-    expect(optionsStep.env?.CODEGRAPH_ENABLED).toContain("vars.ENABLE_CLAUDE_CODEGRAPH == 'true'")
-    expect(reviewWorkflow.match(/github\.event\.inputs\.enable_codegraph == 'true'/g)).toHaveLength(
-      1
-    )
-    expect(reviewWorkflow.match(/vars\.ENABLE_CLAUDE_CODEGRAPH == 'true'/g)).toHaveLength(1)
-    expect(installStep.if).toBe("${{ steps.claude_options.outputs.codegraph_enabled == 'true' }}")
-    expect(installStep.run).toContain('@colbymchenry/codegraph@1.5.0')
-    expect(installStep.run).not.toContain('codegraph install')
-    expect(indexStep.if).toBe("${{ steps.claude_options.outputs.codegraph_enabled == 'true' }}")
-    expect(indexStep.env?.CODEGRAPH_TELEMETRY).toBe('0')
-    expect(indexStep.run).toContain('codegraph init')
-    expect(runtimeStep.env?.CODEGRAPH_ENABLED).toBe(codegraphEnabled)
-    expect(reviewStep.env?.CODEGRAPH_ENABLED).toBe(codegraphEnabled)
-    expect(extractStep.env?.CODEGRAPH_ENABLED).toBe(codegraphEnabled)
-    expect(runtimeStep.run).toContain('args: ["serve", "--mcp"]')
-    expect(reviewStep.run).toContain('--mcp-config "$CLAUDE_MCP_CONFIG_FILE"')
-  })
-
-  it('captures Codex JSON events for an always-run telemetry report', () => {
-    const reviewStep = getNamedStep('codex_review', 'Run Codex correctness review')
-    const telemetryStep = getNamedStep('codex_review', 'Report Codex review telemetry')
-
-    expect(reviewStep.run).toContain('--json')
-    expect(reviewStep.run).toContain('| tee "$execution_file"')
-    expect(telemetryStep.if).toBe('${{ always() }}')
-    expect(telemetryStep.run).toContain('Codex turns:')
-    expect(telemetryStep.run).toContain('reasoning_output_tokens')
-    expect(telemetryStep.run).toContain('Observed item types')
-    expect(telemetryStep.run).toContain('GITHUB_STEP_SUMMARY')
-  })
-
-  it('reports Claude per-turn usage and hook lifecycle counts', () => {
-    const root = createFixtureRoot('ai-review-claude-telemetry-')
-    const executionFile = join(root, 'execution.jsonl')
-    const hookLog = join(root, 'hooks.jsonl')
-    const summary = join(root, 'summary.md')
-    writeJsonLines(executionFile, [
-      {
-        type: 'assistant',
-        message: {
-          id: 'turn-1',
-          model: 'claude-sonnet-5',
-          usage: {
-            input_tokens: 10,
-            cache_read_input_tokens: 100,
-            cache_creation_input_tokens: 20,
-            output_tokens: 30
-          }
-        }
-      },
-      // Streamed content can repeat a message id; telemetry must count that model turn once.
-      {
-        type: 'assistant',
-        message: {
-          id: 'turn-1',
-          model: 'claude-sonnet-5',
-          usage: {
-            input_tokens: 10,
-            cache_read_input_tokens: 100,
-            cache_creation_input_tokens: 20,
-            output_tokens: 30
-          }
-        }
-      },
-      {
-        type: 'assistant',
-        message: {
-          id: 'turn-2',
-          model: 'claude-sonnet-5',
-          usage: {
-            input_tokens: 5,
-            cache_read_input_tokens: 200,
-            cache_creation_input_tokens: 0,
-            output_tokens: 40
-          }
-        }
-      },
-      {
-        type: 'result',
-        subtype: 'success',
-        num_turns: 2,
-        duration_api_ms: 1234,
-        total_cost_usd: 0.42
-      }
-    ])
-    writeJsonLines(hookLog, [
-      { hook_event_name: 'SubagentStart' },
-      { hook_event_name: 'PostToolUse' },
-      { hook_event_name: 'PostToolUse' },
-      { hook_event_name: 'SubagentStop' }
-    ])
-
-    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'claude_telemetry')], {
+    const result = spawnSync('bash', ['-c', getRun(codexWorkflow, 'review', 'Run Codex review')], {
       cwd: root,
       encoding: 'utf8',
       env: {
         ...process.env,
-        EXECUTION_FILE: executionFile,
-        HOOK_LOG: hookLog,
-        DURATION_SECONDS: '3',
-        GITHUB_STEP_SUMMARY: summary
+        PATH: `${bin}:${process.env.PATH}`,
+        CAPTURE_ARGS: argsFile,
+        CAPTURE_STDIN: stdinFile,
+        CODEX_EFFORT: 'high',
+        CODEX_HOME: join(root, 'codex-home'),
+        CODEX_INSTRUCTIONS_FILE: instructions,
+        CODEX_MODEL: 'codex-auto-review',
+        CODEX_PROMPT_FILE: prompt,
+        CODEX_SCHEMA_FILE: schema,
+        GITHUB_OUTPUT: output,
+        GITHUB_WORKSPACE: root,
+        RUNNER_TEMP: root
       }
     })
-
     expect(result.status, result.stderr).toBe(0)
-    expect(result.stdout).toContain('Claude model turns: reported=2, observed=2')
-    expect(result.stdout).toContain(
-      'Claude result: subtype=success, terminal_reason=unknown, structured_output=false'
+    expect(result.stdout).not.toContain('thread.started')
+    expect(readFileSync(join(root, 'codex-execution.jsonl'), 'utf8')).toContain(
+      '"type":"turn.completed"'
     )
-    expect(result.stdout).toContain('1  claude-sonnet-5  10  100  20  30')
-    expect(result.stdout).toContain('PostToolUse: 2')
-    const summaryText = readFileSync(summary, 'utf8')
-    expect(summaryText).toContain('| 2 | claude-sonnet-5 | 5 | 200 | 0 | 40 |')
-    expect(summaryText).toContain('- `SubagentStart`: 1')
+    const args = JSON.parse(readFileSync(argsFile, 'utf8')) as string[]
+    expect(args).toContain('--json')
+    expect(args).toContain('default_permissions=":read-only"')
+    expect(readFileSync(stdinFile, 'utf8')).toBe('Review this pull request.\n')
+    expect(readFileSync(output, 'utf8')).toContain('"verdict":"mergeable"')
   })
 
-  it('reports Codex turns, token usage, and unique tool calls', () => {
-    const root = createFixtureRoot('ai-review-codex-telemetry-')
-    const executionFile = join(root, 'execution.jsonl')
-    const summary = join(root, 'summary.md')
-    writeJsonLines(executionFile, [
-      { type: 'thread.started', thread_id: 'thread-1' },
+  it('reports turns, tokens, and unique tool calls to the step summary', () => {
+    const root = fixtureRoot('dual-codex-telemetry-')
+    const execution = join(root, 'execution.jsonl')
+    const summary = join(root, 'summary')
+    writeJsonLines(execution, [
       { type: 'turn.started' },
       {
         type: 'item.started',
@@ -597,11 +557,7 @@ describe('AI review workflow contract', () => {
       },
       {
         type: 'item.completed',
-        item: { id: 'mcp-1', type: 'mcp_tool_call', status: 'completed' }
-      },
-      {
-        type: 'item.completed',
-        item: { id: 'reasoning-1', type: 'reasoning', status: 'completed' }
+        item: { id: 'message-1', type: 'agent_message', status: 'completed' }
       },
       {
         type: 'turn.completed',
@@ -611,742 +567,144 @@ describe('AI review workflow contract', () => {
           output_tokens: 20,
           reasoning_output_tokens: 5
         }
-      },
-      { type: 'turn.started' },
-      {
-        type: 'item.started',
-        item: { id: 'web-1', type: 'web_search', status: 'in_progress' }
-      },
-      {
-        type: 'item.failed',
-        item: { id: 'web-1', type: 'web_search', status: 'failed' }
-      },
-      { type: 'error', message: 'request failed' },
-      { type: 'turn.failed', error: { message: 'request failed' } }
-    ])
-
-    const result = spawnSync('bash', ['-c', getRunStep('codex_review', 'codex_telemetry')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        CODEX_EFFORT: 'high',
-        CODEX_MODEL: 'gpt-5.6-sol',
-        DURATION_SECONDS: '7',
-        EXECUTION_FILE: executionFile,
-        GITHUB_STEP_SUMMARY: summary
       }
-    })
-
+    ])
+    const result = spawnSync(
+      'bash',
+      ['-c', getRun(codexWorkflow, 'review', 'Report Codex review telemetry')],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          CODEX_EFFORT: 'high',
+          CODEX_MODEL: 'codex-auto-review',
+          DURATION_SECONDS: '7',
+          EXECUTION_FILE: execution,
+          REVIEW_SCOPE: 'architecture',
+          GITHUB_STEP_SUMMARY: summary
+        }
+      }
+    )
     expect(result.status, result.stderr).toBe(0)
-    expect(result.stdout).toContain('Codex turns: started=2, completed=1, failed=1')
-    expect(result.stdout).toContain(
-      'Codex items: unique=4, tool_calls=3, started=2, completed=3, failed=1'
-    )
-    expect(result.stdout).toContain(
-      'Codex tokens: input=100, cached_input=80, output=20, reasoning_output=5'
-    )
-    expect(result.stdout).toContain('command_execution: 1')
+    expect(result.stdout).toContain('Codex items: unique=2, tool_calls=1, failed=0')
+    expect(result.stdout).toContain('Codex tokens: input=100, cached_input=80')
     const summaryText = readFileSync(summary, 'utf8')
+    expect(summaryText).toContain('### Codex architecture review telemetry')
     expect(summaryText).toContain('| 1 | 100 | 80 | 20 | 5 |')
-    expect(summaryText).toContain('| `mcp_tool_call` | 1 |')
-    expect(summaryText).toContain(
-      'Tokens: 100 input; 80 cached input; 20 output; 5 reasoning output'
-    )
-    expect(summaryText).toContain('Responses API request count: not exposed')
+    expect(summaryText).toContain('| `command_execution` | 1 |')
   })
 
-  it('keeps both reviewers on static code inspection instead of running project checks', () => {
-    const claudePrompt = getRunStep('claude_review', 'context')
-    const codexPrompt = getRunStep('codex_review', 'codex_args')
-    const prohibitedChecks = ['install dependencies', 'lint', 'tests', 'typecheck', 'build']
-
-    for (const check of prohibitedChecks) {
-      expect(claudePrompt).toContain(check)
-      expect(codexPrompt).toContain(check)
-    }
-  })
-
-  it('keeps non-blocking Claude hardening suggestions out of findings', () => {
-    const claudePrompt = getRunStep('claude_review', 'context')
-
-    expect(claudePrompt).toContain('concrete problem in the current change')
-    expect(claudePrompt).toContain('hypothetical future drift')
-    expect(claudePrompt).toContain('do not report that accepted trade-off')
-    expect(claudePrompt).toContain('must not change a mergeable verdict to needs changes')
-  })
-
-  it('runs Claude with an explicit Sonnet model and endpoint-compatible output framing', () => {
-    const step = getNamedStep('claude_review', 'Run Claude architecture review')
-    const installStep = getNamedStep('claude_review', 'Install Claude CLI')
-
-    expect(installStep.run).toContain('@anthropic-ai/claude-code@2.1.218')
-    expect(installStep.run).not.toContain('--ignore-scripts')
-    expect(installStep.run).toContain('claude --help')
-    expect(installStep.run).toContain('--agents')
-    expect(installStep.run).toContain('--disable-slash-commands')
-    expect(installStep.run).toContain('--mcp-config')
-    expect(installStep.run).toContain('--setting-sources')
-    expect(step.env?.CLAUDE_MODEL).toBe("${{ vars.CLAUDE_REVIEW_MODEL || 'claude-sonnet-5' }}")
-    expect(step.env?.ANTHROPIC_API_KEY).toBe('${{ secrets.ANTHROPIC_AUTH_TOKEN }}')
-    expect(step.run).toContain('--output-format stream-json')
-    expect(step.run).toContain('Claude CLI failed: subtype=')
-    expect(step.run).toContain('--json-schema "$CLAUDE_REVIEW_SCHEMA"')
-    expect(step.env).not.toHaveProperty('ANTHROPIC_DEFAULT_SONNET_MODEL')
-  })
-
-  it('extracts a valid review when Claude exits nonzero after producing structured output', () => {
-    const root = createFixtureRoot('ai-review-claude-blocking-limit-')
-    const binDir = join(root, 'bin')
-    const promptFile = join(root, 'prompt.md')
-    const runOutput = join(root, 'run-output')
-    const extractOutput = join(root, 'extract-output')
-    mkdirSync(binDir)
-    writeFileSync(promptFile, 'Review this pull request.\n')
-    writeExecutable(
-      join(binDir, 'claude'),
-      `#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' '{"type":"system","subtype":"init","tools":["Agent","Bash","Glob","Grep","Read","StructuredOutput"]}'
-printf '%s\\n' '{"type":"result","subtype":"success","terminal_reason":"blocking_limit","structured_output":{"verdict":"mergeable","summary":"No issues found.","findings":[]}}'
-exit 1
-`
-    )
-
-    const runResult = spawnSync('bash', ['-c', getRunStep('claude_review', 'run_claude')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        PATH: `${binDir}:${process.env.PATH}`,
-        RUNNER_TEMP: root,
-        CLAUDE_PROMPT_FILE: promptFile,
-        CLAUDE_MODEL: 'claude-sonnet-5',
-        CLAUDE_REVIEW_EFFORT: 'high',
-        CLAUDE_REVIEW_SCHEMA: '{}',
-        CLAUDE_SETTINGS_FILE: join(root, 'settings.json'),
-        CLAUDE_MCP_CONFIG_FILE: join(root, 'mcp.json'),
-        CLAUDE_REVIEW_AGENTS: '{}',
-        CLAUDE_HOOK_LOG: join(root, 'hooks.jsonl'),
-        CODEGRAPH_ENABLED: 'false',
-        GITHUB_OUTPUT: runOutput
-      }
-    })
-
-    expect(runResult.status, runResult.stderr).toBe(0)
-    const executionFile = readSimpleOutputs(runOutput).execution_file
-    const extractResult = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        EXECUTION_FILE: executionFile,
-        GITHUB_OUTPUT: extractOutput
-      }
-    })
-
-    expect(extractResult.status, extractResult.stderr).toBe(0)
-    expect(readFileSync(extractOutput, 'utf8')).toContain('**Verdict: mergeable**')
-  })
-
-  it('allows Codex non-write actors only for explicitly automatic fork reviews', () => {
-    const codexStep = getNamedStep('codex_review', 'Prepare Codex review runtime')
-    const automaticForkExpression =
-      "${{ needs.review_target.outputs.is_fork == 'true' && needs.review_target.outputs.fork_mode == 'automatic' && '*' || '' }}"
-
-    expect(codexStep.with?.['allow-users']).toBe(automaticForkExpression)
-  })
-
-  it('fails closed when Claude emits assistant text without structured output', () => {
-    const root = createFixtureRoot('ai-review-claude-output-')
-    const executionFile = join(root, 'execution.json')
-    const githubOutput = join(root, 'github-output')
-    writeJsonLines(executionFile, [
-      { type: 'system', subtype: 'init', tools: claudeReviewTools },
-      {
-        type: 'assistant',
-        message: {
-          content: [
-            { type: 'tool_use', name: 'Read', input: { file_path: 'src/main/acp/runtime.ts' } },
-            { type: 'text', text: 'draft' }
-          ]
-        }
-      },
-      {
-        type: 'assistant',
-        message: {
-          content: [
-            { type: 'text', text: '## Claude Architecture Review' },
-            { type: 'text', text: '**Verdict: mergeable**' }
-          ]
-        }
-      },
-      { type: 'result', subtype: 'success' }
-    ])
-
-    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
-    })
-
-    expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('no structured review')
-  })
-
-  it('fails closed when Claude emits only an unstructured result event', () => {
-    const root = createFixtureRoot('ai-review-claude-result-')
-    const executionFile = join(root, 'execution.jsonl')
-    const githubOutput = join(root, 'github-output')
-    writeJsonLines(executionFile, [
-      { type: 'system', subtype: 'init', tools: claudeReviewTools },
-      {
-        type: 'assistant',
-        message: {
-          content: [{ type: 'tool_use', name: 'StructuredOutput', input: { review: 'submitted' } }]
-        }
-      },
-      {
-        type: 'result',
-        subtype: 'success',
-        result:
-          '<thinking>private reasoning\n' +
-          '<review>## Claude Architecture Review\n**Verdict: mergeable**</review>\n' +
-          'that must not be published</thinking>'
-      }
-    ])
-
-    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
-    })
-
-    expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('no structured review')
-  })
-
-  it('prefers schema-validated review output over free-form reasoning', () => {
-    const root = createFixtureRoot('ai-review-claude-structured-')
-    const executionFile = join(root, 'execution.jsonl')
-    const githubOutput = join(root, 'github-output')
-    writeJsonLines(executionFile, [
-      { type: 'system', subtype: 'init', tools: claudeReviewTools },
-      {
-        type: 'result',
-        subtype: 'success',
-        result: '<thinking>private reasoning</thinking>',
-        structured_output: claudeStructuredOutput()
-      }
-    ])
-
-    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
-    })
-
-    expect(result.status, result.stderr).toBe(0)
-    const output = readFileSync(githubOutput, 'utf8')
-    expect(output).not.toContain('private reasoning')
-    expect(output).toContain('## Claude Architecture Review\n\n**Verdict: mergeable**')
-  })
-
-  it('allows structured findings to quote review framing tags', () => {
-    const root = createFixtureRoot('ai-review-claude-literal-tags-')
-    const executionFile = join(root, 'execution.jsonl')
-    const githubOutput = join(root, 'github-output')
-    writeJsonLines(executionFile, [
-      { type: 'system', subtype: 'init', tools: claudeReviewTools },
-      {
-        type: 'result',
-        subtype: 'success',
-        structured_output: claudeStructuredOutput([
-          claudeFinding({
-            title: 'Do not reject literal <review> and </review> tags in findings'
-          })
-        ])
-      }
-    ])
-
-    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
-    })
-
-    expect(result.status, result.stderr).toBe(0)
-    expect(readFileSync(githubOutput, 'utf8')).toContain('literal <review> and </review> tags')
-  })
-
-  it('rejects a mergeable Claude verdict that contains an actionable finding', () => {
-    const root = createFixtureRoot('ai-review-claude-contradictory-verdict-')
-    const executionFile = join(root, 'execution.jsonl')
-    const githubOutput = join(root, 'github-output')
-    writeJsonLines(executionFile, [
-      { type: 'system', subtype: 'init', tools: claudeReviewTools },
-      {
-        type: 'result',
-        subtype: 'success',
-        structured_output: claudeStructuredOutput([claudeFinding()], 'mergeable')
-      }
-    ])
-
-    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
-    })
-
-    expect(result.status).not.toBe(0)
-  })
-
-  it('keeps a structured review after Claude attempts an unavailable tool', () => {
-    const root = createFixtureRoot('ai-review-claude-tool-use-')
-    const executionFile = join(root, 'execution.json')
-    const githubOutput = join(root, 'github-output')
-    writeJsonLines(executionFile, [
-      { type: 'system', subtype: 'init', tools: claudeReviewTools },
-      {
-        type: 'assistant',
-        message: {
-          content: [
-            { type: 'tool_use', name: 'Write', input: { file_path: 'changed.txt' } },
-            { type: 'text', text: 'The unavailable tool call was rejected by Claude Code.' }
-          ]
-        }
-      },
-      {
-        type: 'result',
-        subtype: 'success',
-        structured_output: claudeStructuredOutput()
-      }
-    ])
-
-    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
-    })
-
-    expect(result.status, result.stderr).toBe(0)
-    expect(readFileSync(githubOutput, 'utf8')).toContain('**Verdict: mergeable**')
-  })
-
-  it('fails closed if Claude advertises tools outside the review tool set', () => {
-    const root = createFixtureRoot('ai-review-claude-tools-available-')
-    const executionFile = join(root, 'execution.json')
-    const githubOutput = join(root, 'github-output')
-    writeJsonLines(executionFile, [
-      { type: 'system', subtype: 'init', tools: [...claudeReviewTools, 'Write'] },
-      {
-        type: 'assistant',
-        message: { content: [{ type: 'text', text: '## Claude Architecture Review' }] }
-      }
-    ])
-
-    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, EXECUTION_FILE: executionFile, GITHUB_OUTPUT: githubOutput }
-    })
-
-    expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('exposed an unexpected tool set')
-  })
-
-  it('allows a configured CodeGraph MCP server to defer its tool until use', () => {
-    const root = createFixtureRoot('ai-review-claude-deferred-mcp-')
-    const executionFile = join(root, 'execution.jsonl')
-    const githubOutput = join(root, 'github-output')
-    writeJsonLines(executionFile, [
-      { type: 'system', subtype: 'init', tools: claudeReviewTools, mcp_servers: ['codegraph'] },
-      { type: 'result', subtype: 'success', structured_output: claudeStructuredOutput() }
-    ])
-
-    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        EXECUTION_FILE: executionFile,
-        CODEGRAPH_ENABLED: 'true',
-        GITHUB_OUTPUT: githubOutput
-      }
-    })
-
-    expect(result.status, result.stderr).toBe(0)
-    expect(readFileSync(githubOutput, 'utf8')).toContain('**Verdict: mergeable**')
-  })
-
-  it('accepts the Task alias reported for Claude subagents', () => {
-    const root = createFixtureRoot('ai-review-claude-task-tool-')
-    const executionFile = join(root, 'execution.jsonl')
-    const githubOutput = join(root, 'github-output')
-    writeJsonLines(executionFile, [
-      {
-        type: 'system',
-        subtype: 'init',
-        tools: [
-          'Task',
-          'Bash',
-          'Glob',
-          'Grep',
-          'Read',
-          'StructuredOutput',
-          'mcp__codegraph__codegraph_explore'
-        ]
-      },
-      { type: 'result', subtype: 'success', structured_output: claudeStructuredOutput() }
-    ])
-
-    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'extract_claude')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        EXECUTION_FILE: executionFile,
-        CODEGRAPH_ENABLED: 'true',
-        GITHUB_OUTPUT: githubOutput
-      }
-    })
-
-    expect(result.status, result.stderr).toBe(0)
-    expect(readFileSync(githubOutput, 'utf8')).toContain('**Verdict: mergeable**')
-  })
-
-  it('feeds a short task prompt through stdin instead of injecting pull request code', () => {
-    const contextStep = getNamedStep('claude_review', 'Build Claude review prompt')
-    const reviewStep = getNamedStep('claude_review', 'Run Claude architecture review')
-
-    expect(contextStep.run).toContain('prompt_file="$RUNNER_TEMP/claude-review-prompt.md"')
-    expect(contextStep.env?.PR_DIFF_BASE).toBe('${{ steps.diff_base.outputs.sha }}')
-    expect(contextStep.run).toContain('git diff --stat %s HEAD')
-    expect(contextStep.run).not.toMatch(/^\s+git diff /m)
-    expect(reviewStep.run).toContain('< "$CLAUDE_PROMPT_FILE"')
-    expect(reviewWorkflow).not.toContain('steps.context.outputs.content')
-    expect(reviewWorkflow).not.toContain('anthropics/claude-code-action')
-  })
-
-  it('keeps the Claude prompt small when the pull request changes a large file', () => {
-    const baseContents = Array.from(
-      { length: 20_000 },
-      (_, index) => `export const value${index} = ${index}\n`
-    ).join('')
-    const changedContents = baseContents.replace(
-      'export const value10000 = 10000',
-      'export const value10000 = 10001'
-    )
-    const root = createMergeCommit({ 'large.ts': changedContents }, { 'large.ts': baseContents })
-    const githubOutput = join(root, 'github-output')
-    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'context')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        RUNNER_TEMP: root,
-        PR_NUMBER: '376',
-        PR_DIFF_BASE: 'base-sha',
-        REPOSITORY: 'aipoch/open-science',
-        GITHUB_OUTPUT: githubOutput
-      }
-    })
-
-    expect(result.status, result.stderr).toBe(0)
-    const prompt = readFileSync(join(root, 'claude-review-prompt.md'), 'utf8')
-    expect(prompt).not.toContain('export const value10000 = 10001')
-    expect(prompt).toContain('git diff --stat base-sha HEAD')
-    expect(Buffer.byteLength(prompt)).toBeLessThan(8_192)
-    expect(getNamedStep('claude_review', 'Install Claude CLI').if).toBeUndefined()
-    expect(getNamedStep('claude_review', 'Run Claude architecture review').if).toBeUndefined()
-  })
-
-  it('runs structured Codex exec through the action proxy and read-only permission profile', () => {
-    const prepareStep = getNamedStep('codex_review', 'Prepare Codex review runtime')
-    const reviewStep = getNamedStep('codex_review', 'Run Codex correctness review')
-
-    expect(parsedWorkflow.jobs.codex_review['timeout-minutes']).toBe(30)
-    expect(prepareStep.uses).toBe('openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56')
-    expect(prepareStep.with).toMatchObject({
-      'openai-api-key': '${{ secrets.OPENAI_API_KEY }}',
-      'responses-api-endpoint': '${{ steps.responses_endpoint.outputs.url }}',
-      'codex-home': '${{ runner.temp }}/codex-home'
-    })
-    expect(prepareStep.with).not.toHaveProperty('prompt')
-    expect(reviewStep.env).toMatchObject({
-      CODEX_HOME: '${{ runner.temp }}/codex-home',
-      CODEX_MODEL: "${{ vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}",
-      CODEX_EFFORT: "${{ vars.CODEX_REVIEW_EFFORT || 'high' }}"
-    })
-    expect(reviewStep.env).not.toHaveProperty('OPENAI_API_KEY')
-    expect(reviewStep.run).toContain('codex exec')
-    expect(reviewStep.run).toContain('--output-schema "$CODEX_SCHEMA_FILE"')
-    expect(reviewStep.run).toContain('--config \'default_permissions=":read-only"\'')
-    expect(reviewStep.run).toContain('--ephemeral')
-    expect(reviewStep.run).toContain('--ignore-rules')
-    expect(reviewStep.run).toContain('--json')
-    expect(reviewWorkflow).not.toContain('npm install -g "@openai/codex-responses-api-proxy')
-  })
-
-  it('captures Codex JSONL while preserving the structured final message', () => {
-    const root = createFixtureRoot('ai-review-codex-exec-')
-    const binDir = join(root, 'bin')
-    const captureArgs = join(root, 'args.json')
-    const captureStdin = join(root, 'stdin.txt')
-    const githubOutput = join(root, 'github-output')
-    const instructionsFile = join(root, 'instructions.txt')
-    const promptFile = join(root, 'prompt.txt')
-    const schemaFile = join(root, 'schema.json')
-    mkdirSync(binDir)
-    writeFileSync(instructionsFile, 'Review with repository standards.\n')
-    writeFileSync(promptFile, 'Review this pull request.\n')
-    writeFileSync(schemaFile, '{}\n')
-    writeExecutable(
-      join(binDir, 'codex'),
-      `#!/usr/bin/env bash
-set -euo pipefail
-jq -cn --args '$ARGS.positional' -- "$@" > "$CODEX_CAPTURE_ARGS"
-args=("$@")
-output_file=''
-for (( index = 0; index < \${#args[@]}; index++ )); do
-  if [[ "\${args[index]}" == '--output-last-message' ]]; then
-    output_file="\${args[index + 1]}"
-  fi
-done
-[[ -n "$output_file" ]]
-cat > "$CODEX_CAPTURE_STDIN"
-printf '%s' '{"verdict":"mergeable","summary":"No issues found.","findings":[]}' > "$output_file"
-printf '%s\n' \\
-  '{"type":"thread.started","thread_id":"thread-1"}' \\
-  '{"type":"turn.started"}' \\
-  '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":8,"output_tokens":2,"reasoning_output_tokens":1}}'
-`
-    )
-
-    const result = spawnSync('bash', ['-c', getRunStep('codex_review', 'run_codex')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        PATH: `${binDir}:${process.env.PATH}`,
-        CODEX_CAPTURE_ARGS: captureArgs,
-        CODEX_CAPTURE_STDIN: captureStdin,
-        CODEX_EFFORT: 'high',
-        CODEX_HOME: join(root, 'codex-home'),
-        CODEX_INSTRUCTIONS_FILE: instructionsFile,
-        CODEX_MODEL: 'gpt-5.6-sol',
-        CODEX_PROMPT_FILE: promptFile,
-        CODEX_SCHEMA_FILE: schemaFile,
-        GITHUB_OUTPUT: githubOutput,
-        GITHUB_WORKSPACE: root,
-        RUNNER_TEMP: root
-      }
-    })
-
-    expect(result.status, result.stderr).toBe(0)
-    const args = JSON.parse(readFileSync(captureArgs, 'utf8')) as string[]
-    expect(args).toContain('--json')
-    expect(args).toContain('--ephemeral')
-    expect(args).toContain('default_permissions=":read-only"')
-    expect(args).toContain('model_reasoning_effort="high"')
-    expect(args.some((arg) => arg.startsWith('developer_instructions="Review with'))).toBe(true)
-    expect(readFileSync(captureStdin, 'utf8')).toBe('Review this pull request.\n')
-    expect(readFileSync(join(root, 'codex-execution.jsonl'), 'utf8')).toContain(
-      '"type":"turn.completed"'
-    )
-    const outputs = readFileSync(githubOutput, 'utf8')
-    expect(outputs).toContain('duration_seconds=')
-    expect(outputs).toContain('final-message<<CODEX_REVIEW_EOF_')
-    expect(outputs).toContain('"verdict":"mergeable"')
-  })
-
-  it('builds a generic structured codex exec invocation', () => {
-    const root = createFixtureRoot('ai-review-codex-args-')
-    const githubOutput = join(root, 'github-output')
-    const result = spawnSync('bash', ['-c', getRunStep('codex_review', 'codex_args')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        RUNNER_TEMP: root,
-        PR_DIFF_BASE: 'base-sha',
-        PR_BRANCH: 'ci/reviewer-dispatch-selector',
-        PR_TITLE: 'ci(review): allow selecting a dispatched reviewer',
-        REVIEW_SHA: 'review-sha',
-        GITHUB_OUTPUT: githubOutput
-      }
-    })
-
-    expect(result.status, result.stderr).toBe(0)
-    const outputs = readSimpleOutputs(githubOutput)
-    const schemaFile = outputs.schema_file
-    const schema = JSON.parse(readFileSync(schemaFile, 'utf8')) as {
-      required: string[]
-      properties: Record<string, unknown>
-    }
-    expect(schema.required).toEqual(['verdict', 'summary', 'findings'])
-    expect(schema.properties).toHaveProperty('findings')
-    const instructions = readFileSync(outputs.instructions_file, 'utf8')
-    expect(instructions).toContain('Branch name valid: true')
-    expect(instructions).toContain('Pull request title valid: true')
-    expect(instructions).not.toContain('ci/reviewer-dispatch-selector')
-    expect(instructions).not.toContain('allow selecting a dispatched reviewer')
-    const prompt = readFileSync(outputs.prompt_file, 'utf8')
-    expect(prompt).toContain('base: base-sha')
-    expect(prompt).toContain('review: review-sha')
-    expect(prompt).toContain('Return the review through the required JSON schema')
-  })
-
-  it('formats a schema-validated Codex approval with an explicit no-findings verdict', async () => {
-    const review = await normalizeCodexReview(
-      JSON.stringify({
-        verdict: 'mergeable',
-        summary: 'The reconnect behavior is safe and the updated tests cover the failure paths.',
-        findings: []
-      })
-    )
-
-    expect(review).toContain('## Codex Correctness Review')
-    expect(review).toContain('**Verdict: mergeable**')
-    expect(review).toContain('**No actionable findings.**')
-    expect(review).toContain('The reconnect behavior is safe')
-  })
-
-  it('formats schema-validated Codex findings as a needs-changes verdict', async () => {
-    const review = await normalizeCodexReview(
-      JSON.stringify({
-        verdict: 'needs changes',
-        summary: 'The reconnect path has a race.',
-        findings: [
-          {
-            priority: 'P1',
-            title: 'Reconnect can race with teardown',
-            path: 'src/main/acp/runtime.ts',
-            line: 100,
-            impact: 'A new session can use a stale provider.',
-            recommendation: 'Wait for teardown before publishing the connection.'
-          }
-        ]
-      })
-    )
-
-    expect(review).toContain('**Verdict: needs changes**')
-    expect(review).toContain('[P1] Reconnect can race with teardown')
-    expect(review).toContain('**src/main/acp/runtime.ts:100**')
-  })
-
-  it('fails closed when Codex ignores the required JSON schema', async () => {
-    await expect(normalizeCodexReview('**[P1] Reconnect can race with teardown**')).rejects.toThrow(
-      'valid JSON'
-    )
-  })
-
-  it('fails closed on the partial JSON finding shape from the review regression', async () => {
+  it('normalizes schema-valid results for either Codex header', async () => {
     await expect(
-      normalizeCodexReview('{"title":"[P1] Reconnect can race with teardown"}')
-    ).rejects.toThrow('required output schema')
-  })
+      normalize(
+        JSON.stringify({ verdict: 'mergeable', summary: 'No issues.', findings: [] }),
+        '## Codex Architecture Review'
+      )
+    ).resolves.toContain('## Codex Architecture Review\n\n**Verdict: mergeable**')
 
-  it('fails closed when the Codex verdict disagrees with its findings', async () => {
     await expect(
-      normalizeCodexReview(
+      normalize(
         JSON.stringify({
-          verdict: 'mergeable',
-          summary: 'Looks good.',
+          verdict: 'needs changes',
+          summary: 'One issue.',
           findings: [
             {
               priority: 'P1',
-              title: 'Hidden finding',
-              path: 'src/main/acp/runtime.ts',
-              line: 100,
-              impact: 'Incorrect behavior.',
+              title: 'Boundary is bypassed',
+              path: 'src/main/example.ts',
+              line: 12,
+              impact: 'Renderer gains unintended ownership.',
+              recommendation: 'Route the operation through preload.'
+            }
+          ]
+        }),
+        '## Codex Correctness Review'
+      )
+    ).resolves.toContain('### [P1] Boundary is bypassed')
+  })
+
+  it('fails closed when the verdict contradicts findings', async () => {
+    await expect(
+      normalize(
+        JSON.stringify({
+          verdict: 'mergeable',
+          summary: 'Contradictory.',
+          findings: [
+            {
+              priority: 'P1',
+              title: 'Issue',
+              path: 'src/main/example.ts',
+              line: 1,
+              impact: 'Breaks behavior.',
               recommendation: 'Fix it.'
             }
           ]
-        })
+        }),
+        '## Codex Correctness Review'
       )
-    ).rejects.toThrow('disagrees with its findings')
+    ).rejects.toThrow('Codex verdict disagrees with its findings')
   })
 
-  it('allows the first Codex review for a pull request', () => {
-    expect(runCodexReviewGate(0)).toMatchObject({ should_run: 'true', round: '1' })
-  })
-
-  it('allows the twentieth Codex review for a pull request by default', () => {
-    expect(runCodexReviewGate(19)).toMatchObject({ should_run: 'true', round: '20' })
-  })
-
-  it('skips Codex review after twenty successful reviews by default', () => {
-    expect(runCodexReviewGate(20)).toMatchObject({ should_run: 'false', round: '21' })
-  })
-
-  it('supports unlimited Codex reviews when the configured maximum is zero', () => {
-    expect(runCodexReviewGate(100, [], '0')).toMatchObject({
-      should_run: 'true',
-      round: '101'
+  it('publishes each reviewer through the shared trusted workflow', () => {
+    expect(mainWorkflow.jobs.post_codex_correctness_feedback.uses).toBe(
+      './.github/workflows/ai-post-review.yml'
+    )
+    expect(mainWorkflow.jobs.post_codex_correctness_feedback.with).toMatchObject({
+      scope: 'correctness',
+      marker: '<!-- ai-review:codex -->',
+      header: '## Codex Correctness Review'
     })
-  })
-
-  it('ignores untrusted or unrelated pull request comments when counting reviews', () => {
-    const unrelatedComments: ReviewComment[] = [
-      {
-        id: 100,
-        body: '## Codex Correctness Review\n**Verdict: mergeable**',
-        user: { login: 'contributor' }
-      },
-      { id: 101, body: 'ordinary bot comment', user: { login: 'github-actions[bot]' } },
-      { id: 102, body: null, user: { login: 'github-actions[bot]' } }
-    ]
-
-    expect(runCodexReviewGate(19, unrelatedComments)).toMatchObject({
-      should_run: 'true',
-      round: '20'
+    expect(mainWorkflow.jobs.post_codex_architecture_feedback.with).toMatchObject({
+      scope: 'architecture',
+      marker: '<!-- ai-review:codex-architecture -->',
+      header: '## Codex Architecture Review'
     })
+    expect(getStep(publisherWorkflow, 'publish', 'Post Codex review').with?.retries).toBe(3)
   })
 
-  it('publishes the twentieth Codex review with a trusted marker', async () => {
-    const [body] = await runPostCodexFeedback(19)
-
-    expect(body).toContain('<!-- ai-review:codex -->')
-    expect(body).toContain('<!-- ai-review-meta head=head-sha run=1234 -->')
-  })
-
-  it('publishes Claude reviews with trusted run and head provenance', async () => {
-    const step = getNamedStep('post_claude_feedback', 'Post Claude architecture review')
-
-    expect(step.env?.REVIEW_HEAD_SHA).toBe('${{ needs.claude_review.outputs.head_sha }}')
-    expect(step.env?.REVIEW_RUN_ID).toBe('${{ github.run_id }}')
-    await expect(runPostClaudeFeedback()).resolves.toEqual([
+  it('publishes architecture feedback with trusted provenance', async () => {
+    const result = await runPublisher()
+    expect(result.output).toBe('true')
+    expect(result.postedBodies).toEqual([
       [
-        '<!-- ai-review:claude -->',
+        '<!-- ai-review:codex-architecture -->',
         '<!-- ai-review-meta head=head-sha run=1234 -->',
-        '## Claude Architecture Review',
+        '## Codex Architecture Review',
+        '',
         '**Verdict: mergeable**'
       ].join('\n')
     ])
   })
 
-  it('does not publish Claude feedback for a stale pull request head', async () => {
-    await expect(runPostClaudeFeedback('newer-head-sha')).resolves.toEqual([])
+  it('does not publish stale feedback or exceed the per-reviewer round limit', async () => {
+    await expect(runPublisher({ currentHead: 'newer-head' })).resolves.toMatchObject({
+      output: 'false',
+      postedBodies: []
+    })
+    const prior = Array.from({ length: 20 }, () => ({
+      body: '<!-- ai-review:codex-architecture -->',
+      user: { login: 'github-actions[bot]' }
+    }))
+    await expect(runPublisher({ comments: prior })).resolves.toMatchObject({
+      output: 'false',
+      postedBodies: []
+    })
   })
 
-  it('does not publish a twenty-first Codex review', async () => {
-    await expect(runPostCodexFeedback(20)).resolves.toEqual([])
-  })
-
-  it('publishes Codex feedback without a round limit when configured with zero', async () => {
-    await expect(runPostCodexFeedback(100, 'head-sha', '0')).resolves.toHaveLength(1)
-  })
-
-  it('does not publish or consume a review round for a stale pull request head', async () => {
-    await expect(runPostCodexFeedback(19, 'newer-head-sha')).resolves.toEqual([])
-  })
-
-  it('serializes the complete review workflow per pull request', () => {
-    expect(parsedWorkflow.concurrency).toEqual({
+  it('serializes each selected reviewer while allowing the two scopes to run in parallel', () => {
+    expect(mainWorkflow.concurrency).toEqual({
       group:
         "ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.reviewer || 'both' }}",
       'cancel-in-progress': true
     })
+    expect(mainWorkflow.jobs.codex_correctness_review.needs).toEqual([
+      'review_target',
+      'codex_review_gate'
+    ])
+    expect(mainWorkflow.jobs.codex_architecture_review.needs).toEqual([
+      'review_target',
+      'codex_review_gate'
+    ])
   })
 })
