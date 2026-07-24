@@ -186,6 +186,56 @@ describe('StoragePanel', () => {
     expect(window.api.storage.revealAppStorage).toHaveBeenCalledWith()
   })
 
+  it('uses warning styling only while application storage remains unavailable', async () => {
+    const repairedEnvironment = environment([
+      {
+        id: 'storage',
+        label: 'App storage permission',
+        status: 'passed',
+        summary: 'Open Science can write to its private data folder.',
+        detail: '/home/u/.open-science'
+      }
+    ])
+    const checkEnvironment = vi.fn().mockImplementation(async () => {
+      useSettingsStore.setState({ environmentCheck: repairedEnvironment })
+      return repairedEnvironment
+    })
+    useSettingsStore.setState({
+      environmentCheck: environment([
+        {
+          id: 'storage',
+          label: 'App storage permission',
+          status: 'failed',
+          summary: 'Open Science cannot write to its private data folder.',
+          detail: '/home/u/.open-science — EACCES: permission denied'
+        }
+      ]),
+      checkEnvironment
+    } as never)
+
+    await act(async () => root.render(<StoragePanel />))
+
+    const repairNotice = container.querySelector<HTMLElement>(
+      '[aria-label="Application storage"] .space-y-3'
+    )
+    expect(repairNotice?.className).toContain('border-amber-500/30')
+    expect(repairNotice?.className).toContain('bg-amber-500/5')
+    expect(repairNotice?.querySelector('.lucide-triangle-alert')).not.toBeNull()
+
+    const recheck = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Check again'
+    )
+    await act(async () => recheck?.click())
+
+    const repairedNotice = container.querySelector<HTMLElement>(
+      '[aria-label="Application storage"] .space-y-3'
+    )
+    expect(repairedNotice?.className).not.toContain('border-amber-500/30')
+    expect(repairedNotice?.className).not.toContain('bg-amber-500/5')
+    expect(repairedNotice?.querySelector('.lucide-triangle-alert')).toBeNull()
+    expect(repairedNotice?.querySelector('.text-emerald-600')).not.toBeNull()
+  })
+
   it('waits for an explicit Continue action after storage passes but Agent still fails', async () => {
     const repairedEnvironment = environment([
       {

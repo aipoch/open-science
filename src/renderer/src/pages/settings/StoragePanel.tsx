@@ -1,5 +1,12 @@
 import { AlertDialog } from 'radix-ui'
-import { CheckCircle2, ChevronRight, FolderInput, FolderOpen, RefreshCw } from 'lucide-react'
+import {
+  CheckCircle2,
+  ChevronRight,
+  FolderInput,
+  FolderOpen,
+  RefreshCw,
+  TriangleAlert
+} from 'lucide-react'
 import { useRef, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -234,14 +241,26 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
           description="Open Science needs write access to its private configuration directory."
           aria-label="Application storage"
         >
-          <div className="space-y-3 rounded-lg border border-border bg-muted/40 p-3">
+          {/* Keep the failure visibly actionable, then remove the warning treatment as soon as a
+              user-requested recheck confirms storage is writable again. */}
+          <div
+            className={cn(
+              'space-y-3 rounded-lg border p-3',
+              storagePassed ? 'border-border bg-muted/40' : 'border-amber-500/30 bg-amber-500/5'
+            )}
+          >
             <div className="flex items-start gap-2">
               {storagePassed ? (
                 <CheckCircle2
                   className="mt-0.5 size-4 shrink-0 text-emerald-600"
                   aria-hidden="true"
                 />
-              ) : null}
+              ) : (
+                <TriangleAlert
+                  className="mt-0.5 size-4 shrink-0 text-amber-600"
+                  aria-hidden="true"
+                />
+              )}
               <div className="min-w-0">
                 <p className="text-sm font-medium text-foreground">{storageCheck.summary}</p>
                 {storageCheck.detail ? (
