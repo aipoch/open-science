@@ -73,6 +73,7 @@ import {
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
   isClaudeSubscriptionProvider,
+  isClaudeSubscriptionProviderId,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
   providerEndpoints
@@ -517,8 +518,8 @@ class SettingsService {
         }
       })
     // The claude-isolated token is stored on the (single) builtin-claude-isolated provider record,
-    // so the controller reads/writes that record directly. The repository's setProviderKeyRef +
-    // clearProviderKeyRef helpers keep the encryption pipeline in one place (see repository.ts).
+    // so the controller reads/writes that record directly. The renderer creates the record before
+    // sign-in; conditional writes keep a late browser result from recreating it after deletion.
     this.claudeIsolatedAuth =
       options.claudeIsolatedAuth ??
       new ClaudeIsolatedAuthController({
@@ -548,9 +549,8 @@ class SettingsService {
   }
 
   // Reads (and decrypts) the long-lived OAuth token stored on the single builtin-claude-isolated
-  // provider record. The record is auto-created on first use by upsertClaudeIsolatedProvider so a
-  // fresh install has somewhere to write the token; reading before the first write returns
-  // undefined, which the controller renders as "not signed in".
+  // provider record. Reading before the renderer has created that record returns undefined, which
+  // the controller renders as "not signed in".
   private async loadClaudeIsolatedToken(): Promise<string | undefined> {
     const settings = await this.repository.getSettings()
     const provider = settings.providers.find(
@@ -562,20 +562,26 @@ class SettingsService {
     return tryDecryptKey(provider.keyRef)
   }
 
-  // Persists the encrypted OAuth token onto the single builtin-claude-isolated provider record. The
-  // record is upserted (created if missing) so a paste on a fresh install does not 404 — this is the
-  // inverse of "delete claude-default + write a new one": we keep a stable record so other code that
-  // keys on the provider id (the IPC layer's reconnect path) does not need to special-case first run.
+  // Persists the encrypted OAuth token only while the builtin-claude-isolated provider still exists.
+  // The renderer creates the record before either sign-in flow starts; refusing to upsert here keeps
+  // a late browser completion from recreating a provider that the user deleted in the meantime.
   private async saveClaudeIsolatedToken(token: string): Promise<void> {
     const keyRef = encryptKey(token)
+    const applied = await this.repository.updateClaudeIsolatedCredentialsIfExists({
+      keyRef,
+      keyMask: maskKey(token)
+    })
 
-    await this.repository.upsertClaudeIsolatedProvider({ keyRef, keyMask: maskKey(token) })
+    if (!applied) throw new Error('The Claude provider was removed before sign-in completed.')
   }
 
-  // Drops the stored token (sets keyRef to undefined on the record). The record itself stays so the
-  // provider card remains visible — it's still selectable, just not authenticated.
+  // Drops the stored token when the record still exists. A concurrent provider deletion wins without
+  // allowing this cleanup path to recreate an empty subscription record.
   private async clearClaudeIsolatedToken(): Promise<void> {
-    await this.repository.upsertClaudeIsolatedProvider({ keyRef: undefined, keyMask: undefined })
+    await this.repository.updateClaudeIsolatedCredentialsIfExists({
+      keyRef: undefined,
+      keyMask: undefined
+    })
   }
 
   // Returns the raw stored settings document (unmasked), for main-process bootstrap needs (e.g. priming
@@ -1838,6 +1844,11 @@ class SettingsService {
   }
 
   async deleteProvider(id: string): Promise<SettingsSnapshot> {
+    if (isClaudeSubscriptionProviderId(id)) {
+      this.claudeIsolatedAuth.cancelLogin()
+      this.claudeSharedAuth.cancelLogin()
+    }
+
     await this.repository.deleteProvider(id)
 
     return this.getSettingsView()

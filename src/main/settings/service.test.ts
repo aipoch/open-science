@@ -11,7 +11,10 @@ import {
   type ClaudeDetectResult
 } from '../../shared/settings'
 import type { CodexAuthControllerPort } from './codex-auth'
-import type { ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
+import type {
+  ClaudeIsolatedAuthControllerPort,
+  ClaudeIsolatedAuthStatus
+} from './claude-isolated-auth'
 import type { ClaudeSharedAuthControllerPort } from './claude-shared-auth'
 import type { UserSkillRepository } from '../skills/user-skill-repository'
 import type { ResponsesBridge } from './responses-bridge'
@@ -251,6 +254,85 @@ describe('SettingsService: providers', () => {
       expect(stored.claudeSubscriptionProviderId).toBeUndefined()
     }
   )
+
+  it.each([CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID])(
+    'cancels both Claude login controllers before deleting the collapsed provider through %s',
+    async (providerId) => {
+      const claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort = {
+        getStatus: vi.fn(),
+        loginIsolatedBrowser: vi.fn(),
+        loginIsolated: vi.fn(),
+        cancelLogin: vi.fn(),
+        logoutIsolated: vi.fn()
+      }
+      const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
+        getStatus: vi.fn(),
+        loginShared: vi.fn(),
+        cancelLogin: vi.fn()
+      }
+      const service = createService(undefined, { claudeIsolatedAuth, claudeSharedAuth })
+      await service.upsertProvider({ type: 'claude-shared' })
+      await service.upsertProvider({ type: 'claude-isolated' })
+
+      await service.deleteProvider(providerId)
+
+      expect(claudeIsolatedAuth.cancelLogin).toHaveBeenCalledOnce()
+      expect(claudeSharedAuth.cancelLogin).toHaveBeenCalledOnce()
+      expect((await repository.getSettings()).providers).toEqual([])
+    }
+  )
+
+  it('discards a browser login token that arrives after the Claude provider is deleted', async () => {
+    let finishBrowserLogin: (() => Promise<void>) | undefined
+    const claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort = {
+      getStatus: vi.fn(),
+      loginIsolatedBrowser: vi.fn(
+        () =>
+          new Promise<ClaudeIsolatedAuthStatus>((resolve) => {
+            finishBrowserLogin = async () => {
+              const applied = await repository.updateClaudeIsolatedCredentialsIfExists({
+                keyRef: 'enc:late-browser-token',
+                keyMask: 'sk-ant-…late'
+              })
+              resolve({
+                supported: true,
+                authenticated: applied,
+                message: applied
+                  ? undefined
+                  : 'The Claude provider was removed before sign-in completed.'
+              })
+            }
+          })
+      ),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
+    const service = createService(undefined, { claudeIsolatedAuth })
+    await service.upsertProvider({ type: 'claude-isolated' })
+
+    const login = service.loginIsolatedClaudeBrowser()
+    await vi.waitFor(() => expect(claudeIsolatedAuth.loginIsolatedBrowser).toHaveBeenCalledOnce())
+    await service.deleteProvider(CLAUDE_ISOLATED_PROVIDER_ID)
+    await finishBrowserLogin?.()
+
+    expect(await login).toMatchObject({ ok: false, applied: false })
+    expect(claudeIsolatedAuth.cancelLogin).toHaveBeenCalledOnce()
+    expect((await repository.getSettings()).providers).toEqual([])
+  })
+
+  it('does not recreate a deleted Claude provider when a late token save completes', async () => {
+    const service = createService(undefined, {
+      executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
+    })
+    await service.upsertProvider({ type: 'claude-isolated' })
+    await service.deleteProvider(CLAUDE_ISOLATED_PROVIDER_ID)
+
+    const result = await service.loginIsolatedClaude('sk-ant-late')
+
+    expect(result).toMatchObject({ ok: false, applied: false })
+    expect((await repository.getSettings()).providers).toEqual([])
+  })
 
   it('validates shared and isolated subscriptions through read-only status checks', async () => {
     const codexAuth: CodexAuthControllerPort = {

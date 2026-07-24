@@ -692,6 +692,23 @@ describe('settings repository: v2 official providers & activeModel migration', (
     expect((await repository.getSettings()).activeModel).toBeUndefined()
   })
 
+  it('does not recreate a deleted Claude provider when a late credential save arrives', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: 'enc:initial',
+      keyMask: 'sk-ant-…initial'
+    })
+    await repository.deleteProvider('builtin-claude-isolated')
+
+    await expect(
+      repository.updateClaudeIsolatedCredentialsIfExists({
+        keyRef: 'enc:late',
+        keyMask: 'sk-ant-…late'
+      })
+    ).resolves.toBe(false)
+    expect((await repository.getSettings()).providers).toEqual([])
+  })
+
   it('persists the active provider + model across a reload (app restart)', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)
