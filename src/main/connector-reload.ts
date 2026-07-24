@@ -13,12 +13,20 @@ export const wireConnectorReload = (
 
 const INITIAL_CONNECTOR_REFRESH_TIMEOUT_MS = 5_000
 
+type InitialConnectorRefreshOptions = {
+  timeoutMs?: number
+  onLateSettled?: () => void | Promise<void>
+}
+
 // Produces a bounded barrier for the first ACP connection/session without putting app startup behind
-// custom MCP discovery. The source refresh remains alive after timeout so its eventual snapshot can
-// still be used by later sessions.
+// custom MCP discovery. If the source refresh settles after the barrier times out, notify the caller
+// so an agent that already started against the old connector docs can be reloaded.
 export const waitForInitialConnectorRefresh = async (
   initialRefresh: Promise<unknown>,
-  timeoutMs = INITIAL_CONNECTOR_REFRESH_TIMEOUT_MS
+  {
+    timeoutMs = INITIAL_CONNECTOR_REFRESH_TIMEOUT_MS,
+    onLateSettled
+  }: InitialConnectorRefreshOptions = {}
 ): Promise<void> => {
   let timeout: ReturnType<typeof setTimeout> | undefined
   const settledRefresh = initialRefresh.then(
@@ -26,11 +34,15 @@ export const waitForInitialConnectorRefresh = async (
     () => undefined
   )
 
-  await Promise.race([
-    settledRefresh,
-    new Promise<void>((resolve) => {
-      timeout = setTimeout(resolve, timeoutMs)
+  const outcome = await Promise.race([
+    settledRefresh.then(() => 'settled' as const),
+    new Promise<'timed-out'>((resolve) => {
+      timeout = setTimeout(() => resolve('timed-out'), timeoutMs)
     })
   ])
   if (timeout) clearTimeout(timeout)
+
+  if (outcome === 'timed-out' && onLateSettled) {
+    void settledRefresh.then(onLateSettled).catch(() => undefined)
+  }
 }

@@ -434,7 +434,13 @@ const registerIpcHandlers = async ({
       (connectors) => {
         connectorsSnapshot = connectors
       }
-    )
+    ),
+    {
+      // If custom MCP discovery outlives the startup barrier, the first agent may already have
+      // materialized the old connector docs. Rotate it once the late refresh settles so the next
+      // session/prompt uses the refreshed skills instead of waiting for another settings change.
+      onLateSettled: () => runtimeRef.current?.requestSkillsReload()
+    }
   )
 
   registerFileSaveHandlers({ resolveManagedFilePath })
