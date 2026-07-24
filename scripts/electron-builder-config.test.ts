@@ -28,6 +28,9 @@ describe('electron-builder Windows targets', () => {
     expect(config).toContain('include: build/installer.nsh')
     expect(include).toContain('windows-runtime-cache-uninstall.ps1')
     expect(cleanup).toContain('.open-science-cache.json')
+    expect(cleanup).toContain('Get-CompactCacheLeaf')
+    expect(cleanup).toContain('$compactLeaf = Get-CompactCacheLeaf $canonicalRoot $userIdentity')
+    expect(cleanup).toContain('(Join-Path $env:USERPROFILE $compactLeaf)')
     expect(cleanup).toContain('S-1-5-32-544')
     expect(cleanup).toContain('$trustedWriteSids -notcontains $sid')
     for (const right of WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES) {
