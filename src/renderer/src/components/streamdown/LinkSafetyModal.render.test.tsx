@@ -19,6 +19,7 @@ describe('LinkSafetyModal', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.unstubAllGlobals()
     act(() => root.unmount())
     container.remove()
     document.body.querySelector('[data-streamdown="link-safety-modal"]')?.remove()
@@ -59,6 +60,7 @@ describe('LinkSafetyModal', () => {
     expect(panel?.className).toContain('shadow-dialog')
     expect(panel?.className).toContain('data-[state=open]:zoom-in-95')
     expect(panel?.className).toContain('data-[state=closed]:fill-mode-forwards')
+    expect(panel?.className).toContain('data-[state=closed]:pointer-events-none')
 
     act(() => {
       overlay?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -70,6 +72,29 @@ describe('LinkSafetyModal', () => {
       panel
         ?.querySelector<HTMLButtonElement>('[aria-label="Close"]')
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes exactly once when Escape bubbles from inside the panel', () => {
+    const onClose = vi.fn()
+
+    act(() => {
+      root.render(
+        <LinkSafetyModal
+          url="https://example.com/paper"
+          isOpen
+          onClose={onClose}
+          onConfirm={vi.fn()}
+        />
+      )
+    })
+
+    const closeButton = document.body.querySelector<HTMLButtonElement>('[aria-label="Close"]')
+
+    act(() => {
+      closeButton?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
 
     expect(onClose).toHaveBeenCalledTimes(1)
@@ -117,6 +142,12 @@ describe('LinkSafetyModal', () => {
     expect(document.body.style.overflow).toBe('hidden')
 
     act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+
+    expect(onClose).toHaveBeenCalledTimes(1)
+
+    act(() => {
       vi.advanceTimersByTime(200)
     })
 
@@ -130,6 +161,44 @@ describe('LinkSafetyModal', () => {
     expect(
       document.body.querySelector('[role="dialog"][aria-label="Open external link?"]')
     ).toBeNull()
+    expect(document.body.style.overflow).toBe('')
+  })
+
+  it('makes closed content inert and skips the fallback delay with reduced motion', () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'matchMedia',
+      vi
+        .fn()
+        .mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    )
+
+    const renderModal = (isOpen: boolean): void => {
+      act(() => {
+        root.render(
+          <LinkSafetyModal
+            url="https://example.com/paper"
+            isOpen={isOpen}
+            onClose={vi.fn()}
+            onConfirm={vi.fn()}
+          />
+        )
+      })
+    }
+
+    renderModal(true)
+    renderModal(false)
+
+    const closingPanel = document.body.querySelector<HTMLElement>(
+      '[data-streamdown="link-safety-panel"]'
+    )
+    expect(closingPanel?.hasAttribute('inert')).toBe(true)
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(document.body.querySelector('[data-streamdown="link-safety-modal"]')).toBeNull()
     expect(document.body.style.overflow).toBe('')
   })
 })

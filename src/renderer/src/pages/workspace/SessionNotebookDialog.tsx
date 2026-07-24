@@ -3,6 +3,7 @@ import { Download, LoaderCircle, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
@@ -349,6 +350,7 @@ const SessionNotebookDialog = ({
   const [runs, setRuns] = useState<NotebookRunRecord[]>([])
   const [status, setStatus] = useState<SessionNotebookStatus>('loading')
   const [error, setError] = useState<string | undefined>(undefined)
+  const dialogSession = useRetainedDialogValue(session)
 
   const sessionId = session?.id
   const projectId = session?.projectId
@@ -407,30 +409,30 @@ const SessionNotebookDialog = ({
           )}
         >
           <Dialog.Title className="sr-only">Session notebook</Dialog.Title>
-          {session ? (
+          {dialogSession ? (
             <SessionNotebookContent
               // Remount per session: the dialog is mounted once and the session prop swaps in
               // place, so per-session export state (a failure banner, an in-flight setState from
               // a superseded export) must be discarded rather than leak into the next session.
-              key={session.id}
-              sessionId={session.id}
+              key={dialogSession.id}
+              sessionId={dialogSession.id}
               runs={runs}
               status={status}
               error={error}
               onClose={onClose}
               onExport={async (kernel) => {
                 await window.api.notebook.exportIpynb({
-                  sessionId: session.id,
-                  projectName: session.projectId,
-                  workspaceCwd: session.cwd ?? '',
+                  sessionId: dialogSession.id,
+                  projectName: dialogSession.projectId,
+                  workspaceCwd: dialogSession.cwd ?? '',
                   kernel
                 })
               }}
               onExportAll={async () => {
                 const result = await window.api.notebook.exportIpynbAll({
-                  sessionId: session.id,
-                  projectName: session.projectId,
-                  workspaceCwd: session.cwd ?? ''
+                  sessionId: dialogSession.id,
+                  projectName: dialogSession.projectId,
+                  workspaceCwd: dialogSession.cwd ?? ''
                 })
                 if (result.saved) {
                   return `Saved ${result.files.length} notebooks to ${result.directory}`

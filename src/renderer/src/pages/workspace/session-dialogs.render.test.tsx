@@ -16,6 +16,12 @@ vi.mock('@/components/ui/input', () => ({
   Input: (props: Record<string, unknown>) => <input {...props} />
 }))
 
+// These structure tests call the components as pure functions; lifecycle behavior is covered by the
+// retained-value tests, so keep this test focused on callback and chrome wiring.
+vi.mock('@/components/ui/use-retained-dialog-value', () => ({
+  useRetainedDialogValue: <T,>(value: T | null | undefined): T | undefined => value ?? undefined
+}))
+
 type ElementWithProps = ReactElement<Record<string, unknown>>
 
 const createSession = (overrides: Partial<ChatSession> = {}): ChatSession => ({

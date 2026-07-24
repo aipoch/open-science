@@ -2,6 +2,14 @@ import { Dialog } from 'radix-ui'
 import { Check, Copy, ExternalLink, FolderOpen } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
+import {
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
+import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useUpdateStore } from '@/stores/update-store'
 import {
@@ -141,12 +149,14 @@ const ReportErrorDialog = ({
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(640px,calc(100vh-2rem))] w-[min(560px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog">
-          <Dialog.Title className="text-base font-semibold text-text-000">
-            Report this error
-          </Dialog.Title>
-          <Dialog.Description className="mt-2 text-sm leading-relaxed text-text-100">
+        <Dialog.Overlay className={dialogOverlayClassName} />
+        <Dialog.Content
+          className={dialogPanelClassName(
+            'flex max-h-[min(640px,calc(100vh-2rem))] w-[min(560px,calc(100vw-2rem))] flex-col'
+          )}
+        >
+          <Dialog.Title className={dialogTitleClassName}>Report this error</Dialog.Title>
+          <Dialog.Description className={dialogDescriptionClassName}>
             This report is posted publicly on GitHub. Edit the error text below to remove anything
             sensitive before sharing. Your runtime log stays on this device and is never attached
             automatically.
@@ -219,7 +229,7 @@ const ReportErrorDialog = ({
             </p>
           ) : null}
 
-          <div className="mt-6 flex flex-wrap items-center justify-end gap-2">
+          <div className={cn(dialogFooterClassName, 'flex-wrap items-center')}>
             <button
               type="button"
               className="mr-auto inline-flex h-8 items-center gap-1.5 rounded-lg border border-border-200 bg-bg-000 px-2.5 text-sm font-medium text-text-100 hover:bg-bg-200 hover:text-text-000"

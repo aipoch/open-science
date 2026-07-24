@@ -7,6 +7,7 @@ import {
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 
 type UninstallRuntimeDialogProps = {
   // The framework whose app-managed runtime is being removed; null keeps the dialog closed.
@@ -37,7 +38,10 @@ const UninstallRuntimeDialog = ({
   onCancel,
   onConfirm
 }: UninstallRuntimeDialogProps): React.JSX.Element => {
-  const name = framework ? DISPLAY_NAME[framework] : ''
+  const dialogFramework = useRetainedDialogValue(framework)
+  const dialogIsUninstalling =
+    useRetainedDialogValue(framework ? isUninstalling : undefined) ?? isUninstalling
+  const name = dialogFramework ? DISPLAY_NAME[dialogFramework] : ''
 
   return (
     <AlertDialog.Root
@@ -60,7 +64,7 @@ const UninstallRuntimeDialog = ({
                 type="button"
                 variant="outline"
                 className={cancelButtonClassName}
-                disabled={isUninstalling}
+                disabled={dialogIsUninstalling}
               >
                 Cancel
               </Button>
@@ -68,10 +72,10 @@ const UninstallRuntimeDialog = ({
             <Button
               type="button"
               className={confirmButtonClassName}
-              disabled={isUninstalling}
+              disabled={dialogIsUninstalling}
               onClick={onConfirm}
             >
-              {isUninstalling ? 'Uninstalling…' : 'Uninstall'}
+              {dialogIsUninstalling ? 'Uninstalling…' : 'Uninstall'}
             </Button>
           </div>
         </AlertDialog.Content>

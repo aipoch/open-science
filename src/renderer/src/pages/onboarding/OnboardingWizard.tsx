@@ -917,10 +917,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                       // provider record AND the token in one click. The modal is reserved for the
                       // Settings-page post-onboarding flow where the user revisits the card later.
                       <div className="mt-4 space-y-2">
-                        <label
-                          className="text-xs font-medium"
-                          htmlFor="wizard-claude-setup-token"
-                        >
+                        <label className="text-xs font-medium" htmlFor="wizard-claude-setup-token">
                           Paste the token from <code className="font-mono">claude setup-token</code>
                         </label>
                         <Input

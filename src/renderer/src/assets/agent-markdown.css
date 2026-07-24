@@ -316,6 +316,15 @@
     background: rgb(0 0 0 / 50%) !important;
     backdrop-filter: none;
 
+    &[data-fullscreen-state='closing'] {
+      pointer-events: none;
+      animation: sd-fullscreen-overlay-out 150ms ease-in forwards;
+
+      & > div[role='presentation'] {
+        animation: sd-fullscreen-panel-out 150ms ease-in forwards;
+      }
+    }
+
     & > button {
       @apply fixed! top-5! right-5! left-auto! bottom-auto! z-[62]! m-0! inline-flex! size-8! cursor-pointer items-center justify-center rounded-lg border border-border bg-card! p-0 text-muted-foreground shadow-dialog transition-colors duration-150;
       transform: none;
@@ -362,15 +371,33 @@
   }
 }
 
+@keyframes sd-fullscreen-overlay-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes sd-fullscreen-panel-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   body
-    > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not(
-      [data-streamdown]
-    ),
+    > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not([data-streamdown]),
   body
-    > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not(
-      [data-streamdown]
-    )
+    > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not([data-streamdown])
     > div[role='presentation'] {
     animation: none;
   }

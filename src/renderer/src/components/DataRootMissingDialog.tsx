@@ -9,6 +9,7 @@ import {
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 
 type DataRootMissingDialogProps = {
   open: boolean
@@ -31,6 +32,7 @@ const DataRootMissingDialog = ({
   const [stillMissing, setStillMissing] = useState(false)
   const [isChoosing, setIsChoosing] = useState(false)
   const [chooseError, setChooseError] = useState<string | undefined>(undefined)
+  const dialogDataRoot = useRetainedDialogValue(open ? dataRoot : undefined) ?? dataRoot
 
   const handleRetry = async (): Promise<void> => {
     setIsRetrying(true)
@@ -77,8 +79,8 @@ const DataRootMissingDialog = ({
             Data folder not found
           </AlertDialog.Title>
           <AlertDialog.Description className={dialogDescriptionClassName}>
-            Your data folder <span className="font-mono">{dataRoot}</span> can&apos;t be found. It
-            may have been deleted, or it&apos;s on a drive that isn&apos;t connected.
+            Your data folder <span className="font-mono">{dialogDataRoot}</span> can&apos;t be
+            found. It may have been deleted, or it&apos;s on a drive that isn&apos;t connected.
           </AlertDialog.Description>
 
           {stillMissing ? (

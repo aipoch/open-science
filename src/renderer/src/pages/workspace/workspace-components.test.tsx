@@ -103,15 +103,6 @@ describe('workspace page component boundaries', () => {
     expect(workspaceSidebarSource).not.toContain('aria-label={`Session status: ${session.status}`}')
   })
 
-  it('shows the session title in destructive delete confirmation copy', () => {
-    const deleteSessionDialogSource = readFileSync(
-      resolve(__dirname, 'DeleteSessionDialog.tsx'),
-      'utf8'
-    )
-
-    expect(deleteSessionDialogSource).toContain('{session?.title}')
-  })
-
   it('uses workspace style tokens instead of migrated hardcoded colors', () => {
     const workspaceSources = [
       readFileSync(workspacePagePath, 'utf8'),

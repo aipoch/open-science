@@ -13,6 +13,7 @@ const AGENT_MARKDOWN_ROOT_SELECTOR = '.agent-markdown-root'
 const TABLE_FULLSCREEN_SELECTOR = '[data-streamdown="table-fullscreen"]'
 const MERMAID_FULLSCREEN_SELECTOR =
   'body > div.fixed.inset-0.z-50.flex.items-center.justify-center[role="button"]:not([data-streamdown])'
+const MERMAID_FULLSCREEN_EXIT_MS = 150
 
 const createRefCountedInstaller = (install: () => () => void): (() => () => void) => {
   let installCount = 0
@@ -607,6 +608,69 @@ const installTableFullscreenFix = createRefCountedInstaller(() => {
   }
 })
 
+/* --- Mermaid fullscreen exit animation --- */
+
+const installMermaidFullscreenExit = createRefCountedInstaller(() => {
+  const replayedCloseButtons = new WeakSet<HTMLButtonElement>()
+  const closeTimers = new Map<HTMLElement, number>()
+
+  const closeAfterAnimation = (overlay: HTMLElement): boolean => {
+    const closeButton = overlay.querySelector<HTMLButtonElement>(':scope > button')
+    if (!closeButton) return false
+
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return false
+    if (overlay.dataset.fullscreenState === 'closing') return true
+
+    overlay.dataset.fullscreenState = 'closing'
+    const timer = window.setTimeout(() => {
+      closeTimers.delete(overlay)
+      replayedCloseButtons.add(closeButton)
+      closeButton.click()
+    }, MERMAID_FULLSCREEN_EXIT_MS)
+    closeTimers.set(overlay, timer)
+    return true
+  }
+
+  const onClick = (event: MouseEvent): void => {
+    const target = event.target
+    if (!(target instanceof Element)) return
+
+    const overlay = target.closest<HTMLElement>(MERMAID_FULLSCREEN_SELECTOR)
+    if (!overlay) return
+
+    const closeButton = overlay.querySelector<HTMLButtonElement>(':scope > button')
+    if (!closeButton) return
+    if (replayedCloseButtons.delete(closeButton)) return
+
+    const closesFullscreen = target === overlay || closeButton.contains(target)
+    if (!closesFullscreen || !closeAfterAnimation(overlay)) return
+
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }
+
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape') return
+
+    const overlays = document.querySelectorAll<HTMLElement>(MERMAID_FULLSCREEN_SELECTOR)
+    const overlay = overlays.item(overlays.length - 1)
+    if (!overlay || !closeAfterAnimation(overlay)) return
+
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }
+
+  document.addEventListener('click', onClick, true)
+  document.addEventListener('keydown', onKeyDown, true)
+
+  return () => {
+    document.removeEventListener('click', onClick, true)
+    document.removeEventListener('keydown', onKeyDown, true)
+    for (const timer of closeTimers.values()) window.clearTimeout(timer)
+    closeTimers.clear()
+  }
+})
+
 /* --- Public entry --- */
 
 let installCount = 0
@@ -618,6 +682,7 @@ const installStreamdown = (): (() => void) => {
       installMenuPositioning(),
       installDownloads(),
       installMermaidDownload(),
+      installMermaidFullscreenExit(),
       installTableActions(),
       installTableFullscreenFix()
     )

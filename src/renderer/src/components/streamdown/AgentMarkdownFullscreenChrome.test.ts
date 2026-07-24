@@ -22,5 +22,8 @@ describe('AgentMarkdown fullscreen chrome', () => {
     expect(mermaidFullscreenBlock).toContain('text-foreground')
     expect(mermaidFullscreenBlock).toContain('shadow-dialog')
     expect(mermaidFullscreenBlock).toContain('bg-card!')
+    expect(mermaidFullscreenBlock).toContain("[data-fullscreen-state='closing']")
+    expect(mermaidFullscreenBlock).toContain('sd-fullscreen-overlay-out')
+    expect(mermaidFullscreenBlock).toContain('sd-fullscreen-panel-out')
   })
 })

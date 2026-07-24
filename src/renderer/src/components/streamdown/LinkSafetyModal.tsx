@@ -37,9 +37,13 @@ const LinkSafetyModal = ({
       }
     }
 
-    const timeout = window.setTimeout(() => {
-      setIsMounted(false)
-    }, 400)
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    const timeout = window.setTimeout(
+      () => {
+        setIsMounted(false)
+      },
+      reducedMotion ? 0 : 400
+    )
 
     return () => {
       window.clearTimeout(timeout)
@@ -74,6 +78,16 @@ const LinkSafetyModal = ({
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
 
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isMounted])
+
+  useEffect(() => {
+    if (!isOpen) {
+      return
+    }
+
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         closeModal()
@@ -84,9 +98,8 @@ const LinkSafetyModal = ({
 
     return () => {
       document.removeEventListener('keydown', onKeyDown)
-      document.body.style.overflow = previousOverflow
     }
-  }, [closeModal, isMounted])
+  }, [closeModal, isOpen])
 
   const copyLink = useCallback(async (): Promise<void> => {
     if (!navigator.clipboard?.writeText) {
@@ -122,15 +135,12 @@ const LinkSafetyModal = ({
         )}
         data-state={isOpen ? 'open' : 'closed'}
         data-streamdown="link-safety-panel"
+        inert={!isOpen}
         ref={panelRef}
         aria-label="Open external link?"
+        aria-hidden={!isOpen}
         aria-modal="true"
         role="dialog"
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') {
-            closeModal()
-          }
-        }}
       >
         <div>
           <Button

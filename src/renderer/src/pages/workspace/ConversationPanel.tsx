@@ -169,6 +169,12 @@ const ConversationPanel = ({
   const [isResuming, setIsResuming] = useState(false)
   // Opens the reviewable, consent-gated error report dialog for a failed run.
   const [isReportOpen, setIsReportOpen] = useState(false)
+  const [reportDialogEpoch, setReportDialogEpoch] = useState(0)
+
+  const openReportDialog = (): void => {
+    setReportDialogEpoch((epoch) => epoch + 1)
+    setIsReportOpen(true)
+  }
 
   // Unconditional hook: check if the active session has any jobs (running or finished).
   const allJobsForSession = useSessionJobStore((s) => s.allJobsForSession)
@@ -303,7 +309,7 @@ const ConversationPanel = ({
                         {isRunErrorReportable ? (
                           <button
                             type="button"
-                            onClick={() => setIsReportOpen(true)}
+                            onClick={openReportDialog}
                             className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100"
                             aria-label="Report this error"
                           >
@@ -519,20 +525,18 @@ const ConversationPanel = ({
           </div>
         </div>
 
-        {/* Mounted only while open so the dialog seeds its editable report fresh from the current
-            error each time (lazy initial state), instead of syncing via an effect. */}
-        {isReportOpen ? (
-          <ReportErrorDialog
-            open
-            error={resolvedRunError}
-            subject={{
-              agentFrameworkId: activeSession?.agentFrameworkId,
-              agentBackendId: activeSession?.agentBackendId,
-              model: activeSession?.agentModel
-            }}
-            onClose={() => setIsReportOpen(false)}
-          />
-        ) : null}
+        {/* Remount on each open so editable report state resets, then stay mounted for Radix's exit. */}
+        <ReportErrorDialog
+          key={reportDialogEpoch}
+          open={isReportOpen}
+          error={resolvedRunError}
+          subject={{
+            agentFrameworkId: activeSession?.agentFrameworkId,
+            agentBackendId: activeSession?.agentBackendId,
+            model: activeSession?.agentModel
+          }}
+          onClose={() => setIsReportOpen(false)}
+        />
       </section>
     </ResizablePanel>
   )
