@@ -88,7 +88,12 @@ export const claudeCodeFramework: AgentFramework = {
       }
     }
 
-    return { meta }
+    const promptPrefix = ctx.turnPromptReminders
+      ?.map(renderClaudeMcpToolNames)
+      .filter(Boolean)
+      .join('\n\n')
+
+    return { meta, ...(promptPrefix ? { promptPrefix } : {}) }
   },
 
   mapPermissionProfile(

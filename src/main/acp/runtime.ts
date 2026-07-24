@@ -286,6 +286,7 @@ const ACTIVITY_GROUP_SYSTEM_PROMPT_APPEND = [
   'The declaration is control metadata: it is not itself a visible step and does not replace the actual tool calls.',
   '</open_science_activity_group_instructions>'
 ].join('\n')
+const ACTIVITY_GROUP_TURN_PROMPT_REMINDER = `Before using any other tool this turn, first call \`${BEGIN_ACTIVITY_GROUP_TOOL_NAME}\` with one concise purpose title for the upcoming group. Call it once per coherent group, not once per tool.`
 // Appends artifact tool guidance as system prompt metadata so user prompts stay untouched.
 const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
   '<open_science_artifact_instructions>',
@@ -2100,11 +2101,12 @@ class AcpRuntime {
       }
       // Prepend a short steering nudge naming the picked skills. It goes only into the content sent to
       // the agent; the user-facing message event keeps the original text (which already shows /Name).
-      // Framework-neutral delivery of the system-prompt guidance: Claude carries it in session _meta so
-      // the prefix is empty and the prompt is unchanged; opencode has no preset, so its guidance rides as
-      // a prompt prefix here, ahead of the skill nudge and the user's text.
+      // Framework-neutral delivery of the system-prompt guidance: Claude carries the complete appends in
+      // session _meta but repeats the short activity declaration reminder here; frameworks without a
+      // session preset carry the complete guidance as a prompt prefix.
       const { promptPrefix } = this.framework.buildSessionSetup({
-        systemPromptAppends: this.getSystemPromptAppends()
+        systemPromptAppends: this.getSystemPromptAppends(),
+        turnPromptReminders: this.getTurnPromptReminders()
       })
       const nudgedText = await this.applySkillNudge(request.text, forced)
       // A history preamble (transcript replayed after a context reset) leads, then the framework guidance
@@ -3066,6 +3068,12 @@ class AcpRuntime {
       ...(this.artifactToolingAvailable() ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
       ...(this.notebookToolingAvailable() ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : [])
     ]
+  }
+
+  private getTurnPromptReminders(): string[] {
+    return this.activityGroupOptions && this.framework.acceptsStdioMcp
+      ? [ACTIVITY_GROUP_TURN_PROMPT_REMINDER]
+      : []
   }
 
   // Builds the ACP `_meta` argument for session/new and session/resume, delegating the framework-specific

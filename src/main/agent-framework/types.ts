@@ -69,11 +69,14 @@ export type ModelConfigContext = {
 // privacy). The framework decides HOW it is delivered — see SessionSetup.
 export type SessionSetupContext = {
   systemPromptAppends: string[]
+  // Short, high-priority reminders that must reach each turn when the framework carries the complete
+  // appends only in session metadata. Frameworks whose appends already ride each prompt may omit them.
+  turnPromptReminders?: string[]
 }
 
 // Framework-specific session configuration returned to the runtime. `meta` becomes the ACP `_meta`
 // on session/new and session/resume. `promptPrefix` is prepended to prompt content when the framework
-// cannot carry appends in session meta (opencode has no system-prompt preset).
+// cannot carry appends in session meta, or when a session-level append needs a per-turn reminder.
 export type SessionSetup = {
   meta?: Record<string, unknown>
   promptPrefix?: string

@@ -733,7 +733,8 @@ describe('ACP runtime session management', () => {
       activityGroups: { mcpEntryPath: '/app/out/main/index.js' }
     })
 
-    await runtime.createSession({ cwd: '/workspace' })
+    const mainSession = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: mainSession.sessionId, text: 'Search PubMed' })
 
     expect(fakeAgent.newSessions[0].mcpServers).toEqual([
       expect.objectContaining({
@@ -742,6 +743,7 @@ describe('ACP runtime session management', () => {
       })
     ])
     expect(JSON.stringify(fakeAgent.newSessions[0]._meta)).toContain(BEGIN_ACTIVITY_GROUP_TOOL_NAME)
+    expect(fakeAgent.prompts[0].text).toContain('mcp__open-science-activity__begin_activity_group')
 
     const reviewerServer = {
       type: 'http' as const,
@@ -749,16 +751,18 @@ describe('ACP runtime session management', () => {
       url: 'http://127.0.0.1:1/mcp',
       headers: []
     }
-    await runtime.buildReviewerSession({
+    const { session: reviewerSession } = await runtime.buildReviewerSession({
       cwd: '/workspace',
       mcpServers: [reviewerServer],
       systemPromptAppend: 'Reviewer-only instructions'
     })
+    await reviewerSession.prompt([{ type: 'text', text: 'Review this turn' }])
 
     expect(fakeAgent.newSessions[1].mcpServers).toEqual([reviewerServer])
     expect(JSON.stringify(fakeAgent.newSessions[1]._meta)).not.toContain(
       BEGIN_ACTIVITY_GROUP_TOOL_NAME
     )
+    expect(fakeAgent.prompts[1].text).toBe('Review this turn')
   })
 
   it.each([
