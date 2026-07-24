@@ -37,7 +37,7 @@ type Workflow = {
 
 const parsedWorkflow = load(reviewWorkflow) as Workflow
 const fixtureRoots: string[] = []
-const claudeReviewTools = ['Bash', 'Glob', 'Grep', 'Read', 'StructuredOutput']
+const claudeReviewTools = ['Agent', 'Bash', 'Glob', 'Grep', 'Read', 'StructuredOutput']
 
 afterEach(() => {
   for (const root of fixtureRoots.splice(0)) rmSync(root, { force: true, recursive: true })
@@ -362,6 +362,7 @@ describe('AI review workflow contract', () => {
   it('exposes workflow_dispatch inputs for the pull request and selected reviewer', () => {
     expect(reviewWorkflow).toContain('workflow_dispatch:')
     expect(reviewWorkflow).toContain('pull_request_number')
+    expect(reviewWorkflow).toContain('enable_codegraph')
     expect(reviewWorkflow).toMatch(/reviewer:\n\s+description: Reviewer to run/)
     expect(reviewWorkflow).toMatch(/options:\n\s+- both\n\s+- claude\n\s+- codex/)
   })
@@ -372,7 +373,7 @@ describe('AI review workflow contract', () => {
 
   it('lets manual dispatch select either reviewer subject to the configured fork mode', () => {
     const dispatchGuards = reviewWorkflow.match(/github\.event_name == 'workflow_dispatch'/g)
-    expect(dispatchGuards?.length).toBe(3)
+    expect(dispatchGuards?.length).toBeGreaterThanOrEqual(3)
     expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'both'/g)?.length).toBe(2)
     expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'claude'/g)?.length).toBe(1)
     expect(reviewWorkflow.match(/github\.event\.inputs\.reviewer == 'codex'/g)?.length).toBe(1)
@@ -398,20 +399,160 @@ describe('AI review workflow contract', () => {
     const step = getNamedStep('claude_review', 'Run Claude architecture review')
     const command = step.run
 
-    expect(command).toContain('--tools "Read,Glob,Grep,Bash"')
+    expect(command).toContain("tools='Read,Glob,Grep,Bash,Agent'")
+    expect(command).toContain('--tools "$tools"')
     expect(command).toContain('--effort "$CLAUDE_REVIEW_EFFORT"')
     expect(step.env?.CLAUDE_REVIEW_EFFORT).toBe("${{ vars.CLAUDE_REVIEW_EFFORT || 'high' }}")
     expect(command).toContain('--permission-mode dontAsk')
-    expect(command).toContain('--allowedTools "Read,Glob,Grep"')
+    expect(command).toContain("allowed_tools='Read,Glob,Grep,Agent'")
+    expect(command).toContain('--allowedTools "$allowed_tools"')
     expect(command).not.toContain('--permission-mode bypassPermissions')
     expect(command).not.toContain('--max-turns')
     expect(parsedWorkflow.jobs.claude_review['timeout-minutes']).toBe(30)
-    // --safe-mode disables all project customisations (hooks, MCP servers, .claude/settings.json).
-    expect(command).toContain('--safe-mode')
+    expect(command).toContain('--setting-sources ""')
+    expect(command).toContain('--settings "$CLAUDE_SETTINGS_FILE"')
+    expect(command).toContain('--agents "$CLAUDE_REVIEW_AGENTS"')
+    expect(command).toContain('--disable-slash-commands')
+    expect(step.env).toMatchObject({
+      CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: '1',
+      CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1'
+    })
+    expect(command).not.toContain('--safe-mode')
     expect(command).toContain('--strict-mcp-config')
     expect(command).not.toMatch(/--allowedTools[^\n]*Bash/)
     expect(reviewWorkflow).toContain('Build Claude review prompt')
     expect(reviewWorkflow).toContain('post_claude_feedback')
+  })
+
+  it('bounds Claude subagent parallelism and records lifecycle hooks', () => {
+    const runtimeStep = getNamedStep('claude_review', 'Build Claude runtime configuration')
+    const reviewStep = getNamedStep('claude_review', 'Run Claude architecture review')
+    const telemetryStep = getNamedStep('claude_review', 'Report Claude review telemetry')
+
+    expect(reviewStep.env).toMatchObject({
+      CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION: '2',
+      CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '2',
+      CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: '1'
+    })
+    expect(runtimeStep.run).toContain('SessionStart')
+    expect(runtimeStep.run).toContain('PostToolUse')
+    expect(runtimeStep.run).toContain('SubagentStart')
+    expect(runtimeStep.run).toContain('SubagentStop')
+    expect(runtimeStep.run).toContain('SessionEnd')
+    expect(runtimeStep.env).toMatchObject({
+      SUBAGENT_EFFORT: "${{ vars.CLAUDE_REVIEW_SUBAGENT_EFFORT || 'medium' }}",
+      SUBAGENT_MAX_TURNS: "${{ vars.CLAUDE_REVIEW_SUBAGENT_MAX_TURNS || '8' }}"
+    })
+    expect(runtimeStep.run).toContain('effort: $effort')
+    expect(runtimeStep.run).toContain('maxTurns: $max_turns')
+    expect(telemetryStep.if).toBe('${{ always() }}')
+    expect(telemetryStep.run).toContain('Claude model turns')
+    expect(telemetryStep.run).toContain('cache_read_input_tokens')
+    expect(telemetryStep.run).toContain('GITHUB_STEP_SUMMARY')
+  })
+
+  it('keeps CodeGraph opt-in and supplies it through a trusted MCP config', () => {
+    const installStep = getNamedStep('claude_review', 'Install CodeGraph')
+    const indexStep = getNamedStep('claude_review', 'Build CodeGraph index')
+    const runtimeStep = getNamedStep('claude_review', 'Build Claude runtime configuration')
+    const reviewStep = getNamedStep('claude_review', 'Run Claude architecture review')
+
+    expect(installStep.if).toContain("github.event.inputs.enable_codegraph == 'true'")
+    expect(installStep.if).toContain("vars.ENABLE_CLAUDE_CODEGRAPH == 'true'")
+    expect(installStep.run).toContain('@colbymchenry/codegraph@1.5.0')
+    expect(installStep.run).not.toContain('codegraph install')
+    expect(indexStep.if).toContain("github.event.inputs.enable_codegraph == 'true'")
+    expect(indexStep.env?.CODEGRAPH_TELEMETRY).toBe('0')
+    expect(indexStep.run).toContain('codegraph init')
+    expect(runtimeStep.run).toContain('args: ["serve", "--mcp"]')
+    expect(reviewStep.run).toContain('--mcp-config "$CLAUDE_MCP_CONFIG_FILE"')
+  })
+
+  it('streams Codex JSON events so turn usage is visible in the action log', () => {
+    const argsStep = getNamedStep('codex_review', 'Build Codex review arguments')
+    expect(argsStep.run).toContain('"--json"')
+  })
+
+  it('reports Claude per-turn usage and hook lifecycle counts', () => {
+    const root = createFixtureRoot('ai-review-claude-telemetry-')
+    const executionFile = join(root, 'execution.jsonl')
+    const hookLog = join(root, 'hooks.jsonl')
+    const summary = join(root, 'summary.md')
+    writeJsonLines(executionFile, [
+      {
+        type: 'assistant',
+        message: {
+          id: 'turn-1',
+          model: 'claude-sonnet-5',
+          usage: {
+            input_tokens: 10,
+            cache_read_input_tokens: 100,
+            cache_creation_input_tokens: 20,
+            output_tokens: 30
+          }
+        }
+      },
+      // Streamed content can repeat a message id; telemetry must count that model turn once.
+      {
+        type: 'assistant',
+        message: {
+          id: 'turn-1',
+          model: 'claude-sonnet-5',
+          usage: {
+            input_tokens: 10,
+            cache_read_input_tokens: 100,
+            cache_creation_input_tokens: 20,
+            output_tokens: 30
+          }
+        }
+      },
+      {
+        type: 'assistant',
+        message: {
+          id: 'turn-2',
+          model: 'claude-sonnet-5',
+          usage: {
+            input_tokens: 5,
+            cache_read_input_tokens: 200,
+            cache_creation_input_tokens: 0,
+            output_tokens: 40
+          }
+        }
+      },
+      {
+        type: 'result',
+        subtype: 'success',
+        num_turns: 2,
+        duration_api_ms: 1234,
+        total_cost_usd: 0.42
+      }
+    ])
+    writeJsonLines(hookLog, [
+      { hook_event_name: 'SubagentStart' },
+      { hook_event_name: 'PostToolUse' },
+      { hook_event_name: 'PostToolUse' },
+      { hook_event_name: 'SubagentStop' }
+    ])
+
+    const result = spawnSync('bash', ['-c', getRunStep('claude_review', 'claude_telemetry')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        EXECUTION_FILE: executionFile,
+        HOOK_LOG: hookLog,
+        DURATION_SECONDS: '3',
+        GITHUB_STEP_SUMMARY: summary
+      }
+    })
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.stdout).toContain('Claude model turns: reported=2, observed=2')
+    expect(result.stdout).toContain('1  claude-sonnet-5  10  100  20  30')
+    expect(result.stdout).toContain('PostToolUse: 2')
+    const summaryText = readFileSync(summary, 'utf8')
+    expect(summaryText).toContain('| 2 | claude-sonnet-5 | 5 | 200 | 0 | 40 |')
+    expect(summaryText).toContain('- `SubagentStart`: 1')
   })
 
   it('keeps both reviewers on static code inspection instead of running project checks', () => {
@@ -451,7 +592,7 @@ describe('AI review workflow contract', () => {
       join(binDir, 'claude'),
       `#!/usr/bin/env bash
 set -euo pipefail
-printf '%s\\n' '{"type":"system","subtype":"init","tools":["Bash","Glob","Grep","Read","StructuredOutput"]}'
+printf '%s\\n' '{"type":"system","subtype":"init","tools":["Agent","Bash","Glob","Grep","Read","StructuredOutput"]}'
 printf '%s\\n' '{"type":"result","subtype":"success","terminal_reason":"blocking_limit","structured_output":{"verdict":"mergeable","summary":"No issues found.","findings":[]}}'
 exit 1
 `
@@ -468,6 +609,11 @@ exit 1
         CLAUDE_MODEL: 'claude-sonnet-5',
         CLAUDE_REVIEW_EFFORT: 'high',
         CLAUDE_REVIEW_SCHEMA: '{}',
+        CLAUDE_SETTINGS_FILE: join(root, 'settings.json'),
+        CLAUDE_MCP_CONFIG_FILE: join(root, 'mcp.json'),
+        CLAUDE_REVIEW_AGENTS: '{}',
+        CLAUDE_HOOK_LOG: join(root, 'hooks.jsonl'),
+        CODEGRAPH_ENABLED: 'false',
         GITHUB_OUTPUT: runOutput
       }
     })
