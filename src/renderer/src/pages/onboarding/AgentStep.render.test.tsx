@@ -110,6 +110,51 @@ describe('AgentStep', () => {
     expect(container.textContent).not.toContain('Uninstall')
   })
 
+  it('offers Install when the selected onboarding runtime has no detected path', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: threeFrameworks,
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        codexReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false)
+    })
+
+    await renderStep()
+
+    expect(container.querySelector('[aria-label="Install Claude Agent"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Repair Claude Agent"]')).toBeNull()
+    expect(container.textContent).toContain('Not installed')
+  })
+
+  it('offers Repair when the selected onboarding runtime has a detected path', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: threeFrameworks,
+      claude: { resolvedPath: '/broken/claude' },
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        codexReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false)
+    })
+
+    await renderStep()
+
+    expect(container.querySelector('[aria-label="Repair Claude Agent"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Install Claude Agent"]')).toBeNull()
+    expect(container.textContent).toContain('Needs repair')
+  })
+
   it('switches to an installed Codex card and refreshes the onboarding environment gate', async () => {
     const setAgentFramework = vi.fn().mockResolvedValue(undefined)
     const checkEnvironment = vi.fn().mockResolvedValue(undefined)

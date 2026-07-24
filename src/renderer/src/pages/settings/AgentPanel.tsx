@@ -459,6 +459,9 @@ const AgentPanel = ({
       description={card.description}
       ready={card.ready}
       needsRepair={
+        // Settings exposes failed selected runtimes as Recovery repairs even when their path is gone.
+        // Onboarding treats a pathless runtime as a first install; the card still repairs stale paths.
+        !isOnboarding &&
         selectedEnvironmentCheck?.agentFrameworkId === card.frameworkId &&
         selectedEnvironmentCheck.checks.some(
           (check) => check.id === 'agent' && check.status === 'failed'
