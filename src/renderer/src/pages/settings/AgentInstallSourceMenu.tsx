@@ -18,6 +18,7 @@ type AgentInstallSourceMenuProps = {
   disabled: boolean
   npmAvailable: boolean
   blockedInstallSources: Partial<Record<ClaudeInstallSource, string>>
+  buttonSize?: React.ComponentProps<typeof Button>['size']
   onInstall: (source: ClaudeInstallSource) => void
 }
 
@@ -31,6 +32,7 @@ const AgentInstallSourceMenu = ({
   disabled,
   npmAvailable,
   blockedInstallSources,
+  buttonSize = 'sm',
   onInstall
 }: AgentInstallSourceMenuProps): React.JSX.Element => {
   const Icon = label === 'Repair' ? Wrench : Download
@@ -40,7 +42,7 @@ const AgentInstallSourceMenu = ({
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
-          size="sm"
+          size={buttonSize}
           disabled={installing || disabled}
           aria-label={`${label} ${name}`}
         >

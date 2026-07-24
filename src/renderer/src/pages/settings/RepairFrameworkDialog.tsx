@@ -55,6 +55,7 @@ const RepairFrameworkDialog = ({
               disabled={disabled}
               npmAvailable={npmAvailable}
               blockedInstallSources={blockedInstallSources}
+              buttonSize="default"
               onInstall={onRepair}
             />
           ) : null}

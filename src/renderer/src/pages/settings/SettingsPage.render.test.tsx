@@ -339,7 +339,16 @@ describe('SettingsPage layout', () => {
 
     const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
     expect(dialog?.textContent).toContain('Claude Agent needs repair')
-    openRadixMenu(dialog?.querySelector<HTMLButtonElement>('[aria-label="Repair Claude Agent"]'))
+    const cancelButton = Array.from(
+      dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find((button) => button.textContent === 'Cancel')
+    const repairButton = dialog?.querySelector<HTMLButtonElement>(
+      '[aria-label="Repair Claude Agent"]'
+    )
+    expect(cancelButton?.dataset.size).toBe('default')
+    expect(repairButton?.dataset.size).toBe(cancelButton?.dataset.size)
+
+    openRadixMenu(repairButton)
     const managed = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
     ).find((item) => item.textContent?.includes('App-managed download (recommended)'))
