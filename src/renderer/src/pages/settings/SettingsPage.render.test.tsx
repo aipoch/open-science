@@ -274,8 +274,84 @@ describe('SettingsPage layout', () => {
 
     expect(document.body.querySelector('[aria-label="Repair Claude Agent"]')).not.toBeNull()
     expect(document.body.querySelector('[aria-label="Repair OpenCode"]')).toBeNull()
-    expect(document.body.textContent).toContain('Claude is missing.')
-    expect(document.body.textContent).toContain('No executable was found on PATH.')
+    const repairNotice = document.body.querySelector('[aria-label="Agent runtime repair issues"]')
+    expect(repairNotice?.textContent).toContain('Claude Code cannot be accessed.')
+    expect(repairNotice?.textContent).toContain('Repair the selected agent before using it.')
+    expect(repairNotice?.textContent).toContain('Claude runtime')
+    expect(repairNotice?.textContent).toContain('Claude is missing.')
+    expect(repairNotice?.textContent).not.toContain('No executable was found on PATH.')
+  })
+
+  it('opens repair from a failed Agent card and removes the notice after repair succeeds', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      claudeReady: false,
+      opencodeReady: false,
+      codexReady: false,
+      agentFrameworkId: 'claude-code',
+      agentReady: false,
+      activeProviderReady: false
+    })
+    const failedEnvironment = {
+      checkedAt: 1,
+      platform: 'darwin' as const,
+      architecture: 'arm64',
+      ready: false,
+      canAutoInstall: false,
+      agentFrameworkId: 'claude-code' as const,
+      runtime: { found: false },
+      checks: [
+        {
+          id: 'agent' as const,
+          label: 'Claude runtime',
+          status: 'failed' as const,
+          summary: 'Claude is missing.'
+        }
+      ]
+    }
+    const repairedEnvironment = {
+      ...failedEnvironment,
+      checkedAt: 2,
+      ready: true,
+      runtime: { found: true, path: '/data/claude' },
+      checks: []
+    }
+    const installClaude = vi.fn().mockResolvedValue({ installId: 'claude-test', ok: true })
+    const checkEnvironment = vi.fn().mockImplementation(async () => {
+      useSettingsStore.setState({ environmentCheck: repairedEnvironment })
+      return repairedEnvironment
+    })
+    useSettingsStore.setState({
+      environmentCheck: failedEnvironment,
+      installClaude,
+      checkEnvironment
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await openAgentPanel()
+    await act(async () => {
+      document.body
+        .querySelector<HTMLElement>('[aria-label="Repair required for Claude Agent"]')
+        ?.click()
+    })
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain('Claude Agent needs repair')
+    openRadixMenu(dialog?.querySelector<HTMLButtonElement>('[aria-label="Repair Claude Agent"]'))
+    const managed = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('App-managed download (recommended)'))
+    await act(async () => {
+      clickRadixMenuItem(managed)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(installClaude).toHaveBeenCalledWith('managed', undefined)
+    expect(checkEnvironment).toHaveBeenCalledWith({ force: true })
+    expect(document.body.querySelector('[aria-label="Agent runtime repair issues"]')).toBeNull()
   })
 
   it('shows every failed Codex component in the Agent repair notice', async () => {
@@ -329,7 +405,11 @@ describe('SettingsPage layout', () => {
     await openAgentPanel()
 
     const repairNotice = document.body.querySelector('[aria-label="Agent runtime repair issues"]')
+    expect(repairNotice?.textContent).toContain('Codex cannot be accessed.')
+    expect(repairNotice?.textContent).toContain('Repair the selected agent before using it.')
+    expect(repairNotice?.textContent).toContain('Codex native CLI')
     expect(repairNotice?.textContent).toContain('Native Codex CLI is not installed.')
+    expect(repairNotice?.textContent).toContain('Codex ACP adapter')
     expect(repairNotice?.textContent).toContain('Codex ACP adapter is not installed.')
   })
 

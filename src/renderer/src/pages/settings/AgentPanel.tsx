@@ -23,6 +23,7 @@ import {
 } from '../../../../shared/settings'
 import { AgentFrameworkCard } from './AgentFrameworkCard'
 import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
+import { RepairFrameworkDialog } from './RepairFrameworkDialog'
 import { SettingsSection } from './SettingsLayout'
 import { SwitchFrameworkDialog } from './SwitchFrameworkDialog'
 import { UninstallRuntimeDialog } from './UninstallRuntimeDialog'
@@ -116,6 +117,7 @@ const AgentPanel = ({
   // The app-managed runtime pending an uninstall confirmation (null = dialog closed), plus the
   // in-flight flag so the dialog and status cards can show progress and stay locked during removal.
   const [pendingUninstall, setPendingUninstall] = useState<FrameworkKey | null>(null)
+  const [pendingRepair, setPendingRepair] = useState<FrameworkKey | null>(null)
   const [isUninstalling, setIsUninstalling] = useState(false)
   // The framework the user picked (via a card) but hasn't confirmed switching to yet.
   const [pendingSwitch, setPendingSwitch] = useState<AgentFrameworkId | null>(null)
@@ -412,14 +414,16 @@ const AgentPanel = ({
     blockedInstallSources.npm = 'Installation network unavailable'
   }
 
-  // First-run installation selects the newly-ready runtime and refreshes the environment gate.
-  // Settings keeps its existing behavior: install only, then let the user choose explicitly.
+  // First-run installation selects the newly-ready runtime only when no usable runtime existed at
+  // the start. Otherwise installation/repair preserves the active framework and only refreshes the
+  // environment gate; Settings always follows that non-stealing behavior.
   const installFramework = async (
     card: FrameworkCardModel,
     source: ClaudeInstallSource
   ): Promise<void> => {
     setInstallActionError(undefined)
     setFrameworkDetectionError(undefined)
+    const shouldActivateAfterInstall = isOnboarding && installedFrameworks.length === 0
     const intentVersion = isOnboarding
       ? (onboardingUserIntentVersion.current += 1)
       : onboardingUserIntentVersion.current
@@ -443,10 +447,26 @@ const AgentPanel = ({
       return
     }
 
-    // A newer card click wins even if it lands between install completion and this switch.
+    if (!shouldActivateAfterInstall) {
+      await checkEnvironment({ force: true })
+      return
+    }
+
+    // A newer card click wins even if it lands between install completion and this first-runtime
+    // activation. The queued switch owns the environment recheck after activation.
     if (intentVersion !== onboardingUserIntentVersion.current) return
     queueOnboardingSwitch(card.frameworkId, intentVersion)
   }
+
+  const cardNeedsRepair = (card: FrameworkCardModel): boolean =>
+    Boolean(card.path) ||
+    (!isOnboarding &&
+      selectedEnvironmentCheck?.agentFrameworkId === card.frameworkId &&
+      selectedEnvironmentCheck.checks.some(
+        (check) => check.id === 'agent' && check.status === 'failed'
+      ))
+
+  const pendingRepairCard = frameworkCards.find((card) => card.key === pendingRepair)
 
   // Maps one framework descriptor to its card, wiring in the panel-level concerns: radio selection
   // (via the switch confirmation), the uninstall dialog, and the per-runtime install slice that
@@ -458,15 +478,7 @@ const AgentPanel = ({
       name={card.name}
       description={card.description}
       ready={card.ready}
-      needsRepair={
-        // Settings exposes failed selected runtimes as Recovery repairs even when their path is gone.
-        // Onboarding treats a pathless runtime as a first install; the card still repairs stale paths.
-        !isOnboarding &&
-        selectedEnvironmentCheck?.agentFrameworkId === card.frameworkId &&
-        selectedEnvironmentCheck.checks.some(
-          (check) => check.id === 'agent' && check.status === 'failed'
-        )
-      }
+      needsRepair={cardNeedsRepair(card)}
       version={card.version}
       path={card.path}
       sourceLabel={card.sourceLabel}
@@ -474,6 +486,7 @@ const AgentPanel = ({
       notReadyHint={card.notReadyHint}
       active={agentFrameworkId === card.frameworkId}
       onSelect={() => requestSwitch(card.frameworkId)}
+      onRepairRequired={cardNeedsRepair(card) ? () => setPendingRepair(card.key) : undefined}
       selectDisabled={
         anyInstalling ||
         isUninstalling ||
@@ -528,25 +541,35 @@ const AgentPanel = ({
               {installActionError || environmentCheckError || frameworkDetectionError}
             </p>
           ) : null}
-          {agentCheckFailures.length > 0 ? (
+          {!isOnboarding && agentCheckFailures.length > 0 ? (
             <div
               aria-label="Agent runtime repair issues"
               className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
             >
-              {agentCheckFailures.map((failure, index) => (
-                <div key={`${failure.label}-${index}`} className="flex items-start gap-2">
-                  <TriangleAlert
-                    className="mt-0.5 size-4 shrink-0 text-amber-600"
-                    aria-hidden="true"
-                  />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">{failure.summary}</p>
-                    {failure.detail ? (
-                      <p className="text-xs leading-5 text-muted-foreground">{failure.detail}</p>
-                    ) : null}
-                  </div>
+              <div className="flex items-start gap-2">
+                <TriangleAlert
+                  className="mt-0.5 size-4 shrink-0 text-amber-600"
+                  aria-hidden="true"
+                />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-foreground">
+                    {activeFramework?.displayName ?? 'The selected agent'} cannot be accessed.
+                  </p>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    Repair the selected agent before using it.
+                  </p>
                 </div>
-              ))}
+              </div>
+              {/* Component summaries keep the diagnosis useful without repeating automatic-install
+                  guidance from the environment-check detail in this explicit Recovery surface. */}
+              <div className="space-y-1 border-l border-amber-500/30 pl-6">
+                {agentCheckFailures.map((failure, index) => (
+                  <div key={`${failure.label}-${index}`}>
+                    <p className="text-xs font-medium text-foreground">{failure.label}</p>
+                    <p className="text-xs leading-5 text-muted-foreground">{failure.summary}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : null}
           {installBlockers.length > 0 ? (
@@ -612,6 +635,22 @@ const AgentPanel = ({
           />
         </>
       )}
+      <RepairFrameworkDialog
+        name={pendingRepairCard?.name ?? null}
+        sources={pendingRepairCard?.installSources ?? []}
+        installing={pendingRepairCard?.install.isInstalling ?? false}
+        disabled={anyInstalling || isUninstalling || (!isOnboarding && isSwitching)}
+        npmAvailable={npmAvailable}
+        blockedInstallSources={
+          pendingRepairCard?.frameworkId === agentFrameworkId ? blockedInstallSources : {}
+        }
+        onCancel={() => setPendingRepair(null)}
+        onRepair={(source) => {
+          if (!pendingRepairCard) return
+          setPendingRepair(null)
+          void installFramework(pendingRepairCard, source)
+        }}
+      />
     </div>
   )
 }

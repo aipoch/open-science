@@ -73,6 +73,15 @@ describe('AgentFrameworkCard', () => {
     expect(container.querySelector('[data-slot="card"]')?.className).toContain('ring-primary')
   })
 
+  it('does not give a not-ready default framework the active treatment', () => {
+    renderCard({ ready: false, active: true })
+
+    const card = container.querySelector('[data-slot="card"]')
+    expect(card?.className).not.toContain('ring-primary')
+    expect(container.querySelector('[data-slot="badge"]')?.textContent).toBe('Not installed')
+    expect(container.querySelector('[role="radio"]')).toBeNull()
+  })
+
   it('shows name, muted v-prefixed version, description, path chip and repo link', () => {
     renderCard({ ready: true, path: '/bin/claude', version: '2.1.0' })
 
@@ -235,6 +244,62 @@ describe('AgentFrameworkCard', () => {
         button.textContent?.includes('Uninstall')
       )
     ).toBe(false)
+  })
+
+  it('requests repair instead of selecting when a broken card is clicked', () => {
+    const onRepairRequired = vi.fn()
+    const onSelect = vi.fn()
+    renderCard({
+      ready: false,
+      path: '/broken/claude',
+      onRepairRequired,
+      onSelect
+    })
+
+    const card = container.querySelector<HTMLElement>('[data-slot="card"]')
+    act(() => card?.click())
+
+    expect(onRepairRequired).toHaveBeenCalledOnce()
+    expect(onSelect).not.toHaveBeenCalled()
+
+    const repair = container.querySelector<HTMLButtonElement>('[aria-label="Repair Claude Agent"]')
+    act(() => repair?.click())
+    expect(onRepairRequired).toHaveBeenCalledOnce()
+  })
+
+  it('requests repair from the keyboard without selecting the broken framework', () => {
+    const onRepairRequired = vi.fn()
+    const onSelect = vi.fn()
+    renderCard({
+      ready: false,
+      path: '/broken/claude',
+      onRepairRequired,
+      onSelect
+    })
+
+    const card = container.querySelector<HTMLElement>('[data-slot="card"]')
+    act(() => {
+      card?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    expect(onRepairRequired).toHaveBeenCalledOnce()
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
+  it('does not open the card repair dialog from the Repair button keyboard event', () => {
+    const onRepairRequired = vi.fn()
+    renderCard({
+      ready: false,
+      path: '/broken/claude',
+      onRepairRequired
+    })
+
+    const repair = container.querySelector<HTMLButtonElement>('[aria-label="Repair Claude Agent"]')
+    act(() => {
+      repair?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    expect(onRepairRequired).not.toHaveBeenCalled()
   })
 
   it('shows Repair for a failed selected runtime even when detection found no path', () => {

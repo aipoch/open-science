@@ -129,6 +129,7 @@ describe('AgentStep', () => {
 
     expect(container.querySelector('[aria-label="Install Claude Agent"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Repair Claude Agent"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Agent runtime repair issues"]')).toBeNull()
     expect(container.textContent).toContain('Not installed')
   })
 
@@ -153,6 +154,76 @@ describe('AgentStep', () => {
     expect(container.querySelector('[aria-label="Repair Claude Agent"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Install Claude Agent"]')).toBeNull()
     expect(container.textContent).toContain('Needs repair')
+  })
+
+  it('explains that a broken agent must be repaired instead of selecting it', async () => {
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: threeFrameworks,
+      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      opencode: { resolvedPath: '/broken/opencode' },
+      setAgentFramework,
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        codexReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(true)
+    })
+
+    await renderStep()
+    await act(async () => {
+      container.querySelector<HTMLElement>('[aria-label="Repair required for OpenCode"]')?.click()
+    })
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain('OpenCode needs repair')
+    expect(dialog?.textContent).toContain('Repair this agent before selecting it.')
+    expect(setAgentFramework).not.toHaveBeenCalled()
+  })
+
+  it('repairs a broken agent from the dialog with the shared install sources', async () => {
+    const installOpencode = vi.fn().mockResolvedValue({ installId: 'i', ok: true })
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: threeFrameworks,
+      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      opencode: { resolvedPath: '/broken/opencode' },
+      installOpencode,
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        codexReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(true)
+    })
+
+    await renderStep()
+    await act(async () => {
+      container.querySelector<HTMLElement>('[aria-label="Repair required for OpenCode"]')?.click()
+    })
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    openRadixMenu(dialog?.querySelector<HTMLButtonElement>('[aria-label="Repair OpenCode"]'))
+    const menu = document.body.querySelector<HTMLElement>('[data-slot="dropdown-menu-content"]')
+    expect(menu?.className).toContain('z-[70]')
+    const managed = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('App-managed download (recommended)'))
+    await act(async () => {
+      clickRadixMenuItem(managed)
+      await Promise.resolve()
+    })
+
+    expect(installOpencode).toHaveBeenCalledWith('managed')
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
   })
 
   it('switches to an installed Codex card and refreshes the onboarding environment gate', async () => {
@@ -357,14 +428,8 @@ describe('AgentStep', () => {
     expect(setAgentFramework).toHaveBeenNthCalledWith(2, 'codex')
   })
 
-  it('keeps a later user choice when an install-success switch is still in flight', async () => {
-    let releaseInstallSwitch: (() => void) | undefined
-    const setAgentFramework = vi.fn().mockImplementation((target: string) => {
-      if (target !== 'opencode') return Promise.resolve()
-      return new Promise<void>((resolve) => {
-        releaseInstallSwitch = resolve
-      })
-    })
+  it('does not replace an installed active agent after installing another agent', async () => {
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
     const installOpencode = vi.fn().mockResolvedValue({ installId: 'i', ok: true })
     const checkEnvironment = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
@@ -388,23 +453,9 @@ describe('AgentStep', () => {
 
     await renderStep()
     await installFromManagedSource('OpenCode')
-    expect(setAgentFramework).toHaveBeenCalledWith('opencode')
 
-    await act(async () => {
-      container.querySelector<HTMLElement>('[aria-label="Use Codex"]')?.click()
-      await Promise.resolve()
-    })
-    // The explicit choice waits for the install-success switch instead of racing it.
-    expect(setAgentFramework).toHaveBeenCalledTimes(1)
-
-    await act(async () => {
-      releaseInstallSwitch?.()
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    expect(setAgentFramework).toHaveBeenNthCalledWith(1, 'opencode')
-    expect(setAgentFramework).toHaveBeenNthCalledWith(2, 'codex')
+    expect(setAgentFramework).not.toHaveBeenCalled()
+    expect(checkEnvironment).toHaveBeenCalledOnce()
   })
 
   it('keeps an installed current framework and exposes every installed card', async () => {
@@ -514,6 +565,34 @@ describe('AgentStep', () => {
     await installFromManagedSource('Claude Agent')
 
     expect(installClaude).toHaveBeenCalledWith('managed', 'npmmirror')
+  })
+
+  it('does not activate the first agent when its installation fails', async () => {
+    const installClaude = vi.fn().mockResolvedValue({ installId: 'i', ok: false })
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+    const checkEnvironment = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: threeFrameworks,
+      installClaude,
+      setAgentFramework,
+      checkEnvironment,
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        codexReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false)
+    })
+
+    await renderStep()
+    await installFromManagedSource('Claude Agent')
+
+    expect(setAgentFramework).not.toHaveBeenCalled()
+    expect(checkEnvironment).not.toHaveBeenCalled()
   })
 
   it('surfaces an installer rejection without an unhandled event promise', async () => {

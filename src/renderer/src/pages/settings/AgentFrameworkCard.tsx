@@ -1,17 +1,8 @@
 import { useState } from 'react'
-import { ChevronDown, Download, Loader2, Wrench } from 'lucide-react'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import type {
   ClaudeInstallProgressEvent,
@@ -19,6 +10,7 @@ import type {
   ClaudeInstallSourceInfo
 } from '../../../../shared/settings'
 import { describeInstallProgress } from './claude-install-progress'
+import { AgentInstallSourceMenu } from './AgentInstallSourceMenu'
 import { RuntimeUninstallControl } from './RuntimeUninstallControl'
 
 type AgentFrameworkCardProps = {
@@ -43,6 +35,8 @@ type AgentFrameworkCardProps = {
   notReadyHint: React.ReactNode
   active: boolean
   onSelect: () => void
+  // Selecting a broken runtime asks the panel to explain and offer repair; it never activates here.
+  onRepairRequired?: () => void
   selectDisabled: boolean
   // Uninstall control wiring, shared across frameworks via RuntimeUninstallControl.
   uninstallCommand: string
@@ -74,83 +68,6 @@ type AgentFrameworkCardProps = {
   onInstall: (source: ClaudeInstallSource) => void
 }
 
-// Install-source picker behind the card's single action button. Choosing a source starts the
-// install immediately; the trigger then flips to a disabled "Installing…" until the run ends.
-// The label adapts to the card state: "Install" when nothing was detected, "Repair" when a
-// detected-but-broken runtime is being reinstalled.
-const InstallSourceMenu = ({
-  name,
-  label,
-  sources,
-  installing,
-  disabled,
-  npmAvailable,
-  blockedInstallSources,
-  onInstall
-}: {
-  name: string
-  label: 'Install' | 'Repair'
-  sources: ClaudeInstallSourceInfo[]
-  installing: boolean
-  disabled: boolean
-  npmAvailable: boolean
-  blockedInstallSources: Partial<Record<ClaudeInstallSource, string>>
-  onInstall: (source: ClaudeInstallSource) => void
-}): React.JSX.Element => {
-  const Icon = label === 'Repair' ? Wrench : Download
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          size="sm"
-          disabled={installing || disabled}
-          aria-label={`${label} ${name}`}
-        >
-          {installing ? (
-            <Loader2 className="animate-spin" aria-hidden="true" />
-          ) : (
-            <Icon aria-hidden />
-          )}
-          {installing ? 'Installing…' : label}
-          {!installing ? <ChevronDown aria-hidden="true" /> : null}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-80">
-        <DropdownMenuLabel>Install source</DropdownMenuLabel>
-        {sources.map((item) => {
-          // Sources needing npm are disabled (not hidden) when npm is missing, so the option stays
-          // discoverable with its unavailability spelled out.
-          const npmMissing = item.requiresNpm && !npmAvailable
-          const unavailableReason =
-            blockedInstallSources[item.id] ?? (npmMissing ? 'npm not found' : undefined)
-          return (
-            <DropdownMenuItem
-              key={item.id}
-              disabled={Boolean(unavailableReason)}
-              onSelect={() => onInstall(item.id)}
-              className="flex flex-col items-start gap-0.5"
-            >
-              <span>
-                {item.label}
-                {unavailableReason ? ` (${unavailableReason})` : ''}
-              </span>
-              {item.description ? (
-                <span className="text-xs text-muted-foreground">{item.description}</span>
-              ) : item.displayCommand ? (
-                <span className="font-mono text-xs text-muted-foreground">
-                  {item.displayCommand}
-                </span>
-              ) : null}
-            </DropdownMenuItem>
-          )
-        })}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
 // Unified agent-framework card for the settings Model panel. The whole card is the radio option
 // that switches the active framework (only ready runtimes are selectable); the action column on
 // the right carries exactly one action — Uninstall when ready, Repair when a detected runtime
@@ -168,6 +85,7 @@ const AgentFrameworkCard = ({
   notReadyHint,
   active,
   onSelect,
+  onRepairRequired,
   selectDisabled,
   uninstallCommand,
   managed,
@@ -188,6 +106,14 @@ const AgentFrameworkCard = ({
   // A runtime with a resolved path (even a broken one) shows its path/link and the Uninstall control.
   const found = Boolean(path)
   const repair = needsRepair || found
+  const canRequestRepair = !ready && repair && Boolean(onRepairRequired)
+  const activateCard = selectDisabled
+    ? undefined
+    : ready
+      ? onSelect
+      : canRequestRepair
+        ? onRepairRequired
+        : undefined
 
   const installing = install.isInstalling
   const installLogs = install.installLogs
@@ -209,34 +135,39 @@ const AgentFrameworkCard = ({
 
   return (
     <Card
-      role={ready ? 'radio' : undefined}
+      role={ready ? 'radio' : canRequestRepair ? 'button' : undefined}
       aria-checked={ready ? active : undefined}
-      aria-label={ready ? `Use ${name}` : undefined}
-      aria-disabled={ready && selectDisabled ? true : undefined}
-      tabIndex={ready ? 0 : undefined}
-      onClick={ready && !selectDisabled ? onSelect : undefined}
+      aria-label={
+        ready ? `Use ${name}` : canRequestRepair ? `Repair required for ${name}` : undefined
+      }
+      aria-disabled={(ready || canRequestRepair) && selectDisabled ? true : undefined}
+      tabIndex={ready || canRequestRepair ? 0 : undefined}
+      onClick={activateCard}
       onKeyDown={
-        ready && !selectDisabled
-          ? // Radio semantics expect Space/Enter to activate; the card has no inner <button>,
-            // so the keyboard toggle is handled here (Space would otherwise scroll the page).
+        activateCard
+          ? // Card selection and repair requests both support Space/Enter; Space would otherwise
+            // scroll the page because the card itself is not a native button.
             (event) => {
+              // Nested links and action buttons own their keyboard events; only the card's own focus
+              // may activate selection or the explanatory repair dialog.
+              if (event.target !== event.currentTarget) return
               if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault()
-                onSelect()
+                activateCard()
               }
             }
           : undefined
       }
       className={cn(
         'gap-0 rounded-lg py-0',
-        ready && 'cursor-pointer transition-colors',
+        (ready || canRequestRepair) && 'cursor-pointer transition-colors',
         // Unselected-but-selectable cards fill with a faint wash on hover to advertise the
         // whole-card click target; the active card keeps its primary tint instead.
-        ready && !active && 'hover:bg-muted/60',
-        ready && selectDisabled && 'pointer-events-none opacity-60',
+        ((ready && !active) || canRequestRepair) && 'hover:bg-muted/60',
+        (ready || canRequestRepair) && selectDisabled && 'pointer-events-none opacity-60',
         // Active gets the strongest treatment (primary ring + faint tint); a not-installed card
         // recedes with a dashed "placeholder" outline so the two groups read differently at a glance.
-        active && 'bg-primary/[0.04] ring-1 ring-primary',
+        ready && active && 'bg-primary/[0.04] ring-1 ring-primary',
         !ready && 'border-dashed bg-muted/40'
       )}
     >
@@ -325,7 +256,7 @@ const AgentFrameworkCard = ({
                   onUninstall={onUninstall}
                 />
               ) : (
-                <InstallSourceMenu
+                <AgentInstallSourceMenu
                   name={name}
                   label={repair ? 'Repair' : 'Install'}
                   sources={installSources}
