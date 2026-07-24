@@ -67,6 +67,28 @@ describe('getProviderFormErrors', () => {
     expect(errors).toEqual({})
     expect(hasProviderFormErrors(errors)).toBe(false)
   })
+
+  it('allows a blank context window and rejects non-positive or fractional values', () => {
+    const complete = {
+      type: 'custom' as const,
+      baseUrl: 'https://g',
+      model: 'm',
+      key: 'k'
+    }
+
+    expect(
+      getProviderFormErrors(createEmptyProviderFormValue({ ...complete, contextWindow: '' }))
+        .contextWindow
+    ).toBeUndefined()
+    expect(
+      getProviderFormErrors(createEmptyProviderFormValue({ ...complete, contextWindow: '0' }))
+        .contextWindow
+    ).toMatch(/positive whole number/i)
+    expect(
+      getProviderFormErrors(createEmptyProviderFormValue({ ...complete, contextWindow: '1.5' }))
+        .contextWindow
+    ).toMatch(/positive whole number/i)
+  })
 })
 
 describe('provider-kind helpers', () => {
@@ -105,7 +127,8 @@ describe('provider-kind helpers', () => {
       name: 'MiniMax',
       vendorId: 'minimax',
       region: 'global',
-      model: ''
+      model: '',
+      contextWindow: ''
     })
   })
 
@@ -115,7 +138,8 @@ describe('provider-kind helpers', () => {
       name: 'OpenAI',
       vendorId: 'openai',
       region: undefined,
-      model: ''
+      model: '',
+      contextWindow: ''
     })
     expect(
       selectedKindKey(createEmptyProviderFormValue({ type: 'official', vendorId: 'openai' }))
@@ -127,7 +151,8 @@ describe('provider-kind helpers', () => {
       type: 'custom',
       vendorId: undefined,
       region: undefined,
-      model: ''
+      model: '',
+      contextWindow: ''
     })
   })
 

@@ -174,6 +174,8 @@ export type ProviderView = {
   apiEndpoints?: ChatApiEndpoint[]
   baseUrl?: string
   model?: string
+  // User-configured context-window size for a custom model. Omitted means the runtime uses 200k.
+  contextWindow?: number
   supportsImageInput: boolean
   // Set for official-vendor providers: which vendor and (where applicable) which regional endpoint.
   vendorId?: OfficialVendorId
@@ -316,6 +318,9 @@ export type ProviderDraft = {
   name?: string
   baseUrl?: string
   model?: string
+  // Custom model context-window size in tokens. `null` explicitly clears a saved override; omitted
+  // leaves it unchanged on partial edits. A provider with no override resolves to 200k at runtime.
+  contextWindow?: number | null
   supportsImageInput?: boolean
   // Which chat APIs a custom gateway speaks (form selector). Official providers take it from the
   // registry; omitted defaults to ['anthropic'].

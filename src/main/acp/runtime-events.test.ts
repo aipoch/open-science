@@ -245,6 +245,37 @@ describe('ACP runtime event normalization', () => {
       terminalExitCode: 0
     })
   })
+
+  it('carries token usage and ignores provider cost metadata', () => {
+    const notification: SessionNotification = {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'usage_update',
+        used: 24890,
+        size: 200000,
+        cost: { amount: 0.12525, currency: 'USD' }
+      }
+    }
+
+    expect(toAcpRuntimeEvent(notification, 'event-7', 1710000000006)).toMatchObject({
+      kind: 'system',
+      contextUsage: { used: 24890, size: 200000 }
+    })
+    expect(
+      toAcpRuntimeEvent(notification, 'event-7', 1710000000006).contextUsage
+    ).not.toHaveProperty('cost')
+  })
+
+  it('preserves an empty context with its required window size', () => {
+    const notification: SessionNotification = {
+      sessionId: 'session-1',
+      update: { sessionUpdate: 'usage_update', used: 0, size: 128000 }
+    }
+
+    const event = toAcpRuntimeEvent(notification, 'event-8', 1710000000007)
+
+    expect(event.contextUsage).toEqual({ used: 0, size: 128000 })
+  })
 })
 
 describe('extractToolFailureText', () => {

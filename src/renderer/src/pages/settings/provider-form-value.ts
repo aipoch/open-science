@@ -18,6 +18,8 @@ export type ProviderFormValue = {
   name: string
   baseUrl: string
   model: string
+  // Kept as text so an empty optional numeric input remains distinct from the 200k runtime default.
+  contextWindow: string
   // Which chat API a custom gateway speaks; drives which agent frameworks can use it. Defaults to
   // 'anthropic'. A custom provider serves exactly one endpoint (official providers take theirs from
   // the registry); it is stored as the single-entry apiEndpoints array.
@@ -39,6 +41,7 @@ export const createEmptyProviderFormValue = (
   name: '',
   baseUrl: '',
   model: '',
+  contextWindow: '',
   apiEndpoint: 'anthropic',
   supportsImageInput: false,
   key: '',
@@ -74,6 +77,7 @@ export const defaultProviderKindKey = (
 // and model come from the registry).
 export type ProviderFormErrors = {
   baseUrl?: string
+  contextWindow?: string
   key?: string
   model?: string
 }
@@ -89,6 +93,12 @@ export const getProviderFormErrors = (
   if (value.type === 'custom') {
     if (!value.baseUrl.trim()) errors.baseUrl = 'Base URL is required.'
     if (!value.model.trim()) errors.model = 'Model is required.'
+    if (value.contextWindow.trim()) {
+      const contextWindow = Number(value.contextWindow)
+      if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) {
+        errors.contextWindow = 'Context window must be a positive whole number of tokens.'
+      }
+    }
     if (!value.key.trim() && !options.hasStoredKey) errors.key = 'API key is required.'
   } else if (value.type === 'official') {
     // No model is chosen at add time: the vendor catalog + the global model selection cover that.
@@ -169,6 +179,7 @@ export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
       apiEndpoint: 'responses',
       baseUrl: '',
       model: '',
+      contextWindow: '',
       key: '',
       vendorId: undefined,
       region: undefined
@@ -183,6 +194,7 @@ export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
       apiEndpoint: 'anthropic',
       baseUrl: '',
       model: '',
+      contextWindow: '',
       key: '',
       vendorId: undefined,
       region: undefined
@@ -199,11 +211,12 @@ export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
       name: vendor?.label,
       vendorId,
       region: vendor?.regions?.[0]?.id,
-      model: ''
+      model: '',
+      contextWindow: ''
     }
   }
 
-  return { type: 'custom', vendorId: undefined, region: undefined, model: '' }
+  return { type: 'custom', vendorId: undefined, region: undefined, model: '', contextWindow: '' }
 }
 
 // Maps the current form value back to its provider-kind key (the dropdown's selected value).

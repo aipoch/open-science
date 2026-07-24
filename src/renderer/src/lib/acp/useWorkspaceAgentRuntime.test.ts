@@ -42,6 +42,7 @@ const createSnapshot = (sessionIds: string[] = []): AcpStateSnapshot => ({
   pendingPermissions: [],
   permissionProfiles: {},
   permissionGrants: {},
+  contextUsageBySession: {},
   promptInFlight: false,
   promptInFlightSessionIds: []
 })

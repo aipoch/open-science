@@ -67,6 +67,7 @@ describe('codexFramework', () => {
         apiEndpoints: ['openai'],
         baseUrl: 'https://gateway.example/v1',
         model: 'chat-model',
+        contextWindow: 128_000,
         key: 'upstream-secret'
       },
       {
@@ -78,6 +79,8 @@ describe('codexFramework', () => {
 
     expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
       model: CODEX_BRIDGE_MODEL,
+      model_context_window: 128_000,
+      model_auto_compact_token_limit: 121_600,
       model_provider: 'open-science',
       model_providers: {
         'open-science': {
@@ -112,6 +115,7 @@ describe('codexFramework', () => {
         baseUrl: 'https://api.minimaxi.com/anthropic',
         openaiBaseUrl: 'https://api.minimaxi.com/v1',
         model: 'MiniMax-M3',
+        contextWindow: 1_000_000,
         key: 'mm-secret'
       },
       {
@@ -123,6 +127,8 @@ describe('codexFramework', () => {
 
     expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
       model: 'MiniMax-M3',
+      model_context_window: 1_000_000,
+      model_auto_compact_token_limit: 950_000,
       model_providers: {
         'open-science': {
           base_url: 'https://api.minimaxi.com/v1',

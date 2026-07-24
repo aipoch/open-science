@@ -85,10 +85,12 @@ import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import {
   defaultVendorModel,
-  getOfficialVendor,
+  getOfficialVendorModelIds,
   isModelBridgeSupported,
   isOfficialVendorId,
   isVendorModelMultimodal,
+  resolveCustomModelContextWindow,
+  resolveModelContextWindow,
   resolveVendorApiEndpoints,
   resolveVendorBaseUrl,
   resolveVendorModelsUrl,
@@ -130,6 +132,7 @@ import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import { detectNpmAvailable, runInstallWithFallback, type InstallTarget } from './claude-install'
 import { OPENCODE_INSTALL_TARGET } from './opencode-install'
 import {
+  ensureManagedCodexContextUsage,
   installManagedCodex,
   managedCodexAdapterEntry,
   managedCodexBinary,
@@ -362,6 +365,7 @@ const classifyClaudeProbeFailure = (error: unknown): 'auth' | 'network' | 'unkno
 export type AgentSpawnConfig = {
   envOverrides: Record<string, string>
   executablePath: string
+  contextWindow?: number
 }
 
 // Outcome of uninstalling a managed runtime. `activeBackendAffected` is true only when the removed
@@ -1712,16 +1716,27 @@ class SettingsService {
     } else if (request.type === 'custom') {
       const baseUrl = request.baseUrl?.trim() || existing?.baseUrl
       const model = request.model?.trim() || existing?.model
+      const contextWindow =
+        request.contextWindow === null
+          ? undefined
+          : (request.contextWindow ?? existing?.contextWindow)
 
       // Required-field guard: never persist an incomplete custom provider, even if the UI is bypassed.
       if (!baseUrl) throw new Error('Base URL is required for a custom provider.')
       if (!model) throw new Error('Model is required for a custom provider.')
       if (!carryKey()) throw new Error('API key is required for a custom provider.')
+      if (
+        contextWindow !== undefined &&
+        (!Number.isSafeInteger(contextWindow) || contextWindow <= 0)
+      ) {
+        throw new Error('Context window must be a positive whole number of tokens.')
+      }
 
       const apiEndpoints = request.apiEndpoints ?? existing?.apiEndpoints ?? ['anthropic']
 
       provider.baseUrl = baseUrl
       provider.model = model
+      if (contextWindow !== undefined) provider.contextWindow = contextWindow
       provider.supportsImageInput =
         request.supportsImageInput ?? existing?.supportsImageInput ?? false
       // Which chat APIs this gateway speaks (drives per-framework availability); defaults to anthropic.
@@ -2230,7 +2245,7 @@ class SettingsService {
     await syncConnectorSkillDocs(join(configRoot, 'skills'), this.enabledConnectorIds(connectors))
   }
 
-  // Bundled connectors the user hasn't turned off (default-on), for opencode instruction delivery.
+  // Bundled connectors the user hasn't turned off (default-on), for skill and baseline delivery.
   private enabledConnectorIds(connectors: StoredConnectors | undefined): string[] {
     const disabled = new Set(connectors?.disabledConnectorIds ?? [])
 
@@ -2511,15 +2526,13 @@ class SettingsService {
       disabledSkillIds
     })
 
-    const envOverrides = buildProviderEnv(
-      this.resolveProvider(activeProvider, settings.activeModel),
-      {
-        storageRoot: this.storageRoot,
-        claudeExecutablePath: executablePath
-      }
-    )
+    const provider = this.resolveProvider(activeProvider, settings.activeModel)
+    const envOverrides = buildProviderEnv(provider, {
+      storageRoot: this.storageRoot,
+      claudeExecutablePath: executablePath
+    })
 
-    return { envOverrides, executablePath }
+    return { envOverrides, executablePath, contextWindow: provider.contextWindow }
   }
 
   // Resolves the active agent backend for one connect: the selected framework plus its spawn inputs.
@@ -2621,7 +2634,7 @@ class SettingsService {
 
     if (framework.id === 'claude-code') {
       // Unchanged Claude path: skills provisioning + Anthropic-shaped env + local-auth handling.
-      const { envOverrides, executablePath } = await this.resolveSpawnConfig(
+      const { envOverrides, executablePath, contextWindow } = await this.resolveSpawnConfig(
         settings,
         forcedSkillIds
       )
@@ -2631,7 +2644,8 @@ class SettingsService {
         backendId: `${framework.id}:${activeProvider.id}`,
         executablePath,
         env: envOverrides,
-        sessionEffort
+        sessionEffort,
+        contextWindow
       }
     }
 
@@ -2639,6 +2653,9 @@ class SettingsService {
       framework.id === 'codex'
         ? await this.resolveCodexExecutable(settings.codex?.resolvedPath)
         : await this.resolveOpencodeExecutable(settings.opencodePath)
+    if (framework.id === 'codex' && isManagedCodexPath(executablePath, this.storageRoot)) {
+      await ensureManagedCodexContextUsage(executablePath)
+    }
     const provider = this.resolveProvider(activeProvider, settings.activeModel)
     // The settings UI intentionally stores one subscription card, but runtime sessions created
     // under the shared and isolated profiles are not interchangeable. Preserve their legacy
@@ -2681,8 +2698,8 @@ class SettingsService {
         executablePath,
         responsesBridge,
         reasoningEffort: sessionEffort,
-        // Connector conventions + tools, so opencode uses host.mcp instead of raw HTTP (it has no skill
-        // docs like Claude). Enabled bundled connectors only.
+        // Keep only connector calling conventions in OpenCode's baseline. Detailed tools are already
+        // materialized as on-demand `mcp-*` skills above, avoiding a full catalog in every request.
         instructions: renderConnectorInstructions(enabledConnectorIds)
       })
       await this.writeAgentConfigFiles(modelConfig.configFiles)
@@ -2706,6 +2723,7 @@ class SettingsService {
           ? { sessionModelRequired: true }
           : {}),
         sessionEffort,
+        contextWindow: provider.contextWindow,
         authentication: modelConfig.authentication,
         providerConfiguration: modelConfig.providerConfiguration,
         responsesBridgeLease: responsesBridge?.lease
@@ -2880,6 +2898,7 @@ class SettingsService {
       apiEndpoints: this.resolveProviderApiEndpoints(provider),
       baseUrl: provider.baseUrl,
       model: provider.model,
+      contextWindow: provider.contextWindow,
       supportsImageInput: this.providerSupportsImageInput(provider, activeModel),
       vendorId: provider.vendorId,
       region: provider.region,
@@ -2928,14 +2947,14 @@ class SettingsService {
   // override. Codex validates an explicit candidate against the live session options before applying it.
   private availableModels(provider: StoredProvider): string[] {
     if (isCodexSubscriptionProvider(provider.type)) {
-      return getOfficialVendor('openai')?.models ?? []
+      return getOfficialVendorModelIds('openai')
     }
 
     if (provider.type === 'official' && provider.vendorId) {
       // Live-fetched models (via "refresh from vendor") take precedence over the bundled catalog.
       if (provider.fetchedModels && provider.fetchedModels.length > 0) return provider.fetchedModels
 
-      return getOfficialVendor(provider.vendorId)?.models ?? []
+      return getOfficialVendorModelIds(provider.vendorId)
     }
 
     return provider.model ? [provider.model] : []
@@ -2966,21 +2985,34 @@ class SettingsService {
     const key = provider.keyRef ? tryDecryptKey(provider.keyRef) : undefined
 
     if (provider.type === 'official' && provider.vendorId) {
+      const model = modelOverride ?? defaultVendorModel(provider.vendorId)
+      const contextWindow = resolveModelContextWindow(provider.vendorId, model)
+
       return {
         type: 'custom',
         baseUrl: resolveVendorBaseUrl(provider.vendorId, provider.region),
         openaiBaseUrl: resolveVendorOpenAiBaseUrl(provider.vendorId, provider.region),
-        model: modelOverride ?? defaultVendorModel(provider.vendorId),
+        model,
+        ...(contextWindow === undefined ? {} : { contextWindow }),
         key,
         apiEndpoints: this.resolveProviderApiEndpoints(provider),
         supportsImageInput: this.providerSupportsImageInput(provider, modelOverride)
       }
     }
 
+    const model = modelOverride ?? provider.model
+    const contextWindow =
+      provider.type === 'custom'
+        ? resolveCustomModelContextWindow(provider.contextWindow)
+        : provider.type === 'claude-isolated'
+          ? resolveModelContextWindow('anthropic', model)
+          : undefined
+
     return {
       type: provider.type,
       baseUrl: provider.baseUrl,
-      model: modelOverride ?? provider.model,
+      model,
+      ...(contextWindow === undefined ? {} : { contextWindow }),
       key,
       apiEndpoints: this.resolveProviderApiEndpoints(provider),
       supportsImageInput: this.providerSupportsImageInput(provider, modelOverride)
@@ -3006,6 +3038,9 @@ class SettingsService {
       type: draft.type,
       baseUrl: draft.baseUrl,
       model: draft.model,
+      ...(draft.type === 'custom'
+        ? { contextWindow: resolveCustomModelContextWindow(draft.contextWindow ?? undefined) }
+        : {}),
       key: draft.key,
       apiEndpoints: draft.apiEndpoints ?? ['anthropic']
     }

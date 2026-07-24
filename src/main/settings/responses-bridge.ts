@@ -689,7 +689,9 @@ export const responsesToChatRequest = (
       : { max_tokens: body.max_output_tokens }),
     ...(chatReasoningEffort ? { reasoning_effort: chatReasoningEffort } : {}),
     stream,
-    ...(stream ? { stream_options: body.stream_options ?? { include_usage: true } } : {})
+    // Responses stream options are not Chat Completions options. Request final usage explicitly and
+    // do not forward fields such as include_obfuscation that a Chat-compatible gateway may reject.
+    ...(stream ? { stream_options: { include_usage: true } } : {})
   }
 }
 
@@ -725,6 +727,32 @@ const responseEnvelope = (
   user: null,
   metadata: {}
 })
+
+// Chat Completions and Responses use different usage field names. Codex validates the Responses
+// shape before publishing its ACP token-usage update, so passing Chat fields through makes usage
+// silently disappear even though the upstream reported it.
+const chatUsageToResponsesUsage = (usage: unknown): JsonObject | undefined => {
+  if (typeof usage !== 'object' || usage === null || Array.isArray(usage)) return undefined
+
+  const chatUsage = usage as JsonObject
+  const tokenCount = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
+  const inputTokens = tokenCount(chatUsage.prompt_tokens)
+  const outputTokens = tokenCount(chatUsage.completion_tokens)
+
+  if (inputTokens === undefined || outputTokens === undefined) return undefined
+
+  const cachedTokens = tokenCount(chatUsage.prompt_tokens_details?.cached_tokens) ?? 0
+  const reasoningTokens = tokenCount(chatUsage.completion_tokens_details?.reasoning_tokens) ?? 0
+
+  return {
+    input_tokens: inputTokens,
+    input_tokens_details: { cached_tokens: cachedTokens },
+    output_tokens: outputTokens,
+    output_tokens_details: { reasoning_tokens: reasoningTokens },
+    total_tokens: tokenCount(chatUsage.total_tokens) ?? inputTokens + outputTokens
+  }
+}
 
 const completionToResponse = (
   completion: JsonObject,
@@ -766,7 +794,7 @@ const completionToResponse = (
     completion.id ?? `resp_${randomBytes(6).toString('hex')}`,
     completion.model,
     output,
-    completion.usage
+    chatUsageToResponsesUsage(completion.usage)
   )
 }
 
@@ -800,6 +828,7 @@ const streamChatToResponses = async (
   let textItem: JsonObject | undefined
   // Accumulated so the caller can cache it against this turn's tool-call ids (see inputToMessages).
   let reasoning = ''
+  let usage: JsonObject | undefined
   let sequence = 0
   writeEvent(response, 'response.created', sequence++, {
     response: responseEnvelope(responseId, model, [])
@@ -839,6 +868,7 @@ const streamChatToResponses = async (
     return item
   }
   const consume = (chunk: JsonObject): void => {
+    usage = chatUsageToResponsesUsage(chunk.usage) ?? usage
     const finishReason = chunk.choices?.[0]?.finish_reason
     if (typeof finishReason === 'string' && finishReason.length > 0) {
       terminalFinishReason = finishReason
@@ -985,7 +1015,7 @@ const streamChatToResponses = async (
     })
   } else if (terminalFinishReason === 'stop' || terminalFinishReason === 'tool_calls') {
     writeEvent(response, 'response.completed', sequence++, {
-      response: responseEnvelope(responseId, model, output)
+      response: responseEnvelope(responseId, model, output, usage)
     })
   } else if (streamError) {
     log.warn('bridge stream error', {
@@ -993,7 +1023,7 @@ const streamChatToResponses = async (
       error: streamError instanceof Error ? streamError.message : String(streamError)
     })
     writeEvent(response, 'response.failed', sequence++, {
-      response: responseEnvelope(responseId, model, output, undefined, 'failed', {
+      response: responseEnvelope(responseId, model, output, usage, 'failed', {
         type: 'upstream_error',
         message: 'Upstream stream ended before completion'
       })
@@ -1004,19 +1034,19 @@ const streamChatToResponses = async (
     log.warn('bridge stream incomplete', { model, finishReason: terminalFinishReason })
     writeEvent(response, 'response.incomplete', sequence++, {
       response: {
-        ...responseEnvelope(responseId, model, output, undefined, 'incomplete'),
+        ...responseEnvelope(responseId, model, output, usage, 'incomplete'),
         incomplete_details: { reason: terminalFinishReason }
       }
     })
   } else if (sawDone) {
     writeEvent(response, 'response.completed', sequence++, {
-      response: responseEnvelope(responseId, model, output)
+      response: responseEnvelope(responseId, model, output, usage)
     })
   } else {
     // No finish_reason and no [DONE]: the upstream ended mid-stream without a terminal signal.
     log.warn('bridge stream truncated (no terminal finish_reason)', { model })
     writeEvent(response, 'response.failed', sequence++, {
-      response: responseEnvelope(responseId, model, output, undefined, 'failed', {
+      response: responseEnvelope(responseId, model, output, usage, 'failed', {
         type: 'upstream_incomplete',
         message: 'Upstream stream ended without a terminal finish_reason'
       })

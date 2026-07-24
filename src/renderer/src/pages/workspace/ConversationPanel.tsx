@@ -1,4 +1,8 @@
-import type { AcpPermissionGrant, AcpPermissionRequest } from '../../../../shared/acp'
+import type {
+  AcpPermissionGrant,
+  AcpPermissionRequest,
+  AcpContextUsage
+} from '../../../../shared/acp'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import type {
   PermissionProfileId,
@@ -39,6 +43,7 @@ import { useSessionJobStore } from '@/stores/session-job-store'
 import { ComposerEditor } from './composer/ComposerEditor'
 import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
+import { ComposerContextUsage } from './ComposerContextUsage'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { normalizeRunFailureError } from './error-report'
@@ -95,6 +100,8 @@ type ConversationPanelProps = {
   permissionProfile: PermissionProfileId
   permissionProfileState: SessionPermissionProfileState | undefined
   permissionGrants: AcpPermissionGrant[]
+  // Latest context-window usage for the active session (undefined when the framework never reported it).
+  contextUsage: AcpContextUsage | undefined
   canChangePermissionProfile: boolean
   // Auto-review toggle: whether the current session has auto-review enabled (default false).
   autoReviewEnabled: boolean
@@ -141,6 +148,7 @@ const ConversationPanel = ({
   permissionProfile,
   permissionProfileState,
   permissionGrants,
+  contextUsage,
   canChangePermissionProfile,
   autoReviewEnabled,
   onDraftDocChange,
@@ -494,6 +502,10 @@ const ConversationPanel = ({
                         />
 
                         <div className="flex-1" />
+
+                        {/* Context-window usage for the active session (renders nothing when the
+                            framework doesn't report usage). Sits with the model it pertains to. */}
+                        <ComposerContextUsage contextUsage={contextUsage} />
 
                         {/* Model/provider switcher; hides itself unless more than one is configured.
                             Grouped on the right with Send, mirroring the reference composer layout. */}

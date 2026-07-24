@@ -31,10 +31,12 @@ const CODEX_PROVIDER_ID = 'open-science'
 // answers. It MUST be a classic tool-mode entry (tool_mode unset), not a `code_mode_only` model like
 // the gpt-5.6-* family: code-mode models advertise no function tools and instead drive an
 // OpenAI-hosted code-execution host that a custom Chat Completions gateway cannot provide, so Codex
-// sends zero tools and the agent can only chat. gpt-5.5 advertises the `shell_command` function tool,
-// which the bridge forwards to Chat Completions. (apply_patch is still a freeform tool the bridge
+// sends zero tools and the agent can only chat. gpt-5.4 advertises the `shell_command` function tool
+// and accepts a 1M context override, while the bridge forwards those tools to Chat Completions.
+// (apply_patch is still a freeform tool the bridge
 // filters, so file edits route through shell rather than the dedicated patch tool.)
-export const CODEX_BRIDGE_MODEL = 'gpt-5.5'
+export const CODEX_BRIDGE_MODEL = 'gpt-5.4'
+const CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95
 const CODEX_MODE_IDS = {
   ask: 'read-only',
   auto: 'agent',
@@ -117,13 +119,24 @@ const buildCodexModelOptions = (input: {
 const buildCodexConfig = (provider: {
   baseUrl?: string
   model?: string
+  contextWindow?: number
   key?: string
   reasoningEffort?: ReasoningEffort
 }): Record<string, unknown> => {
   const baseUrl = normalizeResponsesBaseUrl(provider.baseUrl)
+  const contextWindow =
+    provider.contextWindow && provider.contextWindow > 0 ? provider.contextWindow : undefined
 
   return {
     ...buildCodexModelOptions(provider),
+    ...(contextWindow
+      ? {
+          model_context_window: contextWindow,
+          model_auto_compact_token_limit: Math.floor(
+            (contextWindow * CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT) / 100
+          )
+        }
+      : {}),
     model_provider: CODEX_PROVIDER_ID,
     model_providers: {
       [CODEX_PROVIDER_ID]: {
@@ -281,6 +294,9 @@ export const createCodexFramework = ({
           buildCodexConfig({
             ...provider,
             model: codexModel,
+            // Bind ACP usage to the selected upstream model for both native Responses and the bridge;
+            // the latter deliberately uses a local catalog model only for tool metadata.
+            contextWindow: provider.contextWindow,
             baseUrl: responsesBaseUrl,
             key: useBridge ? undefined : provider.key,
             reasoningEffort: ctx.reasoningEffort

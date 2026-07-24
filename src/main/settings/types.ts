@@ -30,6 +30,8 @@ export type StoredProvider = {
   apiEndpoints?: ChatApiEndpoint[]
   baseUrl?: string
   model?: string
+  // Optional custom-model override. Absence is meaningful and resolves to the shared 200k default.
+  contextWindow?: number
   supportsImageInput?: boolean
   // Set for official-vendor providers only.
   vendorId?: OfficialVendorId

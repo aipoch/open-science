@@ -30,6 +30,12 @@ const appendPath = (base: string, suffix: string): string => {
   }
 }
 
+// The Anthropic AI SDK base used by OpenCode. Unlike Claude Code, which appends `/v1/messages`,
+// the SDK appends only `/messages`; give it a base ending in exactly one `/v1` so both runtimes hit
+// the same endpoint as the provider validator.
+const anthropicMessagesBase = (baseUrl: string): string =>
+  appendPath(normalizeAnthropicBaseUrl(baseUrl), '/v1')
+
 // Appends `/chat/completions` to an already-resolved OpenAI base (see openAiCompletionsBase).
 const appendChatCompletions = (base: string): string => appendPath(base, '/chat/completions')
 
@@ -68,6 +74,7 @@ const openAiChatCompletionsUrl = (provider: OpenAiProviderBase): string | undefi
 }
 
 export {
+  anthropicMessagesBase,
   normalizeAnthropicBaseUrl,
   appendChatCompletions,
   openAiCompletionsBase,

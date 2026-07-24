@@ -5,7 +5,8 @@ import type {
   AcpPermissionGrant,
   AcpPermissionRequest,
   AcpRuntimeEvent,
-  AcpMessageImage
+  AcpMessageImage,
+  AcpContextUsage
 } from '../../../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -1031,6 +1032,7 @@ const useWorkspaceAgentRuntime = (): {
   pendingPermissions: AcpPermissionRequest[]
   permissionProfiles: Record<string, SessionPermissionProfileState>
   permissionGrants: Record<string, AcpPermissionGrant[]>
+  contextUsageBySession: Record<string, AcpContextUsage>
   sendMessage: (input: SendWorkspaceMessageInput) => Promise<SendWorkspaceMessageResult | undefined>
   resendEditedMessage: (
     sessionId: string,
@@ -1202,6 +1204,7 @@ const useWorkspaceAgentRuntime = (): {
     pendingPermissions: runtime.state.pendingPermissions,
     permissionProfiles: runtime.state.permissionProfiles,
     permissionGrants: runtime.state.permissionGrants,
+    contextUsageBySession: runtime.state.contextUsageBySession,
     sendMessage,
     resendEditedMessage,
     cancelRun,

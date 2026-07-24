@@ -46,6 +46,17 @@ let repository: InstanceType<typeof SettingsRepository>
 const CODEX_SHARED_PROVIDER_ID = CODEX_SUBSCRIPTION_PROVIDER_ID
 const CODEX_ISOLATED_PROVIDER_ID = CODEX_SUBSCRIPTION_PROVIDER_ID
 
+const validAnthropicResponse = (): Response =>
+  new Response(
+    JSON.stringify({
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'o' }],
+      usage: { input_tokens: 1, output_tokens: 1 }
+    }),
+    { status: 200, headers: { 'content-type': 'application/json' } }
+  )
+
 type ManagedInstallImpl = (options: {
   installId: string
   onEvent: (event: { kind: string; installId: string }) => void
@@ -498,6 +509,116 @@ describe('SettingsService: providers', () => {
     expect(JSON.stringify(stored)).not.toContain('sk-super-secret')
   })
 
+  it('persists a custom context window and carries it into the OpenCode model metadata', async () => {
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'opencode')
+    await repository.setAgentFramework('opencode')
+    const service = createService(undefined, {
+      opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.18.3' }
+    })
+
+    const snapshot = await service.upsertProvider({
+      type: 'custom',
+      name: 'Gateway',
+      baseUrl: 'https://g',
+      model: 'm',
+      contextWindow: 64_000,
+      key: 'k'
+    })
+    const view = snapshot.providers[0]
+    expect(view.contextWindow).toBe(64_000)
+    expect((await repository.getSettings()).providers[0].contextWindow).toBe(64_000)
+
+    await repository.upsertProvider({
+      ...(await repository.getSettings()).providers[0],
+      lastValidatedAt: Date.now()
+    })
+    await service.setActiveProvider(view.id)
+    const backend = await service.resolveActiveAgentBackend()
+    const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    expect(content.provider.anthropic.models.m.limit.context).toBe(64_000)
+  })
+
+  it('uses a 200k runtime default when a custom context window is omitted', async () => {
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'opencode')
+    await repository.setAgentFramework('opencode')
+    const service = createService(undefined, {
+      opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.18.3' }
+    })
+    const view = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'Gateway',
+        baseUrl: 'https://g',
+        model: 'm',
+        key: 'k'
+      })
+    ).providers[0]
+    expect(view.contextWindow).toBeUndefined()
+
+    await repository.upsertProvider({
+      ...(await repository.getSettings()).providers[0],
+      lastValidatedAt: Date.now()
+    })
+    await service.setActiveProvider(view.id)
+    const backend = await service.resolveActiveAgentBackend()
+    const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    expect(content.provider.anthropic.models.m.limit.context).toBe(200_000)
+  })
+
+  it('keeps OpenCode connector details in on-demand skills instead of baseline context', async () => {
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'opencode')
+    await repository.setAgentFramework('opencode')
+    const service = createService(undefined, {
+      opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.18.3' }
+    })
+    const provider = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'DeepSeek',
+        vendorId: 'deepseek',
+        key: 'k'
+      })
+    ).providers[0]
+    await service.setActiveProvider(provider.id)
+
+    await service.resolveActiveAgentBackend()
+
+    const baseline = await readFile(
+      join(storageRoot, 'opencode', 'config', 'opencode', 'instructions', 'connectors.md'),
+      'utf8'
+    )
+    expect(baseline).toContain('host.mcp')
+    expect(baseline).toContain('mcp-*')
+    expect(baseline).not.toContain('pubchem_get_compounds')
+    expect(baseline).not.toContain('```json')
+    expect(baseline.length).toBeLessThan(2_500)
+
+    const chemistrySkill = await readFile(
+      join(storageRoot, 'opencode', 'config', 'opencode', 'skills', 'mcp-chemistry', 'SKILL.md'),
+      'utf8'
+    )
+    expect(chemistrySkill).toContain('pubchem_get_compounds')
+    expect(chemistrySkill).toContain('```json')
+  })
+
+  it('rejects an invalid custom context window when IPC bypasses the form', async () => {
+    const service = createService()
+    const base = {
+      type: 'custom' as const,
+      name: 'Gateway',
+      baseUrl: 'https://g',
+      model: 'm',
+      key: 'k'
+    }
+
+    await expect(service.upsertProvider({ ...base, contextWindow: 0 })).rejects.toThrow(
+      /positive whole number/i
+    )
+    await expect(service.upsertProvider({ ...base, contextWindow: 1.5 })).rejects.toThrow(
+      /positive whole number/i
+    )
+  })
+
   it('keeps the stored key when an edit omits a new key', async () => {
     const service = createService()
     const created = (
@@ -567,7 +688,7 @@ describe('SettingsService: providers', () => {
 describe('SettingsService: validation', () => {
   it('records lastValidatedAt for a saved provider on success', async () => {
     const service = createService()
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200 }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(validAnthropicResponse()))
 
     const created = (
       await service.upsertProvider({
@@ -735,7 +856,7 @@ describe('SettingsService: validation', () => {
     await service.validateProvider({ providerId: created.id })
     expect((await repository.getSettings()).providers[0].lastValidationFailure).toBeDefined()
 
-    fetchMock.mockResolvedValue({ status: 200 })
+    fetchMock.mockResolvedValue(validAnthropicResponse())
     await service.validateProvider({ providerId: created.id })
 
     const stored = (await repository.getSettings()).providers[0]
@@ -746,7 +867,7 @@ describe('SettingsService: validation', () => {
 
   it('invalidates an earlier success when the latest validation fails', async () => {
     const service = createService()
-    const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
+    const fetchMock = vi.fn().mockResolvedValue(validAnthropicResponse())
     vi.stubGlobal('fetch', fetchMock)
     const created = (
       await service.upsertProvider({
@@ -790,7 +911,7 @@ describe('SettingsService: validation', () => {
             releaseSlow = () => resolve({ status: 401 } as Response)
           })
       )
-      .mockResolvedValue({ status: 200 } as Response)
+      .mockResolvedValue(validAnthropicResponse())
     vi.stubGlobal('fetch', fetchMock)
 
     const slow = service.validateProvider({ providerId: created.id })
@@ -811,7 +932,7 @@ describe('SettingsService: validation', () => {
     ['API format', { apiEndpoints: ['responses' as const] }]
   ])('invalidates prior validation when the custom provider %s changes', async (_label, change) => {
     const service = createService()
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200 }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(validAnthropicResponse()))
     const created = (
       await service.upsertProvider({
         type: 'custom',
@@ -908,10 +1029,8 @@ describe('SettingsService: validation', () => {
 
   it('ignores an older validation result that finishes after a newer success', async () => {
     const service = createService()
-    const resolvers: Array<(response: { status: number }) => void> = []
-    const fetchMock = vi.fn(
-      () => new Promise<{ status: number }>((resolve) => resolvers.push(resolve))
-    )
+    const resolvers: Array<(response: Response) => void> = []
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => resolvers.push(resolve)))
     vi.stubGlobal('fetch', fetchMock)
     const created = (
       await service.upsertProvider({
@@ -927,9 +1046,9 @@ describe('SettingsService: validation', () => {
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
     const newer = service.validateProvider({ providerId: created.id })
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
-    resolvers[1]({ status: 200 })
+    resolvers[1](validAnthropicResponse())
     await newer
-    resolvers[0]({ status: 401 })
+    resolvers[0](new Response(null, { status: 401 }))
     await older
 
     const stored = (await repository.getSettings()).providers[0]
@@ -972,7 +1091,7 @@ describe('SettingsService: validation', () => {
 describe('SettingsService: preflight & spawn config', () => {
   it('gates on a detected claude and a validated active provider', async () => {
     const service = createService()
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200 }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(validAnthropicResponse()))
 
     // Seed an existing executable path so the launch re-check passes.
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
@@ -1191,6 +1310,47 @@ describe('SettingsService: preflight & spawn config', () => {
     })
   })
 
+  it('patches an existing app-managed Codex adapter before returning the backend', async () => {
+    const { managedCodexAdapterEntry } = await import('./managed-codex')
+    const adapterPath = managedCodexAdapterEntry(storageRoot)
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(
+      adapterPath,
+      [
+        '  createUsageUpdate(params) {',
+        '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
+        '  }'
+      ].join('\n')
+    )
+    await chmod(adapterPath, 0o755)
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativePath: '/data/codex-managed/native/codex',
+      nativeVersion: '0.144.6'
+    })
+    await repository.setAgentFramework('codex')
+    const service = createService()
+    const provider = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'Managed Responses',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.openai.com/v1/responses',
+        model: 'gpt-5-codex',
+        key: 'test-key'
+      })
+    ).providers[0]
+    await service.setActiveProvider(provider.id)
+
+    const backend = await service.resolveActiveAgentBackend()
+
+    expect(backend.executablePath).toBe(adapterPath)
+    expect(await readFile(adapterPath, 'utf8')).toContain(
+      'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
+    )
+  })
+
   it.each([
     ['codex-shared', CODEX_SHARED_PROVIDER_ID],
     ['codex-isolated', CODEX_ISOLATED_PROVIDER_ID]
@@ -1308,8 +1468,34 @@ describe('SettingsService: preflight & spawn config', () => {
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
     expect(content.provider['openai-compatible'].models['kimi-k3']).toEqual({
       attachment: true,
-      modalities: { input: ['text', 'image'] }
+      modalities: { input: ['text', 'image'] },
+      limit: { context: 1_000_000, output: 32_000 }
     })
+  })
+
+  it('injects the selected official model context window into OpenCode', async () => {
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'opencode')
+    await repository.setAgentFramework('opencode')
+    const service = createService(undefined, {
+      opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.19.0' }
+    })
+    const provider = (
+      await service.upsertProvider({ type: 'official', name: 'GLM', vendorId: 'zhipu', key: 'k' })
+    ).providers[0]
+
+    await service.setActiveProvider(provider.id, 'glm-5.1')
+    const smallBackend = await service.resolveActiveAgentBackend()
+    const smallConfig = JSON.parse(smallBackend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    expect(smallBackend.contextWindow).toBe(200_000)
+    expect(smallConfig.provider['openai-compatible'].models['glm-5.1'].limit.context).toBe(200_000)
+
+    await service.setActiveProvider(provider.id, 'glm-5.2')
+    const largeBackend = await service.resolveActiveAgentBackend()
+    const largeConfig = JSON.parse(largeBackend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    expect(largeBackend.contextWindow).toBe(1_000_000)
+    expect(largeConfig.provider['openai-compatible'].models['glm-5.2'].limit.context).toBe(
+      1_000_000
+    )
   })
 
   it('resolves a Chat Completions provider through the Codex Responses bridge', async () => {
@@ -1350,11 +1536,9 @@ describe('SettingsService: preflight & spawn config', () => {
     await repository.setAgentFramework('codex')
     const provider = (
       await service.upsertProvider({
-        type: 'custom',
+        type: 'official',
         name: 'DeepSeek',
-        apiEndpoints: ['openai'],
-        baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        vendorId: 'deepseek',
         key: 'test-key'
       })
     ).providers[0]
@@ -1363,14 +1547,15 @@ describe('SettingsService: preflight & spawn config', () => {
       ...storedProvider,
       lastValidatedAt: Date.now()
     })
-    await service.setActiveProvider(provider.id)
+    await service.setActiveProvider(provider.id, 'deepseek-v4-flash')
 
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
     const backend = await service.resolveActiveAgentBackend()
 
     // Chat Completions provider ⇒ bridge ⇒ Codex runs the classic-tool-mode catalog model so it
     // advertises the shell_command function tool the bridge can forward (CODEX_BRIDGE_MODEL).
-    expect(backend.sessionModel).toBe('gpt-5.5')
+    expect(backend.sessionModel).toBe('gpt-5.4')
+    expect(backend.contextWindow).toBe(1_000_000)
     expect(backend.providerConfiguration).toEqual({
       providerId: 'custom-gateway',
       apiType: 'openai',
@@ -1784,6 +1969,7 @@ describe('SettingsService: official vendors', () => {
       ANTHROPIC_AUTH_TOKEN: 'sk-ds',
       ANTHROPIC_MODEL: 'deepseek-v4-flash'
     })
+    expect(config.contextWindow).toBe(1_000_000)
   })
 
   it('refreshes models from the vendor and persists them over the bundled catalog', async () => {

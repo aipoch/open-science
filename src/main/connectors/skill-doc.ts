@@ -92,35 +92,20 @@ export function renderSkillDoc(connectorId: string): string {
   )
 }
 
-// Renders ONE combined instructions doc for agents without on-demand skill loading (opencode): the
-// shared conventions once, then every enabled connector's tools. Delivered via opencode's `instructions`
-// config so the agent reaches connectors through `host.mcp(...)` from the notebook kernel instead of
-// reimplementing the calls with raw HTTP (which bypasses the approval gate, credentials, and limits).
+// Renders the small connector baseline shared by agents with on-demand skill loading. Detailed tool
+// schemas and examples stay in the materialized `mcp-*` skills and enter context only when the agent
+// loads the matching connector. Keeping this document to conventions prevents every enabled connector
+// from consuming the initial context window while still steering calls through the approved host.mcp
+// path instead of raw HTTP.
 export function renderConnectorInstructions(connectorIds: string[]): string {
-  const sections = connectorIds
-    .map((connectorId) => {
-      const meta = CONNECTOR_CATALOG.find((c) => c.id === connectorId)
-      if (!meta) return ''
-
-      const methods = getConnectorTools(connectorId)
-        .map(
-          (t) =>
-            `### ${connectorId} / ${t.id}\n\n${t.description}\n\n\`\`\`json\n${JSON.stringify(t.input, null, 2)}\n\`\`\`\n\n` +
-            (t.returns ? `**Returns:** ${t.returns}\n\n` : '') +
-            renderExample(connectorId, t.id, t.input, t.example)
-        )
-        .join('\n')
-
-      return `## ${connectorId}\n\n${meta.useWhen}\n\n${methods}`
-    })
-    .filter(Boolean)
-
-  if (sections.length === 0) return ''
+  if (!connectorIds.some((id) => CONNECTOR_CATALOG.some((connector) => connector.id === id))) {
+    return ''
+  }
 
   return (
-    `# Open Science data connectors\n\n` +
-    `These connectors are available for this session. ${CONVENTIONS}\n\n` +
-    `# Available connectors\n\n${sections.join('\n\n')}`
+    `# Open Science data connector conventions\n\n` +
+    `Detailed instructions, tool schemas, return shapes, and examples are available through the matching \`mcp-*\` skill. Load that skill before using a connector.\n\n` +
+    CONVENTIONS
   )
 }
 

@@ -28,6 +28,7 @@ type ValidationHttpRequest = {
   url: string
   headers: Record<string, string>
   body: string
+  endpoint: ChatApiEndpoint
   requiresBridgeToolCall?: boolean
 }
 
@@ -108,7 +109,7 @@ const buildAnthropicValidationRequest = (provider: ResolvedProvider): Validation
     messages: [{ role: 'user', content: 'ping' }]
   })
 
-  return { url, headers, body }
+  return { url, headers, body, endpoint: 'anthropic' }
 }
 
 // A bridge contract probe for /v1/chat/completions. Codex depends on function calls, so a plain text
@@ -153,6 +154,7 @@ const buildOpenAiValidationRequest = (
     url,
     headers,
     body,
+    endpoint: 'openai',
     ...(requireBridgeToolCall ? { requiresBridgeToolCall: true } : {})
   }
 }
@@ -181,11 +183,33 @@ const buildResponsesValidationRequest = (provider: ResolvedProvider): Validation
   return {
     url,
     headers,
+    endpoint: 'responses',
     body: JSON.stringify({
       model: provider.model ?? '',
       input: 'ping',
       max_output_tokens: 16
     })
+  }
+}
+
+const hasValidAnthropicMessage = (bodyText: string): boolean => {
+  try {
+    const parsed = JSON.parse(bodyText) as {
+      type?: unknown
+      role?: unknown
+      content?: unknown
+      usage?: { input_tokens?: unknown; output_tokens?: unknown }
+    }
+
+    return (
+      parsed.type === 'message' &&
+      parsed.role === 'assistant' &&
+      Array.isArray(parsed.content) &&
+      typeof parsed.usage?.input_tokens === 'number' &&
+      typeof parsed.usage?.output_tokens === 'number'
+    )
+  } catch {
+    return false
   }
 }
 
@@ -499,6 +523,21 @@ const validateCustomProvider = async (
         status: response.status,
         message: providerMessage
       })
+    }
+
+    if (category === 'ok' && request.endpoint === 'anthropic') {
+      let bodyText = ''
+      try {
+        bodyText = await response.text()
+      } catch {
+        // An unreadable success body cannot prove the Messages contract.
+      }
+      if (!hasValidAnthropicMessage(bodyText)) {
+        return toResult('unknown', {
+          status: response.status,
+          message: 'The provider returned success without a valid Anthropic message.'
+        })
+      }
     }
 
     if (category === 'ok' && request.requiresBridgeToolCall) {

@@ -19,6 +19,7 @@ const emptyAcpState: AcpStateSnapshot = {
   pendingPermissions: [],
   permissionProfiles: {},
   permissionGrants: {},
+  contextUsageBySession: {},
   promptInFlight: false,
   promptInFlightSessionIds: []
 }

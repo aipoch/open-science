@@ -10,7 +10,11 @@ import {
   SelectLabel,
   SelectTrigger
 } from '@/components/ui/select'
-import { getOfficialVendor, resolveVendorApiKeyUrl } from '../../../../shared/provider-registry'
+import {
+  getOfficialVendor,
+  getOfficialVendorModelIds,
+  resolveVendorApiKeyUrl
+} from '../../../../shared/provider-registry'
 import { getApiKeySecurityCopy } from './provider-key-security'
 import { ProviderKindIcon } from './provider-icons'
 import {
@@ -355,6 +359,29 @@ const ProviderForm = ({
               </p>
             ) : null}
           </div>
+
+          <div className="space-y-1.5">
+            <label className={fieldLabelClassName} htmlFor="provider-context-window">
+              Context window
+            </label>
+            <Input
+              id="provider-context-window"
+              aria-label="Context window"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              step={1000}
+              value={value.contextWindow}
+              disabled={disabled}
+              placeholder="200000"
+              onChange={(event) => onChange({ contextWindow: event.target.value })}
+            />
+            {errors.contextWindow ? (
+              <p className={fieldErrorClassName} role="alert">
+                {errors.contextWindow}
+              </p>
+            ) : null}
+          </div>
         </>
       ) : isOfficial ? (
         <>
@@ -385,7 +412,8 @@ const ProviderForm = ({
           {keyField}
 
           {(() => {
-            const models = supportedModels ?? vendor?.models ?? []
+            const models =
+              supportedModels ?? (value.vendorId ? getOfficialVendorModelIds(value.vendorId) : [])
 
             if (models.length === 0) return null
 

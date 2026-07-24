@@ -6,6 +6,8 @@ import {
   getOfficialVendor,
   isOfficialVendorId,
   isVendorModelMultimodal,
+  resolveCustomModelContextWindow,
+  resolveModelContextWindow,
   resolveVendorApiEndpoints,
   resolveVendorApiKeyUrl,
   resolveVendorBaseUrl,
@@ -299,6 +301,57 @@ describe('provider registry', () => {
       expect(isVendorModelMultimodal('openrouter', 'somevendor/unknown-model')).toBe(false)
       // Kimi's list is k3-only; an unknown id is not vision-capable.
       expect(isVendorModelMultimodal('kimi', 'kimi-k9-imaginary')).toBe(false)
+    })
+  })
+
+  describe('resolveModelContextWindow', () => {
+    it('declares a positive context window directly on every bundled model', () => {
+      for (const vendor of OFFICIAL_VENDORS) {
+        for (const model of vendor.models) {
+          expect(model.contextWindow, `${vendor.id}/${model.id}`).toBeGreaterThan(0)
+          expect(resolveModelContextWindow(vendor.id, model.id)).toBe(model.contextWindow)
+        }
+      }
+    })
+
+    it('keeps 1m bundled variants explicit and recognizes the suffix for unknown live models', () => {
+      expect(resolveModelContextWindow('anthropic', 'claude-opus-4-8[1m]')).toBe(1_000_000)
+      expect(resolveModelContextWindow('deepseek', 'deepseek-v4-pro[1m]')).toBe(1_000_000)
+      expect(resolveModelContextWindow('minimax', 'MiniMax-M3[1m]')).toBe(1_000_000)
+      expect(resolveModelContextWindow('anthropic', 'future-claude[1m]')).toBe(1_000_000)
+    })
+
+    it('resolves shipped models with vendor-published per-model limits', () => {
+      expect(resolveModelContextWindow('anthropic', 'claude-opus-4-8')).toBe(1_000_000)
+      expect(resolveModelContextWindow('anthropic', 'claude-haiku-4-5-20251001')).toBe(200_000)
+      expect(resolveModelContextWindow('openai', 'gpt-5.6-sol')).toBe(1_050_000)
+      expect(resolveModelContextWindow('openai', 'gpt-5.4-mini')).toBe(400_000)
+      expect(resolveModelContextWindow('deepseek', 'deepseek-v4-flash')).toBe(1_000_000)
+      expect(resolveModelContextWindow('zhipu', 'glm-5.2')).toBe(1_000_000)
+      expect(resolveModelContextWindow('zhipu', 'glm-5.1')).toBe(200_000)
+      expect(resolveModelContextWindow('kimi', 'kimi-k3')).toBe(1_000_000)
+      expect(resolveModelContextWindow('kimi', 'kimi-k2.7-code')).toBe(256_000)
+    })
+
+    it('resolves OpenRouter cross-vendor slugs from OpenRouter metadata', () => {
+      expect(resolveModelContextWindow('openrouter', 'anthropic/claude-opus-4.8')).toBe(1_000_000)
+      expect(resolveModelContextWindow('openrouter', 'google/gemini-3.1-pro-preview')).toBe(
+        1_048_576
+      )
+      expect(resolveModelContextWindow('openrouter', 'x-ai/grok-4.5')).toBe(500_000)
+      expect(resolveModelContextWindow('openrouter', 'deepseek/deepseek-v4-pro')).toBe(1_048_576)
+    })
+
+    it('uses the conservative fallback for an unknown live-fetched model but not a missing id', () => {
+      expect(resolveModelContextWindow('openai', 'totally-unknown-model')).toBe(200_000)
+      expect(resolveModelContextWindow('anthropic', undefined)).toBeUndefined()
+    })
+  })
+
+  describe('resolveCustomModelContextWindow', () => {
+    it('uses the configured size and falls back to 200k when the user leaves it blank', () => {
+      expect(resolveCustomModelContextWindow(64_000)).toBe(64_000)
+      expect(resolveCustomModelContextWindow(undefined)).toBe(200_000)
     })
   })
 })

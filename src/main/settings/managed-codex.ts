@@ -7,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   open,
+  readFile,
   readdir,
   rename,
   rm,
@@ -105,6 +106,47 @@ const adapterEntryInRoot = (root: string): string => join(root, 'adapter', 'dist
 
 const codexBinaryInRoot = (root: string, platform: ManagedCodexPlatform): string =>
   join(root, 'codex', 'vendor', platform.target, 'bin', platform.binName)
+
+const CODEX_ACP_CONTEXT_USAGE_SOURCE =
+  '    const used = this.sessionState.lastTokenUsage?.totalTokens;'
+const CODEX_ACP_CONTEXT_USAGE_REPLACEMENT = [
+  '    const lastTokenUsage = this.sessionState.lastTokenUsage;',
+  '    const used =',
+  '      lastTokenUsage == null',
+  '        ? void 0',
+  '        : lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0);'
+].join('\n')
+
+// codex-acp receives a per-request tokenUsage.last snapshot but publishes totalTokens as ACP
+// context usage. Patch the pinned self-contained adapter so `used` excludes output and reasoning.
+// The registry integrity pin fixes the input bundle; the guards make a future source drift fail
+// during installation instead of silently restoring the wrong metric.
+export const patchCodexAcpContextUsageSource = (source: string): string => {
+  if (source.includes(CODEX_ACP_CONTEXT_USAGE_REPLACEMENT)) return source
+
+  const matches = source.split(CODEX_ACP_CONTEXT_USAGE_SOURCE).length - 1
+
+  if (matches === 1) {
+    return source.replace(CODEX_ACP_CONTEXT_USAGE_SOURCE, CODEX_ACP_CONTEXT_USAGE_REPLACEMENT)
+  }
+
+  if (
+    matches > 1 ||
+    (source.includes('createUsageUpdate(params)') && source.includes('totalTokens'))
+  ) {
+    throw new Error('Pinned Codex ACP context-usage patch no longer matches the adapter bundle')
+  }
+
+  // Unit-test fixtures use tiny stand-in adapters rather than the pinned production bundle.
+  return source
+}
+
+export const ensureManagedCodexContextUsage = async (adapterPath: string): Promise<void> => {
+  const source = await readFile(adapterPath, 'utf8')
+  const patched = patchCodexAcpContextUsageSource(source)
+
+  if (patched !== source) await writeFile(adapterPath, patched)
+}
 
 type PackageResolution = { tarball: string; integrity: string }
 
@@ -718,6 +760,7 @@ export const installManagedCodex = async ({
         destPath: stagedAdapter
       })
       if (!foundAdapter) throw new Error('Codex ACP package did not contain dist/index.js')
+      await ensureManagedCodexContextUsage(stagedAdapter)
 
       await extractCodexVendor({
         tgzPath: codexTgz,

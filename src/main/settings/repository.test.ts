@@ -263,6 +263,20 @@ describe('settings repository', () => {
     expect(settings.claude).toEqual({ resolvedPath: '/bin/claude' })
   })
 
+  it('keeps only a positive whole-number custom context window', () => {
+    const base = { id: 'p1', type: 'custom', name: 'Gateway' }
+
+    expect(
+      sanitizeSettings({ providers: [{ ...base, contextWindow: 64_000 }] }).providers[0]
+        .contextWindow
+    ).toBe(64_000)
+    for (const contextWindow of [0, -1, 1.5, Number.NaN, '200000']) {
+      expect(
+        sanitizeSettings({ providers: [{ ...base, contextWindow }] }).providers[0].contextWindow
+      ).toBeUndefined()
+    }
+  })
+
   it('round-trips a recorded validation failure across a reload', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)

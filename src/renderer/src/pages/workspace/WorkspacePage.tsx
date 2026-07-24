@@ -159,6 +159,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     pendingPermissions,
     permissionProfiles,
     permissionGrants,
+    contextUsageBySession,
     sendMessage,
     resendEditedMessage,
     cancelRun,
@@ -219,6 +220,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     : undefined
   // Always-allow grants only exist for a bound session; new conversations have none yet.
   const activePermissionGrants = activeSession ? (permissionGrants?.[activeSession.id] ?? []) : []
+  const activeContextUsage = activeSession ? contextUsageBySession?.[activeSession.id] : undefined
   // Auto-review defaults off: an existing session is enabled only when explicitly turned on; a new
   // conversation uses the draft toggle (which also starts off).
   const activeAutoReviewEnabled = activeSession
@@ -912,6 +914,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             permissionProfile={activePermissionProfile}
             permissionProfileState={activePermissionProfileState}
             permissionGrants={activePermissionGrants}
+            contextUsage={activeContextUsage}
             canChangePermissionProfile={canChangePermissionProfile}
             autoReviewEnabled={activeAutoReviewEnabled}
             onDraftDocChange={setDraftDoc}

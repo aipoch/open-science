@@ -47,6 +47,7 @@ const createSnapshot = (overrides: Partial<AcpStateSnapshot> = {}): AcpStateSnap
   pendingPermissions: [],
   permissionProfiles: {},
   permissionGrants: {},
+  contextUsageBySession: {},
   promptInFlight: false,
   promptInFlightSessionIds: [],
   ...overrides

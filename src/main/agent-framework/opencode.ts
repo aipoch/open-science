@@ -9,7 +9,7 @@ import {
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { preferredEndpoint } from '../../shared/settings'
 import type { ReasoningEffort } from '../../shared/settings'
-import { openAiCompletionsBase } from '../settings/base-url'
+import { anthropicMessagesBase, openAiCompletionsBase } from '../settings/base-url'
 import { augmentedPathEnv } from '../settings/shell-path'
 import type { ResolvedProvider } from '../settings/provider-env'
 import type {
@@ -65,6 +65,21 @@ const OPENCODE_ENDPOINT_PROVIDER: Record<'anthropic' | 'openai', { id: string; n
 // plaintext key OFF disk — opencode.json only ever holds the reference, never the secret.
 const OPENCODE_API_KEY_ENV = 'OPENCODE_APP_API_KEY'
 
+// opencode's model `limit` block requires BOTH `context` and `output` (its config schema rejects a
+// limit that carries only one — "Missing key ...limit.output" and the ACP connection closes). We set
+// context from the provider catalog (the whole point: it makes opencode emit usage_update); opencode
+// uses these limits for context accounting, so a best-effort output cap is fine here. Tunable.
+const OPENCODE_DEFAULT_OUTPUT_LIMIT = 32_000
+
+const opencodeOutputLimit = (contextWindow: number, configured?: unknown): number => {
+  const requested =
+    typeof configured === 'number' && Number.isFinite(configured) && configured > 0
+      ? configured
+      : OPENCODE_DEFAULT_OUTPUT_LIMIT
+
+  return Math.min(requested, contextWindow)
+}
+
 // The app's permission policy for opencode: every side-effecting/MCP tool must ASK the ACP client (the
 // app's broker then enforces the selected profile); only safe read-only tools run silently (parity with
 // Claude's Ask mode). The `*` catch-all covers unlisted tools (MCP artifact/notebook/connectors, etc.),
@@ -108,9 +123,14 @@ const resolveOpencodeEndpoint = (
   // The @ai-sdk/openai-compatible client appends `/chat/completions` to baseURL, so hand it the
   // resolved OpenAI completions base — an official vendor's exact versioned base (GLM's /api/paas/v4,
   // DeepSeek/Kimi /v1), or a custom gateway root normalized to `<root>/v1`. Matches the validator and
-  // bridge. The anthropic endpoint keeps the provider's own baseUrl.
+  // bridge. The Anthropic AI SDK appends `/messages` (not `/v1/messages`), so its base must carry the
+  // `/v1` segment that Claude Code and the validator append themselves.
   const baseURL =
-    endpoint === 'openai' ? (openAiCompletionsBase(provider) ?? provider.baseUrl) : provider.baseUrl
+    endpoint === 'openai'
+      ? (openAiCompletionsBase(provider) ?? provider.baseUrl)
+      : provider.baseUrl
+        ? anthropicMessagesBase(provider.baseUrl)
+        : undefined
 
   return { bareModel, providerId, npm, baseURL }
 }
@@ -148,6 +168,17 @@ const buildAppConfigContent = (
   reasoningEffort?: ReasoningEffort
 ): Record<string, unknown> => {
   const { bareModel, providerId, npm, baseURL } = resolveOpencodeEndpoint(provider)
+  const modelConfig = {
+    ...buildModelCapabilities(provider, reasoningEffort),
+    ...(provider.contextWindow === undefined
+      ? {}
+      : {
+          limit: {
+            context: provider.contextWindow,
+            output: opencodeOutputLimit(provider.contextWindow)
+          }
+        })
+  }
 
   return {
     ...(bareModel ? { model: `${providerId}/${bareModel}` } : {}),
@@ -159,9 +190,7 @@ const buildAppConfigContent = (
           ...(baseURL ? { baseURL } : {}),
           ...(provider.key ? { apiKey: `{env:${OPENCODE_API_KEY_ENV}}` } : {})
         },
-        ...(bareModel
-          ? { models: { [bareModel]: buildModelCapabilities(provider, reasoningEffort) } }
-          : {})
+        ...(bareModel ? { models: { [bareModel]: modelConfig } } : {})
       }
     }
   }
@@ -184,7 +213,31 @@ const buildOpencodeConfig = (
   const baseProvider = asRecord(baseProviders[providerId])
   const baseOptions = asRecord(baseProvider.options)
   const baseModels = asRecord(baseProvider.models)
+  const baseModel = bareModel ? asRecord(baseModels[bareModel]) : {}
+  const baseLimit = asRecord(baseModel.limit)
   const basePermission = asRecord(baseConfig.permission)
+  const modelCapabilities = buildModelCapabilities(provider, reasoningEffort)
+  const modelConfig = {
+    ...baseModel,
+    ...modelCapabilities,
+    ...(modelCapabilities.options
+      ? {
+          options: {
+            ...asRecord(baseModel.options),
+            ...asRecord(modelCapabilities.options)
+          }
+        }
+      : {}),
+    ...(provider.contextWindow === undefined
+      ? {}
+      : {
+          limit: {
+            ...baseLimit,
+            context: provider.contextWindow,
+            output: opencodeOutputLimit(provider.contextWindow, baseLimit.output)
+          }
+        })
+  }
   // Preserve any instructions the base config already declared, then append ours (de-duplicated).
   const baseInstructions = Array.isArray(baseConfig.instructions)
     ? baseConfig.instructions.filter((entry): entry is string => typeof entry === 'string')
@@ -223,7 +276,7 @@ const buildOpencodeConfig = (
           ? {
               models: {
                 ...baseModels,
-                [bareModel]: buildModelCapabilities(provider, reasoningEffort)
+                [bareModel]: modelConfig
               }
             }
           : {})
@@ -282,8 +335,9 @@ export const opencodeFramework: AgentFramework = {
     const configPath = join(opencodeDir, 'opencode.json')
     const configFiles = [{ path: configPath, content: '' }]
 
-    // Connector conventions + tools, wired via opencode's `instructions` config so the agent uses
-    // host.mcp instead of raw HTTP. Absolute path keeps it independent of the session cwd.
+    // Compact connector conventions, wired via opencode's `instructions` config so the agent uses
+    // host.mcp instead of raw HTTP. Detailed schemas remain in on-demand `mcp-*` skills. Absolute path
+    // keeps the baseline independent of the session cwd.
     const instructionPaths: string[] = []
     if (ctx.instructions) {
       const instructionsPath = join(opencodeDir, 'instructions', 'connectors.md')

@@ -68,6 +68,21 @@ class AcpRuntimeCoordinator {
     const promptInFlightSessionIds = snapshots.flatMap(
       ({ snapshot }) => snapshot.promptInFlightSessionIds
     )
+    const contextUsageBySession = Object.fromEntries(
+      snapshots.flatMap(({ runtime, snapshot }) =>
+        // A framework selection takes effect immediately even when the prior generation must finish
+        // an active turn. Keep its conversation visible for routing, but stop publishing its context.
+        this.retiredRuntimes.has(runtime)
+          ? []
+          : this.visibleSessionIds(runtime, snapshot).flatMap((sessionId) => {
+              // A runtime may still hold a stale measurement after the same logical session was adopted
+              // by the next generation. Only the current owner may publish its context.
+              if (this.sessionRuntimes.get(sessionId) !== runtime) return []
+              const contextUsage = snapshot.contextUsageBySession[sessionId]
+              return contextUsage ? [[sessionId, contextUsage] as const] : []
+            })
+      )
+    )
 
     return {
       status: primary?.status ?? 'idle',
@@ -88,6 +103,7 @@ class AcpRuntimeCoordinator {
         {},
         ...snapshots.map(({ snapshot }) => snapshot.permissionGrants)
       ),
+      contextUsageBySession,
       promptInFlight: promptInFlightSessionIds.length > 0,
       promptInFlightSessionIds
     }

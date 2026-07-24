@@ -89,10 +89,12 @@ import {
   CODEX_ACP_INTEGRITY,
   CODEX_INTEGRITIES,
   CODEX_VERSION,
+  ensureManagedCodexContextUsage,
   managedCodexAdapterEntry,
   managedCodexBinary,
   managedCodexRoot,
   installManagedCodex,
+  patchCodexAcpContextUsageSource,
   resolveManagedCodexPlatform,
   sanitizeManagedCodexDiagnostic,
   verifyManagedCodexPair,
@@ -1105,6 +1107,80 @@ describe('installManagedCodex', () => {
 
     await expect(readFile(managedCodexAdapterEntry(root))).rejects.toThrow()
     expect(await readFile(join(root, 'unrelated-runtime'), 'utf8')).toBe('keep-me')
+  })
+})
+
+describe('patchCodexAcpContextUsageSource', () => {
+  it('treats omitted cached input tokens as zero', () => {
+    const source = [
+      '  const adapter = {',
+      '    sessionState: { lastTokenUsage: { inputTokens: 42 } },',
+      '    createUsageUpdate(params) {',
+      '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
+      '    return used;',
+      '    }',
+      '  };',
+      '  return adapter.createUsageUpdate({});'
+    ].join('\n')
+
+    const patched = patchCodexAcpContextUsageSource(source)
+    const used = Function(patched)() as number
+
+    expect(used).toBe(42)
+  })
+
+  it('reports the latest request input and cached input instead of total tokens', () => {
+    const source = [
+      '  createUsageUpdate(params) {',
+      '    this.handleTokenUsageUpdated(params);',
+      '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
+      '    return { used };',
+      '  }'
+    ].join('\n')
+
+    const patched = patchCodexAcpContextUsageSource(source)
+
+    expect(patched).toContain(
+      'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
+    )
+    expect(patched).not.toContain('lastTokenUsage?.totalTokens')
+    expect(patchCodexAcpContextUsageSource(patched)).toBe(patched)
+  })
+
+  it('updates an already-installed managed adapter in place', async () => {
+    const patchRoot = await mkdtemp(join(tmpdir(), 'managed-codex-patch-'))
+    try {
+      const adapterPath = join(patchRoot, 'index.js')
+      await writeFile(
+        adapterPath,
+        [
+          '  createUsageUpdate(params) {',
+          '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
+          '  }'
+        ].join('\n')
+      )
+
+      await ensureManagedCodexContextUsage(adapterPath)
+      await ensureManagedCodexContextUsage(adapterPath)
+
+      expect(await readFile(adapterPath, 'utf8')).toContain(
+        'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
+      )
+    } finally {
+      await rm(patchRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed when a Codex ACP bundle no longer matches the pinned patch target', () => {
+    const drifted = [
+      '  createUsageUpdate(params) {',
+      '    const used = this.sessionState.lastTokenUsage.totalTokens;',
+      '  }'
+    ].join('\n')
+
+    expect(() => patchCodexAcpContextUsageSource(drifted)).toThrow(
+      /context-usage patch no longer matches/
+    )
   })
 })
 
