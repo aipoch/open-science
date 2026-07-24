@@ -46,6 +46,15 @@ const renderList = (
     onLogin?: () => void
     onLogout?: () => void
     isCodexLoginPending?: boolean
+    isClaudeSharedLoginPending?: boolean
+    onLoginSharedClaude?: () => void
+    onCancelSharedClaudeLogin?: () => void
+    onLogoutSharedClaude?: () => void
+    isClaudeIsolatedLoginPending?: boolean
+    onLoginIsolatedClaude?: () => void
+    onCancelIsolatedClaudeLogin?: () => void
+    onLoginIsolatedClaudePaste?: () => void
+    onLogoutIsolatedClaude?: () => void
   } = {}
 ): void => {
   act(() => {
@@ -61,6 +70,15 @@ const renderList = (
         onCancelCodexLogin={callbacks.onCancel}
         onLoginIsolatedCodex={callbacks.onLogin}
         onLogoutIsolatedCodex={callbacks.onLogout}
+        isClaudeSharedLoginPending={callbacks.isClaudeSharedLoginPending}
+        onLoginSharedClaude={callbacks.onLoginSharedClaude}
+        onCancelSharedClaudeLogin={callbacks.onCancelSharedClaudeLogin}
+        onLogoutSharedClaude={callbacks.onLogoutSharedClaude}
+        isClaudeIsolatedLoginPending={callbacks.isClaudeIsolatedLoginPending}
+        onLoginIsolatedClaude={callbacks.onLoginIsolatedClaude}
+        onCancelIsolatedClaudeLogin={callbacks.onCancelIsolatedClaudeLogin}
+        onLoginIsolatedClaudePaste={callbacks.onLoginIsolatedClaudePaste}
+        onLogoutIsolatedClaude={callbacks.onLogoutIsolatedClaude}
       />
     )
   })
@@ -252,6 +270,91 @@ describe('ProviderList', () => {
     expect(buttonByLabel('Sign in')).toBeUndefined()
     expect(buttonByLabel('Edit')).toBeDefined()
     expect(buttonByLabel('Delete')).toBeDefined()
+  })
+
+  it('offers browser + setup-token sign-in for claude-isolated, cancel while pending, sign out after', () => {
+    const onLoginIsolatedClaude = vi.fn()
+    const onLoginIsolatedClaudePaste = vi.fn()
+    const onCancelIsolatedClaudeLogin = vi.fn()
+    const onLogoutIsolatedClaude = vi.fn()
+    const isolated = provider({
+      id: 'builtin-claude-isolated',
+      type: 'claude-isolated',
+      name: 'Claude subscription',
+      models: [],
+      model: undefined,
+      maskedKey: undefined,
+      hasKey: false,
+      lastValidatedAt: undefined
+    })
+
+    // Not signed in: the browser sign-in is primary and a setup-token fallback sits beside it.
+    renderList([isolated], undefined, undefined, {
+      onLoginIsolatedClaude,
+      onLoginIsolatedClaudePaste
+    })
+    act(() => buttonByLabel('Sign in with browser')?.click())
+    expect(onLoginIsolatedClaude).toHaveBeenCalledOnce()
+    act(() => buttonByLabel('Use setup token')?.click())
+    expect(onLoginIsolatedClaudePaste).toHaveBeenCalledOnce()
+
+    // While the browser sign-in is open: cancel is offered and the sign-in actions + test go away.
+    renderList([isolated], undefined, undefined, {
+      isClaudeIsolatedLoginPending: true,
+      onCancelIsolatedClaudeLogin
+    })
+    act(() => buttonByLabel('Cancel sign-in')?.click())
+    expect(onCancelIsolatedClaudeLogin).toHaveBeenCalledOnce()
+    expect(buttonByLabel('Sign in with browser')).toBeUndefined()
+    expect(buttonByLabel('Use setup token')).toBeUndefined()
+    expect(buttonByLabel('Test connection')).toBeUndefined()
+    // The pending row guides the user to the setup-token fallback in case the browser never opened.
+    expect(container.textContent).toContain("Didn't open? Cancel and use a setup token")
+
+    // Signed in (verified): sign-in actions go away, sign out is offered.
+    renderList([{ ...isolated, lastValidatedAt: 1 }], undefined, undefined, {
+      onLogoutIsolatedClaude
+    })
+    act(() => buttonByLabel('Sign out')?.click())
+    expect(onLogoutIsolatedClaude).toHaveBeenCalledOnce()
+    expect(buttonByLabel('Sign in with browser')).toBeUndefined()
+  })
+
+  it('swaps the claude-shared sign-in for a cancel action while the browser login is pending', () => {
+    const onLoginSharedClaude = vi.fn()
+    const onCancelSharedClaudeLogin = vi.fn()
+    const onLogoutSharedClaude = vi.fn()
+    const shared = provider({
+      id: 'builtin-claude-shared',
+      type: 'claude-shared',
+      name: 'Claude subscription',
+      models: [],
+      model: undefined,
+      maskedKey: undefined,
+      hasKey: false,
+      lastValidatedAt: undefined
+    })
+
+    // Not signed in: the browser sign-in is offered.
+    renderList([shared], undefined, undefined, { onLoginSharedClaude })
+    act(() => buttonByLabel('Sign in with browser')?.click())
+    expect(onLoginSharedClaude).toHaveBeenCalledOnce()
+
+    // While the browser sign-in is open: sign-in + test go away, cancel takes over (like OpenAI).
+    renderList([shared], undefined, undefined, {
+      isClaudeSharedLoginPending: true,
+      onCancelSharedClaudeLogin
+    })
+    expect(buttonByLabel('Sign in with browser')).toBeUndefined()
+    expect(buttonByLabel('Test connection')).toBeUndefined()
+    act(() => buttonByLabel('Cancel sign-in')?.click())
+    expect(onCancelSharedClaudeLogin).toHaveBeenCalledOnce()
+
+    // Signed in (verified): sign-in actions go away, sign out is offered.
+    renderList([{ ...shared, lastValidatedAt: 1 }], undefined, undefined, { onLogoutSharedClaude })
+    act(() => buttonByLabel('Sign out')?.click())
+    expect(onLogoutSharedClaude).toHaveBeenCalledOnce()
+    expect(buttonByLabel('Sign in with browser')).toBeUndefined()
   })
 
   it('renders an empty state with no providers', () => {

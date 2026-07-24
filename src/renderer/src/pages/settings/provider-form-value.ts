@@ -116,15 +116,16 @@ export const getProviderFormErrors = (
 export const hasProviderFormErrors = (errors: ProviderFormErrors): boolean =>
   Object.keys(errors).length > 0
 
-// Grouping for the provider-type picker. 'api' = official vendors via their standard API key;
-// 'other' = the custom gateway. ('coding' — subscription coding plans — is reserved for once those
-// endpoints are wired up.)
-export type ProviderKindGroup = 'coding' | 'api' | 'other'
+// Grouping for the provider-type picker. 'codex' / 'claude' = each vendor's own subscription
+// sign-in, surfaced as its own section (only one is shown at a time, gated on the active
+// framework); 'api' = official vendors via their standard API key; 'other' = the custom gateway.
+export type ProviderKindGroup = 'codex' | 'claude' | 'api' | 'other'
 
-// Group headers shown in the provider-type picker and dropdown, in display order. ('coding' is
-// reserved for subscription coding-plan endpoints once those are wired up.)
+// Group headers shown in the provider-type picker and dropdown, in display order. The two
+// subscription groups mirror each other: only the one matching the active framework is rendered.
 export const PROVIDER_KIND_GROUPS: { id: ProviderKindGroup; label: string }[] = [
-  { id: 'coding', label: 'Codex subscription' },
+  { id: 'codex', label: 'Codex subscription' },
+  { id: 'claude', label: 'Claude subscription' },
   { id: 'api', label: 'Official API' },
   { id: 'other', label: 'Other' }
 ]
@@ -142,17 +143,16 @@ export const PROVIDER_KINDS: ProviderKind[] = [
     key: 'codex-subscription',
     label: codexSubscriptionProviderIdentity().name,
     description: 'Use an existing Codex profile or sign in with a separate Open Science profile.',
-    group: 'coding'
+    group: 'codex'
   },
   {
-    // Sits in the API group (not coding) because claude-isolated is keyed off an OAuth token, not a
-    // ChatGPT-style sign-in — but it shares the "your subscription" framing the user is used to on
-    // the codex side. Surfaced only when Claude Code is the active framework, mirroring how the
-    // codex subscription is gated.
-    key: 'claude-isolated',
+    // Gets its own subscription section, mirroring the Codex subscription. Supports both shared
+    // (browser OAuth via `claude auth login`, uses ~/.claude) and isolated (setup-token paste, uses
+    // app-owned config dir). Surfaced only when Claude Code is the active framework.
+    key: 'claude-subscription',
     label: claudeIsolatedProviderIdentity().name,
-    description: 'Sign in with a Claude setup-token — no ~/.claude touch, no Keychain.',
-    group: 'api'
+    description: 'Use an existing Claude profile or sign in with a separate Open Science profile.',
+    group: 'claude'
   },
   ...OFFICIAL_VENDORS.map((vendor): ProviderKind => ({
     key: `official:${vendor.id}`,
@@ -186,10 +186,10 @@ export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
     }
   }
 
-  if (key === 'claude-isolated') {
+  if (key === 'claude-subscription') {
     const identity = claudeIsolatedProviderIdentity()
     return {
-      type: 'claude-isolated',
+      type: 'claude-shared',
       name: identity.name,
       apiEndpoint: 'anthropic',
       baseUrl: '',
@@ -224,7 +224,9 @@ export const selectedKindKey = (value: ProviderFormValue): string => {
   if (value.type === 'custom') {
     return 'custom'
   }
-  if (value.type === 'claude-isolated') return 'claude-isolated'
+  if (value.type === 'claude-shared' || value.type === 'claude-isolated') {
+    return 'claude-subscription'
+  }
   if (value.type === 'codex-shared' || value.type === 'codex-isolated') {
     return 'codex-subscription'
   }
@@ -238,4 +240,6 @@ export const providerKindKey = (type: ProviderType, vendorId?: OfficialVendorId)
     ? `official:${vendorId}`
     : type === 'codex-shared' || type === 'codex-isolated'
       ? 'codex-subscription'
-      : type
+      : type === 'claude-shared' || type === 'claude-isolated'
+        ? 'claude-subscription'
+        : type

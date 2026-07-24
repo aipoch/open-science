@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { homedir } from 'node:os'
 
 import type { ChatApiEndpoint, ProviderType } from '../../shared/settings'
 import { normalizeAnthropicBaseUrl } from './base-url'
@@ -39,16 +40,31 @@ export type ProviderEnvOptions = {
 // user's ~/.claude and a per-provider isolated dir (which lost history and customizations on switch).
 const getAppClaudeConfigDir = (storageRoot: string): string => join(storageRoot, 'claude')
 
+// The user's default ~/.claude directory, used by claude-shared to satisfy the CLAUDE_CONFIG_DIR
+// guard in agent-process.ts while still reading credentials from the standard location.
+const getUserClaudeConfigDir = (): string => join(homedir(), '.claude')
+
 // Builds spawn env overrides for one provider. All providers share the app-owned CLAUDE_CONFIG_DIR;
 // a provider only supplies credentials (endpoint / token / model). Empty/omitted fields are simply
 // not set so callers can merge this over process.env without erasing unrelated variables.
+//
+// Exception: claude-shared uses the default ~/.claude (no CLAUDE_CONFIG_DIR override), mirroring how
+// codex-shared uses the default CODEX_HOME.
 const buildProviderEnv = (
   provider: ResolvedProvider,
   { storageRoot, claudeExecutablePath }: ProviderEnvOptions
 ): Record<string, string> => {
   const env: Record<string, string> = {
-    CLAUDE_CODE_EXECUTABLE: claudeExecutablePath,
-    CLAUDE_CONFIG_DIR: getAppClaudeConfigDir(storageRoot)
+    CLAUDE_CODE_EXECUTABLE: claudeExecutablePath
+  }
+
+  // agent-process.ts throws if CLAUDE_CONFIG_DIR is absent — it refuses to start outside a known
+  // config dir to prevent silent credential leaks. For claude-shared we satisfy the guard with the
+  // user's real ~/.claude, so the spawned agent reads the shared credentials already stored there.
+  if (provider.type === 'claude-shared') {
+    env.CLAUDE_CONFIG_DIR = getUserClaudeConfigDir()
+  } else {
+    env.CLAUDE_CONFIG_DIR = getAppClaudeConfigDir(storageRoot)
   }
 
   if (provider.model) env.ANTHROPIC_MODEL = provider.model
@@ -70,6 +86,8 @@ const buildProviderEnv = (
     // ~/.claude touch, no OS credential store.
     if (provider.key) env.CLAUDE_CODE_OAUTH_TOKEN = provider.key
   }
+  // claude-shared: no explicit token injection; the ~/.claude profile (managed by `claude auth
+  // login`) holds the credentials. Claude Code reads them from there.
 
   return env
 }

@@ -3,6 +3,8 @@ import { create, type StoreApi } from 'zustand'
 import type { OfficialVendorId } from '../../../shared/provider-registry'
 import {
   codexSubscriptionProviderIdentity,
+  claudeSharedProviderIdentity,
+  claudeIsolatedProviderIdentity,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
   isCodexSubscriptionProvider,
@@ -177,9 +179,21 @@ type SettingsStore = SettingsStoreData & {
   // The explicit isolated sign-out. Resolves with the outcome so callers can surface a failure
   // (e.g. a timeout where the credential may still be in place) rather than silently succeeding.
   logoutIsolatedCodex: () => Promise<ValidateProviderResult>
-  // The Claude subscription's setup-token paste. Resolves with the recorded outcome; the renderer
-  // is responsible for collecting the token from the user (copy command + paste input).
+  // The Claude subscription's browser OAuth login (claude-shared mode). Opens the browser for sign-in
+  // via `claude auth login --claudeai`. Resolves with the recorded outcome.
+  loginSharedClaude: () => Promise<ValidateProviderResult>
+  // Cancels an in-flight claude-shared browser sign-in (mirrors cancelIsolatedClaudeLogin).
+  cancelSharedClaudeLogin: () => Promise<void>
+  // The Claude subscription's browser OAuth sign-out (claude-shared mode).
+  logoutSharedClaude: () => Promise<ValidateProviderResult>
+  // The Claude subscription's setup-token paste (claude-isolated mode). Resolves with the recorded
+  // outcome; the renderer is responsible for collecting the token from the user (copy command + paste input).
   loginIsolatedClaude: (token: string) => Promise<ValidateProviderResult>
+  // The Claude subscription's browser OAuth for claude-isolated mode: the app runs `claude setup-token`
+  // (opens the browser) under the isolated config dir and captures the token — no manual paste.
+  loginIsolatedClaudeBrowser: () => Promise<ValidateProviderResult>
+  // Cancels an in-flight claude-isolated browser sign-in.
+  cancelIsolatedClaudeLogin: () => Promise<void>
   // The Claude subscription's sign-out. Same failure semantics as logoutIsolatedCodex: a failed
   // sign-out is surfaced rather than silently swallowed.
   logoutIsolatedClaude: () => Promise<ValidateProviderResult>
@@ -508,6 +522,11 @@ const resolveUpsertedProviderId = (
   if (isCodexSubscriptionProvider(request.type)) {
     return codexSubscriptionProviderIdentity().id
   }
+  // Both Claude subscription modes use fixed builtin ids; return the correct one for the new type
+  // so mode switches (shared→isolated or vice versa) resolve to the incoming record, not the old one.
+  if (request.type === 'claude-shared') return claudeSharedProviderIdentity().id
+  if (request.type === 'claude-isolated') return claudeIsolatedProviderIdentity().id
+
   if (request.id) return request.id
 
   const beforeIds = new Set(before.map((provider) => provider.id))
@@ -799,10 +818,47 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     return result
   },
 
+  // Claude subscription's browser OAuth for claude-isolated mode. The app runs `claude setup-token`
+  // under the isolated config dir (opens the browser, captures the token) so there's no manual paste.
+  loginIsolatedClaudeBrowser: async () => {
+    const result = await window.api.settings.loginIsolatedClaudeBrowser()
+
+    set(applySnapshot(await window.api.settings.getSettings()))
+    await get().refreshPreflight()
+
+    return result
+  },
+
+  cancelIsolatedClaudeLogin: async () => {
+    await window.api.settings.cancelIsolatedClaudeLogin()
+  },
+
   logoutIsolatedClaude: async () => {
     const result = await window.api.settings.logoutIsolatedClaude()
     // Same refresh rule as the codex path: a failed sign-out keeps the verified markers, so the
     // store must reflect the real stored state regardless of the outcome.
+    set(applySnapshot(await window.api.settings.getSettings()))
+    await get().refreshPreflight()
+    return result
+  },
+
+  // Claude subscription's browser OAuth sign-in (claude-shared mode). Opens the browser via
+  // `claude auth login --claudeai`. The CLI stores credentials in ~/.claude.
+  loginSharedClaude: async () => {
+    const result = await window.api.settings.loginSharedClaude()
+
+    set(applySnapshot(await window.api.settings.getSettings()))
+    await get().refreshPreflight()
+
+    return result
+  },
+
+  cancelSharedClaudeLogin: async () => {
+    await window.api.settings.cancelClaudeLogin()
+  },
+
+  logoutSharedClaude: async () => {
+    const result = await window.api.settings.logoutSharedClaude()
     set(applySnapshot(await window.api.settings.getSettings()))
     await get().refreshPreflight()
     return result

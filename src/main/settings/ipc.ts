@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
+  CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   isReasoningEffort,
   type AgentFrameworkId,
@@ -240,6 +241,40 @@ const registerSettingsIpcHandlers = ({
     service.validateProvider(request)
   )
   ipcMain.handle('settings:cancel-codex-login', () => service.cancelCodexLogin())
+  ipcMain.handle('settings:cancel-claude-login', () => service.cancelClaudeLogin())
+  ipcMain.handle('settings:login-shared-claude', async () => {
+    const result = await service.loginClaudeShared()
+
+    // A fresh login changes the credentials the live agent relies on; reconnect so it picks them
+    // up. Skip when the outcome was discarded by a mid-flow switch to isolated — reconnecting the
+    // now-isolated runtime would be redundant (its credentials didn't change).
+    if (result.ok) {
+      const snapshot = await service.getSettingsView()
+      const active = snapshot.providers.find(
+        (provider) => provider.id === snapshot.activeProviderId
+      )
+      if (
+        snapshot.activeProviderId === CLAUDE_SHARED_PROVIDER_ID &&
+        active?.type === 'claude-shared'
+      ) {
+        onActiveProviderChanged?.()
+      }
+    }
+
+    return result
+  })
+  ipcMain.handle('settings:logout-shared-claude', async () => {
+    const result = await service.logoutClaudeShared()
+
+    if (result.ok) {
+      const snapshot = await service.getSettingsView()
+      if (snapshot.activeProviderId === CLAUDE_SHARED_PROVIDER_ID) {
+        onActiveProviderChanged?.()
+      }
+    }
+
+    return result
+  })
   ipcMain.handle('settings:login-isolated-claude', async (_event, token: string) => {
     // Renderer payloads are untyped at runtime: reject anything that isn't a string before it
     // reaches the controller, so a malicious or corrupt payload can never be coerced into a save.
@@ -266,6 +301,30 @@ const registerSettingsIpcHandlers = ({
     }
 
     return result
+  })
+  ipcMain.handle('settings:login-isolated-claude-browser', async () => {
+    // Browser sign-in: runs `claude setup-token` under the isolated config dir, which opens the
+    // browser for OAuth and returns the token the app stores. Same post-login reconnect rule as the
+    // paste flow — a fresh credential means the live agent must reconnect to pick it up.
+    const result = await service.loginIsolatedClaudeBrowser()
+
+    if (result.ok && result.applied !== false) {
+      const snapshot = await service.getSettingsView()
+      const active = snapshot.providers.find(
+        (provider) => provider.id === snapshot.activeProviderId
+      )
+      if (
+        snapshot.activeProviderId === CLAUDE_ISOLATED_PROVIDER_ID &&
+        active?.type === 'claude-isolated'
+      ) {
+        onActiveProviderChanged?.()
+      }
+    }
+
+    return result
+  })
+  ipcMain.handle('settings:cancel-isolated-claude-login', async () => {
+    await service.cancelClaudeIsolatedLogin()
   })
   ipcMain.handle('settings:logout-isolated-claude', async () => {
     const result = await service.logoutIsolatedClaude()

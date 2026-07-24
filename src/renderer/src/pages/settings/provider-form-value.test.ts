@@ -92,19 +92,20 @@ describe('getProviderFormErrors', () => {
 })
 
 describe('provider-kind helpers', () => {
-  it('lists official vendors under the API group and custom under Other', () => {
-    const codingKeys = PROVIDER_KINDS.filter((kind) => kind.group === 'coding').map(
-      (kind) => kind.key
-    )
-    const apiKeys = PROVIDER_KINDS.filter((kind) => kind.group === 'api').map((kind) => kind.key)
-    const otherKeys = PROVIDER_KINDS.filter((kind) => kind.group === 'other').map(
-      (kind) => kind.key
-    )
+  it('groups each subscription on its own, official vendors under API, and custom under Other', () => {
+    const groupKeys = (group: string): string[] =>
+      PROVIDER_KINDS.filter((kind) => kind.group === group).map((kind) => kind.key)
+
+    const apiKeys = groupKeys('api')
 
     expect(apiKeys).toContain('official:deepseek')
     expect(apiKeys).toContain('official:openai')
-    expect(codingKeys).toEqual(['codex-subscription'])
-    expect(otherKeys).toEqual(['custom'])
+    // The two subscription sign-ins each get their own group, parallel to one another, rather than
+    // the Claude one hiding under Official API.
+    expect(groupKeys('codex')).toEqual(['codex-subscription'])
+    expect(groupKeys('claude')).toEqual(['claude-subscription'])
+    expect(apiKeys).not.toContain('claude-subscription')
+    expect(groupKeys('other')).toEqual(['custom'])
   })
 
   it('uses one provider kind while keeping the auth mode in the form value', () => {

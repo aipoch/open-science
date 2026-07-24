@@ -790,12 +790,14 @@ describe('settings repository: unknown provider type on load (claude-default rem
       version: 1,
       providers: [
         { id: 'p-custom', type: 'custom', name: 'Custom' },
+        // claude-shared is a real, supported type: it must survive the allowlist, not be dropped.
+        { id: 'builtin-claude-shared', type: 'claude-shared', name: 'Claude subscription' },
         { id: 'p-removed', type: 'claude-default', name: 'Old Local Claude' }
       ]
     })
 
     const settings = await repository.getSettings()
-    expect(settings.providers.map((p) => p.id)).toEqual(['p-custom'])
+    expect(settings.providers.map((p) => p.id)).toEqual(['p-custom', 'builtin-claude-shared'])
     // One warn call for the dropped record, carrying id + type so an operator reading the log can
     // identify which provider was discarded.
     expect(warnSpy).toHaveBeenCalledWith(

@@ -38,17 +38,32 @@ const ProvidersPanel = ({
   const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
   const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
   const logoutIsolatedCodex = useSettingsStore((state) => state.logoutIsolatedCodex)
+  const loginSharedClaude = useSettingsStore((state) => state.loginSharedClaude)
+  const cancelSharedClaudeLogin = useSettingsStore((state) => state.cancelSharedClaudeLogin)
+  const logoutSharedClaude = useSettingsStore((state) => state.logoutSharedClaude)
   const loginIsolatedClaude = useSettingsStore((state) => state.loginIsolatedClaude)
+  const loginIsolatedClaudeBrowser = useSettingsStore((state) => state.loginIsolatedClaudeBrowser)
+  const cancelIsolatedClaudeLogin = useSettingsStore((state) => state.cancelIsolatedClaudeLogin)
   const logoutIsolatedClaude = useSettingsStore((state) => state.logoutIsolatedClaude)
 
   // The last connection-test/sign-in failure, shown as an error line under the list.
   const [providerTestError, setProviderTestError] = useState<string | undefined>(undefined)
   // True while the explicit isolated Codex sign-in is open in the browser; drives the cancel action.
   const [isCodexLoginPending, setIsCodexLoginPending] = useState(false)
-  // Modal state for the Claude subscription's setup-token paste. The modal collects the token and
-  // forwards it through loginIsolatedClaude; null means no modal is open. The wizard uses its own
+  // True while the explicit shared Claude sign-in is open in the browser.
+  const [isClaudeSharedLoginPending, setIsClaudeSharedLoginPending] = useState(false)
+  // True while the claude-isolated browser sign-in (`claude setup-token`) is open in the browser.
+  const [isClaudeIsolatedLoginPending, setIsClaudeIsolatedLoginPending] = useState(false)
+  // Modal state for the Claude subscription's setup-token paste. The modal now doubles as the
+  // fallback for the browser sign-in: "Sign in with browser" opens the browser AND this modal, so a
+  // user whose browser didn't open (or who prefers a token) can paste one. The wizard uses its own
   // flow, so this state lives on the panel rather than the store.
   const [isClaudeSignInOpen, setIsClaudeSignInOpen] = useState(false)
+  // Guards the race between the two isolated sign-in paths. The browser flow (setup-token + its
+  // localhost callback) and a manual paste both write the same provider token; whichever finishes
+  // first wins. When the manual paste wins we cancel the background browser login, and this flag
+  // stops that cancelled login's rejection from surfacing a spurious error over the paste's success.
+  const manualClaudePasteWonRef = useRef(false)
 
   // A pending sign-in lives in the main process for up to five minutes. This panel unmounts when
   // Settings closes (or the user switches panels), and an orphaned flow would have no cancel
@@ -64,10 +79,28 @@ const ProvidersPanel = ({
     }
   }, [cancelCodexLogin])
 
+  // Tear down in-flight Claude sign-ins the same way: both shared (browser OAuth) and isolated
+  // (setup-token) can outlive the panel if the user navigates away mid-flow.
+  const isClaudeSharedLoginPendingRef = useRef(isClaudeSharedLoginPending)
+  useEffect(() => {
+    isClaudeSharedLoginPendingRef.current = isClaudeSharedLoginPending
+  }, [isClaudeSharedLoginPending])
+  const isClaudeIsolatedLoginPendingRef = useRef(isClaudeIsolatedLoginPending)
+  useEffect(() => {
+    isClaudeIsolatedLoginPendingRef.current = isClaudeIsolatedLoginPending
+  }, [isClaudeIsolatedLoginPending])
+  useEffect(() => {
+    return () => {
+      if (isClaudeSharedLoginPendingRef.current) void cancelSharedClaudeLogin()
+      if (isClaudeIsolatedLoginPendingRef.current) void cancelIsolatedClaudeLogin()
+    }
+  }, [cancelSharedClaudeLogin, cancelIsolatedClaudeLogin])
+
   // Codex + Claude subscription pseudo-providers only make sense while their matching framework is the
-  // active one. Hide claude-isolated from non-claude-code frameworks (same rule as the codex branch).
+  // active one. Hide claude-isolated and claude-shared from non-claude-code frameworks (same rule as codex).
   const visibleProviders = providers.filter((provider) => {
-    if (provider.type === 'claude-isolated') return agentFrameworkId === 'claude-code'
+    if (provider.type === 'claude-isolated' || provider.type === 'claude-shared')
+      return agentFrameworkId === 'claude-code'
     if (isCodexSubscriptionProvider(provider.type)) return agentFrameworkId === 'codex'
 
     return true
@@ -121,17 +154,23 @@ const ProvidersPanel = ({
     }
   }
 
-  // The Claude subscription's paste-token sign-in: open the modal, forward the token to main when
-  // the user confirms, and surface any failure through the same error line the other flows use.
+  // The Claude subscription's paste-token sign-in (the modal's submit). Forwards the token to main
+  // and surfaces any failure through the same error line the other flows use. When a browser sign-in
+  // is still running in the background, the manual paste takes over: mark it as the winner and cancel
+  // the background login so the two paths don't both write the provider (or race a stale result onto
+  // the card). The winner flag stops the cancelled login from surfacing its own error.
   const handleClaudeSignIn = async (token: string): Promise<ValidateProviderResult | undefined> => {
     setProviderTestError(undefined)
+
+    if (isClaudeIsolatedLoginPending) {
+      manualClaudePasteWonRef.current = true
+      await cancelIsolatedClaudeLogin()
+    }
 
     try {
       const result = await loginIsolatedClaude(token)
       if (!result.ok) {
-        setProviderTestError(
-          result.message ?? 'Could not save the Claude token. Try again.'
-        )
+        setProviderTestError(result.message ?? 'Could not save the Claude token. Try again.')
       }
 
       return result
@@ -144,20 +183,77 @@ const ProvidersPanel = ({
     }
   }
 
+  // The claude-isolated browser sign-in. The app runs `claude setup-token` under the isolated config
+  // dir; the CLI opens the browser, runs its own localhost callback, captures the code, and prints
+  // the token to stdout — the happy path needs no manual paste. We open the paste modal alongside it
+  // as a fallback (browser didn't open / user prefers a token). On a successful browser callback we
+  // close that modal automatically. Mirrors handleCodexLogin's pending/error handling otherwise.
+  const handleClaudeIsolatedBrowserLogin = async (): Promise<void> => {
+    manualClaudePasteWonRef.current = false
+    setIsClaudeIsolatedLoginPending(true)
+    setProviderTestError(undefined)
+    // Open the fallback paste modal at the same time as the browser flow starts.
+    setIsClaudeSignInOpen(true)
+
+    try {
+      const result = await loginIsolatedClaudeBrowser()
+      // A manual paste finished first and cancelled this browser login: its outcome already won, so
+      // don't overwrite the modal/card with this (now-cancelled) result.
+      if (manualClaudePasteWonRef.current) return
+
+      if (result.ok) {
+        // Browser callback captured the token: close the fallback modal — the user's done.
+        setIsClaudeSignInOpen(false)
+      } else {
+        // Browser login failed (e.g. it never opened). Leave the modal open so the user can paste a
+        // token, and surface the reason there rather than only on the card behind it.
+        setProviderTestError(result.message ?? 'Could not sign in to Claude. Try again.')
+      }
+    } catch (error) {
+      if (manualClaudePasteWonRef.current) return
+      setProviderTestError(error instanceof Error ? error.message : 'Could not sign in to Claude.')
+    } finally {
+      setIsClaudeIsolatedLoginPending(false)
+    }
+  }
+
   const handleClaudeLogout = async (): Promise<void> => {
     setProviderTestError(undefined)
 
     try {
       const result = await logoutIsolatedClaude()
       if (!result.ok) {
-        setProviderTestError(
-          result.message ?? 'Claude sign-out did not complete. Try again.'
-        )
+        setProviderTestError(result.message ?? 'Claude sign-out did not complete. Try again.')
       }
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : 'Could not sign out of Claude.'
-      )
+      setProviderTestError(error instanceof Error ? error.message : 'Could not sign out of Claude.')
+    }
+  }
+
+  // Claude shared mode: browser OAuth login via `claude auth login --claudeai`.
+  const handleClaudeSharedLogin = async (): Promise<void> => {
+    setIsClaudeSharedLoginPending(true)
+    setProviderTestError(undefined)
+
+    try {
+      await loginSharedClaude()
+    } catch (error) {
+      setProviderTestError(error instanceof Error ? error.message : 'Could not sign in to Claude.')
+    } finally {
+      setIsClaudeSharedLoginPending(false)
+    }
+  }
+
+  const handleClaudeSharedLogout = async (): Promise<void> => {
+    setProviderTestError(undefined)
+
+    try {
+      const result = await logoutSharedClaude()
+      if (!result.ok) {
+        setProviderTestError(result.message ?? 'Claude sign-out did not complete. Try again.')
+      }
+    } catch (error) {
+      setProviderTestError(error instanceof Error ? error.message : 'Could not sign out of Claude.')
     }
   }
 
@@ -202,7 +298,20 @@ const ProvidersPanel = ({
           onCancelCodexLogin={() => void cancelCodexLogin()}
           onLoginIsolatedCodex={() => void handleCodexLogin()}
           onLogoutIsolatedCodex={() => void handleCodexLogout()}
-          onLoginIsolatedClaude={() => setIsClaudeSignInOpen(true)}
+          isClaudeSharedLoginPending={isClaudeSharedLoginPending}
+          onLoginSharedClaude={() => void handleClaudeSharedLogin()}
+          onCancelSharedClaudeLogin={() => void cancelSharedClaudeLogin()}
+          onLogoutSharedClaude={() => void handleClaudeSharedLogout()}
+          isClaudeIsolatedLoginPending={isClaudeIsolatedLoginPending}
+          onLoginIsolatedClaude={() => void handleClaudeIsolatedBrowserLogin()}
+          onCancelIsolatedClaudeLogin={() => {
+            // Explicit cancel: suppress the "Sign-in cancelled" error the browser flow would
+            // otherwise surface when its promise resolves, and close the fallback paste modal.
+            manualClaudePasteWonRef.current = true
+            setIsClaudeSignInOpen(false)
+            void cancelIsolatedClaudeLogin()
+          }}
+          onLoginIsolatedClaudePaste={() => setIsClaudeSignInOpen(true)}
           onLogoutIsolatedClaude={() => void handleClaudeLogout()}
         />
         {providerTestError ? (
@@ -227,6 +336,7 @@ const ProvidersPanel = ({
         open={isClaudeSignInOpen}
         onOpenChange={setIsClaudeSignInOpen}
         onSubmit={(token) => handleClaudeSignIn(token)}
+        browserSignInPending={isClaudeIsolatedLoginPending}
       />
     </div>
   )

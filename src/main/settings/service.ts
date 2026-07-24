@@ -64,12 +64,15 @@ import type {
 } from '../../shared/settings'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
+  CLAUDE_SHARED_PROVIDER_ID,
   CODEX_ISOLATED_PROVIDER_ID,
   CODEX_SHARED_PROVIDER_ID,
   claudeIsolatedProviderIdentity,
+  claudeSharedProviderIdentity,
   codexSubscriptionProviderIdentity,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
+  isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
   providerEndpoints
@@ -199,6 +202,11 @@ import {
   type ClaudeIsolatedAuthControllerPort,
   type ClaudeIsolatedAuthStatus
 } from './claude-isolated-auth'
+import {
+  ClaudeSharedAuthController,
+  type ClaudeSharedAuthControllerPort,
+  type ClaudeSharedAuthStatus
+} from './claude-shared-auth'
 
 export type AgentBackendSelection = {
   frameworkId: AgentFrameworkId
@@ -410,6 +418,9 @@ export type SettingsServiceOptions = {
   // when omitted. Storage is delegated to the host's SettingsRepository + encrypt/tryDecryptKey
   // pipeline, mirroring how CodexAuthController delegates to openCodexAuthSession.
   claudeIsolatedAuth?: ClaudeIsolatedAuthControllerPort
+  // Browser OAuth controller for claude-shared; default-constructed when omitted. Calls
+  // `claude auth login --claudeai` to open the browser and stores credentials in ~/.claude.
+  claudeSharedAuth?: ClaudeSharedAuthControllerPort
 }
 
 // Orchestrates the settings units (repository + crypto + detect/install + validate) behind one
@@ -437,6 +448,7 @@ class SettingsService {
   ) => Promise<ManagedCodexInstallOutcome>
   private readonly codexAuth: CodexAuthControllerPort
   private readonly claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort
+  private readonly claudeSharedAuth: ClaudeSharedAuthControllerPort
   private readonly responsesBridges = new Map<string, ResponsesBridgePoolEntry>()
   private providerSequence = 0
   private readonly providerValidationGenerations = new Map<string, number>()
@@ -505,6 +517,22 @@ class SettingsService {
           saveToken: (token) => this.saveClaudeIsolatedToken(token),
           clearToken: () => this.clearClaudeIsolatedToken(),
           isEncryptionAvailable: () => isEncryptionAvailable()
+        },
+        // Resolve the path lazily so a just-detected app-managed binary is used without requiring a
+        // service restart. Falls back to 'claude' on PATH if detection hasn't run yet.
+        claudePath: async () => {
+          const s = await this.repository.getSettings()
+          return s.claude?.resolvedPath ?? 'claude'
+        },
+        configDir: getAppClaudeConfigDir(this.storageRoot)
+      })
+    this.claudeSharedAuth =
+      options.claudeSharedAuth ??
+      new ClaudeSharedAuthController({
+        // Same lazy resolution: use the detected absolute path so app-managed binaries not on PATH work.
+        claudePath: async () => {
+          const s = await this.repository.getSettings()
+          return s.claude?.resolvedPath ?? 'claude'
         }
       })
   }
@@ -529,6 +557,10 @@ class SettingsService {
   // inverse of "delete claude-default + write a new one": we keep a stable record so other code that
   // keys on the provider id (the IPC layer's reconnect path) does not need to special-case first run.
   private async saveClaudeIsolatedToken(token: string): Promise<void> {
+    const settings = await this.repository.getSettings()
+    // If the user switched to shared mode while the browser login was in-flight, the isolated record
+    // was deleted. Skip the write so the switch isn't reversed by the finishing login.
+    if (settings.providers.some((p) => p.id === CLAUDE_SHARED_PROVIDER_ID)) return
     const keyRef = encryptKey(token)
 
     await this.repository.upsertClaudeIsolatedProvider({ keyRef, keyMask: maskKey(token) })
@@ -1633,7 +1665,9 @@ class SettingsService {
       ? codexSubscriptionProviderIdentity()
       : request.type === 'claude-isolated'
         ? claudeIsolatedProviderIdentity()
-        : undefined
+        : request.type === 'claude-shared'
+          ? claudeSharedProviderIdentity()
+          : undefined
     const requestedId = subscriptionIdentity?.id ?? request.id
     const existing = requestedId
       ? settings.providers.find((provider) => provider.id === requestedId)
@@ -1684,6 +1718,14 @@ class SettingsService {
       if (existing?.expiresAt !== undefined) {
         provider.expiresAt = existing.expiresAt
       }
+      credentialsChanged = false
+      const model = request.model?.trim() || existing?.model
+
+      if (model) provider.model = model
+    } else if (request.type === 'claude-shared') {
+      // claude-shared credentials live in ~/.claude, managed by the CLI. No token or expiry to
+      // carry over; only the optional model override is stored on the record.
+      provider.apiEndpoints = ['anthropic']
       credentialsChanged = false
       const model = request.model?.trim() || existing?.model
 
@@ -1759,6 +1801,29 @@ class SettingsService {
       provider.lastValidationFailure = existing.lastValidationFailure
     }
 
+    // When switching between claude-shared and claude-isolated, remove the outgoing record so the
+    // two fixed-id entries don't accumulate. The collapsed card in the list shows whichever is
+    // active; leaving a stale sibling would keep the old mode visible after the switch.
+    if (isClaudeSubscriptionProvider(provider.type)) {
+      const outgoingId =
+        provider.type === 'claude-shared' ? CLAUDE_ISOLATED_PROVIDER_ID : CLAUDE_SHARED_PROVIDER_ID
+      const outgoingExists = settings.providers.some((p) => p.id === outgoingId)
+      const outgoingWasActive = settings.activeProviderId === outgoingId
+
+      if (outgoingExists) {
+        await this.repository.deleteProvider(outgoingId)
+      }
+
+      await this.repository.upsertProvider(provider)
+
+      // Re-activate after the switch so the collapsed card continues pointing at the new mode.
+      if (outgoingWasActive) {
+        await this.repository.setActiveProvider(provider.id)
+      }
+
+      return this.getSettingsView()
+    }
+
     await this.repository.upsertProvider(provider)
 
     return this.getSettingsView()
@@ -1772,6 +1837,10 @@ class SettingsService {
 
   cancelCodexLogin(): void {
     this.codexAuth.cancelLogin()
+  }
+
+  cancelClaudeLogin(): void {
+    this.claudeSharedAuth.cancelLogin()
   }
 
   // The explicit isolated sign-in — the only path that opens the browser login. Saving or testing a
@@ -1849,15 +1918,43 @@ class SettingsService {
   // environment. Storage roundtrip success alone is not authentication: only the subprocess probe
   // can mark the provider verified or advance onboarding.
   async loginIsolatedClaude(token: string): Promise<ValidateProviderResult> {
-    let result = this.claudeIsolatedAuthValidationResult(
-      await this.claudeIsolatedAuth.loginIsolated(token)
+    return this.finalizeClaudeIsolatedLogin(
+      this.claudeIsolatedAuthValidationResult(await this.claudeIsolatedAuth.loginIsolated(token))
     )
+  }
+
+  // Browser sign-in for claude-isolated: the app runs `claude setup-token` (which opens the browser
+  // for OAuth) under the isolated config dir, captures the returned token, and stores it — the same
+  // end state as a manual paste, but with no copy/paste step. Post-login processing (probe + verified
+  // markers) is shared with the paste flow via finalizeClaudeIsolatedLogin.
+  async loginIsolatedClaudeBrowser(): Promise<ValidateProviderResult> {
+    const authStatus = await this.claudeIsolatedAuth.loginIsolatedBrowser()
+    // A user-cancel should not mark the card as failed: the user intentionally stopped the flow,
+    // so no failure marker is written and the card keeps its previous state.
+    if (authStatus.cancelled) {
+      return { ok: false, category: 'unknown', message: authStatus.message, applied: false, cancelled: true }
+    }
+    return this.finalizeClaudeIsolatedLogin(this.claudeIsolatedAuthValidationResult(authStatus))
+  }
+
+  // Cancels an in-flight claude-isolated browser sign-in (the `claude setup-token` subprocess).
+  async cancelClaudeIsolatedLogin(): Promise<void> {
+    this.claudeIsolatedAuth.cancelLogin()
+  }
+
+  // Shared post-login pipeline for both claude-isolated sign-in paths (paste + browser). Given the
+  // controller's storage result, runs the credential probe and records verified/failed markers on the
+  // provider card, so both flows converge on identical state.
+  private async finalizeClaudeIsolatedLogin(
+    initialResult: ValidateProviderResult
+  ): Promise<ValidateProviderResult> {
+    let result = initialResult
 
     const settings = await this.repository.getSettings()
     const provider = settings.providers.find(
       (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
     )
-    // The card can be deleted mid-paste. A deleted claude-isolated record means the paste should
+    // The card can be deleted mid-sign-in. A deleted claude-isolated record means the login should
     // land fresh: create a new one carrying the now-stored token (the controller just persisted it
     // for us via upsertClaudeIsolatedProvider, which has already written the record).
     if (!provider) return { ...result, applied: false }
@@ -1894,19 +1991,23 @@ class SettingsService {
       return { ...result, applied }
     }
 
-    await this.repository.upsertProvider({
-      ...provider,
-      expiresAt: undefined,
-      lastValidatedAt: undefined,
-      lastValidationFailure: {
-        at: Date.now(),
-        category: result.category,
-        status: result.status,
-        message: result.message
+    // Mirror the success path: use the key-matched writer so a concurrent paste that already wrote a
+    // new token does not get overwritten by the stale provider snapshot we read before the login.
+    const applied = await this.repository.updateClaudeIsolatedValidationIfKeyMatches(
+      provider.keyRef,
+      {
+        expiresAt: undefined,
+        lastValidatedAt: undefined,
+        lastValidationFailure: {
+          at: Date.now(),
+          category: result.category,
+          status: result.status,
+          message: result.message
+        }
       }
-    })
+    )
 
-    return { ...result, applied: true }
+    return { ...result, applied }
   }
 
   // Drops the stored token. The provider card stays so the user can sign back in without a fresh
@@ -1943,6 +2044,98 @@ class SettingsService {
     }
 
     return { ok: true, category: 'ok' }
+  }
+
+  // Runs `claude auth login --claudeai` which opens the browser for OAuth. The CLI stores the
+  // credentials in ~/.claude; the app never touches them. After success, runs a probe to validate.
+  async loginClaudeShared(): Promise<ValidateProviderResult> {
+    const authStatus = await this.claudeSharedAuth.loginShared()
+    const result = this.claudeSharedAuthValidationResult(authStatus)
+
+    // A user-cancel: don't write a failure marker and surface the cancellation to the caller.
+    if (authStatus.cancelled) {
+      return { ...result, applied: false, cancelled: true }
+    }
+
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
+    )
+    // The provider can be edited while the browser flow is open. Unless the stored record is still
+    // the shared subscription the login was started for, the outcome is stale and discarded.
+    if (provider?.type !== 'claude-shared') return { ...result, applied: false }
+
+    await this.repository.upsertProvider(
+      result.ok
+        ? {
+            ...provider,
+            lastValidatedAt: Date.now(),
+            lastValidationFailure: undefined
+          }
+        : {
+            ...provider,
+            lastValidatedAt: undefined,
+            lastValidationFailure: {
+              at: Date.now(),
+              category: result.category,
+              status: result.status,
+              message: result.message
+            }
+          }
+    )
+
+    return { ...result, applied: true }
+  }
+
+  async logoutClaudeShared(): Promise<ValidateProviderResult> {
+    const status = await this.claudeSharedAuth.logoutShared()
+
+    if (status.message) {
+      return {
+        ok: false,
+        category: status.message.toLowerCase().includes('timed out') ? 'timeout' : 'unknown',
+        message: status.message
+      }
+    }
+
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
+    )
+
+    if (provider && status.authenticated === false) {
+      await this.repository.upsertProvider({
+        ...provider,
+        lastValidatedAt: undefined,
+        lastValidationFailure: undefined
+      })
+    }
+
+    return { ok: true, category: 'ok' }
+  }
+
+  async getClaudeSharedStatus(): Promise<ValidateProviderResult> {
+    const status = await this.claudeSharedAuth.getStatus()
+
+    if (!status.authenticated) {
+      return this.claudeSharedAuthValidationResult(
+        status,
+        'Not signed in. Sign in via browser OAuth in the Settings card to connect your Claude subscription.'
+      )
+    }
+
+    return { ok: true, category: 'ok' }
+  }
+
+  private claudeSharedAuthValidationResult(
+    status: ClaudeSharedAuthStatus,
+    notSignedInMessage?: string
+  ): ValidateProviderResult {
+    if (status.authenticated) return { ok: true, category: 'ok' }
+
+    const message = status.message ?? notSignedInMessage
+
+    return { ok: false, category: 'unknown', message }
   }
 
   // Re-validates a stored claude-isolated credential through the same one-shot Claude command used
@@ -2046,7 +2239,9 @@ class SettingsService {
             ),
             'Not signed in. Use Sign in to connect your ChatGPT account.'
           )
-        : resolved.provider.type === 'claude-isolated'
+        : resolved.provider.type === 'claude-shared'
+          ? await this.getClaudeSharedStatus()
+          : resolved.provider.type === 'claude-isolated'
           ? await this.getClaudeIsolatedStatus()
           : await validateProvider(resolved.provider, {
               // Probe over Electron's network stack, which honors the system/VPN proxy. Node's global
@@ -2914,9 +3109,8 @@ class SettingsService {
 
   private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
     if (isCodexSubscriptionProvider(provider.type)) return true
-    // claude-isolated authenticates against Anthropic via an app-owned OAuth token and so
-    // inherits vision support the same way the legacy local Claude provider did.
-    if (provider.type === 'claude-isolated') return true
+    // Both Claude subscription modes authenticate against Anthropic and inherit vision support.
+    if (isClaudeSubscriptionProvider(provider.type)) return true
 
     // Custom providers: respect the user-configured supportsImageInput flag
     if (provider.type === 'custom') return provider.supportsImageInput === true
@@ -2934,10 +3128,12 @@ class SettingsService {
     return false
   }
 
-  // Credentials usable: codex subscriptions always; claude-isolated needs a decryptable token;
-  // custom/official need a key that still decrypts.
+  // Credentials usable: codex/claude subscriptions are CLI-managed; claude-isolated needs a
+  // decryptable token; custom/official need a key that still decrypts.
   private isProviderKeyUsable(provider: StoredProvider): boolean {
     if (isCodexSubscriptionProvider(provider.type)) return true
+    // claude-shared credentials live in ~/.claude and are owned by the CLI; no keyRef is stored.
+    if (provider.type === 'claude-shared') return true
 
     return Boolean(provider.keyRef) && tryDecryptKey(provider.keyRef) !== undefined
   }

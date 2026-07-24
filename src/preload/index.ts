@@ -285,9 +285,14 @@ type OpenScienceAPI = {
     setClosePreference: (request: SetClosePreferenceRequest) => Promise<SettingsSnapshot>
     validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
     cancelCodexLogin: () => Promise<void>
+    cancelClaudeLogin: () => Promise<void>
     loginIsolatedCodex: () => Promise<ValidateProviderResult>
     logoutIsolatedCodex: () => Promise<ValidateProviderResult>
+    loginSharedClaude: () => Promise<ValidateProviderResult>
+    logoutSharedClaude: () => Promise<ValidateProviderResult>
     loginIsolatedClaude: (token: string) => Promise<ValidateProviderResult>
+    loginIsolatedClaudeBrowser: () => Promise<ValidateProviderResult>
+    cancelIsolatedClaudeLogin: () => Promise<void>
     logoutIsolatedClaude: () => Promise<ValidateProviderResult>
     refreshProviderModels: (
       request: RefreshProviderModelsRequest
@@ -692,10 +697,15 @@ const api: OpenScienceAPI = {
     validateProvider: (request) =>
       ipcRenderer.invoke('settings:validate-provider', request) as Promise<ValidateProviderResult>,
     cancelCodexLogin: () => ipcRenderer.invoke('settings:cancel-codex-login') as Promise<void>,
+    cancelClaudeLogin: () => ipcRenderer.invoke('settings:cancel-claude-login') as Promise<void>,
     loginIsolatedCodex: () =>
       ipcRenderer.invoke('settings:login-isolated-codex') as Promise<ValidateProviderResult>,
     logoutIsolatedCodex: () =>
       ipcRenderer.invoke('settings:logout-isolated-codex') as Promise<ValidateProviderResult>,
+    loginSharedClaude: () =>
+      ipcRenderer.invoke('settings:login-shared-claude') as Promise<ValidateProviderResult>,
+    logoutSharedClaude: () =>
+      ipcRenderer.invoke('settings:logout-shared-claude') as Promise<ValidateProviderResult>,
     // The Claude subscription's setup-token paste. Same shape as the codex login, but the renderer
     // supplies the token (no browser flow), so the payload is the plaintext string itself.
     loginIsolatedClaude: (token: string) =>
@@ -703,6 +713,12 @@ const api: OpenScienceAPI = {
         'settings:login-isolated-claude',
         token
       ) as Promise<ValidateProviderResult>,
+    loginIsolatedClaudeBrowser: () =>
+      ipcRenderer.invoke(
+        'settings:login-isolated-claude-browser'
+      ) as Promise<ValidateProviderResult>,
+    cancelIsolatedClaudeLogin: () =>
+      ipcRenderer.invoke('settings:cancel-isolated-claude-login') as Promise<void>,
     logoutIsolatedClaude: () =>
       ipcRenderer.invoke('settings:logout-isolated-claude') as Promise<ValidateProviderResult>,
     refreshProviderModels: (request) =>

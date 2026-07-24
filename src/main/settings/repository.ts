@@ -42,6 +42,7 @@ const log = createLogger('settings.repository')
 
 const PROVIDER_TYPES = new Set<ProviderType>([
   'custom',
+  'claude-shared',
   'claude-isolated',
   'official',
   'codex-shared',
