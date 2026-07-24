@@ -22,6 +22,9 @@ export type UpdateStatus = {
   progress?: number // 0-100 while downloading
   downloadedBytes?: number // bytes received so far while downloading
   totalBytes?: number // total installer size in bytes
+  // Full progress detail (speed/ETA/reconnect) mirrored from the last update:progress broadcast so
+  // the dialog can render the shared DownloadProgressLine.
+  downloadProgress?: import('./download-progress').DownloadProgress
   localPath?: string // set when state === 'ready'
   error?: string
   // How the renderer applies a ready update: open the downloaded installer (mac manual reinstall) or
@@ -29,12 +32,9 @@ export type UpdateStatus = {
   applyKind?: 'installer' | 'restart'
 }
 
-// Broadcast on every download chunk so the renderer can show live byte counts alongside the percent.
-export type DownloadProgress = {
-  percent: number
-  transferred: number
-  total: number
-}
+// DownloadProgress now lives in download-progress.ts as a superset (adds phase/bytesPerSecond/
+// etaSeconds/attempt). Re-exported here so existing importers of this module keep working.
+export type { DownloadProgress } from './download-progress'
 
 export type AppInfo = { name: string; version: string; copyright: string }
 

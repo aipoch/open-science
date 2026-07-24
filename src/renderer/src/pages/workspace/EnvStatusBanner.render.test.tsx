@@ -38,6 +38,61 @@ describe('EnvStatusBanner', () => {
     )
   })
 
+  it('shows the shared speed/ETA line during an upgrade pack download', () => {
+    act(() =>
+      root.render(
+        <EnvStatusBanner
+          ui={{
+            kind: 'preparing',
+            scope: 'upgrade',
+            phase: 'download',
+            message: 'Downloading…',
+            progress: 0.4,
+            download: {
+              phase: 'downloading',
+              transferred: 4_000_000,
+              total: 10_000_000,
+              percent: 40,
+              bytesPerSecond: 2_000_000,
+              attempt: 0
+            }
+          }}
+        />
+      )
+    )
+    // Speed is surfaced (formatProgressLine renders "…/s"), not just a bare percent.
+    expect(container.querySelector('[data-testid="env-status-banner"]')?.textContent).toContain(
+      '/s'
+    )
+  })
+
+  it('surfaces a reconnect during an upgrade download instead of a frozen percent', () => {
+    act(() =>
+      root.render(
+        <EnvStatusBanner
+          ui={{
+            kind: 'preparing',
+            scope: 'upgrade',
+            phase: 'download',
+            message: 'Downloading…',
+            progress: 0.4,
+            download: {
+              phase: 'reconnecting',
+              transferred: 4_000_000,
+              total: 10_000_000,
+              percent: 40,
+              bytesPerSecond: 0,
+              attempt: 2
+            }
+          }}
+        />
+      )
+    )
+    expect(container.querySelector('[data-testid="env-status-banner"]')?.textContent).toContain(
+      'resuming'
+    )
+  })
+
   it('shows an error banner with a retry affordance wired to the store retry action', () => {
     let retried = 0
     act(() =>

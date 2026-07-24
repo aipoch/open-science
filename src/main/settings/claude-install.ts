@@ -115,6 +115,34 @@ const isRegionBlockedOutput = (text: string): boolean => {
   return REGION_BLOCK_MARKERS.some((marker) => haystack.includes(marker))
 }
 
+// Signatures of a transient network failure in installer output (npm registry timeouts, DNS/connection
+// resets, curl transfer errors). A non-zero exit whose output matches is worth retrying; anything else
+// (a real config/permission error) is surfaced as-is.
+const RETRYABLE_INSTALL_MARKERS = [
+  'etimedout',
+  'econnreset',
+  'econnrefused',
+  'enotfound',
+  'eai_again',
+  'network',
+  'timed out',
+  'timeout',
+  'socket hang up',
+  'connection reset',
+  'temporary failure',
+  'could not resolve host',
+  'failed to fetch'
+]
+
+// Whether installer output looks like a transient network failure (drives the retry loop). A region
+// block is handled separately (npm fallback), so it is excluded here to avoid double-handling.
+const isRetryableInstallFailure = (text: string): boolean => {
+  if (isRegionBlockedOutput(text)) return false
+  const haystack = text.toLowerCase()
+
+  return RETRYABLE_INSTALL_MARKERS.some((marker) => haystack.includes(marker))
+}
+
 // Injectable deps for the npm-global-prefix writability probe. Both default to real npm/fs but are
 // swappable so tests run offline without shelling out or touching the filesystem.
 type NpmGlobalPrefixWritableDeps = {
@@ -195,6 +223,10 @@ export type RunInstallOptions = {
 // the fallback's availability check can be driven in tests without shelling out to a real npm.
 export type RunInstallWithFallbackOptions = RunInstallOptions & {
   npmProbe?: () => Promise<unknown>
+  // Maximum extra attempts after the initial one (default 2 → total 3). Injectable so tests skip waits.
+  maxNetworkRetries?: number
+  // Delay between network-failure retries; injectable so tests run instantly.
+  retrySleep?: (ms: number) => Promise<void>
 }
 
 // Real installer spawn with piped stdio. PATH is augmented so a GUI-launched app can still find npm,
@@ -314,7 +346,11 @@ const runInstall = async ({
         // Only the official script can be served the region-block page; flag it so callers can retry
         // with npm instead of surfacing a cryptic `syntax error near '<'`.
         regionBlocked:
-          !ok && source === 'official-script' && isRegionBlockedOutput(captured) ? true : undefined
+          !ok && source === 'official-script' && isRegionBlockedOutput(captured) ? true : undefined,
+        // A non-zero exit that looks like a transient network fault; the caller retries the same
+        // source. A timeout is not a clean network signature, so it is not treated as retryable here.
+        retryableNetworkFailure:
+          !ok && !timedOut && isRetryableInstallFailure(captured) ? true : undefined
       })
     })
   })
@@ -356,42 +392,64 @@ const runInstallWithFallback = async ({
   platform,
   npmProbe,
   npmPrefixWritable,
-  installTarget
+  installTarget,
+  maxNetworkRetries = 2,
+  retrySleep = (ms) => new Promise((r) => setTimeout(r, ms))
 }: RunInstallWithFallbackOptions): Promise<ClaudeInstallResult> => {
-  const result = await runInstall({
-    source,
-    installId,
-    onEvent,
-    timeoutMs,
-    spawnImpl,
-    platform,
-    npmPrefixWritable,
-    installTarget
-  })
+  // Inner: one region-block-aware attempt (official-script → npm on region block).
+  const runOnce = async (): Promise<ClaudeInstallResult> => {
+    const result = await runInstall({
+      source,
+      installId,
+      onEvent,
+      timeoutMs,
+      spawnImpl,
+      platform,
+      npmPrefixWritable,
+      installTarget
+    })
 
-  if (result.ok || source !== 'official-script' || !result.regionBlocked) return result
+    if (result.ok || source !== 'official-script' || !result.regionBlocked) return result
 
-  const { available } = await detectNpmAvailable(npmProbe)
+    const { available } = await detectNpmAvailable(npmProbe)
 
-  if (!available) return result
+    if (!available) return result
 
-  onEvent({
-    kind: 'log',
-    installId,
-    stream: 'system',
-    chunk: 'Official installer looks unavailable in your region; falling back to npm…\n'
-  })
+    onEvent({
+      kind: 'log',
+      installId,
+      stream: 'system',
+      chunk: 'Official installer looks unavailable in your region; falling back to npm…\n'
+    })
 
-  return runInstall({
-    source: 'npm',
-    installId,
-    onEvent,
-    timeoutMs,
-    spawnImpl,
-    platform,
-    npmPrefixWritable,
-    installTarget
-  })
+    return runInstall({
+      source: 'npm',
+      installId,
+      onEvent,
+      timeoutMs,
+      spawnImpl,
+      platform,
+      npmPrefixWritable,
+      installTarget
+    })
+  }
+
+  // Outer: retry loop for transient network failures (registry timeouts, connection resets, etc.).
+  // Region-block is handled inside runOnce; a retryable network failure keeps the same source.
+  for (let attempt = 0; ; attempt++) {
+    const result = await runOnce()
+
+    if (result.ok || !result.retryableNetworkFailure || attempt >= maxNetworkRetries) return result
+
+    const backoffMs = Math.min(2000 * 2 ** attempt, 15_000)
+    onEvent({
+      kind: 'log',
+      installId,
+      stream: 'system',
+      chunk: `Install interrupted, retrying… (attempt ${attempt + 2})\n`
+    })
+    await retrySleep(backoffMs)
+  }
 }
 
 export {

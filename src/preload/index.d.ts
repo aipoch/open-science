@@ -127,6 +127,7 @@ import type {
   SetPackageMirrorRequest,
   SetAgentFrameworkRequest,
   SetNotificationsEnabledRequest,
+  SetClosePreferenceRequest,
   SetReasoningEffortRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
@@ -248,10 +249,13 @@ interface OpenScienceAPI {
     setAgentFramework(request: SetAgentFrameworkRequest): Promise<SettingsSnapshot>
     setReasoningEffort(request: SetReasoningEffortRequest): Promise<SettingsSnapshot>
     setNotificationsEnabled(request: SetNotificationsEnabledRequest): Promise<SettingsSnapshot>
+    setClosePreference(request: SetClosePreferenceRequest): Promise<SettingsSnapshot>
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
     cancelCodexLogin(): Promise<void>
     loginIsolatedCodex(): Promise<ValidateProviderResult>
     logoutIsolatedCodex(): Promise<ValidateProviderResult>
+    loginIsolatedClaude(token: string): Promise<ValidateProviderResult>
+    logoutIsolatedClaude(): Promise<ValidateProviderResult>
     refreshProviderModels(
       request: RefreshProviderModelsRequest
     ): Promise<RefreshProviderModelsResult>
@@ -269,6 +273,8 @@ interface OpenScienceAPI {
     importSkillZipBatch(request: ImportSkillZipBatchRequest): Promise<ImportSkillZipBatchResult>
     previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreviewResult>
     scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult>
+    listAgentHomeSkills(): Promise<AgentHomeSkillView[]>
+    importAgentHomeSkill(request: ImportAgentHomeSkillRequest): Promise<ImportSkillResult>
     listConnectors(): Promise<ConnectorsSnapshot>
     getConnectorDetail(id: string): Promise<ConnectorDetailView>
     setConnectorEnabled(request: SetConnectorEnabledRequest): Promise<ConnectorsSnapshot>
@@ -530,9 +536,9 @@ interface OpenScienceAPI {
     // Fires when Cmd+W / Ctrl+W is pressed; the renderer decides pane-vs-window.
     onCloseActivePane(listener: () => void): RemoveListener
     // Fires when main asks to confirm a close/quit; the renderer renders the modal and replies.
-    onCloseConfirmRequest(listener: (payload: CloseConfirmRequest) => void): RemoveListener
+    onCloseConfirmRequest?(listener: (payload: CloseConfirmRequest) => void): RemoveListener
     // Renderer -> main: modal-mounted ack, then the user's choice, keyed by requestId.
-    sendCloseConfirmResponse(payload: CloseConfirmResponse): void
+    sendCloseConfirmResponse?(payload: CloseConfirmResponse): void
   }
 }
 

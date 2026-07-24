@@ -39,4 +39,15 @@ describe('claudeCodeFramework', () => {
 
     expect(systemPrompt.append).toBe(callableName)
   })
+
+  it('renders per-turn reminders with Claude callable tool names', () => {
+    const setup = claudeCodeFramework.buildSessionSetup({
+      systemPromptAppends: ['Complete session guidance'],
+      turnPromptReminders: ['First call `begin_activity_group` with a purpose title.']
+    })
+
+    expect(setup.promptPrefix).toBe(
+      'First call `mcp__open-science-activity__begin_activity_group` with a purpose title.'
+    )
+  })
 })

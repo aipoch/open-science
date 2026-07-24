@@ -48,6 +48,8 @@ type AgentFrameworkCardProps = {
   isUninstalling: boolean
   // A detect run is in flight (the section-level Re-detect triggers all frameworks at once).
   isDetecting: boolean
+  // Whether an ACP prompt is currently running; forwarded to RuntimeUninstallControl.
+  promptInFlight?: boolean
   onUninstall: () => void
   // Install menu + progress wiring (only meaningful on not-ready cards).
   installSources: ClaudeInstallSourceInfo[]
@@ -160,6 +162,7 @@ const AgentFrameworkCard = ({
   managed,
   isUninstalling,
   isDetecting,
+  promptInFlight,
   onUninstall,
   installSources,
   install,
@@ -303,6 +306,7 @@ const AgentFrameworkCard = ({
                 isDetecting={isDetecting}
                 // Global by contract: an install of ANY framework locks every card's Uninstall.
                 isInstalling={installRunning}
+                promptInFlight={promptInFlight}
                 onUninstall={onUninstall}
               />
             ) : (

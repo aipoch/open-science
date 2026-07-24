@@ -9,6 +9,7 @@ import {
   providerValidationFailed
 } from '../../../shared/settings'
 import type { PackageMirror } from '../../../shared/mirror'
+import type { CloseActionPreference } from '../../../shared/window-controls'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import type {
   ClaudeDetectResult,
@@ -31,6 +32,7 @@ import type {
   ReasoningEffort,
   SettingsSnapshot,
   SkillView,
+  AgentHomeSkillView,
   CreateSkillRequest,
   UpdateSkillRequest,
   ImportSkillResult,
@@ -134,6 +136,8 @@ type SettingsStoreData = {
   reasoningEffort: ReasoningEffort
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
   notificationsEnabled: boolean
+  // Saved Windows titlebar-close behavior. Undefined means ask every time.
+  closePreference: CloseActionPreference | undefined
   // When true, the settings dialog opens directly to the Compute panel.
   pendingComputePanel?: boolean
 }
@@ -177,6 +181,12 @@ type SettingsStore = SettingsStoreData & {
   // The explicit isolated sign-out. Resolves with the outcome so callers can surface a failure
   // (e.g. a timeout where the credential may still be in place) rather than silently succeeding.
   logoutIsolatedCodex: () => Promise<ValidateProviderResult>
+  // The Claude subscription's setup-token paste. Resolves with the recorded outcome; the renderer
+  // is responsible for collecting the token from the user (copy command + paste input).
+  loginIsolatedClaude: (token: string) => Promise<ValidateProviderResult>
+  // The Claude subscription's sign-out. Same failure semantics as logoutIsolatedCodex: a failed
+  // sign-out is surfaced rather than silently swallowed.
+  logoutIsolatedClaude: () => Promise<ValidateProviderResult>
   // Fetches a saved provider's live model list from the vendor and refreshes the cache on success.
   refreshProviderModels: (providerId: string) => Promise<RefreshProviderModelsResult>
   // Activates a provider and, optionally, a specific model within it (composer model switch). An
@@ -188,6 +198,7 @@ type SettingsStore = SettingsStoreData & {
   setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
   // Toggles desktop notifications for finished/failed agent tasks; applies immediately.
   setNotificationsEnabled: (enabled: boolean) => Promise<void>
+  setClosePreference: (preference: CloseActionPreference | undefined) => Promise<void>
   deleteProvider: (providerId: string) => Promise<void>
   openSettings: () => void
   closeSettings: () => void
@@ -227,6 +238,11 @@ type SettingsStore = SettingsStoreData & {
   previewSkillZip: (dataBase64: string) => Promise<SkillBundlePreviewResult>
   // Scans a GitHub repo for importable skill directories (does not mutate state).
   scanRepoSkills: (repo: string) => Promise<ScanRepoResult>
+  // Lists the skills under the user's machine-level Claude config (~/.claude/skills/) for the
+  // "From your agent home" import source. Read-only; the import action lives below.
+  listAgentHomeSkills: () => Promise<AgentHomeSkillView[]>
+  // Copies one agent-home skill into the imported-skill store, refreshing the catalog on success.
+  importAgentHomeSkill: (slug: string) => Promise<ImportSkillResult>
   // Loads the bundled-connector list (enabled/auto-allow + NCBI credential state) from main.
   loadConnectors: () => Promise<void>
   // Toggles one connector; optimistic, then reconciled with the authoritative snapshot from main.
@@ -320,6 +336,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   packageMirror: undefined,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
+  closePreference: undefined,
   pendingComputePanel: undefined
 })
 
@@ -335,6 +352,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   // Defensive: main always fills this, but an untyped snapshot (tests, older backends) must not
   // write undefined into the boolean preference.
   notificationsEnabled: snapshot.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
+  closePreference: snapshot.closePreference,
   agentFrameworkId: snapshot.agentFrameworkId,
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,
@@ -455,7 +473,7 @@ export const selectFrameworkApiEndpoints = (state: SettingsStoreData): ChatApiEn
     ?.supportedApiTypes ?? DEFAULT_FRAMEWORK_API_ENDPOINTS
 
 // A single selectable (provider, model) entry for the composer picker. `model` is '' for a provider
-// with no concrete model (a claude-default without an override), meaning "use the provider default".
+// with no concrete model, meaning "use the provider default".
 export type ProviderModelOption = {
   providerId: string
   providerName: string
@@ -775,6 +793,27 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     return result
   },
 
+  // Claude subscription's paste-token sign-in. The renderer owns the modal that captures the
+  // setup-token output; this action forwards it to main, where it lands encrypted on the fixed
+  // builtin-claude-isolated provider record.
+  loginIsolatedClaude: async (token: string) => {
+    const result = await window.api.settings.loginIsolatedClaude(token)
+
+    set(applySnapshot(await window.api.settings.getSettings()))
+    await get().refreshPreflight()
+
+    return result
+  },
+
+  logoutIsolatedClaude: async () => {
+    const result = await window.api.settings.logoutIsolatedClaude()
+    // Same refresh rule as the codex path: a failed sign-out keeps the verified markers, so the
+    // store must reflect the real stored state regardless of the outcome.
+    set(applySnapshot(await window.api.settings.getSettings()))
+    await get().refreshPreflight()
+    return result
+  },
+
   // Fetches a provider's live models from the vendor; on success the persisted list is reflected here.
   refreshProviderModels: async (providerId) => {
     const result = await window.api.settings.refreshProviderModels({ providerId })
@@ -845,6 +884,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     } catch (error) {
       set({ notificationsEnabled: previous })
       console.error('Failed to set notifications enabled', error)
+    }
+  },
+
+  setClosePreference: async (preference) => {
+    const previous = get().closePreference
+    set({ closePreference: preference })
+
+    try {
+      set(applySnapshot(await window.api.settings.setClosePreference({ preference })))
+    } catch (error) {
+      set({ closePreference: previous })
+      console.error('Failed to set close preference', error)
     }
   },
 
@@ -943,6 +994,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   previewSkillZip: async (dataBase64) => window.api.settings.previewSkillZip({ dataBase64 }),
 
   scanRepoSkills: async (repo) => window.api.settings.scanRepoSkills({ repo }),
+
+  // The agent-home import surface: list is read-only, import copies one skill into the imported
+  // store and refreshes the catalog so the row can disappear (already-imported badge) immediately.
+  listAgentHomeSkills: async () => window.api.settings.listAgentHomeSkills(),
+  importAgentHomeSkill: async (slug) => {
+    const result = await window.api.settings.importAgentHomeSkill({ slug })
+
+    set(applySnapshot(await window.api.settings.getSettings()))
+
+    return result
+  },
 
   loadConnectors: async () => {
     const { connectors, customServers, ncbi } = await window.api.settings.listConnectors()

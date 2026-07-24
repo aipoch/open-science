@@ -1,11 +1,14 @@
 import { execFile } from 'node:child_process'
-import { access, chmod, mkdir, readdir, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, readdir, realpath, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
+import { dirname, join, resolve, sep } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 
 import { z } from 'zod'
+
+import type { CloseActionPreference } from '../../shared/window-controls'
 
 import type {
   ClaudeDetectResult,
@@ -19,9 +22,11 @@ import type {
   RemoveCustomServerRequest,
   SetCustomServerEnabledRequest,
   UpdateCustomServerRequest,
+  AgentHomeSkillView,
   CreateSkillRequest,
   DeleteSkillRequest,
   EnvironmentCheckResult,
+  ImportAgentHomeSkillRequest,
   InstallClaudeRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
@@ -58,8 +63,10 @@ import type {
   ValidateProviderResult
 } from '../../shared/settings'
 import {
+  CLAUDE_ISOLATED_PROVIDER_ID,
   CODEX_ISOLATED_PROVIDER_ID,
   CODEX_SHARED_PROVIDER_ID,
+  claudeIsolatedProviderIdentity,
   codexSubscriptionProviderIdentity,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
@@ -68,6 +75,12 @@ import {
   providerEndpoints
 } from '../../shared/settings'
 import type { PackageMirror } from '../../shared/mirror'
+import {
+  buildActiveModelIncompatibleMessage,
+  CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
+  CLAUDE_EXECUTABLE_MISSING_MESSAGE,
+  NO_ACTIVE_PROVIDER_MESSAGE
+} from '../../shared/run-error-classification'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import {
@@ -82,6 +95,7 @@ import {
   resolveVendorOpenAiBaseUrl
 } from '../../shared/provider-registry'
 import { resolveStorageRoot } from '../storage-root'
+import { buildAgentSpawnEnv } from '../acp/agent-process'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   getAgentFramework,
@@ -134,14 +148,15 @@ import {
   type ManagedInstallOutcome
 } from './managed-claude'
 import { encryptKey, isEncryptionAvailable, maskKey, tryDecryptKey } from './crypto'
-import { applyLocalClaudeAuth, defaultUserClaudeDir } from './local-claude-auth'
+import { augmentedPathEnv } from './shell-path'
 import { computePreflight } from './preflight'
 import { listProviderModels } from './list-models'
 import { buildProviderEnv, getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
 import {
   ResponsesBridge,
   type ResponsesBridgeConnection,
-  type ResponsesBridgeNamespacedTool
+  type ResponsesBridgeNamespacedTool,
+  type ResponsesBridgeTarget
 } from './responses-bridge'
 import { SettingsRepository } from './repository'
 import { sanitizeCustomMcpServer } from './repository'
@@ -150,12 +165,18 @@ import { getConnectorTools } from '../connectors/registry'
 import { renderConnectorInstructions, renderSkillDoc } from '../connectors/skill-doc'
 import { syncConnectorSkillDocs } from '../connectors/provision'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
-import { UserSkillRepository } from '../skills/user-skill-repository'
+import { SAFE_SLUG, UserSkillRepository } from '../skills/user-skill-repository'
 import { netFetch, netFetchStandard } from '../skills/net-fetch'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
 import { readSkillFile } from '../skills/skill-files'
 import { NOTEBOOK_MCP_SERVER_NAME, NOTEBOOK_RPC_TOOLS } from '../notebook/mcp-server'
 import { ARTIFACT_MCP_SERVER_NAME, writeArtifactFileToolSchema } from '../artifacts/mcp-server'
+import { beginActivityGroupToolSchema } from '../activity-groups/mcp-server'
+import {
+  ACTIVITY_GROUP_MCP_SERVER_NAME,
+  BEGIN_ACTIVITY_GROUP_TOOL_NAME
+} from '../../shared/activity-groups'
+import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
 import type {
   StoredConnectors,
   StoredCodexInfo,
@@ -163,18 +184,47 @@ import type {
   StoredProvider,
   StoredSettings
 } from './types'
-import { classifyStatus, validateProvider, type ClaudeProbeResult } from './validate'
+import { classifyStatus, validateProvider } from './validate'
 import {
   CodexAuthController,
   openCodexAuthSession,
   type CodexAuthControllerPort,
   type CodexAuthStatus
 } from './codex-auth'
+import {
+  ClaudeIsolatedAuthController,
+  type ClaudeIsolatedAuthControllerPort,
+  type ClaudeIsolatedAuthStatus
+} from './claude-isolated-auth'
+
+export type AgentBackendSelection = {
+  frameworkId: AgentFrameworkId
+}
+
+export type AgentBackendResolutionContext = {
+  forcedSkillIds?: string[]
+}
+
+type ResponsesBridgePoolEntry = {
+  bridge: ResponsesBridge
+  connection: Promise<ResponsesBridgeConnection>
+  leaseCount: number
+}
+
+type LeasedResponsesBridgeConnection = ResponsesBridgeConnection & {
+  lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
+}
 
 const execFileAsync = promisify(execFile)
 
-// Hard ceiling for the claude-default probe so a stuck local claude can never hang the wizard.
+// Hard ceiling for a Claude credential probe so a stuck process can never hang the wizard.
 const CLAUDE_PROBE_TIMEOUT_MS = 20_000
+// Anthropic documents `claude setup-token` as a one-year long-lived OAuth token. We surface
+// "expires <date>" on the Settings card using this estimate until the first Claude session returns
+// a real expiry. A one-year window is a coarse upper bound; a token that the underlying
+// subscription has already revoked surfaces as a validation failure on first use, so the worst case
+// is a card that says "expires in a year" for a credential that actually expires sooner.
+const SETUP_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000
 const CODEX_INSTALL_TARGET: InstallTarget = {
   npmPackage: '@agentclientprotocol/codex-acp',
   // Codex exposes no supported shell installer; InstallCodexRequest cannot select this branch.
@@ -215,7 +265,21 @@ const CODEX_BRIDGE_ARTIFACT_TOOLS: ResponsesBridgeNamespacedTool[] = [
     }) as ResponsesBridgeNamespacedTool['parameters']
   }
 ]
-
+const CODEX_ACTIVITY_TOOL_NAMESPACE = `mcp__${ACTIVITY_GROUP_MCP_SERVER_NAME.replace(
+  /[^a-zA-Z0-9_]/g,
+  '_'
+)}`
+const CODEX_BRIDGE_ACTIVITY_TOOLS: ResponsesBridgeNamespacedTool[] = [
+  {
+    namespace: CODEX_ACTIVITY_TOOL_NAMESPACE,
+    name: BEGIN_ACTIVITY_GROUP_TOOL_NAME,
+    description:
+      'Declare the concise purpose of the next coherent group of tool calls. Call once before the first tool in that group, not once per step.',
+    parameters: z.toJSONSchema(z.object(beginActivityGroupToolSchema), {
+      target: 'draft-7'
+    }) as ResponsesBridgeNamespacedTool['parameters']
+  }
+]
 const isManagedCodexPath = (adapterPath: string, storageRoot: string): boolean =>
   adapterPath === managedCodexAdapterEntry(storageRoot)
 
@@ -261,6 +325,38 @@ const isTimeoutError = (error: unknown): boolean => {
   )
 }
 
+const classifyClaudeProbeFailure = (error: unknown): 'auth' | 'network' | 'unknown' => {
+  if (typeof error !== 'object' || error === null) return 'unknown'
+
+  const candidate = error as {
+    code?: string | number
+    message?: string
+    stderr?: unknown
+    stdout?: unknown
+  }
+  if (candidate.code === 'ENOENT' || candidate.code === 'EACCES') return 'unknown'
+
+  const detail = [candidate.message, candidate.stderr, candidate.stdout]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ')
+  if (
+    /\b(?:401|403)\b|unauthori[sz]ed|not authenticated|not logged in|authentication failed|invalid api key|api key.*invalid|please run \/login|oauth.*(?:invalid|expired|reject)|(?:invalid|expired|rejected).*token|token.*(?:invalid|expired|rejected)/i.test(
+      detail
+    )
+  ) {
+    return 'auth'
+  }
+  if (
+    /\b(?:ECONNREFUSED|ECONNRESET|ENETUNREACH|EHOSTUNREACH|EAI_AGAIN)\b|network|fetch failed|getaddrinfo/i.test(
+      detail
+    )
+  ) {
+    return 'network'
+  }
+
+  return 'unknown'
+}
+
 // A spawn configuration the ACP runtime reads at connect time so the active provider's credentials
 // are always current.
 export type AgentSpawnConfig = {
@@ -282,9 +378,12 @@ export type SettingsServiceOptions = {
   detectDeps?: ClaudeDetectDeps
   opencodeDetectDeps?: OpencodeDetectDeps
   codexDetectDeps?: CodexDetectDeps
-  // The machine's own Claude config dir, read to reuse its login for the "local" provider. Injectable
-  // so tests don't touch the real ~/.claude.
+  // The machine's own Claude config dir, read by legacy code paths and the claude-isolated
+  // provider for skill scanning. Injectable so tests don't touch the real ~/.claude.
   userClaudeDir?: string
+  // The machine's own Codex config dir, scanned for the "From your agent home" skill source.
+  // Injectable for the same reason as userClaudeDir.
+  userCodexDir?: string
   // Bundled-skill source, injectable so tests can point at a seeded temp dir instead of app resources.
   skillRegistry?: SkillRegistry
   // Writable personal/imported skill store, injectable so tests can use a temp storage root.
@@ -303,6 +402,10 @@ export type SettingsServiceOptions = {
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
   codexAuth?: CodexAuthControllerPort
+  // Encrypted-token controller for claude-isolated; default-constructed against this.storageRoot
+  // when omitted. Storage is delegated to the host's SettingsRepository + encrypt/tryDecryptKey
+  // pipeline, mirroring how CodexAuthController delegates to openCodexAuthSession.
+  claudeIsolatedAuth?: ClaudeIsolatedAuthControllerPort
 }
 
 // Orchestrates the settings units (repository + crypto + detect/install + validate) behind one
@@ -315,6 +418,7 @@ class SettingsService {
   private readonly opencodeDetectDeps: OpencodeDetectDeps
   private readonly codexDetectDeps: CodexDetectDeps
   private readonly userClaudeDir: string
+  private readonly userCodexDir: string
   private readonly skillRegistry: SkillRegistry
   private readonly userSkills: UserSkillRepository
   private readonly executeClaudeProbe: ExecuteClaudeProbe
@@ -328,12 +432,10 @@ class SettingsService {
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
   private readonly codexAuth: CodexAuthControllerPort
-  private responsesBridge: ResponsesBridge | undefined
+  private readonly claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort
+  private readonly responsesBridges = new Map<string, ResponsesBridgePoolEntry>()
   private providerSequence = 0
   private readonly providerValidationGenerations = new Map<string, number>()
-  // Skills force-loaded for the current turn: subtracted from the stored disabled set at spawn time so
-  // a picked-but-disabled skill materializes for this prompt only, without mutating stored settings.
-  private turnForcedSkillIds = new Set<string>()
 
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
@@ -367,7 +469,8 @@ class SettingsService {
       managedAdapterPath,
       managedCodexPath: managedNativePath
     }
-    this.userClaudeDir = options.userClaudeDir ?? defaultUserClaudeDir()
+    this.userClaudeDir = options.userClaudeDir ?? join(homedir(), '.claude')
+    this.userCodexDir = options.userCodexDir ?? join(homedir(), '.codex')
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
     this.userSkills = options.userSkills ?? new UserSkillRepository(this.storageRoot)
     this.executeClaudeProbe = options.executeClaudeProbe ?? executeClaudeProbe
@@ -387,6 +490,50 @@ class SettingsService {
           })
         }
       })
+    // The claude-isolated token is stored on the (single) builtin-claude-isolated provider record,
+    // so the controller reads/writes that record directly. The repository's setProviderKeyRef +
+    // clearProviderKeyRef helpers keep the encryption pipeline in one place (see repository.ts).
+    this.claudeIsolatedAuth =
+      options.claudeIsolatedAuth ??
+      new ClaudeIsolatedAuthController({
+        store: {
+          loadToken: () => this.loadClaudeIsolatedToken(),
+          saveToken: (token) => this.saveClaudeIsolatedToken(token),
+          clearToken: () => this.clearClaudeIsolatedToken(),
+          isEncryptionAvailable: () => isEncryptionAvailable()
+        }
+      })
+  }
+
+  // Reads (and decrypts) the long-lived OAuth token stored on the single builtin-claude-isolated
+  // provider record. The record is auto-created on first use by upsertClaudeIsolatedProvider so a
+  // fresh install has somewhere to write the token; reading before the first write returns
+  // undefined, which the controller renders as "not signed in".
+  private async loadClaudeIsolatedToken(): Promise<string | undefined> {
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
+    )
+
+    if (!provider?.keyRef) return undefined
+
+    return tryDecryptKey(provider.keyRef)
+  }
+
+  // Persists the encrypted OAuth token onto the single builtin-claude-isolated provider record. The
+  // record is upserted (created if missing) so a paste on a fresh install does not 404 — this is the
+  // inverse of "delete claude-default + write a new one": we keep a stable record so other code that
+  // keys on the provider id (the IPC layer's reconnect path) does not need to special-case first run.
+  private async saveClaudeIsolatedToken(token: string): Promise<void> {
+    const keyRef = encryptKey(token)
+
+    await this.repository.upsertClaudeIsolatedProvider({ keyRef, keyMask: maskKey(token) })
+  }
+
+  // Drops the stored token (sets keyRef to undefined on the record). The record itself stays so the
+  // provider card remains visible — it's still selectable, just not authenticated.
+  private async clearClaudeIsolatedToken(): Promise<void> {
+    await this.repository.upsertClaudeIsolatedProvider({ keyRef: undefined, keyMask: undefined })
   }
 
   // Returns the raw stored settings document (unmasked), for main-process bootstrap needs (e.g. priming
@@ -428,6 +575,7 @@ class SettingsService {
       packageMirror: settings.packageMirror,
       reasoningEffort: settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
       notificationsEnabled: settings.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
+      closePreference: settings.closePreference,
       agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       agentFrameworks: listAgentFrameworks().map((framework) => ({
         id: framework.id,
@@ -576,7 +724,9 @@ class SettingsService {
     // A live bridge never sees resolveActiveAgentBackend again until the next provider switch, so its
     // forwarding policy must be updated in place: an explicit level forwards, 'default' restores
     // stripping so Codex's own default effort never leaks upstream.
-    this.responsesBridge?.setForwardReasoningEffort(effort !== DEFAULT_REASONING_EFFORT)
+    for (const { bridge } of this.responsesBridges.values()) {
+      bridge.setForwardReasoningEffort(effort !== DEFAULT_REASONING_EFFORT)
+    }
 
     return this.getSettingsView()
   }
@@ -592,6 +742,18 @@ class SettingsService {
   // Sets the desktop-notification preference and returns the refreshed snapshot for the renderer.
   async setNotificationsEnabled(enabled: boolean): Promise<SettingsSnapshot> {
     await this.repository.setNotificationsEnabled(enabled)
+
+    return this.getSettingsView()
+  }
+
+  async getClosePreference(): Promise<CloseActionPreference | undefined> {
+    return (await this.repository.getSettings()).closePreference
+  }
+
+  async setClosePreference(
+    preference: CloseActionPreference | undefined
+  ): Promise<SettingsSnapshot> {
+    await this.repository.setClosePreference(preference)
 
     return this.getSettingsView()
   }
@@ -653,16 +815,6 @@ class SettingsService {
     return skills.map((skill) => this.toSkillView(skill, disabled))
   }
 
-  // Sets the skills to force-load for the current turn (picked in the composer). Cleared after the turn.
-  setTurnForcedSkillIds(ids: string[]): void {
-    this.turnForcedSkillIds = new Set(ids)
-  }
-
-  // Clears the turn-scoped force-load set so later spawns use the normal enabled set.
-  clearTurnForcedSkillIds(): void {
-    this.turnForcedSkillIds.clear()
-  }
-
   // Returns the subset of forced ids that are currently disabled in settings — i.e. the picks that need
   // a respawn to materialize. Enabled picks are already present and need no reconnect.
   async skillsNeedingForceLoad(forcedIds: string[]): Promise<string[]> {
@@ -672,10 +824,14 @@ class SettingsService {
     return forcedIds.filter((id) => disabled.has(id))
   }
 
-  // Maps skill ids to their display names in the given order, skipping unknown ids. Used for the nudge.
-  async skillNamesForIds(ids: string[]): Promise<string[]> {
+  // Resolves picker ids to the names the agent's Skill tool accepts. Bundled skills use their
+  // manifest id as frontmatter name, while personal/imported ids have an app-owned source prefix and
+  // must use the frontmatter name kept in the user skill catalog.
+  async skillNudgeNamesForIds(ids: string[]): Promise<string[]> {
     const skills = await this.skillCatalog()
-    const nameById = new Map(skills.map((skill) => [skill.id, skill.name]))
+    const nameById = new Map(
+      skills.map((skill) => [skill.id, skill.source === 'featured' ? skill.id : skill.name])
+    )
 
     return ids.map((id) => nameById.get(id)).filter((name): name is string => name !== undefined)
   }
@@ -797,6 +953,83 @@ class SettingsService {
   // Scans a GitHub repo for importable skill directories (marking already-imported ones).
   async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
     return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
+  }
+
+  // Lists the skills under the active agent's machine-level home. The "From your agent home" import
+  // source is framework-agnostic: it resolves to `~/.claude/skills/` when the active framework is
+  // `claude-code` and to `~/.codex/skills/` when it is `codex`. OpenCode reads skills per-project
+  // (no global convention) so the source is hidden for that framework. The Claude path is anchored
+  // on `userClaudeDir` and the Codex path on `userCodexDir` so tests can inject a temp dir.
+  async listAgentHomeSkills(): Promise<AgentHomeSkillView[]> {
+    const settings = await this.repository.getSettings()
+    const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+    const homeSkillsDir = this.resolveAgentHomeSkillsDir(framework)
+
+    if (!homeSkillsDir) return []
+
+    return this.userSkills.listAgentHomeSkills(homeSkillsDir)
+  }
+
+  // Resolves the per-framework global skills directory, or undefined when the active framework
+  // has no global skills convention. Kept private so callers go through `listAgentHomeSkills`.
+  private resolveAgentHomeSkillsDir(framework: AgentFrameworkId): string | undefined {
+    switch (framework) {
+      case 'claude-code':
+        return join(this.userClaudeDir, 'skills')
+      case 'codex':
+        return join(this.userCodexDir, 'skills')
+      case 'opencode':
+        return undefined
+      default:
+        return undefined
+    }
+  }
+
+  // Imports a single agent-home skill by re-deriving its path against the active agent's home
+  // dir and copying the directory into the imported-skill store. Path authority stays in main: the
+  // renderer only supplies the slug returned by listAgentHomeSkills, and the service rejects any
+  // slug that escapes the resolved home (no .. traversal, no symlink-to-elsewhere).
+  // Returns the same shape importSkill returns so the renderer can apply the same post-import
+  // refresh (refresh skill list, mark skills-changed so the agent reloads).
+  async importAgentHomeSkill(request: ImportAgentHomeSkillRequest): Promise<ImportSkillResult> {
+    const sourcePath = await this.resolveAgentHomeSkillPath(request.slug)
+    const outcome = await this.userSkills.importAgentHomeSkill(sourcePath)
+
+    return { status: outcome.status, id: outcome.id, skills: await this.listSkills() }
+  }
+
+  // Resolves a renderer-supplied slug to an absolute path under the active agent's skills dir,
+  // refusing escapes. Centralises the containment check so the IPC and the import path agree on
+  // which directory is "the agent home" and a malicious slug cannot reach arbitrary host files.
+  // The home is resolved via realpath so a symlink that points outside the agent home (e.g. an
+  // attacker who writes `~/.claude/skills/innocent -> /etc` and tries to import `innocent`) is
+  // rejected even though `resolve(home, slug)` would pass the lexical containment check.
+  private async resolveAgentHomeSkillPath(slug: string): Promise<string> {
+    const settings = await this.repository.getSettings()
+    const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+    const homeSkillsDir = this.resolveAgentHomeSkillsDir(framework)
+
+    if (!homeSkillsDir) {
+      throw new Error(
+        `The active agent framework (${framework}) has no global skills directory to import from.`
+      )
+    }
+    if (!SAFE_SLUG.test(slug)) {
+      throw new Error(`Refusing to import agent-home skill with unsafe slug: ${slug}`)
+    }
+
+    // Realpath both sides so a symlink under the home that points outside the configured skills
+    // directory is rejected (lexical `resolve` would only catch `..` traversal, not symlinks).
+    const homeRoot = await realpath(homeSkillsDir).catch(() => resolve(homeSkillsDir))
+    const lexicalCandidate = resolve(homeRoot, slug)
+    const candidate = await realpath(lexicalCandidate).catch(() => lexicalCandidate)
+    const homeWithSep = homeRoot.endsWith(sep) ? homeRoot : homeRoot + sep
+
+    if (candidate !== homeRoot && !candidate.startsWith(homeWithSep)) {
+      throw new Error(`Refusing to import agent-home skill outside its home: ${slug}`)
+    }
+
+    return candidate
   }
 
   // Projects a catalog skill into its renderer-safe view given the disabled set.
@@ -1388,9 +1621,15 @@ class SettingsService {
   // Encrypts any new key, recomputes its mask, and inserts/updates the provider record.
   async upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot> {
     const settings = await this.repository.getSettings()
+    // Both Codex and Claude subscription providers use a fixed builtin id so the add path, the
+    // token-save path, and every id-keyed lookup in this service converge on a single record.
+    // Without this, a random id from `createProviderId()` would shadow the token-holding record
+    // and the active provider would spawn the agent unauthenticated.
     const subscriptionIdentity = isCodexSubscriptionProvider(request.type)
       ? codexSubscriptionProviderIdentity()
-      : undefined
+      : request.type === 'claude-isolated'
+        ? claudeIsolatedProviderIdentity()
+        : undefined
     const requestedId = subscriptionIdentity?.id ?? request.id
     const existing = requestedId
       ? settings.providers.find((provider) => provider.id === requestedId)
@@ -1426,6 +1665,25 @@ class SettingsService {
     if (isCodexSubscriptionProvider(request.type)) {
       provider.apiEndpoints = ['responses']
       credentialsChanged = existing !== undefined && existing.type !== request.type
+    } else if (request.type === 'claude-isolated') {
+      // claude-isolated has no fields of its own: the type tells the renderer/env-builder what to do
+      // with the encrypted token (stored separately on login). A model override is allowed. The
+      // encrypted token AND the credential's estimated expiry
+      // must carry over an edit so a model change does not silently drop the stored credential or
+      // hide the Expires <date> on the Settings card; sign-in itself is handled by
+      // loginIsolatedClaude, which sets expiresAt on a fresh paste.
+      provider.apiEndpoints = ['anthropic']
+      if (existing?.keyRef) {
+        provider.keyRef = existing.keyRef
+        provider.keyMask = existing.keyMask
+      }
+      if (existing?.expiresAt !== undefined) {
+        provider.expiresAt = existing.expiresAt
+      }
+      credentialsChanged = false
+      const model = request.model?.trim() || existing?.model
+
+      if (model) provider.model = model
     } else if (request.type === 'official') {
       // Base URL and model catalog come from the registry; the provider only stores which vendor
       // (and, for multi-region vendors, which endpoint) plus the key.
@@ -1473,11 +1731,6 @@ class SettingsService {
         provider.baseUrl !== existing?.baseUrl ||
         provider.model !== existing?.model ||
         provider.apiEndpoints.join(',') !== (existing?.apiEndpoints ?? []).join(',')
-    } else {
-      // claude-default: optional model override, no credentials of its own.
-      const model = request.model?.trim() || existing?.model
-
-      if (model) provider.model = model
     }
 
     // A re-test is required before a changed provider can re-gate onboarding.
@@ -1577,6 +1830,154 @@ class SettingsService {
     return { ok: true, category: 'ok' }
   }
 
+  // Stores a pasted OAuth token, then runs a one-shot Claude request with the exact isolated spawn
+  // environment. Storage roundtrip success alone is not authentication: only the subprocess probe
+  // can mark the provider verified or advance onboarding.
+  async loginIsolatedClaude(token: string): Promise<ValidateProviderResult> {
+    let result = this.claudeIsolatedAuthValidationResult(
+      await this.claudeIsolatedAuth.loginIsolated(token)
+    )
+
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
+    )
+    // The card can be deleted mid-paste. A deleted claude-isolated record means the paste should
+    // land fresh: create a new one carrying the now-stored token (the controller just persisted it
+    // for us via upsertClaudeIsolatedProvider, which has already written the record).
+    if (!provider) return { ...result, applied: false }
+
+    if (result.ok) {
+      result = await this.runClaudeIsolatedProbe(
+        this.resolveProvider(
+          provider,
+          settings.activeProviderId === provider.id ? settings.activeModel : undefined
+        ),
+        settings
+      )
+
+      const applied = await this.repository.updateClaudeIsolatedValidationIfKeyMatches(
+        provider.keyRef,
+        result.ok
+          ? {
+              expiresAt: Date.now() + SETUP_TOKEN_LIFETIME_MS,
+              lastValidatedAt: Date.now(),
+              lastValidationFailure: undefined
+            }
+          : {
+              expiresAt: undefined,
+              lastValidatedAt: undefined,
+              lastValidationFailure: {
+                at: Date.now(),
+                category: result.category,
+                status: result.status,
+                message: result.message
+              }
+            }
+      )
+
+      return { ...result, applied }
+    }
+
+    await this.repository.upsertProvider({
+      ...provider,
+      expiresAt: undefined,
+      lastValidatedAt: undefined,
+      lastValidationFailure: {
+        at: Date.now(),
+        category: result.category,
+        status: result.status,
+        message: result.message
+      }
+    })
+
+    return { ...result, applied: true }
+  }
+
+  // Drops the stored token. The provider card stays so the user can sign back in without a fresh
+  // add; the verified markers are cleared so the next validation/test must succeed before it can
+  // re-gate onboarding. When the controller reports an error (status.message set), the token may
+  // still be in storage — we leave the existing validation markers untouched so the next status
+  // check surfaces the real state instead of a misleading "cleared, please retest".
+  async logoutIsolatedClaude(): Promise<ValidateProviderResult> {
+    const status = await this.claudeIsolatedAuth.logoutIsolated()
+
+    // Propagate the controller's error independently of `authenticated`: a failed logout can leave
+    // the token in storage and still report `authenticated: false`, but the controller's `message`
+    // is what the user needs to see rather than a silent success.
+    if (status.message) {
+      return {
+        ok: false,
+        category: status.message.toLowerCase().includes('timed out') ? 'timeout' : 'unknown',
+        message: status.message
+      }
+    }
+
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
+    )
+
+    if (provider && status.authenticated === false) {
+      await this.repository.upsertProvider({
+        ...provider,
+        expiresAt: undefined,
+        lastValidatedAt: undefined,
+        lastValidationFailure: undefined
+      })
+    }
+
+    return { ok: true, category: 'ok' }
+  }
+
+  // Re-validates a stored claude-isolated credential through the same one-shot Claude command used
+  // during sign-in. Reading the encrypted token only proves storage health; the subprocess probe is
+  // what detects a rejected, revoked, or expired setup-token.
+  async getClaudeIsolatedStatus(): Promise<ValidateProviderResult> {
+    const status = await this.claudeIsolatedAuth.getStatus()
+
+    if (!status.authenticated) {
+      return this.claudeIsolatedAuthValidationResult(
+        status,
+        'Not signed in. Run `claude setup-token` and paste the token to connect your Claude subscription.'
+      )
+    }
+
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
+    )
+
+    if (!provider) {
+      return {
+        ok: false,
+        category: 'unknown',
+        message: 'Claude subscription provider is not configured.'
+      }
+    }
+
+    return this.runClaudeIsolatedProbe(
+      this.resolveProvider(
+        provider,
+        settings.activeProviderId === provider.id ? settings.activeModel : undefined
+      ),
+      settings
+    )
+  }
+
+  // The Claude-auth status does not have a 'timeout' or 'incompatible' category of its own; map it
+  // to the same validation-result envelope the renderer already understands for the codex path.
+  private claudeIsolatedAuthValidationResult(
+    status: ClaudeIsolatedAuthStatus,
+    notSignedInMessage?: string
+  ): ValidateProviderResult {
+    if (status.authenticated) return { ok: true, category: 'ok' }
+
+    const message = status.message ?? notSignedInMessage
+
+    return { ok: false, category: 'unknown', message }
+  }
+
   // Activates a provider and the model to run within it. An omitted/unknown model falls back to the
   // provider's default (its stored model, or the vendor's first catalog entry).
   async setActiveProvider(id: string, model?: string): Promise<SettingsSnapshot> {
@@ -1609,11 +2010,14 @@ class SettingsService {
     // while Claude Code is active would otherwise fail a raw /v1/messages probe and be reported as an
     // auth error, even though the key is valid — the pairing, not the credential, is the problem. Decide
     // this before any network call so the card names the real reason (which route the framework needs).
-    // codex-subscription keeps its own login-status branch below; its usability is enforced elsewhere.
+    // codex-subscription + claude-isolated keep their own login-status branches; their usability is
+    // enforced elsewhere.
     const framework = getAgentFramework(settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
-    const incompatibility = isCodexSubscriptionProvider(resolved.provider.type)
-      ? undefined
-      : this.frameworkIncompatibilityResult(resolved.provider, framework)
+    const incompatibility =
+      isCodexSubscriptionProvider(resolved.provider.type) ||
+      resolved.provider.type === 'claude-isolated'
+        ? undefined
+        : this.frameworkIncompatibilityResult(resolved.provider, framework)
 
     const result =
       incompatibility ??
@@ -1627,22 +2031,20 @@ class SettingsService {
             ),
             'Not signed in. Use Sign in to connect your ChatGPT account.'
           )
-        : await validateProvider(resolved.provider, {
-            // Probe over Electron's network stack, which honors the system/VPN proxy. Node's global
-            // fetch (undici) takes a direct path and ignores that proxy, so an official vendor reachable
-            // only through a proxy (e.g. api.openai.com) would fail the probe as a false `network` error
-            // even with a valid key. The local Responses-bridge loopback stays on the direct fetch.
-            fetchImpl: netFetchStandard,
-            runClaudeProbe:
-              resolved.provider.type === 'claude-default'
-                ? () => this.runClaudeProbe(resolved.provider, settings)
-                : undefined,
-            // For a multi-route provider, probe the route this framework actually drives so a passing
-            // test proves that route (e.g. Claude Code hits /v1/messages, not /v1/chat/completions).
-            // Codex is excluded: it bridges the provider's OpenAI route under its `responses` protocol,
-            // so its HTTP route is decided by the bridge, not by supportedApiTypes — keep it as-is.
-            frameworkEndpoints: framework.id === 'codex' ? undefined : framework.supportedApiTypes
-          }))
+        : resolved.provider.type === 'claude-isolated'
+          ? await this.getClaudeIsolatedStatus()
+          : await validateProvider(resolved.provider, {
+              // Probe over Electron's network stack, which honors the system/VPN proxy. Node's global
+              // fetch (undici) takes a direct path and ignores that proxy, so an official vendor reachable
+              // only through a proxy (e.g. api.openai.com) would fail the probe as a false `network` error
+              // even with a valid key. The local Responses-bridge loopback stays on the direct fetch.
+              fetchImpl: netFetchStandard,
+              // For a multi-route provider, probe the route this framework actually drives so a passing
+              // test proves that route (e.g. Claude Code hits /v1/messages, not /v1/chat/completions).
+              // Codex is excluded: it bridges the provider's OpenAI route under its `responses` protocol,
+              // so its HTTP route is decided by the bridge, not by supportedApiTypes — keep it as-is.
+              frameworkEndpoints: framework.id === 'codex' ? undefined : framework.supportedApiTypes
+            }))
 
     if (resolved.storedId) {
       // Each early return here means the tested target no longer matches what is stored (a newer test
@@ -1810,10 +2212,11 @@ class SettingsService {
   // its disabled state, mirroring the Claude provisioning path.
   private async materializeAgentSkills(
     settings: StoredSettings,
-    configRoot: string
+    configRoot: string,
+    forcedSkillIds: ReadonlySet<string>
   ): Promise<void> {
     const disabled = new Set(
-      (settings.disabledSkillIds ?? []).filter((id) => !this.turnForcedSkillIds.has(id))
+      (settings.disabledSkillIds ?? []).filter((id) => !forcedSkillIds.has(id))
     )
     const enabled = (await this.skillCatalog()).filter((skill) => !disabled.has(skill.id))
 
@@ -2061,8 +2464,18 @@ class SettingsService {
   }
 
   // Builds the spawn env for the active provider, read fresh so switching takes effect on reconnect.
-  async resolveActiveSpawnConfig(): Promise<AgentSpawnConfig> {
+  async resolveActiveSpawnConfig(
+    context: AgentBackendResolutionContext = {}
+  ): Promise<AgentSpawnConfig> {
     const settings = await this.repository.getSettings()
+
+    return this.resolveSpawnConfig(settings, new Set(context.forcedSkillIds ?? []))
+  }
+
+  private async resolveSpawnConfig(
+    settings: StoredSettings,
+    forcedSkillIds: ReadonlySet<string>
+  ): Promise<AgentSpawnConfig> {
     let executablePath = settings.claude?.resolvedPath
 
     // Trust the stored path only if it still exists. A user who uninstalled Claude leaves a stale path
@@ -2074,7 +2487,7 @@ class SettingsService {
     }
 
     if (!executablePath) {
-      throw new Error('Claude executable is not configured. Complete onboarding in settings.')
+      throw new Error(CLAUDE_EXECUTABLE_MISSING_MESSAGE)
     }
 
     const activeProvider = settings.activeProviderId
@@ -2082,7 +2495,7 @@ class SettingsService {
       : undefined
 
     if (!activeProvider) {
-      throw new Error('No active model provider is configured. Configure one in settings.')
+      throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
     }
 
     // Ensure the app-owned config dir exists (and app assets are injected) before the agent spawns. The
@@ -2091,30 +2504,20 @@ class SettingsService {
     // disabled set so a picked-but-disabled skill materializes for this prompt without mutating settings.
     const appConfigDir = getAppClaudeConfigDir(this.storageRoot)
     const disabledSkillIds = (settings.disabledSkillIds ?? []).filter(
-      (id) => !this.turnForcedSkillIds.has(id)
+      (id) => !forcedSkillIds.has(id)
     )
     await provisionAppClaudeConfigDir(appConfigDir, {
       skills: await this.skillCatalog(),
       disabledSkillIds
     })
 
-    let envOverrides = buildProviderEnv(
+    const envOverrides = buildProviderEnv(
       this.resolveProvider(activeProvider, settings.activeModel),
       {
         storageRoot: this.storageRoot,
         claudeExecutablePath: executablePath
       }
     )
-
-    // The "local" provider reuses the machine's own Claude login: inject its token/base URL (or copy
-    // OAuth credentials) at spawn time. OS-store-only OAuth falls back to Claude's implicit default
-    // config context, because setting CLAUDE_CONFIG_DIR makes that native login invisible.
-    if (activeProvider.type === 'claude-default') {
-      envOverrides = await applyLocalClaudeAuth(envOverrides, {
-        userClaudeDir: this.userClaudeDir,
-        appConfigDir
-      })
-    }
 
     return { envOverrides, executablePath }
   }
@@ -2124,13 +2527,51 @@ class SettingsService {
   // provider to their own native config (a generated opencode.json) via the framework adapter and get
   // it written to disk before spawn. The framework can be forced with OPEN_SCIENCE_AGENT_FRAMEWORK for
   // the spike until the settings selector lands.
-  async resolveActiveAgentBackend(): Promise<ResolvedAgentBackend> {
+  async resolveActiveAgentBackend(
+    context: AgentBackendResolutionContext = {}
+  ): Promise<ResolvedAgentBackend> {
     const settings = await this.repository.getSettings()
     const forced = process.env.OPEN_SCIENCE_AGENT_FRAMEWORK
     const frameworkId: AgentFrameworkId =
       forced === 'opencode' || forced === 'claude-code' || forced === 'codex'
         ? forced
         : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
+
+    return this.resolveAgentBackendFromSettings(settings, frameworkId, context)
+  }
+
+  // Captures only non-secret backend identity. Runtime generations resolve credentials again at spawn,
+  // so decrypted keys are not retained by the coordinator after AcpRuntime finishes authentication.
+  async captureActiveAgentBackendSelection(): Promise<AgentBackendSelection> {
+    const settings = await this.repository.getSettings()
+    const forced = process.env.OPEN_SCIENCE_AGENT_FRAMEWORK
+    const frameworkId: AgentFrameworkId =
+      forced === 'opencode' || forced === 'claude-code' || forced === 'codex'
+        ? forced
+        : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
+
+    return { frameworkId }
+  }
+
+  async resolveAgentBackend(
+    selection: AgentBackendSelection,
+    context: AgentBackendResolutionContext = {}
+  ): Promise<ResolvedAgentBackend> {
+    const stored = await this.repository.getSettings()
+    const settings: StoredSettings = {
+      ...stored,
+      agentFrameworkId: selection.frameworkId
+    }
+
+    return this.resolveAgentBackendFromSettings(settings, selection.frameworkId, context)
+  }
+
+  private async resolveAgentBackendFromSettings(
+    settings: StoredSettings,
+    frameworkId: AgentFrameworkId,
+    context: AgentBackendResolutionContext
+  ): Promise<ResolvedAgentBackend> {
+    const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
     const framework = getAgentFramework(frameworkId)
     // 'default' means "don't override": nothing is sent over ACP or framework config, so the agent
     // keeps its own default effort. A concrete level is delivered through two channels deliberately
@@ -2153,7 +2594,7 @@ class SettingsService {
       : undefined
 
     if (!activeProvider) {
-      throw new Error('No active model provider is configured. Configure one in settings.')
+      throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
     }
 
     if (
@@ -2165,9 +2606,7 @@ class SettingsService {
         framework
       )
     ) {
-      throw new Error(
-        `The active model isn't compatible with ${framework.displayName}. Open Settings → Model to pick a compatible model or switch the agent framework.`
-      )
+      throw new Error(buildActiveModelIncompatibleMessage(framework.displayName))
     }
 
     if (
@@ -2177,15 +2616,15 @@ class SettingsService {
         this.resolveActiveModel(activeProvider, settings.activeModel)
       )
     ) {
-      throw new Error(
-        'The active model is not supported over the Codex Chat Completions bridge. Pick another model in Settings → Model.'
-      )
+      throw new Error(CODEX_BRIDGE_UNSUPPORTED_MESSAGE)
     }
 
     if (framework.id === 'claude-code') {
-      await this.disableResponsesBridge()
       // Unchanged Claude path: skills provisioning + Anthropic-shaped env + local-auth handling.
-      const { envOverrides, executablePath } = await this.resolveActiveSpawnConfig()
+      const { envOverrides, executablePath } = await this.resolveSpawnConfig(
+        settings,
+        forcedSkillIds
+      )
 
       return {
         framework,
@@ -2220,7 +2659,7 @@ class SettingsService {
     // Shared mode exposes the user's normal Codex profile exactly as they own it. The app's skill
     // synchronizer deliberately stays out of ~/.codex so same-named user skills are never replaced.
     if (!(framework.id === 'codex' && provider.type === 'codex-shared')) {
-      await this.materializeAgentSkills(settings, skillsRoot)
+      await this.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
     }
     // The Chat Completions bridge only exists to let Codex (a Responses-only client) drive an
     // OpenAI Chat provider. A provider that also speaks native Responses is driven directly, so
@@ -2231,41 +2670,49 @@ class SettingsService {
       (provider.apiEndpoints?.includes('openai') ?? false) &&
       !(provider.apiEndpoints?.includes('responses') ?? false)
     const enabledConnectorIds = this.enabledConnectorIds(settings.connectors)
+    // A bridge may still serve a live Codex runtime from an earlier framework generation. Do not stop
+    // or retarget it merely because the newly selected framework/provider does not need one.
     const responsesBridge = needsResponsesBridge
       ? await this.ensureResponsesBridge(provider, enabledConnectorIds, sessionEffort !== undefined)
-      : await this.disableResponsesBridge()
-    const modelConfig = framework.prepareModelConfig(provider, {
-      storageRoot: this.storageRoot,
-      executablePath,
-      responsesBridge,
-      reasoningEffort: sessionEffort,
-      // Connector conventions + tools, so opencode uses host.mcp instead of raw HTTP (it has no skill
-      // docs like Claude). Enabled bundled connectors only.
-      instructions: renderConnectorInstructions(enabledConnectorIds)
-    })
-    await this.writeAgentConfigFiles(modelConfig.configFiles)
+      : undefined
+    try {
+      const modelConfig = framework.prepareModelConfig(provider, {
+        storageRoot: this.storageRoot,
+        executablePath,
+        responsesBridge,
+        reasoningEffort: sessionEffort,
+        // Connector conventions + tools, so opencode uses host.mcp instead of raw HTTP (it has no skill
+        // docs like Claude). Enabled bundled connectors only.
+        instructions: renderConnectorInstructions(enabledConnectorIds)
+      })
+      await this.writeAgentConfigFiles(modelConfig.configFiles)
 
-    // Protocol-driven frameworks apply an explicit model through the ACP session configOption. A Codex
-    // subscription with no explicit selection leaves this undefined so Codex uses the account default.
-    const sessionModel = modelConfig.sessionModel ?? provider.model
-    return {
-      framework,
-      backendId: `${framework.id}:${backendProviderId}`,
-      executablePath,
-      env: {
-        ...(modelConfig.env ?? {}),
-        ...(framework.id === 'codex' && settings.codex?.nativePath
-          ? { CODEX_PATH: settings.codex.nativePath }
-          : {})
-      },
-      args: modelConfig.args,
-      sessionModel,
-      ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type) && sessionModel
-        ? { sessionModelRequired: true }
-        : {}),
-      sessionEffort,
-      authentication: modelConfig.authentication,
-      providerConfiguration: modelConfig.providerConfiguration
+      // Protocol-driven frameworks apply an explicit model through the ACP session configOption. A Codex
+      // subscription with no explicit selection leaves this undefined so Codex uses the account default.
+      const sessionModel = modelConfig.sessionModel ?? provider.model
+      return {
+        framework,
+        backendId: `${framework.id}:${backendProviderId}`,
+        executablePath,
+        env: {
+          ...(modelConfig.env ?? {}),
+          ...(framework.id === 'codex' && settings.codex?.nativePath
+            ? { CODEX_PATH: settings.codex.nativePath }
+            : {})
+        },
+        args: modelConfig.args,
+        sessionModel,
+        ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type) && sessionModel
+          ? { sessionModelRequired: true }
+          : {}),
+        sessionEffort,
+        authentication: modelConfig.authentication,
+        providerConfiguration: modelConfig.providerConfiguration,
+        responsesBridgeLease: responsesBridge?.lease
+      }
+    } catch (error) {
+      await responsesBridge?.lease.release()
+      throw error
     }
   }
 
@@ -2273,7 +2720,7 @@ class SettingsService {
     provider: ResolvedProvider,
     enabledConnectorIds: string[],
     forwardReasoningEffort: boolean
-  ): Promise<ResponsesBridgeConnection> {
+  ): Promise<LeasedResponsesBridgeConnection> {
     // Resolve to the OpenAI base the bridge appends `/chat/completions` to: an official vendor's exact
     // versioned base, or a custom gateway root normalized to `<root>/v1`.
     const targetBaseUrl = openAiCompletionsBase(provider)
@@ -2284,7 +2731,14 @@ class SettingsService {
       key: provider.key,
       model: provider.model,
       forwardReasoningEffort,
-      namespacedTools: [...CODEX_BRIDGE_NOTEBOOK_TOOLS, ...CODEX_BRIDGE_ARTIFACT_TOOLS],
+      namespacedTools: [
+        ...CODEX_BRIDGE_NOTEBOOK_TOOLS,
+        ...CODEX_BRIDGE_ARTIFACT_TOOLS,
+        ...CODEX_BRIDGE_ACTIVITY_TOOLS
+      ],
+      reviewerScope: {
+        namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS
+      },
       connectorInstructions: enabledConnectorIds.map((id) => {
         const metadata = CONNECTOR_CATALOG.find((connector) => connector.id === id)
         return {
@@ -2296,19 +2750,68 @@ class SettingsService {
         }
       })
     }
-    if (!this.responsesBridge) {
-      this.responsesBridge = new ResponsesBridge(target)
+    const fingerprint = this.responsesBridgeFingerprint(target)
+    let entry = this.responsesBridges.get(fingerprint)
+    if (!entry) {
+      const bridge = new ResponsesBridge(target)
+      entry = { bridge, connection: bridge.start(), leaseCount: 0 }
+      this.responsesBridges.set(fingerprint, entry)
     } else {
-      this.responsesBridge.setTarget(target)
+      // Reasoning effort is a live global preference, not part of the bridge's pinned routing target.
+      entry.bridge.setForwardReasoningEffort(forwardReasoningEffort)
+    }
+    entry.leaseCount += 1
+
+    let connection: ResponsesBridgeConnection
+    try {
+      connection = await entry.connection
+    } catch (error) {
+      entry.leaseCount = Math.max(0, entry.leaseCount - 1)
+      if (entry.leaseCount === 0 && this.responsesBridges.get(fingerprint) === entry) {
+        this.responsesBridges.delete(fingerprint)
+        await entry.bridge.close().catch(() => undefined)
+      }
+      throw error
     }
 
-    return this.responsesBridge.start()
+    let released = false
+    const leasedEntry = entry
+    return {
+      ...connection,
+      lease: {
+        registerReviewerSession: (promptCacheKey) =>
+          leasedEntry.bridge.registerReviewerSession(promptCacheKey),
+        unregisterReviewerSession: (promptCacheKey) =>
+          leasedEntry.bridge.unregisterReviewerSession(promptCacheKey),
+        release: async () => {
+          if (released) return
+          released = true
+          leasedEntry.leaseCount = Math.max(0, leasedEntry.leaseCount - 1)
+          if (
+            leasedEntry.leaseCount > 0 ||
+            this.responsesBridges.get(fingerprint) !== leasedEntry
+          ) {
+            return
+          }
+          this.responsesBridges.delete(fingerprint)
+          await leasedEntry.bridge.close()
+        }
+      }
+    }
   }
 
-  private async disableResponsesBridge(): Promise<undefined> {
-    if (this.responsesBridge) await this.responsesBridge.close()
-    this.responsesBridge = undefined
-    return undefined
+  private responsesBridgeFingerprint(target: ResponsesBridgeTarget): string {
+    // forwardReasoningEffort is intentionally live mutable and therefore excluded from the pinned
+    // routing identity. Including it would split leases and prevent effort fan-out to existing bridges.
+    const pinnedTarget = {
+      baseUrl: target.baseUrl,
+      key: target.key,
+      model: target.model,
+      namespacedTools: target.namespacedTools,
+      reviewerScope: target.reviewerScope,
+      connectorInstructions: target.connectorInstructions
+    }
+    return createHash('sha256').update(JSON.stringify(pinnedTarget)).digest('hex')
   }
 
   // Locates the opencode binary: an explicitly stored path wins, else a best-effort PATH lookup.
@@ -2366,9 +2869,9 @@ class SettingsService {
   // Maps a stored provider to its masked renderer view, flagging custom keys that no longer decrypt.
   private toProviderView(provider: StoredProvider, activeModel?: string): ProviderView {
     const hasKey = Boolean(provider.keyRef)
-    // custom and official both require a decryptable key; claude-default carries none.
-    const needsKey =
-      provider.type !== 'claude-default' && hasKey && tryDecryptKey(provider.keyRef) === undefined
+    // custom and official both require a decryptable key; claude-isolated carries a stored token,
+    // so it follows the same "needs a decryptable keyRef" rule as custom.
+    const needsKey = hasKey && tryDecryptKey(provider.keyRef) === undefined
 
     return {
       id: provider.id,
@@ -2385,14 +2888,16 @@ class SettingsService {
       hasKey,
       needsKey,
       lastValidatedAt: provider.lastValidatedAt,
-      lastValidationFailure: provider.lastValidationFailure
+      lastValidationFailure: provider.lastValidationFailure,
+      ...(provider.expiresAt !== undefined ? { expiresAt: provider.expiresAt } : {})
     }
   }
 
   private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
     if (isCodexSubscriptionProvider(provider.type)) return true
-    // claude-default always supports images (uses the user's Claude login, which has vision models)
-    if (provider.type === 'claude-default') return true
+    // claude-isolated authenticates against Anthropic via an app-owned OAuth token and so
+    // inherits vision support the same way the legacy local Claude provider did.
+    if (provider.type === 'claude-isolated') return true
 
     // Custom providers: respect the user-configured supportsImageInput flag
     if (provider.type === 'custom') return provider.supportsImageInput === true
@@ -2410,10 +2915,10 @@ class SettingsService {
     return false
   }
 
-  // Credentials usable: claude-default always; custom/official need a key that still decrypts.
+  // Credentials usable: codex subscriptions always; claude-isolated needs a decryptable token;
+  // custom/official need a key that still decrypts.
   private isProviderKeyUsable(provider: StoredProvider): boolean {
     if (isCodexSubscriptionProvider(provider.type)) return true
-    if (provider.type === 'claude-default') return true
 
     return Boolean(provider.keyRef) && tryDecryptKey(provider.keyRef) !== undefined
   }
@@ -2529,15 +3034,15 @@ class SettingsService {
     }
   }
 
-  // The human reason a provider can't drive a framework: a Claude-only login, else a route mismatch
-  // (which endpoint the framework needs vs. which the provider speaks). Route paths, not vendor names,
-  // so it reads as "which API shape".
+  // The human reason a provider can't drive a framework: a route mismatch (which endpoint the framework
+  // needs vs. which the provider speaks). Route paths, not vendor names, so it reads as "which API
+  // shape".
   private frameworkIncompatibilityMessage(
     provider: ResolvedProvider,
     framework: { displayName: string; supportedApiTypes: readonly ChatApiEndpoint[] }
   ): string {
-    if (provider.type === 'claude-default') {
-      return `Uses this machine's Claude sign-in, which only Claude Code can run. Switch to Claude Code or pick another provider.`
+    if (provider.type === 'claude-isolated') {
+      return `Carries an Anthropic OAuth token (setup-token) in app-owned storage, which only Claude Code can carry. Switch to Claude Code or pick another provider.`
     }
 
     const routes: Record<ChatApiEndpoint, string> = {
@@ -2590,17 +3095,18 @@ class SettingsService {
     )
   }
 
-  // One-shot `claude -p "ok"` probe for claude-default validation, using the isolated/default env. A
-  // hard timeout guarantees the wizard never hangs on a claude that never returns; a timeout is
-  // reported distinctly so the UI can say "timed out" rather than "auth failed".
-  private async runClaudeProbe(
+  private async runClaudeIsolatedProbe(
     provider: ResolvedProvider,
     settings: StoredSettings
-  ): Promise<ClaudeProbeResult> {
+  ): Promise<ValidateProviderResult> {
     const executablePath = settings.claude?.resolvedPath
 
     if (!executablePath) {
-      return { ok: false, message: 'Claude executable is not configured.' }
+      return {
+        ok: false,
+        category: 'unknown',
+        message: 'Claude executable is not configured. Complete Claude detection in settings first.'
+      }
     }
 
     const appConfigDir = getAppClaudeConfigDir(this.storageRoot)
@@ -2608,37 +3114,38 @@ class SettingsService {
       skills: await this.skillCatalog(),
       disabledSkillIds: settings.disabledSkillIds
     })
-
-    const envOverrides = await applyLocalClaudeAuth(
-      buildProviderEnv(provider, {
-        storageRoot: this.storageRoot,
-        claudeExecutablePath: executablePath
-      }),
-      { userClaudeDir: this.userClaudeDir, appConfigDir }
-    )
-    const env = {
-      ...process.env,
-      ...envOverrides
-    }
-
-    // The native-auth fallback requires the variable to be absent, including from the parent process.
-    if (!('CLAUDE_CONFIG_DIR' in envOverrides)) delete env.CLAUDE_CONFIG_DIR
+    const envOverrides = buildProviderEnv(provider, {
+      storageRoot: this.storageRoot,
+      claudeExecutablePath: executablePath
+    })
+    const env = buildAgentSpawnEnv(augmentedPathEnv(process.env), envOverrides, executablePath)
 
     try {
       await this.executeClaudeProbe(executablePath, env)
 
-      return { ok: true }
+      return { ok: true, category: 'ok' }
     } catch (error) {
-      return isTimeoutError(error)
-        ? { ok: false, timedOut: true, message: 'Local claude did not respond in time.' }
-        : {
-            ok: false,
-            message:
-              'Local Claude could not authenticate. Run `claude` in a terminal and log in, then try again.'
-          }
+      if (isTimeoutError(error)) {
+        return {
+          ok: false,
+          category: 'timeout',
+          message: 'Claude token validation timed out. Try again.'
+        }
+      }
+
+      const category = classifyClaudeProbeFailure(error)
+      const messages = {
+        auth: 'Claude rejected the setup token. Run `claude setup-token` again and paste a new token.',
+        network:
+          'Claude could not reach Anthropic while validating the token. Check your network and try again.',
+        unknown: 'Claude could not run the token validation probe. Re-detect Claude and try again.'
+      } as const
+
+      return { ok: false, category, message: messages[category] }
     }
   }
 
+  // Issues a fresh, monotonically-increasing provider id for an upsert.
   private createProviderId(): string {
     this.providerSequence += 1
 

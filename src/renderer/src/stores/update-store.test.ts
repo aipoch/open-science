@@ -195,5 +195,56 @@ describe('useUpdateStore', () => {
     expect(status.progress).toBe(42)
     expect(status.downloadedBytes).toBe(4200)
     expect(status.totalBytes).toBe(10000)
+
+    // A reconnecting event omits percent/total; the mirror must keep the last known size and
+    // percent so the action button doesn't flip to "Downloading 0%" mid-reconnect.
+    progressListener?.({ phase: 'reconnecting', transferred: 4200, bytesPerSecond: 0, attempt: 1 })
+    const reconnecting = useUpdateStore.getState().status
+    expect(reconnecting.progress).toBe(42)
+    expect(reconnecting.totalBytes).toBe(10000)
+    expect(reconnecting.downloadProgress?.phase).toBe('reconnecting')
+  })
+
+  it('preserves downloadProgress (speed) across a status broadcast while downloading', async () => {
+    let progressListener: ((progress: unknown) => void) | undefined
+    let statusListener: ((status: unknown) => void) | undefined
+    ;(window as unknown as { api: unknown }).api = {
+      update: {
+        getAppInfo: () =>
+          Promise.resolve({ name: 'Open Science', version: '0.2.0', copyright: '' }),
+        getStatus: () => Promise.resolve({ state: 'idle', current: '0.2.0' }),
+        onStatus: (l: (status: unknown) => void) => {
+          statusListener = l
+        },
+        onProgress: (l: (progress: unknown) => void) => {
+          progressListener = l
+        },
+        check: vi.fn(),
+        download: vi.fn(),
+        apply: vi.fn()
+      }
+    }
+    useUpdateStore.getState().init()
+    await Promise.resolve()
+
+    // electron-updater emits a progress event (with speed) then a status event on every tick. The
+    // status event carries no downloadProgress; the store must not drop the speed just set.
+    progressListener?.({
+      phase: 'downloading',
+      percent: 42,
+      transferred: 4200,
+      total: 10000,
+      bytesPerSecond: 12345,
+      attempt: 0
+    })
+    statusListener?.({ state: 'downloading', current: '0.2.0', progress: 42, totalBytes: 10000 })
+
+    const status = useUpdateStore.getState().status
+    expect(status.state).toBe('downloading')
+    expect(status.downloadProgress?.bytesPerSecond).toBe(12345)
+
+    // Once the download finishes, a terminal status clears the stale progress payload.
+    statusListener?.({ state: 'ready', current: '0.2.0', progress: 100 })
+    expect(useUpdateStore.getState().status.downloadProgress).toBeUndefined()
   })
 })

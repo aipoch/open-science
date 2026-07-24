@@ -579,6 +579,86 @@ describe('OnboardingWizard', () => {
     expect(container.textContent).not.toContain('Where should Open Science store your data?')
   })
 
+  it('verifies a pasted Claude setup-token before activating and advancing', async () => {
+    const persistProvider = vi.fn().mockResolvedValue('builtin-claude-isolated')
+    const loginIsolatedClaude = vi
+      .fn()
+      .mockResolvedValue({ ok: true, category: 'ok', applied: true })
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        codexReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      environmentCheck: environment(true),
+      persistProvider,
+      loginIsolatedClaude,
+      setActiveProvider
+    })
+
+    await act(async () => root.render(<OnboardingWizard />))
+    await clickButton(/^continue$/i)
+    await selectOption('Provider type', 'Claude subscription')
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Claude setup token"]')
+    if (!input) throw new Error('Claude setup token input not found')
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setter?.call(input, 'sk-ant-valid')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await clickButton(/test & continue/i)
+
+    expect(persistProvider).toHaveBeenCalledOnce()
+    expect(loginIsolatedClaude).toHaveBeenCalledWith('sk-ant-valid')
+    expect(setActiveProvider).toHaveBeenCalledWith('builtin-claude-isolated')
+    expect(container.textContent).toContain('Where should Open Science store your data?')
+  })
+
+  it('shows a rejected Claude setup-token and stays on the provider step', async () => {
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        codexReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      environmentCheck: environment(true),
+      persistProvider: vi.fn().mockResolvedValue('builtin-claude-isolated'),
+      loginIsolatedClaude: vi.fn().mockResolvedValue({
+        ok: false,
+        category: 'auth',
+        applied: true,
+        message: 'Claude rejected the setup token. Run `claude setup-token` again.'
+      }),
+      setActiveProvider
+    })
+
+    await act(async () => root.render(<OnboardingWizard />))
+    await clickButton(/^continue$/i)
+    await selectOption('Provider type', 'Claude subscription')
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Claude setup token"]')
+    if (!input) throw new Error('Claude setup token input not found')
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setter?.call(input, 'sk-ant-expired')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await clickButton(/test & continue/i)
+
+    expect(setActiveProvider).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Claude rejected the setup token')
+    expect(container.textContent).not.toContain('Where should Open Science store your data?')
+  })
+
   it('cancels an in-flight isolated sign-in when the wizard unmounts', async () => {
     const cancelCodexLogin = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({

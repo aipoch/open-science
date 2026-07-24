@@ -20,15 +20,24 @@ type ConversationItem = ConversationMessageItem | ConversationActivityItem
 
 const KNOWN_TITLE_TOOL_NAMES = new Set(['ToolSearch'])
 
-// Claude Code namespaces MCP tools as mcp__<server>__<tool>; this is the notebook server's prefix.
-const NOTEBOOK_PROVIDER_TOOL_PREFIX = 'mcp__open-science-notebook__'
+// MCP tools are namespaced as mcp__<server>__<tool>. Claude Code keeps the hyphenated server name
+// (open-science-notebook); the Codex/gpt bridge sanitizes hyphens to underscores
+// (open_science_notebook). Match both forms so notebook rows are detected regardless of framework.
+const NOTEBOOK_PROVIDER_TOOL_PATTERN = /^mcp__open[-_]science[-_]notebook__(.+)$/iu
+
+// Returns the notebook tool suffix (e.g. "notebook_execute") for a notebook MCP tool identity, or
+// undefined when the name is not a notebook tool. Framework-agnostic across the two server-name forms.
+const getNotebookToolSuffix = (providerToolName: string | undefined): string | undefined =>
+  NOTEBOOK_PROVIDER_TOOL_PATTERN.exec(providerToolName?.trim() ?? '')?.[1]
 
 // Maps a notebook MCP tool to a clean human label so rows read as notebook actions, not raw
-// mcp__open-science-notebook__* names. Returns undefined for non-notebook tools.
+// mcp__…__* names. Returns undefined for non-notebook tools.
 const formatNotebookToolName = (providerToolName: string): string | undefined => {
-  if (!providerToolName.startsWith(NOTEBOOK_PROVIDER_TOOL_PREFIX)) return undefined
+  const suffix = getNotebookToolSuffix(providerToolName)
 
-  switch (providerToolName.slice(NOTEBOOK_PROVIDER_TOOL_PREFIX.length)) {
+  if (!suffix) return undefined
+
+  switch (suffix) {
     case 'notebook_execute':
       return 'Notebook cell'
     case 'notebook_state':
@@ -120,10 +129,10 @@ const createConversationItems = (session: ChatSession | undefined): Conversation
 }
 
 export {
-  NOTEBOOK_PROVIDER_TOOL_PREFIX,
   createConversationItems,
   formatActivityTitle,
   formatNotebookToolName,
+  getNotebookToolSuffix,
   isActivityActive
 }
 export type { ConversationItem }

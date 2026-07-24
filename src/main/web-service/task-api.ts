@@ -446,6 +446,9 @@ class HeadlessTaskApi {
       status: 'error',
       activeRun: undefined,
       error: message,
+      // A model-provider failure (tagged on the error event at the ACP layer) is not a reportable bug;
+      // persist that so a reloaded headless session hides the report button, matching the desktop path.
+      ...(runtimeError?.providerError ? { errorReportable: false } : {}),
       updatedAt: this.dependencies.now()
     }
     run.status = 'failed'

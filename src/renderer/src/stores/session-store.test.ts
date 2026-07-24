@@ -285,6 +285,25 @@ describe('session store', () => {
     ])
   })
 
+  it('persists the model selected when each run starts', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'First run',
+      agentModel: 'model-a'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Second run',
+      agentModel: 'model-b'
+    })
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.agentModel).toBe('model-b')
+    expect(toPersistedSession(session).agentModel).toBe('model-b')
+  })
+
   it('merges streamed agent chunks by stream id and completes them when the run stops', () => {
     const result = useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -446,6 +465,77 @@ describe('session store', () => {
     })
   })
 
+  it('derives errorReportable from the message when no explicit flag is passed', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Read the files'
+    })
+
+    // An opaque/internal failure with no crafted-message match stays reportable.
+    useSessionStore.getState().failRun('transport-session-1', 'Agent session could not be created.')
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(true)
+
+    // An app-crafted reminder is recognized by its exact text and is not reportable.
+    useSessionStore
+      .getState()
+      .failRun('transport-session-1', 'Session workspace is missing; start a new conversation.')
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
+  })
+
+  it('honors an explicit reportable flag (the runtime tags a model-provider failure)', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Read the files'
+    })
+
+    // A model-provider failure: opaque text that WOULD derive reportable=true, but the ACP layer
+    // structurally tagged it non-reportable, and the explicit flag wins.
+    useSessionStore.getState().failRun('transport-session-1', 'Invalid API key', {
+      reportable: false
+    })
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
+  })
+
+  it('clears errorReportable when a new run starts, so a later error cannot inherit it', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'first turn'
+    })
+    // A model-provider failure hides the report button.
+    useSessionStore.getState().failRun('transport-session-1', 'Invalid API key', {
+      reportable: false
+    })
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
+
+    // A new turn clears the prior error + flag.
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'second turn'
+    })
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBeUndefined()
+
+    // A later ACP-layer failure with no explicit flag derives reportable=true — it never inherits the
+    // earlier provider error's false.
+    useSessionStore.getState().failRun('transport-session-1', 'Agent cancellation failed')
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(true)
+  })
+
+  it('records an artifact finalization error as reportable (an app-layer failure)', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Create a report'
+    })
+    // Simulate a prior provider error's flag lingering, then an artifact error overwriting it.
+    useSessionStore.getState().failRun('transport-session-1', 'Invalid API key', {
+      reportable: false
+    })
+    useSessionStore.getState().recordArtifactError('transport-session-1', 'disk full')
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.error).toContain('disk full')
+    expect(session.errorReportable).toBe(true)
+  })
+
   it('keeps artifact finalization errors visible when the run later stops', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -527,6 +617,76 @@ describe('session store', () => {
         eventIds: ['event-1', 'event-2']
       })
     ])
+  })
+
+  it('assigns real tool activities to the declared activity group and persists the group', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Inspect and update the app'
+    })
+
+    useSessionStore
+      .getState()
+      .beginActivityGroup(
+        'transport-session-1',
+        'group-call-1',
+        'Inspect the current implementation'
+      )
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'transport-session-1',
+      toolCallId: 'tool-read-1',
+      eventId: 'event-read-1',
+      toolKind: 'read',
+      status: 'completed'
+    })
+    useSessionStore
+      .getState()
+      .beginActivityGroup('transport-session-1', 'group-call-2', 'Apply the focused change')
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'transport-session-1',
+      toolCallId: 'tool-edit-1',
+      eventId: 'event-edit-1',
+      toolKind: 'edit',
+      status: 'completed'
+    })
+    useSessionStore.getState().completeActivityGroup('transport-session-1')
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.activities).toEqual([
+      expect.objectContaining({ id: 'tool-read-1', activityGroupId: 'group-call-1' }),
+      expect.objectContaining({ id: 'tool-edit-1', activityGroupId: 'group-call-2' })
+    ])
+    expect(session.activityGroups).toEqual([
+      expect.objectContaining({
+        id: 'group-call-1',
+        title: 'Inspect the current implementation',
+        activityIds: ['tool-read-1'],
+        completedAt: expect.any(Number)
+      }),
+      expect.objectContaining({
+        id: 'group-call-2',
+        title: 'Apply the focused change',
+        activityIds: ['tool-edit-1'],
+        completedAt: expect.any(Number)
+      })
+    ])
+    expect(toPersistedSession(session).activityGroups).toEqual(session.activityGroups)
+  })
+
+  it('does not notify the store when no started activity group can be completed', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Answer without tools'
+    })
+    const before = useSessionStore.getState()
+    const listener = vi.fn()
+    const unsubscribe = useSessionStore.subscribe(listener)
+
+    useSessionStore.getState().completeActivityGroup('transport-session-1')
+
+    expect(useSessionStore.getState()).toBe(before)
+    expect(listener).not.toHaveBeenCalled()
+    unsubscribe()
   })
 
   it('preserves tool activity content and locations across updates', () => {
@@ -876,6 +1036,25 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions).toHaveLength(1)
     expect(useSessionStore.getState().sessions[0].title).toBe('Renamed session')
     expect(useSessionStore.getState().selectedSessionId).toBe('transport-session-1')
+  })
+
+  it('toggles the pinned flag without disturbing updatedAt, and persists it', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'pin-session',
+      content: 'Pin me'
+    })
+    const originalUpdatedAt = useSessionStore.getState().sessions[0].updatedAt
+
+    useSessionStore.getState().togglePinned('pin-session')
+    const pinned = useSessionStore.getState().sessions[0]
+    expect(pinned.pinned).toBe(true)
+    // Pinning is an organizational action, so it must not bump the "last active" timestamp.
+    expect(pinned.updatedAt).toBe(originalUpdatedAt)
+    expect(toPersistedSession(pinned).pinned).toBe(true)
+
+    useSessionStore.getState().togglePinned('pin-session')
+    expect(useSessionStore.getState().sessions[0].pinned).toBe(false)
+    expect(toPersistedSession(useSessionStore.getState().sessions[0]).pinned).toBe(false)
   })
 
   it("keeps selection within the deleted session's project", () => {
@@ -1554,6 +1733,42 @@ describe('truncateSessionFromMessage', () => {
     expect(
       useSessionStore.getState().sessions[0].activities?.map((activity) => activity.id)
     ).toEqual(['act-1'])
+  })
+
+  it('prunes activity group references when edited resend removes their activities', () => {
+    seedSession({
+      activities: [
+        { ...createActivity('act-1', baseTime + 150), activityGroupId: 'group-1' },
+        { ...createActivity('act-2', baseTime + 250), activityGroupId: 'group-1' },
+        { ...createActivity('act-3', baseTime + 350), activityGroupId: 'group-2' }
+      ],
+      activityGroups: [
+        {
+          id: 'group-1',
+          title: 'First group',
+          sortIndex: 1,
+          activityIds: ['act-1', 'act-2'],
+          createdAt: baseTime + 140,
+          updatedAt: baseTime + 250,
+          completedAt: baseTime + 260
+        },
+        {
+          id: 'group-2',
+          title: 'Second group',
+          sortIndex: 2,
+          activityIds: ['act-3'],
+          createdAt: baseTime + 340,
+          updatedAt: baseTime + 350,
+          completedAt: baseTime + 360
+        }
+      ]
+    })
+
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+
+    expect(useSessionStore.getState().sessions[0].activityGroups).toEqual([
+      expect.objectContaining({ id: 'group-1', activityIds: ['act-1'] })
+    ])
   })
 
   it('advances filesRevision only when removed messages carry file references', () => {

@@ -26,8 +26,7 @@ import { incompatibilityReason } from './composer-model-picker-utils'
 const triggerClassName =
   'flex h-8 max-w-[220px] items-center gap-1 rounded-md px-2.5 text-sm text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
 
-// Label for an option: the model name, or the provider name when the option carries no concrete model
-// (a claude-default without an override).
+// Label for an option: the model name, or the provider name when the option carries no concrete model.
 const optionLabel = (option: ProviderModelOption): string => option.model || option.providerName
 
 // Model/provider switcher shown in the composer toolbar. Reads the settings store directly (the store
@@ -48,8 +47,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
     agentFrameworks.find((framework) => framework.id === agentFrameworkId)?.displayName ??
     'this framework'
 
-  // A provider is selectable only when it can actually drive the current framework (endpoint + type;
-  // a Local Claude provider is Claude-only).
+  // A provider is selectable only when it can actually drive the current framework (endpoint + type).
   const isCompatible = (provider: (typeof providers)[number], model: string): boolean =>
     isProviderUsableByFramework(
       { apiEndpoints: provider.apiEndpoints, type: provider.type },

@@ -594,3 +594,135 @@ describe('ConversationPanel notebook bar', () => {
     expect(handleOpenJobList).toHaveBeenCalledWith('session-bar')
   })
 })
+
+describe('ConversationPanel error box + report affordance', () => {
+  const errorSession: ChatSession = {
+    id: 'session-err',
+    projectId: 'project-a',
+    title: 'Error session',
+    cwd: '/workspace',
+    status: 'error',
+    error: 'Run failed: connection reset',
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }
+
+  const reportButton = (): HTMLElement | null =>
+    container.querySelector('[aria-label="Report this error"]')
+
+  const errorBoxText = (): string => container.querySelector('.border-red-200')?.textContent ?? ''
+
+  it('shows the error and a Report button for a failed run (status === error)', () => {
+    renderPanel({ activeSession: errorSession })
+    expect(errorBoxText()).toContain('Run failed: connection reset')
+    expect(reportButton()).not.toBeNull()
+  })
+
+  it('renders the error box for a failed run even when it has no error text', () => {
+    renderPanel({ activeSession: { ...errorSession, error: undefined } })
+    // The shown fallback equals the text seeded into the report (single RUN_FAILED_FALLBACK_ERROR),
+    // upholding the "shown == reported" invariant when a failed run carries no error message.
+    expect(errorBoxText()).toContain('The run failed with no error message.')
+    // Still reportable — the affordance follows the failure status, not the presence of text.
+    expect(reportButton()).not.toBeNull()
+  })
+
+  it('shows only the transient actionError, without a Report button, for a non-failed session', () => {
+    renderPanel({
+      activeSession: { ...errorSession, status: 'idle', error: undefined },
+      actionError: 'Could not send message'
+    })
+    expect(errorBoxText()).toContain('Could not send message')
+    expect(reportButton()).toBeNull()
+  })
+
+  it('shows both a transient actionError and the run failure, keeping the Report button', () => {
+    // Both present: each error gets its own row, and the run failure keeps its report entry — a
+    // transient error must not suppress the ability to report the actual failure.
+    renderPanel({ activeSession: errorSession, actionError: 'Could not send message' })
+    const text = errorBoxText()
+    expect(text).toContain('Could not send message')
+    expect(text).toContain('Run failed: connection reset')
+    expect(reportButton()).not.toBeNull()
+  })
+
+  it('opens the report dialog when the Report button is clicked', () => {
+    renderPanel({ activeSession: errorSession })
+    act(() => {
+      reportButton()?.click()
+    })
+    // Dialog renders into a portal on document.body.
+    const title = Array.from(document.body.querySelectorAll('*')).find(
+      (el) => el.textContent === 'Report this error' && el.children.length === 0
+    )
+    expect(title).toBeTruthy()
+  })
+
+  it('seeds the dialog with the same fallback text the box shows when a run has no error', () => {
+    // shown == reported: the textarea the user reviews must carry the exact string shown in the box.
+    renderPanel({ activeSession: { ...errorSession, error: undefined } })
+    const shown = errorBoxText()
+    act(() => {
+      reportButton()?.click()
+    })
+    const textarea = document.body.querySelector(
+      'textarea[aria-label="Error details"]'
+    ) as HTMLTextAreaElement | null
+    expect(textarea?.value).toBe('The run failed with no error message.')
+    expect(shown).toContain(textarea?.value ?? '')
+  })
+
+  it('uses the shared fallback for a whitespace-only persisted error', () => {
+    renderPanel({ activeSession: { ...errorSession, error: '   ' } })
+    expect(errorBoxText()).toContain('The run failed with no error message.')
+
+    act(() => {
+      reportButton()?.click()
+    })
+
+    const textarea = document.body.querySelector(
+      'textarea[aria-label="Error details"]'
+    ) as HTMLTextAreaElement | null
+    expect(textarea?.value).toBe('The run failed with no error message.')
+  })
+
+  it('hides the Report button for an app-crafted, actionable failure', () => {
+    // A recognized failure keeps its message but is not a bug worth a GitHub issue.
+    renderPanel({
+      activeSession: {
+        ...errorSession,
+        error: 'Session workspace is missing; start a new conversation.'
+      }
+    })
+    expect(errorBoxText()).toContain('Session workspace is missing')
+    expect(reportButton()).toBeNull()
+  })
+
+  it('hides the Report button for a model-provider error (tagged non-reportable at the ACP layer)', () => {
+    // A provider/model failure is tagged structurally (errorReportable: false), not by its text —
+    // the raw provider message is kept visible but is not a bug worth a GitHub issue.
+    renderPanel({
+      activeSession: {
+        ...errorSession,
+        error: 'Invalid API key',
+        errorReportable: false
+      }
+    })
+    expect(errorBoxText()).toContain('Invalid API key')
+    expect(reportButton()).toBeNull()
+  })
+
+  it('shows the Report button when a persisted error predates the reportable flag (undefined)', () => {
+    // Old sessions have no errorReportable; fall back to classifying the text — an opaque failure
+    // stays reportable, an app-crafted reminder does not.
+    renderPanel({
+      activeSession: {
+        ...errorSession,
+        error: 'Run failed: connection reset',
+        errorReportable: undefined
+      }
+    })
+    expect(reportButton()).not.toBeNull()
+  })
+})

@@ -103,9 +103,11 @@ class AgentMcpHttpHost {
 
     if (!server) return
 
-    await new Promise<void>((resolve, reject) => {
+    const closing = new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()))
     })
+    server.closeAllConnections()
+    await closing
   }
 
   // Registers (or replaces) the artifact environment for one routing id; re-registration on resume

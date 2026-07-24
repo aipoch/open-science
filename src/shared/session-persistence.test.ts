@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
 
 import {
+  sanitizeActivityGroup,
   normalizeSessionFile,
   sanitizeMessageImages,
   sanitizeToolActivity,
@@ -115,6 +116,7 @@ describe('sanitizeToolActivity', () => {
       id: 'tool-1',
       kind: 'tool',
       title: 'Edit app.ts',
+      activityGroupId: 'group-1',
       status: 'completed',
       sortIndex: 3,
       eventIds: ['event-1'],
@@ -134,6 +136,7 @@ describe('sanitizeToolActivity', () => {
       id: 'tool-1',
       kind: 'tool',
       title: 'Edit app.ts',
+      activityGroupId: 'group-1',
       status: 'completed',
       providerToolName: 'Edit',
       toolKind: 'edit',
@@ -175,6 +178,28 @@ describe('sanitizeToolActivity', () => {
 
   it('rejects entries without an id', () => {
     expect(sanitizeToolActivity({ status: 'completed' })).toBeUndefined()
+  })
+})
+
+describe('sanitizeActivityGroup', () => {
+  it('keeps a valid group declaration bounded and structured', () => {
+    expect(
+      sanitizeActivityGroup({
+        id: 'group-1',
+        title: 'Inspect the implementation.',
+        sortIndex: 4,
+        activityIds: ['tool-1'],
+        createdAt: 5,
+        updatedAt: 6
+      })
+    ).toEqual({
+      id: 'group-1',
+      title: 'Inspect the implementation',
+      sortIndex: 4,
+      activityIds: ['tool-1'],
+      createdAt: 5,
+      updatedAt: 6
+    })
   })
 })
 
@@ -249,16 +274,18 @@ describe('normalizeSessionFile with activities', () => {
     expect(malformed?.filesRevision).toBeUndefined()
   })
 
-  it('round-trips the agent backend identity used to resume a session', () => {
+  it('round-trips the agent backend identity and run model used for diagnostics', () => {
     const session = normalizeSessionFile({
       ...createSessionWithActivity(undefined),
       activities: undefined,
       agentFrameworkId: 'codex',
-      agentBackendId: 'codex:codex-isolated'
+      agentBackendId: 'codex:codex-isolated',
+      agentModel: 'gpt-5.6-sol'
     })
 
     expect(session?.agentFrameworkId).toBe('codex')
     expect(session?.agentBackendId).toBe('codex:codex-isolated')
+    expect(session?.agentModel).toBe('gpt-5.6-sol')
   })
 
   it('keeps known approval profiles and safely defaults unknown values', () => {
@@ -331,5 +358,36 @@ describe('normalizeSessionFile with activities', () => {
     expect(legacy?.enabledComputeHosts).toBeUndefined()
     expect(mixedValid?.enabledComputeHosts).toEqual(['ssh:valid'])
     expect(allInvalid?.enabledComputeHosts).toBeUndefined()
+  })
+
+  it('persists errorReportable only when a model-provider error marked it false', () => {
+    const base = { ...createSessionWithActivity(undefined), activities: undefined, status: 'error' }
+
+    // A provider error tagged non-reportable at the ACP layer round-trips as false so the reloaded
+    // session keeps the report button hidden.
+    const providerFailure = normalizeSessionFile({
+      ...base,
+      error: 'Invalid API key',
+      errorReportable: false
+    })
+    // A reportable failure does not persist the field (default is reportable — no need to store true).
+    const reportableFailure = normalizeSessionFile({
+      ...base,
+      error: 'Agent session could not be created.',
+      errorReportable: true
+    })
+    // An older session file, written before the flag existed, has no field and defaults to reportable.
+    const legacy = normalizeSessionFile({ ...base, error: 'Some old failure' })
+    // The flag is meaningless without an error and is dropped.
+    const noError = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      errorReportable: false
+    })
+
+    expect(providerFailure?.errorReportable).toBe(false)
+    expect(reportableFailure?.errorReportable).toBeUndefined()
+    expect(legacy?.errorReportable).toBeUndefined()
+    expect(noError?.errorReportable).toBeUndefined()
   })
 })

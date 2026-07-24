@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
 import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { Readable } from 'node:stream'
-import { Transform } from 'node:stream'
-import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
-import { pipeline } from 'node:stream/promises'
+
+import type { DownloadProgress } from '../../shared/download-progress'
+import { netFetchStandard } from '../skills/net-fetch'
+import { resilientDownload } from '../net/resilient-download'
 
 import {
   manifestUrl,
@@ -37,11 +36,15 @@ import { operationJournalPath, RuntimeOperationJournal } from './operation-journ
 export type LanguagePackFetchDeps = {
   // Fetches a URL and returns its body as text (used for manifest.json).
   fetchText: (url: string) => Promise<string>
-  // Downloads a URL to destPath (the pack archive).
+  // Downloads a URL to destPath (the pack archive). `expected` carries the manifest sha256/size so the
+  // resilient core can verify inline and resume against the right total. Short-read detection needs a
+  // total, so callers must supply `expected.size` when the response may omit Content-Length.
+  // Cancellation is handled by the closure-captured signal in the default adapter, not a parameter.
   download: (
     url: string,
     destPath: string,
-    onProgress?: (downloadedBytes: number, totalBytes?: number) => void
+    onProgress?: (p: DownloadProgress) => void,
+    expected?: { sha256?: string; size?: number }
   ) => Promise<void>
   // sha256 hex of a file; injectable for tests, defaults to the streaming sha256File.
   sha256?: (path: string) => Promise<string>
@@ -64,58 +67,31 @@ const withCancel = (internal: AbortSignal, external?: AbortSignal): AbortSignal 
 
 const fetchText = async (url: string, external?: AbortSignal): Promise<string> => {
   const signal = withCancel(AbortSignal.timeout(MANIFEST_TIMEOUT_MS), external)
-  const response = await fetch(url, { signal })
+  // Electron net.fetch so the manifest request honors the system/VPN proxy, matching the pack download.
+  const response = await netFetchStandard(url, { signal })
   if (!response.ok) throw new Error(`runtime manifest request failed (${response.status})`)
   return response.text()
 }
 
+// Default download implementation: delegates to the shared resilient core with Electron net.fetch so
+// downloads honor the system/VPN proxy and gain Range resume + retry + stall handling. Verifies the
+// pack's sha256 inline when the caller passes it (fetchLanguagePack does, from the manifest entry).
+// Tests inject a fake via LanguagePackFetchDeps.download.
 const downloadFile = async (
   url: string,
   destPath: string,
-  onProgress: (downloadedBytes: number, totalBytes?: number) => void = () => undefined,
-  external?: AbortSignal
+  onProgress: (p: DownloadProgress) => void = () => undefined,
+  external?: AbortSignal,
+  expected?: { sha256?: string; size?: number }
 ): Promise<void> => {
-  const controller = new AbortController()
-  let stallTimer: ReturnType<typeof setTimeout> | undefined
-  const armStall = (): void => {
-    if (stallTimer) clearTimeout(stallTimer)
-    stallTimer = setTimeout(
-      () =>
-        controller.abort(new Error(`runtime pack download stalled (>${PACK_STALL_TIMEOUT_MS}ms)`)),
-      PACK_STALL_TIMEOUT_MS
-    )
-  }
-  armStall()
-  try {
-    const response = await fetch(url, { signal: withCancel(controller.signal, external) })
-    if (!response.ok) throw new Error(`runtime pack request failed (${response.status})`)
-    if (!response.body) throw new Error('runtime pack response had no body')
-    const contentLength = Number(response.headers.get('content-length'))
-    // A missing Content-Length yields 0 (Number(null)); treat only a positive value as known, so the
-    // caller falls back to the manifest's pack size for the progress bar instead of showing a stuck 0.
-    const totalBytes =
-      Number.isFinite(contentLength) && contentLength > 0 ? contentLength : undefined
-    let downloadedBytes = 0
-    onProgress(downloadedBytes, totalBytes)
-    const meter = new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        downloadedBytes += chunk.length
-        armStall()
-        onProgress(downloadedBytes, totalBytes)
-        callback(null, chunk)
-      }
-    })
-    await pipeline(
-      // Node's DOM and stream lib definitions use incompatible ReadableStream generics here; the
-      // runtime contract is the standard Web stream returned by Node fetch.
-      Readable.fromWeb(response.body as unknown as NodeReadableStream<Uint8Array>),
-      meter,
-      createWriteStream(destPath),
-      { signal: withCancel(controller.signal, external) }
-    )
-  } finally {
-    if (stallTimer) clearTimeout(stallTimer)
-  }
+  await resilientDownload(url, destPath, {
+    expectedSha256: expected?.sha256,
+    expectedSize: expected?.size,
+    stallTimeoutMs: PACK_STALL_TIMEOUT_MS,
+    signal: external,
+    onProgress,
+    deps: { fetchImpl: netFetchStandard }
+  })
 }
 
 // The result of a successful pack fetch: the resolved id/entry and where the verified file landed.
@@ -138,7 +114,7 @@ export const fetchLanguagePack = async (
   language: PackLanguage,
   packVersion: string,
   deps: LanguagePackFetchDeps,
-  onDownloadProgress: (downloadedBytes: number, totalBytes?: number) => void = () => undefined
+  onDownloadProgress: (p: DownloadProgress) => void = () => undefined
 ): Promise<FetchedLanguagePack> => {
   const manifest = parseManifest(await deps.fetchText(manifestUrl(cdnBase, version, subdir)))
   if (manifest.schema !== SUPPORTED_SCHEMA) {
@@ -164,8 +140,14 @@ export const fetchLanguagePack = async (
   await deps.download(
     packUrl(cdnBase, version, subdir, entry.file),
     filePath,
-    (downloadedBytes, totalBytes) => onDownloadProgress(downloadedBytes, totalBytes ?? entry.size)
+    // Fill in the manifest's pack size when the response omits Content-Length, so the UI still shows
+    // a meaningful total/percent instead of an unknown-size bar.
+    (p) => onDownloadProgress(p.total != null ? p : { ...p, total: entry.size }),
+    { sha256: entry.sha256, size: entry.size }
   )
+  // Defense-in-depth: an independent post-download size+sha256 verification, separate from the inline
+  // check the resilient core already performed while streaming. See verifyPackChecksum — this is a
+  // required second integrity gate for a large executed artifact, not redundant work.
   await verifyPackChecksum(
     filePath,
     { sha256: entry.sha256, size: entry.size },
@@ -189,9 +171,19 @@ type FetchBundleFn = (
 // Adapts the single-file CDN fetch to the provisioner's lock-based contract. A failed CDN fetch throws
 // one source-scoped, actionable error so HTTP/integrity failures survive through Settings and lazy
 // provisioning; no online solve is attempted. An aborted `signal` (user Cancel) aborts the download.
-export const createFetchBundleAdapter =
-  (root: string, cdnBase: string | undefined, deps: FetchBundleAdapterDeps = {}): FetchBundleFn =>
-  async (spec, version, onProgress, signal) => {
+export const createFetchBundleAdapter = (
+  root: string,
+  cdnBase: string | undefined,
+  deps: FetchBundleAdapterDeps = {}
+): FetchBundleFn => {
+  // One cache namespace per app session (per adapter instance — the provisioner builds it once at
+  // startup). A prior session's partial .part therefore lives under a DIFFERENT token and is invisible
+  // to this session's fetch, so "app closes → start from scratch" holds by construction — it does not
+  // depend on the startup .cache wipe running or succeeding (that wipe is now pure housekeeping, and a
+  // corrupt-journal early-return or a failed rm can no longer cause a stale resume). Within a session
+  // the token is stable, so a manual retry (no restart) still resumes via Range.
+  const sessionCacheKey = randomUUID()
+  return async (spec, version, onProgress, signal) => {
     if (!cdnBase) return undefined
     // Stage under <root>/packs (the SAME volume as the final pack dir), NOT the system tmpdir: the
     // final commit is an atomic rename() into runtimePackDir(root,...), and a relocated data root on a
@@ -202,6 +194,16 @@ export const createFetchBundleAdapter =
     await mkdir(packsRoot, { recursive: true })
     const workDir = await mkdtemp(join(packsRoot, '.incoming-'))
     const unpackedDir = join(workDir, 'pack')
+    // Location for the downloaded archive + its .part. The extraction staging (workDir) is disposable
+    // and wiped in the finally, but the .part must OUTLIVE a failed or cancelled fetch WITHIN a session
+    // so a manual retry (no restart) resumes via Range instead of restarting a ~345 MB download.
+    // Path: .cache/<sessionCacheKey>/<envVersion>/<subdir>/. The session key makes a PRIOR session's
+    // .part invisible here ("app closes → start from scratch", independent of the startup wipe); the
+    // envVersion+subdir segments keep a stale fragment from a different version/arch from being
+    // Range-resumed against a new pack URL (which would only fail checksum after a full re-download).
+    const subdir = deps.subdir ?? runtimeSubdir()
+    const archiveDir = join(packsRoot, '.cache', sessionCacheKey, String(version), subdir)
+    await mkdir(archiveDir, { recursive: true })
     // Crash recovery (WS13): record the download intent BEFORE staging so a hard-quit mid-fetch leaves
     // a journal entry whose targetPath is this .incoming-* dir; startup recovery removes the orphan.
     // Cleared in the finally on every normal completion/failure (the staging is gone by then), so only
@@ -225,30 +227,38 @@ export const createFetchBundleAdapter =
         progress: 0.05
       })
       const fetched = await fetchLanguagePack(
-        workDir,
+        // Download the archive to the stable cache dir (not workDir) so its .part survives for resume.
+        archiveDir,
         cdnBase,
         version,
-        deps.subdir ?? runtimeSubdir(),
+        subdir,
         spec.language,
         spec.version,
         {
           // Bake the external cancel signal into the default fetchers so a user Cancel aborts the
           // in-flight manifest fetch and pack download (injected test deps opt out, as before).
           fetchText: deps.fetchText ?? ((url) => fetchText(url, signal)),
-          download: deps.download ?? ((url, dest, op) => downloadFile(url, dest, op, signal)),
+          download:
+            deps.download ??
+            ((url, dest, op, expected) => downloadFile(url, dest, op, signal, expected)),
           sha256: deps.sha256
         },
-        (downloadedBytes, totalBytes) => {
-          const ratio = totalBytes && totalBytes > 0 ? downloadedBytes / totalBytes : 0
-          const detail = totalBytes
-            ? ` (${Math.min(100, Math.round(ratio * 100))}%)`
-            : downloadedBytes > 0
-              ? ` (${Math.round(downloadedBytes / 1024 / 1024)} MB)`
-              : ''
+        (download) => {
+          const ratio =
+            download.total && download.total > 0 ? download.transferred / download.total : 0
+          const detail =
+            download.phase === 'reconnecting'
+              ? ' (resuming…)'
+              : download.total
+                ? ` (${Math.min(100, Math.round(ratio * 100))}%)`
+                : download.transferred > 0
+                  ? ` (${Math.round(download.transferred / 1024 / 1024)} MB)`
+                  : ''
           onProgress({
             phase: `fetch-${spec.language}`,
             message: `Downloading managed ${spec.language} runtime${detail}`,
-            progress: 0.1 + 0.25 * Math.min(1, ratio)
+            progress: 0.1 + 0.25 * Math.min(1, ratio),
+            download
           })
         }
       )
@@ -259,6 +269,11 @@ export const createFetchBundleAdapter =
       })
 
       await extractPackArchiveWithDeps(fetched.filePath, unpackedDir, { extract: deps.extract })
+      // The archive is now fully extracted into staging, so the cached copy is no longer needed —
+      // remove it (and any stale .part) to reclaim the ~345 MB. Best-effort: a leftover only wastes
+      // disk and is overwritten on the next fetch. A download that never reached here keeps its .part.
+      await rm(fetched.filePath, { force: true }).catch(() => undefined)
+      await rm(`${fetched.filePath}.part`, { force: true }).catch(() => undefined)
       const lockPath = join(unpackedDir, `${fetched.id}.lock`)
       await readFile(lockPath, 'utf8')
       const entries = await validateAndSeedPack(root, unpackedDir, lockPath, (completed, total) => {
@@ -270,7 +285,7 @@ export const createFetchBundleAdapter =
       })
       if (entries.length === 0) return undefined
 
-      const subdir = deps.subdir ?? runtimeSubdir()
+      // subdir was resolved once above (used for the version/subdir-keyed archive cache dir).
       const pathBudget = pathBudgetForPack(fetched.entry)
       if (subdir === 'win-64' && !pathBudget) return undefined
       if (pathBudget) {
@@ -325,3 +340,4 @@ export const createFetchBundleAdapter =
       await journal.complete(operationId).catch(() => undefined)
     }
   }
+}

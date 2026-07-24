@@ -45,7 +45,23 @@ const { createSession, resetSessionContext, resumeSession, sendPrompt, AcpRuntim
     const resumeSession = vi.fn().mockResolvedValue({ sessionId: 's-1', cwd: '/workspace' })
     const sendPrompt = vi.fn().mockResolvedValue(undefined)
     const AcpRuntimeMock = vi.fn().mockImplementation(function () {
-      return { createSession, resetSessionContext, resumeSession, sendPrompt, getSnapshot: vi.fn() }
+      return {
+        createSession,
+        resetSessionContext,
+        resumeSession,
+        sendPrompt,
+        getSnapshot: vi.fn().mockReturnValue({
+          status: 'idle',
+          cwd: '/workspace',
+          sessionIds: [],
+          events: [],
+          pendingPermissions: [],
+          permissionProfiles: {},
+          permissionGrants: {},
+          promptInFlight: false,
+          promptInFlightSessionIds: []
+        })
+      }
     })
     return { createSession, resetSessionContext, resumeSession, sendPrompt, AcpRuntimeMock }
   })
@@ -91,7 +107,10 @@ const registerWithFakes = (overrides?: {
     runRegistry: {} as never,
     uploadRepository: {} as never,
     notebookRpcServer: {} as never,
-    settingsService: {} as never,
+    settingsService: {
+      captureActiveAgentBackendSelection: vi.fn().mockResolvedValue({}),
+      resolveAgentBackend: vi.fn().mockResolvedValue({})
+    } as never,
     taskNotifications: taskNotifications as never
   })
 }

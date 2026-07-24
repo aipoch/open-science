@@ -9,6 +9,7 @@ import {
 // Bounds how much of a failed tool's result text reaches the log, so large or sensitive tool output
 // cannot flood it. Tuned to fit a typical error message (e.g. WebFetch's domain-safety preflight).
 const TOOL_FAILURE_TEXT_LIMIT = 300
+const MAX_RUNTIME_RAW_PAYLOAD_CHARS = 8_000
 
 // Narrows protocol extension values before reading provider-specific metadata.
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -21,6 +22,24 @@ const trimProviderValue = (value: unknown): string | undefined => {
   const trimmedValue = value.trim()
 
   return trimmedValue ? trimmedValue : undefined
+}
+
+// Keeps small JSON payloads for activity details while dropping values that would make runtime
+// snapshots expensive or impossible to structured-clone across IPC.
+const sanitizeRawToolPayload = (value: unknown): unknown | undefined => {
+  if (value === undefined || value === null) return undefined
+
+  try {
+    const serialized = JSON.stringify(value)
+
+    if (serialized === undefined || serialized.length > MAX_RUNTIME_RAW_PAYLOAD_CHARS) {
+      return undefined
+    }
+
+    return JSON.parse(serialized) as unknown
+  } catch {
+    return undefined
+  }
 }
 
 // Extracts a safe tool identity (e.g. "WebFetch") from ACP extension metadata without exposing
@@ -192,17 +211,19 @@ const toAcpRuntimeEvent = (
         text: contentToText(update.content)
       }
     case 'tool_call':
-      // Keep provider-specific tool metadata only in raw; preview behavior is file-only for now.
+      // Tool events expose only the bounded fields consumed by the UI. Do not retain the original
+      // notification because it duplicates the unbounded arguments and results inside `raw`.
       return {
         ...base,
+        raw: undefined,
         kind: 'tool',
         toolCallId: update.toolCallId,
         providerToolName: extractProviderToolName(update),
         toolKind: update.kind,
         toolContent: update.content,
         toolLocations: update.locations,
-        rawInput: update.rawInput,
-        rawOutput: update.rawOutput,
+        rawInput: sanitizeRawToolPayload(update.rawInput),
+        rawOutput: sanitizeRawToolPayload(update.rawOutput),
         ...extractTerminalMeta(update),
         title: update.title,
         status: update.status
@@ -211,14 +232,15 @@ const toAcpRuntimeEvent = (
       // Tool updates stay compact and do not expose future preview metadata assumptions.
       return {
         ...base,
+        raw: undefined,
         kind: 'tool',
         toolCallId: update.toolCallId,
         providerToolName: extractProviderToolName(update),
         toolKind: update.kind ?? undefined,
         toolContent: update.content ?? undefined,
         toolLocations: update.locations ?? undefined,
-        rawInput: update.rawInput,
-        rawOutput: update.rawOutput,
+        rawInput: sanitizeRawToolPayload(update.rawInput),
+        rawOutput: sanitizeRawToolPayload(update.rawOutput),
         ...extractTerminalMeta(update),
         title: update.title ?? undefined,
         status: update.status ?? undefined

@@ -9,6 +9,15 @@ import { GeneralPanel } from './GeneralPanel'
 
 vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
 
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = (): boolean => false
+  Element.prototype.setPointerCapture = (): void => undefined
+  Element.prototype.releasePointerCapture = (): void => undefined
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = (): void => undefined
+}
+
 let container: HTMLDivElement
 let root: Root
 let cliApi: {
@@ -18,6 +27,7 @@ let cliApi: {
 }
 let settingsApi: {
   setNotificationsEnabled: ReturnType<typeof vi.fn>
+  setClosePreference: ReturnType<typeof vi.fn>
 }
 
 const findButton = (pattern: RegExp): HTMLButtonElement | undefined =>
@@ -63,15 +73,22 @@ beforeEach(() => {
       .fn()
       .mockImplementation((request: { enabled: boolean }) =>
         Promise.resolve({ notificationsEnabled: request.enabled })
+      ),
+    setClosePreference: vi
+      .fn()
+      .mockImplementation((request: { preference?: 'minimize' | 'quit' }) =>
+        Promise.resolve({ closePreference: request.preference })
       )
   }
-  useSettingsStore.setState({ notificationsEnabled: true })
+  useSettingsStore.setState({ notificationsEnabled: true, closePreference: undefined })
   ;(window as unknown as { api: unknown }).api = {
     logs: {
       getPath: vi.fn().mockResolvedValue('/logs/main.log'),
       openFile: vi.fn().mockResolvedValue({ opened: true }),
       revealInFolder: vi.fn().mockResolvedValue({ revealed: true })
     },
+    platform: 'win32',
+    window: { onCloseConfirmRequest: vi.fn() },
     cli: cliApi,
     github: { getStars: vi.fn().mockResolvedValue(1) },
     settings: settingsApi
@@ -153,5 +170,35 @@ describe('GeneralPanel notifications', () => {
 
     expect(settingsApi.setNotificationsEnabled).toHaveBeenCalledWith({ enabled: false })
     expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+  })
+})
+
+describe('GeneralPanel close behavior', () => {
+  it('changes the Windows titlebar-close preference', async () => {
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    const trigger = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="When closing the window"]'
+    )
+    expect(trigger?.textContent).toContain('Ask every time')
+
+    await act(async () => {
+      trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const quit = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (option) => option.textContent?.includes('Quit')
+    )
+    await act(async () => {
+      quit?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
+      quit?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flush()
+
+    expect(settingsApi.setClosePreference).toHaveBeenCalledWith({ preference: 'quit' })
+    expect(useSettingsStore.getState().closePreference).toBe('quit')
   })
 })

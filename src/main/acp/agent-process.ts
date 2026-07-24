@@ -21,22 +21,39 @@ const toUnpackedAsarPath = (filePath: string): string =>
 // Env vars carrying an Anthropic endpoint/credentials/model that an isolated provider must not inherit.
 const ANTHROPIC_ENV_PREFIX = 'ANTHROPIC_'
 
-// Builds the environment for the ACP agent child process. Isolated providers carry CLAUDE_CONFIG_DIR,
-// so inherited ANTHROPIC_* variables are dropped before their own overrides are applied. A local provider
-// with OS-store-only OAuth deliberately omits CLAUDE_CONFIG_DIR and reuses Claude's default auth context.
+// Claude Code's setup-token-based subscription auth. A custom/official provider that does not set
+// this var must not inherit the user's Anthropic subscription token from the parent shell.
+const CLAUDE_CODE_OAUTH_TOKEN = 'CLAUDE_CODE_OAUTH_TOKEN'
+
+// Builds the environment for the ACP agent child process. Credential variables from the parent
+// process are dropped unconditionally before the per-provider overrides are applied. The previous
+// `if (isolated && ...)` gate relied on every provider always setting CLAUDE_CONFIG_DIR; that
+// assumption is load-bearing — a future provider that forgets to set it would silently inherit
+// credentials from the host shell and undo the isolation guarantee. Failing closed here keeps
+// the agent process honest even if a provider misses the override. CLAUDE_CONFIG_DIR is then
+// overwritten by `envOverrides` (set by every provider that spawns the agent) so the app-owned
+// config dir wins regardless of what was in the parent env.
 const buildAgentSpawnEnv = (
   sourceEnv: NodeJS.ProcessEnv,
   envOverrides: Record<string, string>,
   executablePath: string
 ): NodeJS.ProcessEnv => {
-  const isolated = 'CLAUDE_CONFIG_DIR' in envOverrides
+  if (!envOverrides.CLAUDE_CONFIG_DIR?.trim()) {
+    throw new Error(
+      'Claude config directory is not configured. Refusing to start outside app-owned isolation.'
+    )
+  }
+
   const base: NodeJS.ProcessEnv = {}
 
   for (const [key, value] of Object.entries(sourceEnv)) {
-    if (isolated && key.startsWith(ANTHROPIC_ENV_PREFIX)) continue
-    // A non-isolated local provider must use Claude's implicit default context. Inheriting an explicit
-    // CLAUDE_CONFIG_DIR would recreate the same native-credential lookup failure we are avoiding.
-    if (!isolated && key === 'CLAUDE_CONFIG_DIR') continue
+    if (
+      key.startsWith(ANTHROPIC_ENV_PREFIX) ||
+      key === CLAUDE_CODE_OAUTH_TOKEN ||
+      key === 'CLAUDE_CONFIG_DIR'
+    ) {
+      continue
+    }
     base[key] = value
   }
 

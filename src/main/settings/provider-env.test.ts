@@ -42,26 +42,39 @@ describe('provider-env', () => {
     expect(env.ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com')
   })
 
-  it('uses the shared app config dir for a local (claude-default) provider, no endpoint/token', () => {
-    const env = buildProviderEnv({ type: 'claude-default', model: 'claude-opus' }, options)
+  it('injects CLAUDE_CODE_OAUTH_TOKEN for a claude-isolated provider under the app config dir', () => {
+    // claude-isolated authenticates a Claude subscription via a long-lived OAuth token (from
+    // `claude setup-token`). The token is portable across config dirs, so isolation comes from the
+    // app-owned CLAUDE_CONFIG_DIR + this one env var — no ANTHROPIC_BASE_URL, no ANTHROPIC_AUTH_TOKEN.
+    const env = buildProviderEnv(
+      {
+        type: 'claude-isolated',
+        model: 'claude-sonnet-4-5',
+        key: 'sk-ant-oauth-token'
+      },
+      options
+    )
 
     expect(env).toEqual({
       CLAUDE_CODE_EXECUTABLE: '/bin/claude',
       CLAUDE_CONFIG_DIR: getAppClaudeConfigDir('/root'),
-      ANTHROPIC_MODEL: 'claude-opus'
+      ANTHROPIC_MODEL: 'claude-sonnet-4-5',
+      CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oauth-token'
     })
-    // Local reuses the auth stored in the app dir, so no endpoint/token is injected here.
-    expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
+    // claude-isolated never sets the legacy bearer / base-url envs: isolation comes from the token.
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
   })
 
-  it('omits the model for a local provider when none is set', () => {
-    const env = buildProviderEnv({ type: 'claude-default' }, options)
+  it('still sets CLAUDE_CONFIG_DIR for claude-isolated when no model or token is provided', () => {
+    // The 'isolated' predicate in agent-process.ts keys on 'CLAUDE_CONFIG_DIR' in envOverrides — so
+    // the agent's env-strip logic must always find it, even on an unauthenticated provider.
+    const env = buildProviderEnv({ type: 'claude-isolated' }, options)
 
     expect(env).toEqual({
       CLAUDE_CODE_EXECUTABLE: '/bin/claude',
       CLAUDE_CONFIG_DIR: getAppClaudeConfigDir('/root')
     })
-    expect(env.ANTHROPIC_MODEL).toBeUndefined()
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
   })
 })

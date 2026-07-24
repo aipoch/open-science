@@ -35,8 +35,7 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
 
   if (options.length === 0) return null
 
-  // A provider is selectable only when it can actually drive the current framework (endpoint + type;
-  // a Local Claude provider is Claude-only).
+  // A provider is selectable only when it can actually drive the current framework (endpoint + type).
   const isCompatible = (provider: (typeof providers)[number], model: string): boolean =>
     isProviderUsableByFramework(
       { apiEndpoints: provider.apiEndpoints, type: provider.type },

@@ -325,7 +325,9 @@ type NotebookRuntimeServiceOptions = {
   saveIpynb?: (suggestedName: string, data: string) => Promise<ExportNotebookResult>
   // Save-directory seam for the "Download all" path. Production falls back to a directory picker
   // dialog and writes one file per data kernel under the user's chosen directory.
-  saveIpynbAll?: (files: Array<{ kernel: 'python' | 'r'; name: string; data: string }>) => Promise<ExportNotebookAllResult>
+  saveIpynbAll?: (
+    files: Array<{ kernel: 'python' | 'r'; name: string; data: string }>
+  ) => Promise<ExportNotebookAllResult>
   // Resolves app-managed artifact paths with the artifact repository's canonical/symlink checks,
   // bound to the artifact's declaring project/session subtree.
   resolveArtifactPath?: (request: {
@@ -2055,14 +2057,10 @@ class NotebookRuntimeService {
       document,
       this.options.resolveArtifactPath
     )
-    const notebook = runDocumentToIpynbForKernel(
-      document,
-      dataKernel,
-      {
-        appVersion: this.options.appVersion,
-        artifactOutputs
-      }
-    )
+    const notebook = runDocumentToIpynbForKernel(document, dataKernel, {
+      appVersion: this.options.appVersion,
+      artifactOutputs
+    })
     const suggestedName = `session-${request.sessionId.slice(0, 8)}-${dataKernel}.ipynb`
     const serialized = `${JSON.stringify(notebook, null, 2)}\n`
 
@@ -2675,6 +2673,14 @@ class NotebookRuntimeService {
 
   private async runRecovery(): Promise<void> {
     const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
+    // Reclaim any prior-session pack-download cache FIRST — before the corrupt-journal early return
+    // below — so this housekeeping runs on every startup path, not just the healthy-journal one. It is
+    // only housekeeping: correctness of "app closes → start from scratch" is guaranteed independently by
+    // the per-session cache key (createFetchBundleAdapter), so a failure here (or skipping it) can never
+    // let a new fetch resume last session's .part — it only leaves reclaimable disk. Hence best-effort.
+    await rm(join(runtimeRoot, 'packs', '.cache'), { recursive: true, force: true }).catch(
+      () => undefined
+    )
     const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
     // Fail SAFE on a corrupt/unreadable journal: reconcileInterruptedOperations would read it as empty
     // (nothing in flight) and open the recovery barrier, but a corrupt journal is NOT proof that no op

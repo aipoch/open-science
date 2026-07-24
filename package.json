@@ -1,7 +1,7 @@
 {
   "name": "open-science",
   "productName": "Open Science",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Open Science — an open-source, model-agnostic AI workbench for scientific discovery.",
   "main": "./out/main/index.js",
   "author": "aipoch",
@@ -69,6 +69,7 @@
     "@streamdown/mermaid": "^1.0.2",
     "@tailwindcss/typography": "^0.5.20",
     "@tailwindcss/vite": "^4.3.2",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^22.19.1",
     "@types/papaparse": "^5.5.2",
     "@types/react": "^19.2.7",

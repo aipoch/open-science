@@ -3,14 +3,14 @@ import { describe, expect, it } from 'vitest'
 import { describeValidation } from './validation-message'
 
 describe('describeValidation', () => {
-  it('uses the controlled Local Claude auth message when the subprocess probe supplies one', () => {
+  it('uses a custom auth message verbatim when one is supplied', () => {
     expect(
       describeValidation({
         ok: false,
         category: 'auth',
-        message: 'Local Claude could not authenticate. Run `claude` in a terminal and log in.'
+        message: 'Custom auth message from the probe.'
       })
-    ).toBe('Local Claude could not authenticate. Run `claude` in a terminal and log in.')
+    ).toBe('Custom auth message from the probe.')
   })
 
   it('keeps the generic API-key guidance for HTTP auth failures', () => {

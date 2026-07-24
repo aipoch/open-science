@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
+import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import { deriveProvisionUi } from '../workspace/provisioning-view'
 import {
   isEnvEnabled,
@@ -186,21 +187,30 @@ const RuntimeChoiceCard = (): React.JSX.Element | null => {
                   : 'not set up yet'}
           </p>
           {managedPreparing && provisionUi.kind === 'preparing' ? (
-            <div
-              className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-bg-300"
-              role="progressbar"
-              aria-label="Setting up the app-managed Python environment"
-              aria-valuenow={Math.round(provisionUi.progress * 100)}
-              aria-valuemin={0}
-              aria-valuemax={100}
-            >
+            <>
+              {/* §3.1: overall provision bar + the download sub-line coexist (the download is one
+                  phase of provisioning), matching the notebook-gate surface. */}
               <div
-                className="h-full rounded-full bg-primary transition-[width] duration-300"
-                style={{
-                  width: `${Math.max(2, Math.min(100, Math.round(provisionUi.progress * 100)))}%`
-                }}
-              />
-            </div>
+                className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-bg-300"
+                role="progressbar"
+                aria-label="Setting up the app-managed Python environment"
+                aria-valuenow={Math.round(provisionUi.progress * 100)}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              >
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-300"
+                  style={{
+                    width: `${Math.max(2, Math.min(100, Math.round(provisionUi.progress * 100)))}%`
+                  }}
+                />
+              </div>
+              {provisionUi.download ? (
+                <div className="mt-2 w-full max-w-xs">
+                  <DownloadProgressLine progress={provisionUi.download} />
+                </div>
+              ) : null}
+            </>
           ) : null}
           {enabledOwn.length > 0 ? (
             <p className="mt-1 truncate text-[11px] text-text-100">

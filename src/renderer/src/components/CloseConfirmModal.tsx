@@ -23,19 +23,25 @@ type ActiveRequest = {
 // only), so every call into window.api.window here must tolerate that absence.
 export const CloseConfirmModal = (): React.JSX.Element | null => {
   const [request, setRequest] = useState<ActiveRequest | undefined>(undefined)
+  const [remember, setRemember] = useState(true)
 
   useEffect(() => {
     const windowApi = window.api.window
     if (!windowApi.onCloseConfirmRequest) return undefined
     return windowApi.onCloseConfirmRequest((payload: CloseConfirmRequest) => {
       windowApi.sendCloseConfirmResponse?.({ requestId: payload.requestId, ack: true })
+      setRemember(true)
       setRequest(payload)
     })
   }, [])
 
   const reply = (choice: CloseConfirmChoice): void => {
     if (request) {
-      window.api.window.sendCloseConfirmResponse?.({ requestId: request.requestId, choice })
+      window.api.window.sendCloseConfirmResponse?.({
+        requestId: request.requestId,
+        choice,
+        ...(request.variant === 'close-to-tray' ? { remember } : {})
+      })
     }
     setRequest(undefined)
   }
@@ -93,6 +99,17 @@ export const CloseConfirmModal = (): React.JSX.Element | null => {
                 )
               })}
             </ul>
+          ) : null}
+          {!isQuitVariant ? (
+            <label className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(event) => setRemember(event.target.checked)}
+                className="size-4 shrink-0 accent-primary"
+              />
+              <span>Don&apos;t ask again</span>
+            </label>
           ) : null}
           <div className="mt-4 flex justify-end gap-2">
             {isQuitVariant ? (

@@ -184,6 +184,42 @@ describe('RuntimeChoiceCard', () => {
     expect(setEnvironmentEnabled).not.toHaveBeenCalledWith('python', symlinkPath, true)
   })
 
+  it('shows the shared speed/ETA line during the managed pack download', async () => {
+    // No runnable managed env yet + an in-flight provision whose progress carries a download payload.
+    listEnvironments.mockResolvedValue({ python: [], r: [] })
+    const store = useNotebookEnvStore.getState()
+    const original = {
+      status: store.status,
+      scope: store.scope,
+      progress: store.progress
+    }
+    useNotebookEnvStore.setState({
+      status: { ...store.status, provisioning: true, pythonReady: false },
+      scope: 'python',
+      progress: {
+        scope: 'python',
+        phase: 'download',
+        message: 'Downloading…',
+        progress: 0.4,
+        download: {
+          phase: 'downloading',
+          transferred: 4_000_000,
+          total: 10_000_000,
+          percent: 40,
+          bytesPerSecond: 2_000_000,
+          attempt: 0
+        }
+      }
+    })
+    try {
+      await render()
+      // The shared line surfaces speed ("…/s"), not merely a coarse percent bar.
+      expect(container.textContent ?? '').toContain('/s')
+    } finally {
+      useNotebookEnvStore.setState(original)
+    }
+  })
+
   it('keeps Cancel clickable during a real in-flight managed provision', async () => {
     // No runnable app-managed env → the "Download and set up" affordance is shown.
     listEnvironments.mockResolvedValue({ python: [], r: [] })

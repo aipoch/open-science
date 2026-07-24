@@ -8,10 +8,7 @@ import { extractJobIdFromActivity } from '@/components/job-binding-utils'
 import { WorkspaceToolActivityRow } from './WorkspaceToolActivityRow'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
 import { WorkspaceWebSearchActivityRow } from './WorkspaceWebSearchActivityRow'
-import {
-  buildToolActivityDetails,
-  isNotebookExecuteActivity
-} from './workspace-tool-activity-details'
+import { buildToolActivityDetails } from './workspace-tool-activity-details'
 import {
   formatActivityGroupTitle,
   formatStepCount,
@@ -72,7 +69,7 @@ const WorkspaceActivityGroup = ({
               <ChevronRight className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
             </span>
             <span className="min-w-0 truncate text-left font-medium text-text-000">
-              {formatActivityGroupTitle(group.activities)}
+              {formatActivityGroupTitle(group.activities, group.title)}
             </span>
             <span className="ml-auto shrink-0 whitespace-nowrap text-[12px] tabular-nums text-text-100">
               {formatStepCount(visibleActivities)}
@@ -86,9 +83,9 @@ const WorkspaceActivityGroup = ({
                   const isSearch = isSearchActivity(activity, group.activities, activityIndex)
                   const searchDetails = isSearch ? formatWebSearchDetails(activity) : undefined
                   const toolDetails = isSearch ? undefined : buildToolActivityDetails(activity)
-                  // Notebook cells lead with their code, so show it unfolded unless the user collapsed it.
-                  const isRowExpanded =
-                    expansionOverrides[activity.id] ?? isNotebookExecuteActivity(activity)
+                  // All tool rows — notebook cells included — default collapsed (meaningful title
+                  // only); clicking the title reveals the code and output. A user toggle still wins.
+                  const isRowExpanded = expansionOverrides[activity.id] ?? false
 
                   return (
                     <div key={activity.id} className="w-full overflow-hidden">

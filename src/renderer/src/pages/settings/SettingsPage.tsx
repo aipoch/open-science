@@ -350,10 +350,12 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
             ? 'Upload skills'
             : skillsView.kind === 'import'
               ? 'Import from GitHub'
-              : (() => {
-                  const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
-                  return skillsView.kind === 'edit' ? `Edit ${name}`.trim() : name
-                })()
+              : skillsView.kind === 'import-agent-home'
+                ? 'From your agent home'
+                : (() => {
+                    const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
+                    return skillsView.kind === 'edit' ? `Edit ${name}`.trim() : name
+                  })()
       return {
         rootLabel: 'Skills',
         rootTo: { panel: 'skills', skills: { kind: 'list' }, model: currentLocation.model },
@@ -799,6 +801,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                       encryptionAvailable={encryptionAvailable}
                       showCodexSubscriptions={
                         agentFrameworkId === 'codex' && editingProvider === undefined
+                      }
+                      showClaudeIsolated={
+                        agentFrameworkId === 'claude-code' && editingProvider === undefined
                       }
                     />
                     {statusMessage ? (

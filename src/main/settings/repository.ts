@@ -11,8 +11,10 @@ import type {
   ValidationCategory
 } from '../../shared/settings'
 import {
+  CLAUDE_ISOLATED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   SETTINGS_FILE_VERSION,
+  claudeIsolatedProviderIdentity,
   codexSubscriptionProviderIdentity,
   isCodexSubscriptionProvider,
   isCodexSubscriptionProviderId,
@@ -22,6 +24,8 @@ import { isOfficialVendorId } from '../../shared/provider-registry'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
+import type { CloseActionPreference } from '../../shared/window-controls'
+import { createLogger } from '../logger'
 import {
   createEmptySettings,
   type StoredComputeGrant,
@@ -34,9 +38,11 @@ import {
 
 const SETTINGS_FILE = 'settings.json'
 
+const log = createLogger('settings.repository')
+
 const PROVIDER_TYPES = new Set<ProviderType>([
   'custom',
-  'claude-default',
+  'claude-isolated',
   'official',
   'codex-shared',
   'codex-isolated'
@@ -151,6 +157,8 @@ const sanitizeValidationFailure = (value: unknown): ProviderValidationFailure | 
 }
 
 // Rebuilds one provider record, dropping unknown fields and records missing required identity.
+// An unknown `type` is dropped at load time and logged at WARN — usually a stale provider kind from a
+// prior version (e.g. the removed 'claude-default'). A bad value must never reach the active snapshot.
 const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   if (!isRecord(value)) return undefined
 
@@ -158,7 +166,13 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   const type = asString(value.type) as ProviderType | undefined
   const name = asString(value.name)
 
-  if (!id || !type || !PROVIDER_TYPES.has(type) || name === undefined) return undefined
+  if (!id || !type || name === undefined) return undefined
+
+  if (!PROVIDER_TYPES.has(type)) {
+    log.warn('dropping stored provider with unknown type', { id, type })
+
+    return undefined
+  }
 
   // An official provider without a recognizable vendor is unusable (no base URL/catalog to resolve),
   // so drop the corrupt record rather than keep a provider that can never spawn or validate.
@@ -175,6 +189,7 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   const keyMask = asString(value.keyMask)
   const lastValidatedAt = asNumber(value.lastValidatedAt)
   const lastValidationFailure = sanitizeValidationFailure(value.lastValidationFailure)
+  const expiresAt = asNumber(value.expiresAt)
   // Keep only a clean list of non-empty string model ids.
   const fetchedModels = Array.isArray(value.fetchedModels)
     ? value.fetchedModels.filter(
@@ -212,6 +227,7 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   if (keyMask) provider.keyMask = keyMask
   if (lastValidatedAt !== undefined) provider.lastValidatedAt = lastValidatedAt
   if (lastValidationFailure) provider.lastValidationFailure = lastValidationFailure
+  if (expiresAt !== undefined) provider.expiresAt = expiresAt
 
   return provider
 }
@@ -455,6 +471,12 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     settings.notificationsEnabled = notificationsEnabled
   }
 
+  const closePreference = asString(value.closePreference)
+
+  if (closePreference === 'minimize' || closePreference === 'quit') {
+    settings.closePreference = closePreference
+  }
+
   const opencodePath = asString(value.opencodePath)
 
   if (opencodePath) {
@@ -621,6 +643,64 @@ class SettingsRepository {
     })
   }
 
+  // Updates the single claude-isolated provider record (id is fixed at builtin-claude-isolated).
+  // The patch carries only the key-bearing fields the controller writes — model/lastValidatedAt/etc
+  // stay on whatever the renderer/service previously set, so a paste does not stomp the validated-at
+  // timestamp the validation flow recorded. When the record does not exist yet (a fresh install's
+  // first paste) it is created with the fixed id/name, mirroring codex's single subscription record.
+  async upsertClaudeIsolatedProvider(
+    patch: Partial<Pick<StoredProvider, 'keyRef' | 'keyMask' | 'lastValidatedAt' | 'lastValidationFailure'>>
+  ): Promise<StoredSettings> {
+    const identity = claudeIsolatedProviderIdentity()
+
+    return this.mutate((settings) => {
+      const index = settings.providers.findIndex(
+        (existing) => existing.id === CLAUDE_ISOLATED_PROVIDER_ID
+      )
+
+      if (index >= 0) {
+        const providers = [...settings.providers]
+
+        providers[index] = { ...providers[index], ...patch }
+        return { ...settings, providers }
+      }
+
+      const created: StoredProvider = {
+        id: identity.id,
+        type: 'claude-isolated',
+        name: identity.name
+      }
+
+      return { ...settings, providers: [...settings.providers, { ...created, ...patch }] }
+    })
+  }
+
+  // Records a probe result only while the credential that was probed is still current. Login probes
+  // run a subprocess and can overlap logout, deletion, edits, or a second paste; comparing inside the
+  // serialized mutation prevents a stale result from restoring an old provider snapshot or marking a
+  // replacement token as verified.
+  async updateClaudeIsolatedValidationIfKeyMatches(
+    expectedKeyRef: string | undefined,
+    patch: Pick<StoredProvider, 'expiresAt' | 'lastValidatedAt' | 'lastValidationFailure'>
+  ): Promise<boolean> {
+    let applied = false
+
+    await this.mutate((settings) => {
+      const index = settings.providers.findIndex(
+        (provider) => provider.id === CLAUDE_ISOLATED_PROVIDER_ID
+      )
+      if (index < 0 || settings.providers[index].keyRef !== expectedKeyRef) return settings
+
+      const providers = [...settings.providers]
+      providers[index] = { ...providers[index], ...patch }
+      applied = true
+
+      return { ...settings, providers }
+    })
+
+    return applied
+  }
+
   // Removes a provider and clears the active pointer (and model) when it referenced the removed one.
   async deleteProvider(id: string): Promise<StoredSettings> {
     return this.mutate((settings) => {
@@ -675,6 +755,11 @@ class SettingsRepository {
   // immediately, without a restart.
   async setNotificationsEnabled(enabled: boolean): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, notificationsEnabled: enabled }))
+  }
+
+  // Persists the Windows titlebar-close behavior; undefined restores the confirmation dialog.
+  async setClosePreference(preference: CloseActionPreference | undefined): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, closePreference: preference }))
   }
 
   // Records the detected opencode executable path + version for later spawns + the settings status card.

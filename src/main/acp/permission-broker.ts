@@ -28,9 +28,9 @@ const ALLOW_ONCE_OPTION_KIND = 'allow_once'
 // projection tests (permission-broker.test.ts) pin this contract and would fail on such a drift.
 const CODEX_POLICY_AMENDMENT_OPTION_ID_PATTERN = /^accept_.*policy_amendment$/
 // Codex sends two allow_always options for MCP tool requests. The persistent cross-session one uses
-// this option ID; the session-scoped one uses 'allow-session'. Keying on the persistent ID (not
+// this option ID; the session-scoped one uses 'allow_session'. Keying on the persistent ID (not
 // position) is robust to option reordering — tests pin this contract.
-const CODEX_MCP_PERSISTENT_ALLOW_OPTION_ID = 'allow-always'
+const CODEX_MCP_PERSISTENT_ALLOW_OPTION_ID = 'allow_always'
 
 const commandFromRawInput = (rawInput: unknown): string | undefined => {
   if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) return undefined
@@ -87,8 +87,8 @@ const projectPermissionOptions = (
     return params.options
   }
 
-  // Codex MCP tools send two allow_always variants: a session-scoped one ('allow-session') and
-  // a persistent cross-session one ('allow-always'). Strip the persistent one by its known
+  // Codex MCP tools send two allow_always variants: a session-scoped one ('allow_session') and
+  // a persistent cross-session one ('allow_always'). Strip the persistent one by its known
   // option ID so the app's session-only, revocable grant model is never bypassed.
   if (isMcp) {
     return params.options.filter(

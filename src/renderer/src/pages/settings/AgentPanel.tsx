@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 
 // Import the bare Mono/Color components straight from their modules: each icon's entry point
@@ -64,6 +64,31 @@ const AgentPanel = (): React.JSX.Element => {
   const detectClaude = useSettingsStore((state) => state.detectClaude)
   const installClaude = useSettingsStore((state) => state.installClaude)
 
+  // Track whether an ACP prompt is currently running so the uninstall (a destructive teardown) can be
+  // blocked while a task uses the runtime. Fail closed: default to true (treated as busy) until the
+  // first snapshot arrives, so the button is never briefly enabled during the getState() round-trip.
+  const [promptInFlight, setPromptInFlight] = useState(true)
+  useEffect(() => {
+    let mounted = true
+    // A live onState broadcast is always fresher than the initial getState() read. Subscribing first
+    // is NOT enough — getState() is async, so a live event can arrive before the snapshot resolves and
+    // then be clobbered by the stale snapshot when it lands. Latch the first live event and drop any
+    // getState() result that arrives after it, so live state always wins the race.
+    let liveEventSeen = false
+    const removeListener = window.api.acp.onState((s) => {
+      if (!mounted) return
+      liveEventSeen = true
+      setPromptInFlight(s.promptInFlight)
+    })
+    void window.api.acp.getState().then((s) => {
+      if (mounted && !liveEventSeen) setPromptInFlight(s.promptInFlight)
+    })
+    return () => {
+      mounted = false
+      removeListener()
+    }
+  }, [])
+
   // The app-managed runtime pending an uninstall confirmation (null = dialog closed), plus the
   // in-flight flag so the dialog and status cards can show progress and stay locked during removal.
   const [pendingUninstall, setPendingUninstall] = useState<FrameworkKey | null>(null)
@@ -76,6 +101,13 @@ const AgentPanel = (): React.JSX.Element => {
   // reconnects the agent, so the cards and readiness gate update without a manual re-detect.
   const handleConfirmUninstall = async (): Promise<void> => {
     if (!pendingUninstall) return
+    // Revalidate at confirm time: a prompt may have started after the dialog opened (the card control
+    // disables live, but an already-open dialog wouldn't). Uninstalling the runtime out from under a
+    // running task is exactly what the guard prevents, so close the dialog instead of proceeding.
+    if (promptInFlight) {
+      setPendingUninstall(null)
+      return
+    }
 
     setIsUninstalling(true)
 
@@ -233,6 +265,7 @@ const AgentPanel = (): React.JSX.Element => {
       managed={card.managed}
       isUninstalling={isUninstalling && pendingUninstall === card.key}
       isDetecting={isDetectingAnyFramework}
+      promptInFlight={promptInFlight}
       onUninstall={() => setPendingUninstall(card.key)}
       installSources={card.installSources}
       install={card.install}

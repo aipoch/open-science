@@ -12,6 +12,7 @@ import {
   type PermissionProfileId
 } from './permission-profiles'
 import type { AgentFrameworkId } from './settings'
+import { sanitizeActivityGroupTitle } from './activity-groups'
 
 // One JSON file per session (sessions/<projectId>/<sessionId>.json) carries this envelope version.
 export const SESSION_FILE_VERSION = 1
@@ -97,6 +98,7 @@ export type PersistedToolActivity = {
   id: string
   kind: 'tool'
   title: string
+  activityGroupId?: string
   status: PersistedToolActivityStatus
   sortIndex: number
   eventIds: string[]
@@ -113,6 +115,16 @@ export type PersistedToolActivity = {
   updatedAt: number
 }
 
+export type PersistedActivityGroup = {
+  id: string
+  title: string
+  sortIndex: number
+  activityIds: string[]
+  createdAt: number
+  updatedAt: number
+  completedAt?: number
+}
+
 export type PersistedChatSession = {
   id: string
   // Owning project. On load this is authoritative from the file's directory (sessions/<projectId>/).
@@ -124,6 +136,9 @@ export type PersistedChatSession = {
   // Identifies the provider/profile session store within a framework so a restored session is never
   // resumed against an incompatible backend (for example Codex shared profile vs isolated login).
   agentBackendId?: string
+  // Model selected when the latest run started. Kept with the session so a later settings change
+  // cannot misattribute a failed run's diagnostic report.
+  agentModel?: string
   // Per-conversation approval posture. Older session files omit it and safely restore to Ask.
   permissionProfile?: PermissionProfileId
   // Per-conversation auto-review toggle. Absent (older files) or non-true is treated as disabled;
@@ -133,10 +148,19 @@ export type PersistedChatSession = {
   // compatibility; semantically a set (single-select for now, multi-select-ready internally).
   // Absent on older sessions — treated as empty (no host enabled).
   enabledComputeHosts?: string[]
+  // Pins the conversation to a dedicated section at the top of the sidebar. Absent (older files) or
+  // non-true restores as unpinned; only an explicit true keeps it pinned across restarts.
+  pinned?: boolean
   messages: PersistedChatMessage[]
   activities?: PersistedToolActivity[]
+  activityGroups?: PersistedActivityGroup[]
   activeRun?: PersistedActiveRun
   error?: string
+  // Whether a failed run's error is worth a GitHub issue. False for a recognized failure (a provider/
+  // model error the agent relayed, or one of the app's own actionable reminders); true/absent for an
+  // unknown ACP-layer failure. Resolved once when the run fails and persisted so the "Report error"
+  // gate survives a reload. Absent on older files — treated as reportable (the prior behavior).
+  errorReportable?: boolean
   artifacts?: PersistedArtifact[]
   // Incremented only when finalized file metadata changes; text streaming leaves it untouched.
   filesRevision?: number
@@ -472,6 +496,7 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
     updatedAt: asNumber(activity.updatedAt) ?? 0
   }
   const providerToolName = asString(activity.providerToolName)
+  const activityGroupId = asString(activity.activityGroupId)
   const toolKind = asString(activity.toolKind)
   const toolContent = sanitizeToolContent(activity.toolContent)
   const toolLocations = sanitizeToolLocations(activity.toolLocations)
@@ -481,6 +506,7 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   const terminalExitCode = asNumber(activity.terminalExitCode)
 
   if (providerToolName) sanitized.providerToolName = providerToolName
+  if (activityGroupId) sanitized.activityGroupId = activityGroupId
   if (toolKind) sanitized.toolKind = toolKind
   if (toolContent) sanitized.toolContent = toolContent
   if (toolLocations) sanitized.toolLocations = toolLocations
@@ -497,6 +523,31 @@ const normalizeActivityAfterRestore = (activity: PersistedToolActivity): Persist
   activity.status === 'pending' || activity.status === 'in_progress'
     ? { ...activity, status: 'failed' }
     : activity
+
+export const sanitizeActivityGroup = (group: unknown): PersistedActivityGroup | undefined => {
+  if (!isRecord(group)) return undefined
+
+  const id = asString(group.id)
+  const title = sanitizeActivityGroupTitle(group.title)
+  if (!id || !title) return undefined
+
+  const updatedAt = asNumber(group.updatedAt) ?? 0
+  const completedAt = asNumber(group.completedAt)
+  return {
+    id,
+    title,
+    sortIndex: asNumber(group.sortIndex) ?? 0,
+    activityIds: asStringArray(group.activityIds),
+    createdAt: asNumber(group.createdAt) ?? 0,
+    updatedAt,
+    ...(completedAt === undefined ? {} : { completedAt })
+  }
+}
+
+const normalizeActivityGroupAfterRestore = (
+  group: PersistedActivityGroup
+): PersistedActivityGroup =>
+  group.completedAt === undefined ? { ...group, completedAt: group.updatedAt } : group
 
 // Rebuilds one structured mention segment, dropping malformed entries so the bubble stays renderable.
 const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
@@ -645,6 +696,12 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
         .filter((item): item is PersistedToolActivity => !!item)
         .map(normalizeActivityAfterRestore)
     : []
+  const activityGroups = Array.isArray(session.activityGroups)
+    ? session.activityGroups
+        .map(sanitizeActivityGroup)
+        .filter((item): item is PersistedActivityGroup => !!item)
+        .map(normalizeActivityGroupAfterRestore)
+    : []
   const sanitized: PersistedChatSession = {
     id,
     // Content value is a hint; the repository overrides it with the session file's directory on load.
@@ -669,6 +726,7 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
   const error = asString(session.error)
   const agentFrameworkId = asString(session.agentFrameworkId) as AgentFrameworkId | undefined
   const agentBackendId = asString(session.agentBackendId)
+  const agentModel = asString(session.agentModel)
   const enabledComputeHosts = Array.isArray(session.enabledComputeHosts)
     ? session.enabledComputeHosts.filter(
         (item): item is string => typeof item === 'string' && item.startsWith('ssh:')
@@ -677,16 +735,22 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
 
   if (activeRun) sanitized.activeRun = activeRun
   if (error) sanitized.error = error
+  // Only meaningful alongside an error; persisted only when explicitly false (absent = reportable).
+  if (error && session.errorReportable === false) sanitized.errorReportable = false
   if (agentFrameworkId && AGENT_FRAMEWORK_IDS.has(agentFrameworkId)) {
     sanitized.agentFrameworkId = agentFrameworkId
   }
   if (agentBackendId) sanitized.agentBackendId = agentBackendId
+  if (agentModel) sanitized.agentModel = agentModel
+  // Restore the pin only from an explicit true so malformed or legacy files stay unpinned.
+  if (session.pinned === true) sanitized.pinned = true
   if (artifacts.length > 0) sanitized.artifacts = artifacts
   const filesRevision = asNumber(session.filesRevision)
   if (filesRevision !== undefined && Number.isInteger(filesRevision) && filesRevision >= 0) {
     sanitized.filesRevision = filesRevision
   }
   if (activities.length > 0) sanitized.activities = activities
+  if (activityGroups.length > 0) sanitized.activityGroups = activityGroups
   if (enabledComputeHosts.length > 0) sanitized.enabledComputeHosts = enabledComputeHosts
 
   return sanitizeSessionMessageImages(normalizeSessionAfterRestore(sanitized))

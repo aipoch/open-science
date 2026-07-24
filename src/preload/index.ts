@@ -136,6 +136,7 @@ import type {
   SetPackageMirrorRequest,
   SetAgentFrameworkRequest,
   SetNotificationsEnabledRequest,
+  SetClosePreferenceRequest,
   SetReasoningEffortRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
@@ -149,6 +150,8 @@ import type {
   ImportSkillZipRequest,
   ImportSkillZipBatchRequest,
   ImportSkillZipBatchResult,
+  ImportAgentHomeSkillRequest,
+  AgentHomeSkillView,
   PreviewSkillZipRequest,
   SkillBundlePreviewResult,
   ScanRepoRequest,
@@ -278,10 +281,13 @@ type OpenScienceAPI = {
     setAgentFramework: (request: SetAgentFrameworkRequest) => Promise<SettingsSnapshot>
     setReasoningEffort: (request: SetReasoningEffortRequest) => Promise<SettingsSnapshot>
     setNotificationsEnabled: (request: SetNotificationsEnabledRequest) => Promise<SettingsSnapshot>
+    setClosePreference: (request: SetClosePreferenceRequest) => Promise<SettingsSnapshot>
     validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
     cancelCodexLogin: () => Promise<void>
     loginIsolatedCodex: () => Promise<ValidateProviderResult>
     logoutIsolatedCodex: () => Promise<ValidateProviderResult>
+    loginIsolatedClaude: (token: string) => Promise<ValidateProviderResult>
+    logoutIsolatedClaude: () => Promise<ValidateProviderResult>
     refreshProviderModels: (
       request: RefreshProviderModelsRequest
     ) => Promise<RefreshProviderModelsResult>
@@ -299,6 +305,8 @@ type OpenScienceAPI = {
     importSkillZipBatch: (request: ImportSkillZipBatchRequest) => Promise<ImportSkillZipBatchResult>
     previewSkillZip: (request: PreviewSkillZipRequest) => Promise<SkillBundlePreviewResult>
     scanRepoSkills: (request: ScanRepoRequest) => Promise<ScanRepoResult>
+    listAgentHomeSkills: () => Promise<AgentHomeSkillView[]>
+    importAgentHomeSkill: (request: ImportAgentHomeSkillRequest) => Promise<ImportSkillResult>
     listConnectors: () => Promise<ConnectorsSnapshot>
     getConnectorDetail: (id: string) => Promise<ConnectorDetailView>
     setConnectorEnabled: (request: SetConnectorEnabledRequest) => Promise<ConnectorsSnapshot>
@@ -575,9 +583,9 @@ type OpenScienceAPI = {
     // Fires when Cmd+W / Ctrl+W is pressed; the renderer decides pane-vs-window.
     onCloseActivePane: (listener: () => void) => RemoveListener
     // Fires when main asks to confirm a close/quit; the renderer renders the modal and replies.
-    onCloseConfirmRequest: (listener: (payload: CloseConfirmRequest) => void) => RemoveListener
+    onCloseConfirmRequest?: (listener: (payload: CloseConfirmRequest) => void) => RemoveListener
     // Renderer -> main: modal-mounted ack, then the user's choice, keyed by requestId.
-    sendCloseConfirmResponse: (payload: CloseConfirmResponse) => void
+    sendCloseConfirmResponse?: (payload: CloseConfirmResponse) => void
   }
 }
 
@@ -677,6 +685,8 @@ const api: OpenScienceAPI = {
         'settings:set-notifications-enabled',
         request
       ) as Promise<SettingsSnapshot>,
+    setClosePreference: (request) =>
+      ipcRenderer.invoke('settings:set-close-preference', request) as Promise<SettingsSnapshot>,
     validateProvider: (request) =>
       ipcRenderer.invoke('settings:validate-provider', request) as Promise<ValidateProviderResult>,
     cancelCodexLogin: () => ipcRenderer.invoke('settings:cancel-codex-login') as Promise<void>,
@@ -684,6 +694,15 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('settings:login-isolated-codex') as Promise<ValidateProviderResult>,
     logoutIsolatedCodex: () =>
       ipcRenderer.invoke('settings:logout-isolated-codex') as Promise<ValidateProviderResult>,
+    // The Claude subscription's setup-token paste. Same shape as the codex login, but the renderer
+    // supplies the token (no browser flow), so the payload is the plaintext string itself.
+    loginIsolatedClaude: (token: string) =>
+      ipcRenderer.invoke(
+        'settings:login-isolated-claude',
+        token
+      ) as Promise<ValidateProviderResult>,
+    logoutIsolatedClaude: () =>
+      ipcRenderer.invoke('settings:logout-isolated-claude') as Promise<ValidateProviderResult>,
     refreshProviderModels: (request) =>
       ipcRenderer.invoke(
         'settings:refresh-provider-models',
@@ -722,6 +741,12 @@ const api: OpenScienceAPI = {
       ) as Promise<SkillBundlePreviewResult>,
     scanRepoSkills: (request: ScanRepoRequest) =>
       ipcRenderer.invoke('settings:scan-repo-skills', request) as Promise<ScanRepoResult>,
+    // "From your agent home" import source: lists the skills under ~/.claude/skills/ for the
+    // renderer to display, and copies one into the imported-skill store on demand.
+    listAgentHomeSkills: () =>
+      ipcRenderer.invoke('settings:list-agent-home-skills') as Promise<AgentHomeSkillView[]>,
+    importAgentHomeSkill: (request: ImportAgentHomeSkillRequest) =>
+      ipcRenderer.invoke('settings:import-agent-home-skill', request) as Promise<ImportSkillResult>,
     listConnectors: () =>
       ipcRenderer.invoke('settings:list-connectors') as Promise<ConnectorsSnapshot>,
     getConnectorDetail: (id: string) =>

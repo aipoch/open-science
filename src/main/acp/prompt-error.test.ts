@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { describePromptError } from './prompt-error'
+import { describePromptError, isProviderPromptError } from './prompt-error'
 
 // Builds an ACP RequestError-shaped value: an Error carrying the JSON-RPC code + data the agent attaches.
 const agentError = (
@@ -104,5 +104,43 @@ describe('describePromptError', () => {
 
   it('accepts a plain string error', () => {
     expect(describePromptError('boom')).toBe('boom')
+  })
+})
+
+describe('isProviderPromptError', () => {
+  it('flags an upstream APIError (auth/rate/quota/5xx all share this tag)', () => {
+    expect(isProviderPromptError(agentError('Invalid API key'))).toBe(true)
+    expect(isProviderPromptError(agentError('429 Too Many Requests'))).toBe(true)
+    expect(isProviderPromptError(agentError('Internal error: Overloaded: service is busy'))).toBe(
+      true
+    )
+  })
+
+  it('flags a provider-relayed failure tagged with errorKind "provider-error"', () => {
+    const error = Object.assign(new Error('Internal error'), {
+      code: -32603,
+      data: { errorKind: 'provider-error' },
+      name: 'RequestError'
+    })
+
+    expect(isProviderPromptError(error)).toBe(true)
+  })
+
+  it('flags a provider resource-not-found (wrong model id / endpoint)', () => {
+    const error = agentError(
+      'Internal error: Not Found: {"error":{"message":"unknown model","type":"resource_not_found_error"}}'
+    )
+
+    expect(isProviderPromptError(error)).toBe(true)
+  })
+
+  it('does NOT flag an ACP-layer exception (no provider signal) — these stay reportable', () => {
+    // A protocol not-found the resume path owns.
+    expect(
+      isProviderPromptError(Object.assign(new Error('Resource not found'), { code: -32002 }))
+    ).toBe(false)
+    // An app-layer throw with no agent tag.
+    expect(isProviderPromptError(new Error('Agent session could not be created.'))).toBe(false)
+    expect(isProviderPromptError('boom')).toBe(false)
   })
 })

@@ -1,3 +1,4 @@
+import { netFetchStandard } from '../skills/net-fetch'
 import type { PlatformDownload, UpdateManifest } from '../../shared/update'
 
 const isDownload = (value: unknown): value is PlatformDownload => {
@@ -32,7 +33,9 @@ export const parseManifest = (data: unknown): UpdateManifest => {
 
 export const fetchManifest = async (
   url: string,
-  fetchImpl: typeof fetch = fetch
+  // Default to the proxy-aware net.fetch so the manifest request honors the system/VPN proxy,
+  // matching the installer download and language-pack fetch. Node's global fetch bypasses it.
+  fetchImpl: typeof fetch = netFetchStandard
 ): Promise<UpdateManifest> => {
   const response = await fetchImpl(url, { headers: { Accept: 'application/json' } })
   if (!response.ok) throw new Error(`Manifest fetch failed: ${response.status}`)

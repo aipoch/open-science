@@ -11,6 +11,7 @@ import type { OfficialVendorId } from '../../shared/provider-registry'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
+import type { CloseActionPreference } from '../../shared/window-controls'
 import type { AgentFrameworkId } from '../agent-framework'
 
 // Main-process-only stored shapes for settings.json. These carry the encrypted key reference and a
@@ -40,6 +41,11 @@ export type StoredProvider = {
   keyMask?: string
   // Timestamp of the last successful connectivity/key check on the provider's first model.
   lastValidatedAt?: number
+  // Estimated expiry of a stored credential, used to surface "expires <date>" on the Settings card.
+  // Only set for credential types that have a known bounded lifetime: today that is the Claude
+  // `claude setup-token` (Anthropic documents a one-year lifetime) and a codex subscription sign-in
+  // (whose expiry Anthropic / OpenAI surface on the auth status). Stored in epoch ms.
+  expiresAt?: number
   // Recorded when a validation fails; cleared on the next success or a credential change. Kept so the
   // "unverified" warning survives a restart.
   lastValidationFailure?: ProviderValidationFailure
@@ -101,6 +107,8 @@ export type StoredSettings = {
   reasoningEffort?: ReasoningEffort
   // Desktop-notification preference for finished/failed agent tasks. Absent means enabled.
   notificationsEnabled?: boolean
+  // Windows titlebar-close behavior. Absent means ask every time.
+  closePreference?: CloseActionPreference
   // Detected opencode executable path + reported version (for the status card). Absent = detect on PATH.
   opencodePath?: string
   opencodeVersion?: string

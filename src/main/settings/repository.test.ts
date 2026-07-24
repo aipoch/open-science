@@ -1,10 +1,27 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, normalize, sep } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingsRepository, sanitizeSettings } from './repository'
 import type { StoredProvider } from './types'
+
+// Capture the warn calls the repository makes through createLogger. vi.hoisted runs before the
+// module's top-level code so the vi.mock factory can reference the same spy instance.
+const loggerMock = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn()
+}))
+const { warn: warnSpy } = loggerMock
+vi.mock('../logger', () => ({
+  createLogger: () => loggerMock
+}))
+
+beforeEach(() => {
+  warnSpy.mockClear()
+})
 
 let storageRoot: string | undefined
 
@@ -137,6 +154,18 @@ describe('settings repository', () => {
     expect(sanitizeSettings({ notificationsEnabled: 'yes' }).notificationsEnabled).toBeUndefined()
     expect(sanitizeSettings({ notificationsEnabled: 1 }).notificationsEnabled).toBeUndefined()
     expect(sanitizeSettings({}).notificationsEnabled).toBeUndefined()
+  })
+
+  it('persists, sanitizes, and clears the close action preference', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.setClosePreference('minimize')
+    expect((await new SettingsRepository(root).getSettings()).closePreference).toBe('minimize')
+    expect(sanitizeSettings({ closePreference: 'invalid' }).closePreference).toBeUndefined()
+
+    await repository.setClosePreference(undefined)
+    expect((await repository.getSettings()).closePreference).toBeUndefined()
   })
 
   it('persists the Codex adapter and paired native runtime across a sanitized read', async () => {
@@ -721,5 +750,87 @@ describe('settings repository: v2 official providers & activeModel migration', (
     // An empty list deletes the language and drops the map once empty.
     await repository.setManualInterpreters('python', [])
     expect((await repository.getSettings()).notebookManualInterpreters).toBeUndefined()
+  })
+})
+
+describe('settings repository: unknown provider type on load (claude-default removal)', () => {
+  // This is the upgrade-path guarantee #346 makes: an existing install with a stored
+  // claude-default provider (and possibly an activeProviderId / activeModel pointing at it) must
+  // come up cleanly on the next launch, with the unknown provider dropped, the active pointers
+  // cleared, and a WARN log so the user can see what happened.
+
+  const writeRawSettings = async (root: string, payload: object): Promise<void> => {
+    await writeFile(join(root, 'settings.json'), JSON.stringify(payload), 'utf8')
+  }
+
+  it('drops a stored claude-default provider at load and logs a WARN with the unknown id+type', async () => {
+    // The repository's `log` is a module-scoped const created via createLogger. We can't reach it
+    // directly, so the test mocks the logger module at the top of the file and asserts the
+    // repository called `warn` with the unknown id + type. The dedicated log-format tests in
+    // logger.test.ts cover the formatting pipeline; this test pins the repository's call site.
+    const { warn: warnSpy } = loggerMock
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await writeRawSettings(root, {
+      version: 1,
+      providers: [
+        { id: 'p-custom', type: 'custom', name: 'Custom' },
+        { id: 'p-removed', type: 'claude-default', name: 'Old Local Claude' }
+      ]
+    })
+
+    const settings = await repository.getSettings()
+    expect(settings.providers.map((p) => p.id)).toEqual(['p-custom'])
+    // One warn call for the dropped record, carrying id + type so an operator reading the log can
+    // identify which provider was discarded.
+    expect(warnSpy).toHaveBeenCalledWith(
+      'dropping stored provider with unknown type',
+      expect.objectContaining({ id: 'p-removed', type: 'claude-default' })
+    )
+  })
+
+  it('clears activeProviderId and activeModel when the active provider is the dropped one', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await writeRawSettings(root, {
+      version: 1,
+      activeProviderId: 'p-removed',
+      activeModel: 'claude-sonnet-4-5',
+      providers: [
+        { id: 'p-removed', type: 'claude-default', name: 'Old Local Claude', model: 'claude-sonnet-4-5' }
+      ]
+    })
+
+    const settings = await repository.getSettings()
+
+    // The dropped provider's id is no longer in the list, so the active pointer must be cleared.
+    expect(settings.providers.find((p) => p.id === 'p-removed')).toBeUndefined()
+    expect(settings.activeProviderId).toBeUndefined()
+    // activeModel must follow the activeProviderId: a stale model without a provider is a half-state
+    // the composer can pick up.
+    expect(settings.activeModel).toBeUndefined()
+  })
+
+  it('keeps activeProviderId when the active provider survives the drop', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await writeRawSettings(root, {
+      version: 1,
+      activeProviderId: 'p-survives',
+      activeModel: 'gpt-4o',
+      providers: [
+        { id: 'p-survives', type: 'custom', name: 'Survives', model: 'gpt-4o' },
+        { id: 'p-removed', type: 'claude-default', name: 'Old Local Claude' }
+      ]
+    })
+
+    const settings = await repository.getSettings()
+
+    expect(settings.activeProviderId).toBe('p-survives')
+    expect(settings.activeModel).toBe('gpt-4o')
+    expect(settings.providers.find((p) => p.id === 'p-removed')).toBeUndefined()
   })
 })

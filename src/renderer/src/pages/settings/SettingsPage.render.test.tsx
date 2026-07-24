@@ -82,7 +82,9 @@ const installApi = (): void => {
       setPackageMirror: vi.fn().mockResolvedValue({})
     },
     acp: {
-      getState: vi.fn().mockResolvedValue({ promptInFlightSessionIds: [] }),
+      getState: vi.fn().mockResolvedValue({ promptInFlight: false, promptInFlightSessionIds: [] }),
+      // AgentPanel subscribes to live prompt-in-flight state; the mock returns a no-op unsubscribe.
+      onState: vi.fn().mockReturnValue(() => {}),
       cancel: vi.fn()
     },
     logs: {
@@ -754,6 +756,105 @@ describe('SettingsPage uninstall confirmation', () => {
       findButton(dialog!, 'Switch')?.click()
     })
     expect(setAgentFramework).toHaveBeenCalledWith({ id: 'opencode' })
+  })
+
+  // An inactive but managed Claude (OpenCode active) whose Uninstall would otherwise be enabled.
+  const inactiveManagedClaudeSnapshot = {
+    claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+    opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
+    providers: [],
+    agentFrameworkId: 'opencode',
+    agentFrameworks: bothFrameworks,
+    claudeManaged: true,
+    opencodeManaged: false
+  }
+
+  it('disables uninstall while a prompt is in flight and blocks confirming a dialog opened before it', async () => {
+    const api = (
+      window as unknown as {
+        api: { settings: Record<string, unknown>; acp: Record<string, unknown> }
+      }
+    ).api
+    api.settings.getSettings = vi.fn().mockResolvedValue(inactiveManagedClaudeSnapshot)
+    const uninstallClaude = vi.fn().mockResolvedValue(inactiveManagedClaudeSnapshot)
+    api.settings.uninstallClaude = uninstallClaude
+
+    // Capture the live listener; start idle so the dialog can be opened.
+    let emitAcp:
+      ((s: { promptInFlight: boolean; promptInFlightSessionIds: string[] }) => void) | undefined
+    api.acp.getState = vi
+      .fn()
+      .mockResolvedValue({ promptInFlight: false, promptInFlightSessionIds: [] })
+    api.acp.onState = vi.fn().mockImplementation((cb: typeof emitAcp) => {
+      emitAcp = cb
+      return () => {}
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await openAgentPanel()
+
+    // Idle → the card Uninstall is enabled and opens the confirmation.
+    const cardUninstall = findButton(document.body, 'Uninstall')
+    expect(cardUninstall?.disabled).toBe(false)
+    await act(async () => {
+      cardUninstall?.click()
+    })
+    expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull()
+
+    // A prompt starts while the dialog is open — the card control disables live, but confirming must
+    // also be intercepted so the busy runtime isn't torn down out from under the task.
+    await act(async () => {
+      emitAcp?.({ promptInFlight: true, promptInFlightSessionIds: ['s1'] })
+    })
+    const confirmDialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    const confirm = confirmDialog ? findButton(confirmDialog, 'Uninstall') : undefined
+    await act(async () => {
+      confirm?.click()
+    })
+    expect(uninstallClaude).not.toHaveBeenCalled()
+    // Revalidation closes the dialog instead of proceeding.
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+  })
+
+  it('lets a live in-flight event win the race against a later idle initial snapshot', async () => {
+    const api = (
+      window as unknown as {
+        api: { settings: Record<string, unknown>; acp: Record<string, unknown> }
+      }
+    ).api
+    api.settings.getSettings = vi.fn().mockResolvedValue(inactiveManagedClaudeSnapshot)
+
+    // getState resolves LATE with a stale idle snapshot; a live in-flight event fires first. The
+    // effect must keep the button disabled — the stale snapshot must not clobber the live state.
+    let resolveGetState:
+      ((s: { promptInFlight: boolean; promptInFlightSessionIds: string[] }) => void) | undefined
+    api.acp.getState = vi.fn().mockReturnValue(
+      new Promise((resolve) => {
+        resolveGetState = resolve
+      })
+    )
+    let emitAcp:
+      ((s: { promptInFlight: boolean; promptInFlightSessionIds: string[] }) => void) | undefined
+    api.acp.onState = vi.fn().mockImplementation((cb: typeof emitAcp) => {
+      emitAcp = cb
+      return () => {}
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await openAgentPanel()
+
+    // Live event arrives first (prompt in flight), then the stale idle getState resolves last.
+    await act(async () => {
+      emitAcp?.({ promptInFlight: true, promptInFlightSessionIds: ['s1'] })
+      resolveGetState?.({ promptInFlight: false, promptInFlightSessionIds: [] })
+    })
+
+    const cardUninstall = findButton(document.body, 'Uninstall')
+    expect(cardUninstall?.getAttribute('aria-disabled')).toBe('true')
   })
 })
 

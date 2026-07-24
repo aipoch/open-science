@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -17,6 +17,7 @@ import {
   fetchLanguagePack,
   type LanguagePackFetchDeps
 } from './language-pack-fetch'
+import type { ProvisionProgress } from './provisioner'
 
 const makeDestDir = (): string => mkdtempSync(join(tmpdir(), 'os-pack-'))
 
@@ -110,6 +111,17 @@ describe('fetchLanguagePack', () => {
     ).rejects.toThrow(/sha256 mismatch/)
   })
 
+  it('runs an independent post-download sha256 verification (defense-in-depth)', async () => {
+    // Even though the production download verifies inline, fetchLanguagePack must still run its own
+    // post-download hash as a separate integrity gate. A wrong hasher here must fail the fetch.
+    const sha256 = vi.fn(async () => 'f'.repeat(64))
+    const deps = makeDeps({ sha256 })
+    await expect(
+      fetchLanguagePack(makeDestDir(), 'https://cdn/envs', 1, 'osx-arm64', 'python', '3.11', deps)
+    ).rejects.toThrow(/sha256 mismatch/)
+    expect(sha256).toHaveBeenCalled()
+  })
+
   it('rejects a version that was not published', async () => {
     const deps = makeDeps()
     await expect(
@@ -167,9 +179,23 @@ describe('createFetchBundleAdapter', () => {
     const deps = makeDeps({}, m)
     const writeDownload = deps.download
     deps.download = vi.fn(async (url, destPath, onProgress) => {
-      onProgress?.(50, 200)
+      onProgress?.({
+        phase: 'downloading',
+        transferred: 50,
+        total: 200,
+        percent: 25,
+        bytesPerSecond: 1000,
+        attempt: 0
+      })
       await writeDownload(url, destPath)
-      onProgress?.(200, 200)
+      onProgress?.({
+        phase: 'downloading',
+        transferred: 200,
+        total: 200,
+        percent: 100,
+        bytesPerSecond: 1000,
+        attempt: 0
+      })
     })
     const extract = vi.fn(async (_archivePath: string, destDir: string) => {
       await mkdir(destDir, { recursive: true })
@@ -179,7 +205,7 @@ describe('createFetchBundleAdapter', () => {
       )
       await writeFile(join(destDir, 'package-1.conda'), packageBytes)
     })
-    const progress: Array<{ message: string; progress: number }> = []
+    const progress: ProvisionProgress[] = []
     const adapter = createFetchBundleAdapter(root, 'https://cdn/envs', {
       ...deps,
       subdir: 'osx-arm64',
@@ -209,6 +235,9 @@ describe('createFetchBundleAdapter', () => {
       'Downloading managed python runtime (100%)'
     )
     expect(progress.map((event) => event.message)).toContain('Downloaded python-3.12.tar.zst')
+    // A download-phase event carries the nested DownloadProgress detail for the UI speed line.
+    const withDownload = progress.find((event) => event.download)
+    expect(withDownload?.download).toMatchObject({ phase: 'downloading', attempt: 0 })
     await rm(root, { recursive: true, force: true })
   })
 
@@ -307,4 +336,78 @@ describe('createFetchBundleAdapter', () => {
       )
     }
   )
+
+  it('preserves a partial .part in the stable cache when a download fails, for resume', async () => {
+    // Simulate an interrupted download: write a .part next to the archive destPath, then throw. The
+    // adapter must wipe the disposable .incoming-* staging in its finally, but LEAVE the .part so a
+    // manual retry resumes via Range instead of restarting the whole pack.
+    const root = makeDestDir()
+    const deps = makeDeps()
+    let partPath = ''
+    deps.download = vi.fn(async (_url: string, destPath: string) => {
+      partPath = `${destPath}.part`
+      writeFileSync(partPath, Buffer.from('partial-bytes'))
+      throw new Error('ECONNRESET mid-download')
+    })
+    const adapter = createFetchBundleAdapter(root, 'https://cdn/envs', {
+      ...deps,
+      subdir: 'osx-arm64'
+    })
+    await expect(
+      adapter(
+        { name: 'default-python', language: 'python', version: '3.12', packages: [] },
+        1,
+        () => {}
+      )
+    ).rejects.toThrow(/Managed runtime pack unavailable/)
+
+    // The .part survived, under a per-session cache key then the version/subdir segments.
+    expect(partPath).toContain(join('packs', '.cache'))
+    expect(partPath.endsWith(join('1', 'osx-arm64', 'python-3.12.tar.zst.part'))).toBe(true)
+    expect(existsSync(partPath)).toBe(true)
+    // …while no .incoming-* staging dir was left behind.
+    const leftovers = readdirSync(join(root, 'packs')).filter((n) => n.startsWith('.incoming-'))
+    expect(leftovers).toEqual([])
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('uses a distinct cache dir per adapter instance so a prior session cannot resume', async () => {
+    // Two adapters model two app sessions. Each must download under its OWN cache key, so one
+    // session's leftover .part is invisible to the other — the "start from scratch" guarantee holds
+    // by construction, independent of the startup wipe. Capture each session's archive dir.
+    const root = makeDestDir()
+    const capture = (): { deps: ReturnType<typeof makeDeps>; dirOf: () => string } => {
+      const deps = makeDeps()
+      let dir = ''
+      deps.download = vi.fn(async (_url: string, destPath: string) => {
+        dir = dirname(destPath) // dirname, not lastIndexOf('/'), so the dir is correct on Windows too
+        throw new Error('stop after capturing the path')
+      })
+      return { deps, dirOf: () => dir }
+    }
+    const a = capture()
+    const b = capture()
+    const spec = {
+      name: 'default-python',
+      language: 'python' as const,
+      version: '3.12',
+      packages: []
+    }
+    await createFetchBundleAdapter(root, 'https://cdn/envs', { ...a.deps, subdir: 'osx-arm64' })(
+      spec,
+      1,
+      () => {}
+    ).catch(() => {})
+    await createFetchBundleAdapter(root, 'https://cdn/envs', { ...b.deps, subdir: 'osx-arm64' })(
+      spec,
+      1,
+      () => {}
+    ).catch(() => {})
+
+    // Same version/subdir, but the two sessions resolved to DIFFERENT cache dirs (distinct keys).
+    expect(a.dirOf()).not.toBe(b.dirOf())
+    expect(a.dirOf()).toContain(join('packs', '.cache'))
+    expect(b.dirOf()).toContain(join('packs', '.cache'))
+    await rm(root, { recursive: true, force: true })
+  })
 })

@@ -6,20 +6,23 @@
 
 import type { OfficialVendorId } from './provider-registry'
 import type { PackageMirror } from './mirror'
+import type { CloseActionPreference } from './window-controls'
 
 // Settings file schema version; bumped when the on-disk shape changes. v2 adds official-vendor
 // providers (vendorId/region) and a per-selection activeModel alongside activeProviderId.
 export const SETTINGS_FILE_VERSION = 2
 
-// A provider targets a custom gateway, a built-in official vendor, a local Claude login, or one of
-// Codex's two subscription profiles. Codex shared uses the machine's normal CODEX_HOME; isolated uses
-// the app-owned profile.
-export type ProviderType =
-  'custom' | 'claude-default' | 'official' | 'codex-shared' | 'codex-isolated'
+// A provider targets a custom gateway, a built-in official vendor, an app-owned Claude
+// subscription, or one of Codex's two subscription profiles. Codex shared uses the machine's
+// normal CODEX_HOME; isolated uses the app-owned profile. claude-isolated authenticates a Claude
+// subscription via a setup-token paste under an app-owned CLAUDE_CONFIG_DIR (no ~/.claude touch).
+export type ProviderType = 'custom' | 'claude-isolated' | 'official' | 'codex-shared' | 'codex-isolated'
 
 export const CODEX_SHARED_PROVIDER_ID = 'builtin-codex-shared'
 export const CODEX_ISOLATED_PROVIDER_ID = 'builtin-codex-isolated'
 export const CODEX_SUBSCRIPTION_PROVIDER_ID = 'builtin-codex-subscription'
+
+export const CLAUDE_ISOLATED_PROVIDER_ID = 'builtin-claude-isolated'
 
 export const isCodexSubscriptionProvider = (
   type: ProviderType
@@ -34,6 +37,14 @@ export const isCodexSubscriptionProviderId = (id: string): boolean =>
   id === CODEX_SUBSCRIPTION_PROVIDER_ID ||
   id === CODEX_SHARED_PROVIDER_ID ||
   id === CODEX_ISOLATED_PROVIDER_ID
+
+export const claudeIsolatedProviderIdentity = (): { id: string; name: string } => ({
+  id: CLAUDE_ISOLATED_PROVIDER_ID,
+  name: 'Claude subscription'
+})
+
+export const isClaudeIsolatedProviderId = (id: string): boolean =>
+  id === CLAUDE_ISOLATED_PROVIDER_ID
 
 // The chat API a model endpoint speaks: `anthropic` = /v1/messages, `openai` =
 // /v1/chat/completions, and `responses` = /v1/responses. Keep the two OpenAI-shaped protocols
@@ -59,15 +70,16 @@ export const isProviderCompatibleWith = (
 ): boolean => endpoints.some((endpoint) => frameworkEndpoints.includes(endpoint))
 
 // Whether a provider can actually drive a given framework. Two axes: endpoint compatibility (above),
-// AND provider-type — a `claude-default` provider reuses the machine's own Claude login (Claude-specific
-// OAuth/config), which no other framework can consume, so it is only usable by Claude Code regardless
-// of endpoint. Enforced both in the renderer gates and main-side (preflight + spawn).
+// AND provider-type — a `claude-isolated` provider carries an app-owned Anthropic OAuth token
+// that no other framework can consume, so it is only usable by Claude Code regardless of endpoint.
+// Codex subscription providers carry their own login and can only drive Codex regardless of
+// endpoint. Enforced both in the renderer gates and main-side (preflight + spawn).
 export const isProviderUsableByFramework = (
   provider: { apiEndpoints?: readonly ChatApiEndpoint[]; type: ProviderType },
   framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
 ): boolean => {
   if (isCodexSubscriptionProvider(provider.type)) return framework.id === 'codex'
-  if (provider.type === 'claude-default' && framework.id !== 'claude-code') return false
+  if (provider.type === 'claude-isolated' && framework.id !== 'claude-code') return false
 
   const endpoints = providerEndpoints(provider)
 
@@ -166,7 +178,7 @@ export type ProviderView = {
   vendorId?: OfficialVendorId
   region?: string
   // Models selectable for this provider in the composer: the vendor catalog for official providers,
-  // or the single configured model for custom/claude-default. Derived from the registry in main.
+  // or the single configured model for custom. Derived from the registry in main.
   models: string[]
   // A short, non-secret hint like "sk-…abcd" for display only.
   maskedKey?: string
@@ -180,6 +192,10 @@ export type ProviderView = {
   // Present when the most recent validation failed and no later one has succeeded. Drives the
   // "unverified" warning in the provider list.
   lastValidationFailure?: ProviderValidationFailure
+  // Estimated credential expiry (epoch ms). Set for credential types that have a known bounded
+  // lifetime — today that is `claude setup-token` (Anthropic documents a one-year lifetime).
+  // The Settings card surfaces this as "Expires <date>".
+  expiresAt?: number
 }
 
 // True when a provider's most recent validation failed (and no later one succeeded). A failed
@@ -234,8 +250,8 @@ export type SettingsSnapshot = {
   // Detected codex-acp adapter and its paired native Codex runtime.
   codex: CodexInfo
   activeProviderId?: string
-  // The active model within the active provider. For custom/claude-default this mirrors the provider's
-  // own model; for official providers it's the chosen catalog entry. Undefined until a provider exists.
+  // The active model within the active provider. For custom this mirrors the provider's own model;
+  // for official providers it's the chosen catalog entry. Undefined until a provider exists.
   activeModel?: string
   providers: ProviderView[]
   // The selected agent backend, and the frameworks available to choose from.
@@ -256,6 +272,8 @@ export type SettingsSnapshot = {
   reasoningEffort: ReasoningEffort
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
   notificationsEnabled: boolean
+  // Saved Windows titlebar-close behavior. Undefined means ask every time.
+  closePreference?: CloseActionPreference
 }
 
 // Request to set (or clear, via omitted fields) the package-mirror configuration.
@@ -271,6 +289,10 @@ export type SetReasoningEffortRequest = {
 
 export type SetNotificationsEnabledRequest = {
   enabled: boolean
+}
+
+export type SetClosePreferenceRequest = {
+  preference?: CloseActionPreference
 }
 
 // The hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.
@@ -549,6 +571,9 @@ export type ClaudeInstallResult = {
   // The official installer returned a region-block HTML page instead of the script (common in
   // regions where claude.ai is unavailable); the installer auto-falls-back to npm when it can.
   regionBlocked?: boolean
+  // The install failed with output matching a transient network fault (registry timeout, connection
+  // reset); the runner retries the same source a few times before surfacing the failure.
+  retryableNetworkFailure?: boolean
 }
 
 // Availability of npm on the host, used to gate the npm source.
@@ -730,6 +755,33 @@ export type SkillBundlePreviewResult = {
 // Scan a GitHub repo (owner/repo, owner/repo@ref, or a URL) for skill directories.
 export type ScanRepoRequest = {
   repo: string
+}
+
+// One skill the user's machine-level Claude config (typically ~/.claude/skills/<slug>/) contains.
+// Surfaced for the "From your agent home" import source so the renderer can list what's available
+// without reading the skill bodies; importing is a separate call (see service.importAgentHomeSkill).
+export type AgentHomeSkillView = {
+  // The directory name under the agent's skills/ dir. Used as the candidate slug and as the
+  // identifier on disk; not a renderer-visible name (the SKILL.md frontmatter supplies that).
+  slug: string
+  // Parsed from the skill's SKILL.md frontmatter; falls back to the slug when the file is missing
+  // or unparseable so the UI can still list a row for it.
+  name: string
+  description: string
+  // Absolute path to the source directory under the agent's home. The renderer never exposes this
+  // to the user; main uses it to copy on import.
+  path: string
+  // True when an imported-skill record with the same slug (or matching content signature) already
+  // exists, so the UI can mark it as already pulled in and skip the import button.
+  alreadyImported: boolean
+}
+
+// Request to import a single skill from the user's agent home into Open Science. `slug` is the
+// top-level directory name returned by listAgentHomeSkills; the main-process service re-derives
+// the absolute path against the active agent's home so a renderer-supplied path cannot reach
+// outside the configured skills directory.
+export type ImportAgentHomeSkillRequest = {
+  slug: string
 }
 
 // One skill directory found by a repo scan, with an importable URL and whether it's already imported.

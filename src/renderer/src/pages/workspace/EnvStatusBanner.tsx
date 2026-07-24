@@ -1,3 +1,4 @@
+import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import type { ProvisionUiState } from './provisioning-view'
 
 // Floating top-of-app pill for the launch-time upgrade gate (spec §6.2). First-run python preparation
@@ -35,6 +36,13 @@ const EnvStatusBanner = ({
             </button>
           ) : null}
         </>
+      ) : ui.download ? (
+        // Task 8: keep the existing overall provision phase text (with its percent), and render the
+        // shared DownloadProgressLine (speed/ETA + resume bar) BELOW it — not a second overall bar.
+        <div className="flex min-w-56 flex-col text-left">
+          <span>Updating the notebook environment… {Math.round(ui.progress * 100)}%</span>
+          <DownloadProgressLine progress={ui.download} />
+        </div>
       ) : (
         <span>Updating the notebook environment… {Math.round(ui.progress * 100)}%</span>
       )}

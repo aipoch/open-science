@@ -221,6 +221,13 @@ export const sha256File = (path: string): Promise<string> =>
 // `size` is given (a cheap pre-check that catches a truncated download without hashing), then streams
 // the whole file through sha256 and compares. Throws on any mismatch so the caller drops the partial
 // pack and reports an actionable provisioning error.
+//
+// Defense-in-depth (INTENTIONAL — do not "optimize" into a size-only check): the resilient download
+// core already verifies sha256 inline while streaming, but this independent post-download re-hash is a
+// required, separate integrity gate per the plan. It catches corruption that inline hashing cannot —
+// a bad disk sector or another process mutating the file between the core's rename and extraction —
+// on a runtime the app will execute. The extra full-file read is a deliberate correctness/perf
+// tradeoff for a large, long-lived, executed artifact, not redundant work.
 export const verifyPackChecksum = async (
   filePath: string,
   expected: { sha256: string; size?: number },

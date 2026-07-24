@@ -36,6 +36,7 @@ type FakeSettingsService = Record<
   | 'setAgentFramework'
   | 'setReasoningEffort'
   | 'setNotificationsEnabled'
+  | 'setClosePreference'
   | 'upsertProvider'
   | 'deleteProvider'
   | 'setActiveProvider'
@@ -43,6 +44,8 @@ type FakeSettingsService = Record<
   | 'cancelCodexLogin'
   | 'loginIsolatedCodex'
   | 'logoutIsolatedCodex'
+  | 'loginIsolatedClaude'
+  | 'logoutIsolatedClaude'
   | 'markOnboardingComplete'
   | 'listSkills'
   | 'getSkillDetail'
@@ -69,15 +72,18 @@ const createFakeService = (): FakeSettingsService => ({
   installClaude: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
   installOpencode: vi.fn().mockResolvedValue({ installId: 'oc', ok: true }),
   installCodex: vi.fn().mockResolvedValue({ installId: 'cx', ok: true }),
-  uninstallClaude: vi
-    .fn()
-    .mockResolvedValue({ snapshot: { claude: {}, providers: [] }, activeBackendAffected: true }),
-  uninstallOpencode: vi
-    .fn()
-    .mockResolvedValue({ snapshot: { claude: {}, providers: [] }, activeBackendAffected: true }),
-  uninstallCodex: vi
-    .fn()
-    .mockResolvedValue({ snapshot: { claude: {}, providers: [] }, activeBackendAffected: true }),
+  uninstallClaude: vi.fn().mockResolvedValue({
+    snapshot: { claude: {}, providers: [], agentFrameworkId: 'claude-code' },
+    activeBackendAffected: true
+  }),
+  uninstallOpencode: vi.fn().mockResolvedValue({
+    snapshot: { claude: {}, providers: [], agentFrameworkId: 'opencode' },
+    activeBackendAffected: true
+  }),
+  uninstallCodex: vi.fn().mockResolvedValue({
+    snapshot: { claude: {}, providers: [], agentFrameworkId: 'codex' },
+    activeBackendAffected: true
+  }),
   setAgentFramework: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], agentFrameworkId: 'opencode' }),
@@ -87,6 +93,9 @@ const createFakeService = (): FakeSettingsService => ({
   setNotificationsEnabled: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], notificationsEnabled: false }),
+  setClosePreference: vi
+    .fn()
+    .mockResolvedValue({ claude: {}, providers: [], closePreference: 'quit' }),
   upsertProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   deleteProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   setActiveProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
@@ -96,6 +105,8 @@ const createFakeService = (): FakeSettingsService => ({
   logoutIsolatedCodex: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], activeProviderId: undefined }),
+  loginIsolatedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+  logoutIsolatedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   markOnboardingComplete: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   listSkills: vi.fn().mockResolvedValue([]),
   getSkillDetail: vi.fn().mockResolvedValue({
@@ -141,6 +152,8 @@ describe('settings IPC handlers', () => {
       'settings:cancel-codex-login',
       'settings:login-isolated-codex',
       'settings:logout-isolated-codex',
+      'settings:login-isolated-claude',
+      'settings:logout-isolated-claude',
       'settings:mark-onboarding-complete'
     ]) {
       expect(handlers.has(channel)).toBe(true)
@@ -326,20 +339,59 @@ describe('settings IPC handlers', () => {
     expect(onActiveProviderChanged).not.toHaveBeenCalled()
   })
 
-  it('reconnects after uninstall only when the removed runtime was the active backend', async () => {
+  it.each([
+    ['claude', 'opencode'],
+    ['opencode', 'codex'],
+    ['codex', 'claude-code']
+  ] as const)(
+    'rotates the runtime after uninstalling active %s auto-switches frameworks',
+    async (channel, fallbackFramework) => {
+      handlers.clear()
+      const service = createFakeService()
+      service[
+        channel === 'claude'
+          ? 'uninstallClaude'
+          : channel === 'opencode'
+            ? 'uninstallOpencode'
+            : 'uninstallCodex'
+      ].mockResolvedValue({
+        snapshot: { claude: {}, providers: [], agentFrameworkId: fallbackFramework },
+        activeBackendAffected: true
+      })
+      const onActiveProviderChanged = vi.fn()
+      const onAgentFrameworkChanged = vi.fn()
+      registerSettingsIpcHandlers({
+        service: asService(service),
+        onActiveProviderChanged,
+        onAgentFrameworkChanged
+      })
+
+      await invoke(`settings:uninstall-${channel}`)
+
+      expect(onAgentFrameworkChanged).toHaveBeenCalledOnce()
+      expect(onActiveProviderChanged).not.toHaveBeenCalled()
+    }
+  )
+
+  it('reconnects after uninstalling the active runtime when no fallback is ready', async () => {
     handlers.clear()
     const service = createFakeService()
     service.uninstallClaude.mockResolvedValue({
-      snapshot: { claude: {}, providers: [] },
+      snapshot: { claude: {}, providers: [], agentFrameworkId: 'claude-code' },
       activeBackendAffected: true
     })
     const onActiveProviderChanged = vi.fn()
-    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+    const onAgentFrameworkChanged = vi.fn()
+    registerSettingsIpcHandlers({
+      service: asService(service),
+      onActiveProviderChanged,
+      onAgentFrameworkChanged
+    })
 
     await invoke('settings:uninstall-claude')
 
-    expect(service.uninstallClaude).toHaveBeenCalledTimes(1)
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+    expect(onAgentFrameworkChanged).not.toHaveBeenCalled()
   })
 
   it('does not reconnect after uninstalling the inactive runtime', async () => {
@@ -499,20 +551,26 @@ describe('settings IPC handlers', () => {
     }
   })
 
-  it('persists the selected framework and respawns the agent on set-agent-framework', async () => {
+  it('persists the selected framework and rotates future sessions on set-agent-framework', async () => {
     handlers.clear()
     const service = createFakeService()
     const snapshot = { claude: {}, providers: [], agentFrameworkId: 'opencode' }
     service.setAgentFramework.mockResolvedValue(snapshot)
     const onActiveProviderChanged = vi.fn()
-    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+    const onAgentFrameworkChanged = vi.fn()
+    registerSettingsIpcHandlers({
+      service: asService(service),
+      onActiveProviderChanged,
+      onAgentFrameworkChanged
+    })
 
     const result = await invoke('settings:set-agent-framework', { id: 'opencode' })
 
     // The handler unwraps the request to the bare framework id the service expects.
     expect(service.setAgentFramework).toHaveBeenCalledWith('opencode')
-    // Switching frameworks swaps the backend binary, so the live agent must be dropped like a provider switch.
-    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+    // Existing sessions keep their owning runtime; only future sessions rotate to the new framework.
+    expect(onAgentFrameworkChanged).toHaveBeenCalledOnce()
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
     expect(result).toBe(snapshot)
   })
 
@@ -606,6 +664,21 @@ describe('settings IPC handlers', () => {
       'Invalid notifications-enabled flag'
     )
     expect(service.setNotificationsEnabled).not.toHaveBeenCalled()
+  })
+
+  it('persists valid close preferences and rejects unknown values', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    registerSettingsIpcHandlers({ service: asService(service) })
+
+    await invoke('settings:set-close-preference', { preference: 'quit' })
+    await invoke('settings:set-close-preference', {})
+
+    expect(service.setClosePreference).toHaveBeenNthCalledWith(1, 'quit')
+    expect(service.setClosePreference).toHaveBeenNthCalledWith(2, undefined)
+    await expect(invoke('settings:set-close-preference', { preference: 'close' })).rejects.toThrow(
+      'Invalid close preference'
+    )
   })
 
   it('surfaces a service error thrown by install-opencode', async () => {

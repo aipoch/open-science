@@ -1,12 +1,16 @@
 import { ipcMain } from 'electron'
 
 import {
+  CLAUDE_ISOLATED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   isReasoningEffort,
+  type AgentFrameworkId,
   type ReasoningEffort,
+  type SettingsSnapshot,
   type CreateSkillRequest,
   type DeleteProviderRequest,
   type DeleteSkillRequest,
+  type ImportAgentHomeSkillRequest,
   type ImportSkillRequest,
   type ImportSkillZipRequest,
   type ImportSkillZipBatchRequest,
@@ -27,6 +31,7 @@ import {
   type SetConnectorEnabledRequest,
   type SetNcbiCredentialsRequest,
   type SetPackageMirrorRequest,
+  type SetClosePreferenceRequest,
   type SetNotificationsEnabledRequest,
   type SetReasoningEffortRequest,
   type SetSkillEnabledRequest,
@@ -47,8 +52,11 @@ const SETTINGS_INSTALL_LOG_CHANNEL = 'settings:install-log'
 
 export type SettingsIpcOptions = {
   service?: SettingsService
-  // Called after the active provider changes so the ACP runtime can drop its stale connection.
+  // Called after the active provider changes so the current framework runtime reconnects with it.
   onActiveProviderChanged?: () => void
+  // Called after the agent framework changes. Active turns finish on their prior framework; every later
+  // turn resumes through the newly selected framework.
+  onAgentFrameworkChanged?: () => void
   // Called after the reasoning effort changes so the ACP runtime can live-apply it to open sessions.
   // Returns true when the level was applied over ACP (no reconnect needed); false means the active
   // framework only carries effort in its spawn config and onActiveProviderChanged must fire instead.
@@ -69,10 +77,26 @@ const broadcastInstallEvent = (event: ClaudeInstallEvent): void => {
 const registerSettingsIpcHandlers = ({
   service = createDefaultSettingsService(),
   onActiveProviderChanged,
+  onAgentFrameworkChanged,
   onReasoningEffortChanged,
   onSkillsChanged,
   onConnectorsChanged
 }: SettingsIpcOptions = {}): void => {
+  const notifyAfterRuntimeUninstall = (
+    uninstalledFramework: AgentFrameworkId,
+    snapshot: SettingsSnapshot,
+    activeBackendAffected: boolean
+  ): void => {
+    if (!activeBackendAffected) return
+
+    if (snapshot.agentFrameworkId !== uninstalledFramework) {
+      onAgentFrameworkChanged?.()
+      return
+    }
+
+    onActiveProviderChanged?.()
+  }
+
   ipcMain.handle('settings:get-preflight', () => service.getPreflight())
   ipcMain.handle('settings:get-settings', () => service.getSettingsView())
   ipcMain.handle('settings:encryption-available', () => service.isEncryptionAvailable())
@@ -95,10 +119,10 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:uninstall-claude', async () => {
     const { snapshot, activeBackendAffected } = await service.uninstallClaude()
 
-    // Reconnect only when the removed runtime backed the active framework (its live agent is now stale,
-    // possibly auto-switched to the other). Uninstalling the inactive runtime touches nothing the live
-    // agent depends on, so it must not churn the connection.
-    if (activeBackendAffected) onActiveProviderChanged?.()
+    // Refresh only when the removed runtime backed the active framework. Rotate generations when the
+    // service selected a fallback framework; otherwise reconnect the now-stale current generation.
+    // Uninstalling an inactive runtime must not churn the live agent.
+    notifyAfterRuntimeUninstall('claude-code', snapshot, activeBackendAffected)
 
     return snapshot
   })
@@ -106,7 +130,7 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:uninstall-opencode', async () => {
     const { snapshot, activeBackendAffected } = await service.uninstallOpencode()
 
-    if (activeBackendAffected) onActiveProviderChanged?.()
+    notifyAfterRuntimeUninstall('opencode', snapshot, activeBackendAffected)
 
     return snapshot
   })
@@ -114,7 +138,7 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:uninstall-codex', async () => {
     const { snapshot, activeBackendAffected } = await service.uninstallCodex()
 
-    if (activeBackendAffected) onActiveProviderChanged?.()
+    notifyAfterRuntimeUninstall('codex', snapshot, activeBackendAffected)
 
     return snapshot
   })
@@ -157,9 +181,9 @@ const registerSettingsIpcHandlers = ({
       log.info('set agent framework requested', { id: request.id })
       const snapshot = await service.setAgentFramework(request.id)
 
-      // Switching frameworks needs a fresh agent process, exactly like a provider switch — the live
-      // process is a different backend binary, so the choice only takes effect on reconnect.
-      onActiveProviderChanged?.()
+      // A framework uses a different backend binary. Preserve active turns, then resume every later turn
+      // through a runtime for the newly selected framework.
+      onAgentFrameworkChanged?.()
 
       return snapshot
     }
@@ -200,10 +224,64 @@ const registerSettingsIpcHandlers = ({
       return service.setNotificationsEnabled(request.enabled)
     }
   )
+  ipcMain.handle(
+    'settings:set-close-preference',
+    async (_event, request: SetClosePreferenceRequest) => {
+      const preference = request?.preference
+      if (preference !== undefined && preference !== 'minimize' && preference !== 'quit') {
+        throw new Error(`Invalid close preference: ${String(preference)}`)
+      }
+
+      log.info('set close preference requested', { preference: preference ?? 'ask' })
+      return service.setClosePreference(preference)
+    }
+  )
   ipcMain.handle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>
     service.validateProvider(request)
   )
   ipcMain.handle('settings:cancel-codex-login', () => service.cancelCodexLogin())
+  ipcMain.handle('settings:login-isolated-claude', async (_event, token: string) => {
+    // Renderer payloads are untyped at runtime: reject anything that isn't a string before it
+    // reaches the controller, so a malicious or corrupt payload can never be coerced into a save.
+    if (typeof token !== 'string') {
+      throw new Error('Claude sign-in token must be a string.')
+    }
+
+    const result = await service.loginIsolatedClaude(token)
+
+    // A fresh login changes the credentials the live agent relies on; reconnect so it picks them
+    // up. Skip when the outcome was discarded (the claude-isolated record was deleted mid-paste) —
+    // reconnecting the now-active provider would be redundant (its credentials didn't change).
+    if (result.ok && result.applied !== false) {
+      const snapshot = await service.getSettingsView()
+      const active = snapshot.providers.find(
+        (provider) => provider.id === snapshot.activeProviderId
+      )
+      if (
+        snapshot.activeProviderId === CLAUDE_ISOLATED_PROVIDER_ID &&
+        active?.type === 'claude-isolated'
+      ) {
+        onActiveProviderChanged?.()
+      }
+    }
+
+    return result
+  })
+  ipcMain.handle('settings:logout-isolated-claude', async () => {
+    const result = await service.logoutIsolatedClaude()
+
+    // Reconnect only when the sign-out actually cleared the credential. A failed sign-out leaves
+    // the token in place, so forcing the live agent to reconnect would just re-authenticate with
+    // the token we failed to remove.
+    if (result.ok) {
+      const snapshot = await service.getSettingsView()
+      if (snapshot.activeProviderId === CLAUDE_ISOLATED_PROVIDER_ID) {
+        onActiveProviderChanged?.()
+      }
+    }
+
+    return result
+  })
   ipcMain.handle('settings:login-isolated-codex', async () => {
     const result = await service.loginIsolatedCodex()
 
@@ -300,6 +378,18 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMain.handle('settings:scan-repo-skills', (_event, request: ScanRepoRequest) =>
     service.scanRepoSkills(request)
+  )
+  // Lists the user's machine-level Claude skills (~/.claude/skills/) for the "From your agent home"
+  // import source. Read-only — the renderer calls importAgentHomeSkill to actually copy one in.
+  ipcMain.handle('settings:list-agent-home-skills', () => service.listAgentHomeSkills())
+  ipcMain.handle(
+    'settings:import-agent-home-skill',
+    async (_event, request: ImportAgentHomeSkillRequest) => {
+      const result = await service.importAgentHomeSkill(request)
+      onSkillsChanged?.()
+
+      return result
+    }
   )
 
   ipcMain.handle('settings:list-connectors', () => service.listConnectors())

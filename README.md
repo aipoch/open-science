@@ -63,7 +63,7 @@ Review the assets and verification information published on the release page. Se
 The first launch has two guided steps:
 
 1. **Prepare environment** checks compatibility, app storage, secure credential storage, network access, the Claude runtime, and optional Python Notebook support. If the runtime is missing, Open Science can install an app-managed copy without requiring Node.js, npm, or an administrator password.
-2. **Model provider** connects and tests the model you want to use. Choose a built-in provider, an Anthropic-compatible custom gateway, or reuse an existing subscription login without entering an API Key — `Local Claude` for a Claude Code login, or a ChatGPT/Codex subscription login on the Codex backend.
+2. **Model provider** connects and tests the model you want to use. Choose a built-in provider, an Anthropic-compatible custom gateway, or reuse an existing subscription login without entering an API Key — paste a `claude setup-token` for a Claude subscription, or pick a ChatGPT/Codex subscription login on the Codex backend.
 
 <table>
   <tr>
@@ -134,7 +134,7 @@ Open Science brings those pieces into one inspectable desktop workspace:
 
 - **Work that persists.** Projects, sessions, drafts, files, previews, and run history survive application restarts.
 - **Execution, not just suggestions.** The agent can run commands, Python, and R, edit files, search, call connectors, and generate artifacts with the user's approval.
-- **Multiple model choices.** Use a built-in cloud provider, a compatible custom gateway, or a local Claude login.
+- **Multiple model choices.** Use a built-in cloud provider, a compatible custom gateway, or a Claude subscription via setup-token.
 - **Local-first ownership.** The application and project state run on your computer; external calls happen through services you explicitly configure or approve.
 - **Inspectability.** The source code, skills, connector definitions, tool activity, and generated files are available for review.
 - **Extensibility.** Add skills and MCP connectors instead of waiting for a closed plugin roadmap.
@@ -166,9 +166,9 @@ This section describes durable product capabilities rather than a version-specif
 
 | Area                         | Core capability                                                                                                                                                                                                                                                             |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Projects and sessions**    | Create, rename, and delete projects; maintain multiple sessions; restore recent work, drafts, conversation history, and preview state.                                                                                                                                      |
+| **Projects and sessions**    | Create, rename, and delete projects; maintain multiple sessions with pinning to keep key sessions at the top of the sidebar; restore recent work, drafts, conversation history, and preview state.                                                                                                                                      |
 | **Agent workflow**           | Natural-language tasks, streamed responses, typed tool-activity cards, stop controls, approval pauses, a confirmation step before closing or quitting during a running task, desktop notifications on task completion and failure, and recovery of sessions interrupted by an application restart.                                |
-| **Models**                   | Built-in cloud providers, custom compatible gateways, Local Claude, connection validation, per-model multimodal image input, per-model reasoning-effort control, and model selection per session.                                                                                                               |
+| **Models**                   | Built-in cloud providers, custom compatible gateways, Claude and Codex subscription logins, connection validation, per-model multimodal image input, per-model reasoning-effort control, and model selection per session.                                                                                                               |
 | **Agent backend**            | A selectable agent-framework backend so the same workspace can run on more than one underlying agent implementation, with provider and model choices validated against the selected backend, and app-managed backends installable, switchable, and removable from Settings. |
 | **Execution**                | Persistent notebook kernels (Python, R, and a REPL control plane) with durable code/output history, app-managed environments with offline provisioning and bring-your-own interpreters, remote SSH compute hosts as additional execution targets, and a user terminal shared with the agent.                          |
 | **Inputs and artifacts**     | File attachments, a project-level file library with indexed pagination and session grouping for large projects, generated artifact cards, \`@\` references to existing uploads/outputs, read-only multi-tab previews, file download/export from the library, and session export as `.ipynb` (per-tab or download-all). |
@@ -186,8 +186,12 @@ This section describes durable product capabilities rather than a version-specif
 | ---------------------------- | ------------------------------------------------------------------------------------------------- |
 | **Built-in cloud providers** | Choose from the provider list shown by the installed app and authenticate with the requested key. |
 | **Custom Gateway**           | Supply a compatible Base URL, API Key, and exact model ID.                                        |
-| **Local Claude**             | Reuse the computer's Claude Code login without entering an API Key in Open Science.               |
 | **Codex Subscription**       | Select the Codex agent framework first, then you can select Codex subscription in provider type   |
+| **Claude Subscription**      | Run `claude setup-token` in a terminal and paste the resulting long-lived token into the Open Science sign-in prompt. The token is stored encrypted in app data and Claude always runs under an app-owned `CLAUDE_CONFIG_DIR`, isolated from your `~/.claude/`. |
+
+The legacy **Local Claude** provider has been removed. Previously stored Local Claude entries are
+dropped during upgrade; add **Claude Subscription** and authenticate with `claude setup-token`
+instead.
 
 Built-in cloud vendors currently include OpenAI, Anthropic, DeepSeek, Zhipu AI (GLM) with a dedicated GLM Coding Plan endpoint, Kimi (Moonshot), MiniMax, StepFun, Xiaomi MIMO, SenseNova, Volcengine Ark, and the OpenRouter aggregation gateway, among others; some are region-specific.
 
@@ -339,15 +343,15 @@ A: An API Key is a secret credential issued by a model provider. Create or copy 
 
 ### **Q: Do I need an API Key?**
 
-A: Not if you reuse an existing subscription login — `Local Claude` with a working Claude Code login on this computer, or a ChatGPT/Codex subscription login on the Codex backend. Built-in cloud providers and custom gateways require their own keys.
+A: Not if you reuse an existing subscription login — a Claude subscription via `claude setup-token` (paste the token into the Open Science sign-in prompt), or a ChatGPT/Codex subscription login on the Codex backend. Built-in cloud providers and custom gateways require their own keys.
 
 ### **Q: Which model providers can I use?**
 
-A: Open the provider picker during setup or under `Settings → Model` for the choices supported by your installed app. You can use a built-in cloud provider, an Anthropic-compatible Custom Gateway, or `Local Claude`.
+A: Open the provider picker during setup or under `Settings → Model` for the choices supported by your installed app. You can use a built-in cloud provider, an Anthropic-compatible Custom Gateway, a Claude subscription via `claude setup-token`, or a Codex subscription on the Codex backend.
 
 ### **Q: Why does the model connection test fail?**
 
-A: Check the API Key for missing characters or spaces, verify the Base URL and region, use the provider's exact model ID, and confirm network access and account balance. For `Local Claude`, run `claude` in a terminal and complete login before testing again.
+A: Check the API Key for missing characters or spaces, verify the Base URL and region, use the provider's exact model ID, and confirm network access and account balance. For a Claude subscription, re-run `claude setup-token` in a terminal and paste the new token into the Open Science sign-in prompt.
 
 ### **Q: Why is `Continue` disabled during setup?**
 

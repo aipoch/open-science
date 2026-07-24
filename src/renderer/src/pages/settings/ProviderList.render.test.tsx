@@ -156,23 +156,6 @@ describe('ProviderList', () => {
     expect(container.textContent).toContain('authentication rejected')
   })
 
-  it('shows the Local Claude probe message instead of referring to an API key', () => {
-    renderList([
-      provider({
-        type: 'claude-default',
-        name: 'Local Claude',
-        lastValidationFailure: {
-          at: 2,
-          category: 'auth',
-          message: 'Local Claude could not authenticate. Run `claude` in a terminal and log in.'
-        }
-      })
-    ])
-
-    expect(container.textContent).toContain('Run `claude` in a terminal')
-    expect(container.textContent).not.toContain('check the API key')
-  })
-
   it('does not flag a provider whose latest validation succeeded', () => {
     // A stale failure older than the last success is not a warning.
     renderList([
@@ -194,38 +177,6 @@ describe('ProviderList', () => {
 
     expect(container.textContent).toContain('Testing…')
     expect(container.querySelector('[aria-label="Connection verified"]')).toBeNull()
-  })
-
-  it('shows only the model for a local Claude provider and never a key row', () => {
-    renderList([
-      provider({
-        type: 'claude-default',
-        name: 'Local Claude',
-        baseUrl: undefined,
-        model: 'claude-opus',
-        maskedKey: undefined,
-        hasKey: false
-      })
-    ])
-
-    expect(container.textContent).toContain('Model: claude-opus')
-    expect(container.textContent).not.toContain('Key:')
-  })
-
-  it('labels an empty local-Claude model as the default', () => {
-    renderList([
-      provider({
-        type: 'claude-default',
-        name: 'Local Claude',
-        baseUrl: undefined,
-        model: undefined,
-        maskedKey: undefined,
-        hasKey: false
-      })
-    ])
-
-    expect(container.textContent).toContain('Model: default')
-    expect(container.textContent).not.toContain('Key:')
   })
 
   it('keeps shared Codex account management under Codex CLI', () => {

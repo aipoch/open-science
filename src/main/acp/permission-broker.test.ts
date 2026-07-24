@@ -94,9 +94,9 @@ const createCodexMcpPermissionRequest = (sessionId = 'session-1'): RequestPermis
     status: 'pending'
   },
   options: [
-    { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
-    { optionId: 'allow-always', name: "Allow and Don't Ask Again", kind: 'allow_always' },
-    { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+    { optionId: 'allow_session', name: 'Allow for This Session', kind: 'allow_always' },
+    { optionId: 'allow_always', name: "Allow and Don't Ask Again", kind: 'allow_always' },
+    { optionId: 'allow_once', name: 'Allow', kind: 'allow_once' },
     { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
   ]
 })
@@ -251,10 +251,10 @@ describe('ACP permission broker', () => {
       mcpServerNames: ['open-science-notebook']
     })
 
-    // The persistent allow-always option is stripped by ID; session-scoped allow-session survives.
+    // The persistent allow_always option is stripped by ID; session-scoped allow_session survives.
     expect(emitted[0].options).toEqual([
-      { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
-      { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'allow_session', name: 'Allow for This Session', kind: 'allow_always' },
+      { optionId: 'allow_once', name: 'Allow', kind: 'allow_once' },
       { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
     ])
   })
@@ -265,9 +265,9 @@ describe('ACP permission broker', () => {
     const request = createCodexMcpPermissionRequest()
     // Reverse the option order to verify the filter is ID-based, not position-based.
     request.options = [
-      { optionId: 'allow-always', name: "Allow and Don't Ask Again", kind: 'allow_always' },
-      { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
-      { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'allow_always', name: "Allow and Don't Ask Again", kind: 'allow_always' },
+      { optionId: 'allow_session', name: 'Allow for This Session', kind: 'allow_always' },
+      { optionId: 'allow_once', name: 'Allow', kind: 'allow_once' },
       { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
     ]
 
@@ -278,8 +278,8 @@ describe('ACP permission broker', () => {
     })
 
     expect(emitted[0].options).toEqual([
-      { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
-      { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'allow_session', name: 'Allow for This Session', kind: 'allow_always' },
+      { optionId: 'allow_once', name: 'Allow', kind: 'allow_once' },
       { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
     ])
   })
@@ -289,8 +289,8 @@ describe('ACP permission broker', () => {
     const broker = new AcpPermissionBroker((request) => emitted.push(request))
     const request = createCodexMcpPermissionRequest()
     request.options = [
-      { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
-      { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'allow_session', name: 'Allow for This Session', kind: 'allow_always' },
+      { optionId: 'allow_once', name: 'Allow', kind: 'allow_once' },
       { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
     ]
 
@@ -301,8 +301,8 @@ describe('ACP permission broker', () => {
     })
 
     expect(emitted[0].options).toEqual([
-      { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
-      { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'allow_session', name: 'Allow for This Session', kind: 'allow_always' },
+      { optionId: 'allow_once', name: 'Allow', kind: 'allow_once' },
       { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
     ])
   })
