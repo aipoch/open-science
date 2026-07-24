@@ -2,19 +2,17 @@ import { pathToFileURL } from 'node:url'
 
 import { describe, expect, it, vi } from 'vitest'
 
+import * as runtimeProtocol from './office-preview-runtime-protocol'
+
 describe('Office preview runtime protocol', () => {
   it('serves the isolated runtime from its own site and proxies development assets', async () => {
-    const module = await import('./office-preview-runtime-protocol').catch(() => undefined)
-    expect(module).toBeDefined()
-    if (!module) return
-
     const fetchRuntime = vi.fn().mockResolvedValue(
       new Response('export const ready = true', {
         status: 200,
         headers: { 'content-type': 'text/javascript' }
       })
     )
-    const handler = module.createOfficePreviewRuntimeProtocolHandler({
+    const handler = runtimeProtocol.createOfficePreviewRuntimeProtocolHandler({
       runtimeHtmlPath: '/app/renderer/office-preview.html',
       devServerUrl: 'http://localhost:5173',
       fetchRuntime
@@ -24,7 +22,7 @@ describe('Office preview runtime protocol', () => {
       new Request('open-science-office-preview://runtime/src/office-preview/main.ts')
     )
 
-    const runtimeUrl = new URL(module.createOfficePreviewRuntimeUrl('session / 1'))
+    const runtimeUrl = new URL(runtimeProtocol.createOfficePreviewRuntimeUrl('session / 1'))
     expect(runtimeUrl.protocol).toBe('open-science-office-preview:')
     expect(runtimeUrl.hostname).toBe('runtime')
     expect(runtimeUrl.pathname).toBe('/office-preview.html')
@@ -39,9 +37,8 @@ describe('Office preview runtime protocol', () => {
   })
 
   it('preserves Vite query parameters when proxying development modules', async () => {
-    const module = await import('./office-preview-runtime-protocol')
     const fetchRuntime = vi.fn().mockResolvedValue(new Response('export default "/worker.js"'))
-    const handler = module.createOfficePreviewRuntimeProtocolHandler({
+    const handler = runtimeProtocol.createOfficePreviewRuntimeProtocolHandler({
       runtimeHtmlPath: '/app/renderer/office-preview.html',
       devServerUrl: 'http://localhost:5173',
       fetchRuntime
@@ -59,12 +56,8 @@ describe('Office preview runtime protocol', () => {
   })
 
   it('rejects requests outside the dedicated runtime host', async () => {
-    const module = await import('./office-preview-runtime-protocol').catch(() => undefined)
-    expect(module).toBeDefined()
-    if (!module) return
-
     const fetchRuntime = vi.fn()
-    const handler = module.createOfficePreviewRuntimeProtocolHandler({
+    const handler = runtimeProtocol.createOfficePreviewRuntimeProtocolHandler({
       runtimeHtmlPath: '/app/renderer/office-preview.html',
       fetchRuntime
     })
@@ -78,13 +71,12 @@ describe('Office preview runtime protocol', () => {
   })
 
   it('maps packaged assets inside the renderer bundle and applies the runtime CSP', async () => {
-    const module = await import('./office-preview-runtime-protocol')
     const fetchRuntime = vi.fn().mockResolvedValue(
       new Response('<!doctype html>', {
         headers: { 'content-type': 'text/html; charset=utf-8' }
       })
     )
-    const handler = module.createOfficePreviewRuntimeProtocolHandler({
+    const handler = runtimeProtocol.createOfficePreviewRuntimeProtocolHandler({
       runtimeHtmlPath: '/app/renderer/office-preview.html',
       fetchRuntime
     })
@@ -109,13 +101,12 @@ describe('Office preview runtime protocol', () => {
   })
 
   it('allows only the local Vite bootstrap requirements in development', async () => {
-    const module = await import('./office-preview-runtime-protocol')
     const fetchRuntime = vi.fn().mockResolvedValue(
       new Response('<!doctype html>', {
         headers: { 'content-type': 'text/html; charset=utf-8' }
       })
     )
-    const handler = module.createOfficePreviewRuntimeProtocolHandler({
+    const handler = runtimeProtocol.createOfficePreviewRuntimeProtocolHandler({
       runtimeHtmlPath: '/app/renderer/office-preview.html',
       devServerUrl: 'http://localhost:5173',
       fetchRuntime
@@ -133,9 +124,8 @@ describe('Office preview runtime protocol', () => {
   })
 
   it('rejects encoded paths that escape the packaged renderer bundle', async () => {
-    const module = await import('./office-preview-runtime-protocol')
     const fetchRuntime = vi.fn()
-    const handler = module.createOfficePreviewRuntimeProtocolHandler({
+    const handler = runtimeProtocol.createOfficePreviewRuntimeProtocolHandler({
       runtimeHtmlPath: '/app/renderer/office-preview.html',
       fetchRuntime
     })
@@ -149,11 +139,10 @@ describe('Office preview runtime protocol', () => {
   })
 
   it('preserves HEAD semantics without buffering an upstream body', async () => {
-    const module = await import('./office-preview-runtime-protocol')
     const fetchRuntime = vi
       .fn()
       .mockResolvedValue(new Response('runtime', { headers: { 'content-length': '7' } }))
-    const handler = module.createOfficePreviewRuntimeProtocolHandler({
+    const handler = runtimeProtocol.createOfficePreviewRuntimeProtocolHandler({
       runtimeHtmlPath: '/app/renderer/office-preview.html',
       fetchRuntime
     })
@@ -168,7 +157,6 @@ describe('Office preview runtime protocol', () => {
   })
 
   it('buffers trusted runtime assets and replaces stale transfer headers', async () => {
-    const module = await import('./office-preview-runtime-protocol')
     const fetchRuntime = vi.fn().mockResolvedValue(
       new Response('runtime', {
         headers: {
@@ -178,7 +166,7 @@ describe('Office preview runtime protocol', () => {
         }
       })
     )
-    const handler = module.createOfficePreviewRuntimeProtocolHandler({
+    const handler = runtimeProtocol.createOfficePreviewRuntimeProtocolHandler({
       runtimeHtmlPath: '/app/renderer/office-preview.html',
       fetchRuntime
     })
@@ -192,21 +180,19 @@ describe('Office preview runtime protocol', () => {
     expect(response.headers.get('content-encoding')).toBeNull()
   })
 
-  it('registers and unregisters only the dedicated runtime scheme', async () => {
-    const module = await import('./office-preview-runtime-protocol')
-    const targetProtocol = { handle: vi.fn(), unhandle: vi.fn() }
+  it('registers only the dedicated runtime scheme', async () => {
+    const targetProtocol = { handle: vi.fn() }
     const options = {
       runtimeHtmlPath: '/app/renderer/office-preview.html',
       fetchRuntime: vi.fn()
     }
 
-    const unregister = module.registerOfficePreviewRuntimeProtocol(options, targetProtocol)
+    const result = runtimeProtocol.registerOfficePreviewRuntimeProtocol(options, targetProtocol)
 
     expect(targetProtocol.handle).toHaveBeenCalledWith(
-      module.OFFICE_PREVIEW_RUNTIME_SCHEME,
+      runtimeProtocol.OFFICE_PREVIEW_RUNTIME_SCHEME,
       expect.any(Function)
     )
-    unregister()
-    expect(targetProtocol.unhandle).toHaveBeenCalledWith(module.OFFICE_PREVIEW_RUNTIME_SCHEME)
+    expect(result).toBeUndefined()
   })
 })

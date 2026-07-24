@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import {
+  createOfficePreviewFrameProcessResolver,
+  createOfficePreviewProcessMemoryReader
+} from './office-preview-electron'
+
 describe('Office preview Electron adapter', () => {
   it('resolves the exact runtime frame and compares operating-system process ids', async () => {
-    const module = await import('./office-preview-electron').catch(() => undefined)
-    expect(module).toBeDefined()
-    if (!module) return
-
     const runtimeUrl =
       'open-science-office-preview://runtime/office-preview.html?sessionId=session-1'
     const unrelatedFrame = { url: `${runtimeUrl}-other`, osProcessId: 201 }
@@ -15,7 +16,7 @@ describe('Office preview Electron adapter', () => {
       osProcessId: 101,
       framesInSubtree: [unrelatedFrame, runtimeFrame]
     }
-    const resolveFrameProcess = module.createOfficePreviewFrameProcessResolver({
+    const resolveFrameProcess = createOfficePreviewFrameProcessResolver({
       fromId: vi.fn().mockReturnValue({ mainFrame })
     })
 
@@ -27,11 +28,7 @@ describe('Office preview Electron adapter', () => {
   })
 
   it('reads private process memory from Electron metrics using the frame OS pid', async () => {
-    const module = await import('./office-preview-electron').catch(() => undefined)
-    expect(module).toBeDefined()
-    if (!module) return
-
-    const getProcessMemoryUsageBytes = module.createOfficePreviewProcessMemoryReader({
+    const getProcessMemoryUsageBytes = createOfficePreviewProcessMemoryReader({
       getAppMetrics: vi
         .fn()
         .mockReturnValue([{ pid: 202, memory: { privateBytes: 321, workingSetSize: 654 } }])

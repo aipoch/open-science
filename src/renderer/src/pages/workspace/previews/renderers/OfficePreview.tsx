@@ -117,7 +117,6 @@ export const OfficePreviewContent = ({
   const extension = resolveOfficeExtension(item)
   const [ownsLease, setOwnsLease] = useState(false)
   const [state, setState] = useState<OfficeHostState>(OFFICE_CHECKING_STATE)
-  const [sessionId, setSessionId] = useState<string | undefined>(undefined)
   const [frame, setFrame] = useState<OfficePreviewFrame | undefined>(undefined)
   const [frameLoadGeneration, setFrameLoadGeneration] = useState(0)
 
@@ -126,7 +125,6 @@ export const OfficePreviewContent = ({
       officePreviewHostLeaseCoordinator.register((active) => {
         setOwnsLease(active)
         setState(OFFICE_CHECKING_STATE)
-        setSessionId(undefined)
         setFrame(undefined)
         setFrameLoadGeneration(0)
       }),
@@ -146,7 +144,6 @@ export const OfficePreviewContent = ({
         setState({ kind: 'ready' })
       } else if (nextState.phase === 'error') {
         // Main destroys terminal sessions, so remove the corresponding iframe at the same boundary.
-        setSessionId(undefined)
         setFrame(undefined)
         setFrameLoadGeneration(0)
         setState({ kind: 'error', error: nextState.error })
@@ -188,7 +185,6 @@ export const OfficePreviewContent = ({
 
         openedSessionId = result.sessionId
         setFrameLoadGeneration(0)
-        setSessionId(result.sessionId)
         setFrame({ sessionId: result.sessionId, url: result.runtimeUrl })
         if (pendingState?.sessionId === result.sessionId) applyRuntimeState(pendingState)
         pendingState = undefined
@@ -212,7 +208,7 @@ export const OfficePreviewContent = ({
   }, [attempt, extension, hostId, item.name, item.path, ownsLease, source])
 
   useEffect(() => {
-    if (!frame || frame.sessionId !== sessionId || frameLoadGeneration === 0) return
+    if (!frame || frameLoadGeneration === 0) return
 
     let active = true
     let attached = false
@@ -222,7 +218,7 @@ export const OfficePreviewContent = ({
         event.source !== frameRef.current?.contentWindow ||
         event.origin !== OFFICE_PREVIEW_RUNTIME_ORIGIN ||
         !isOfficePreviewRuntimeMessage(event.data) ||
-        event.data.sessionId !== frame.sessionId
+        event.data.state.sessionId !== frame.sessionId
       ) {
         return
       }
@@ -240,7 +236,6 @@ export const OfficePreviewContent = ({
         if (!active) return
         if (!result || result.kind !== 'attached') {
           setFrame(undefined)
-          setSessionId(undefined)
           setFrameLoadGeneration(0)
           setState({ kind: 'error', error: 'PREVIEW_PROCESS_NOT_ISOLATED' })
           return
@@ -250,7 +245,6 @@ export const OfficePreviewContent = ({
           channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
           version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
           type: 'start',
-          sessionId: frame.sessionId,
           start: result.start
         }
         frameRef.current?.contentWindow?.postMessage(message, OFFICE_PREVIEW_RUNTIME_ORIGIN)
@@ -261,7 +255,6 @@ export const OfficePreviewContent = ({
         // IPC failures bypass the supervisor's normal unavailable result, so release explicitly.
         void window.api.officePreview.close(frame.sessionId)
         setFrame(undefined)
-        setSessionId(undefined)
         setFrameLoadGeneration(0)
         setState({ kind: 'error', error: 'RENDER_FAILED' })
       })
@@ -269,7 +262,7 @@ export const OfficePreviewContent = ({
       active = false
       window.removeEventListener('message', handleMessage)
     }
-  }, [frame, frameLoadGeneration, sessionId])
+  }, [frame, frameLoadGeneration])
 
   if (state.kind === 'too-large') {
     return (
@@ -308,14 +301,13 @@ export const OfficePreviewContent = ({
       data-office-preview-state={state.kind}
       className="relative size-full overflow-hidden bg-bg-000"
     >
-      {frame && frame.sessionId === sessionId ? (
+      {frame ? (
         <iframe
           ref={frameRef}
           data-office-preview-frame
           title={`Preview of ${item.name}`}
           src={frame.url}
           onLoad={() => {
-            if (frame.sessionId !== sessionId) return
             // A same-document frame reload needs a fresh process check and start capability.
             setState({ kind: 'loading', title: 'Starting Office preview' })
             setFrameLoadGeneration((generation) => generation + 1)

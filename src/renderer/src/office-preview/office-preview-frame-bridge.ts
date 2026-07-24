@@ -41,24 +41,13 @@ const createOfficePreviewFrameBridge = (
       disposed ||
       event.source !== options.runtimeWindow.parent ||
       !isOfficePreviewHostMessage(event.data) ||
-      event.data.sessionId !== options.sessionId
+      event.data.start.sessionId !== options.sessionId
     ) {
       return
     }
     listeners.forEach((listener) => listener(event.data.start))
   }
   options.runtimeWindow.addEventListener('message', handleMessage)
-  // Packaged file: parents have an opaque origin, so outbound non-capability messages require '*'.
-  // The parent still authenticates this runtime by both window identity and the exact child origin.
-  options.runtimeWindow.parent.postMessage(
-    {
-      channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
-      version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
-      type: 'ready',
-      sessionId: options.sessionId
-    },
-    '*'
-  )
 
   return {
     onStart: (listener) => {
@@ -72,7 +61,6 @@ const createOfficePreviewFrameBridge = (
           channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
           version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
           type: 'state',
-          sessionId: options.sessionId,
           state
         },
         '*'

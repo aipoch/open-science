@@ -55,7 +55,6 @@ type OfficePreviewRuntimeProtocolOptions = {
 
 type OfficePreviewRuntimeProtocolRegistrar = {
   handle: (scheme: string, handler: (request: Request) => Promise<Response>) => void
-  unhandle: (scheme: string) => void
 }
 
 const createOfficePreviewRuntimeUrl = (sessionId: string): string => {
@@ -152,12 +151,11 @@ const createOfficePreviewRuntimeProtocolHandler = (
 const registerOfficePreviewRuntimeProtocol = (
   options: OfficePreviewRuntimeProtocolOptions,
   targetProtocol: OfficePreviewRuntimeProtocolRegistrar
-): (() => void) => {
+): void => {
   targetProtocol.handle(
     OFFICE_PREVIEW_RUNTIME_SCHEME,
     createOfficePreviewRuntimeProtocolHandler(options)
   )
-  return () => targetProtocol.unhandle(OFFICE_PREVIEW_RUNTIME_SCHEME)
 }
 
 export {

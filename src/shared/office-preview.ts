@@ -105,24 +105,15 @@ export type OfficePreviewHostMessage = {
   channel: typeof OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL
   version: typeof OFFICE_PREVIEW_FRAME_MESSAGE_VERSION
   type: 'start'
-  sessionId: string
   start: OfficePreviewRuntimeStart
 }
 
-export type OfficePreviewRuntimeMessage =
-  | {
-      channel: typeof OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL
-      version: typeof OFFICE_PREVIEW_FRAME_MESSAGE_VERSION
-      type: 'ready'
-      sessionId: string
-    }
-  | {
-      channel: typeof OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL
-      version: typeof OFFICE_PREVIEW_FRAME_MESSAGE_VERSION
-      type: 'state'
-      sessionId: string
-      state: OfficePreviewRuntimeState
-    }
+export type OfficePreviewRuntimeMessage = {
+  channel: typeof OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL
+  version: typeof OFFICE_PREVIEW_FRAME_MESSAGE_VERSION
+  type: 'state'
+  state: OfficePreviewRuntimeState
+}
 
 const OFFICE_PREVIEW_PHASES = new Set<OfficePreviewPhase>([
   'starting',
@@ -206,9 +197,7 @@ export const isOfficePreviewHostMessage = (value: unknown): value is OfficePrevi
     message.channel === OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL &&
     message.version === OFFICE_PREVIEW_FRAME_MESSAGE_VERSION &&
     message.type === 'start' &&
-    isNonEmptyString(message.sessionId) &&
-    isOfficePreviewRuntimeStart(message.start) &&
-    message.start.sessionId === message.sessionId
+    isOfficePreviewRuntimeStart(message.start)
   )
 }
 
@@ -220,12 +209,10 @@ export const isOfficePreviewRuntimeMessage = (
   const message = value as Partial<OfficePreviewRuntimeMessage>
   if (
     message.channel !== OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL ||
-    message.version !== OFFICE_PREVIEW_FRAME_MESSAGE_VERSION ||
-    !isNonEmptyString(message.sessionId)
+    message.version !== OFFICE_PREVIEW_FRAME_MESSAGE_VERSION
   ) {
     return false
   }
-  if (message.type === 'ready') return true
   if (message.type !== 'state' || !('state' in message)) return false
-  return isOfficePreviewRuntimeState(message.state) && message.state.sessionId === message.sessionId
+  return isOfficePreviewRuntimeState(message.state)
 }

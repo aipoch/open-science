@@ -168,7 +168,10 @@ describe('OfficePreviewRenderer', () => {
 
     expect(attachFrame).toHaveBeenCalledWith('office-session-1')
     expect(postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'start', sessionId: 'office-session-1' }),
+      expect.objectContaining({
+        type: 'start',
+        start: expect.objectContaining({ sessionId: 'office-session-1' })
+      }),
       OFFICE_PREVIEW_RUNTIME_ORIGIN
     )
 
@@ -180,7 +183,6 @@ describe('OfficePreviewRenderer', () => {
           channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
           version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
           type: 'state',
-          sessionId: 'office-session-1',
           state: { sessionId: 'office-session-1', phase: 'ready' }
         }
       })
@@ -206,7 +208,6 @@ describe('OfficePreviewRenderer', () => {
           channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
           version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
           type: 'state',
-          sessionId: 'office-session-1',
           state: { sessionId: 'office-session-1', phase: 'ready' }
         }
       })
@@ -218,7 +219,6 @@ describe('OfficePreviewRenderer', () => {
           channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
           version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
           type: 'state',
-          sessionId: 'another-session',
           state: { sessionId: 'another-session', phase: 'ready' }
         }
       })
@@ -243,7 +243,6 @@ describe('OfficePreviewRenderer', () => {
           channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
           version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
           type: 'state',
-          sessionId: 'office-session-1',
           state: { sessionId: 'office-session-1', phase: 'ready' }
         }
       })
@@ -269,7 +268,10 @@ describe('OfficePreviewRenderer', () => {
     expect(attachFrame).toHaveBeenCalledTimes(2)
     expect(postMessage).toHaveBeenCalledTimes(2)
     expect(postMessage).toHaveBeenLastCalledWith(
-      expect.objectContaining({ type: 'start', sessionId: 'office-session-1' }),
+      expect.objectContaining({
+        type: 'start',
+        start: expect.objectContaining({ sessionId: 'office-session-1' })
+      }),
       OFFICE_PREVIEW_RUNTIME_ORIGIN
     )
   })

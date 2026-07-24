@@ -1,13 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { OfficePreviewRuntimeStart } from '../../../shared/office-preview'
+import { createOfficePreviewFrameBridge } from './office-preview-frame-bridge'
 
 describe('Office preview frame bridge', () => {
   it('routes only parent messages for the active session', async () => {
-    const module = await import('./office-preview-frame-bridge').catch(() => undefined)
-    expect(module).toBeDefined()
-    if (!module) return
-
     let messageListener: ((event: MessageEvent) => void) | undefined
     const parent = { postMessage: vi.fn() }
     const runtimeWindow = {
@@ -17,7 +14,7 @@ describe('Office preview frame bridge', () => {
       }),
       removeEventListener: vi.fn()
     }
-    const bridge = module.createOfficePreviewFrameBridge({
+    const bridge = createOfficePreviewFrameBridge({
       runtimeWindow: runtimeWindow as never,
       sessionId: 'session-1'
     })
@@ -40,18 +37,14 @@ describe('Office preview frame bridge', () => {
       channel: 'open-science-office-preview',
       version: 1,
       type: 'start',
-      sessionId: 'session-1',
       start
     }
 
-    expect(parent.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'ready', sessionId: 'session-1' }),
-      '*'
-    )
+    expect(parent.postMessage).not.toHaveBeenCalled()
     messageListener?.({ source: {}, data: message } as unknown as MessageEvent)
     messageListener?.({
       source: parent,
-      data: { ...message, sessionId: 'different-session' }
+      data: { ...message, start: { ...start, sessionId: 'different-session' } }
     } as unknown as MessageEvent)
     expect(onStart).not.toHaveBeenCalled()
 
@@ -62,7 +55,6 @@ describe('Office preview frame bridge', () => {
     expect(parent.postMessage).toHaveBeenLastCalledWith(
       expect.objectContaining({
         type: 'state',
-        sessionId: 'session-1',
         state: { sessionId: 'session-1', phase: 'ready' }
       }),
       '*'
