@@ -16,10 +16,14 @@ import type {
 import type { ReasoningEffort } from '../../shared/settings'
 import { AcpRuntime, type AcpRuntimeCallbacks } from './runtime'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
+import { ConversationPermissionGrantStore } from './permission-broker'
 
 const MAX_EVENTS = 500
 
-type RuntimeFactory = (callbacks: AcpRuntimeCallbacks) => AcpRuntime
+type RuntimeFactory = (
+  callbacks: AcpRuntimeCallbacks,
+  permissionGrantStore: ConversationPermissionGrantStore
+) => AcpRuntime
 
 // Keeps each framework generation in its own AcpRuntime. Framework changes preserve active turns, then
 // retire their runtime so every later turn resumes through the newly selected framework.
@@ -31,6 +35,7 @@ class AcpRuntimeCoordinator {
   private readonly permissionRuntimes = new Map<string, AcpRuntime>()
   private readonly reviewerRuntimes = new WeakMap<ActiveSession, AcpRuntime>()
   private readonly runtimeIds = new WeakMap<AcpRuntime, string>()
+  private readonly permissionGrantStore = new ConversationPermissionGrantStore()
   private runtimeSequence = 0
   private activeRuntime: AcpRuntime | undefined
   private lastRuntime: AcpRuntime | undefined
@@ -99,10 +104,7 @@ class AcpRuntimeCoordinator {
         {},
         ...snapshots.map(({ snapshot }) => snapshot.permissionProfiles)
       ),
-      permissionGrants: Object.assign(
-        {},
-        ...snapshots.map(({ snapshot }) => snapshot.permissionGrants)
-      ),
+      permissionGrants: this.permissionGrantStore.snapshot(),
       contextUsageBySession,
       promptInFlight: promptInFlightSessionIds.length > 0,
       promptInFlightSessionIds
@@ -373,16 +375,19 @@ class AcpRuntimeCoordinator {
   }
 
   private addRuntime(): AcpRuntime {
-    const runtime = this.createRuntime({
-      onStateChanged: (snapshot) => this.handleRuntimeState(runtime, snapshot),
-      onEvent: (event) =>
-        this.callbacks.onEvent?.({ ...event, id: this.eventId(runtime, event.id) }),
-      onPermissionRequest: (request) => {
-        this.permissionRuntimes.set(request.requestId, runtime)
-        this.callbacks.onPermissionRequest?.(request)
+    const runtime = this.createRuntime(
+      {
+        onStateChanged: (snapshot) => this.handleRuntimeState(runtime, snapshot),
+        onEvent: (event) =>
+          this.callbacks.onEvent?.({ ...event, id: this.eventId(runtime, event.id) }),
+        onPermissionRequest: (request) => {
+          this.permissionRuntimes.set(request.requestId, runtime)
+          this.callbacks.onPermissionRequest?.(request)
+        },
+        onRetired: () => this.handleRuntimeRetired(runtime)
       },
-      onRetired: () => this.handleRuntimeRetired(runtime)
-    })
+      this.permissionGrantStore
+    )
     this.runtimeSequence += 1
     this.runtimeIds.set(runtime, `runtime-${this.runtimeSequence}`)
     this.runtimes.add(runtime)

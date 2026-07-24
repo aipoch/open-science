@@ -9,20 +9,65 @@ import type {
 import { extractProviderToolName } from './runtime-events'
 import {
   isMcpToolName,
+  resolveMcpProviderLeafIdentity,
   resolveAutomaticPermission,
   type PermissionPolicyContext
 } from './permission-policy'
 
 type PendingPermission = {
   request: AcpPermissionRequest
-  categoryKey: string
+  categoryKey?: string
+  providerAllowOnceOptionId?: string
   resolve: (response: RequestPermissionResponse) => void
 }
 
 type EmitPermissionRequest = (request: AcpPermissionRequest) => void
 
+class ConversationPermissionGrantStore {
+  private readonly categoriesBySession = new Map<string, Set<string>>()
+
+  list(sessionId: string): string[] {
+    return Array.from(this.categoriesBySession.get(sessionId) ?? [])
+  }
+
+  snapshot(): Record<string, AcpPermissionGrant[]> {
+    return Object.fromEntries(
+      Array.from(this.categoriesBySession, ([sessionId, categories]) => [
+        sessionId,
+        Array.from(categories, describeGrant)
+      ])
+    )
+  }
+
+  has(sessionId: string, categoryKey: string): boolean {
+    return this.categoriesBySession.get(sessionId)?.has(categoryKey) ?? false
+  }
+
+  remember(sessionId: string, categoryKey: string): void {
+    const categories = this.categoriesBySession.get(sessionId) ?? new Set<string>()
+    categories.add(categoryKey)
+    this.categoriesBySession.set(sessionId, categories)
+  }
+
+  revoke(sessionId: string, categoryKey: string): void {
+    const categories = this.categoriesBySession.get(sessionId)
+    categories?.delete(categoryKey)
+    if (categories?.size === 0) this.categoriesBySession.delete(sessionId)
+  }
+
+  clear(sessionId: string): void {
+    this.categoriesBySession.delete(sessionId)
+  }
+}
+
 const ALLOW_ALWAYS_OPTION_KIND = 'allow_always'
 const ALLOW_ONCE_OPTION_KIND = 'allow_once'
+const REJECT_ALWAYS_OPTION_KIND = 'reject_always'
+const SESSION_ALLOW_OPTION_ID_PREFIX = 'open-science:allow-session:'
+const FILE_TOOL_KINDS = new Set(['read', 'edit', 'delete', 'move'])
+const FILE_PROVIDER_TOOLS = new Set(['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
+const NOTEBOOK_SERVER = 'open-science-notebook'
+const NOTEBOOK_EXECUTION_TOOLS = new Set(['notebook_execute', 'repl_execute', 'bash_execute'])
 // Depends on the codex-acp option-ID contract: persistent exec/network policy amendments are the only
 // options whose IDs match this shape. If codex-acp renames them, projection silently stops — the
 // projection tests (permission-broker.test.ts) pin this contract and would fail on such a drift.
@@ -57,23 +102,126 @@ const resolvePermissionTitle = (params: RequestPermissionRequest, isMcp: boolean
   )
 }
 
-// Trivial `KEY=VALUE` env assignment prefixing a shell command (e.g. `FOO=bar python a.py`). Values
-// containing whitespace/quotes are not covered (already split away) and fall back to the raw token.
-const ENV_ASSIGNMENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=[^\s]*$/
+const resolveMcpToolIdentity = (
+  name: string | null | undefined,
+  mcpServerNames: readonly string[]
+): string | undefined => {
+  if (!name) return undefined
 
-// Derives the normalized full-command signature used to group shell/execute permissions. Leading
-// trivial env assignments are skipped, but arguments remain part of the authorization boundary.
-const commandSignature = (command: string): string => {
-  const tokens = command.trim().split(/\s+/)
-  let index = 0
+  if (name.startsWith('mcp__')) {
+    const [reportedServer, ...toolParts] = name.slice('mcp__'.length).split('__')
+    if (!reportedServer || toolParts.length === 0) return undefined
 
-  while (index < tokens.length - 1 && ENV_ASSIGNMENT_PATTERN.test(tokens[index])) {
-    index += 1
+    // Some bridges sanitize MCP server names for tool-call compatibility (hyphens become
+    // underscores). Project back to the configured server identity so the same app-owned grant is
+    // reused after a framework/runtime switch instead of creating a second category.
+    const server =
+      mcpServerNames.find(
+        (candidate) =>
+          candidate === reportedServer || candidate.replaceAll('-', '_') === reportedServer
+      ) ?? reportedServer
+    return `${server}/${toolParts.join('__')}`
   }
 
-  const rest = tokens.slice(index)
+  for (const server of [...mcpServerNames].sort((left, right) => right.length - left.length)) {
+    const codexPrefix = `mcp.${server}.`
+    if (name.startsWith(codexPrefix)) return `${server}/${name.slice(codexPrefix.length)}`
 
-  return rest.length > 0 ? rest.join(' ') : command.trim()
+    const opencodePrefix = `${server}_`
+    if (name.startsWith(opencodePrefix)) return `${server}/${name.slice(opencodePrefix.length)}`
+  }
+
+  return resolveMcpProviderLeafIdentity(name, mcpServerNames)
+}
+
+const commandSignature = (command: string): string => command.trim()
+
+const resolveShellCommand = (params: RequestPermissionRequest): string | undefined =>
+  commandFromRawInput(params.toolCall.rawInput)?.trim()
+
+const recordInput = (rawInput: unknown): Record<string, unknown> | undefined => {
+  if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) return undefined
+
+  const record = rawInput as Record<string, unknown>
+  const nested = record.arguments
+
+  return nested && typeof nested === 'object' && !Array.isArray(nested)
+    ? (nested as Record<string, unknown>)
+    : record
+}
+
+const normalizeNotebookRuntime = (value: string): string | undefined => {
+  const normalized = value.trim().toLowerCase()
+
+  if (normalized === 'python' || normalized === 'py') return 'python'
+  if (normalized === 'r') return 'r'
+  if (['repl', 'javascript', 'js', 'node'].includes(normalized)) return 'javascript'
+  if (normalized === 'bash' || normalized === 'shell') return 'bash'
+  return undefined
+}
+
+const resolveNotebookExecutionTool = (identity: string): string | undefined => {
+  const separator = identity.indexOf('/')
+  if (separator < 0) return undefined
+
+  const server = identity.slice(0, separator).replaceAll('_', '-').toLowerCase()
+  const tool = identity.slice(separator + 1).toLowerCase()
+  if (server !== NOTEBOOK_SERVER || !NOTEBOOK_EXECUTION_TOOLS.has(tool)) return undefined
+
+  return tool
+}
+
+const resolveNotebookRuntime = (tool: string, rawInput: unknown): string | undefined => {
+  if (tool === 'repl_execute') return 'javascript'
+  if (tool === 'bash_execute') return 'bash'
+
+  const input = recordInput(rawInput)
+  for (const field of ['kernelKind', 'kernel', 'language']) {
+    const value = input?.[field]
+    if (typeof value !== 'string') continue
+
+    const runtime = normalizeNotebookRuntime(value)
+    if (runtime) return runtime
+  }
+
+  const code = input?.code
+  if (
+    typeof code === 'string' &&
+    code.trim() &&
+    (/<-/.test(code) ||
+      /\blibrary\(/.test(code) ||
+      /\bdata\.frame\(/.test(code) ||
+      /\b(ggplot|dplyr|tidyr)\(/.test(code))
+  ) {
+    return 'r'
+  }
+
+  return tool === 'notebook_execute' ? 'python' : undefined
+}
+
+const resolveNotebookPermissionContext = (
+  name: string | null | undefined,
+  rawInput: unknown,
+  mcpServerNames: readonly string[]
+): { runtime?: string } | undefined => {
+  const identity = resolveMcpToolIdentity(name, mcpServerNames)
+  if (!identity) return undefined
+
+  const tool = resolveNotebookExecutionTool(identity)
+  if (!tool) return undefined
+
+  return { runtime: resolveNotebookRuntime(tool, rawInput) }
+}
+
+const isMcpPermission = (
+  params: RequestPermissionRequest,
+  mcpServerNames: readonly string[]
+): boolean => {
+  const providerToolName = extractProviderToolName(params.toolCall)
+  return (
+    isMcpToolName(params.toolCall.title, mcpServerNames) ||
+    isMcpToolName(providerToolName, mcpServerNames)
+  )
 }
 
 // Open Science owns per-session grants, so Codex approvals omit options that grant persistent
@@ -111,62 +259,126 @@ const projectPermissionOptions = (
   )
 }
 
-// Derives a session-scoped "Always" category key from a permission request (first match wins):
+// Derives an app-owned session grant category key from a permission request (first match wins):
 // 1. MCP tool (recognized across frameworks — Claude's mcp__ prefix or an opencode <server>_ name):
-//    keyed by the tool name, no args.
-// 2. Shell/execute tool (provider tool name Bash, or execute kind): keyed by full command signature.
-// 3. Other built-ins (Write/Edit/WebFetch/…): keyed by provider tool name (falls back to title).
+//    keyed by tool identity, with notebook execution tools further separated by runtime.
+// 2. Shell/execute tool (provider tool name Bash, or execute kind): keyed by concrete command signature.
+// 3. File operations: keyed by stable operation/tool identity, independent of target path.
+// 4. Other built-ins (WebFetch/…): keyed by stable provider tool name.
 // The MCP check runs before the execute branch so an opencode MCP tool reporting kind:execute (e.g. a
 // notebook execute-cell) is grouped as its own MCP tool, not misrouted to the shared Bash category.
 const resolveCategoryKey = (
   params: RequestPermissionRequest,
   mcpServerNames: readonly string[] = []
-): string => {
+): string | undefined => {
   const { toolCall } = params
-  const reportedTitle = reportedPermissionTitle(params)
   const providerToolName = extractProviderToolName(toolCall)
 
-  if (
-    isMcpToolName(toolCall.title, mcpServerNames) ||
-    isMcpToolName(providerToolName, mcpServerNames)
-  ) {
-    return `mcp:${reportedTitle}`
-  }
+  if (isMcpPermission(params, mcpServerNames)) {
+    const identity =
+      resolveMcpToolIdentity(toolCall.title, mcpServerNames) ??
+      resolveMcpToolIdentity(providerToolName, mcpServerNames)
 
-  const title = resolvePermissionTitle(params, false)
+    if (!identity) return undefined
+
+    const notebookContext =
+      resolveNotebookPermissionContext(toolCall.title, toolCall.rawInput, mcpServerNames) ??
+      resolveNotebookPermissionContext(providerToolName, toolCall.rawInput, mcpServerNames)
+    if (notebookContext) {
+      return notebookContext.runtime ? `mcp:${identity}:${notebookContext.runtime}` : undefined
+    }
+
+    return `mcp:${identity}`
+  }
 
   if (providerToolName === 'Bash' || toolCall.kind === 'execute') {
-    return `bash:${commandSignature(title)}`
+    const command = resolveShellCommand(params)
+    return command ? `shell:${commandSignature(command)}` : undefined
   }
 
-  return `tool:${providerToolName ?? title}`
+  if (
+    toolCall.locations?.length ||
+    (toolCall.kind && FILE_TOOL_KINDS.has(toolCall.kind)) ||
+    (providerToolName && FILE_PROVIDER_TOOLS.has(providerToolName))
+  ) {
+    const operation = providerToolName ?? toolCall.kind
+    return operation ? `file:${operation}` : undefined
+  }
+
+  return providerToolName ? `tool:${providerToolName}` : undefined
 }
 
 // Projects an opaque category key into the display grant shown in the composer.
 const describeGrant = (categoryKey: string): AcpPermissionGrant => {
-  if (categoryKey.startsWith('bash:')) {
-    return { categoryKey, kind: 'shell', label: categoryKey.slice('bash:'.length) }
+  if (categoryKey.startsWith('shell:')) {
+    return {
+      categoryKey,
+      kind: 'shell',
+      label: categoryKey.slice('shell:'.length),
+      scope: 'session'
+    }
   }
 
   if (categoryKey.startsWith('mcp:')) {
-    return { categoryKey, kind: 'mcp', label: categoryKey.slice('mcp:'.length) }
+    const descriptor = categoryKey.slice('mcp:'.length)
+    const runtimeSeparator = descriptor.lastIndexOf(':')
+    const identity = runtimeSeparator >= 0 ? descriptor.slice(0, runtimeSeparator) : descriptor
+    const runtime = runtimeSeparator >= 0 ? descriptor.slice(runtimeSeparator + 1) : undefined
+    const runtimeLabel =
+      runtime === 'python'
+        ? 'Python'
+        : runtime === 'r'
+          ? 'R'
+          : runtime === 'javascript'
+            ? 'JavaScript'
+            : runtime === 'bash'
+              ? 'Bash'
+              : undefined
+    const [server, tool] = identity.split('/')
+    const notebookToolLabel =
+      server?.replaceAll('_', '-').toLowerCase() === NOTEBOOK_SERVER
+        ? tool === 'bash_execute'
+          ? 'Notebook shell'
+          : tool === 'notebook_execute' || tool === 'repl_execute'
+            ? 'Notebook REPL'
+            : undefined
+        : undefined
+
+    return {
+      categoryKey,
+      kind: 'mcp',
+      label: runtimeLabel
+        ? `${notebookToolLabel ?? identity} (${runtimeLabel})`
+        : (notebookToolLabel ?? descriptor),
+      scope: 'session'
+    }
+  }
+
+  if (categoryKey.startsWith('file:')) {
+    return {
+      categoryKey,
+      kind: 'tool',
+      label: categoryKey.slice('file:'.length),
+      scope: 'session'
+    }
   }
 
   if (categoryKey.startsWith('tool:')) {
-    return { categoryKey, kind: 'tool', label: categoryKey.slice('tool:'.length) }
+    return { categoryKey, kind: 'tool', label: categoryKey.slice('tool:'.length), scope: 'session' }
   }
 
-  return { categoryKey, kind: 'tool', label: categoryKey }
+  return { categoryKey, kind: 'tool', label: categoryKey, scope: 'session' }
 }
 
 // Tracks permission requests until the renderer chooses an outcome.
 class AcpPermissionBroker {
   private pendingRequests = new Map<string, PendingPermission>()
-  // Per-session set of category keys the user chose to always allow this session.
-  private alwaysAllowedCategories = new Map<string, Set<string>>()
 
   // Accepts the callback used to publish new permission requests to listeners.
-  constructor(private readonly emitPermissionRequest: EmitPermissionRequest) {}
+  constructor(
+    private readonly emitPermissionRequest: EmitPermissionRequest,
+    private readonly conversationGrants = new ConversationPermissionGrantStore()
+  ) {}
 
   // Returns serializable pending requests for runtime snapshots.
   getPendingRequests(): AcpPermissionRequest[] {
@@ -179,16 +391,14 @@ class AcpPermissionBroker {
     )
   }
 
-  // Lists the session's always-allow grants so the composer can show and revoke them.
+  // Lists the app conversation's grants so the composer can show and revoke them.
   listGrants(sessionId: string): AcpPermissionGrant[] {
-    const categories = this.alwaysAllowedCategories.get(sessionId)
-
-    return categories ? Array.from(categories, describeGrant) : []
+    return this.conversationGrants.list(sessionId).map(describeGrant)
   }
 
-  // Removes one always-allow grant so its tool prompts again on the next call.
+  // Removes one session grant so its tool prompts again on the next call.
   revokeGrant(sessionId: string, categoryKey: string): void {
-    this.alwaysAllowedCategories.get(sessionId)?.delete(categoryKey)
+    this.conversationGrants.revoke(sessionId, categoryKey)
   }
 
   // Stores a permission request and resolves it later from a renderer response.
@@ -197,9 +407,34 @@ class AcpPermissionBroker {
     policyContext?: PermissionPolicyContext
   ): Promise<RequestPermissionResponse> {
     const requestId = randomUUID()
-    const categoryKey = resolveCategoryKey(params, policyContext?.mcpServerNames)
-    const isMcp = categoryKey.startsWith('mcp:')
-    const permissionOptions = projectPermissionOptions(params, policyContext, isMcp)
+    const mcpServerNames = policyContext?.mcpServerNames ?? []
+    const categoryKey = resolveCategoryKey(params, mcpServerNames)
+    const isMcp = isMcpPermission(params, mcpServerNames)
+    const projectedProviderOptions = projectPermissionOptions(params, policyContext, isMcp)
+    const providerPermissionOptions = projectedProviderOptions.filter(
+      (option) =>
+        option.kind.toLowerCase() !== ALLOW_ALWAYS_OPTION_KIND &&
+        option.kind.toLowerCase() !== REJECT_ALWAYS_OPTION_KIND
+    )
+    const providerAllowOnceOption = providerPermissionOptions.find(
+      (option) => option.kind.toLowerCase() === ALLOW_ONCE_OPTION_KIND
+    )
+    const permissionOptions: AcpPermissionRequest['options'] = providerPermissionOptions.map(
+      (option) => ({
+        optionId: option.optionId,
+        name: option.name,
+        kind: option.kind,
+        ...(option.kind.toLowerCase() === ALLOW_ONCE_OPTION_KIND ? { scope: 'once' as const } : {})
+      })
+    )
+    if (providerAllowOnceOption && categoryKey) {
+      permissionOptions.push({
+        optionId: `${SESSION_ALLOW_OPTION_ID_PREFIX}${requestId}`,
+        name: 'This conversation',
+        kind: ALLOW_ALWAYS_OPTION_KIND,
+        scope: 'session'
+      })
+    }
     const request: AcpPermissionRequest = {
       requestId,
       sessionId: params.sessionId,
@@ -211,19 +446,14 @@ class AcpPermissionBroker {
       toolKind: params.toolCall.kind ?? undefined,
       toolLocations: params.toolCall.locations ?? undefined,
       rawInput: params.toolCall.rawInput,
-      options: permissionOptions.map((option) => ({
-        optionId: option.optionId,
-        name: option.name,
-        kind: option.kind
-      })),
-      raw: params
+      options: permissionOptions
     }
 
     // A model-independent fallback auto-reviews only structured, workspace-contained low-risk tools.
     // Resolve against the projected options so a stripped policy amendment can never be an automatic
     // outcome — the "amendments are never selectable" invariant must hold on the auto path too.
     const automaticOptionId = resolveAutomaticPermission(
-      { ...params, options: permissionOptions },
+      { ...params, options: providerPermissionOptions },
       policyContext
     )
 
@@ -233,8 +463,10 @@ class AcpPermissionBroker {
       })
     }
 
-    // A prior "Always" choice on this category auto-approves without prompting again.
-    const autoAllowOptionId = this.resolveAutoAllowOptionId(request, categoryKey)
+    // A prior app-owned session grant auto-approves without prompting again.
+    const autoAllowOptionId = categoryKey
+      ? this.resolveAutoAllowOptionId(request, categoryKey)
+      : undefined
 
     if (autoAllowOptionId) {
       return Promise.resolve({
@@ -244,7 +476,12 @@ class AcpPermissionBroker {
 
     // The returned promise is held open until the UI selects or cancels an option.
     return new Promise((resolve) => {
-      this.pendingRequests.set(requestId, { request, categoryKey, resolve })
+      this.pendingRequests.set(requestId, {
+        request,
+        categoryKey,
+        providerAllowOnceOptionId: providerAllowOnceOption?.optionId,
+        resolve
+      })
       this.emitPermissionRequest(request)
     })
   }
@@ -271,61 +508,62 @@ class AcpPermissionBroker {
       return true
     }
 
-    // "Always" on a tool suppresses future prompts for that same category this session.
-    this.rememberAlwaysAllowed(pending.request, pending.categoryKey, response.optionId)
+    const selected = pending.request.options.find((option) => option.optionId === response.optionId)
+    const providerOptionId =
+      selected?.scope === 'session' ? pending.providerAllowOnceOptionId : response.optionId
+
+    if (!providerOptionId) {
+      pending.resolve({ outcome: { outcome: 'cancelled' } })
+      return true
+    }
+
+    // Session grants are owned by Open Science. The Agent receives only its one-shot option.
+    if (pending.categoryKey) {
+      this.rememberSessionGrant(pending.request, pending.categoryKey, response.optionId)
+    }
 
     pending.resolve({
       outcome: {
         outcome: 'selected',
-        optionId: response.optionId
+        optionId: providerOptionId
       }
     })
 
     return true
   }
 
-  // Returns an allow option id when this category was already always-allowed, else undefined.
+  // Returns a one-shot allow option when this category has an app-owned session grant.
   private resolveAutoAllowOptionId(
     request: AcpPermissionRequest,
     categoryKey: string
   ): string | undefined {
-    if (!this.alwaysAllowedCategories.get(request.sessionId)?.has(categoryKey)) {
+    if (!this.conversationGrants.has(request.sessionId, categoryKey)) {
       return undefined
     }
 
-    // Prefer a one-shot allow so the agent still governs the always-allow lifecycle itself.
-    const allowOption =
-      request.options.find((option) => option.kind.toLowerCase() === ALLOW_ONCE_OPTION_KIND) ??
-      request.options.find((option) => option.kind.toLowerCase() === ALLOW_ALWAYS_OPTION_KIND)
-
-    return allowOption?.optionId
+    return request.options.find((option) => option.scope === 'once')?.optionId
   }
 
-  // Records the category as always-allowed when the user picked its allow_always option.
-  private rememberAlwaysAllowed(
+  // Records the category when the user picks Open Science's synthetic session scope.
+  private rememberSessionGrant(
     request: AcpPermissionRequest,
     categoryKey: string,
     optionId: string
   ): void {
     const chosen = request.options.find((option) => option.optionId === optionId)
 
-    if (chosen?.kind.toLowerCase() !== ALLOW_ALWAYS_OPTION_KIND) return
+    if (chosen?.scope !== 'session') return
 
-    const allowed = this.alwaysAllowedCategories.get(request.sessionId) ?? new Set<string>()
-
-    allowed.add(categoryKey)
-    this.alwaysAllowedCategories.set(request.sessionId, allowed)
+    this.conversationGrants.remember(request.sessionId, categoryKey)
   }
 
-  // Cancels every pending request during full runtime teardown.
-  cancelAll(): void {
+  // Cancels every pending request while preserving conversation grants across Agent reconnects.
+  cancelAllPending(): void {
     const pendingRequests = Array.from(this.pendingRequests.keys())
 
     for (const requestId of pendingRequests) {
       this.respond({ requestId, cancelled: true })
     }
-
-    this.alwaysAllowedCategories.clear()
   }
 
   // Cancels pending requests for one session while leaving other sessions intact.
@@ -338,6 +576,17 @@ class AcpPermissionBroker {
       }
     }
   }
+
+  // Ends one Agent session: cancel its outstanding prompts and discard its non-persistent grants.
+  clearSession(sessionId: string): void {
+    this.cancelForSession(sessionId)
+    this.conversationGrants.clear(sessionId)
+  }
 }
 
-export { AcpPermissionBroker, resolveCategoryKey }
+export {
+  AcpPermissionBroker,
+  ConversationPermissionGrantStore,
+  resolveCategoryKey,
+  resolveNotebookPermissionContext
+}

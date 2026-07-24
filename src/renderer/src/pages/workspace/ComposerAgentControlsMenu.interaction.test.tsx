@@ -271,8 +271,8 @@ describe('ComposerAgentControlsMenu', () => {
           profile="ask"
           autoReviewEnabled={false}
           grants={[
-            { categoryKey: 'shell:git', label: 'git status', kind: 'shell' },
-            { categoryKey: 'mcp:search', label: 'search papers', kind: 'mcp' }
+            { categoryKey: 'shell:git', label: 'git status', kind: 'shell', scope: 'session' },
+            { categoryKey: 'mcp:search', label: 'search papers', kind: 'mcp', scope: 'session' }
           ]}
           onProfileChange={vi.fn()}
           onAutoReviewChange={vi.fn()}
@@ -281,11 +281,12 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    expect(container.textContent).toContain('Always allowed this session')
+    expect(container.textContent).toContain('Allowed this conversation')
     expect(container.textContent).toContain('git status')
 
     const revokeButton = Array.from(container.querySelectorAll('button')).find(
-      (candidate) => candidate.getAttribute('aria-label') === 'Revoke always-allow for git status'
+      (candidate) =>
+        candidate.getAttribute('aria-label') === 'Revoke conversation grant for git status'
     )
 
     if (!revokeButton) throw new Error('revoke button not found')
@@ -294,6 +295,33 @@ describe('ComposerAgentControlsMenu', () => {
 
     expect(onRevokeGrant).toHaveBeenCalledWith('shell:git')
   })
+
+  it.each(['auto', 'full'] as const)(
+    'keeps Ask conversation grants visible while the %s profile is selected',
+    (profile) => {
+      act(() => {
+        root.render(
+          <ComposerAgentControlsMenu
+            profile={profile}
+            autoReviewEnabled={false}
+            grants={[
+              {
+                categoryKey: 'mcp:notebook/python',
+                label: 'Notebook REPL (Python)',
+                kind: 'mcp',
+                scope: 'session'
+              }
+            ]}
+            onProfileChange={vi.fn()}
+            onAutoReviewChange={vi.fn()}
+          />
+        )
+      })
+
+      expect(container.textContent).toContain('Allowed this conversation')
+      expect(container.textContent).toContain('Notebook REPL (Python)')
+    }
+  )
 
   it('clears all grants when Clear all is clicked', () => {
     const onClearGrants = vi.fn()
@@ -304,8 +332,8 @@ describe('ComposerAgentControlsMenu', () => {
           profile="ask"
           autoReviewEnabled={false}
           grants={[
-            { categoryKey: 'shell:git', label: 'git status', kind: 'shell' },
-            { categoryKey: 'tool:Write', label: 'Write', kind: 'tool' }
+            { categoryKey: 'shell:git', label: 'git status', kind: 'shell', scope: 'session' },
+            { categoryKey: 'tool:Write', label: 'Write', kind: 'tool', scope: 'session' }
           ]}
           onProfileChange={vi.fn()}
           onAutoReviewChange={vi.fn()}
@@ -315,7 +343,7 @@ describe('ComposerAgentControlsMenu', () => {
     })
 
     const clearButton = Array.from(container.querySelectorAll('button')).find(
-      (candidate) => candidate.getAttribute('aria-label') === 'Clear all always-allow grants'
+      (candidate) => candidate.getAttribute('aria-label') === 'Clear all conversation grants'
     )
 
     if (!clearButton) throw new Error('clear button not found')
@@ -473,7 +501,9 @@ describe('ComposerAgentControlsMenu', () => {
           profile="ask"
           autoReviewEnabled={false}
           readOnly={true}
-          grants={[{ categoryKey: 'shell:git', label: 'git status', kind: 'shell' }]}
+          grants={[
+            { categoryKey: 'shell:git', label: 'git status', kind: 'shell', scope: 'session' }
+          ]}
           onProfileChange={vi.fn()}
           onAutoReviewChange={vi.fn()}
         />
@@ -494,13 +524,62 @@ describe('ComposerAgentControlsMenu', () => {
     ).toBe(true)
 
     const clearButton = Array.from(container.querySelectorAll('button')).find(
-      (candidate) => candidate.getAttribute('aria-label') === 'Clear all always-allow grants'
+      (candidate) => candidate.getAttribute('aria-label') === 'Clear all conversation grants'
     )
     const revokeButton = Array.from(container.querySelectorAll('button')).find(
-      (candidate) => candidate.getAttribute('aria-label') === 'Revoke always-allow for git status'
+      (candidate) =>
+        candidate.getAttribute('aria-label') === 'Revoke conversation grant for git status'
     )
     expect(clearButton?.disabled).toBe(true)
     expect(revokeButton?.disabled).toBe(true)
+  })
+
+  it('keeps conversation grant actions available while profile controls are read-only', () => {
+    const onRevokeGrant = vi.fn()
+    const onClearGrants = vi.fn()
+
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          readOnly={true}
+          grantActionsReadOnly={false}
+          grants={[
+            {
+              categoryKey: 'shell:execute',
+              label: 'Shell commands',
+              kind: 'shell',
+              scope: 'session'
+            }
+          ]}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onRevokeGrant={onRevokeGrant}
+          onClearGrants={onClearGrants}
+        />
+      )
+    })
+
+    expect(
+      findButton('Ask for approvalAsk before file edits, commands, network, and MCP tools.')
+        .disabled
+    ).toBe(true)
+
+    const clearButton = Array.from(container.querySelectorAll('button')).find(
+      (candidate) => candidate.getAttribute('aria-label') === 'Clear all conversation grants'
+    )
+    const revokeButton = Array.from(container.querySelectorAll('button')).find(
+      (candidate) =>
+        candidate.getAttribute('aria-label') === 'Revoke conversation grant for Shell commands'
+    )
+    expect(clearButton?.disabled).toBe(false)
+    expect(revokeButton?.disabled).toBe(false)
+
+    act(() => clearButton?.click())
+    act(() => revokeButton?.click())
+    expect(onClearGrants).toHaveBeenCalledTimes(1)
+    expect(onRevokeGrant).toHaveBeenCalledWith('shell:execute')
   })
 
   it('renders SSH hosts from the compute store under the compute section', () => {

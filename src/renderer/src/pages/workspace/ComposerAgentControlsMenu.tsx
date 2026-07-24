@@ -65,8 +65,10 @@ type ComposerAgentControlsMenuProps = {
   grants?: AcpPermissionGrant[]
   autoReviewEnabled: boolean
   // Read-only while a session is running: the menu stays openable and the permission
-  // submenu still expands on hover, but every mutating control is disabled.
+  // submenu still expands on hover, but profiles, auto-review, and compute stay immutable.
   readOnly?: boolean
+  // Grant revocation remains independently available while a turn is running.
+  grantActionsReadOnly?: boolean
   autoReviewDisabled?: boolean
   onProfileChange: (profile: PermissionProfileId) => void
   onAutoReviewChange: (enabled: boolean) => void
@@ -123,6 +125,7 @@ const ComposerAgentControlsMenu = ({
   grants,
   autoReviewEnabled,
   readOnly = false,
+  grantActionsReadOnly = readOnly,
   autoReviewDisabled = false,
   onProfileChange,
   onAutoReviewChange,
@@ -135,8 +138,8 @@ const ComposerAgentControlsMenu = ({
   const selectedProfile = permissionProfiles.find((candidate) => candidate.id === profile)!
   const SelectedIcon = selectedProfile.icon
   const fullAccessUnavailable = profileState?.fullAccessAvailable === false
-  // Grants only apply while asking for approval; the count pill hints at active always-allows.
-  const hasGrants = profile === 'ask' && (grants?.length ?? 0) > 0
+  // Ask grants stay visible across profile switches so changing Auto/Full never appears to lose them.
+  const hasGrants = (grants?.length ?? 0) > 0
   // Anything other than the defaults (ask + auto-review off) gets a dot on the trigger.
   const isNonDefault = profile !== DEFAULT_PERMISSION_PROFILE || autoReviewEnabled
 
@@ -196,7 +199,7 @@ const ComposerAgentControlsMenu = ({
             {hasGrants ? (
               <span
                 className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-bg-300 px-1 text-[10px] font-medium leading-none text-text-100"
-                aria-label={`${grants!.length} always-allowed this session`}
+                aria-label={`${grants!.length} allowed this conversation`}
               >
                 {grants!.length}
               </span>
@@ -320,14 +323,14 @@ const ComposerAgentControlsMenu = ({
             <div className="mt-1 border-t border-border-200 pt-1">
               <div className="flex items-center justify-between px-2 pb-0.5">
                 <span className="text-[11px] font-medium uppercase tracking-wide text-text-300">
-                  Always allowed this session
+                  Allowed this conversation
                 </span>
                 {/* One-click clear for a long session; swallow the event so the menu stays open. */}
                 <button
                   type="button"
                   className="shrink-0 text-[11px] text-text-300 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-text-300"
-                  aria-label="Clear all always-allow grants"
-                  disabled={readOnly}
+                  aria-label="Clear all conversation grants"
+                  disabled={grantActionsReadOnly}
                   onClick={(event) => {
                     event.preventDefault()
                     event.stopPropagation()
@@ -354,8 +357,8 @@ const ComposerAgentControlsMenu = ({
                     <button
                       type="button"
                       className="flex size-5 shrink-0 items-center justify-center rounded text-text-300 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-text-300"
-                      aria-label={`Revoke always-allow for ${grant.label}`}
-                      disabled={readOnly}
+                      aria-label={`Revoke conversation grant for ${grant.label}`}
+                      disabled={grantActionsReadOnly}
                       onClick={(event) => {
                         event.preventDefault()
                         event.stopPropagation()
