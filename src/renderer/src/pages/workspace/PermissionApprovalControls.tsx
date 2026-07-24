@@ -1,10 +1,12 @@
-import { Check, ChevronDown, ChevronRight } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Info } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { AcpPermissionRequest } from '../../../../shared/acp'
+import type { NotebookSessionRequest } from '../../../../shared/notebook'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { dialogTitleClassName } from '@/components/ui/dialog-chrome'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
@@ -12,6 +14,9 @@ import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 type PermissionApprovalControlsProps = {
   requests: AcpPermissionRequest[]
   onRespond: (requestId: string, optionId?: string) => void
+  // Session locator for the notebook env badge; optional so the controls render standalone
+  // (isolation tests, sessions without notebook context).
+  notebookLookup?: NotebookSessionRequest
 }
 
 type PermissionOption = AcpPermissionRequest['options'][number]
@@ -237,6 +242,112 @@ const getPermissionRiskLabel = (request: AcpPermissionRequest): string => {
   }
 }
 
+// Per-session env-name lookups, cached so every prompt in the same chat reuses a single read.
+// Keyed by sessionId + kernel kind so a python badge and an R badge never share a stale answer.
+const notebookEnvCache = new Map<string, Promise<string | undefined>>()
+
+// Resolves the environment a session's notebook kernels run in: prefer the live kernel matching
+// the requested kind, then any live env, then the most recent run's recorded env. Sessions that
+// never touched the notebook (or have no bridge in tests) resolve to undefined — no badge.
+const lookupNotebookEnvironment = async (
+  request: NotebookSessionRequest,
+  kernelKind: 'python' | 'r'
+): Promise<string | undefined> => {
+  const api = window.api?.notebook
+  if (!api) return undefined
+  try {
+    const state = await api.state(request)
+    const live =
+      state.environments.find((e) => e.kind === kernelKind && e.environment)?.environment ??
+      state.environments.find((e) => e.environment)?.environment
+    if (live) return live
+    for (let i = state.runs.length - 1; i >= 0; i -= 1) {
+      const env = state.runs[i].environment
+      if (env) return env
+    }
+  } catch {
+    /* no notebook for this session yet */
+  }
+  return undefined
+}
+
+const useNotebookEnvironment = (
+  lookup: NotebookSessionRequest | undefined,
+  kernelKind: 'python' | 'r' | undefined
+): string | undefined => {
+  const [envName, setEnvName] = useState<string | undefined>()
+  const lookupKey = lookup ? `${lookup.projectName ?? ''}:${lookup.sessionId}` : undefined
+  useEffect(() => {
+    if (!lookup || !lookupKey || !kernelKind) return
+    let cancelled = false
+    const key = `${lookupKey}:${kernelKind}`
+    let cached = notebookEnvCache.get(key)
+    if (!cached) {
+      cached = lookupNotebookEnvironment(lookup, kernelKind)
+      notebookEnvCache.set(key, cached)
+    }
+    void cached.then((name) => {
+      if (!cancelled) setEnvName(name)
+    })
+    return () => {
+      cancelled = true
+    }
+    // lookup is a fresh object per render; the primitive key is the real dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lookupKey, kernelKind])
+  return kernelKind ? envName : undefined
+}
+
+// Header cluster for notebook prompts: kernel-language badge, the session's bound environment
+// (once the runtime has spawned or recorded one), and an info tooltip that keeps the raw tool
+// identity reachable now that the header shows a friendly question instead of the tool name.
+const NotebookHeaderBadges = ({
+  lookup,
+  language,
+  riskLabel,
+  rawIdentity
+}: {
+  lookup: NotebookSessionRequest | undefined
+  language: string
+  riskLabel: string
+  rawIdentity: string | undefined
+}): React.JSX.Element => {
+  const kernelKind = language === 'python' ? 'python' : language === 'r' ? 'r' : undefined
+  const envName = useNotebookEnvironment(lookup, kernelKind)
+
+  return (
+    <span className="ml-auto flex shrink-0 items-center gap-1.5">
+      <Badge variant="secondary" data-testid="permission-language-badge">
+        {language}
+      </Badge>
+      {envName ? (
+        <Badge variant="secondary" data-testid="permission-env-badge">
+          {envName}
+        </Badge>
+      ) : null}
+      {rawIdentity ? (
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label="Tool details"
+                data-testid="permission-tool-info"
+                className="flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <Info className="size-3.5" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {riskLabel} · {rawIdentity}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      ) : null}
+    </span>
+  )
+}
+
 // Popover listing the two available scope choices.
 const ScopeDropdown = ({
   selected,
@@ -340,7 +451,8 @@ const ScopeDropdown = ({
 
 const PermissionApprovalControls = ({
   requests,
-  onRespond
+  onRespond,
+  notebookLookup
 }: PermissionApprovalControlsProps): React.JSX.Element | null => {
   const [scope, setScope] = useState<PermissionScope>('conversation')
   const [scopeOpen, setScopeOpen] = useState(false)
@@ -396,7 +508,8 @@ const PermissionApprovalControls = ({
   // collapsed into the shell wording: the broker preserves MCP identity even for kind:'execute'
   // tools (e.g. open-science-artifacts_write_artifact_file), and the provider/title is the only
   // place that identity stays visible when there is no code preview.
-  const isNotebook = resolveNotebookToolName(request) !== undefined
+  const notebookToolName = resolveNotebookToolName(request)
+  const isNotebook = notebookToolName !== undefined
   const isShell =
     request.isMcp !== true &&
     (request.toolKind === 'execute' || request.providerToolName === 'Bash')
@@ -422,14 +535,30 @@ const PermissionApprovalControls = ({
     return request.title !== headerName ? request.title : undefined
   })()
 
+  // Kernel language for the notebook header badge: the code preview's language when there is one,
+  // otherwise resolved from the tool identity alone (repl/bash suffixes, python default), so the
+  // badge always agrees with what the code block would highlight.
+  const permLanguage = notebookToolName
+    ? (permCode?.language ?? resolveNotebookLanguage(notebookToolName, undefined, undefined))
+    : undefined
+
   return (
     <div className="mb-2 flex w-full max-w-full flex-col gap-4 rounded-xl border border-border bg-card p-5 text-xs leading-5 text-card-foreground shadow-dialog outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
-      {/* Header: action question + risk label */}
+      {/* Header: action question + risk label (notebook prompts get language/env badges + tooltip) */}
       <div className="flex min-w-0 items-center gap-2">
         <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>{headerTitle}</span>
-        <Badge variant="secondary" className="ml-auto">
-          {getPermissionRiskLabel(request)}
-        </Badge>
+        {notebookToolName && permLanguage ? (
+          <NotebookHeaderBadges
+            lookup={notebookLookup}
+            language={permLanguage}
+            riskLabel={getPermissionRiskLabel(request)}
+            rawIdentity={request.providerToolName ?? request.title}
+          />
+        ) : (
+          <Badge variant="secondary" className="ml-auto">
+            {getPermissionRiskLabel(request)}
+          </Badge>
+        )}
       </div>
 
       {/* Full request title (the target being authorized) when the header alone doesn't show it. */}
@@ -526,6 +655,7 @@ const PermissionApprovalControls = ({
           type="button"
           variant="outline"
           data-testid="deny-button"
+          className="px-4"
           onClick={() => onRespond(request.requestId, denyOptionId)}
         >
           Deny

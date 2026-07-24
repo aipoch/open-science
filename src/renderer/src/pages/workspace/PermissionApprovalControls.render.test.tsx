@@ -317,7 +317,7 @@ describe('PermissionApprovalControls', () => {
       <PermissionApprovalControls requests={[brokerShape]} onRespond={() => undefined} />
     )
     expect(html).toContain('Run notebook cell')
-    expect(html).toContain('Notebook execution</span>')
+    expect(html).toContain('data-testid="permission-tool-info"')
     expect(html).toContain('data-language="python"')
     expect(html).toContain('print(&quot;hi&quot;)')
     // Must not misclassify as a shell command showing the namespaced title.
@@ -341,22 +341,45 @@ describe('PermissionApprovalControls', () => {
       <PermissionApprovalControls requests={[opencodeShape]} onRespond={() => undefined} />
     )
     expect(html).toContain('Run notebook cell')
-    expect(html).toContain('Notebook execution</span>')
+    expect(html).toContain('data-testid="permission-tool-info"')
     expect(html).toContain('data-language="python"')
     expect(html).not.toContain('data-language="bash"')
   })
 
-  it('labels a fully-namespaced notebook request as Notebook execution', () => {
-    // The risk badge must agree with the code-card header for real mcp__<server>__notebook_execute
-    // names, not fall through to the generic MCP label.
+  it('labels a fully-namespaced notebook request with the notebook badge cluster, not MCP', () => {
+    // The header cluster must agree with the code-card header for real
+    // mcp__<server>__notebook_execute names, not fall through to the generic MCP label.
     const html = renderToStaticMarkup(
       <PermissionApprovalControls
         requests={[{ ...notebookPermissionRequest, isMcp: true }]}
         onRespond={() => undefined}
       />
     )
-    expect(html).toContain('Notebook execution</span>')
+    expect(html).toContain('data-testid="permission-language-badge"')
+    expect(html).toContain('data-testid="permission-tool-info"')
     expect(html).not.toContain('MCP tool access</span>')
+  })
+
+  it('shows the kernel language badge for notebook prompts, matching the code highlight', () => {
+    const pythonHtml = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[notebookPermissionRequest]}
+        onRespond={() => undefined}
+      />
+    )
+    expect(pythonHtml).toContain('>python</span>')
+
+    // The badge follows the inferred code language even without an explicit kernel field.
+    const rHtml = renderToStaticMarkup(
+      <PermissionApprovalControls requests={[rNotebookRequest]} onRespond={() => undefined} />
+    )
+    expect(rHtml).toContain('>r</span>')
+
+    // repl_execute pins JavaScript even though its code looks generic.
+    const replHtml = renderToStaticMarkup(
+      <PermissionApprovalControls requests={[replRequest]} onRespond={() => undefined} />
+    )
+    expect(replHtml).toContain('>javascript</span>')
   })
 
   it('renders no code block when rawInput is absent', () => {

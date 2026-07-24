@@ -326,6 +326,15 @@ const ConversationPanel = ({
                 <PermissionApprovalControls
                   requests={pendingPermissions}
                   onRespond={onRespondToPermission}
+                  notebookLookup={
+                    activeSession
+                      ? {
+                          sessionId: activeSession.id,
+                          workspaceCwd: activeSession.cwd ?? '',
+                          projectName: activeSession.projectId
+                        }
+                      : undefined
+                  }
                 />
 
                 {notebookReference || hasAnyJobs ? (
