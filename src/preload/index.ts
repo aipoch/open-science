@@ -59,8 +59,10 @@ import type {
   ExportNotebookKernelRequest,
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
+  ImportNotebookResult,
   NotebookLanguage,
   NotebookRunSummary,
+  OpenJupyterLabResult,
   NotebookSessionReference,
   NotebookSessionRequest,
   NotebookSessionState,
@@ -467,6 +469,8 @@ type OpenScienceAPI = {
     execute: (request: ExecuteNotebookCodeRequest) => Promise<NotebookRunSummary>
     exportIpynb: (request: ExportNotebookKernelRequest) => Promise<ExportNotebookResult>
     exportIpynbAll: (request: ExportNotebookAllRequest) => Promise<ExportNotebookAllResult>
+    importIpynb: (request: NotebookSessionRequest) => Promise<ImportNotebookResult>
+    openInJupyterLab: (request: NotebookSessionRequest) => Promise<OpenJupyterLabResult>
     restart: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
     shutdown: (
       request: NotebookSessionRequest
@@ -952,15 +956,13 @@ const api: OpenScienceAPI = {
     execute: (request) =>
       ipcRenderer.invoke('notebook:execute', request) as Promise<NotebookRunSummary>,
     exportIpynb: (request) =>
-      ipcRenderer.invoke(
-        'notebook:export-ipynb',
-        request
-      ) as Promise<ExportNotebookResult>,
+      ipcRenderer.invoke('notebook:export-ipynb', request) as Promise<ExportNotebookResult>,
     exportIpynbAll: (request) =>
-      ipcRenderer.invoke(
-        'notebook:export-ipynb-all',
-        request
-      ) as Promise<ExportNotebookAllResult>,
+      ipcRenderer.invoke('notebook:export-ipynb-all', request) as Promise<ExportNotebookAllResult>,
+    importIpynb: (request) =>
+      ipcRenderer.invoke('notebook:import-ipynb', request) as Promise<ImportNotebookResult>,
+    openInJupyterLab: (request) =>
+      ipcRenderer.invoke('notebook:open-jupyterlab', request) as Promise<OpenJupyterLabResult>,
     restart: (request) =>
       ipcRenderer.invoke('notebook:restart', request) as Promise<NotebookSessionState>,
     shutdown: (request) =>

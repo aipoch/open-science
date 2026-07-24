@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
-import { readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
@@ -16,11 +16,13 @@ import type {
   ExportNotebookKernelRequest,
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
+  ImportNotebookResult,
   NotebookEnvironmentStatus,
   NotebookKernelMetadata,
   NotebookLanguage,
   NotebookOutput,
   NotebookRunDocument,
+  OpenJupyterLabResult,
   NotebookRunRecord,
   NotebookRunSource,
   NotebookRunStatus,
@@ -41,11 +43,14 @@ import type {
 } from '../../shared/notebook-env'
 import type { PackageMirror } from '../../shared/mirror'
 import {
+  runDocumentToIpynb,
   runDocumentToIpynbByKernel,
   runDocumentToIpynbForKernel,
   type NbformatOutput,
   type ResolvedArtifact
 } from './ipynb-export'
+import { ipynbToRunRecords } from './ipynb-import'
+import { JupyterLabManager } from './jupyterlab'
 import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
 import { saveIpynbAll } from './save-ipynb-all'
 import type { KernelProcessKind } from './kernel-executor'
@@ -335,6 +340,9 @@ type NotebookRuntimeServiceOptions = {
     projectName: string
     sessionId: string
   }) => Promise<string>
+  // Native file-picker seam for notebook import tests.
+  pickIpynb?: () => Promise<string | null>
+  jupyterLabManager?: JupyterLabManager
 }
 
 // The wire binding plus the interpreter override the executor needs. `resolvedInterpreter` is set only
@@ -403,6 +411,16 @@ const saveIpynbWithDialog = async (
   if (canceled || !filePath) return { saved: false }
   await writeFile(filePath, data, 'utf8')
   return { saved: true, filePath }
+}
+
+const pickIpynbWithDialog = async (): Promise<string | null> => {
+  const { dialog } = await import('electron')
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: 'Import notebook',
+    properties: ['openFile'],
+    filters: [{ name: 'Jupyter Notebook', extensions: ['ipynb'] }]
+  })
+  return canceled ? null : (filePaths[0] ?? null)
 }
 
 // Writes one .ipynb per data kernel under a user-picked directory. Used by the "Download all" path;
@@ -885,6 +903,7 @@ class EnvConcurrencyLock {
 // Coordinates notebook cells, shared interpreters, persisted run history, and UI notifications.
 class NotebookRuntimeService {
   private readonly repository: NotebookRunRepository
+  private readonly jupyterLabManager: JupyterLabManager
   private readonly sessions = new Map<string, RuntimeSession>()
   private readonly announcedAgentSessionIds = new Set<string>()
   // Serializes environment management (installs) against kernel runs on the same language's env;
@@ -959,6 +978,7 @@ class NotebookRuntimeService {
 
   constructor(private readonly options: NotebookRuntimeServiceOptions) {
     this.repository = options.repository ?? new NotebookRunRepository(options.dataRoot)
+    this.jupyterLabManager = options.jupyterLabManager ?? new JupyterLabManager()
     this.mcpRpcConnectionResolver = options.getMcpRpcConnection
     this.packageMirrorResolver = options.getPackageMirror
     this.runtimeEnablementResolver = options.getRuntimeEnablement
@@ -2105,6 +2125,112 @@ class NotebookRuntimeService {
     return (this.options.saveIpynbAll ?? saveIpynbAll)(files)
   }
 
+  // Imports code cells as durable, not-yet-executed records and exposes data-kernel cells for rerun.
+  async importIpynb(request: NotebookSessionRequest): Promise<ImportNotebookResult> {
+    const filePath = await (this.options.pickIpynb ?? pickIpynbWithDialog)()
+    if (!filePath) return { imported: false }
+
+    let notebook: unknown
+    try {
+      notebook = JSON.parse(await readFile(filePath, 'utf8')) as unknown
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`Could not read .ipynb: ${message}`)
+    }
+
+    const imported = ipynbToRunRecords(notebook, {
+      createId: randomUUID,
+      importedAt: Date.now()
+    })
+    const session = await this.ensureSession(request)
+    if (imported.runs.length > 0) {
+      await this.repository.appendRuns({
+        projectName: session.projectName,
+        sessionId: session.sessionId,
+        runs: imported.runs
+      })
+      for (const run of imported.runs) {
+        if (run.kernelKind !== 'python' && run.kernelKind !== 'r') continue
+        session.cells.push({
+          id: run.cellId,
+          language: run.kernelKind,
+          code: run.script,
+          status: 'idle',
+          executionCount: run.executionCount,
+          latestRunId: run.runId
+        })
+      }
+      session.executionCount += imported.runs.length
+      this.notifyNotebookChanged(session)
+    }
+
+    return {
+      imported: true,
+      cellCount: imported.runs.length,
+      skippedCellCount: imported.skippedCellCount
+    }
+  }
+
+  // Materializes the current projection inside the session data root, ensures JupyterLab is available
+  // in the session's bound Python runtime, and opens the authenticated local URL it reports.
+  async openInJupyterLab(request: NotebookSessionRequest): Promise<OpenJupyterLabResult> {
+    const session = await this.ensureSession(request)
+    const document = await this.repository.findExisting(session.projectName, session.sessionId)
+    if (!document) {
+      throw new Error(`Notebook session not found: ${request.sessionId}`)
+    }
+
+    const binding = session.runtimeBindings.get('python')
+    if (binding?.status === 'unavailable') {
+      throw new Error('The bound Python runtime is unavailable.')
+    }
+    const environment = this.resolveRunEnv(session, 'python')
+    const interpreter =
+      binding?.source === 'external'
+        ? binding.resolvedInterpreter
+        : {
+            command: pythonBin(envPrefix(getRuntimeRoot(this.options.dataRoot), environment))
+          }
+    if (!interpreter) {
+      throw new Error('The bound Python interpreter could not be resolved.')
+    }
+
+    const artifactOutputs = await resolveNotebookArtifactOutputs(
+      document,
+      this.options.resolveArtifactPath
+    )
+    const notebook = runDocumentToIpynb(document, {
+      appVersion: this.options.appVersion,
+      artifactOutputs
+    })
+    await mkdir(document.dataRoot, { recursive: true })
+    const notebookPath = join(document.dataRoot, `session-${request.sessionId.slice(0, 8)}.ipynb`)
+    await writeFile(notebookPath, `${JSON.stringify(notebook, null, 2)}\n`, 'utf8')
+
+    const launched = await this.jupyterLabManager.launch({
+      sessionId: session.sessionId,
+      command: interpreter.command,
+      commandArgs: interpreter.args,
+      notebookPath,
+      rootDir: document.dataRoot,
+      cwd: document.dataRoot,
+      ensureInstalled: async () => {
+        const result = await this.managePackages({
+          language: 'python',
+          packages: ['jupyterlab'],
+          sessionId: session.sessionId,
+          workspaceCwd: request.workspaceCwd,
+          projectName: session.projectName
+        })
+        if (!result.ok) {
+          throw new Error(result.error || result.log || 'Failed to install JupyterLab.')
+        }
+      }
+    })
+
+    return { opened: true, ...launched }
+  }
+
   // Replaces the interpreter process while preserving cells and durable run history. Prefers the
   // executor's own in-place restart (keeps the same instance, e.g. NotebookKernelExecutor tears down
   // and lazily respawns its loops) and only shuts down + recreates for executors that don't support it.
@@ -2546,6 +2672,7 @@ class NotebookRuntimeService {
     const session = this.sessions.get(request.sessionId)
 
     if (session) {
+      await this.jupyterLabManager.shutdown(request.sessionId)
       await session.executor.shutdown()
       this.sessions.delete(request.sessionId)
     }
@@ -2789,8 +2916,9 @@ class NotebookRuntimeService {
     const results = await Promise.all(
       Array.from(this.sessions.values()).map((session) => session.executor.shutdown())
     )
+    const jupyterResult = await this.jupyterLabManager.shutdownAll()
     this.sessions.clear()
-    return { reaped: results.every((result) => result.reaped) }
+    return { reaped: jupyterResult.reaped && results.every((result) => result.reaped) }
   }
 
   // Lists sessions with a cell mid-execution, for the pre-migration active-session warning.
@@ -2836,7 +2964,19 @@ class NotebookRuntimeService {
       dataRoot: document.dataRoot,
       runtimeRoot: document.kernel.runtimeRoot,
       runJsonPath: getNotebookRunJsonPath(this.options.dataRoot, projectName, request.sessionId),
-      cells: [],
+      cells: document.runs
+        .filter(
+          (run) =>
+            run.status === 'imported' && (run.kernelKind === 'python' || run.kernelKind === 'r')
+        )
+        .map((run) => ({
+          id: run.cellId,
+          language: run.kernelKind as NotebookLanguage,
+          code: run.script,
+          status: 'idle' as const,
+          executionCount: run.executionCount,
+          latestRunId: run.runId
+        })),
       executionCount: document.runs.length,
       executor: this.createExecutor(request.sessionId, projectName),
       executionQueues: new Map(),

@@ -51,6 +51,8 @@ describe('SessionNotebookContent export', () => {
           onClose={vi.fn()}
           onExport={onExport}
           onExportAll={vi.fn()}
+          onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -72,7 +74,10 @@ describe('SessionNotebookContent export', () => {
 
   it('passes the clicked tab kernel to the export callback after switching tabs', async () => {
     const onExport = vi.fn().mockResolvedValue(undefined)
-    const mixedRuns: NotebookRunRecord[] = [run, { ...run, runId: 'r1', kernelKind: 'r', environment: 'default-r' }]
+    const mixedRuns: NotebookRunRecord[] = [
+      run,
+      { ...run, runId: 'r1', kernelKind: 'r', environment: 'default-r' }
+    ]
     await act(async () => {
       root.render(
         <SessionNotebookContent
@@ -82,6 +87,8 @@ describe('SessionNotebookContent export', () => {
           onClose={vi.fn()}
           onExport={onExport}
           onExportAll={vi.fn()}
+          onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -118,6 +125,8 @@ describe('SessionNotebookContent export', () => {
           onClose={vi.fn()}
           onExport={onExport}
           onExportAll={vi.fn()}
+          onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -146,6 +155,8 @@ describe('SessionNotebookContent export', () => {
           onClose={vi.fn()}
           onExport={onExport}
           onExportAll={vi.fn()}
+          onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -172,6 +183,8 @@ describe('SessionNotebookContent export', () => {
           onClose={vi.fn()}
           onExport={failingExport}
           onExportAll={vi.fn()}
+          onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -195,6 +208,8 @@ describe('SessionNotebookContent export', () => {
           onClose={vi.fn()}
           onExport={vi.fn()}
           onExportAll={vi.fn()}
+          onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -204,7 +219,10 @@ describe('SessionNotebookContent export', () => {
 
   it('invokes onExportAll for the "Download all" button on mixed sessions', async () => {
     const onExportAll = vi.fn().mockResolvedValue(undefined)
-    const mixedRuns: NotebookRunRecord[] = [run, { ...run, runId: 'r1', kernelKind: 'r', environment: 'default-r' }]
+    const mixedRuns: NotebookRunRecord[] = [
+      run,
+      { ...run, runId: 'r1', kernelKind: 'r', environment: 'default-r' }
+    ]
     await act(async () => {
       root.render(
         <SessionNotebookContent
@@ -214,6 +232,8 @@ describe('SessionNotebookContent export', () => {
           onClose={vi.fn()}
           onExport={vi.fn()}
           onExportAll={onExportAll}
+          onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -241,6 +261,8 @@ describe('SessionNotebookContent export', () => {
           onClose={vi.fn()}
           onExport={vi.fn()}
           onExportAll={onExportAll}
+          onImport={vi.fn()}
+          onOpenJupyterLab={vi.fn()}
         />
       )
     })
@@ -250,5 +272,64 @@ describe('SessionNotebookContent export', () => {
     )
     expect(allButton).toBeNull()
     expect(onExportAll).not.toHaveBeenCalled()
+  })
+
+  it('invokes import for an empty notebook and surfaces failures', async () => {
+    const onImport = vi.fn().mockRejectedValue(new Error('Invalid notebook'))
+    await act(async () => {
+      root.render(
+        <SessionNotebookContent
+          sessionId="session-1"
+          runs={[]}
+          status="ready"
+          onClose={vi.fn()}
+          onExport={vi.fn()}
+          onExportAll={vi.fn()}
+          onImport={onImport}
+          onOpenJupyterLab={vi.fn()}
+        />
+      )
+    })
+
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Import .ipynb"]')
+    expect(button?.disabled).toBe(false)
+    await act(async () => {
+      button?.click()
+      await Promise.resolve()
+    })
+
+    expect(onImport).toHaveBeenCalledOnce()
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Invalid notebook')
+    expect(button?.disabled).toBe(false)
+  })
+
+  it('opens JupyterLab and surfaces launcher failures', async () => {
+    const onOpenJupyterLab = vi.fn().mockRejectedValue(new Error('Install denied'))
+    await act(async () => {
+      root.render(
+        <SessionNotebookContent
+          sessionId="session-1"
+          runs={[run]}
+          status="ready"
+          onClose={vi.fn()}
+          onExport={vi.fn()}
+          onExportAll={vi.fn()}
+          onImport={vi.fn()}
+          onOpenJupyterLab={onOpenJupyterLab}
+        />
+      )
+    })
+
+    const button = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open in JupyterLab"]'
+    )
+    expect(button?.disabled).toBe(false)
+    await act(async () => {
+      button?.click()
+      await Promise.resolve()
+    })
+
+    expect(onOpenJupyterLab).toHaveBeenCalledOnce()
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Install denied')
   })
 })
