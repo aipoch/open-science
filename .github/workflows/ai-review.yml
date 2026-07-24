@@ -1,8 +1,10 @@
 name: AI PR Review
 
 # Required repository configuration:
-# - Secrets: OPENAI_API_KEY and CODEX_BASE_URL
-#   (the URL may omit the trailing slash or include the full /v1/responses endpoint)
+# - Shared fallback secrets: OPENAI_API_KEY and CODEX_BASE_URL
+# - Reviewer-specific secrets: CODEX_CORRECTNESS_API_KEY / CODEX_CORRECTNESS_BASE_URL and
+#   CODEX_ARCHITECTURE_API_KEY / CODEX_ARCHITECTURE_BASE_URL
+#   (base URLs may omit the trailing slash or include the full /v1/responses endpoint)
 # Set ENABLE_CODEX_REVIEW=false to disable all automated reviewers. Set CODEX_REVIEW_MODE to both,
 # correctness, architecture, or disabled for automatic pull request events (default: correctness).
 # CODEX_REVIEW_MODEL and CODEX_REVIEW_EFFORT provide shared defaults. Override either reviewer with
@@ -257,8 +259,8 @@ jobs:
       model: ${{ vars.CODEX_CORRECTNESS_MODEL || vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}
       effort: ${{ vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_REVIEW_EFFORT || 'high' }}
     secrets:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      CODEX_BASE_URL: ${{ secrets.CODEX_BASE_URL }}
+      OPENAI_API_KEY: ${{ secrets.CODEX_CORRECTNESS_API_KEY || secrets.OPENAI_API_KEY }}
+      CODEX_BASE_URL: ${{ secrets.CODEX_CORRECTNESS_BASE_URL || secrets.CODEX_BASE_URL }}
 
   codex_architecture_review:
     name: Codex architecture review
@@ -280,8 +282,8 @@ jobs:
       model: ${{ vars.CODEX_ARCHITECTURE_MODEL || vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}
       effort: ${{ vars.CODEX_ARCHITECTURE_EFFORT || vars.CODEX_REVIEW_EFFORT || 'high' }}
     secrets:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      CODEX_BASE_URL: ${{ secrets.CODEX_BASE_URL }}
+      OPENAI_API_KEY: ${{ secrets.CODEX_ARCHITECTURE_API_KEY || secrets.OPENAI_API_KEY }}
+      CODEX_BASE_URL: ${{ secrets.CODEX_ARCHITECTURE_BASE_URL || secrets.CODEX_BASE_URL }}
 
   post_codex_correctness_feedback:
     name: Post Codex correctness feedback

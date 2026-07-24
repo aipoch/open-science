@@ -20,6 +20,7 @@ type WorkflowJob = {
   steps?: WorkflowStep[]
   if?: string
   needs?: string | string[]
+  secrets?: Record<string, string>
   uses?: string
   with?: Record<string, string>
   outputs?: Record<string, string>
@@ -407,7 +408,7 @@ describe('dual Codex workflow contract', () => {
     expect(result.summary).toContain('architecture review round 1 (unlimited)')
   })
 
-  it('invokes the reusable Codex workflow twice with independent models and effort', () => {
+  it('invokes the reusable Codex workflow twice with independent backends', () => {
     const correctness = mainWorkflow.jobs.codex_correctness_review
     const architecture = mainWorkflow.jobs.codex_architecture_review
     expect(correctness.uses).toBe('./.github/workflows/ai-codex-review.yml')
@@ -417,10 +418,18 @@ describe('dual Codex workflow contract', () => {
       model: "${{ vars.CODEX_CORRECTNESS_MODEL || vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}",
       effort: "${{ vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_REVIEW_EFFORT || 'high' }}"
     })
+    expect(correctness.secrets).toEqual({
+      OPENAI_API_KEY: '${{ secrets.CODEX_CORRECTNESS_API_KEY || secrets.OPENAI_API_KEY }}',
+      CODEX_BASE_URL: '${{ secrets.CODEX_CORRECTNESS_BASE_URL || secrets.CODEX_BASE_URL }}'
+    })
     expect(architecture.with).toMatchObject({
       scope: 'architecture',
       model: "${{ vars.CODEX_ARCHITECTURE_MODEL || vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}",
       effort: "${{ vars.CODEX_ARCHITECTURE_EFFORT || vars.CODEX_REVIEW_EFFORT || 'high' }}"
+    })
+    expect(architecture.secrets).toEqual({
+      OPENAI_API_KEY: '${{ secrets.CODEX_ARCHITECTURE_API_KEY || secrets.OPENAI_API_KEY }}',
+      CODEX_BASE_URL: '${{ secrets.CODEX_ARCHITECTURE_BASE_URL || secrets.CODEX_BASE_URL }}'
     })
   })
 
