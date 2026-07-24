@@ -9,6 +9,7 @@ import {
   providerValidationFailed
 } from '../../../shared/settings'
 import type { PackageMirror } from '../../../shared/mirror'
+import type { CloseActionPreference } from '../../../shared/window-controls'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import type {
   ClaudeDetectResult,
@@ -135,6 +136,8 @@ type SettingsStoreData = {
   reasoningEffort: ReasoningEffort
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
   notificationsEnabled: boolean
+  // Saved Windows titlebar-close behavior. Undefined means ask every time.
+  closePreference: CloseActionPreference | undefined
   // When true, the settings dialog opens directly to the Compute panel.
   pendingComputePanel?: boolean
 }
@@ -195,6 +198,7 @@ type SettingsStore = SettingsStoreData & {
   setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
   // Toggles desktop notifications for finished/failed agent tasks; applies immediately.
   setNotificationsEnabled: (enabled: boolean) => Promise<void>
+  setClosePreference: (preference: CloseActionPreference | undefined) => Promise<void>
   deleteProvider: (providerId: string) => Promise<void>
   openSettings: () => void
   closeSettings: () => void
@@ -332,6 +336,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   packageMirror: undefined,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
+  closePreference: undefined,
   pendingComputePanel: undefined
 })
 
@@ -347,6 +352,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   // Defensive: main always fills this, but an untyped snapshot (tests, older backends) must not
   // write undefined into the boolean preference.
   notificationsEnabled: snapshot.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
+  closePreference: snapshot.closePreference,
   agentFrameworkId: snapshot.agentFrameworkId,
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,
@@ -878,6 +884,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     } catch (error) {
       set({ notificationsEnabled: previous })
       console.error('Failed to set notifications enabled', error)
+    }
+  },
+
+  setClosePreference: async (preference) => {
+    const previous = get().closePreference
+    set({ closePreference: preference })
+
+    try {
+      set(applySnapshot(await window.api.settings.setClosePreference({ preference })))
+    } catch (error) {
+      set({ closePreference: previous })
+      console.error('Failed to set close preference', error)
     }
   },
 

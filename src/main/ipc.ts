@@ -152,6 +152,7 @@ const registerIpcHandlers = async ({
   notebook: ReturnType<typeof createDefaultNotebookRuntimeService>
   shutdownCoordinator: BackendShutdownCoordinator
   taskNotifications: TaskNotificationService
+  settingsService: SettingsService
 }> => {
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsService = createDefaultSettingsService()
@@ -627,7 +628,13 @@ const registerIpcHandlers = async ({
 
   // Return the long-lived backend handles so the app lifecycle (before-quit) can shut them down
   // cleanly on quit — the agent process tree and every notebook kernel.
-  return { runtime, notebook: notebookService, shutdownCoordinator, taskNotifications }
+  return {
+    runtime,
+    notebook: notebookService,
+    shutdownCoordinator,
+    taskNotifications,
+    settingsService
+  }
 }
 
 export { registerIpcHandlers }

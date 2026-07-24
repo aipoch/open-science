@@ -36,6 +36,7 @@ type FakeSettingsService = Record<
   | 'setAgentFramework'
   | 'setReasoningEffort'
   | 'setNotificationsEnabled'
+  | 'setClosePreference'
   | 'upsertProvider'
   | 'deleteProvider'
   | 'setActiveProvider'
@@ -92,6 +93,9 @@ const createFakeService = (): FakeSettingsService => ({
   setNotificationsEnabled: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], notificationsEnabled: false }),
+  setClosePreference: vi
+    .fn()
+    .mockResolvedValue({ claude: {}, providers: [], closePreference: 'quit' }),
   upsertProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   deleteProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   setActiveProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
@@ -660,6 +664,21 @@ describe('settings IPC handlers', () => {
       'Invalid notifications-enabled flag'
     )
     expect(service.setNotificationsEnabled).not.toHaveBeenCalled()
+  })
+
+  it('persists valid close preferences and rejects unknown values', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    registerSettingsIpcHandlers({ service: asService(service) })
+
+    await invoke('settings:set-close-preference', { preference: 'quit' })
+    await invoke('settings:set-close-preference', {})
+
+    expect(service.setClosePreference).toHaveBeenNthCalledWith(1, 'quit')
+    expect(service.setClosePreference).toHaveBeenNthCalledWith(2, undefined)
+    await expect(invoke('settings:set-close-preference', { preference: 'close' })).rejects.toThrow(
+      'Invalid close preference'
+    )
   })
 
   it('surfaces a service error thrown by install-opencode', async () => {

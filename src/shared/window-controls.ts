@@ -89,6 +89,9 @@ export type CloseConfirmVariant = 'close-to-tray' | 'quit'
 // 'minimize' only occurs for the 'close-to-tray' variant; 'cancel' keeps the app/window as-is.
 export type CloseConfirmChoice = 'quit' | 'minimize' | 'cancel'
 
+// Saved behavior for the Windows titlebar close action. Undefined means ask every time.
+export type CloseActionPreference = Extract<CloseConfirmChoice, 'quit' | 'minimize'>
+
 export type CloseConfirmRequest = {
   requestId: string
   variant: CloseConfirmVariant
@@ -96,8 +99,10 @@ export type CloseConfirmRequest = {
 }
 
 // ack:true when the modal mounts (proves the renderer is alive); choice set when the user decides.
+// remember is only meaningful for close-to-tray choices.
 export type CloseConfirmResponse = {
   requestId: string
   ack?: boolean
   choice?: CloseConfirmChoice
+  remember?: boolean
 }
