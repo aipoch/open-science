@@ -6,20 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PreviewUnsupportedContent } from './previews/PreviewFallback'
 import { PreviewImageContent } from './previews/renderers/ImagePreview'
 
-// react-zoom-pan-pinch constructs a ResizeObserver on mount; jsdom doesn't provide one.
-if (!(globalThis as { ResizeObserver?: unknown }).ResizeObserver) {
-  ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
-    observe(): void {
-      /* no-op shim for zoom/pan layout measurement in jsdom */
-    }
-    unobserve(): void {
-      /* no-op */
-    }
-    disconnect(): void {
-      /* no-op */
-    }
-  }
-}
+// ResizeObserver (needed by react-zoom-pan-pinch) is polyfilled globally in test/setup-jsdom-polyfills.ts.
 
 describe('PreviewUnsupportedContent', () => {
   let container: HTMLDivElement
