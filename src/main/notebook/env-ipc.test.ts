@@ -7,6 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Capture ipcMain.handle registrations so registerNotebookEnvIpcHandlers can be exercised headless.
 const registered = new Map<string, (event: unknown, ...args: unknown[]) => unknown>()
 const sentProgress: ProvisionProgress[] = []
+const loggerSpies = vi.hoisted(() => ({
+  info: vi.fn(),
+  error: vi.fn()
+}))
 vi.mock('electron', () => ({
   ipcMain: { handle: (channel: string, handler: never) => registered.set(channel, handler) },
   BrowserWindow: {
@@ -20,6 +24,18 @@ vi.mock('electron', () => ({
     ]
   }
 }))
+vi.mock('../logger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../logger')>()
+  return {
+    ...actual,
+    createLogger: () => ({
+      debug: vi.fn(),
+      info: loggerSpies.info,
+      warn: vi.fn(),
+      error: loggerSpies.error
+    })
+  }
+})
 
 import type { ProvisionProgress, RuntimeProvisioner } from './provisioner'
 import {
@@ -291,6 +307,8 @@ describe('registerNotebookEnvIpcHandlers', () => {
   beforeEach(() => {
     registered.clear()
     sentProgress.length = 0
+    loggerSpies.info.mockReset()
+    loggerSpies.error.mockReset()
   })
   afterEach(() => {
     registered.clear()
@@ -337,6 +355,126 @@ describe('registerNotebookEnvIpcHandlers', () => {
       { phase: 'fetch-r', message: 'Downloading R', progress: 0.4, scope: 'r' },
       { phase: 'repair', message: 'Repairing Python', progress: 0.2, scope: 'python' }
     ])
+  })
+
+  it('logs a provision failure with diagnostics and rethrows the original error', async () => {
+    const failure = Object.assign(new Error('micromamba timed out after 600000ms'), {
+      code: 'MICROMAMBA_TIMEOUT',
+      data: { timeoutMs: 600_000, offline: true }
+    })
+    const provisioner = fakeProvisioner({
+      provisionPython: vi.fn().mockRejectedValue(failure)
+    })
+    registerNotebookEnvIpcHandlers(provisioner, 'F:\\openScience\\data\\OpenScience\\runtime')
+
+    await expect(registered.get('notebook-env:provision')?.({}, 'python')).rejects.toBe(failure)
+
+    expect(loggerSpies.error).toHaveBeenCalledOnce()
+    const [message, fields] = loggerSpies.error.mock.calls[0] as [string, Record<string, unknown>]
+    expect(message).toBe('runtime operation failed')
+    expect(fields).toMatchObject({
+      operation: 'provision',
+      language: 'python',
+      root: 'F:\\openScience\\data\\OpenScience\\runtime',
+      error: 'micromamba timed out after 600000ms',
+      code: 'MICROMAMBA_TIMEOUT',
+      data: { timeoutMs: 600_000, offline: true }
+    })
+    expect(fields.operationId).toEqual(expect.any(String))
+    expect(fields.durationMs).toEqual(expect.any(Number))
+  })
+
+  it('redacts credentials from persisted runtime diagnostics without changing the thrown error', async () => {
+    const channel = 'https://user:basic-secret@example.com/t/path-secret/conda?token=query-secret'
+    const failure = Object.assign(new Error(`micromamba timed out (${channel})`), {
+      code: 'MICROMAMBA_TIMEOUT',
+      data: {
+        argv: ['micromamba', '-c', channel],
+        stderrTail: 'api_key=stderr-secret',
+        stdoutTail: 'Bearer stdout-secret'
+      }
+    })
+    const provisioner = fakeProvisioner({
+      provisionPython: vi
+        .fn()
+        .mockImplementation(async (report: (p: ProvisionProgress) => void) => {
+          report({ phase: 'fetch-python', message: `Retrying ${channel}`, progress: 0.1 })
+          throw failure
+        })
+    })
+    registerNotebookEnvIpcHandlers(provisioner, '/runtime')
+
+    await expect(registered.get('notebook-env:provision')?.({}, 'python')).rejects.toBe(failure)
+
+    const persisted = JSON.stringify({
+      info: loggerSpies.info.mock.calls,
+      error: loggerSpies.error.mock.calls
+    })
+    for (const secret of [
+      'basic-secret',
+      'path-secret',
+      'query-secret',
+      'stderr-secret',
+      'stdout-secret'
+    ]) {
+      expect(persisted).not.toContain(secret)
+    }
+    expect(persisted).toContain('[redacted]')
+    expect(failure.message).toContain('basic-secret')
+  })
+
+  it('logs operation lifecycle and phase changes without logging every download chunk', async () => {
+    const provisioner = fakeProvisioner({
+      provisionPython: vi
+        .fn()
+        .mockImplementation(async (report: (p: ProvisionProgress) => void) => {
+          report({ phase: 'fetch-python', message: 'Downloading Python (10%)', progress: 0.1 })
+          report({ phase: 'fetch-python', message: 'Downloading Python (20%)', progress: 0.2 })
+          report({
+            phase: 'fetch-python',
+            message: 'Downloading Python (resuming…)',
+            progress: 0.2,
+            download: {
+              phase: 'reconnecting',
+              transferred: 20,
+              total: 100,
+              percent: 20,
+              bytesPerSecond: 0,
+              attempt: 1
+            }
+          })
+          report({ phase: 'create-python', message: 'Creating Python', progress: 0.45 })
+        })
+    })
+    registerNotebookEnvIpcHandlers(provisioner, '/runtime')
+
+    await registered.get('notebook-env:provision')?.({}, 'python')
+
+    expect(loggerSpies.info.mock.calls.map(([message]) => message)).toEqual([
+      'runtime operation started',
+      'runtime operation progress',
+      'runtime operation progress',
+      'runtime operation progress',
+      'runtime operation completed'
+    ])
+    const progressFields = loggerSpies.info.mock.calls
+      .filter(([message]) => message === 'runtime operation progress')
+      .map(([, fields]) => fields as Record<string, unknown>)
+    expect(progressFields).toMatchObject([
+      { phase: 'fetch-python', message: 'Downloading Python (10%)' },
+      {
+        phase: 'fetch-python',
+        message: 'Downloading Python (resuming…)',
+        download: { phase: 'reconnecting', attempt: 1, transferred: 20, total: 100 }
+      },
+      { phase: 'create-python', message: 'Creating Python' }
+    ])
+    const operationIds = new Set(
+      loggerSpies.info.mock.calls.map(
+        ([, fields]) => (fields as { operationId: string }).operationId
+      )
+    )
+    expect(operationIds.size).toBe(1)
   })
 })
 

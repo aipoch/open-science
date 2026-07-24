@@ -139,6 +139,7 @@ export const runMicromamba = (
     let timedOut = false
     let cancelled = false
     let settled = false
+    const startedAt = Date.now()
     const appendTail = (current: string, chunk: unknown): string =>
       `${current}${String(chunk)}`.slice(-maxTail)
     child.stdout.on('data', (chunk) => {
@@ -217,11 +218,25 @@ export const runMicromamba = (
       }
       const tails = output()
       if (timedOut) {
-        reject(
+        const timeoutError = Object.assign(
           new Error(
             `micromamba timed out after ${timeoutMs}ms (${argv.join(' ')})${tails ? `:\n${tails}` : ''}`
-          )
+          ),
+          {
+            code: 'MICROMAMBA_TIMEOUT',
+            data: {
+              argv,
+              cachePath: env?.CONDA_PKGS_DIRS,
+              durationMs: Date.now() - startedAt,
+              offline: argv.includes('--offline'),
+              pid: child.pid,
+              stderrTail: stderr,
+              stdoutTail: stdout,
+              timeoutMs
+            }
+          }
         )
+        reject(timeoutError)
         return
       }
       if (code === 0) {

@@ -89,6 +89,42 @@ describe('runMicromamba', () => {
     ).rejects.toThrow(/timed out[^]*timeout-stderr-token/i)
   })
 
+  it('attaches structured offline-create diagnostics to a timeout', async () => {
+    const argv = [
+      process.execPath,
+      '-e',
+      'process.stdout.write(process.env.MM_TIMEOUT_TOKEN); setInterval(() => {}, 1000)',
+      '--',
+      '--offline'
+    ]
+
+    await expect(
+      runMicromamba(
+        argv,
+        {
+          MM_TIMEOUT_TOKEN: 'timeout-stdout-token',
+          CONDA_PKGS_DIRS: 'C:\\Users\\test\\os12345678'
+        },
+        undefined,
+        undefined,
+        undefined,
+        200
+      )
+    ).rejects.toMatchObject({
+      code: 'MICROMAMBA_TIMEOUT',
+      data: {
+        argv,
+        cachePath: 'C:\\Users\\test\\os12345678',
+        durationMs: expect.any(Number),
+        offline: true,
+        pid: expect.any(Number),
+        stderrTail: '',
+        stdoutTail: 'timeout-stdout-token',
+        timeoutMs: 200
+      }
+    })
+  })
+
   it('distinguishes user cancellation from timeout and non-zero exit', async () => {
     const abort = new AbortController()
     const running = runMicromamba(
