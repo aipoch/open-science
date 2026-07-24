@@ -1,0 +1,109 @@
+name: Reusable AI Review Publisher
+
+on:
+  workflow_call:
+    inputs:
+      scope:
+        required: true
+        type: string
+      marker:
+        required: true
+        type: string
+      header:
+        required: true
+        type: string
+      review_body:
+        required: true
+        type: string
+      pull_request_number:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
+      max_rounds:
+        required: true
+        type: string
+    outputs:
+      posted:
+        description: Whether the review comment was published
+        value: ${{ jobs.publish.outputs.posted }}
+
+jobs:
+  publish:
+    name: Publish ${{ inputs.header }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: codex-review-post-${{ inputs.pull_request_number }}-${{ inputs.scope }}
+      cancel-in-progress: false
+    outputs:
+      posted: ${{ steps.post.outputs.posted }}
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Post Codex review
+        id: post
+        uses: actions/github-script@v8
+        env:
+          REVIEW_BODY: ${{ inputs.review_body }}
+          REVIEW_HEADER: ${{ inputs.header }}
+          REVIEW_MARKER: ${{ inputs.marker }}
+          PR_NUMBER: ${{ inputs.pull_request_number }}
+          REVIEW_HEAD_SHA: ${{ inputs.head_sha }}
+          REVIEW_RUN_ID: ${{ github.run_id }}
+          CODEX_REVIEW_MAX_ROUNDS: ${{ inputs.max_rounds }}
+        with:
+          github-token: ${{ github.token }}
+          retries: 3
+          script: |
+            const marker = process.env.REVIEW_MARKER;
+            const header = process.env.REVIEW_HEADER;
+            const provenance =
+              `<!-- ai-review-meta head=${process.env.REVIEW_HEAD_SHA} run=${process.env.REVIEW_RUN_ID} -->`;
+            const maxReviewsText = process.env.CODEX_REVIEW_MAX_ROUNDS;
+            if (!marker || !header) throw new Error('Review marker and header are required.');
+            if (!/^\d+$/.test(maxReviewsText)) {
+              throw new Error('CODEX_REVIEW_MAX_ROUNDS must be a non-negative integer.');
+            }
+            const maxReviews = Number(maxReviewsText);
+            if (!Number.isSafeInteger(maxReviews)) {
+              throw new Error('CODEX_REVIEW_MAX_ROUNDS is too large.');
+            }
+
+            const issueNumber = Number(process.env.PR_NUMBER);
+            const { data: currentPullRequest } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: issueNumber,
+            });
+            if (currentPullRequest.head.sha !== process.env.REVIEW_HEAD_SHA) {
+              core.notice('Skipping Codex feedback: a newer pull request commit exists.');
+              core.setOutput('posted', 'false');
+              return;
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const reviewCount = comments.filter(
+              ({ body, user }) =>
+                user?.login === 'github-actions[bot]' &&
+                (body?.includes(marker) || body?.includes(header)),
+            ).length;
+            if (maxReviews > 0 && reviewCount >= maxReviews) {
+              core.notice(`Skipping Codex feedback: review limit ${maxReviews} reached.`);
+              core.setOutput('posted', 'false');
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: `${marker}\n${provenance}\n${process.env.REVIEW_BODY}`,
+            });
+            core.setOutput('posted', 'true');
