@@ -482,9 +482,17 @@ describe('AI review workflow contract', () => {
     expect(reviewStep.run).toContain('--mcp-config "$CLAUDE_MCP_CONFIG_FILE"')
   })
 
-  it('streams Codex JSON events so turn usage is visible in the action log', () => {
-    const argsStep = getNamedStep('codex_review', 'Build Codex review arguments')
-    expect(argsStep.run).toContain('"--json"')
+  it('captures Codex JSON events for an always-run telemetry report', () => {
+    const reviewStep = getNamedStep('codex_review', 'Run Codex correctness review')
+    const telemetryStep = getNamedStep('codex_review', 'Report Codex review telemetry')
+
+    expect(reviewStep.run).toContain('--json')
+    expect(reviewStep.run).toContain('| tee "$execution_file"')
+    expect(telemetryStep.if).toBe('${{ always() }}')
+    expect(telemetryStep.run).toContain('Codex turns:')
+    expect(telemetryStep.run).toContain('reasoning_output_tokens')
+    expect(telemetryStep.run).toContain('Observed item types')
+    expect(telemetryStep.run).toContain('GITHUB_STEP_SUMMARY')
   })
 
   it('reports Claude per-turn usage and hook lifecycle counts', () => {
@@ -572,14 +580,90 @@ describe('AI review workflow contract', () => {
     expect(summaryText).toContain('- `SubagentStart`: 1')
   })
 
+  it('reports Codex turns, token usage, and unique tool calls', () => {
+    const root = createFixtureRoot('ai-review-codex-telemetry-')
+    const executionFile = join(root, 'execution.jsonl')
+    const summary = join(root, 'summary.md')
+    writeJsonLines(executionFile, [
+      { type: 'thread.started', thread_id: 'thread-1' },
+      { type: 'turn.started' },
+      {
+        type: 'item.started',
+        item: { id: 'command-1', type: 'command_execution', status: 'in_progress' }
+      },
+      {
+        type: 'item.completed',
+        item: { id: 'command-1', type: 'command_execution', status: 'completed' }
+      },
+      {
+        type: 'item.completed',
+        item: { id: 'mcp-1', type: 'mcp_tool_call', status: 'completed' }
+      },
+      {
+        type: 'item.completed',
+        item: { id: 'reasoning-1', type: 'reasoning', status: 'completed' }
+      },
+      {
+        type: 'turn.completed',
+        usage: {
+          input_tokens: 100,
+          cached_input_tokens: 80,
+          output_tokens: 20,
+          reasoning_output_tokens: 5
+        }
+      },
+      { type: 'turn.started' },
+      {
+        type: 'item.started',
+        item: { id: 'web-1', type: 'web_search', status: 'in_progress' }
+      },
+      {
+        type: 'item.failed',
+        item: { id: 'web-1', type: 'web_search', status: 'failed' }
+      },
+      { type: 'error', message: 'request failed' },
+      { type: 'turn.failed', error: { message: 'request failed' } }
+    ])
+
+    const result = spawnSync('bash', ['-c', getRunStep('codex_review', 'codex_telemetry')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        CODEX_EFFORT: 'high',
+        CODEX_MODEL: 'gpt-5.6-sol',
+        DURATION_SECONDS: '7',
+        EXECUTION_FILE: executionFile,
+        GITHUB_STEP_SUMMARY: summary
+      }
+    })
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.stdout).toContain('Codex turns: started=2, completed=1, failed=1')
+    expect(result.stdout).toContain(
+      'Codex items: unique=4, tool_calls=3, started=2, completed=3, failed=1'
+    )
+    expect(result.stdout).toContain(
+      'Codex tokens: input=100, cached_input=80, output=20, reasoning_output=5'
+    )
+    expect(result.stdout).toContain('command_execution: 1')
+    const summaryText = readFileSync(summary, 'utf8')
+    expect(summaryText).toContain('| 1 | 100 | 80 | 20 | 5 |')
+    expect(summaryText).toContain('| `mcp_tool_call` | 1 |')
+    expect(summaryText).toContain(
+      'Tokens: 100 input; 80 cached input; 20 output; 5 reasoning output'
+    )
+    expect(summaryText).toContain('Responses API request count: not exposed')
+  })
+
   it('keeps both reviewers on static code inspection instead of running project checks', () => {
     const claudePrompt = getRunStep('claude_review', 'context')
-    const codexStep = getNamedStep('codex_review', 'Run Codex correctness review')
+    const codexPrompt = getRunStep('codex_review', 'codex_args')
     const prohibitedChecks = ['install dependencies', 'lint', 'tests', 'typecheck', 'build']
 
     for (const check of prohibitedChecks) {
       expect(claudePrompt).toContain(check)
-      expect(codexStep.with?.prompt).toContain(check)
+      expect(codexPrompt).toContain(check)
     }
   })
 
@@ -666,7 +750,7 @@ exit 1
   })
 
   it('allows Codex non-write actors only for explicitly automatic fork reviews', () => {
-    const codexStep = getNamedStep('codex_review', 'Run Codex correctness review')
+    const codexStep = getNamedStep('codex_review', 'Prepare Codex review runtime')
     const automaticForkExpression =
       "${{ needs.review_target.outputs.is_fork == 'true' && needs.review_target.outputs.fork_mode == 'automatic' && '*' || '' }}"
 
@@ -978,22 +1062,102 @@ exit 1
   })
 
   it('runs structured Codex exec through the action proxy and read-only permission profile', () => {
-    const step = getNamedStep('codex_review', 'Run Codex correctness review')
+    const prepareStep = getNamedStep('codex_review', 'Prepare Codex review runtime')
+    const reviewStep = getNamedStep('codex_review', 'Run Codex correctness review')
 
     expect(parsedWorkflow.jobs.codex_review['timeout-minutes']).toBe(30)
-    expect(step.uses).toBe('openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56')
-    expect(step.with).toMatchObject({
+    expect(prepareStep.uses).toBe('openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56')
+    expect(prepareStep.with).toMatchObject({
       'openai-api-key': '${{ secrets.OPENAI_API_KEY }}',
       'responses-api-endpoint': '${{ steps.responses_endpoint.outputs.url }}',
-      model: "${{ vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}",
-      effort: "${{ vars.CODEX_REVIEW_EFFORT || 'high' }}",
-      'permission-profile': ':read-only',
-      'codex-args': '${{ steps.codex_args.outputs.value }}',
-      'output-schema-file': '${{ steps.codex_args.outputs.schema_file }}'
+      'codex-home': '${{ runner.temp }}/codex-home'
     })
-    expect(step.with).not.toHaveProperty('sandbox')
-    expect(step.with?.prompt).toContain('Return the review through the required JSON schema')
-    expect(reviewWorkflow).not.toContain('codex-responses-api-proxy')
+    expect(prepareStep.with).not.toHaveProperty('prompt')
+    expect(reviewStep.env).toMatchObject({
+      CODEX_HOME: '${{ runner.temp }}/codex-home',
+      CODEX_MODEL: "${{ vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}",
+      CODEX_EFFORT: "${{ vars.CODEX_REVIEW_EFFORT || 'high' }}"
+    })
+    expect(reviewStep.env).not.toHaveProperty('OPENAI_API_KEY')
+    expect(reviewStep.run).toContain('codex exec')
+    expect(reviewStep.run).toContain('--output-schema "$CODEX_SCHEMA_FILE"')
+    expect(reviewStep.run).toContain('--config \'default_permissions=":read-only"\'')
+    expect(reviewStep.run).toContain('--ephemeral')
+    expect(reviewStep.run).toContain('--ignore-rules')
+    expect(reviewStep.run).toContain('--json')
+    expect(reviewWorkflow).not.toContain('npm install -g "@openai/codex-responses-api-proxy')
+  })
+
+  it('captures Codex JSONL while preserving the structured final message', () => {
+    const root = createFixtureRoot('ai-review-codex-exec-')
+    const binDir = join(root, 'bin')
+    const captureArgs = join(root, 'args.json')
+    const captureStdin = join(root, 'stdin.txt')
+    const githubOutput = join(root, 'github-output')
+    const instructionsFile = join(root, 'instructions.txt')
+    const promptFile = join(root, 'prompt.txt')
+    const schemaFile = join(root, 'schema.json')
+    mkdirSync(binDir)
+    writeFileSync(instructionsFile, 'Review with repository standards.\n')
+    writeFileSync(promptFile, 'Review this pull request.\n')
+    writeFileSync(schemaFile, '{}\n')
+    writeExecutable(
+      join(binDir, 'codex'),
+      `#!/usr/bin/env bash
+set -euo pipefail
+jq -cn --args '$ARGS.positional' -- "$@" > "$CODEX_CAPTURE_ARGS"
+args=("$@")
+output_file=''
+for (( index = 0; index < \${#args[@]}; index++ )); do
+  if [[ "\${args[index]}" == '--output-last-message' ]]; then
+    output_file="\${args[index + 1]}"
+  fi
+done
+[[ -n "$output_file" ]]
+cat > "$CODEX_CAPTURE_STDIN"
+printf '%s' '{"verdict":"mergeable","summary":"No issues found.","findings":[]}' > "$output_file"
+printf '%s\n' \\
+  '{"type":"thread.started","thread_id":"thread-1"}' \\
+  '{"type":"turn.started"}' \\
+  '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":8,"output_tokens":2,"reasoning_output_tokens":1}}'
+`
+    )
+
+    const result = spawnSync('bash', ['-c', getRunStep('codex_review', 'run_codex')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH}`,
+        CODEX_CAPTURE_ARGS: captureArgs,
+        CODEX_CAPTURE_STDIN: captureStdin,
+        CODEX_EFFORT: 'high',
+        CODEX_HOME: join(root, 'codex-home'),
+        CODEX_INSTRUCTIONS_FILE: instructionsFile,
+        CODEX_MODEL: 'gpt-5.6-sol',
+        CODEX_PROMPT_FILE: promptFile,
+        CODEX_SCHEMA_FILE: schemaFile,
+        GITHUB_OUTPUT: githubOutput,
+        GITHUB_WORKSPACE: root,
+        RUNNER_TEMP: root
+      }
+    })
+
+    expect(result.status, result.stderr).toBe(0)
+    const args = JSON.parse(readFileSync(captureArgs, 'utf8')) as string[]
+    expect(args).toContain('--json')
+    expect(args).toContain('--ephemeral')
+    expect(args).toContain('default_permissions=":read-only"')
+    expect(args).toContain('model_reasoning_effort="high"')
+    expect(args.some((arg) => arg.startsWith('developer_instructions="Review with'))).toBe(true)
+    expect(readFileSync(captureStdin, 'utf8')).toBe('Review this pull request.\n')
+    expect(readFileSync(join(root, 'codex-execution.jsonl'), 'utf8')).toContain(
+      '"type":"turn.completed"'
+    )
+    const outputs = readFileSync(githubOutput, 'utf8')
+    expect(outputs).toContain('duration_seconds=')
+    expect(outputs).toContain('final-message<<CODEX_REVIEW_EOF_')
+    expect(outputs).toContain('"verdict":"mergeable"')
   })
 
   it('builds a generic structured codex exec invocation', () => {
@@ -1005,34 +1169,32 @@ exit 1
       env: {
         ...process.env,
         RUNNER_TEMP: root,
+        PR_DIFF_BASE: 'base-sha',
         PR_BRANCH: 'ci/reviewer-dispatch-selector',
         PR_TITLE: 'ci(review): allow selecting a dispatched reviewer',
+        REVIEW_SHA: 'review-sha',
         GITHUB_OUTPUT: githubOutput
       }
     })
 
     expect(result.status, result.stderr).toBe(0)
-    const outputLines = readFileSync(githubOutput, 'utf8').trim().split('\n')
-    const args = JSON.parse(outputLines[0]!.slice('value='.length)) as string[]
-    expect(args).not.toContain('review')
-    expect(args).not.toContain('--base')
-    expect(args).not.toContain('--output-schema')
-    expect(args).not.toContain('--title')
-    expect(args).not.toContain('-')
-    // codex-action writes its proxy route to the isolated CODEX_HOME config.
-    expect(args).not.toContain('--ignore-user-config')
-    const schemaFile = outputLines[1]!.slice('schema_file='.length)
+    const outputs = readSimpleOutputs(githubOutput)
+    const schemaFile = outputs.schema_file
     const schema = JSON.parse(readFileSync(schemaFile, 'utf8')) as {
       required: string[]
       properties: Record<string, unknown>
     }
     expect(schema.required).toEqual(['verdict', 'summary', 'findings'])
     expect(schema.properties).toHaveProperty('findings')
-    const instructions = args.find((arg) => arg.startsWith('developer_instructions='))
+    const instructions = readFileSync(outputs.instructions_file, 'utf8')
     expect(instructions).toContain('Branch name valid: true')
     expect(instructions).toContain('Pull request title valid: true')
     expect(instructions).not.toContain('ci/reviewer-dispatch-selector')
     expect(instructions).not.toContain('allow selecting a dispatched reviewer')
+    const prompt = readFileSync(outputs.prompt_file, 'utf8')
+    expect(prompt).toContain('base: base-sha')
+    expect(prompt).toContain('review: review-sha')
+    expect(prompt).toContain('Return the review through the required JSON schema')
   })
 
   it('formats a schema-validated Codex approval with an explicit no-findings verdict', async () => {

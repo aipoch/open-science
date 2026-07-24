@@ -868,12 +868,15 @@ jobs:
       - name: Build Codex review arguments
         id: codex_args
         env:
+          PR_DIFF_BASE: ${{ steps.diff_base.outputs.sha }}
           PR_BRANCH: ${{ needs.review_target.outputs.head_ref }}
           PR_TITLE: ${{ needs.review_target.outputs.title }}
+          REVIEW_SHA: ${{ needs.review_target.outputs.review_sha }}
         shell: bash
         run: |
           set -euo pipefail
           instructions_file="$RUNNER_TEMP/codex-review-instructions.txt"
+          prompt_file="$RUNNER_TEMP/codex-review-prompt.txt"
           schema_file="$RUNNER_TEMP/codex-review-schema.json"
 
           branch_valid=false
@@ -898,6 +901,27 @@ jobs:
             echo 'tests, typecheck, build, package-manager commands, repository scripts, or project'
             echo 'executables. Read test source files when needed to understand expected behavior.'
           } > "$instructions_file"
+
+          {
+            echo 'Review only the changes introduced by this pull request. Inspect the checked-out'
+            echo 'repository, diff, callers, tests, and configuration as needed. Focus on actionable'
+            echo 'correctness, security, regression, and repository-standard defects.'
+            echo
+            echo 'Perform static code inspection only. Do not install dependencies or run lint, tests,'
+            echo 'typecheck, build, package-manager commands, repository scripts, or project executables.'
+            echo 'Reading test source files is encouraged when it clarifies expected behavior.'
+            echo
+            echo 'The exact pull request changes are between these commits:'
+            printf '  base: %s\n' "$PR_DIFF_BASE"
+            printf '  review: %s\n' "$REVIEW_SHA"
+            echo "Start with \`git diff --stat <base> HEAD\` and \`git diff <base> HEAD\`, substituting the"
+            echo 'base commit above, then inspect relevant files and callers as needed.'
+            echo
+            echo 'Return the review through the required JSON schema. Use "needs changes" exactly when'
+            echo 'findings is non-empty, and "mergeable" exactly when findings is empty. Every finding'
+            echo 'must include its P0-P3 priority, concise title, repository-relative path, start line,'
+            echo 'concrete impact, and recommendation. Do not put findings only in the summary.'
+          } > "$prompt_file"
 
           jq -n '
             {
@@ -935,54 +959,253 @@ jobs:
             }
           ' > "$schema_file"
 
-          args="$(
-            jq -cn \
-              --rawfile instructions "$instructions_file" \
-              '[
-                "--ephemeral",
-                "--ignore-rules",
-                "--json",
-                "--config",
-                ("developer_instructions=" + ($instructions | tojson))
-              ]'
-          )"
-          echo "value=$args" >> "$GITHUB_OUTPUT"
-          echo "schema_file=$schema_file" >> "$GITHUB_OUTPUT"
+          {
+            echo "instructions_file=$instructions_file"
+            echo "prompt_file=$prompt_file"
+            echo "schema_file=$schema_file"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Run Codex correctness review
-        id: run_codex
+      # The pinned action prepares the authenticated Responses API proxy, isolated CODEX_HOME,
+      # actor checks, bubblewrap prerequisites, and dropped-sudo runtime. Codex is invoked in the
+      # next step so its JSONL event stream remains available for the Action summary.
+      - name: Prepare Codex review runtime
         uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           responses-api-endpoint: ${{ steps.responses_endpoint.outputs.url }}
-          model: ${{ vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}
-          effort: ${{ vars.CODEX_REVIEW_EFFORT || 'high' }}
-          permission-profile: ':read-only'
           codex-home: ${{ runner.temp }}/codex-home
-          codex-args: ${{ steps.codex_args.outputs.value }}
-          output-schema-file: ${{ steps.codex_args.outputs.schema_file }}
-          prompt: |
-            Review only the changes introduced by this pull request. Inspect the checked-out
-            repository, diff, callers, tests, and configuration as needed. Focus on actionable
-            correctness, security, regression, and repository-standard defects.
-
-            Perform static code inspection only. Do not install dependencies or run lint, tests,
-            typecheck, build, package-manager commands, repository scripts, or project executables.
-            Reading test source files is encouraged when it clarifies expected behavior.
-
-            The exact pull request changes are between these commits:
-              base: ${{ steps.diff_base.outputs.sha }}
-              review: ${{ needs.review_target.outputs.review_sha }}
-            Start with `git diff --stat <base> HEAD` and `git diff <base> HEAD`, substituting the
-            base commit above, then inspect relevant files and callers as needed.
-
-            Return the review through the required JSON schema. Use "needs changes" exactly when
-            findings is non-empty, and "mergeable" exactly when findings is empty. Every finding
-            must include its P0-P3 priority, concise title, repository-relative path, start line,
-            concrete impact, and recommendation. Do not put findings only in the summary.
           # Automatic fork runs are explicitly opted in by FORK_REVIEW_MODE. Manual dispatches run
           # as the trusted dispatcher and do not need to allow the fork author.
           allow-users: ${{ needs.review_target.outputs.is_fork == 'true' && needs.review_target.outputs.fork_mode == 'automatic' && '*' || '' }}
+
+      - name: Run Codex correctness review
+        id: run_codex
+        env:
+          CODEX_EFFORT: ${{ vars.CODEX_REVIEW_EFFORT || 'high' }}
+          CODEX_HOME: ${{ runner.temp }}/codex-home
+          CODEX_INSTRUCTIONS_FILE: ${{ steps.codex_args.outputs.instructions_file }}
+          CODEX_MODEL: ${{ vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}
+          CODEX_PROMPT_FILE: ${{ steps.codex_args.outputs.prompt_file }}
+          CODEX_SCHEMA_FILE: ${{ steps.codex_args.outputs.schema_file }}
+          CODEX_INTERNAL_ORIGINATOR_OVERRIDE: codex_github_action
+          FORCE_COLOR: '0'
+          NO_COLOR: '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          execution_file="$RUNNER_TEMP/codex-execution.jsonl"
+          final_message_file="$RUNNER_TEMP/codex-final-message.json"
+          developer_instructions="$(jq -Rs . < "$CODEX_INSTRUCTIONS_FILE")"
+          started_at="$(date +%s)"
+          : > "$execution_file"
+          : > "$final_message_file"
+
+          set +e
+          codex exec \
+            --skip-git-repo-check \
+            --cd "$GITHUB_WORKSPACE" \
+            --output-last-message "$final_message_file" \
+            --output-schema "$CODEX_SCHEMA_FILE" \
+            --model "$CODEX_MODEL" \
+            --config "model_reasoning_effort=\"${CODEX_EFFORT}\"" \
+            --ephemeral \
+            --ignore-rules \
+            --json \
+            --config "developer_instructions=${developer_instructions}" \
+            --config 'default_permissions=":read-only"' \
+            < "$CODEX_PROMPT_FILE" \
+            | tee "$execution_file"
+          pipeline_status=("${PIPESTATUS[@]}")
+          set -e
+
+          codex_status="${pipeline_status[0]}"
+          tee_status="${pipeline_status[1]}"
+          duration_seconds=$(( $(date +%s) - started_at ))
+          {
+            echo "execution_file=$execution_file"
+            echo "duration_seconds=$duration_seconds"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ -s "$final_message_file" ]]; then
+            delimiter="CODEX_REVIEW_EOF_$(head -c 16 /dev/urandom | xxd -p)"
+            {
+              echo "final-message<<${delimiter}"
+              cat "$final_message_file"
+              echo
+              echo "${delimiter}"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+          if (( codex_status != 0 )); then
+            echo "Codex CLI exited with status ${codex_status}." >&2
+            exit "$codex_status"
+          fi
+          if (( tee_status != 0 )); then
+            echo "Failed to capture Codex JSON events (tee status ${tee_status})." >&2
+            exit "$tee_status"
+          fi
+
+      - name: Report Codex review telemetry
+        id: codex_telemetry
+        if: ${{ always() }}
+        env:
+          CODEX_EFFORT: ${{ vars.CODEX_REVIEW_EFFORT || 'high' }}
+          CODEX_MODEL: ${{ vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}
+          DURATION_SECONDS: ${{ steps.run_codex.outputs.duration_seconds }}
+          EXECUTION_FILE: ${{ runner.temp }}/codex-execution.jsonl
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -s "$EXECUTION_FILE" ]]; then
+            echo "::warning::Codex execution telemetry is unavailable."
+            {
+              echo '### Codex review telemetry'
+              echo
+              echo 'Codex execution telemetry is unavailable.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if ! jq -s -e 'all(.[]; type == "object" and (.type | type == "string"))' \
+            "$EXECUTION_FILE" > /dev/null; then
+            echo "::warning::Codex execution telemetry is not valid JSONL."
+            {
+              echo '### Codex review telemetry'
+              echo
+              echo 'Codex execution telemetry is not valid JSONL.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          started_turns="$(jq -r -s '[.[] | select(.type == "turn.started")] | length' "$EXECUTION_FILE")"
+          completed_turns="$(jq -r -s '[.[] | select(.type == "turn.completed")] | length' "$EXECUTION_FILE")"
+          failed_turns="$(jq -r -s '[.[] | select(.type == "turn.failed")] | length' "$EXECUTION_FILE")"
+          error_events="$(jq -r -s '[.[] | select(.type == "error")] | length' "$EXECUTION_FILE")"
+          item_started="$(jq -r -s '[.[] | select(.type == "item.started")] | length' "$EXECUTION_FILE")"
+          item_completed="$(jq -r -s '[.[] | select(.type == "item.completed")] | length' "$EXECUTION_FILE")"
+          item_failed="$(jq -r -s '[.[] | select(.type == "item.failed")] | length' "$EXECUTION_FILE")"
+
+          turns_tsv="$(jq -r -s '
+            [
+              .[]
+              | select(.type == "turn.completed")
+              | .usage // {}
+            ]
+            | to_entries[]
+            | [
+                (.key + 1),
+                (.value.input_tokens // 0),
+                (.value.cached_input_tokens // 0),
+                (.value.output_tokens // 0),
+                (.value.reasoning_output_tokens // 0)
+              ]
+            | @tsv
+          ' "$EXECUTION_FILE")"
+          IFS=$'\t' read -r total_input total_cached total_output total_reasoning <<< "$(jq -r -s '
+            [
+              .[]
+              | select(.type == "turn.completed")
+              | .usage // {}
+            ]
+            | [
+                (map(.input_tokens // 0) | add // 0),
+                (map(.cached_input_tokens // 0) | add // 0),
+                (map(.output_tokens // 0) | add // 0),
+                (map(.reasoning_output_tokens // 0) | add // 0)
+              ]
+            | @tsv
+          ' "$EXECUTION_FILE")"
+
+          item_counts_tsv="$(jq -r -s '
+            [
+              .[]
+              | select(.type | startswith("item."))
+              | .item
+              | select((.id? != null) and (.type? != null))
+            ]
+            | unique_by(.id)
+            | group_by(.type)
+            | map({ type: .[0].type, count: length })
+            | sort_by(-.count, .type)
+            | .[]
+            | [.type, .count]
+            | @tsv
+          ' "$EXECUTION_FILE")"
+          unique_items="$(jq -r -s '
+            [
+              .[]
+              | select(.type | startswith("item."))
+              | .item
+              | select((.id? != null) and (.type? != null))
+            ]
+            | unique_by(.id)
+            | length
+          ' "$EXECUTION_FILE")"
+          tool_calls="$(jq -r -s '
+            def is_tool:
+              . == "command_execution" or
+              . == "mcp_tool_call" or
+              . == "web_search" or
+              . == "file_change";
+            [
+              .[]
+              | select(.type | startswith("item."))
+              | .item
+              | select((.id? != null) and (.type? | is_tool))
+            ]
+            | unique_by(.id)
+            | length
+          ' "$EXECUTION_FILE")"
+
+          echo "::group::Codex review usage"
+          echo "Codex model: ${CODEX_MODEL}; effort: ${CODEX_EFFORT}"
+          echo "Codex turns: started=${started_turns}, completed=${completed_turns}, failed=${failed_turns}"
+          echo "Codex duration: wall=${DURATION_SECONDS:-unknown}s"
+          echo "Codex items: unique=${unique_items}, tool_calls=${tool_calls}, started=${item_started}, completed=${item_completed}, failed=${item_failed}"
+          echo "Codex errors: ${error_events}"
+          echo "Codex tokens: input=${total_input}, cached_input=${total_cached}, output=${total_output}, reasoning_output=${total_reasoning}"
+          printf '%s\n' 'turn  input  cached-input  output  reasoning-output'
+          if [[ -n "$turns_tsv" ]]; then
+            while IFS=$'\t' read -r turn input cached output reasoning; do
+              printf '%s  %s  %s  %s  %s\n' "$turn" "$input" "$cached" "$output" "$reasoning"
+            done <<< "$turns_tsv"
+          fi
+          if [[ -n "$item_counts_tsv" ]]; then
+            echo 'Observed Codex items:'
+            while IFS=$'\t' read -r item_type count; do
+              printf '%s: %s\n' "$item_type" "$count"
+            done <<< "$item_counts_tsv"
+          fi
+          echo "::endgroup::"
+
+          {
+            echo '### Codex review telemetry'
+            echo
+            echo "- Model: \`${CODEX_MODEL}\`; effort: \`${CODEX_EFFORT}\`"
+            echo "- Turns: ${started_turns} started, ${completed_turns} completed, ${failed_turns} failed"
+            echo "- Duration: ${DURATION_SECONDS:-unknown}s wall"
+            echo "- Items: ${unique_items} unique; ${tool_calls} tool calls; ${item_failed} failed"
+            echo "- Error events: ${error_events}"
+            echo "- Tokens: ${total_input} input; ${total_cached} cached input; ${total_output} output; ${total_reasoning} reasoning output"
+            echo '- Responses API request count: not exposed by the Codex JSON event stream'
+            echo
+            echo '| Turn | Input | Cached input | Output | Reasoning output |'
+            echo '| ---: | ---: | ---: | ---: | ---: |'
+            if [[ -n "$turns_tsv" ]]; then
+              while IFS=$'\t' read -r turn input cached output reasoning; do
+                echo "| ${turn} | ${input} | ${cached} | ${output} | ${reasoning} |"
+              done <<< "$turns_tsv"
+            fi
+            if [[ -n "$item_counts_tsv" ]]; then
+              echo
+              echo '**Observed item types**'
+              echo
+              echo '| Item type | Count |'
+              echo '| --- | ---: |'
+              while IFS=$'\t' read -r item_type count; do
+                echo "| \`${item_type}\` | ${count} |"
+              done <<< "$item_counts_tsv"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Normalize Codex review
         id: normalize_codex
