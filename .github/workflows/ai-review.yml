@@ -246,6 +246,8 @@ jobs:
     name: Codex correctness review
     needs: [review_target, codex_review_gate]
     if: ${{ needs.codex_review_gate.outputs.correctness_should_run == 'true' }}
+    permissions:
+      contents: read
     uses: ./.github/workflows/ai-codex-review.yml
     with:
       scope: correctness
@@ -269,6 +271,8 @@ jobs:
     name: Codex architecture review
     needs: [review_target, codex_review_gate]
     if: ${{ needs.codex_review_gate.outputs.architecture_should_run == 'true' }}
+    permissions:
+      contents: read
     uses: ./.github/workflows/ai-codex-review.yml
     with:
       scope: architecture

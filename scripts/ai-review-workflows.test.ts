@@ -20,6 +20,7 @@ type WorkflowJob = {
   steps?: WorkflowStep[]
   if?: string
   needs?: string | string[]
+  permissions?: Record<string, string>
   secrets?: Record<string, string>
   uses?: string
   with?: Record<string, string>
@@ -422,6 +423,8 @@ describe('dual Codex workflow contract', () => {
     const architecture = mainWorkflow.jobs.codex_architecture_review
     expect(correctness.uses).toBe('./.github/workflows/ai-codex-review.yml')
     expect(architecture.uses).toBe('./.github/workflows/ai-codex-review.yml')
+    expect(correctness.permissions).toEqual({ contents: 'read' })
+    expect(architecture.permissions).toEqual({ contents: 'read' })
     expect(correctness.with).toMatchObject({
       scope: 'correctness',
       model: "${{ vars.CODEX_CORRECTNESS_MODEL || vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}",
