@@ -299,8 +299,9 @@ const useNotebookEnvironment = (
 }
 
 // Header cluster for notebook prompts: kernel-language badge, the session's bound environment
-// (once the runtime has spawned or recorded one), and an info tooltip that keeps the raw tool
-// identity reachable now that the header shows a friendly question instead of the tool name.
+// (once the runtime has spawned or recorded one), and an info tooltip explaining where the code
+// runs and what an approval covers, with the raw tool identity kept reachable now that the header
+// shows a friendly question instead of the tool name.
 const NotebookHeaderBadges = ({
   lookup,
   language,
@@ -338,8 +339,13 @@ const NotebookHeaderBadges = ({
                 <Info className="size-3.5" aria-hidden="true" />
               </button>
             </TooltipTrigger>
-            <TooltipContent>
-              {riskLabel} · {rawIdentity}
+            <TooltipContent className="max-w-72 whitespace-normal">
+              <span className="block">
+                {riskLabel}. Runs in this session&apos;s notebook runtime
+                {envName ? ` (${envName})` : ''}; allowing for this conversation auto-approves later
+                calls to this tool without asking again.
+              </span>
+              <span className="mt-0.5 block break-all opacity-70">{rawIdentity}</span>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
