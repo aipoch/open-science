@@ -181,12 +181,12 @@ const PermissionCodeSection = ({
   const [expanded, setExpanded] = useState(true)
 
   return (
-    <div className="w-full overflow-hidden rounded-lg bg-muted/60 px-1.5 py-1">
+    <div className="w-full overflow-hidden rounded-lg bg-muted/60 px-2 py-1.5">
       <button
         type="button"
         data-testid="permission-code-toggle"
         aria-expanded={expanded}
-        className="flex w-full items-center gap-2 rounded-lg py-[5px] pl-1.5 pr-2.5 text-[13px] transition-colors hover:bg-muted"
+        className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-[13px] transition-colors hover:bg-muted"
         onClick={() => setExpanded((e) => !e)}
       >
         <span
@@ -283,7 +283,7 @@ const ScopeDropdown = ({
       ref={ref}
       role="menu"
       aria-label="Authorization scope"
-      className="absolute bottom-full left-0 z-10 mb-1 min-w-44 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-menu outline-none"
+      className="absolute bottom-full right-0 z-10 mb-1.5 min-w-44 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu outline-none"
     >
       {options.map(({ scope, label, subtitle }, index) => (
         <button
@@ -295,7 +295,7 @@ const ScopeDropdown = ({
           role="menuitemradio"
           aria-checked={selected === scope}
           className={cn(
-            'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted',
+            'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-muted',
             selected === scope && 'bg-muted'
           )}
           onClick={() => {
@@ -323,15 +323,15 @@ const ScopeDropdown = ({
             }
           }}
         >
-          {/* Check column: left side, fixed slot so selection never shifts the label */}
-          <span className="flex w-3.5 shrink-0 justify-center text-primary">
-            {selected === scope ? <Check className="size-3.5" strokeWidth={2.5} /> : null}
-          </span>
-          {/* Label column: left-aligned flush to the check slot so both rows line up */}
+          {/* Label column: left-aligned flush to padding so both rows line up */}
           <div className="flex min-w-0 flex-1 flex-col">
             <span className="text-xs font-medium text-foreground">{label}</span>
             <span className="text-[11px] leading-tight text-muted-foreground">{subtitle}</span>
           </div>
+          {/* Check column: right side, fixed slot so selection never shifts the label */}
+          <span className="flex w-3.5 shrink-0 justify-center text-primary">
+            {selected === scope ? <Check className="size-3.5" strokeWidth={2.5} /> : null}
+          </span>
         </button>
       ))}
     </div>
@@ -414,7 +414,7 @@ const PermissionApprovalControls = ({
       : undefined
 
   return (
-    <div className="mb-2 flex w-full max-w-full flex-col gap-3 rounded-xl border border-border bg-card p-4 text-xs leading-5 text-card-foreground shadow-dialog outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
+    <div className="mb-2 flex w-full max-w-full flex-col gap-4 rounded-xl border border-border bg-card p-5 text-xs leading-5 text-card-foreground shadow-dialog outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
       {/* Header: action question + risk label */}
       <div className="flex min-w-0 items-center gap-2">
         <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>{headerTitle}</span>
@@ -449,13 +449,13 @@ const PermissionApprovalControls = ({
         />
       )}
 
-      {/* Allow / Deny button row, left-aligned like the reference approval prompts */}
-      <div className="flex items-center gap-2">
-        {/* Split Allow button: main action + scope chevron; the menu anchors to this group's left edge.
-            Styled like the shared Button (size sm, including flex centering so the label baseline
+      {/* Allow / Deny button row */}
+      <div className="flex items-center justify-end gap-2">
+        {/* Split Allow button: main action + scope chevron; the menu anchors to this group's right edge.
+            Styled like the shared Button (default size, including flex centering so the label baseline
             matches the neighboring Button primitives) but kept as two segments so the chevron
             stays a separate tab stop with its own aria-haspopup semantics. */}
-        <div className="relative flex items-stretch overflow-visible rounded-[min(var(--radius-md),12px)]">
+        <div className="relative flex items-stretch overflow-visible rounded-lg">
           {scopeOpen && (
             <ScopeDropdown
               selected={effectiveScope}
@@ -464,11 +464,11 @@ const PermissionApprovalControls = ({
               onClose={closeScopeMenu}
             />
           )}
-          <div className="flex items-stretch overflow-hidden rounded-[min(var(--radius-md),12px)]">
+          <div className="flex items-stretch overflow-hidden rounded-lg">
             <button
               type="button"
               data-testid="allow-primary"
-              className="inline-flex h-7 select-none items-center justify-center whitespace-nowrap bg-primary px-2.5 text-[0.8rem] font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+              className="inline-flex h-8 select-none items-center justify-center whitespace-nowrap bg-primary px-3 text-sm font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
               disabled={!allowOptionId}
               onClick={() => {
                 if (allowOptionId) onRespond(request.requestId, allowOptionId)
@@ -484,7 +484,7 @@ const PermissionApprovalControls = ({
               aria-label="Choose authorization scope"
               aria-expanded={scopeOpen}
               aria-haspopup="menu"
-              className="inline-flex h-7 select-none items-center justify-center bg-primary px-1.5 text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50"
+              className="inline-flex h-8 select-none items-center justify-center bg-primary px-2 text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50"
               onClick={(e) => {
                 // Stop propagation so this click doesn't reach the dropdown's document
                 // click-listener and immediately re-close the menu it just opened.
@@ -492,7 +492,7 @@ const PermissionApprovalControls = ({
                 setScopeOpen((o) => !o)
               }}
             >
-              <ChevronDown className="size-3.5" />
+              <ChevronDown className="size-4" />
             </button>
           </div>
         </div>
@@ -503,7 +503,6 @@ const PermissionApprovalControls = ({
             key={option.optionId}
             type="button"
             variant="outline"
-            size="sm"
             data-testid="extra-option"
             onClick={() => onRespond(request.requestId, option.optionId)}
           >
@@ -513,7 +512,6 @@ const PermissionApprovalControls = ({
         <Button
           type="button"
           variant="outline"
-          size="sm"
           data-testid="deny-button"
           onClick={() => onRespond(request.requestId, denyOptionId)}
         >
