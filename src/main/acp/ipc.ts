@@ -79,6 +79,7 @@ const createRuntime = ({
   uploadRepository,
   notebookRpcServer,
   settingsService,
+  initializationBarrier,
   taskNotifications
 }: AcpIpcOptions): AcpRuntimeCoordinator => {
   const configRoot = resolveConfigRoot()
@@ -137,7 +138,8 @@ const createRuntime = ({
       })
     },
     callbacks,
-    defaultCwd
+    defaultCwd,
+    initializationBarrier
   )
 }
 
@@ -145,19 +147,12 @@ const createRuntime = ({
 // settings, storage, reviewer, and shutdown integrations.
 const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator => {
   const runtime = createRuntime(options)
-  const waitForInitialization = async (): Promise<void> => {
-    await options.initializationBarrier
-  }
 
   ipcMain.handle('acp:get-state', () => runtime.getSnapshot())
-  ipcMain.handle('acp:connect', async (_event, request: AcpConnectRequest) => {
-    await waitForInitialization()
-    return runtime.connect(request)
-  })
+  ipcMain.handle('acp:connect', (_event, request: AcpConnectRequest) => runtime.connect(request))
   ipcMain.handle('acp:disconnect', () => runtime.disconnect())
   ipcMain.handle('acp:create-session', async (_event, request: AcpCreateSessionRequest) => {
     try {
-      await waitForInitialization()
       const explicitCwd = request.cwd?.trim()
       if (explicitCwd) {
         return await runtime.createSession({ ...request, cwd: explicitCwd })
@@ -184,14 +179,12 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator =
       throw error
     }
   })
-  ipcMain.handle('acp:resume-session', async (_event, request: AcpResumeSessionRequest) => {
-    await waitForInitialization()
-    return runtime.resumeSession(request)
-  })
-  ipcMain.handle('acp:reset-session-context', async (_event, request: AcpResumeSessionRequest) => {
-    await waitForInitialization()
-    return runtime.resetSessionContext(request)
-  })
+  ipcMain.handle('acp:resume-session', (_event, request: AcpResumeSessionRequest) =>
+    runtime.resumeSession(request)
+  )
+  ipcMain.handle('acp:reset-session-context', (_event, request: AcpResumeSessionRequest) =>
+    runtime.resetSessionContext(request)
+  )
   // Prompt calls wait for the turn to stop, then return the latest snapshot.
   ipcMain.handle('acp:send-prompt', async (_event, request: AcpPromptRequest) => {
     // Remember the prompt's first line so a completion/failure notification can name the task.
