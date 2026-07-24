@@ -11,7 +11,7 @@ import {
 } from '@/stores/preview-workbench-store'
 import { useReviewStore } from '@/stores/review-store'
 import { useSettingsStore } from '@/stores/settings-store'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { shouldShowAgentLoadingMessage } from './agent-loading-message'
@@ -73,6 +73,30 @@ const getMessageArtifacts = (
   return message.artifactIds
     .map((artifactId) => artifactsById.get(artifactId))
     .filter((artifact): artifact is MessageArtifact => Boolean(artifact))
+}
+
+// Each prompt may yield intermediate agent messages before its final answer. Keep only the last
+// agent message for a prompt, then expose copy only when that message completed successfully.
+const getFinalCompletedAgentMessageIds = (messages: ChatMessage[]): Set<string> => {
+  const finalAgentMessageByPromptId = new Map<string, ChatMessage>()
+  let latestUserMessageId: string | undefined
+
+  for (const message of messages) {
+    if (message.role === 'user') {
+      latestUserMessageId = message.id
+      continue
+    }
+
+    // Older persisted sessions may lack response linkage, so use the preceding user turn.
+    const promptMessageId = message.responseToMessageId ?? latestUserMessageId ?? message.id
+    finalAgentMessageByPromptId.set(promptMessageId, message)
+  }
+
+  return new Set(
+    [...finalAgentMessageByPromptId.values()]
+      .filter((message) => message.status === 'complete')
+      .map((message) => message.id)
+  )
 }
 
 // Sends an app-managed generated file to the preview workbench instead of opening it locally.
@@ -185,6 +209,10 @@ const WorkspaceMessageScroller = ({
     [activeSession]
   )
   const showAgentLoadingMessage = shouldShowAgentLoadingMessage(activeSession)
+  const finalCompletedAgentMessageIds = useMemo(
+    () => getFinalCompletedAgentMessageIds(activeSession?.messages ?? []),
+    [activeSession?.messages]
+  )
 
   // Counts the user turns after each message; the destructive-resend warning keys off turns, not
   // raw message count, so a single follow-up turn stays warning-free.
@@ -455,6 +483,7 @@ const WorkspaceMessageScroller = ({
                           canEditMessage={canEditMessage}
                           onSendEditedMessage={onSendEditedMessage}
                           subsequentTurns={subsequentTurnCountByMessageId.get(item.message.id) ?? 0}
+                          canCopyMarkdown={finalCompletedAgentMessageIds.has(item.message.id)}
                           artifacts={artifacts}
                         />
                         {review ? (
