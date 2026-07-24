@@ -253,9 +253,14 @@ interface OpenScienceAPI {
     setClosePreference(request: SetClosePreferenceRequest): Promise<SettingsSnapshot>
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
     cancelCodexLogin(): Promise<void>
+    cancelClaudeLogin(): Promise<void>
     loginIsolatedCodex(): Promise<ValidateProviderResult>
     logoutIsolatedCodex(): Promise<ValidateProviderResult>
+    loginSharedClaude(): Promise<ValidateProviderResult>
+    logoutSharedClaude(): Promise<ValidateProviderResult>
     loginIsolatedClaude(token: string): Promise<ValidateProviderResult>
+    loginIsolatedClaudeBrowser(): Promise<ValidateProviderResult>
+    cancelIsolatedClaudeLogin(): Promise<void>
     logoutIsolatedClaude(): Promise<ValidateProviderResult>
     refreshProviderModels(
       request: RefreshProviderModelsRequest

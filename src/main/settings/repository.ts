@@ -1,9 +1,11 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, normalize, parse } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import type {
   AgentFrameworkId,
   ChatApiEndpoint,
+  ClaudeSubscriptionProviderId,
   ClaudeInfo,
   ProviderType,
   ProviderValidationFailure,
@@ -12,10 +14,13 @@ import type {
 } from '../../shared/settings'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
+  CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   SETTINGS_FILE_VERSION,
   claudeIsolatedProviderIdentity,
   codexSubscriptionProviderIdentity,
+  isClaudeSubscriptionProvider,
+  isClaudeSubscriptionProviderId,
   isCodexSubscriptionProvider,
   isCodexSubscriptionProviderId,
   isReasoningEffort
@@ -42,6 +47,7 @@ const log = createLogger('settings.repository')
 
 const PROVIDER_TYPES = new Set<ProviderType>([
   'custom',
+  'claude-shared',
   'claude-isolated',
   'official',
   'codex-shared',
@@ -195,6 +201,7 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   const lastValidatedAt = asNumber(value.lastValidatedAt)
   const lastValidationFailure = sanitizeValidationFailure(value.lastValidationFailure)
   const expiresAt = asNumber(value.expiresAt)
+  const disconnectedAt = asNumber(value.disconnectedAt)
   // Keep only a clean list of non-empty string model ids.
   const fetchedModels = Array.isArray(value.fetchedModels)
     ? value.fetchedModels.filter(
@@ -234,6 +241,9 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   if (lastValidatedAt !== undefined) provider.lastValidatedAt = lastValidatedAt
   if (lastValidationFailure) provider.lastValidationFailure = lastValidationFailure
   if (expiresAt !== undefined) provider.expiresAt = expiresAt
+  if (disconnectedAt !== undefined && type === 'claude-shared') {
+    provider.disconnectedAt = disconnectedAt
+  }
 
   return provider
 }
@@ -375,6 +385,18 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   const settings: StoredSettings = {
     version: SETTINGS_FILE_VERSION,
     providers
+  }
+  const claudeSubscriptionProviderId = asString(value.claudeSubscriptionProviderId)
+
+  if (
+    claudeSubscriptionProviderId &&
+    isClaudeSubscriptionProviderId(claudeSubscriptionProviderId) &&
+    providers.some(
+      (provider) =>
+        provider.id === claudeSubscriptionProviderId && isClaudeSubscriptionProvider(provider.type)
+    )
+  ) {
+    settings.claudeSubscriptionProviderId = claudeSubscriptionProviderId
   }
   const claude = sanitizeClaudeInfo(value.claude)
   const codex = sanitizeCodexInfo(value.codex)
@@ -645,7 +667,14 @@ class SettingsRepository {
       if (index >= 0) providers[index] = provider
       else providers.push(provider)
 
-      return { ...settings, providers }
+      return {
+        ...settings,
+        providers,
+        ...(isClaudeSubscriptionProvider(provider.type) &&
+        isClaudeSubscriptionProviderId(provider.id)
+          ? { claudeSubscriptionProviderId: provider.id }
+          : {})
+      }
     })
   }
 
@@ -683,6 +712,27 @@ class SettingsRepository {
     })
   }
 
+  async updateClaudeIsolatedCredentialsIfExists(
+    patch: Pick<StoredProvider, 'keyRef' | 'keyMask'>
+  ): Promise<boolean> {
+    let applied = false
+
+    await this.mutate((settings) => {
+      const index = settings.providers.findIndex(
+        (provider) => provider.id === CLAUDE_ISOLATED_PROVIDER_ID
+      )
+      if (index < 0) return settings
+
+      const providers = [...settings.providers]
+      providers[index] = { ...providers[index], ...patch }
+      applied = true
+
+      return { ...settings, providers }
+    })
+
+    return applied
+  }
+
   // Records a probe result only while the credential that was probed is still current. Login probes
   // run a subprocess and can overlap logout, deletion, edits, or a second paste; comparing inside the
   // serialized mutation prevents a stale result from restoring an old provider snapshot or marking a
@@ -709,15 +759,73 @@ class SettingsRepository {
     return applied
   }
 
+  async updateClaudeSharedValidationIfUnchanged(
+    expectedProvider: StoredProvider,
+    expectedPreferredMode: ClaudeSubscriptionProviderId | undefined,
+    expectedResolvedModel: string | undefined,
+    patch: Pick<StoredProvider, 'disconnectedAt' | 'lastValidatedAt' | 'lastValidationFailure'>
+  ): Promise<boolean> {
+    let applied = false
+
+    await this.mutate((settings) => {
+      const index = settings.providers.findIndex(
+        (provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID
+      )
+      if (index < 0) return settings
+
+      const currentProvider = settings.providers[index]
+      // Only the effective shared-Claude target belongs in this CAS. Models selected on unrelated
+      // active providers do not change what the completed shared probe actually verified.
+      const currentResolvedModel =
+        settings.activeProviderId === CLAUDE_SHARED_PROVIDER_ID
+          ? (settings.activeModel ?? currentProvider?.model)
+          : currentProvider?.model
+      if (
+        settings.claudeSubscriptionProviderId !== expectedPreferredMode ||
+        currentResolvedModel !== expectedResolvedModel ||
+        !isDeepStrictEqual(currentProvider, expectedProvider)
+      ) {
+        return settings
+      }
+
+      const providers = [...settings.providers]
+      providers[index] = { ...providers[index], ...patch }
+      applied = true
+
+      return { ...settings, providers }
+    })
+
+    return applied
+  }
+
   // Removes a provider and clears the active pointer (and model) when it referenced the removed one.
+  // Claude's two fixed records are one collapsed provider in the UI, so deleting either id removes
+  // the whole subscription group atomically, including its persisted display preference.
   async deleteProvider(id: string): Promise<StoredSettings> {
     return this.mutate((settings) => {
-      const providers = settings.providers.filter((provider) => provider.id !== id)
-      const clearedActive = settings.activeProviderId === id
+      const deletingClaudeSubscription = isClaudeSubscriptionProviderId(id)
+      const removedIds = new Set(
+        settings.providers
+          .filter(
+            (provider) =>
+              provider.id === id ||
+              (deletingClaudeSubscription && isClaudeSubscriptionProvider(provider.type))
+          )
+          .map((provider) => provider.id)
+      )
+      const providers = settings.providers.filter((provider) => !removedIds.has(provider.id))
+      const clearedActive =
+        settings.activeProviderId !== undefined && removedIds.has(settings.activeProviderId)
       const activeProviderId = clearedActive ? undefined : settings.activeProviderId
       const activeModel = clearedActive ? undefined : settings.activeModel
 
-      return { ...settings, providers, activeProviderId, activeModel }
+      return {
+        ...settings,
+        providers,
+        activeProviderId,
+        activeModel,
+        ...(deletingClaudeSubscription ? { claudeSubscriptionProviderId: undefined } : {})
+      }
     })
   }
 
@@ -732,7 +840,10 @@ class SettingsRepository {
       return {
         ...settings,
         activeProviderId: id,
-        activeModel: id === undefined ? undefined : model
+        activeModel: id === undefined ? undefined : model,
+        ...(id !== undefined && isClaudeSubscriptionProviderId(id)
+          ? { claudeSubscriptionProviderId: id }
+          : {})
       }
     })
   }

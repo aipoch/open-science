@@ -39,6 +39,13 @@ type SettingsApi = {
   cancelCodexLogin: ReturnType<typeof vi.fn>
   loginIsolatedCodex: ReturnType<typeof vi.fn>
   logoutIsolatedCodex: ReturnType<typeof vi.fn>
+  cancelClaudeLogin: ReturnType<typeof vi.fn>
+  loginSharedClaude: ReturnType<typeof vi.fn>
+  logoutSharedClaude: ReturnType<typeof vi.fn>
+  loginIsolatedClaude: ReturnType<typeof vi.fn>
+  loginIsolatedClaudeBrowser: ReturnType<typeof vi.fn>
+  cancelIsolatedClaudeLogin: ReturnType<typeof vi.fn>
+  logoutIsolatedClaude: ReturnType<typeof vi.fn>
   refreshProviderModels: ReturnType<typeof vi.fn>
   setActiveProvider: ReturnType<typeof vi.fn>
   deleteProvider: ReturnType<typeof vi.fn>
@@ -157,6 +164,13 @@ beforeEach(() => {
     cancelCodexLogin: vi.fn().mockResolvedValue(undefined),
     loginIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
     logoutIsolatedCodex: vi.fn().mockResolvedValue(snapshot([])),
+    cancelClaudeLogin: vi.fn().mockResolvedValue(undefined),
+    loginSharedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+    logoutSharedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+    loginIsolatedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+    loginIsolatedClaudeBrowser: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+    cancelIsolatedClaudeLogin: vi.fn().mockResolvedValue(undefined),
+    logoutIsolatedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
     refreshProviderModels: vi.fn(),
     setActiveProvider: vi.fn().mockImplementation((request: { id: string }) => {
       callLog.push(`setActive:${request.id}`)
@@ -366,6 +380,34 @@ describe('settings store: loginIsolatedCodex', () => {
     expect(result).toMatchObject({ ok: false, category: 'auth' })
     expect(api.getSettings).toHaveBeenCalled()
     expect(useSettingsStore.getState().providers).toHaveLength(1)
+  })
+})
+
+describe('settings store: Claude authentication', () => {
+  it.each([
+    ['loginSharedClaude', 'loginSharedClaude'],
+    ['loginIsolatedClaudeBrowser', 'loginIsolatedClaudeBrowser'],
+    ['logoutSharedClaude', 'logoutSharedClaude'],
+    ['logoutIsolatedClaude', 'logoutIsolatedClaude']
+  ] as const)('%s refreshes settings and preflight', async (storeMethod, apiMethod) => {
+    api.getSettings.mockResolvedValue(snapshot([providerView('claude-provider')]))
+
+    await useSettingsStore.getState()[storeMethod]()
+
+    expect(api[apiMethod]).toHaveBeenCalledOnce()
+    expect(api.getSettings).toHaveBeenCalledOnce()
+    expect(api.getPreflight).toHaveBeenCalledOnce()
+    expect(useSettingsStore.getState().providers).toHaveLength(1)
+  })
+
+  it('forwards a pasted token and refreshes settings and preflight', async () => {
+    api.getSettings.mockResolvedValue(snapshot([providerView('builtin-claude-isolated')]))
+
+    await useSettingsStore.getState().loginIsolatedClaude('sk-ant-test')
+
+    expect(api.loginIsolatedClaude).toHaveBeenCalledWith('sk-ant-test')
+    expect(api.getSettings).toHaveBeenCalledOnce()
+    expect(api.getPreflight).toHaveBeenCalledOnce()
   })
 })
 
@@ -709,6 +751,42 @@ describe('settings store: provider/model selection', () => {
 })
 
 describe('selectProviderModelOptions', () => {
+  it('exposes only the preferred Claude subscription mode when both records exist', () => {
+    const options = selectProviderModelOptions(
+      [
+        {
+          id: 'builtin-claude-shared',
+          type: 'claude-shared',
+          name: 'Claude subscription',
+          models: [],
+          supportsImageInput: false,
+          hasKey: false,
+          needsKey: false
+        },
+        {
+          id: 'builtin-claude-isolated',
+          type: 'claude-isolated',
+          name: 'Claude subscription',
+          models: [],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ],
+      undefined,
+      'builtin-claude-isolated'
+    )
+
+    expect(options).toEqual([
+      {
+        providerId: 'builtin-claude-isolated',
+        providerName: 'Claude subscription',
+        providerType: 'claude-isolated',
+        model: ''
+      }
+    ])
+  })
+
   it('emits one option per catalog model for an official provider', () => {
     const options = selectProviderModelOptions([
       {

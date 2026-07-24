@@ -76,6 +76,9 @@ describe('provisionAppClaudeConfigDir', () => {
     for (const sub of APP_ASSET_SUBDIRS) {
       expect(entries).toContain(sub)
     }
+    await expect(
+      readFile(join(configDir, '.claude-plugin', 'plugin.json'), 'utf8').then(JSON.parse)
+    ).resolves.toMatchObject({ name: 'open-science' })
   })
 
   it('is idempotent', async () => {

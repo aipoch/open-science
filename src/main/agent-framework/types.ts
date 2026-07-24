@@ -71,6 +71,9 @@ export type SessionSetupContext = {
   // Short, high-priority reminders that must reach each turn when the framework carries the complete
   // appends only in session metadata. Frameworks whose appends already ride each prompt may omit them.
   turnPromptReminders?: string[]
+  // Framework-native options resolved with the active backend and applied to every session created
+  // on that connection. Claude uses this to inject app-owned settings/plugins into shared auth mode.
+  sessionOptions?: Record<string, unknown>
 }
 
 // Framework-specific session configuration returned to the runtime. `meta` becomes the ACP `_meta`
@@ -141,6 +144,8 @@ export type ResolvedAgentBackend = {
   executablePath: string
   env: Record<string, string>
   args?: string[]
+  // Framework-native session options retained by the runtime and passed through buildSessionSetup.
+  sessionOptions?: Record<string, unknown>
   // Model to apply per session via the ACP `model` configOption, for frameworks that select the model
   // over the protocol rather than via env (opencode). Undefined ⇒ the framework's env/config drives it
   // (Claude uses ANTHROPIC_MODEL). Applied best-effort: skipped when the agent advertises no match.

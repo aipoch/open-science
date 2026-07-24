@@ -32,13 +32,15 @@ class AcpRuntimeCoordinator {
   private readonly reviewerRuntimes = new WeakMap<ActiveSession, AcpRuntime>()
   private readonly runtimeIds = new WeakMap<AcpRuntime, string>()
   private runtimeSequence = 0
+  private initializationGeneration = 0
   private activeRuntime: AcpRuntime | undefined
   private lastRuntime: AcpRuntime | undefined
 
   constructor(
     private readonly createRuntime: RuntimeFactory,
     private readonly callbacks: AcpRuntimeCallbacks = {},
-    private readonly defaultCwd = ''
+    private readonly defaultCwd = '',
+    private readonly initializationBarrier?: Promise<unknown>
   ) {
     this.activeRuntime = this.addRuntime()
     this.lastRuntime = this.activeRuntime
@@ -118,12 +120,14 @@ class AcpRuntimeCoordinator {
   }
 
   async connect(request: AcpConnectRequest = {}): Promise<AcpStateSnapshot> {
+    await this.waitForInitialization()
     const runtime = this.getActiveRuntime()
     await runtime.connect(request)
     return this.getSnapshot()
   }
 
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
+    this.supersedeInitializationRequests()
     const runtimes = Array.from(this.runtimes)
     const results = await Promise.allSettled(
       runtimes.map((runtime) => runtime.disconnect(emitClosedStatus))
@@ -138,19 +142,23 @@ class AcpRuntimeCoordinator {
   }
 
   shutdown(): void {
+    this.supersedeInitializationRequests()
     for (const runtime of this.runtimes) runtime.shutdown()
     this.clearRuntimeOwnership()
   }
 
   async shutdownForQuit(): Promise<{ reaped: boolean }> {
+    this.supersedeInitializationRequests()
     return this.shutdownAll((runtime) => runtime.shutdownForQuit())
   }
 
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
+    this.supersedeInitializationRequests()
     return this.shutdownAll((runtime) => runtime.shutdownForUpdateGate())
   }
 
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
+    await this.waitForInitialization()
     const runtime = this.getActiveRuntime()
     const response = await runtime.createSession(request)
     this.sessionRuntimes.set(response.sessionId, runtime)
@@ -159,6 +167,7 @@ class AcpRuntimeCoordinator {
   }
 
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+    await this.waitForInitialization()
     const owner = this.findRuntimeForSession(request.sessionId)
     const runtime = owner && !this.retiredRuntimes.has(owner) ? owner : this.getActiveRuntime()
     const response = await runtime.resumeSession(request)
@@ -168,6 +177,7 @@ class AcpRuntimeCoordinator {
   }
 
   async resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+    await this.waitForInitialization()
     const runtime = this.runtimeForSession(request.sessionId)
     const response = await runtime.resetSessionContext(request)
     this.sessionRuntimes.set(response.sessionId, runtime)
@@ -345,6 +355,18 @@ class AcpRuntimeCoordinator {
         )
       }
     }
+  }
+
+  private async waitForInitialization(): Promise<void> {
+    const generation = this.initializationGeneration
+    await this.initializationBarrier
+    if (generation !== this.initializationGeneration) {
+      throw new Error('ACP initialization request was superseded.')
+    }
+  }
+
+  private supersedeInitializationRequests(): void {
+    this.initializationGeneration += 1
   }
 
   private getActiveRuntime(): AcpRuntime {

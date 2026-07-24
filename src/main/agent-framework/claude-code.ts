@@ -74,10 +74,12 @@ export const claudeCodeFramework: AgentFramework = {
   },
 
   buildSessionSetup(ctx: SessionSetupContext): SessionSetup {
-    // settingSources:['user'] pins the app-owned config dir so a workspace ~/.claude env can't override
-    // the active provider endpoint. Appends ride the claude_code system-prompt preset.
+    // settingSources:['user'] excludes workspace settings that could override the active provider.
+    // Shared mode adds app-owned settings/plugins at the SDK flag layer via sessionOptions.
     const meta: Record<string, unknown> = {
-      claudeCode: { options: { settingSources: ['user'] } }
+      claudeCode: {
+        options: { ...ctx.sessionOptions, settingSources: ['user'] }
+      }
     }
 
     if (ctx.systemPromptAppends.length > 0) {

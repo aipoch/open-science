@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
+import {
+  CLAUDE_ISOLATED_PROVIDER_ID,
+  CLAUDE_SHARED_PROVIDER_ID,
+  CODEX_SUBSCRIPTION_PROVIDER_ID
+} from '../../shared/settings'
 import type { SettingsService } from './service'
 
 // Capture every ipcMain.handle registration so handlers can be invoked directly in the test.
@@ -42,9 +46,14 @@ type FakeSettingsService = Record<
   | 'setActiveProvider'
   | 'validateProvider'
   | 'cancelCodexLogin'
+  | 'cancelClaudeLogin'
   | 'loginIsolatedCodex'
   | 'logoutIsolatedCodex'
+  | 'loginClaudeShared'
+  | 'logoutClaudeShared'
   | 'loginIsolatedClaude'
+  | 'loginIsolatedClaudeBrowser'
+  | 'cancelClaudeIsolatedLogin'
   | 'logoutIsolatedClaude'
   | 'markOnboardingComplete'
   | 'listSkills'
@@ -101,11 +110,16 @@ const createFakeService = (): FakeSettingsService => ({
   setActiveProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   cancelCodexLogin: vi.fn(),
+  cancelClaudeLogin: vi.fn(),
   loginIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   logoutIsolatedCodex: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], activeProviderId: undefined }),
+  loginClaudeShared: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+  logoutClaudeShared: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   loginIsolatedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+  loginIsolatedClaudeBrowser: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+  cancelClaudeIsolatedLogin: vi.fn(),
   logoutIsolatedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   markOnboardingComplete: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   listSkills: vi.fn().mockResolvedValue([]),
@@ -150,9 +164,14 @@ describe('settings IPC handlers', () => {
       'settings:set-active-provider',
       'settings:validate-provider',
       'settings:cancel-codex-login',
+      'settings:cancel-claude-login',
       'settings:login-isolated-codex',
       'settings:logout-isolated-codex',
+      'settings:login-shared-claude',
+      'settings:logout-shared-claude',
       'settings:login-isolated-claude',
+      'settings:login-isolated-claude-browser',
+      'settings:cancel-isolated-claude-login',
       'settings:logout-isolated-claude',
       'settings:mark-onboarding-complete'
     ]) {
@@ -179,6 +198,24 @@ describe('settings IPC handlers', () => {
 
     await invoke('settings:logout-isolated-codex')
     expect(service.logoutIsolatedCodex).toHaveBeenCalledOnce()
+
+    await invoke('settings:cancel-claude-login')
+    expect(service.cancelClaudeLogin).toHaveBeenCalledOnce()
+
+    await invoke('settings:login-shared-claude')
+    expect(service.loginClaudeShared).toHaveBeenCalledOnce()
+
+    await invoke('settings:logout-shared-claude')
+    expect(service.logoutClaudeShared).toHaveBeenCalledOnce()
+
+    await invoke('settings:login-isolated-claude', 'sk-ant-test')
+    expect(service.loginIsolatedClaude).toHaveBeenCalledWith('sk-ant-test')
+
+    await invoke('settings:login-isolated-claude-browser')
+    expect(service.loginIsolatedClaudeBrowser).toHaveBeenCalledOnce()
+
+    await invoke('settings:cancel-isolated-claude-login')
+    expect(service.cancelClaudeIsolatedLogin).toHaveBeenCalledOnce()
   })
 
   it('reconnects the active Codex subscription after isolated logout', async () => {
@@ -301,6 +338,26 @@ describe('settings IPC handlers', () => {
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
   })
 
+  it('drops the agent connection when grouped Claude deletion removes the active sibling', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    service.getSettingsView.mockResolvedValue({
+      activeProviderId: CLAUDE_SHARED_PROVIDER_ID,
+      providers: []
+    })
+    service.deleteProvider.mockResolvedValue({
+      claude: {},
+      activeProviderId: undefined,
+      providers: []
+    })
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+
+    await invoke('settings:delete-provider', { id: CLAUDE_ISOLATED_PROVIDER_ID })
+
+    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+  })
+
   it('drops the agent connection when the edited provider is the active one', async () => {
     handlers.clear()
     const service = createFakeService()
@@ -313,6 +370,37 @@ describe('settings IPC handlers', () => {
     // Editing the live provider must respawn the agent so the new base URL / key / model take effect.
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
   })
+
+  it.each([
+    [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID, 'claude-isolated'],
+    [CLAUDE_ISOLATED_PROVIDER_ID, CLAUDE_SHARED_PROVIDER_ID, 'claude-shared']
+  ] as const)(
+    'drops the agent connection when active Claude mode changes from %s to %s',
+    async (previousProviderId, nextProviderId, nextType) => {
+      handlers.clear()
+      const service = createFakeService()
+      service.getSettingsView.mockResolvedValue({
+        claude: {},
+        activeProviderId: previousProviderId,
+        providers: []
+      })
+      service.upsertProvider.mockResolvedValue({
+        claude: {},
+        activeProviderId: nextProviderId,
+        providers: []
+      })
+      const onActiveProviderChanged = vi.fn()
+      registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+
+      await invoke('settings:upsert-provider', {
+        id: previousProviderId,
+        type: nextType,
+        name: 'Claude subscription'
+      })
+
+      expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+    }
+  )
 
   it('does not drop the connection when editing a non-active provider', async () => {
     handlers.clear()

@@ -1,5 +1,6 @@
 import type {
   ChatApiEndpoint,
+  ClaudeSubscriptionProviderId,
   ClaudeInfo,
   CodexInfo,
   ProviderType,
@@ -51,6 +52,10 @@ export type StoredProvider = {
   // Recorded when a validation fails; cleared on the next success or a credential change. Kept so the
   // "unverified" warning survives a restart.
   lastValidationFailure?: ProviderValidationFailure
+  // claude-shared credentials live in the user's global profile and cannot be removed safely by the
+  // app. This timestamp records an app-local disconnect so Open Science stops using that profile
+  // until the user explicitly signs in again.
+  disconnectedAt?: number
 }
 
 // A user-added custom MCP server. Phase 1 = stdio (local command). Phase 2 adds the remote
@@ -117,6 +122,9 @@ export type StoredSettings = {
   // codex-acp adapter plus the native Codex runtime it launches.
   codex?: StoredCodexInfo
   activeProviderId?: string
+  // Last explicitly configured Claude subscription mode. Kept separately from activeProviderId so
+  // switching to a custom provider does not make the collapsed Claude card fall back to list order.
+  claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
   // Active model within the active provider; backfilled from the provider's own model on load when a
   // pre-v2 settings file (which had no per-model selection) is read.
   activeModel?: string

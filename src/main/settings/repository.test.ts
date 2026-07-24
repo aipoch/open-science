@@ -49,6 +49,87 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('keeps only an existing Claude subscription provider as the preferred mode', () => {
+    const providers = [
+      {
+        id: 'builtin-claude-isolated',
+        type: 'claude-isolated',
+        name: 'Claude subscription'
+      }
+    ]
+
+    expect(
+      sanitizeSettings({
+        claudeSubscriptionProviderId: 'builtin-claude-isolated',
+        providers
+      }).claudeSubscriptionProviderId
+    ).toBe('builtin-claude-isolated')
+    expect(
+      sanitizeSettings({
+        claudeSubscriptionProviderId: 'builtin-claude-shared',
+        providers
+      }).claudeSubscriptionProviderId
+    ).toBeUndefined()
+    expect(
+      sanitizeSettings({
+        claudeSubscriptionProviderId: 'unknown',
+        providers
+      }).claudeSubscriptionProviderId
+    ).toBeUndefined()
+  })
+
+  it('remembers the most recently upserted Claude subscription mode', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.upsertProvider(
+      provider({
+        id: 'builtin-claude-shared',
+        type: 'claude-shared',
+        name: 'Claude subscription'
+      })
+    )
+    await repository.upsertProvider(
+      provider({
+        id: 'builtin-claude-isolated',
+        type: 'claude-isolated',
+        name: 'Claude subscription'
+      })
+    )
+
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      claudeSubscriptionProviderId: 'builtin-claude-isolated'
+    })
+  })
+
+  it('remembers the last activated Claude mode after switching to another provider', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.upsertProvider(
+      provider({
+        id: 'builtin-claude-isolated',
+        type: 'claude-isolated',
+        name: 'Claude subscription'
+      })
+    )
+    await repository.upsertProvider(
+      provider({
+        id: 'builtin-claude-shared',
+        type: 'claude-shared',
+        name: 'Claude subscription'
+      })
+    )
+    await repository.upsertProvider(provider())
+
+    await repository.setActiveProvider('builtin-claude-isolated')
+    await repository.setActiveProvider('p1')
+
+    await expect(new SettingsRepository(root).getSettings()).resolves.toMatchObject({
+      activeProviderId: 'p1',
+      claudeSubscriptionProviderId: 'builtin-claude-isolated'
+    })
+  })
+
   it('migrates two legacy Codex subscription cards into one active-mode provider', () => {
     const settings = sanitizeSettings({
       activeProviderId: 'builtin-codex-isolated',
@@ -640,6 +721,23 @@ describe('settings repository: v2 official providers & activeModel migration', (
     expect((await repository.getSettings()).activeModel).toBeUndefined()
   })
 
+  it('does not recreate a deleted Claude provider when a late credential save arrives', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: 'enc:initial',
+      keyMask: 'sk-ant-…initial'
+    })
+    await repository.deleteProvider('builtin-claude-isolated')
+
+    await expect(
+      repository.updateClaudeIsolatedCredentialsIfExists({
+        keyRef: 'enc:late',
+        keyMask: 'sk-ant-…late'
+      })
+    ).resolves.toBe(false)
+    expect((await repository.getSettings()).providers).toEqual([])
+  })
+
   it('persists the active provider + model across a reload (app restart)', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)
@@ -790,12 +888,14 @@ describe('settings repository: unknown provider type on load (claude-default rem
       version: 1,
       providers: [
         { id: 'p-custom', type: 'custom', name: 'Custom' },
+        // claude-shared is a real, supported type: it must survive the allowlist, not be dropped.
+        { id: 'builtin-claude-shared', type: 'claude-shared', name: 'Claude subscription' },
         { id: 'p-removed', type: 'claude-default', name: 'Old Local Claude' }
       ]
     })
 
     const settings = await repository.getSettings()
-    expect(settings.providers.map((p) => p.id)).toEqual(['p-custom'])
+    expect(settings.providers.map((p) => p.id)).toEqual(['p-custom', 'builtin-claude-shared'])
     // One warn call for the dropped record, carrying id + type so an operator reading the log can
     // identify which provider was discarded.
     expect(warnSpy).toHaveBeenCalledWith(

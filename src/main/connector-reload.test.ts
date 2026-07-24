@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { wireConnectorReload } from './connector-reload'
+import { waitForInitialConnectorRefresh, wireConnectorReload } from './connector-reload'
 
 // Exercises the REAL wiring used by ipc.ts's onConnectorsChanged (not a reimplementation): the skills
 // reload must run on BOTH settle paths, so if the source ever regressed `.finally` to `.then` these
@@ -23,5 +23,79 @@ describe('wireConnectorReload', () => {
     // the behavior a `.then` chain would drop, which is why the source uses `.finally`.
     await expect(wireConnectorReload(refresh, reload)).rejects.toThrow('sync failed')
     expect(reload).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('waitForInitialConnectorRefresh', () => {
+  it('does not reload when the initial connector docs are ready within the barrier', async () => {
+    let finishRefresh: (() => void) | undefined
+    const refresh = new Promise<void>((resolve) => {
+      finishRefresh = resolve
+    })
+    let settled = false
+    const reload = vi.fn()
+
+    const barrier = waitForInitialConnectorRefresh(refresh, { onLateSettled: reload }).then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    finishRefresh?.()
+
+    await barrier
+    expect(settled).toBe(true)
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('settles after a bounded wait when connector discovery hangs', async () => {
+    vi.useFakeTimers()
+    try {
+      const refresh = new Promise<void>(() => undefined)
+      let settled = false
+
+      const barrier = waitForInitialConnectorRefresh(refresh, { timeoutMs: 100 }).then(() => {
+        settled = true
+      })
+      await Promise.resolve()
+      expect(settled).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(100)
+
+      await barrier
+      expect(settled).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    ['resolves', false],
+    ['rejects', true]
+  ] as const)('reloads once when a timed-out refresh later %s', async (_label, rejects) => {
+    vi.useFakeTimers()
+    try {
+      let finishRefresh: (() => void) | undefined
+      let failRefresh: ((error: Error) => void) | undefined
+      const refresh = new Promise<void>((resolve, reject) => {
+        finishRefresh = resolve
+        failRefresh = reject
+      })
+      const reload = vi.fn()
+      const barrier = waitForInitialConnectorRefresh(refresh, {
+        timeoutMs: 100,
+        onLateSettled: reload
+      })
+
+      await vi.advanceTimersByTimeAsync(100)
+      await barrier
+      expect(reload).not.toHaveBeenCalled()
+
+      if (rejects) failRefresh?.(new Error('sync failed'))
+      else finishRefresh?.()
+      await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce())
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -32,11 +32,13 @@ const render = (
   {
     onChange = vi.fn(),
     errors,
-    showCodexSubscriptions = false
+    showCodexSubscriptions = false,
+    showClaudeIsolated = false
   }: {
     onChange?: () => void
     errors?: ProviderFormErrors
     showCodexSubscriptions?: boolean
+    showClaudeIsolated?: boolean
   } = {}
 ): void => {
   act(() => {
@@ -46,6 +48,7 @@ const render = (
         onChange={onChange}
         errors={errors}
         showCodexSubscriptions={showCodexSubscriptions}
+        showClaudeIsolated={showClaudeIsolated}
       />
     )
   })
@@ -131,6 +134,28 @@ describe('ProviderForm field switching', () => {
     const trigger = container.querySelector('[aria-label="Codex authentication"]')
     expect(trigger).not.toBeNull()
     expect(trigger?.textContent).toContain('Use existing Codex profile')
+  })
+
+  it('shows a fixed Claude subscription without an editable name or API key', () => {
+    render(
+      createEmptyProviderFormValue({
+        type: 'claude-isolated',
+        name: 'Claude subscription',
+        apiEndpoint: 'anthropic'
+      }),
+      { showClaudeIsolated: true }
+    )
+
+    // Mirrors the Codex subscription: the identity is a fixed builtin, so no editable name, and the
+    // browser sign-in (both isolated and shared modes) lives in the Settings card, not an inline
+    // API-key field. The authentication mode selector is shown.
+    expect(container.querySelector('[aria-label="Provider name"]')).toBeNull()
+    expect(container.querySelector('[aria-label="API key"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Model"]')).not.toBeNull()
+    expect(container.textContent).toContain('Claude authentication')
+    expect(container.textContent).toContain('Sign in separately')
+    expect(container.textContent).toContain('claude setup-token')
+    expect(container.textContent).toContain('nothing is read from or written to')
   })
 
   it('surfaces the provider-type picker with the current selection', () => {

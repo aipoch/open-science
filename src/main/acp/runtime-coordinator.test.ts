@@ -35,6 +35,10 @@ const createFakeRuntime = (options: {
   prompt?: (sessionId: string) => Promise<unknown>
 }): {
   runtime: AcpRuntime
+  connect: ReturnType<typeof vi.fn>
+  createSession: ReturnType<typeof vi.fn>
+  resetSessionContext: ReturnType<typeof vi.fn>
+  resumeSession: ReturnType<typeof vi.fn>
   disconnect: ReturnType<typeof vi.fn>
   requestRetirement: ReturnType<typeof vi.fn>
   requestProviderReconnect: ReturnType<typeof vi.fn>
@@ -47,12 +51,38 @@ const createFakeRuntime = (options: {
 } => {
   let snapshot = emptySnapshot()
   let sessionIndex = 0
+  const connect = vi.fn(async () => snapshot)
+  const createSession = vi.fn(async () => {
+    const sessionId = options.sessionIds[sessionIndex]
+    sessionIndex += 1
+    snapshot = { ...snapshot, sessionId, sessionIds: [...snapshot.sessionIds, sessionId] }
+    options.callbacks.onStateChanged?.(snapshot)
+    return { sessionId, cwd: '/workspace', frameworkId: options.frameworkId }
+  })
+  const resumeSession = vi.fn(async ({ sessionId }: { sessionId: string }) => {
+    snapshot = {
+      ...snapshot,
+      sessionId,
+      sessionIds: snapshot.sessionIds.includes(sessionId)
+        ? snapshot.sessionIds
+        : [...snapshot.sessionIds, sessionId]
+    }
+    options.callbacks.onStateChanged?.(snapshot)
+    return { sessionId, cwd: '/workspace', frameworkId: options.frameworkId, contextReset: true }
+  })
+  const resetSessionContext = vi.fn(async ({ sessionId }: { sessionId: string }) => ({
+    sessionId,
+    cwd: '/workspace',
+    frameworkId: options.frameworkId,
+    contextReset: true
+  }))
   const disconnect = vi.fn(async () => snapshot)
   const requestRetirement = vi.fn(async () => undefined)
   const requestProviderReconnect = vi.fn(async () => undefined)
   const requestSkillsReload = vi.fn(async () => undefined)
   const applyReasoningEffortChange = vi.fn(async () => true)
   const respondToPermission = vi.fn(() => snapshot)
+  const shutdown = vi.fn()
   const shutdownForQuit = vi.fn(async () => ({ reaped: true }))
   const shutdownForUpdateGate = vi.fn(async () => ({ reaped: true }))
   const sendPrompt = vi.fn(async ({ sessionId }: { sessionId: string }) => {
@@ -82,24 +112,10 @@ const createFakeRuntime = (options: {
     getSnapshot: () => snapshot,
     getActivePromptSessions: () => [],
     getActiveArtifactRunIds: () => [],
-    createSession: vi.fn(async () => {
-      const sessionId = options.sessionIds[sessionIndex]
-      sessionIndex += 1
-      snapshot = { ...snapshot, sessionId, sessionIds: [...snapshot.sessionIds, sessionId] }
-      options.callbacks.onStateChanged?.(snapshot)
-      return { sessionId, cwd: '/workspace', frameworkId: options.frameworkId }
-    }),
-    resumeSession: vi.fn(async ({ sessionId }: { sessionId: string }) => {
-      snapshot = {
-        ...snapshot,
-        sessionId,
-        sessionIds: snapshot.sessionIds.includes(sessionId)
-          ? snapshot.sessionIds
-          : [...snapshot.sessionIds, sessionId]
-      }
-      options.callbacks.onStateChanged?.(snapshot)
-      return { sessionId, cwd: '/workspace', frameworkId: options.frameworkId, contextReset: true }
-    }),
+    connect,
+    createSession,
+    resumeSession,
+    resetSessionContext,
     sendPrompt,
     withActivity: vi.fn(
       async (_activityOptions: unknown, work: (scopedRuntime: AcpRuntime) => Promise<unknown>) =>
@@ -118,12 +134,17 @@ const createFakeRuntime = (options: {
     requestSkillsReload,
     applyReasoningEffortChange,
     respondToPermission,
+    shutdown,
     shutdownForQuit,
     shutdownForUpdateGate
   } as unknown as AcpRuntime
 
   return {
     runtime,
+    connect,
+    createSession,
+    resetSessionContext,
+    resumeSession,
     disconnect,
     requestRetirement,
     requestProviderReconnect,
@@ -148,6 +169,73 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it('does not run lifecycle requests after disconnect supersedes initialization', async () => {
+    const initialization = createDeferred()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      {},
+      '',
+      initialization.promise
+    )
+
+    const pending = Promise.allSettled([
+      coordinator.connect(),
+      coordinator.createSession(),
+      coordinator.resumeSession({ sessionId: 'session-1', cwd: '/workspace' }),
+      coordinator.resetSessionContext({ sessionId: 'session-1', cwd: '/workspace' })
+    ])
+    await coordinator.disconnect()
+    initialization.resolve()
+
+    const outcomes = await pending
+    expect(outcomes).toHaveLength(4)
+    for (const outcome of outcomes) {
+      if (outcome.status === 'fulfilled') throw new Error('Expected request to be superseded')
+      expect(outcome.reason).toEqual(
+        expect.objectContaining({ message: expect.stringMatching(/superseded/i) })
+      )
+    }
+    expect(created[0].connect).not.toHaveBeenCalled()
+    expect(created[0].createSession).not.toHaveBeenCalled()
+    expect(created[0].resumeSession).not.toHaveBeenCalled()
+    expect(created[0].resetSessionContext).not.toHaveBeenCalled()
+  })
+
+  it('does not connect after shutdown supersedes initialization', async () => {
+    const initialization = createDeferred()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      {},
+      '',
+      initialization.promise
+    )
+
+    const connecting = coordinator.connect()
+    coordinator.shutdown()
+    initialization.resolve()
+
+    await expect(connecting).rejects.toThrow(/superseded/i)
+    expect(created[0].connect).not.toHaveBeenCalled()
+  })
+
   it('keeps reconnecting settings on the active generation and fans out live effort', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {

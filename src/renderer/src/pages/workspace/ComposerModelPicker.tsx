@@ -36,6 +36,9 @@ const optionLabel = (option: ProviderModelOption): string => option.model || opt
 const ComposerModelPicker = (): React.JSX.Element | null => {
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
+  const claudeSubscriptionProviderId = useSettingsStore(
+    (state) => state.claudeSubscriptionProviderId
+  )
   const activeModel = useSettingsStore((state) => state.activeModel)
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
   const openSettings = useSettingsStore((state) => state.openSettings)
@@ -55,7 +58,11 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
     ) &&
     (agentFrameworkId !== 'codex' || isModelBridgeSupported(provider, model))
 
-  const options = selectProviderModelOptions(providers)
+  const options = selectProviderModelOptions(
+    providers,
+    activeProviderId,
+    claudeSubscriptionProviderId
+  )
   const usableOptions = options.filter((option) => {
     const provider = providers.find((candidate) => candidate.id === option.providerId)
     return provider ? isCompatible(provider, option.model) : false

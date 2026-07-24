@@ -16,7 +16,7 @@ import { JobPoller } from './compute/job-poller'
 import { SystemSshRunner } from './compute/ssh-runner'
 import { SystemScpRunner } from './compute/scp-runner'
 import { harvestJob } from './compute/harvest-engine'
-import { wireConnectorReload } from './connector-reload'
+import { waitForInitialConnectorRefresh, wireConnectorReload } from './connector-reload'
 import { ApprovalBroker } from './connectors/approval-broker'
 import { toCustomMcpConfig, selectEnabledCustomServers } from './connectors/custom-mcp-bootstrap'
 import { McpClientManager } from './connectors/mcp-client-manager'
@@ -426,12 +426,20 @@ const registerIpcHandlers = async ({
     }
   )
 
-  void refreshConnectorSkillDocs(
-    settingsService,
-    resolveStorageRoot(),
-    mcpClientManager,
-    (connectors) => {
-      connectorsSnapshot = connectors
+  const initialConnectorSkillsReady = waitForInitialConnectorRefresh(
+    refreshConnectorSkillDocs(
+      settingsService,
+      resolveStorageRoot(),
+      mcpClientManager,
+      (connectors) => {
+        connectorsSnapshot = connectors
+      }
+    ),
+    {
+      // If custom MCP discovery outlives the startup barrier, the first agent may already have
+      // materialized the old connector docs. Rotate it once the late refresh settles so the next
+      // session/prompt uses the refreshed skills instead of waiting for another settings change.
+      onLateSettled: () => runtimeRef.current?.requestSkillsReload()
     }
   )
 
@@ -449,7 +457,8 @@ const registerIpcHandlers = async ({
     uploadRepository,
     notebookRpcServer,
     settingsService,
-    taskNotifications
+    taskNotifications,
+    initializationBarrier: initialConnectorSkillsReady
   })
   runtimeRef.current = runtime
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install

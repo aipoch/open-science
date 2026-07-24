@@ -6,6 +6,24 @@ import { codexFramework } from './codex'
 import { opencodeFramework } from './opencode'
 
 describe('claudeCodeFramework', () => {
+  it('injects resolved settings and local plugins into Claude session options', () => {
+    const sessionOptions = {
+      settings: '/app/claude/settings.json',
+      plugins: [{ type: 'local', path: '/app/claude', skipMcpDiscovery: true }]
+    }
+
+    const setup = claudeCodeFramework.buildSessionSetup({
+      systemPromptAppends: [],
+      sessionOptions
+    })
+
+    expect(setup.meta).toMatchObject({
+      claudeCode: {
+        options: { ...sessionOptions, settingSources: ['user'] }
+      }
+    })
+  })
+
   it('renders Open Science MCP tool references as Claude callable names', () => {
     const setup = claudeCodeFramework.buildSessionSetup({
       systemPromptAppends: [

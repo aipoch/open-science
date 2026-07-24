@@ -14,16 +14,20 @@ export const SETTINGS_FILE_VERSION = 2
 
 // A provider targets a custom gateway, a built-in official vendor, an app-owned Claude
 // subscription, or one of Codex's two subscription profiles. Codex shared uses the machine's
-// normal CODEX_HOME; isolated uses the app-owned profile. claude-isolated authenticates a Claude
-// subscription via a setup-token paste under an app-owned CLAUDE_CONFIG_DIR (no ~/.claude touch).
+// normal CODEX_HOME; isolated uses the app-owned profile. claude-shared uses ~/.claude (browser
+// OAuth login via `claude auth login`); claude-isolated uses an app-owned CLAUDE_CONFIG_DIR
+// (setup-token paste, no ~/.claude touch).
 export type ProviderType =
-  'custom' | 'claude-isolated' | 'official' | 'codex-shared' | 'codex-isolated'
+  'custom' | 'claude-shared' | 'claude-isolated' | 'official' | 'codex-shared' | 'codex-isolated'
 
 export const CODEX_SHARED_PROVIDER_ID = 'builtin-codex-shared'
 export const CODEX_ISOLATED_PROVIDER_ID = 'builtin-codex-isolated'
 export const CODEX_SUBSCRIPTION_PROVIDER_ID = 'builtin-codex-subscription'
 
+export const CLAUDE_SHARED_PROVIDER_ID = 'builtin-claude-shared'
 export const CLAUDE_ISOLATED_PROVIDER_ID = 'builtin-claude-isolated'
+export type ClaudeSubscriptionProviderId =
+  typeof CLAUDE_SHARED_PROVIDER_ID | typeof CLAUDE_ISOLATED_PROVIDER_ID
 
 export const isCodexSubscriptionProvider = (
   type: ProviderType
@@ -39,13 +43,45 @@ export const isCodexSubscriptionProviderId = (id: string): boolean =>
   id === CODEX_SHARED_PROVIDER_ID ||
   id === CODEX_ISOLATED_PROVIDER_ID
 
+export const isClaudeSubscriptionProvider = (
+  type: ProviderType
+): type is 'claude-shared' | 'claude-isolated' =>
+  type === 'claude-shared' || type === 'claude-isolated'
+
+// The claude-isolated record's fixed identity. Every isolated lookup (repository upsert,
+// service login/edit/validation) keys on CLAUDE_ISOLATED_PROVIDER_ID.
 export const claudeIsolatedProviderIdentity = (): { id: string; name: string } => ({
   id: CLAUDE_ISOLATED_PROVIDER_ID,
   name: 'Claude subscription'
 })
 
-export const isClaudeIsolatedProviderId = (id: string): boolean =>
-  id === CLAUDE_ISOLATED_PROVIDER_ID
+// The claude-shared record's fixed identity. Every shared lookup keys on CLAUDE_SHARED_PROVIDER_ID.
+export const claudeSharedProviderIdentity = (): { id: string; name: string } => ({
+  id: CLAUDE_SHARED_PROVIDER_ID,
+  name: 'Claude subscription'
+})
+
+export const isClaudeSubscriptionProviderId = (id: string): id is ClaudeSubscriptionProviderId =>
+  id === CLAUDE_SHARED_PROVIDER_ID || id === CLAUDE_ISOLATED_PROVIDER_ID
+
+// Chooses the single Claude subscription record projected by collapsed UI surfaces. An active Claude
+// record wins; otherwise the last explicitly configured mode wins, with list order only as a legacy
+// fallback for settings written before the preference existed.
+export const selectClaudeSubscriptionProvider = <T extends { id: string; type: ProviderType }>(
+  providers: readonly T[],
+  activeProviderId?: string,
+  preferredProviderId?: ClaudeSubscriptionProviderId
+): T | undefined => {
+  const claudeProviders = providers.filter((provider) =>
+    isClaudeSubscriptionProvider(provider.type)
+  )
+
+  return (
+    claudeProviders.find((provider) => provider.id === activeProviderId) ??
+    claudeProviders.find((provider) => provider.id === preferredProviderId) ??
+    claudeProviders[0]
+  )
+}
 
 // The chat API a model endpoint speaks: `anthropic` = /v1/messages, `openai` =
 // /v1/chat/completions, and `responses` = /v1/responses. Keep the two OpenAI-shaped protocols
@@ -80,7 +116,9 @@ export const isProviderUsableByFramework = (
   framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
 ): boolean => {
   if (isCodexSubscriptionProvider(provider.type)) return framework.id === 'codex'
-  if (provider.type === 'claude-isolated' && framework.id !== 'claude-code') return false
+  // Both Claude subscription modes rely on the ~/.claude or app-owned credential that only
+  // claude-code knows how to read; OpenCode receives neither an endpoint nor a token.
+  if (isClaudeSubscriptionProvider(provider.type) && framework.id !== 'claude-code') return false
 
   const endpoints = providerEndpoints(provider)
 
@@ -253,6 +291,8 @@ export type SettingsSnapshot = {
   // Detected codex-acp adapter and its paired native Codex runtime.
   codex: CodexInfo
   activeProviderId?: string
+  // Last explicitly configured Claude subscription mode, used when another provider is active.
+  claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
   // The active model within the active provider. For custom this mirrors the provider's own model;
   // for official providers it's the chosen catalog entry. Undefined until a provider exists.
   activeModel?: string
@@ -372,6 +412,9 @@ export type ValidateProviderResult = {
   // must treat `applied === false` as "do not advance": the stored provider does not reflect it.
   // Absent means applied (the ordinary synchronous path).
   applied?: boolean
+  // Set when the user explicitly cancelled a browser sign-in. Distinct from applied:false (provider
+  // changed): the login was intentionally stopped, not invalidated by a concurrent edit.
+  cancelled?: boolean
 }
 
 // Request to refresh a saved provider's model list from the vendor's live API (fills the bundled

@@ -1,6 +1,7 @@
 import { CirclePlus, Sparkles } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
+import anthropicLogo from '@/assets/provider-icons/anthropic.svg'
 import claudeLogo from '@/assets/provider-icons/claude.svg'
 import deepseekLogo from '@/assets/provider-icons/deepseek.svg'
 import minimaxLogo from '@/assets/provider-icons/minimax.svg'
@@ -21,7 +22,7 @@ import type { OfficialVendorId } from '../../../../shared/provider-registry'
 // rather than a made-up logo. Custom uses a plus-in-circle.
 const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   openai: openaiLogo,
-  anthropic: claudeLogo,
+  anthropic: anthropicLogo,
   deepseek: deepseekLogo,
   minimax: minimaxLogo,
   stepfun: stepfunLogo,
@@ -59,6 +60,14 @@ export const ProviderKindIcon = ({
     kindKey === 'codex-isolated'
   ) {
     return <img src={openaiLogo} alt="" className={cn('size-5 shrink-0', className)} />
+  }
+
+  if (
+    kindKey === 'claude-subscription' ||
+    kindKey === 'claude-shared' ||
+    kindKey === 'claude-isolated'
+  ) {
+    return <img src={claudeLogo} alt="" className={cn('size-5 shrink-0', className)} />
   }
 
   const vendorId = kindKey.slice('official:'.length) as OfficialVendorId

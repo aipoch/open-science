@@ -31,6 +31,7 @@ type SubmitSpy = ReturnType<typeof vi.fn> & {
 const renderModal = (props: {
   onSubmit?: SubmitSpy
   open?: boolean
+  browserSignInPending?: boolean
 }): { onSubmit: SubmitSpy; onOpenChange: ReturnType<typeof vi.fn> } => {
   const onSubmit = (props.onSubmit ?? vi.fn(async () => undefined)) as SubmitSpy
   const onOpenChange = vi.fn()
@@ -40,6 +41,7 @@ const renderModal = (props: {
         open={props.open ?? true}
         onOpenChange={onOpenChange}
         onSubmit={onSubmit as never}
+        browserSignInPending={props.browserSignInPending ?? false}
       />
     )
   })
@@ -72,6 +74,16 @@ const setInputValue = (input: HTMLInputElement, value: string): void => {
 }
 
 describe('ClaudeIsolatedSignInModal UI state', () => {
+  it('accurately describes where the encrypted setup token is stored', () => {
+    renderModal({})
+
+    expect(document.body.textContent).toContain('encrypted in Open Science app storage')
+    expect(document.body.textContent).not.toContain(
+      'stored encrypted in your app-owned Claude config'
+    )
+    expect(document.body.textContent).toContain('never read from or written to ~/.claude')
+  })
+
   it('disables the Sign in button until the user pastes a non-empty token', () => {
     const { onSubmit } = renderModal({})
 
@@ -104,6 +116,30 @@ describe('ClaudeIsolatedSignInModal UI state', () => {
     renderModal({})
 
     expect(document.body.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('shows the Step 1 run-command block for a pure manual sign-in', () => {
+    renderModal({ browserSignInPending: false })
+
+    expect(document.body.textContent).toContain('Step 1 · Run')
+    expect(findButton('Copy')).toBeDefined()
+    // The paste field keeps its "Step 2" numbering when Step 1 is present.
+    expect(document.body.textContent).toContain('Step 2 · Paste')
+  })
+
+  it('hides the run-command step during a browser sign-in (the app runs it) and shows the status banner', () => {
+    renderModal({ browserSignInPending: true })
+
+    // The app already runs `claude setup-token`, so the "Step 1 · Run this yourself" block is gone.
+    expect(document.body.textContent).not.toContain('Step 1 · Run')
+    expect(findButton('Copy')).toBeUndefined()
+    // The paste field survives as a fallback, but without the now-orphaned "Step 2" numbering.
+    expect(findInput('Claude setup token')).toBeDefined()
+    expect(document.body.textContent).not.toContain('Step 2 · Paste')
+    // The status banner explains the browser flow is in progress.
+    expect(document.body.querySelector('[role="status"]')?.textContent).toContain(
+      'Opening your browser'
+    )
   })
 
   it('does not call onSubmit when the user cancels', () => {

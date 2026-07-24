@@ -89,6 +89,7 @@ const { registerAcpIpcHandlers } = await import('./ipc')
 
 // Minimal options — createRuntime just forwards them into the mocked AcpRuntime constructor.
 const registerWithFakes = (overrides?: {
+  initializationBarrier?: Promise<unknown>
   taskNotifications?: {
     trackPrompt: ReturnType<typeof vi.fn>
     untrackPrompt: ReturnType<typeof vi.fn>
@@ -101,7 +102,7 @@ const registerWithFakes = (overrides?: {
       untrackPrompt: ReturnType<typeof vi.fn>
     })
 
-  registerAcpIpcHandlers({
+  const options = {
     mcpEntryPath: '/app/out/main/index.js',
     repository: {} as never,
     runRegistry: {} as never,
@@ -111,8 +112,11 @@ const registerWithFakes = (overrides?: {
       captureActiveAgentBackendSelection: vi.fn().mockResolvedValue({}),
       resolveAgentBackend: vi.fn().mockResolvedValue({})
     } as never,
-    taskNotifications: taskNotifications as never
-  })
+    taskNotifications: taskNotifications as never,
+    initializationBarrier: overrides?.initializationBarrier
+  }
+
+  registerAcpIpcHandlers(options)
 }
 
 afterEach(() => {
@@ -130,6 +134,28 @@ afterEach(() => {
 })
 
 describe('registerAcpIpcHandlers — managed session workspace', () => {
+  it('registers immediately but waits for initialization before creating the first session', async () => {
+    let finishInitialization: (() => void) | undefined
+    const initializationBarrier = new Promise<void>((resolve) => {
+      finishInitialization = resolve
+    })
+
+    registerWithFakes({ initializationBarrier })
+    expect(handlers.has('acp:create-session')).toBe(true)
+
+    const creation = handlers.get('acp:create-session')?.(
+      {},
+      { cwd: '/workspace', projectName: 'project-1', permissionProfile: 'ask' }
+    )
+    await Promise.resolve()
+    expect(createSession).not.toHaveBeenCalled()
+
+    finishInitialization?.()
+    await creation
+
+    expect(createSession).toHaveBeenCalledOnce()
+  })
+
   it('creates new sessions in a unique workspace under the configured data root', async () => {
     registerWithFakes()
 

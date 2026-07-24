@@ -52,6 +52,13 @@ type PreloadApi = {
     cancelCodexLogin: () => unknown
     loginIsolatedCodex: () => unknown
     logoutIsolatedCodex: () => unknown
+    cancelClaudeLogin: () => unknown
+    loginSharedClaude: () => unknown
+    logoutSharedClaude: () => unknown
+    loginIsolatedClaude: (token: string) => unknown
+    loginIsolatedClaudeBrowser: () => unknown
+    cancelIsolatedClaudeLogin: () => unknown
+    logoutIsolatedClaude: () => unknown
   }
   acp: {
     resumeSession: (request: unknown) => unknown
@@ -215,6 +222,48 @@ const cases: ForwardingCase[] = [
     name: 'settings.logoutIsolatedCodex → settings:logout-isolated-codex (no args)',
     invoke: (a) => a.settings.logoutIsolatedCodex(),
     channel: 'settings:logout-isolated-codex',
+    args: []
+  },
+  {
+    name: 'settings.cancelClaudeLogin → settings:cancel-claude-login (no args)',
+    invoke: (a) => a.settings.cancelClaudeLogin(),
+    channel: 'settings:cancel-claude-login',
+    args: []
+  },
+  {
+    name: 'settings.loginSharedClaude → settings:login-shared-claude (no args)',
+    invoke: (a) => a.settings.loginSharedClaude(),
+    channel: 'settings:login-shared-claude',
+    args: []
+  },
+  {
+    name: 'settings.logoutSharedClaude → settings:logout-shared-claude (no args)',
+    invoke: (a) => a.settings.logoutSharedClaude(),
+    channel: 'settings:logout-shared-claude',
+    args: []
+  },
+  {
+    name: 'settings.loginIsolatedClaude → settings:login-isolated-claude',
+    invoke: (a) => a.settings.loginIsolatedClaude('sk-ant-test'),
+    channel: 'settings:login-isolated-claude',
+    args: ['sk-ant-test']
+  },
+  {
+    name: 'settings.loginIsolatedClaudeBrowser → settings:login-isolated-claude-browser (no args)',
+    invoke: (a) => a.settings.loginIsolatedClaudeBrowser(),
+    channel: 'settings:login-isolated-claude-browser',
+    args: []
+  },
+  {
+    name: 'settings.cancelIsolatedClaudeLogin → settings:cancel-isolated-claude-login (no args)',
+    invoke: (a) => a.settings.cancelIsolatedClaudeLogin(),
+    channel: 'settings:cancel-isolated-claude-login',
+    args: []
+  },
+  {
+    name: 'settings.logoutIsolatedClaude → settings:logout-isolated-claude (no args)',
+    invoke: (a) => a.settings.logoutIsolatedClaude(),
+    channel: 'settings:logout-isolated-claude',
     args: []
   },
   // command-line launcher install/uninstall/status

@@ -122,7 +122,7 @@ const ProviderForm = ({
   const isCustom = value.type === 'custom'
   const isOfficial = value.type === 'official'
   const isCodexSubscription = value.type === 'codex-shared' || value.type === 'codex-isolated'
-  const isClaudeIsolated = value.type === 'claude-isolated'
+  const isClaudeSubscription = value.type === 'claude-shared' || value.type === 'claude-isolated'
   const vendor = isOfficial && value.vendorId ? getOfficialVendor(value.vendorId) : undefined
 
   const selectedKey = selectedKindKey(value)
@@ -194,13 +194,12 @@ const ProviderForm = ({
             {PROVIDER_KIND_GROUPS.map((group) => {
               const kinds = PROVIDER_KINDS.filter((kind) => {
                 if (kind.group !== group.id) return false
-                // The coding group is reserved for the Codex subscription; only show it when the
-                // active framework is Codex (mirrors the existing showCodexSubscriptions gate).
-                if (group.id === 'coding' && !showCodexSubscriptions) return false
-                // claude-isolated is the only Claude-side subscription option; gate it on the active
-                // framework being Claude Code, so the picker doesn't surface a kind the user can't
-                // actually drive (Claude Code is the only framework that speaks the bearer token).
-                if (kind.key === 'claude-isolated' && !showClaudeIsolated) return false
+                // The Codex subscription section only shows when Codex is the active framework
+                // (the only one that can drive it), mirroring the showCodexSubscriptions gate.
+                if (group.id === 'codex' && !showCodexSubscriptions) return false
+                // The Claude subscription section mirrors it: gate on Claude Code being active,
+                // the only framework that speaks the app-owned bearer token.
+                if (group.id === 'claude' && !showClaudeIsolated) return false
 
                 return true
               })
@@ -226,7 +225,7 @@ const ProviderForm = ({
         </Select>
       </div>
 
-      {!isCodexSubscription ? (
+      {!isCodexSubscription && !isClaudeSubscription ? (
         <div className="space-y-1.5">
           <label className={fieldLabelClassName} htmlFor="provider-name">
             Name
@@ -272,6 +271,77 @@ const ProviderForm = ({
               : 'Stores a separate Codex login in Open Science app data without changing your Codex CLI profile.'}
           </p>
         </div>
+      ) : isClaudeSubscription ? (
+        <>
+          <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
+            <div className="space-y-1.5">
+              <span className={fieldLabelClassName}>Claude authentication</span>
+              <Select
+                value={value.type}
+                disabled={disabled}
+                onValueChange={(type) =>
+                  onChange({ type: type as 'claude-shared' | 'claude-isolated' })
+                }
+              >
+                <SelectTrigger aria-label="Claude authentication" disabled={disabled}>
+                  <span>
+                    {value.type === 'claude-shared'
+                      ? 'Use existing Claude profile (Recommended)'
+                      : 'Sign in separately (isolated)'}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="claude-shared">
+                    Use existing Claude profile (Recommended)
+                  </SelectItem>
+                  <SelectItem value="claude-isolated">Sign in separately (isolated)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {value.type === 'claude-shared'
+                ? 'Recommended. Uses your existing Claude login from ~/.claude. Sign in once via browser OAuth and use across all Claude tools.'
+                : 'Advanced. Signs in through the browser and stores a separate Claude login in Open Science, completely isolated from your personal Claude profile.'}
+            </p>
+            <div className="space-y-1.5 border-t border-border-200 pt-3">
+              <p className="text-xs text-muted-foreground">
+                {value.type === 'claude-shared' ? (
+                  <>
+                    Sign in via browser OAuth. The Settings card will open your browser to sign in
+                    with your Claude account. Your credentials are stored in{' '}
+                    <code className="font-mono">~/.claude</code>.
+                  </>
+                ) : (
+                  <>
+                    Run <code className="font-mono">claude setup-token</code> in a terminal and
+                    paste the token below. It is stored encrypted under your app-owned Claude config
+                    dir; nothing is read from or written to{' '}
+                    <code className="font-mono">~/.claude</code>.
+                  </>
+                )}
+              </p>
+            </div>
+            {value.type === 'claude-isolated' && (
+              <p className="text-xs text-muted-foreground">
+                Paste the token in the Settings card after saving — the wizard&apos;s Test &amp;
+                continue flow signs you in.
+              </p>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <label className={fieldLabelClassName} htmlFor="provider-model">
+              Model <span className="text-muted-foreground">(optional override)</span>
+            </label>
+            <Input
+              id="provider-model"
+              aria-label="Model"
+              value={value.model}
+              disabled={disabled}
+              placeholder="Leave blank to use Claude's default"
+              onChange={(event) => onChange({ model: event.target.value })}
+            />
+          </div>
+        </>
       ) : isCustom ? (
         <>
           <div className="space-y-1.5">
@@ -448,36 +518,6 @@ const ProviderForm = ({
               </div>
             )
           })()}
-        </>
-      ) : isClaudeIsolated ? (
-        <>
-          <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
-            <div className="space-y-1.5">
-              <span className={fieldLabelClassName}>Authentication</span>
-              <p className="text-xs text-muted-foreground">
-                Run <code className="font-mono">claude setup-token</code> in a terminal and paste
-                the token below. It is stored encrypted under your app-owned Claude config dir;
-                nothing is read from or written to <code className="font-mono">~/.claude</code>.
-              </p>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Paste the token in the Settings card after saving — the wizard&apos;s Test &amp;
-              continue flow signs you in.
-            </p>
-          </div>
-          <div className="space-y-1.5">
-            <label className={fieldLabelClassName} htmlFor="provider-model">
-              Model <span className="text-muted-foreground">(optional override)</span>
-            </label>
-            <Input
-              id="provider-model"
-              aria-label="Model"
-              value={value.model}
-              disabled={disabled}
-              placeholder="Leave blank to use Claude's default"
-              onChange={(event) => onChange({ model: event.target.value })}
-            />
-          </div>
         </>
       ) : (
         <div className="space-y-1.5">
