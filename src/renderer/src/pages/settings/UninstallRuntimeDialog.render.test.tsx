@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -29,6 +32,35 @@ const button = (text: string): HTMLButtonElement | undefined =>
   )
 
 describe('UninstallRuntimeDialog Codex variant', () => {
+  it('uses shared settings dialog chrome', () => {
+    act(() =>
+      root.render(
+        <UninstallRuntimeDialog
+          framework="codex"
+          isUninstalling={false}
+          onCancel={vi.fn()}
+          onConfirm={vi.fn()}
+        />
+      )
+    )
+
+    const overlay = Array.from(document.body.querySelectorAll<HTMLElement>('div')).find((element) =>
+      element.className.includes('bg-black/50')
+    )
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    const source = readFileSync(resolve(__dirname, 'UninstallRuntimeDialog.tsx'), 'utf8')
+
+    expect(overlay?.className).toContain('data-[state=open]:fade-in-0')
+    expect(dialog?.className).toContain('rounded-xl')
+    expect(dialog?.className).toContain('border-border')
+    expect(dialog?.className).toContain('bg-card')
+    expect(dialog?.className).toContain('shadow-dialog')
+    expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
+    expect(source).toContain('dialogOverlayClassName')
+    expect(source).toContain('dialogPanelClassName')
+    expect(source).not.toContain('backdrop-blur')
+  })
+
   it('renders Codex-specific copy and title when the framework is codex', () => {
     act(() =>
       root.render(

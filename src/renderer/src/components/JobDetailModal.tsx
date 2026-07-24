@@ -5,6 +5,8 @@ import { Dialog } from 'radix-ui'
 import type { JobSummary } from '../../../shared/compute'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { Button } from '@/components/ui/button'
+import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import { cn } from '@/lib/utils'
 import { JobStatusBadge } from './JobStatusBadge'
 import { JobTerminalOutput } from './JobTerminalOutput'
 import { formatDuration, jobElapsedMs } from './remote-job-badge-utils'
@@ -300,16 +302,22 @@ export function JobDetailModal({
     path: string
   } | null>(null)
 
-  // Reset to the appropriate view when the modal opens with a different initial job.
-  const prevInitialJobId = useRef<string | undefined>(undefined)
-  useEffect(() => {
-    if (!open) return
-    const newId = initialJob?.job_id
-    if (newId !== prevInitialJobId.current) {
-      prevInitialJobId.current = newId
+  // Keep closing content stable for the exit animation, then reset before the next open is committed.
+  const [previousInput, setPreviousInput] = useState(() => ({
+    open,
+    sessionId,
+    initialJobId: initialJob?.job_id
+  }))
+  const inputChanged =
+    open !== previousInput.open ||
+    sessionId !== previousInput.sessionId ||
+    initialJob?.job_id !== previousInput.initialJobId
+  if (inputChanged) {
+    setPreviousInput({ open, sessionId, initialJobId: initialJob?.job_id })
+    if (open) {
       setView(initialJob ? { kind: 'detail', job: initialJob } : { kind: 'list' })
     }
-  }, [open, initialJob])
+  }
 
   const handleSelectJob = useCallback((job: JobSummary) => {
     setView({ kind: 'detail', job })
@@ -333,9 +341,11 @@ export function JobDetailModal({
         }}
       >
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-[70] bg-black/50" />
+          <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[70]')} />
           <Dialog.Content
-            className="fixed left-1/2 top-1/2 z-[70] flex w-[640px] max-w-[calc(100vw-2rem)] max-h-[82vh] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-card text-foreground shadow-dialog overflow-hidden"
+            className={dialogPanelClassName(
+              'z-[70] flex w-[640px] max-w-[calc(100vw-2rem)] max-h-[82vh] flex-col overflow-hidden p-0'
+            )}
             aria-label="Remote job details"
             data-testid="job-detail-modal"
           >

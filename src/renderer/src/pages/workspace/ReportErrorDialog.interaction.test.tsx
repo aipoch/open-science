@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ReportErrorDialog } from './ReportErrorDialog'
@@ -90,6 +91,32 @@ describe('ReportErrorDialog', () => {
   it('seeds the editable textarea with only the error text', () => {
     renderDialog()
     expect(textarea()?.value).toBe('Run failed: connection reset')
+  })
+
+  it('requires an explicit close action instead of dismissing from the overlay', () => {
+    const onClose = vi.fn()
+    act(() => {
+      root.render(
+        <ReportErrorDialog
+          open
+          error="Run failed: connection reset"
+          subject={{ agentFrameworkId: 'claude-code', agentBackendId: 'claude-code:p1' }}
+          onClose={onClose}
+        />
+      )
+    })
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
+    const overlay = dialog?.previousElementSibling as HTMLElement | null
+    expect(dialog?.querySelector('[aria-label="Close"]')).not.toBeNull()
+
+    if (overlay) fireEvent.pointerDown(overlay)
+    expect(onClose).not.toHaveBeenCalled()
+
+    act(() => {
+      dialog?.querySelector<HTMLButtonElement>('[aria-label="Close"]')?.click()
+    })
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('shows environment facts read-only, outside the editable field', () => {

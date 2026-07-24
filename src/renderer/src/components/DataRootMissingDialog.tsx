@@ -3,6 +3,13 @@ import { FolderInput, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import {
+  dialogDescriptionClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 
 type DataRootMissingDialogProps = {
   open: boolean
@@ -25,6 +32,7 @@ const DataRootMissingDialog = ({
   const [stillMissing, setStillMissing] = useState(false)
   const [isChoosing, setIsChoosing] = useState(false)
   const [chooseError, setChooseError] = useState<string | undefined>(undefined)
+  const dialogDataRoot = useRetainedDialogValue(open ? dataRoot : undefined) ?? dataRoot
 
   const handleRetry = async (): Promise<void> => {
     setIsRetrying(true)
@@ -65,14 +73,14 @@ const DataRootMissingDialog = ({
   return (
     <AlertDialog.Root open={open}>
       <AlertDialog.Portal>
-        <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
-        <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(460px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog">
-          <AlertDialog.Title className="text-base font-semibold text-text-000">
+        <AlertDialog.Overlay className={dialogOverlayClassName} />
+        <AlertDialog.Content className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))]')}>
+          <AlertDialog.Title className={dialogTitleClassName}>
             Data folder not found
           </AlertDialog.Title>
-          <AlertDialog.Description className="mt-2 text-sm leading-relaxed text-text-100">
-            Your data folder <span className="font-mono">{dataRoot}</span> can&apos;t be found. It
-            may have been deleted, or it&apos;s on a drive that isn&apos;t connected.
+          <AlertDialog.Description className={dialogDescriptionClassName}>
+            Your data folder <span className="font-mono">{dialogDataRoot}</span> can&apos;t be
+            found. It may have been deleted, or it&apos;s on a drive that isn&apos;t connected.
           </AlertDialog.Description>
 
           {stillMissing ? (

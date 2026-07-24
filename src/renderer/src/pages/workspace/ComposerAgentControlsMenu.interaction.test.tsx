@@ -75,10 +75,29 @@ vi.mock('radix-ui', () => ({
     Root: ({ open, children }: PropsWithChildren<{ open?: boolean }>): React.JSX.Element | null =>
       open ? <div>{children}</div> : null,
     Portal: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
-    Overlay: (): React.JSX.Element => <div />,
-    Content: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>,
-    Title: ({ children }: PropsWithChildren): React.JSX.Element => <h2>{children}</h2>,
-    Description: ({ children }: PropsWithChildren): React.JSX.Element => <p>{children}</p>,
+    Overlay: ({ className }: { className?: string }): React.JSX.Element => (
+      <div data-testid="full-access-overlay" className={className} />
+    ),
+    Content: ({
+      children,
+      className
+    }: PropsWithChildren<{ className?: string }>): React.JSX.Element => (
+      <div data-testid="full-access-dialog" className={className}>
+        {children}
+      </div>
+    ),
+    Title: ({
+      children,
+      className
+    }: PropsWithChildren<{ className?: string }>): React.JSX.Element => (
+      <h2 className={className}>{children}</h2>
+    ),
+    Description: ({
+      children,
+      className
+    }: PropsWithChildren<{ className?: string }>): React.JSX.Element => (
+      <p className={className}>{children}</p>
+    ),
     Cancel: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
     Action: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>
   }
@@ -200,6 +219,20 @@ describe('ComposerAgentControlsMenu', () => {
     expect(findButton('Cancel').getAttribute('data-slot')).toBe('button')
     expect(findButton('Cancel').getAttribute('data-variant')).toBe('outline')
     expect(findButton('Enable').getAttribute('data-slot')).toBe('button')
+    expect(findButton('Enable').className).toContain('bg-amber-600')
+
+    const overlay = container.querySelector<HTMLElement>('[data-testid="full-access-overlay"]')
+    const dialog = container.querySelector<HTMLElement>('[data-testid="full-access-dialog"]')
+
+    expect(overlay?.className).toContain('bg-black/50')
+    expect(overlay?.className).toContain('data-[state=open]:fade-in-0')
+    expect(overlay?.className).not.toContain('backdrop-blur')
+    expect(dialog?.className).toContain('rounded-xl')
+    expect(dialog?.className).toContain('border-border')
+    expect(dialog?.className).toContain('bg-card')
+    expect(dialog?.className).toContain('shadow-dialog')
+    expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
+    expect(dialog?.querySelector('[aria-label="Close"]')).not.toBeNull()
 
     act(() => findButton('Enable').click())
     expect(onProfileChange).toHaveBeenCalledWith('full')

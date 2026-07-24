@@ -4,6 +4,13 @@ import { useEffect, useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  dialogDescriptionClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
@@ -65,6 +72,7 @@ const RuntimesPanel = (): React.JSX.Element => {
     env: DiscoveredInterpreter
     usage: RuntimeUsage
   } | null>(null)
+  const dialogDisableImpact = useRetainedDialogValue(disableImpact)
   const initEnv = useNotebookEnvStore((state) => state.init)
   const provisionEnv = useNotebookEnvStore((state) => state.provision)
   const cancelEnv = useNotebookEnvStore((state) => state.cancel)
@@ -531,20 +539,20 @@ const RuntimesPanel = (): React.JSX.Element => {
         }}
       >
         <AlertDialog.Portal>
-          <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
           <AlertDialog.Content
             data-testid="disable-impact-dialog"
-            className="fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-card p-6 text-foreground shadow-lg"
+            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]')}
           >
-            <AlertDialog.Title className="text-base font-semibold text-foreground">
-              Disable {disableImpact?.env.label}?
+            <AlertDialog.Title className={dialogTitleClassName}>
+              Disable {dialogDisableImpact?.env.label}?
             </AlertDialog.Title>
-            <AlertDialog.Description className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            <AlertDialog.Description className={dialogDescriptionClassName}>
               It is in use by{' '}
-              {(disableImpact?.usage.running ?? 0) + (disableImpact?.usage.idle ?? 0)} active
-              session(s) — {disableImpact?.usage.running ?? 0} running,{' '}
-              {disableImpact?.usage.idle ?? 0} idle. Disabling lets any running cell finish, then
-              closes its kernel; those sessions must switch to another runtime to keep working.
+              {(dialogDisableImpact?.usage.running ?? 0) + (dialogDisableImpact?.usage.idle ?? 0)}{' '}
+              active session(s) — {dialogDisableImpact?.usage.running ?? 0} running,{' '}
+              {dialogDisableImpact?.usage.idle ?? 0} idle. Disabling lets any running cell finish,
+              then closes its kernel; those sessions must switch to another runtime to keep working.
             </AlertDialog.Description>
             <div className="mt-6 flex justify-end gap-2">
               <AlertDialog.Cancel asChild>
@@ -552,7 +560,7 @@ const RuntimesPanel = (): React.JSX.Element => {
                   Cancel
                 </Button>
               </AlertDialog.Cancel>
-              {(disableImpact?.usage.running ?? 0) > 0 ? (
+              {(dialogDisableImpact?.usage.running ?? 0) > 0 ? (
                 <AlertDialog.Action asChild>
                   <Button
                     type="button"

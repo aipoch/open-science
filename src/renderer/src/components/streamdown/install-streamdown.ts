@@ -13,27 +13,10 @@ const AGENT_MARKDOWN_ROOT_SELECTOR = '.agent-markdown-root'
 const TABLE_FULLSCREEN_SELECTOR = '[data-streamdown="table-fullscreen"]'
 const MERMAID_FULLSCREEN_SELECTOR =
   'body > div.fixed.inset-0.z-50.flex.items-center.justify-center[role="button"]:not([data-streamdown])'
-
-const createRefCountedInstaller = (install: () => () => void): (() => () => void) => {
-  let installCount = 0
-  let uninstall: (() => void) | undefined
-
-  return () => {
-    if (installCount === 0) {
-      uninstall = install()
-    }
-
-    installCount += 1
-
-    return () => {
-      installCount = Math.max(0, installCount - 1)
-      if (installCount === 0) {
-        uninstall?.()
-        uninstall = undefined
-      }
-    }
-  }
-}
+const FULLSCREEN_SELECTOR = `${MERMAID_FULLSCREEN_SELECTOR}, ${TABLE_FULLSCREEN_SELECTOR}`
+const FULLSCREEN_EXIT_MS = 150
+const FULLSCREEN_FOCUSABLE_SELECTOR =
+  'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 /* --- Menu positioning (fullscreen + mermaid dropdowns) --- */
 
@@ -44,9 +27,6 @@ const usesFixedMenuPosition = (relative: HTMLElement): boolean =>
     relative.closest('[data-streamdown="table-fullscreen"]') ||
     relative.closest('.agent-markdown-root [data-streamdown="mermaid-block-actions"]')
   )
-
-const isStreamdownControlRelative = (relative: HTMLElement): boolean =>
-  usesFixedMenuPosition(relative)
 
 const positionControlMenu = (relative: HTMLElement): void => {
   if (!usesFixedMenuPosition(relative)) return
@@ -78,7 +58,7 @@ const positionOpenMenus = (): void => {
   for (const relative of document.querySelectorAll<HTMLElement>(
     `${AGENT_MARKDOWN_ROOT_SELECTOR} .relative, ${TABLE_FULLSCREEN_SELECTOR} .relative`
   )) {
-    if (relative.querySelector(MENU_SELECTOR) && isStreamdownControlRelative(relative)) {
+    if (relative.querySelector(MENU_SELECTOR) && usesFixedMenuPosition(relative)) {
       positionControlMenu(relative)
     }
   }
@@ -101,12 +81,12 @@ const maybeRepositionMenu = (event: Event): void => {
 
   const relative = button.parentElement
   if (!(relative instanceof HTMLElement) || !relative.classList.contains('relative')) return
-  if (!isStreamdownControlRelative(relative)) return
+  if (!usesFixedMenuPosition(relative)) return
 
   scheduleMenuReposition(relative)
 }
 
-const installMenuPositioning = createRefCountedInstaller(() => {
+const installMenuPositioning = (): (() => void) => {
   document.addEventListener('click', maybeRepositionMenu, true)
   window.addEventListener('resize', positionOpenMenus)
   document.addEventListener('scroll', positionOpenMenus, true)
@@ -116,15 +96,15 @@ const installMenuPositioning = createRefCountedInstaller(() => {
     window.removeEventListener('resize', positionOpenMenus)
     document.removeEventListener('scroll', positionOpenMenus, true)
   }
-})
+}
 
 /* --- Blob download patch (Electron sandbox) --- */
 
 const originalCreateObjectURL = URL.createObjectURL.bind(URL)
 const originalRevokeObjectURL = URL.revokeObjectURL.bind(URL)
 const blobByUrl = new Map<string, Blob>()
-let streamdownDownloadGestureUntil = 0
-const STREAMDOWN_DOWNLOAD_GESTURE_MS = 15_000
+let streamdownDownloadGestureActive = false
+let pendingImageDownloadUntil = 0
 
 const markStreamdownDownloadGesture = (event: Event): void => {
   const target = event.target
@@ -138,47 +118,48 @@ const markStreamdownDownloadGesture = (event: Event): void => {
     return
   }
 
-  streamdownDownloadGestureUntil = performance.now() + STREAMDOWN_DOWNLOAD_GESTURE_MS
+  streamdownDownloadGestureActive = true
+  queueMicrotask(() => {
+    streamdownDownloadGestureActive = false
+  })
+
+  if (target.closest('[data-streamdown="image-wrapper"]')) {
+    pendingImageDownloadUntil = performance.now() + 30_000
+  }
 }
 
-const hasActiveStreamdownDownloadGesture = (): boolean =>
-  performance.now() <= streamdownDownloadGestureUntil
-
-const saveTrackedBlob = (blob: Blob, filename: string): void => {
-  void (async () => {
-    try {
-      const result = await saveBlobFile({
-        suggestedName: filename,
-        mimeType: blob.type || 'application/octet-stream',
-        data: await blob.arrayBuffer()
-      })
-
-      if (!result.saved) return
-    } catch (error) {
-      console.error('[streamdown-download] save failed:', error)
-    }
-  })()
+const saveTrackedBlob = async (blob: Blob, filename: string): Promise<void> => {
+  try {
+    await saveBlobFile({
+      suggestedName: filename,
+      mimeType: blob.type || 'application/octet-stream',
+      data: await blob.arrayBuffer()
+    })
+  } catch (error) {
+    console.error('[streamdown-download] save failed:', error)
+  }
 }
 
 const trySaveDownloadAnchor = (anchor: HTMLAnchorElement): boolean => {
   if (!anchor.download || !anchor.href.startsWith('blob:')) return false
-  if (!hasActiveStreamdownDownloadGesture()) return false
 
   const blob = blobByUrl.get(anchor.href)
-  if (!blob) {
-    console.warn('[streamdown-download] blob not tracked for', anchor.href)
-    return false
-  }
+  if (!blob) return false
 
-  saveTrackedBlob(blob, anchor.download)
-  streamdownDownloadGestureUntil = 0
+  void saveTrackedBlob(blob, anchor.download)
+  blobByUrl.delete(anchor.href)
   return true
 }
 
-const installDownloads = createRefCountedInstaller(() => {
+const installDownloads = (): (() => void) => {
   URL.createObjectURL = (blob: Blob): string => {
     const url = originalCreateObjectURL(blob)
-    blobByUrl.set(url, blob)
+    const claimsPendingImage =
+      performance.now() <= pendingImageDownloadUntil && blob.type.startsWith('image/')
+    if (streamdownDownloadGestureActive || claimsPendingImage) {
+      blobByUrl.set(url, blob)
+      if (claimsPendingImage) pendingImageDownloadUntil = 0
+    }
     return url
   }
 
@@ -204,9 +185,10 @@ const installDownloads = createRefCountedInstaller(() => {
     URL.createObjectURL = originalCreateObjectURL
     URL.revokeObjectURL = originalRevokeObjectURL
     blobByUrl.clear()
-    streamdownDownloadGestureUntil = 0
+    streamdownDownloadGestureActive = false
+    pendingImageDownloadUntil = 0
   }
-})
+}
 
 /* --- Mermaid SVG download --- */
 
@@ -267,7 +249,7 @@ const saveMermaidSvg = async (block: Element): Promise<void> => {
   })
 }
 
-const installMermaidDownload = createRefCountedInstaller(() => {
+const installMermaidDownload = (): (() => void) => {
   const onDownloadClick = (event: Event): void => {
     const target = event.target
     if (!(target instanceof Element)) return
@@ -290,7 +272,7 @@ const installMermaidDownload = createRefCountedInstaller(() => {
   return () => {
     document.removeEventListener('click', onDownloadClick, true)
   }
-})
+}
 
 /* --- Table copy / download --- */
 
@@ -519,7 +501,7 @@ const onTableMenuEscape = (event: KeyboardEvent): void => {
   }
 }
 
-const installTableActions = createRefCountedInstaller(() => {
+const installTableActions = (): (() => void) => {
   document.addEventListener('mousedown', onFullscreenMenuPointer, true)
   document.addEventListener('mousedown', onInlineToolbarPointer, true)
   document.addEventListener('mousedown', onDismissTableMenu, true)
@@ -532,9 +514,9 @@ const installTableActions = createRefCountedInstaller(() => {
     document.removeEventListener('keydown', onTableMenuEscape)
     closeActiveTableMenu()
   }
-})
+}
 
-/* --- Table fullscreen content sync --- */
+/* --- Fullscreen dialog adapter --- */
 
 let lastTableWrapper: HTMLElement | null = null
 
@@ -556,7 +538,7 @@ const syncFullscreenTable = (overlay: HTMLElement): void => {
   fullscreenTable.innerHTML = sourceTable.innerHTML
 }
 
-const installTableFullscreenFix = createRefCountedInstaller(() => {
+const installTableFullscreenFix = (): (() => void) => {
   const onToolbarClick = (event: Event): void => {
     const target = event.target
     if (!(target instanceof Element)) return
@@ -605,7 +587,158 @@ const installTableFullscreenFix = createRefCountedInstaller(() => {
     document.removeEventListener('click', onToolbarClick, true)
     lastTableWrapper = null
   }
-})
+}
+
+const installFullscreenDialogAdapter = (): (() => void) => {
+  const replayedCloseButtons = new WeakSet<HTMLButtonElement>()
+  const closeTimers = new Map<HTMLElement, number>()
+  const previousFocus = new WeakMap<HTMLElement, HTMLElement>()
+
+  const findFullscreenCloseButton = (overlay: HTMLElement): HTMLButtonElement | null =>
+    overlay.matches(TABLE_FULLSCREEN_SELECTOR)
+      ? overlay.querySelector<HTMLButtonElement>(
+          ':scope > div[role="presentation"] > div:first-child > button:last-of-type'
+        )
+      : overlay.querySelector<HTMLButtonElement>(':scope > button')
+
+  const findFullscreenLayers = (node: Node): HTMLElement[] => {
+    if (!(node instanceof HTMLElement)) return []
+
+    const layers = [...node.querySelectorAll<HTMLElement>(FULLSCREEN_SELECTOR)]
+    if (node.matches(FULLSCREEN_SELECTOR)) layers.unshift(node)
+    return layers
+  }
+
+  const closeAfterAnimation = (overlay: HTMLElement): boolean => {
+    const closeButton = findFullscreenCloseButton(overlay)
+    if (!closeButton) return false
+
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return false
+    if (overlay.dataset.fullscreenState === 'closing') return true
+
+    overlay.dataset.fullscreenState = 'closing'
+    const timer = window.setTimeout(() => {
+      closeTimers.delete(overlay)
+      replayedCloseButtons.add(closeButton)
+      closeButton.click()
+    }, FULLSCREEN_EXIT_MS)
+    closeTimers.set(overlay, timer)
+    return true
+  }
+
+  const trapFullscreenFocus = (event: KeyboardEvent, overlay: HTMLElement): void => {
+    const focusable = [
+      ...overlay.querySelectorAll<HTMLElement>(FULLSCREEN_FOCUSABLE_SELECTOR)
+    ].filter((element) => {
+      for (let current: HTMLElement | null = element; current; current = current.parentElement) {
+        const style = window.getComputedStyle(current)
+        if (
+          current.hidden ||
+          current.inert ||
+          current.getAttribute('aria-hidden') === 'true' ||
+          style.display === 'none' ||
+          style.visibility === 'hidden'
+        ) {
+          return false
+        }
+        if (current === overlay) break
+      }
+      return true
+    })
+    if (focusable.length === 0) return
+
+    const activeIndex = focusable.indexOf(document.activeElement as HTMLElement)
+    const nextIndex = event.shiftKey
+      ? activeIndex <= 0
+        ? focusable.length - 1
+        : activeIndex - 1
+      : activeIndex < 0 || activeIndex === focusable.length - 1
+        ? 0
+        : activeIndex + 1
+
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    focusable[nextIndex]?.focus()
+  }
+
+  const onClick = (event: MouseEvent): void => {
+    const target = event.target
+    if (!(target instanceof Element)) return
+
+    const overlay = target.closest<HTMLElement>(FULLSCREEN_SELECTOR)
+    if (!overlay) return
+
+    const closeButton = findFullscreenCloseButton(overlay)
+    if (!closeButton) return
+    if (replayedCloseButtons.delete(closeButton)) return
+
+    if (target === overlay) {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      return
+    }
+    if (!closeButton.contains(target) || !closeAfterAnimation(overlay)) return
+
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }
+
+  const onKeyDown = (event: KeyboardEvent): void => {
+    // A portaled link confirmation is the active layer and owns Tab/Escape until it closes.
+    if (document.querySelector('[data-streamdown="link-safety-panel"][data-state="open"]')) {
+      return
+    }
+
+    const overlays = document.querySelectorAll<HTMLElement>(FULLSCREEN_SELECTOR)
+    const overlay = overlays.item(overlays.length - 1)
+    if (!overlay) return
+
+    if (event.key === 'Tab') {
+      trapFullscreenFocus(event, overlay)
+      return
+    }
+
+    if (event.key !== 'Escape' || !closeAfterAnimation(overlay)) return
+
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }
+
+  document.addEventListener('click', onClick, true)
+  document.addEventListener('keydown', onKeyDown, true)
+
+  const markAddedFullscreen = (node: Node): void => {
+    for (const overlay of findFullscreenLayers(node)) {
+      if (document.activeElement instanceof HTMLElement) {
+        previousFocus.set(overlay, document.activeElement)
+      }
+      requestAnimationFrame(() => findFullscreenCloseButton(overlay)?.focus())
+    }
+  }
+
+  const restoreRemovedFullscreenFocus = (node: Node): void => {
+    for (const overlay of findFullscreenLayers(node)) {
+      const target = previousFocus.get(overlay)
+      if (target?.isConnected) requestAnimationFrame(() => target.focus())
+      previousFocus.delete(overlay)
+    }
+  }
+  const observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      mutation.addedNodes.forEach(markAddedFullscreen)
+      mutation.removedNodes.forEach(restoreRemovedFullscreenFocus)
+    }
+  })
+  observer.observe(document.body, { childList: true })
+
+  return () => {
+    observer.disconnect()
+    document.removeEventListener('click', onClick, true)
+    document.removeEventListener('keydown', onKeyDown, true)
+    for (const timer of closeTimers.values()) window.clearTimeout(timer)
+    closeTimers.clear()
+  }
+}
 
 /* --- Public entry --- */
 
@@ -618,6 +751,7 @@ const installStreamdown = (): (() => void) => {
       installMenuPositioning(),
       installDownloads(),
       installMermaidDownload(),
+      installFullscreenDialogAdapter(),
       installTableActions(),
       installTableFullscreenFix()
     )

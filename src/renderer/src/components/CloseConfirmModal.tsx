@@ -2,7 +2,10 @@ import { AlertDialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { resolveActiveSessionDisplay, truncateLabel } from '@/lib/active-session-display'
+import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { ActiveSessionInfo } from '../../../shared/storage'
 import type {
@@ -46,10 +49,11 @@ export const CloseConfirmModal = (): React.JSX.Element | null => {
     setRequest(undefined)
   }
 
-  if (!request) return null
+  const dialogRequest = useRetainedDialogValue(request)
+  if (!dialogRequest) return null
 
-  const isQuitVariant = request.variant === 'quit'
-  const hasSessions = request.sessions.length > 0
+  const isQuitVariant = dialogRequest.variant === 'quit'
+  const hasSessions = dialogRequest.sessions.length > 0
   const title = isQuitVariant ? 'Quit Open Science?' : 'Minimize or quit?'
   const description = isQuitVariant
     ? 'Work is still running and will be interrupted if you quit.'
@@ -57,21 +61,23 @@ export const CloseConfirmModal = (): React.JSX.Element | null => {
 
   return (
     <AlertDialog.Root
-      open
+      open={Boolean(request)}
       onOpenChange={(open) => {
         if (!open) reply('cancel')
       }}
     >
       <AlertDialog.Portal>
-        <AlertDialog.Overlay className="fixed inset-0 z-[60] bg-black/50" />
-        <AlertDialog.Content className="fixed left-1/2 top-1/2 z-[60] w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 text-foreground shadow-dialog">
+        <AlertDialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
+        <AlertDialog.Content
+          className={dialogPanelClassName('z-[60] w-[min(420px,calc(100vw-2rem))]')}
+        >
           <AlertDialog.Title className="text-sm font-semibold">{title}</AlertDialog.Title>
           <AlertDialog.Description className="mt-1 text-xs text-muted-foreground">
             {description}
           </AlertDialog.Description>
           {hasSessions ? (
             <ul className="mt-3 space-y-1 text-xs">
-              {request.sessions.map((session) => {
+              {dialogRequest.sessions.map((session) => {
                 const row = resolveActiveSessionDisplay(session)
                 // Clicking a row cancels the close and jumps to that session so the user can check on
                 // it. Only navigable when we resolved its project (openSession needs the project id).

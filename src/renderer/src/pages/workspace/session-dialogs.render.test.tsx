@@ -16,6 +16,12 @@ vi.mock('@/components/ui/input', () => ({
   Input: (props: Record<string, unknown>) => <input {...props} />
 }))
 
+// These structure tests call the components as pure functions; lifecycle behavior is covered by the
+// retained-value tests, so keep this test focused on callback and chrome wiring.
+vi.mock('@/components/ui/use-retained-dialog-value', () => ({
+  useRetainedDialogValue: <T,>(value: T | null | undefined): T | undefined => value ?? undefined
+}))
+
 type ElementWithProps = ReactElement<Record<string, unknown>>
 
 const createSession = (overrides: Partial<ChatSession> = {}): ChatSession => ({
@@ -57,6 +63,39 @@ const getTextContent = (node: ReactNode): string => {
 }
 
 describe('workspace session dialogs behavior wiring', () => {
+  const findPanel = (elements: ElementWithProps[]): ElementWithProps | undefined =>
+    elements.find((element) =>
+      String(element.props.className ?? '').includes('rounded-xl border border-border bg-card')
+    )
+
+  const expectSettingsDialogChrome = (
+    tree: ReactNode,
+    expectedWidth: string,
+    expectedClose: () => void,
+    options: { interceptsOutsideClick?: boolean } = { interceptsOutsideClick: true }
+  ): void => {
+    const elements = collectElements(tree)
+    const overlay = elements.find((element) =>
+      String(element.props.className ?? '').includes('bg-black/50')
+    )
+    const panel = findPanel(elements)
+    const closeButton = elements.find((element) => element.props['aria-label'] === 'Close')
+
+    expect(overlay?.props.className).not.toContain('backdrop-blur')
+    expect(panel?.props.className).toContain(expectedWidth)
+    expect(panel?.props.className).toContain('text-foreground')
+    expect(panel?.props.className).toContain('shadow-dialog')
+
+    if (options.interceptsOutsideClick) {
+      expect(panel?.props.onInteractOutside).toBeTypeOf('function')
+      const outsideEvent = { preventDefault: vi.fn() }
+      ;(panel?.props.onInteractOutside as (event: typeof outsideEvent) => void)(outsideEvent)
+      expect(outsideEvent.preventDefault).toHaveBeenCalledOnce()
+    }
+
+    expect(closeButton?.props.onClick).toBe(expectedClose)
+  }
+
   it('wires rename input, cancel, and submit callbacks', async () => {
     const { RenameSessionDialog } = await import('./RenameSessionDialog')
     const onRenameDraftChange = vi.fn()
@@ -96,6 +135,20 @@ describe('workspace session dialogs behavior wiring', () => {
     expect(onConfirmRename).toHaveBeenCalledWith('submit-event')
   })
 
+  it('renders rename with settings dialog chrome and an explicit close control', async () => {
+    const { RenameSessionDialog } = await import('./RenameSessionDialog')
+    const onCancel = vi.fn()
+    const tree = RenameSessionDialog({
+      session: createSession(),
+      renameDraft: 'Notebook review',
+      onRenameDraftChange: vi.fn(),
+      onCancel,
+      onConfirmRename: vi.fn()
+    })
+
+    expectSettingsDialogChrome(tree, 'w-[min(420px,calc(100vw-2rem))]', onCancel)
+  })
+
   it('wires delete close and confirm callbacks while rendering the session title', async () => {
     const { DeleteSessionDialog } = await import('./DeleteSessionDialog')
     const onCancel = vi.fn()
@@ -119,5 +172,19 @@ describe('workspace session dialogs behavior wiring', () => {
     expect(deleteButton?.props.onClick).toBeTypeOf('function')
     ;(deleteButton?.props.onClick as () => void)()
     expect(onConfirmDelete).toHaveBeenCalledOnce()
+  })
+
+  it('renders delete with settings dialog chrome and an explicit close control', async () => {
+    const { DeleteSessionDialog } = await import('./DeleteSessionDialog')
+    const onCancel = vi.fn()
+    const tree = DeleteSessionDialog({
+      session: createSession({ title: 'Dataset cleanup' }),
+      onCancel,
+      onConfirmDelete: vi.fn()
+    })
+
+    expectSettingsDialogChrome(tree, 'w-[min(420px,calc(100vw-2rem))]', onCancel, {
+      interceptsOutsideClick: false
+    })
   })
 })

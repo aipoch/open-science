@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -50,6 +53,34 @@ afterEach(() => {
 })
 
 describe('DataRootMissingDialog', () => {
+  it('uses shared settings dialog chrome for the missing data root guard', async () => {
+    installApi()
+
+    await act(async () => {
+      root.render(
+        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+      )
+    })
+
+    const overlay = Array.from(document.body.querySelectorAll<HTMLElement>('div')).find((element) =>
+      element.className.includes('bg-black/50')
+    )
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    const source = readFileSync(resolve(__dirname, 'DataRootMissingDialog.tsx'), 'utf8')
+
+    expect(overlay?.className).toContain('data-[state=open]:fade-in-0')
+    expect(overlay?.className).toContain('data-[state=closed]:fill-mode-forwards')
+    expect(overlay?.className).not.toContain('backdrop-blur')
+    expect(dialog?.className).toContain('rounded-xl')
+    expect(dialog?.className).toContain('border-border')
+    expect(dialog?.className).toContain('bg-card')
+    expect(dialog?.className).toContain('shadow-dialog')
+    expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
+    expect(dialog?.className).toContain('data-[state=closed]:fill-mode-forwards')
+    expect(source).toContain('dialogOverlayClassName')
+    expect(source).toContain('dialogPanelClassName')
+  })
+
   it('renders the folder-not-found copy with the configured path when open', async () => {
     installApi()
 

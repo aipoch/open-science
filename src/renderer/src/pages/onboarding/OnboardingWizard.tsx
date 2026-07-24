@@ -12,6 +12,12 @@ import {
   CardHeader,
   CardTitle
 } from '@/components/ui/card'
+import {
+  dialogDescriptionClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { APP } from '../../../../shared/app-config'
@@ -911,10 +917,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                       // provider record AND the token in one click. The modal is reserved for the
                       // Settings-page post-onboarding flow where the user revisits the card later.
                       <div className="mt-4 space-y-2">
-                        <label
-                          className="text-xs font-medium"
-                          htmlFor="wizard-claude-setup-token"
-                        >
+                        <label className="text-xs font-medium" htmlFor="wizard-claude-setup-token">
                           Paste the token from <code className="font-mono">claude setup-token</code>
                         </label>
                         <Input
@@ -1066,12 +1069,12 @@ const OnboardingWizard = (): React.JSX.Element => {
         }}
       >
         <AlertDialog.Portal>
-          <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
-          <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog">
-            <AlertDialog.Title className="text-base font-semibold text-text-000">
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
+          <AlertDialog.Content className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))]')}>
+            <AlertDialog.Title className={dialogTitleClassName}>
               Restart to set up your data?
             </AlertDialog.Title>
-            <AlertDialog.Description className="mt-2 text-sm leading-relaxed text-text-100">
+            <AlertDialog.Description className={dialogDescriptionClassName}>
               Open Science will restart to set up your data at{' '}
               <span className="font-mono">{chosenDataRoot}</span>.
             </AlertDialog.Description>

@@ -103,15 +103,6 @@ describe('workspace page component boundaries', () => {
     expect(workspaceSidebarSource).not.toContain('aria-label={`Session status: ${session.status}`}')
   })
 
-  it('shows the session title in destructive delete confirmation copy', () => {
-    const deleteSessionDialogSource = readFileSync(
-      resolve(__dirname, 'DeleteSessionDialog.tsx'),
-      'utf8'
-    )
-
-    expect(deleteSessionDialogSource).toContain('{session?.title}')
-  })
-
   it('uses workspace style tokens instead of migrated hardcoded colors', () => {
     const workspaceSources = [
       readFileSync(workspacePagePath, 'utf8'),
@@ -200,6 +191,27 @@ describe('workspace page component boundaries', () => {
     expect(`${mainCssSource}\n${emphasisSources}`).not.toContain(deprecatedActionToken)
     expect(emphasisSources).toContain('bg-primary')
     expect(emphasisSources).toContain('text-primary')
+  })
+
+  it('keeps first-batch workspace dialogs on the settings dialog chrome', () => {
+    const renameSource = readFileSync(resolve(__dirname, 'RenameSessionDialog.tsx'), 'utf8')
+    const deleteSource = readFileSync(resolve(__dirname, 'DeleteSessionDialog.tsx'), 'utf8')
+    const notebookSource = readFileSync(resolve(__dirname, 'SessionNotebookDialog.tsx'), 'utf8')
+
+    for (const source of [renameSource, notebookSource]) {
+      expect(source).toContain('dialogOverlayClassName')
+      expect(source).toContain('dialogPanelClassName')
+      expect(source).toContain('onInteractOutside={(event) => event.preventDefault()}')
+      expect(source).not.toContain('backdrop-blur')
+    }
+
+    expect(deleteSource).toContain('dialogOverlayClassName')
+    expect(deleteSource).toContain('dialogPanelClassName')
+    expect(deleteSource).toContain('AlertDialog.Root')
+    expect(deleteSource).not.toContain('backdrop-blur')
+
+    expect(notebookSource).toContain('dialogPanelClassName(')
+    expect(notebookSource).toContain('w-[calc(100%-2rem)] max-w-5xl')
   })
 })
 
