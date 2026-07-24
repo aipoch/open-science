@@ -182,6 +182,17 @@ describe('provider registry', () => {
     expect(defaultVendorModel('stepfun')).toBe('step-3.7-flash')
   })
 
+  it('routes Step Plan over Anthropic and OpenAI under /step_plan, no live model list', () => {
+    expect(resolveVendorApiEndpoints('stepplan')).toEqual(['anthropic', 'openai'])
+    expect(vendorHasRegions('stepplan')).toBe(false)
+    expect(resolveVendorBaseUrl('stepplan')).toBe('https://api.stepfun.com/step_plan')
+    expect(resolveVendorOpenAiBaseUrl('stepplan')).toBe('https://api.stepfun.com/step_plan/v1')
+    // Quota-based plan: fixed catalog, no "refresh from vendor" endpoint.
+    expect(resolveVendorModelsUrl('stepplan')).toBeUndefined()
+    expect(resolveVendorApiKeyUrl('stepplan')).toBe('https://platform.stepfun.com/plan-subscribe')
+    expect(defaultVendorModel('stepplan')).toBe('step-3.7-flash')
+  })
+
   it('resolves the key-console URL, preferring the selected region', () => {
     // Single-endpoint vendor: the vendor-level URL.
     expect(resolveVendorApiKeyUrl('deepseek')).toBe('https://platform.deepseek.com/api_keys')
@@ -276,6 +287,9 @@ describe('provider registry', () => {
     it('returns true only for the StepFun multimodal flash model', () => {
       expect(isVendorModelMultimodal('stepfun', 'step-3.7-flash')).toBe(true)
       expect(isVendorModelMultimodal('stepfun', 'step-3.5-flash')).toBe(false)
+      expect(isVendorModelMultimodal('stepplan', 'step-3.7-flash')).toBe(true)
+      expect(isVendorModelMultimodal('stepplan', 'step-3.5-flash-2603')).toBe(false)
+      expect(isVendorModelMultimodal('stepplan', 'step-router-v1')).toBe(false)
     })
 
     it('returns true for OpenRouter vision-capable models', () => {
