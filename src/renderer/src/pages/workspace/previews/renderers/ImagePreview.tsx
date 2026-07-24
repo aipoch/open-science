@@ -11,11 +11,6 @@ import { createPreviewResourceKey } from '../preview-resource-key'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useManagedPreviewResource } from '../useManagedPreviewResource'
 
-// scale=1 is the fit-to-window baseline; 8x is enough to inspect pixel detail without letting the
-// image run away off-bounds.
-const ZOOM_MIN = 1
-const ZOOM_MAX = 8
-
 // Honour the OS "reduce motion" setting the same way the rest of the app does: matchMedia is
 // optional (absent under jsdom), so guard the call. Read at render time — the preview remounts
 // each time it opens, so there's no long-lived subscription to keep in sync.
@@ -85,8 +80,9 @@ const ZoomableImage = ({
 
   return (
     <TransformWrapper
-      minScale={ZOOM_MIN}
-      maxScale={ZOOM_MAX}
+      // scale=1 is the fit-to-window baseline; 8x inspects pixel detail without running off-bounds.
+      minScale={1}
+      maxScale={8}
       centerOnInit
       zoomAnimation={{ disabled: reduceMotion }}
       // Only override animationTime when reducing motion; passing undefined would clobber the
