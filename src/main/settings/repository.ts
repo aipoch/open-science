@@ -732,14 +732,33 @@ class SettingsRepository {
   }
 
   // Removes a provider and clears the active pointer (and model) when it referenced the removed one.
+  // Claude's two fixed records are one collapsed provider in the UI, so deleting either id removes
+  // the whole subscription group atomically, including its persisted display preference.
   async deleteProvider(id: string): Promise<StoredSettings> {
     return this.mutate((settings) => {
-      const providers = settings.providers.filter((provider) => provider.id !== id)
-      const clearedActive = settings.activeProviderId === id
+      const deletingClaudeSubscription = isClaudeSubscriptionProviderId(id)
+      const removedIds = new Set(
+        settings.providers
+          .filter(
+            (provider) =>
+              provider.id === id ||
+              (deletingClaudeSubscription && isClaudeSubscriptionProvider(provider.type))
+          )
+          .map((provider) => provider.id)
+      )
+      const providers = settings.providers.filter((provider) => !removedIds.has(provider.id))
+      const clearedActive =
+        settings.activeProviderId !== undefined && removedIds.has(settings.activeProviderId)
       const activeProviderId = clearedActive ? undefined : settings.activeProviderId
       const activeModel = clearedActive ? undefined : settings.activeModel
 
-      return { ...settings, providers, activeProviderId, activeModel }
+      return {
+        ...settings,
+        providers,
+        activeProviderId,
+        activeModel,
+        ...(deletingClaudeSubscription ? { claudeSubscriptionProviderId: undefined } : {})
+      }
     })
   }
 

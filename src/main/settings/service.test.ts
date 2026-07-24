@@ -227,6 +227,31 @@ describe('SettingsService: providers', () => {
     expect((await repository.getSettings()).providers).toEqual([])
   })
 
+  it.each([
+    [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID, 'claude-isolated-model'],
+    [CLAUDE_ISOLATED_PROVIDER_ID, CLAUDE_SHARED_PROVIDER_ID, 'claude-shared-model']
+  ] as const)(
+    'deleting %s through the collapsed card also removes its active sibling',
+    async (deletedId, activeId, activeModel) => {
+      const service = createService()
+      await service.upsertProvider({ type: 'claude-shared', model: 'claude-shared-model' })
+      await service.upsertProvider({ type: 'claude-isolated', model: 'claude-isolated-model' })
+      await service.setActiveProvider(activeId, activeModel)
+
+      const snapshot = await service.deleteProvider(deletedId)
+
+      expect(snapshot.providers).toEqual([])
+      expect(snapshot.claudeSubscriptionProviderId).toBeUndefined()
+      expect(snapshot.activeProviderId).toBeUndefined()
+      expect(snapshot.activeModel).toBeUndefined()
+      const stored = await repository.getSettings()
+      expect(stored.providers).toEqual([])
+      expect(stored.activeProviderId).toBeUndefined()
+      expect(stored.activeModel).toBeUndefined()
+      expect(stored.claudeSubscriptionProviderId).toBeUndefined()
+    }
+  )
+
   it('validates shared and isolated subscriptions through read-only status checks', async () => {
     const codexAuth: CodexAuthControllerPort = {
       getStatus: vi.fn().mockResolvedValue({
