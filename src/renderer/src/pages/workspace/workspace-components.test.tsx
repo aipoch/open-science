@@ -393,7 +393,9 @@ describe('conversation message scroller integration', () => {
     expect(workspaceActivityGroupSource).toContain('data-testid="tool-group"')
     expect(workspaceActivityGroupSource).toContain('data-testid="tool-group-header"')
     expect(workspaceActivityGroupSource).toContain('<WorkspaceWebSearchActivityRow')
-    expect(workspaceActivityGroupSource).toContain('formatActivityGroupTitle(group.activities)')
+    expect(workspaceActivityGroupSource).toContain(
+      'formatActivityGroupTitle(group.activities, group.title)'
+    )
     expect(workspaceActivityGroupSource).toContain('getRenderableActivityEntries(group.activities)')
     expect(workspaceWebSearchActivityRowSource).toContain('const WorkspaceWebSearchActivityRow')
     expect(workspaceWebSearchActivityRowSource).toContain('<WorkspaceToolActivityRowButton')

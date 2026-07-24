@@ -92,6 +92,57 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('consumes activity-group declarations without creating a visible tool step', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'group-event-1',
+        kind: 'tool',
+        toolCallId: 'group-call-1',
+        providerToolName: 'mcp__open-science-activity__begin_activity_group',
+        rawInput: { title: 'Inspect the implementation' },
+        status: 'pending'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'narration-event-1',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        text: 'I will inspect the implementation first.'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'group-event-2',
+        kind: 'tool',
+        toolCallId: 'group-call-1',
+        status: 'completed'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'tool-event-1',
+        kind: 'tool',
+        toolCallId: 'tool-read-1',
+        providerToolName: 'Read',
+        toolKind: 'read',
+        status: 'completed'
+      })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.activities).toEqual([
+      expect.objectContaining({ id: 'tool-read-1', activityGroupId: 'group-call-1' })
+    ])
+    expect(session.activityGroups).toEqual([
+      expect.objectContaining({
+        id: 'group-call-1',
+        title: 'Inspect the implementation',
+        activityIds: ['tool-read-1']
+      })
+    ])
+  })
+
   it('applies assistant image events without creating placeholder text', async () => {
     await applyWorkspaceRuntimeEvent(
       createEvent({

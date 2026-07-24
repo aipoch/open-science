@@ -12,6 +12,7 @@ import {
   type PermissionProfileId
 } from './permission-profiles'
 import type { AgentFrameworkId } from './settings'
+import { sanitizeActivityGroupTitle } from './activity-groups'
 
 // One JSON file per session (sessions/<projectId>/<sessionId>.json) carries this envelope version.
 export const SESSION_FILE_VERSION = 1
@@ -97,6 +98,7 @@ export type PersistedToolActivity = {
   id: string
   kind: 'tool'
   title: string
+  activityGroupId?: string
   status: PersistedToolActivityStatus
   sortIndex: number
   eventIds: string[]
@@ -111,6 +113,16 @@ export type PersistedToolActivity = {
   terminalExitCode?: number | null
   createdAt: number
   updatedAt: number
+}
+
+export type PersistedActivityGroup = {
+  id: string
+  title: string
+  sortIndex: number
+  activityIds: string[]
+  createdAt: number
+  updatedAt: number
+  completedAt?: number
 }
 
 export type PersistedChatSession = {
@@ -141,6 +153,7 @@ export type PersistedChatSession = {
   pinned?: boolean
   messages: PersistedChatMessage[]
   activities?: PersistedToolActivity[]
+  activityGroups?: PersistedActivityGroup[]
   activeRun?: PersistedActiveRun
   error?: string
   // Whether a failed run's error is worth a GitHub issue. False for a recognized failure (a provider/
@@ -483,6 +496,7 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
     updatedAt: asNumber(activity.updatedAt) ?? 0
   }
   const providerToolName = asString(activity.providerToolName)
+  const activityGroupId = asString(activity.activityGroupId)
   const toolKind = asString(activity.toolKind)
   const toolContent = sanitizeToolContent(activity.toolContent)
   const toolLocations = sanitizeToolLocations(activity.toolLocations)
@@ -492,6 +506,7 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   const terminalExitCode = asNumber(activity.terminalExitCode)
 
   if (providerToolName) sanitized.providerToolName = providerToolName
+  if (activityGroupId) sanitized.activityGroupId = activityGroupId
   if (toolKind) sanitized.toolKind = toolKind
   if (toolContent) sanitized.toolContent = toolContent
   if (toolLocations) sanitized.toolLocations = toolLocations
@@ -508,6 +523,31 @@ const normalizeActivityAfterRestore = (activity: PersistedToolActivity): Persist
   activity.status === 'pending' || activity.status === 'in_progress'
     ? { ...activity, status: 'failed' }
     : activity
+
+export const sanitizeActivityGroup = (group: unknown): PersistedActivityGroup | undefined => {
+  if (!isRecord(group)) return undefined
+
+  const id = asString(group.id)
+  const title = sanitizeActivityGroupTitle(group.title)
+  if (!id || !title) return undefined
+
+  const updatedAt = asNumber(group.updatedAt) ?? 0
+  const completedAt = asNumber(group.completedAt)
+  return {
+    id,
+    title,
+    sortIndex: asNumber(group.sortIndex) ?? 0,
+    activityIds: asStringArray(group.activityIds),
+    createdAt: asNumber(group.createdAt) ?? 0,
+    updatedAt,
+    ...(completedAt === undefined ? {} : { completedAt })
+  }
+}
+
+const normalizeActivityGroupAfterRestore = (
+  group: PersistedActivityGroup
+): PersistedActivityGroup =>
+  group.completedAt === undefined ? { ...group, completedAt: group.updatedAt } : group
 
 // Rebuilds one structured mention segment, dropping malformed entries so the bubble stays renderable.
 const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
@@ -656,6 +696,12 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
         .filter((item): item is PersistedToolActivity => !!item)
         .map(normalizeActivityAfterRestore)
     : []
+  const activityGroups = Array.isArray(session.activityGroups)
+    ? session.activityGroups
+        .map(sanitizeActivityGroup)
+        .filter((item): item is PersistedActivityGroup => !!item)
+        .map(normalizeActivityGroupAfterRestore)
+    : []
   const sanitized: PersistedChatSession = {
     id,
     // Content value is a hint; the repository overrides it with the session file's directory on load.
@@ -704,6 +750,7 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
     sanitized.filesRevision = filesRevision
   }
   if (activities.length > 0) sanitized.activities = activities
+  if (activityGroups.length > 0) sanitized.activityGroups = activityGroups
   if (enabledComputeHosts.length > 0) sanitized.enabledComputeHosts = enabledComputeHosts
 
   return sanitizeSessionMessageImages(normalizeSessionAfterRestore(sanitized))

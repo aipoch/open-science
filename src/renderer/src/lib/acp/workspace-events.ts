@@ -5,6 +5,10 @@ import { createPreviewFileItem } from '../../pages/workspace/preview-file-item'
 import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
+import {
+  getActivityGroupTitleFromToolEvent,
+  isActivityGroupToolEvent
+} from '../../../../shared/activity-groups'
 import { useSessionStore } from '../../stores/session-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import {
@@ -22,6 +26,20 @@ const pendingPermissionSessionIds = new Set<string>()
 // the main process broadcasts reviewer:suppress-next-auto-review before sending the correction prompt;
 // the renderer calls suppressNextAutoReview(sessionId) so the correction turn's stop event is ignored.
 const suppressAutoReviewOnceFor = new Set<string>()
+const activityGroupToolCallIdsBySession = new Map<string, Set<string>>()
+
+const isActivityGroupControlEvent = (event: AcpRuntimeEvent): boolean => {
+  if (!event.sessionId || !event.toolCallId) return false
+
+  if (isActivityGroupToolEvent(event)) {
+    const toolCallIds = activityGroupToolCallIdsBySession.get(event.sessionId) ?? new Set<string>()
+    toolCallIds.add(event.toolCallId)
+    activityGroupToolCallIdsBySession.set(event.sessionId, toolCallIds)
+    return true
+  }
+
+  return activityGroupToolCallIdsBySession.get(event.sessionId)?.has(event.toolCallId) === true
+}
 
 // Marks the next triggerAutoReview call for a session as suppressed. Cleared on use (one-shot).
 const suppressNextAutoReview = (sessionId: string): void => {
@@ -205,6 +223,7 @@ const applyWorkspaceRuntimeEvent = async (
       return true
     }
 
+    store.completeActivityGroup(event.sessionId)
     store.appendAgentMessageChunk({
       sessionId: event.sessionId,
       streamId: createRuntimeStreamId(event),
@@ -217,6 +236,12 @@ const applyWorkspaceRuntimeEvent = async (
 
   // Tool calls become visible activity rows, including web-search query/result payloads.
   if (event.kind === 'tool' && event.sessionId && event.toolCallId) {
+    if (isActivityGroupControlEvent(event)) {
+      const title = getActivityGroupTitleFromToolEvent(event)
+      if (title) store.beginActivityGroup(event.sessionId, event.toolCallId, title)
+      return true
+    }
+
     store.upsertToolActivity({
       sessionId: event.sessionId,
       toolCallId: event.toolCallId,
@@ -236,6 +261,7 @@ const applyWorkspaceRuntimeEvent = async (
   }
 
   if (event.kind === 'stop' && event.sessionId) {
+    activityGroupToolCallIdsBySession.delete(event.sessionId)
     store.finishRun(event.sessionId)
 
     // Trigger a background review for the just-completed turn.
@@ -291,6 +317,7 @@ const applyWorkspaceRuntimeEvent = async (
   }
 
   if (event.kind === 'error' && event.sessionId) {
+    activityGroupToolCallIdsBySession.delete(event.sessionId)
     // A recoverable request-size overflow shows the neutral "compacting" note ONLY while a recovery is
     // actually in flight — the workspace runtime flips the session to `compacting` first (its recovery
     // effect runs before this event is applied). If the session is not compacting, no recovery started

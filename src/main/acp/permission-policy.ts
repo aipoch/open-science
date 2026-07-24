@@ -6,6 +6,10 @@ import type {
   PermissionProfileId
 } from '../../shared/permission-profiles'
 import type { AgentFrameworkId } from '../../shared/settings'
+import {
+  ACTIVITY_GROUP_MCP_SERVER_NAME,
+  isActivityGroupToolEvent
+} from '../../shared/activity-groups'
 import { extractProviderToolName } from './runtime-events'
 
 type PermissionPolicyContext = {
@@ -24,7 +28,8 @@ const MCP_TOOL_PREFIX = 'mcp__'
 const CODEX_MCP_TOOL_PREFIX = 'mcp.'
 const MCP_PROVIDER_LEAF_NAMES: Record<string, readonly string[]> = {
   'open-science-notebook': ['execute'],
-  'open-science-artifacts': ['write']
+  'open-science-artifacts': ['write'],
+  'open-science-activity': ['begin_activity_group']
 }
 
 // Recognizes an MCP-originated tool name across frameworks (see MCP_TOOL_PREFIX): Claude's mcp__ prefix,
@@ -103,6 +108,17 @@ const resolveAutomaticPermission = (
   params: RequestPermissionRequest,
   context: PermissionPolicyContext | undefined
 ): string | undefined => {
+  if (
+    context?.mcpServerNames?.includes(ACTIVITY_GROUP_MCP_SERVER_NAME) &&
+    isActivityGroupToolEvent({
+      title: params.toolCall.title ?? undefined,
+      providerToolName: extractProviderToolName(params.toolCall),
+      rawInput: params.toolCall.rawInput
+    })
+  ) {
+    return resolveAllowOptionId(params)
+  }
+
   if (context?.profile === 'full') {
     return resolveFullAccessAllowOptionId(params)
   }

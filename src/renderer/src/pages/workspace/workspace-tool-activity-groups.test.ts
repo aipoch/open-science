@@ -101,9 +101,46 @@ describe('groupConversationItems', () => {
       expect(secondGroup.activities.map((activity) => activity.id)).toEqual(['a2', 'a3'])
     }
   })
+
+  it('splits adjacent activities at declared group boundaries', () => {
+    const grouped = groupConversationItems(
+      [
+        activityItem(createActivity({ id: 'a1', activityGroupId: 'g1' })),
+        activityItem(createActivity({ id: 'a2', activityGroupId: 'g2' }))
+      ],
+      [
+        {
+          id: 'g1',
+          title: 'Inspect files',
+          sortIndex: 1,
+          activityIds: ['a1'],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'g2',
+          title: 'Apply changes',
+          sortIndex: 2,
+          activityIds: ['a2'],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    )
+
+    expect(grouped).toEqual([
+      expect.objectContaining({ id: 'activity-group-g1', title: 'Inspect files' }),
+      expect.objectContaining({ id: 'activity-group-g2', title: 'Apply changes' })
+    ])
+  })
 })
 
 describe('formatActivityGroupTitle', () => {
+  it('uses the declared group title when one exists', () => {
+    expect(
+      formatActivityGroupTitle([createActivity({ id: 'a1' })], 'Inspect the implementation')
+    ).toBe('Inspect the implementation')
+  })
   it('emits ordered, pluralized clauses for a mixed group', () => {
     const activities = [
       createActivity({ id: 'edit-1', toolKind: 'edit' }),

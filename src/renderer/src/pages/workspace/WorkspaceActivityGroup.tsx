@@ -69,7 +69,7 @@ const WorkspaceActivityGroup = ({
               <ChevronRight className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
             </span>
             <span className="min-w-0 truncate text-left font-medium text-text-000">
-              {formatActivityGroupTitle(group.activities)}
+              {formatActivityGroupTitle(group.activities, group.title)}
             </span>
             <span className="ml-auto shrink-0 whitespace-nowrap text-[12px] tabular-nums text-text-100">
               {formatStepCount(visibleActivities)}

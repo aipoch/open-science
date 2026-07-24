@@ -151,6 +151,27 @@ describe('permission policy', () => {
     ).toBeUndefined()
   })
 
+  it('auto-approves the declaration-only activity group tool under Ask', () => {
+    const request = createPermissionRequest('other', undefined, {
+      title: 'mcp__open-science-activity__begin_activity_group'
+    })
+
+    expect(
+      resolveAutomaticPermission(request, {
+        profile: 'ask',
+        mcpServerNames: ['open-science-activity']
+      })
+    ).toBe('allow')
+    expect(isMcpToolName('begin_activity_group', ['open-science-activity'])).toBe(true)
+
+    expect(
+      resolveAutomaticPermission(
+        createPermissionRequest('other', undefined, { title: 'begin_activity_group' }),
+        { profile: 'ask', mcpServerNames: ['open-science-activity'] }
+      )
+    ).toBeUndefined()
+  })
+
   it('grants a single-use approval only, never escalating to allow_always', () => {
     const request = createPermissionRequest('read', [{ path: 'data/input.csv' }])
 

@@ -171,6 +171,11 @@ import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limit
 import { readSkillFile } from '../skills/skill-files'
 import { NOTEBOOK_MCP_SERVER_NAME, NOTEBOOK_RPC_TOOLS } from '../notebook/mcp-server'
 import { ARTIFACT_MCP_SERVER_NAME, writeArtifactFileToolSchema } from '../artifacts/mcp-server'
+import { beginActivityGroupToolSchema } from '../activity-groups/mcp-server'
+import {
+  ACTIVITY_GROUP_MCP_SERVER_NAME,
+  BEGIN_ACTIVITY_GROUP_TOOL_NAME
+} from '../../shared/activity-groups'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
 import type {
   StoredConnectors,
@@ -256,6 +261,21 @@ const CODEX_BRIDGE_ARTIFACT_TOOLS: ResponsesBridgeNamespacedTool[] = [
     description:
       'Attach a generated image, chart, report, data export, or archive to the current Open Science response. The file must already exist before using a localPath source.',
     parameters: z.toJSONSchema(z.object(writeArtifactFileToolSchema), {
+      target: 'draft-7'
+    }) as ResponsesBridgeNamespacedTool['parameters']
+  }
+]
+const CODEX_ACTIVITY_TOOL_NAMESPACE = `mcp__${ACTIVITY_GROUP_MCP_SERVER_NAME.replace(
+  /[^a-zA-Z0-9_]/g,
+  '_'
+)}`
+const CODEX_BRIDGE_ACTIVITY_TOOLS: ResponsesBridgeNamespacedTool[] = [
+  {
+    namespace: CODEX_ACTIVITY_TOOL_NAMESPACE,
+    name: BEGIN_ACTIVITY_GROUP_TOOL_NAME,
+    description:
+      'Declare the concise purpose of the next coherent group of tool calls. Call once before the first tool in that group, not once per step.',
+    parameters: z.toJSONSchema(z.object(beginActivityGroupToolSchema), {
       target: 'draft-7'
     }) as ResponsesBridgeNamespacedTool['parameters']
   }
@@ -2711,7 +2731,11 @@ class SettingsService {
       key: provider.key,
       model: provider.model,
       forwardReasoningEffort,
-      namespacedTools: [...CODEX_BRIDGE_NOTEBOOK_TOOLS, ...CODEX_BRIDGE_ARTIFACT_TOOLS],
+      namespacedTools: [
+        ...CODEX_BRIDGE_NOTEBOOK_TOOLS,
+        ...CODEX_BRIDGE_ARTIFACT_TOOLS,
+        ...CODEX_BRIDGE_ACTIVITY_TOOLS
+      ],
       reviewerScope: {
         namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS
       },

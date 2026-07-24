@@ -19,6 +19,7 @@ import type {
 
 // Claude exposes ACP-provided MCP tools as mcp__<server>__<tool>; shared prompts stay framework-neutral.
 const CLAUDE_MCP_TOOL_NAMES = [
+  ['begin_activity_group', 'mcp__open-science-activity__begin_activity_group'],
   ['write_artifact_file', 'mcp__open-science-artifacts__write_artifact_file'],
   ['notebook_execute', 'mcp__open-science-notebook__notebook_execute'],
   ['repl_execute', 'mcp__open-science-notebook__repl_execute'],

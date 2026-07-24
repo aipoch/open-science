@@ -1407,6 +1407,12 @@ describe('SettingsService: preflight & spawn config', () => {
           function: expect.objectContaining({
             name: 'mcp__open_science_artifacts__write_artifact_file'
           })
+        }),
+        expect.objectContaining({
+          type: 'function',
+          function: expect.objectContaining({
+            name: 'mcp__open_science_activity__begin_activity_group'
+          })
         })
       ])
     })

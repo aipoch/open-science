@@ -84,6 +84,11 @@ import {
   type ArtifactMcpEnvironment,
   type ArtifactRunContext
 } from '../artifacts/mcp-server'
+import {
+  ACTIVITY_GROUP_MCP_SERVER_NAME,
+  BEGIN_ACTIVITY_GROUP_TOOL_NAME,
+  createActivityGroupMcpServerConfig
+} from '../activity-groups/mcp-server'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
@@ -136,6 +141,7 @@ type AcpRuntimeOptions = {
   artifacts?: AcpRuntimeArtifactOptions
   uploads?: AcpRuntimeUploadOptions
   notebook?: AcpRuntimeNotebookOptions
+  activityGroups?: AcpRuntimeActivityGroupOptions
   skills?: AcpRuntimeSkillsOptions
   // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
   // framework-coupled behavior (spawn, session meta, permission-mode mapping) via AgentFramework.
@@ -210,6 +216,11 @@ type AcpRuntimeNotebookOptions = {
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
 }
 
+type AcpRuntimeActivityGroupOptions = {
+  mcpEntryPath: string
+  mcpCommand?: string
+}
+
 type SessionAttachmentResponse = {
   sessionId: string
   modes?: SessionModeState | null
@@ -267,6 +278,14 @@ const codexMcpToolIdentity = (
 const MAX_EVENTS = 500
 // Bounds pending Codex MCP identities even if an agent never emits terminal tool updates.
 const MAX_CODEX_MCP_TOOL_IDENTITIES_PER_SESSION = 32
+const ACTIVITY_GROUP_SYSTEM_PROMPT_APPEND = [
+  '<open_science_activity_group_instructions>',
+  `Before the first tool call in each coherent group of work, call the MCP tool \`${BEGIN_ACTIVITY_GROUP_TOOL_NAME}\` from the \`${ACTIVITY_GROUP_MCP_SERVER_NAME}\` server with a concise user-facing purpose title.`,
+  'Call it once for the group, not once per tool or step. A turn may contain multiple groups when the purpose changes.',
+  'Declare the group before doing its work. Do not call it when you will answer without using tools.',
+  'The declaration is control metadata: it is not itself a visible step and does not replace the actual tool calls.',
+  '</open_science_activity_group_instructions>'
+].join('\n')
 // Appends artifact tool guidance as system prompt metadata so user prompts stay untouched.
 const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
   '<open_science_artifact_instructions>',
@@ -596,6 +615,7 @@ class AcpRuntime {
   private readonly cancelTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
   private readonly notebookOptions: AcpRuntimeNotebookOptions | undefined
+  private readonly activityGroupOptions: AcpRuntimeActivityGroupOptions | undefined
   private readonly artifactRepository: ArtifactRepository | undefined
   private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
   private readonly uploadRepository: UploadRepository | undefined
@@ -627,6 +647,7 @@ class AcpRuntime {
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle))
     this.artifactOptions = options.artifacts
     this.notebookOptions = options.notebook
+    this.activityGroupOptions = options.activityGroups
     this.artifactRepository = options.artifacts
       ? (options.artifacts.repository ?? new ArtifactRepository(options.artifacts.dataRoot))
       : undefined
@@ -2817,6 +2838,17 @@ class AcpRuntime {
     this.notebookOptions.registerSessionAlias?.(notebookSessionId, sessionId)
   }
 
+  private createActivityGroupMcpServers(): McpServer[] {
+    if (!this.activityGroupOptions) return []
+
+    return [
+      createActivityGroupMcpServerConfig({
+        command: this.activityGroupOptions.mcpCommand ?? process.execPath,
+        entryPath: this.activityGroupOptions.mcpEntryPath
+      })
+    ]
+  }
+
   // Builds the notebook MCP environment for one session, shared by the stdio config and the http host.
   private async buildNotebookEnvironment(
     notebookSessionId: string,
@@ -2894,6 +2926,7 @@ class AcpRuntime {
     // runs instead of failing on an unsupported stdio server config.
     const servers = this.framework.acceptsStdioMcp
       ? [
+          ...this.createActivityGroupMcpServers(),
           ...(artifactEnabled
             ? this.createArtifactMcpServers(artifactSessionId, sessionCwd, projectName)
             : []),
@@ -3027,6 +3060,9 @@ class AcpRuntime {
     return [
       SKILLS_READ_GUARD_SYSTEM_PROMPT_APPEND,
       LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND,
+      ...(this.activityGroupOptions && this.framework.acceptsStdioMcp
+        ? [ACTIVITY_GROUP_SYSTEM_PROMPT_APPEND]
+        : []),
       ...(this.artifactToolingAvailable() ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
       ...(this.notebookToolingAvailable() ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : [])
     ]
@@ -3646,6 +3682,8 @@ class AcpRuntime {
       toolKind: event.toolKind,
       toolContent: event.toolContent,
       toolLocations: event.toolLocations,
+      rawInput: event.rawInput,
+      rawOutput: event.rawOutput,
       runId: event.runId,
       artifactSessionId: event.artifactSessionId,
       artifactClaimId: event.artifactClaimId,

@@ -131,6 +131,7 @@ const createRuntime = ({
           registerSessionAlias: (aliasSessionId, sessionId) =>
             notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId)
         },
+        activityGroups: { mcpEntryPath },
         callbacks: runtimeCallbacks
       })
     },

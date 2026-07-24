@@ -7,6 +7,7 @@ import type {
 } from '@agentclientprotocol/sdk'
 
 import type { ArtifactFile } from '../../../shared/artifacts'
+import { sanitizeActivityGroupTitle } from '../../../shared/activity-groups'
 import {
   MAX_ACP_SESSION_IMAGE_BYTES,
   sanitizeAcpMessageImage,
@@ -20,8 +21,10 @@ import {
   INTERRUPTED_SESSION_ERROR,
   sanitizeMessageImages,
   sanitizeToolActivity,
+  sanitizeActivityGroup,
   type MessagePart,
   type PersistedActiveRun,
+  type PersistedActivityGroup,
   type PersistedArtifact,
   type PersistedChatMessage,
   type PersistedChatSession,
@@ -46,6 +49,7 @@ export type ToolActivity = {
   id: string
   kind: 'tool'
   title: string
+  activityGroupId?: string
   status: ToolActivityStatus
   eventIds: string[]
   sortIndex: number
@@ -205,6 +209,8 @@ type SessionStore = SessionStoreData & {
   removeMessage: (sessionId: string, messageId: string) => void
   truncateSessionFromMessage: (sessionId: string, messageId: string) => void
   upsertToolActivity: (input: UpsertToolActivityInput) => void
+  beginActivityGroup: (sessionId: string, groupId: string, title: string) => void
+  completeActivityGroup: (sessionId: string) => void
   setPermissionPending: (sessionId: string) => void
   clearPermissionPending: (sessionId: string) => void
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
@@ -246,6 +252,7 @@ const stripTransientMessageState = (message: ChatMessage): PersistedChatMessage 
 const stripTransientSessionState = (session: ChatSession): PersistedChatSession => {
   const {
     activities,
+    activityGroups,
     isPending,
     interrupted,
     fixLoopActive,
@@ -265,12 +272,18 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
   const persistedActivities = activities
     ?.map(sanitizeToolActivity)
     .filter((activity): activity is PersistedToolActivity => !!activity)
+  const persistedActivityGroups = activityGroups
+    ?.map(sanitizeActivityGroup)
+    .filter((group): group is PersistedActivityGroup => !!group)
 
   return {
     ...persistedSession,
     messages: messages.map(stripTransientMessageState),
     ...(persistedActivities && persistedActivities.length > 0
       ? { activities: persistedActivities }
+      : {}),
+    ...(persistedActivityGroups && persistedActivityGroups.length > 0
+      ? { activityGroups: persistedActivityGroups }
       : {})
   }
 }
@@ -311,6 +324,19 @@ const createPendingSessionId = (): string => {
 const createSortIndex = (): number => {
   timelineSequence += 1
   return timelineSequence
+}
+
+const completeOpenActivityGroups = (
+  groups: PersistedActivityGroup[] | undefined,
+  now: number
+): PersistedActivityGroup[] | undefined => {
+  const completed = groups
+    ?.filter((group) => group.completedAt !== undefined || group.activityIds.length > 0)
+    .map((group) =>
+      group.completedAt === undefined ? { ...group, completedAt: now, updatedAt: now } : group
+    )
+
+  return completed && completed.length > 0 ? completed : undefined
 }
 
 // Derives a compact default title from the first user message.
@@ -1136,6 +1162,10 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           return session
         }
 
+        const activeGroup = session.activityGroups?.findLast(
+          (group) => group.completedAt === undefined
+        )
+
         // New tool calls are transient activity rows, not persisted chat messages.
         const activity: ToolActivity = {
           id: toolCallId,
@@ -1144,6 +1174,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           status: nextStatus ?? 'pending',
           eventIds: [eventId],
           sortIndex: createSortIndex(),
+          activityGroupId: activeGroup?.id,
           providerToolName,
           toolKind,
           toolContent,
@@ -1160,10 +1191,77 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           ...session,
           status: getToolActivitySessionStatus(session),
           activities: [...activities, activity],
+          activityGroups: activeGroup
+            ? session.activityGroups?.map((group) =>
+                group.id === activeGroup.id
+                  ? {
+                      ...group,
+                      activityIds: [...group.activityIds, activity.id],
+                      updatedAt: now
+                    }
+                  : group
+              )
+            : session.activityGroups,
           updatedAt: now
         }
       })
     }))
+  },
+
+  beginActivityGroup: (sessionId, groupId, title) => {
+    const groupTitle = sanitizeActivityGroupTitle(title)
+    if (!sessionId || !groupId || !groupTitle) return
+
+    set((state) => ({
+      sessions: state.sessions.map((session) => {
+        if (session.id !== sessionId || !session.activeRun) return session
+        if (session.activityGroups?.some((group) => group.id === groupId)) return session
+
+        const now = Date.now()
+        const completedGroups = completeOpenActivityGroups(session.activityGroups, now) ?? []
+
+        return {
+          ...session,
+          activityGroups: [
+            ...completedGroups,
+            {
+              id: groupId,
+              title: groupTitle,
+              sortIndex: createSortIndex(),
+              activityIds: [],
+              createdAt: now,
+              updatedAt: now
+            }
+          ],
+          updatedAt: now
+        }
+      })
+    }))
+  },
+
+  completeActivityGroup: (sessionId) => {
+    if (!sessionId) return
+
+    const now = Date.now()
+    set((state) => {
+      const target = state.sessions.find((session) => session.id === sessionId)
+      const hasStartedOpenGroup = target?.activityGroups?.some(
+        (group) => group.completedAt === undefined && group.activityIds.length > 0
+      )
+      if (!hasStartedOpenGroup) return state
+
+      return {
+        sessions: state.sessions.map((session) =>
+          session.id === sessionId
+            ? {
+                ...session,
+                activityGroups: completeOpenActivityGroups(session.activityGroups, now),
+                updatedAt: now
+              }
+            : session
+        )
+      }
+    })
   },
 
   // Completes the active run and any streamed messages for the session.
@@ -1184,6 +1282,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           errorReportable: keepArtifactError ? session.errorReportable : undefined,
           messages: completeStreamingMessages(session.messages),
           activities: completeOpenActivities(session.activities),
+          activityGroups: completeOpenActivityGroups(session.activityGroups, Date.now()),
           updatedAt: Date.now()
         }
       })
@@ -1214,6 +1313,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               errorReportable,
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
+              activityGroups: completeOpenActivityGroups(session.activityGroups, Date.now()),
               updatedAt: Date.now()
             }
           : session
@@ -1254,6 +1354,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               compacting: true,
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
+              activityGroups: completeOpenActivityGroups(session.activityGroups, Date.now()),
               updatedAt: Date.now()
             }
           : session
@@ -1306,6 +1407,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               errorReportable: undefined,
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
+              activityGroups: completeOpenActivityGroups(session.activityGroups, Date.now()),
               updatedAt: Date.now()
             }
           : session
@@ -1353,14 +1455,23 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         const hasFiles = removed.some(
           (message) => (message.uploads?.length ?? 0) > 0 || (message.artifactIds?.length ?? 0) > 0
         )
+        const activities = session.activities?.filter(
+          (activity) => activity.createdAt < cutMessage.createdAt
+        )
+        const retainedActivityIds = new Set(activities?.map((activity) => activity.id) ?? [])
+        const activityGroups = session.activityGroups
+          ?.map((group) => ({
+            ...group,
+            activityIds: group.activityIds.filter((id) => retainedActivityIds.has(id))
+          }))
+          .filter((group) => group.activityIds.length > 0)
 
         return {
           ...session,
           status: 'idle',
           messages: session.messages.slice(0, cutIndex),
-          activities: session.activities?.filter(
-            (activity) => activity.createdAt < cutMessage.createdAt
-          ),
+          activities,
+          activityGroups,
           activeRun: undefined,
           agentStatus: undefined,
           error: undefined,

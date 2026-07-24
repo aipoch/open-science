@@ -21,6 +21,10 @@ import { SkillRegistry } from '../skills/registry'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
 import { ArtifactRepository } from '../artifacts/repository'
 import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
+import {
+  ACTIVITY_GROUP_MCP_SERVER_NAME,
+  BEGIN_ACTIVITY_GROUP_TOOL_NAME
+} from '../activity-groups/mcp-server'
 import type { UploadedAttachment } from '../../shared/uploads'
 import { UploadRepository } from '../uploads/repository'
 import { MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES } from '../uploads/attachment-media'
@@ -719,6 +723,74 @@ describe('ACP runtime migration write-gate', () => {
 })
 
 describe('ACP runtime session management', () => {
+  it('injects activity-group declarations into main sessions but not reviewer sessions', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['main-session', 'reviewer-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      activityGroups: { mcpEntryPath: '/app/out/main/index.js' }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    expect(fakeAgent.newSessions[0].mcpServers).toEqual([
+      expect.objectContaining({
+        name: ACTIVITY_GROUP_MCP_SERVER_NAME,
+        args: ['/app/out/main/index.js', '--open-science-activity-group-mcp']
+      })
+    ])
+    expect(JSON.stringify(fakeAgent.newSessions[0]._meta)).toContain(BEGIN_ACTIVITY_GROUP_TOOL_NAME)
+
+    const reviewerServer = {
+      type: 'http' as const,
+      name: 'open-science-reviewer',
+      url: 'http://127.0.0.1:1/mcp',
+      headers: []
+    }
+    await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [reviewerServer],
+      systemPromptAppend: 'Reviewer-only instructions'
+    })
+
+    expect(fakeAgent.newSessions[1].mcpServers).toEqual([reviewerServer])
+    expect(JSON.stringify(fakeAgent.newSessions[1]._meta)).not.toContain(
+      BEGIN_ACTIVITY_GROUP_TOOL_NAME
+    )
+  })
+
+  it.each([
+    ['opencode', opencodeFramework],
+    ['codex', codexFramework]
+  ] as const)(
+    'injects activity-group tooling and prompt guidance for %s',
+    async (_name, framework) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['main-session'], {
+        modes:
+          framework.id === 'codex'
+            ? createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+            : undefined
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.2.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework,
+        activityGroups: { mcpEntryPath: '/app/out/main/index.js' }
+      })
+
+      const session = await runtime.createSession({ cwd: '/workspace' })
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Inspect the project' })
+
+      expect(fakeAgent.newSessions[0].mcpServers).toEqual([
+        expect.objectContaining({ name: ACTIVITY_GROUP_MCP_SERVER_NAME })
+      ])
+      expect(fakeAgent.prompts[0].text).toContain(BEGIN_ACTIVITY_GROUP_TOOL_NAME)
+    }
+  )
   it('applies native Full access before the first prompt', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['full-session'], {

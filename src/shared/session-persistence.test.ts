@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
 
 import {
+  sanitizeActivityGroup,
   normalizeSessionFile,
   sanitizeMessageImages,
   sanitizeToolActivity,
@@ -115,6 +116,7 @@ describe('sanitizeToolActivity', () => {
       id: 'tool-1',
       kind: 'tool',
       title: 'Edit app.ts',
+      activityGroupId: 'group-1',
       status: 'completed',
       sortIndex: 3,
       eventIds: ['event-1'],
@@ -134,6 +136,7 @@ describe('sanitizeToolActivity', () => {
       id: 'tool-1',
       kind: 'tool',
       title: 'Edit app.ts',
+      activityGroupId: 'group-1',
       status: 'completed',
       providerToolName: 'Edit',
       toolKind: 'edit',
@@ -175,6 +178,28 @@ describe('sanitizeToolActivity', () => {
 
   it('rejects entries without an id', () => {
     expect(sanitizeToolActivity({ status: 'completed' })).toBeUndefined()
+  })
+})
+
+describe('sanitizeActivityGroup', () => {
+  it('keeps a valid group declaration bounded and structured', () => {
+    expect(
+      sanitizeActivityGroup({
+        id: 'group-1',
+        title: 'Inspect the implementation.',
+        sortIndex: 4,
+        activityIds: ['tool-1'],
+        createdAt: 5,
+        updatedAt: 6
+      })
+    ).toEqual({
+      id: 'group-1',
+      title: 'Inspect the implementation',
+      sortIndex: 4,
+      activityIds: ['tool-1'],
+      createdAt: 5,
+      updatedAt: 6
+    })
   })
 })
 
