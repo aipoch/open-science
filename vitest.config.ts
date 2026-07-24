@@ -14,7 +14,7 @@ export default defineConfig({
     // Loads .env into process.env before tests run. Integration tests gated on RUN_COMPUTE_JOBS=1
     // read their target alias from COMPUTE_TEST_SSH_ALIAS. The file is gitignored; .env.example
     // documents the supported variables.
-    setupFiles: ['./test/setup-dotenv.ts', './test/setup-jsdom-polyfills.ts'],
+    setupFiles: ['./test/setup-dotenv.ts'],
     // Keep vitest's defaults (node_modules, dist, .git, ...) and also ignore git worktrees created
     // under .claude/worktrees — those hold full source + node_modules copies that would otherwise be
     // discovered and run as duplicate (and often stale) suites during local runs.
