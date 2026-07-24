@@ -551,7 +551,8 @@ class SettingsService {
         claudePath: async () => {
           const s = await this.repository.getSettings()
           return s.claude?.resolvedPath ?? 'claude'
-        }
+        },
+        configDir: this.userClaudeDir
       })
   }
 
@@ -2131,7 +2132,7 @@ class SettingsService {
             lastValidationFailure: undefined
           }
         : {
-            disconnectedAt: targetProvider.disconnectedAt,
+            disconnectedAt: authStatus.authenticated ? undefined : targetProvider.disconnectedAt,
             lastValidatedAt: undefined,
             lastValidationFailure: {
               at: Date.now(),

@@ -383,5 +383,30 @@ describe('ClaudeIsolatedAuthController', () => {
       })
       expect(store.saveCalls).toHaveLength(0)
     })
+
+    it('does not persist a captured browser token after the login is cancelled', async () => {
+      const store = createStore()
+      const controller = new ClaudeIsolatedAuthController({
+        store,
+        claudePath: 'claude',
+        configDir: '/tmp/app-claude'
+      })
+      const child = new FakeChild()
+      nextSpawn = () => child
+
+      const pending = controller.loginIsolatedBrowser()
+      await vi.waitFor(() => expect(spawnCalls).toHaveLength(1))
+      child.on('close', () => controller.cancelLogin())
+      child.stdout.emit('data', Buffer.from('sk-ant-oat01-browser-token\n'))
+      child.emit('close', 0)
+
+      await expect(pending).resolves.toEqual({
+        supported: true,
+        authenticated: false,
+        message: 'Sign-in cancelled.',
+        cancelled: true
+      })
+      expect(store.saveCalls).toHaveLength(0)
+    })
   })
 })

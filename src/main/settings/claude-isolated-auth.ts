@@ -223,6 +223,18 @@ export class ClaudeIsolatedAuthController {
 
       const result = await runSetupTokenLogin(claudePath, this.configDir, abort.signal)
 
+      if (abort.signal.aborted) {
+        return {
+          supported: true,
+          authenticated: false,
+          message:
+            abort.signal.reason === 'timeout'
+              ? 'Browser sign-in timed out. If your browser did not open, use "Use setup token" instead.'
+              : 'Sign-in cancelled.',
+          cancelled: abort.signal.reason === 'user-cancel'
+        }
+      }
+
       if (!result.token) {
         return {
           supported: true,

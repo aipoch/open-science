@@ -16,7 +16,7 @@ import { JobPoller } from './compute/job-poller'
 import { SystemSshRunner } from './compute/ssh-runner'
 import { SystemScpRunner } from './compute/scp-runner'
 import { harvestJob } from './compute/harvest-engine'
-import { registerAfterInitialConnectorRefresh, wireConnectorReload } from './connector-reload'
+import { waitForInitialConnectorRefresh, wireConnectorReload } from './connector-reload'
 import { ApprovalBroker } from './connectors/approval-broker'
 import { toCustomMcpConfig, selectEnabledCustomServers } from './connectors/custom-mcp-bootstrap'
 import { McpClientManager } from './connectors/mcp-client-manager'
@@ -426,16 +426,15 @@ const registerIpcHandlers = async ({
     }
   )
 
-  // Complete the initial bundled/custom connector snapshot before ACP IPC is exposed. Shared Claude
-  // loads the app-owned skills directory as a local plugin, so a fire-and-forget refresh could let the
-  // first session start before custom connector docs exist.
-  const initialConnectorSkillsReady = refreshConnectorSkillDocs(
-    settingsService,
-    resolveStorageRoot(),
-    mcpClientManager,
-    (connectors) => {
-      connectorsSnapshot = connectors
-    }
+  const initialConnectorSkillsReady = waitForInitialConnectorRefresh(
+    refreshConnectorSkillDocs(
+      settingsService,
+      resolveStorageRoot(),
+      mcpClientManager,
+      (connectors) => {
+        connectorsSnapshot = connectors
+      }
+    )
   )
 
   registerFileSaveHandlers({ resolveManagedFilePath })
@@ -445,17 +444,16 @@ const registerIpcHandlers = async ({
   registerWindowIpcHandlers()
   const updateService = registerUpdateIpcHandlers()
   startUpdateScheduler(updateService)
-  const runtime = await registerAfterInitialConnectorRefresh(initialConnectorSkillsReady, () =>
-    registerAcpIpcHandlers({
-      mcpEntryPath: mainEntryPath,
-      repository: artifactRepository,
-      runRegistry: artifactRunRegistry,
-      uploadRepository,
-      notebookRpcServer,
-      settingsService,
-      taskNotifications
-    })
-  )
+  const runtime = registerAcpIpcHandlers({
+    mcpEntryPath: mainEntryPath,
+    repository: artifactRepository,
+    runRegistry: artifactRunRegistry,
+    uploadRepository,
+    notebookRpcServer,
+    settingsService,
+    taskNotifications,
+    initializationBarrier: initialConnectorSkillsReady
+  })
   runtimeRef.current = runtime
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
   // gate. Built here because it needs the runtime, which does not exist when update IPC is registered

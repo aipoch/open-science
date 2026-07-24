@@ -13,14 +13,13 @@ export const wireConnectorReload = (
 
 const INITIAL_CONNECTOR_REFRESH_TIMEOUT_MS = 5_000
 
-// Lets unrelated IPC registration proceed while the initial connector sync runs, but keeps ACP
-// registration behind a bounded barrier so the first session normally observes a complete skills
-// snapshot without allowing a hung custom MCP server to block app startup indefinitely.
-export const registerAfterInitialConnectorRefresh = async <T>(
+// Produces a bounded barrier for the first ACP connection/session without putting app startup behind
+// custom MCP discovery. The source refresh remains alive after timeout so its eventual snapshot can
+// still be used by later sessions.
+export const waitForInitialConnectorRefresh = async (
   initialRefresh: Promise<unknown>,
-  registerRuntime: () => T,
   timeoutMs = INITIAL_CONNECTOR_REFRESH_TIMEOUT_MS
-): Promise<T> => {
+): Promise<void> => {
   let timeout: ReturnType<typeof setTimeout> | undefined
   const settledRefresh = initialRefresh.then(
     () => undefined,
@@ -34,6 +33,4 @@ export const registerAfterInitialConnectorRefresh = async <T>(
     })
   ])
   if (timeout) clearTimeout(timeout)
-
-  return registerRuntime()
 }

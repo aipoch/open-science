@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { registerAfterInitialConnectorRefresh, wireConnectorReload } from './connector-reload'
+import { waitForInitialConnectorRefresh, wireConnectorReload } from './connector-reload'
 
 // Exercises the REAL wiring used by ipc.ts's onConnectorsChanged (not a reimplementation): the skills
 // reload must run on BOTH settle paths, so if the source ever regressed `.finally` to `.then` these
@@ -26,38 +26,42 @@ describe('wireConnectorReload', () => {
   })
 })
 
-describe('registerAfterInitialConnectorRefresh', () => {
-  it('does not expose the runtime until the initial connector docs are ready', async () => {
+describe('waitForInitialConnectorRefresh', () => {
+  it('does not settle until the initial connector docs are ready', async () => {
     let finishRefresh: (() => void) | undefined
     const refresh = new Promise<void>((resolve) => {
       finishRefresh = resolve
     })
-    const registerRuntime = vi.fn(() => ({ ready: true }))
+    let settled = false
 
-    const registration = registerAfterInitialConnectorRefresh(refresh, registerRuntime)
+    const barrier = waitForInitialConnectorRefresh(refresh).then(() => {
+      settled = true
+    })
     await Promise.resolve()
-    expect(registerRuntime).not.toHaveBeenCalled()
+    expect(settled).toBe(false)
 
     finishRefresh?.()
 
-    await expect(registration).resolves.toEqual({ ready: true })
-    expect(registerRuntime).toHaveBeenCalledOnce()
+    await barrier
+    expect(settled).toBe(true)
   })
 
-  it('registers the runtime after a bounded wait when connector discovery hangs', async () => {
+  it('settles after a bounded wait when connector discovery hangs', async () => {
     vi.useFakeTimers()
     try {
       const refresh = new Promise<void>(() => undefined)
-      const registerRuntime = vi.fn(() => ({ ready: true }))
+      let settled = false
 
-      const registration = registerAfterInitialConnectorRefresh(refresh, registerRuntime, 100)
+      const barrier = waitForInitialConnectorRefresh(refresh, 100).then(() => {
+        settled = true
+      })
       await Promise.resolve()
-      expect(registerRuntime).not.toHaveBeenCalled()
+      expect(settled).toBe(false)
 
       await vi.advanceTimersByTimeAsync(100)
 
-      await expect(registration).resolves.toEqual({ ready: true })
-      expect(registerRuntime).toHaveBeenCalledOnce()
+      await barrier
+      expect(settled).toBe(true)
     } finally {
       vi.useRealTimers()
     }

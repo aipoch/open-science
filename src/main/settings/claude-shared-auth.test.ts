@@ -33,7 +33,7 @@ const scriptChild =
 
 const makeController = (
   claudePath: string | (() => string | Promise<string>) = 'claude',
-  opts?: { loginTimeoutMs?: number; statusTimeoutMs?: number }
+  opts?: { configDir?: string; loginTimeoutMs?: number; statusTimeoutMs?: number }
 ): ClaudeSharedAuthController => new ClaudeSharedAuthController({ claudePath, ...opts })
 
 beforeEach(() => {
@@ -47,6 +47,15 @@ describe('ClaudeSharedAuthController.getStatus', () => {
     const ctrl = makeController()
     await expect(ctrl.getStatus()).resolves.toEqual({ supported: true, authenticated: true })
     expect(spawnCalls[0]?.args).toEqual(['auth', 'status', '--json'])
+  })
+
+  it('checks auth status in the configured shared profile directory', async () => {
+    nextSpawn = scriptChild('{"loggedIn":true}', '', 0)
+    const ctrl = makeController('claude', { configDir: '/profiles/shared-claude' })
+
+    await ctrl.getStatus()
+
+    expect(spawnCalls[0]?.env?.CLAUDE_CONFIG_DIR).toBe('/profiles/shared-claude')
   })
 
   it('reports signed out when loggedIn is false', async () => {
@@ -112,6 +121,15 @@ describe('ClaudeSharedAuthController.loginShared', () => {
       authenticated: true
     })
     expect(spawnCalls[0]?.args).toEqual(['auth', 'login', '--claudeai'])
+  })
+
+  it('runs browser login in the configured shared profile directory', async () => {
+    nextSpawn = scriptChild('', '', 0)
+    const ctrl = makeController('claude', { configDir: '/profiles/shared-claude' })
+
+    await ctrl.loginShared()
+
+    expect(spawnCalls[0]?.env?.CLAUDE_CONFIG_DIR).toBe('/profiles/shared-claude')
   })
 
   it('returns authenticated:false and surfaces stderr on non-zero exit', async () => {

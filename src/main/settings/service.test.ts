@@ -4445,6 +4445,32 @@ describe('SettingsService: claude-shared login orchestration', () => {
     expect(provider?.lastValidationFailure?.message).toContain('OAuth rejected')
   })
 
+  it('clears the local disconnect after browser auth succeeds even when the probe fails', async () => {
+    const service = createService(undefined, {
+      claudeSharedAuth: sharedAuth({ loginOk: true }),
+      executeClaudeProbe: vi.fn().mockRejectedValue(new Error('temporary network failure'))
+    })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await service.upsertProvider({ type: 'claude-shared' })
+    await service.logoutClaudeShared()
+    expect(
+      (await repository.getSettings()).providers.find(
+        (provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID
+      )?.disconnectedAt
+    ).toBeGreaterThan(0)
+
+    await expect(service.loginClaudeShared()).resolves.toMatchObject({
+      ok: false,
+      applied: true
+    })
+
+    const provider = (await repository.getSettings()).providers.find(
+      (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
+    )
+    expect(provider?.disconnectedAt).toBeUndefined()
+    expect(provider?.lastValidationFailure?.category).toBe('network')
+  })
+
   it('validateProvider probes the shared Claude runtime with the resolved model', async () => {
     const auth = sharedAuth()
     vi.mocked(auth.getStatus).mockResolvedValue({ supported: true, authenticated: true })

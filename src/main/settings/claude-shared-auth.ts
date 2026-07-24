@@ -20,6 +20,7 @@ type ClaudeSharedAuthControllerOptions = {
   // Absolute path to the claude executable, or a resolver called before each spawn. A resolver lets
   // callers use the persisted detection result without a synchronous construction-time read.
   claudePath: string | (() => string | Promise<string>)
+  configDir?: string
   loginTimeoutMs?: number
   statusTimeoutMs?: number
 }
@@ -27,6 +28,7 @@ type ClaudeSharedAuthControllerOptions = {
 // Checks whether the user is signed in by running `claude auth status`.
 const checkAuthStatus = async (
   claudePath: string,
+  configDir: string,
   timeoutMs: number
 ): Promise<ClaudeSharedAuthStatus> => {
   const abort = new AbortController()
@@ -39,7 +41,7 @@ const checkAuthStatus = async (
           resolveClaudeExecutableForSpawn(claudePath),
           ['auth', 'status', '--json'],
           {
-            env: { ...augmentedPathEnv(process.env), CLAUDE_CONFIG_DIR: getUserClaudeConfigDir() },
+            env: { ...augmentedPathEnv(process.env), CLAUDE_CONFIG_DIR: configDir },
             signal: abort.signal as AbortSignal
           }
         )
@@ -98,6 +100,7 @@ const checkAuthStatus = async (
 // Runs `claude auth login --claudeai` which opens the browser for OAuth login.
 const runBrowserLogin = async (
   claudePath: string,
+  configDir: string,
   signal: AbortSignal
 ): Promise<ClaudeSharedAuthStatus> => {
   try {
@@ -110,7 +113,7 @@ const runBrowserLogin = async (
             env: (() => {
               const env: NodeJS.ProcessEnv = {
                 ...augmentedPathEnv(process.env),
-                CLAUDE_CONFIG_DIR: getUserClaudeConfigDir()
+                CLAUDE_CONFIG_DIR: configDir
               }
               // Suppress flags that prevent browser OAuth from opening; same pattern as claude-isolated-auth.
               delete env.NO_BROWSER
@@ -162,12 +165,14 @@ const runBrowserLogin = async (
 
 export class ClaudeSharedAuthController {
   private readonly _claudePath: string | (() => string | Promise<string>)
+  private readonly configDir: string
   private readonly loginTimeoutMs: number
   private readonly statusTimeoutMs: number
   private activeLogin: AbortController | undefined
 
   constructor(options: ClaudeSharedAuthControllerOptions) {
     this._claudePath = options.claudePath
+    this.configDir = options.configDir ?? getUserClaudeConfigDir()
     this.loginTimeoutMs = options.loginTimeoutMs ?? 5 * 60_000 // 5 minutes
     this.statusTimeoutMs = options.statusTimeoutMs ?? 30_000 // 30 seconds
   }
@@ -178,7 +183,7 @@ export class ClaudeSharedAuthController {
 
   async getStatus(): Promise<ClaudeSharedAuthStatus> {
     try {
-      return checkAuthStatus(await this.resolveClaude(), this.statusTimeoutMs)
+      return checkAuthStatus(await this.resolveClaude(), this.configDir, this.statusTimeoutMs)
     } catch (error) {
       return {
         supported: true,
@@ -204,7 +209,7 @@ export class ClaudeSharedAuthController {
 
     try {
       const claudePath = await this.resolveClaude()
-      return await runBrowserLogin(claudePath, abort.signal)
+      return await runBrowserLogin(claudePath, this.configDir, abort.signal)
     } catch (error) {
       if (abort.signal.aborted) {
         return {
