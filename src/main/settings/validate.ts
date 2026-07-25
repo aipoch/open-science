@@ -214,11 +214,13 @@ const hasValidAnthropicMessage = (bodyText: string): boolean => {
 }
 
 // Maps an HTTP status to a validation category. 2xx is success; auth/model errors are distinguished
-// so the UI can point the user at the credential vs. the model field.
+// so the UI can point the user at the credential vs. the model field. 5xx server errors are surfaced
+// as a distinct category so users can distinguish gateway/upstream issues from client-side problems.
 const classifyStatus = (status: number): ValidationCategory => {
   if (status >= 200 && status < 300) return 'ok'
   if (status === 401 || status === 403) return 'auth'
   if (status === 404) return 'model-not-found'
+  if (status >= 500 && status < 600) return 'server-error'
 
   return 'unknown'
 }

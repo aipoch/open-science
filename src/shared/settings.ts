@@ -399,7 +399,15 @@ export type ValidateProviderRequest = {
 // 'incompatible' is decided before any network probe: the provider's API format can't drive the
 // active agent framework, so a raw auth probe would only mislead (the key is fine; the pairing isn't).
 export type ValidationCategory =
-  'ok' | 'network' | 'auth' | 'model-not-found' | 'bad-url' | 'timeout' | 'incompatible' | 'unknown'
+  | 'ok'
+  | 'network'
+  | 'auth'
+  | 'model-not-found'
+  | 'bad-url'
+  | 'timeout'
+  | 'incompatible'
+  | 'server-error'
+  | 'unknown'
 
 export type ValidateProviderResult = {
   ok: boolean
