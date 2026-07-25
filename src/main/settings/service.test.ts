@@ -2670,7 +2670,9 @@ describe('SettingsService: skills', () => {
     // A stale or manually edited setting cannot make the hidden skill user-selectable.
     await repository.setSkillEnabled('demo', false)
     expect(await service.skillsNeedingForceLoad(['demo'])).toEqual([])
-    expect(await service.skillNudgeNamesForIds(['demo'])).toEqual([])
+    // Persisted drafts and headless API callers that already hold the id can still steer the ACP
+    // agent, without exposing the skill through renderer-facing discovery.
+    expect(await service.skillNudgeNamesForIds(['demo'])).toEqual(['demo'])
   })
 
   it('creates, edits, and deletes a personal skill alongside featured skills', async () => {

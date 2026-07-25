@@ -899,11 +899,12 @@ class SettingsService {
     return forcedIds.filter((id) => visibleIds.has(id) && disabled.has(id))
   }
 
-  // Resolves picker ids to the names the agent's Skill tool accepts. Bundled skills use their
-  // manifest id as frontmatter name, while personal/imported ids have an app-owned source prefix and
-  // must use the frontmatter name kept in the user skill catalog.
+  // Resolves runtime-supplied ids to the names the agent's Skill tool accepts. This intentionally uses
+  // the complete catalog so persisted drafts and headless callers that already hold an agent-only id
+  // keep working without exposing that skill through renderer-facing discovery. Bundled skills use
+  // their manifest id as frontmatter name, while personal/imported ids have an app-owned source prefix.
   async skillNudgeNamesForIds(ids: string[]): Promise<string[]> {
-    const skills = await this.userSkillCatalog()
+    const skills = await this.skillCatalog()
     const nameById = new Map(
       skills.map((skill) => [skill.id, skill.source === 'featured' ? skill.id : skill.name])
     )
