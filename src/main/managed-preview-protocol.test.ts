@@ -183,4 +183,232 @@ describe('managed preview protocol', () => {
     expect(body).toContain('parent.postMessage')
     expect(fetchFile).not.toHaveBeenCalled()
   })
+
+  it('errors the strict stream when the request signal is already aborted with a custom reason', async () => {
+    const source = new Uint8Array(128 * 1024)
+    source.fill(7)
+    let closed = false
+    const fileHandle = {
+      read: vi.fn(async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+        buffer.fill(7, offset, offset + length)
+        // Echo a value derived from the requested position so the read observable matches it.
+        buffer[buffer.length - 1] = position & 0xff
+        return { bytesRead: length, buffer }
+      }),
+      close: vi.fn(async () => {
+        closed = true
+      })
+    }
+    const resources = {
+      resolveProtocolResource: vi.fn().mockResolvedValue({
+        fileHandle,
+        mimeType: 'application/octet-stream',
+        size: source.length,
+        verifyUnchanged: vi.fn().mockResolvedValue(undefined)
+      })
+    } as unknown as ManagedPreviewResources
+    const controller = new AbortController()
+    controller.abort(new DOMException('Renderer stepped away', 'AbortError'))
+    const handle = createManagedPreviewProtocolHandler(resources)
+
+    const response = await handle(
+      new Request('open-science-preview://resource-1/report.xlsx', {
+        signal: controller.signal
+      })
+    )
+    const reader = response.body!.getReader()
+
+    await expect(reader.read()).rejects.toThrow(/Renderer stepped away/i)
+    expect(closed).toBe(true)
+  })
+
+  it('closes the underlying file handle when the consumer cancels a strict stream mid-read', async () => {
+    const source = new TextEncoder().encode('cancel-strict-stream-payload')
+    const fileHandle = {
+      read: vi.fn(async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+        buffer.set(source.subarray(position, position + length), offset)
+        return { bytesRead: length, buffer }
+      }),
+      close: vi.fn()
+    }
+    const resources = {
+      resolveProtocolResource: vi.fn().mockResolvedValue({
+        fileHandle,
+        mimeType: 'application/octet-stream',
+        size: source.length,
+        verifyUnchanged: vi.fn().mockResolvedValue(undefined)
+      })
+    } as unknown as ManagedPreviewResources
+    const handle = createManagedPreviewProtocolHandler(resources)
+
+    const response = await handle(
+      new Request('open-science-preview://resource-1/report.xlsx', {
+        headers: { Range: `bytes=0-${source.length - 1}` }
+      })
+    )
+    const reader = response.body!.getReader()
+    await reader.read()
+
+    await reader.cancel()
+
+    expect(fileHandle.close).toHaveBeenCalled()
+  })
+
+  it('returns the load-error page when an invalid Range header rejects the strict response setup', async () => {
+    const source = Buffer.from('strict-range-error-path')
+    const fileHandle = {
+      read: vi.fn(async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+        buffer.set(source.subarray(position, position + length), offset)
+        return { bytesRead: length, buffer }
+      }),
+      close: vi.fn()
+    }
+    const resources = {
+      resolveProtocolResource: vi.fn().mockResolvedValue({
+        fileHandle,
+        mimeType: 'application/octet-stream',
+        size: source.length,
+        verifyUnchanged: vi.fn().mockResolvedValue(undefined)
+      })
+    } as unknown as ManagedPreviewResources
+    const handle = createManagedPreviewProtocolHandler(resources)
+
+    const response = await handle(
+      new Request('open-science-preview://resource-1/report.xlsx', {
+        headers: { Range: 'bytes=abc-def' }
+      })
+    )
+
+    expect(response.status).toBe(404)
+    expect(response.headers.get('content-type')).toContain('text/html')
+    // The inner throw forces the file handle to close before the outer catch falls back.
+    expect(fileHandle.close).toHaveBeenCalled()
+  })
+
+  it('returns the load-error page when the strict stream rejects synchronously before any body is created', async () => {
+    const fileHandle = {
+      read: vi.fn(),
+      close: vi.fn()
+    }
+    const resources = {
+      resolveProtocolResource: vi.fn().mockResolvedValue({
+        fileHandle,
+        mimeType: 'application/octet-stream',
+        size: 4,
+        verifyUnchanged: vi.fn().mockRejectedValue(new Error('inode vanished'))
+      })
+    } as unknown as ManagedPreviewResources
+    const handle = createManagedPreviewProtocolHandler(resources)
+
+    const response = await handle(
+      new Request('open-science-preview://resource-1/report.xlsx', {
+        method: 'HEAD'
+      })
+    )
+
+    expect(response.status).toBe(404)
+    expect(fileHandle.close).toHaveBeenCalled()
+  })
+
+  it('handles a HEAD request for a strict resource without invoking FileHandle.read', async () => {
+    const verifyUnchanged = vi.fn().mockResolvedValue(undefined)
+    const fileHandle = {
+      read: vi.fn(),
+      close: vi.fn()
+    }
+    const resources = {
+      resolveProtocolResource: vi.fn().mockResolvedValue({
+        fileHandle,
+        mimeType: 'application/octet-stream',
+        size: 256,
+        verifyUnchanged
+      })
+    } as unknown as ManagedPreviewResources
+    const handle = createManagedPreviewProtocolHandler(resources)
+
+    const response = await handle(
+      new Request('open-science-preview://resource-1/report.xlsx', {
+        method: 'HEAD'
+      })
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-length')).toBe('256')
+    expect(response.headers.get('accept-ranges')).toBe('bytes')
+    expect(response.body).toBeNull()
+    expect(fileHandle.read).not.toHaveBeenCalled()
+    expect(verifyUnchanged).toHaveBeenCalled()
+    expect(fileHandle.close).toHaveBeenCalled()
+  })
+
+  it('serves an entire strict file via a Range header when the end is omitted and content-length reflects the full file', async () => {
+    const source = Buffer.alloc(512)
+    source.fill(0xab)
+    let closed = false
+    const fileHandle = {
+      read: vi.fn(async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+        buffer.set(source.subarray(position, position + length), offset)
+        return { bytesRead: length, buffer }
+      }),
+      close: vi.fn(async () => {
+        closed = true
+      })
+    }
+    const resources = {
+      resolveProtocolResource: vi.fn().mockResolvedValue({
+        fileHandle,
+        mimeType: 'application/octet-stream',
+        size: source.length,
+        verifyUnchanged: vi.fn().mockResolvedValue(undefined)
+      })
+    } as unknown as ManagedPreviewResources
+    const handle = createManagedPreviewProtocolHandler(resources)
+
+    const response = await handle(
+      new Request('open-science-preview://resource-1/report.xlsx', {
+        headers: { Range: 'bytes=0-' }
+      })
+    )
+
+    expect(response.status).toBe(206)
+    expect(response.headers.get('content-range')).toBe(
+      `bytes 0-${source.length - 1}/${source.length}`
+    )
+    expect(response.headers.get('content-length')).toBe(String(source.length))
+    const collected = await response.text()
+    expect(collected.length).toBe(source.length)
+    expect(closed).toBe(true)
+  })
+
+  it('errors the stream when verifyUnchanged rejects the final identity check mid-pull', async () => {
+    const source = Buffer.alloc(64 * 1024)
+    const fileHandle = {
+      read: vi.fn(async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+        buffer.set(source.subarray(position, position + length), offset)
+        return { bytesRead: length, buffer }
+      }),
+      close: vi.fn()
+    }
+    const verifyUnchanged = vi.fn().mockRejectedValue(new Error('inode changed mid-stream'))
+    const resources = {
+      resolveProtocolResource: vi.fn().mockResolvedValue({
+        fileHandle,
+        mimeType: 'application/octet-stream',
+        size: source.length,
+        verifyUnchanged
+      })
+    } as unknown as ManagedPreviewResources
+    const handle = createManagedPreviewProtocolHandler(resources)
+
+    const response = await handle(new Request('open-science-preview://resource-1/report.xlsx'))
+    const reader = response.body!.getReader()
+    const drain = async (): Promise<void> => {
+      while (!(await reader.read()).done) {
+        // Drain until the final pull observes the inode mutation.
+      }
+    }
+
+    await expect(drain()).rejects.toThrow(/inode changed mid-stream/i)
+    expect(fileHandle.close).toHaveBeenCalled()
+  })
 })
