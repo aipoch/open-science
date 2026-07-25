@@ -533,11 +533,15 @@ const PermissionApprovalControls = ({
     request.isMcp !== true &&
     (request.toolKind === 'execute' || request.providerToolName === 'Bash')
 
-  // MCP titles are protocol identifiers, not user-facing details. Files, commands, and other
-  // native tools retain their target-bearing title when the code/path preview does not already show it.
+  // MCP identifiers are only needed when the request has no code, arguments, or locations to review.
+  // In that case, the presentation layer supplies a humanized service/action label rather than the
+  // provider's raw protocol spelling. Files, commands, and other native tools retain their target.
   const headerName = request.providerToolName ?? request.title
   const titleDetail = ((): string | undefined => {
-    if (request.isMcp || !request.title || request.title === permCode?.code) return undefined
+    if (request.isMcp) {
+      return !permCode && !request.toolLocations?.length ? presentation.actionDetail : undefined
+    }
+    if (!request.title || request.title === permCode?.code) return undefined
     if (!request.providerToolName) return request.title
     if (isShell) {
       return !permCode && request.title !== request.providerToolName ? request.title : undefined

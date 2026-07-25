@@ -168,7 +168,7 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain('Command execution</span>')
   })
 
-  it('hides the protocol identity for execute-kind MCP requests', () => {
+  it('keeps an otherwise-opaque MCP request distinguishable without its protocol identity', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls
         requests={[
@@ -187,6 +187,7 @@ describe('PermissionApprovalControls', () => {
 
     expect(html).toContain('Use external service?')
     expect(html).not.toContain('Run command?')
+    expect(html).toContain('Open Science Artifacts / Write Artifact File')
     expect(html).not.toContain('write_artifact_file')
     expect(html).not.toContain('mcp.open-science-artifacts')
   })

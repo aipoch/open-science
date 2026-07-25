@@ -59,4 +59,15 @@ describe('describePermissionRequest', () => {
   ])('classifies current non-notebook permission types', (permission, categoryLabel) => {
     expect(describePermissionRequest(permission).categoryLabel).toBe(categoryLabel)
   })
+
+  it('humanizes an otherwise-opaque MCP action without keeping its protocol spelling', () => {
+    expect(
+      describePermissionRequest(
+        request({
+          title: 'mcp__open-science-artifacts__write_artifact_file',
+          isMcp: true
+        })
+      ).actionDetail
+    ).toBe('Open Science Artifacts / Write Artifact File')
+  })
 })

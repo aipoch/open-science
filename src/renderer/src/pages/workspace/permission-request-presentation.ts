@@ -12,6 +12,7 @@ type PermissionPresentation = {
   actionTitle: string
   categoryLabel: string
   description: string
+  actionDetail?: string
   notebookRuntime?: NotebookRuntime
 }
 
@@ -128,6 +129,28 @@ const notebookControlPresentation = (tool: string): PermissionPresentation => {
 const providerToolName = (request: AcpPermissionRequest): string | undefined =>
   request.providerToolName?.trim() || undefined
 
+// Keeps an otherwise-opaque MCP request distinguishable without surfacing its protocol spelling.
+// The request title is preferred because providers can reduce providerToolName to a bare leaf.
+const humanizeMcpAction = (request: AcpPermissionRequest): string | undefined => {
+  const name = request.title.trim() || providerToolName(request)
+  if (!name) return undefined
+
+  const normalized = name.replace(/^mcp(?:__|\.)/u, '')
+  const segments = normalized
+    .split(/__|\./u)
+    .filter(Boolean)
+    .map((segment) =>
+      segment
+        .split(/[-_]/u)
+        .filter(Boolean)
+        .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+        .join(' ')
+    )
+    .filter(Boolean)
+
+  return segments.length > 0 ? segments.join(' / ') : undefined
+}
+
 const isNetworkTool = (request: AcpPermissionRequest): boolean => {
   const name = providerToolName(request)?.toLowerCase()
   return request.toolKind === 'fetch' || name === 'webfetch' || name === 'websearch'
@@ -150,7 +173,8 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
     return {
       actionTitle: 'Use external service?',
       categoryLabel: 'External service',
-      description: 'Uses an MCP service configured for this conversation.'
+      description: 'Uses an MCP service configured for this conversation.',
+      actionDetail: humanizeMcpAction(request)
     }
   }
 
