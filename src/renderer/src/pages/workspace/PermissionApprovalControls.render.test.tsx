@@ -502,7 +502,7 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('WebFetch')
   })
 
-  it('shows notebook control impact without exposing the MCP identifier', () => {
+  it('keeps notebook control details in the information tooltip without exposing its identifier', () => {
     const identifier = 'open_science_notebook_notebook_restart'
     const restart: AcpPermissionRequest = {
       requestId: 'restart-1',
@@ -520,7 +520,7 @@ describe('PermissionApprovalControls', () => {
 
     expect(html).toContain('Restart notebook?')
     expect(html).toContain('Notebook control</span>')
-    expect(html).toContain('Running processes and unsaved runtime state may be lost.')
+    expect(html).not.toContain('Running processes and unsaved runtime state may be lost.')
     expect(html).toContain('data-testid="permission-tool-info"')
     expect(html).not.toContain(identifier)
   })

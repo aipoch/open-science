@@ -313,11 +313,13 @@ const PermissionHeaderBadges = ({
   lookup,
   runtime,
   categoryLabel,
+  description,
   scopeDescription
 }: {
   lookup: NotebookSessionRequest | undefined
   runtime?: NotebookRuntime
   categoryLabel: string
+  description: string
   scopeDescription: string
 }): React.JSX.Element => {
   const kernelKind = runtime === 'python' ? 'python' : runtime === 'r' ? 'r' : undefined
@@ -345,7 +347,12 @@ const PermissionHeaderBadges = ({
               <Info className="size-3.5" aria-hidden="true" />
             </button>
           </TooltipTrigger>
-          <TooltipContent className="max-w-72 whitespace-normal">{scopeDescription}</TooltipContent>
+          <TooltipContent className="max-w-72 whitespace-normal">
+            <div className="space-y-1">
+              <p>{description}</p>
+              <p className="text-muted-foreground">{scopeDescription}</p>
+            </div>
+          </TooltipContent>
         </Tooltip>
       </TooltipProvider>
     </span>
@@ -556,7 +563,7 @@ const PermissionApprovalControls = ({
   })()
 
   return (
-    <div className="mb-2 flex w-full max-w-full flex-col gap-4 rounded-xl border border-border bg-card p-5 text-xs leading-5 text-card-foreground shadow-dialog outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
+    <div className="mb-2 flex w-full max-w-full flex-col gap-3 rounded-xl border border-border bg-card p-5 text-xs leading-5 text-card-foreground shadow-dialog outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
       {/* Header: plain-language action plus its classification and notebook context. */}
       <div className="flex min-w-0 items-center gap-2">
         <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>
@@ -566,11 +573,10 @@ const PermissionApprovalControls = ({
           lookup={notebookLookup}
           runtime={presentation.notebookRuntime}
           categoryLabel={presentation.categoryLabel}
+          description={presentation.description}
           scopeDescription={scopeDescription}
         />
       </div>
-
-      <p className="text-xs text-muted-foreground">{presentation.description}</p>
 
       {/* Full request title (the target being authorized) when the header alone doesn't show it. */}
       {titleDetail ? (
