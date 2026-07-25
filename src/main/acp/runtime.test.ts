@@ -6216,6 +6216,37 @@ describe('ACP runtime skill force-load + nudge', () => {
     expect(hooks.markForceLoaded).not.toHaveBeenCalled()
   })
 
+  it('continues the prompt when post-resume skill migration cleanup fails', async () => {
+    errorLogSpy.mockClear()
+    const spawner = createFreshAgentSpawner()
+    const hooks = createSkillsHooks({ needForceLoad: ['research'] })
+    hooks.markForceLoaded.mockRejectedValue(new Error('settings write failed'))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: spawner.spawn,
+      skills: hooks
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: 'remote-session-1',
+      text: 'summarize the paper',
+      forcedSkillIds: ['research']
+    })
+
+    expect(spawner.agents[1].prompts).toEqual([
+      {
+        sessionId: 'remote-session-1',
+        text: 'Use the following skill(s) for this task: research.\n\nsummarize the paper'
+      }
+    ])
+    expect(errorLogSpy).toHaveBeenCalledWith(
+      'forced skill migration cleanup failed',
+      expect.objectContaining({ error: 'settings write failed' })
+    )
+  })
+
   it('nudges without any reconnect when every picked skill is already enabled', async () => {
     const spawner = createFreshAgentSpawner()
     const hooks = createSkillsHooks({ needForceLoad: [] })

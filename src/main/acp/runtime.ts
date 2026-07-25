@@ -2107,7 +2107,13 @@ class AcpRuntime {
             throw new Error(`ACP session not found after force-load: ${request.sessionId}`)
           }
           activeSession = reloaded
-          await this.skillsHooks.markForceLoaded?.(toForce)
+          try {
+            await this.skillsHooks.markForceLoaded?.(toForce)
+          } catch (error) {
+            // The skill is already materialized in the resumed generation. Persisting migration
+            // cleanup is best-effort and must not turn a usable runtime into a failed user prompt.
+            safeLogError('forced skill migration cleanup failed', errorLogFields(error))
+          }
         }
       }
     } catch (error) {
