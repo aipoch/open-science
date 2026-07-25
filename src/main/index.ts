@@ -151,10 +151,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // preventDefault() on Cmd+- and Cmd+= and silently disables zoom out / reset (issue #336).
       installWindowShortcuts(app)
 
-      // Late-bound so the settings IPC (registered below) can reach the icon controller, which itself
-      // needs the persisted variant that only exists once settingsService is constructed. The change
-      // callback only fires on a user action (well after startup), so the controller is always set by then.
-      let appIconController: ReturnType<typeof createAppIconController> | undefined
+      // Held in a box (not a bare let) so the settings IPC callback registered below can reach the icon
+      // controller, which itself needs the persisted variant that only exists once settingsService is
+      // constructed. The change callback only fires on a user action (well after startup), so the
+      // controller is always set by then. Mirrors the trayBox late-binding pattern in app-lifecycle.ts.
+      const appIconControllerBox: {
+        current: ReturnType<typeof createAppIconController> | undefined
+      } = { current: undefined }
 
       const webMode = parseWebModeOptions(process.argv)
       // Always install the capture layer BEFORE handlers register: it records ipcMain.handle handlers as
@@ -166,21 +169,22 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         await registerIpcHandlers({
           mainEntryPath,
           headless: webMode.headless,
-          onAppIconVariantChanged: (variant) => appIconController?.setVariant(variant),
+          onAppIconVariantChanged: (variant) => appIconControllerBox.current?.setVariant(variant),
           listAppIconPreviews: () => buildAppIconPreviews(nativeImage, iconVariantPaths)
         })
 
-      // Apply the persisted icon variant now and keep new windows in sync. Skip in headless web mode:
-      // there is no local window or dock to re-skin. The controller owns the macOS dock icon that the
-      // pre-existing startup code used to set directly.
-      if (!webMode.headless) {
-        const initialVariant = await settingsService.getAppIconVariant()
-        appIconController = createAppIconController({
-          electron: { app, getAllWindows: () => BrowserWindow.getAllWindows(), nativeImage },
-          variantPaths: iconVariantPaths,
-          initialVariant
-        })
-      }
+      // Apply the persisted icon variant now and keep it in sync as windows come and go. Created
+      // unconditionally — even a headless launch can later surface a desktop window on a plain second
+      // launch (routeSecondInstance -> showMainWindow), and that window plus any live icon-setting
+      // change must still pick up the variant. Construction is safe headless: the dock is set on macOS
+      // (as the pre-existing startup code did unconditionally) and the window loop is a no-op until the
+      // browser-window-created listener sees the first window. The controller owns the macOS dock icon.
+      const initialVariant = await settingsService.getAppIconVariant()
+      appIconControllerBox.current = createAppIconController({
+        electron: { app, getAllWindows: () => BrowserWindow.getAllWindows(), nativeImage },
+        variantPaths: iconVariantPaths,
+        initialVariant
+      })
       const webController = createWebServiceController({
         rpc: rpcCapture,
         requestQuit: () => app.quit()
