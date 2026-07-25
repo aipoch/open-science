@@ -9,6 +9,10 @@ import {
   registerManagedPreviewIpcHandlers
 } from './managed-preview-ipc'
 
+// Vitest hoists vi.mock(...) above the rest of the module body, so anything the factory closes over
+// has to exist before the factory runs. vi.hoisted guarantees that.
+const handlers = vi.hoisted(() => new Map<string, (event: unknown, payload: unknown) => unknown>())
+
 vi.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, handler: (event: unknown, payload: unknown) => unknown) => {
@@ -16,8 +20,6 @@ vi.mock('electron', () => ({
     }
   }
 }))
-
-const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>()
 
 const createFakeEvent = (
   senderId: number
