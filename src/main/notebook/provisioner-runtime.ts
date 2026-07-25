@@ -14,6 +14,39 @@ export const CHILD_UNCONFIRMED = 'RUNTIME_CHILD_UNCONFIRMED'
 export const isChildUnconfirmedError = (error: unknown): boolean =>
   error instanceof Error && error.message.includes(CHILD_UNCONFIRMED)
 
+// Structured payload attached to a runMicromamba failure (exit / timeout). The user-facing
+// `Error.message` carries only a short excerpt; the full stdout/stderr tails live here so machine
+// consumers (cache-corruption / MAX_PATH recovery parsers, startup-gate logging) keep the complete
+// diagnostics the message no longer holds.
+export type MicromambaErrorData = {
+  argv: string[]
+  exitCode?: number | null
+  stderrTail?: string
+  stdoutTail?: string
+}
+
+const hasMicromambaErrorData = (error: unknown): error is { data: MicromambaErrorData } =>
+  error instanceof Error &&
+  typeof (error as { data?: unknown }).data === 'object' &&
+  (error as { data?: unknown }).data !== null
+
+// The FULL micromamba diagnostic text for machine parsing (not for the UI). Prefers the untruncated
+// stdout+stderr tails on `error.data`; falls back to `error.message` for errors raised without the
+// structured payload (e.g. captureMicromamba, spawn-failure). Recovery heuristics regex-match this, so
+// it must reconstruct what the pre-excerpt `Error.message` used to contain.
+export const micromambaDiagnosticText = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : String(error)
+  if (!hasMicromambaErrorData(error)) return message
+  const { stdoutTail, stderrTail } = error.data
+  return [
+    message,
+    stdoutTail && `stdout tail:\n${stdoutTail}`,
+    stderrTail && `stderr tail:\n${stderrTail}`
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 // Kills a child and resolves ONLY once it has actually exited, escalating SIGTERM -> SIGKILL. Resolves
 // true when exit is confirmed, false when it can't be confirmed within the deadline (SIGTERM can be
 // ignored/delayed and kill() can return false, so a single kill() is not proof of exit). The caller

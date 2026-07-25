@@ -299,6 +299,14 @@ export const runStartupGate = async (
     // already-existing managed env; a first-time env is built lazily on first notebook use
     // (ensureDefaultEnvReady), so there is nothing to provision here.
   } catch (error) {
+    // This is the automatic (no per-op logging) path, so record the FULL diagnostics here — including
+    // the structured micromamba tails on `error.data` — before broadcasting only the short UI message.
+    // Otherwise a launch-time restore/upgrade/repair failure would leave nothing but a truncated excerpt.
+    try {
+      log.error('startup gate failed', runtimeErrorLogFields(error))
+    } catch {
+      // Diagnostics are best-effort and must never suppress the progress broadcast below.
+    }
     broadcast({
       phase: 'error',
       message: `Environment preparation failed: ${(error as Error).message}`,

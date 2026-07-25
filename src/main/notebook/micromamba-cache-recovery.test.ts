@@ -104,6 +104,32 @@ describe('recoverWindowsMaxPathPackage', () => {
     expect(existsSync(sibling)).toBe(true)
   })
 
+  it('recovers when the signature lives only in the error data tails, not the short UI message', () => {
+    // A runMicromamba failure now caps `Error.message` to a short excerpt and keeps the full micromamba
+    // output on `error.data.stderrTail`. Recovery must read the tails (via micromambaDiagnosticText),
+    // or a self-healing MAX_PATH repair would be skipped whenever the signature falls outside the cap.
+    const cache = makeRoot()
+    const leaf = 'libstdcxx-devel_win-64-15.2.0-h0a72980_119'
+    const packageDir = join(cache, 'https', 'conda.anaconda.org', 'conda-forge', 'noarch', leaf)
+    mkdirSync(packageDir, { recursive: true })
+    const missing = join(packageDir, 'Library', 'x'.repeat(280))
+    const error = Object.assign(new Error('micromamba failed (exit 1; mm create): …plan-noise'), {
+      code: 'MICROMAMBA_EXIT',
+      data: {
+        argv: ['mm', 'create'],
+        exitCode: 1,
+        stderrTail:
+          `warning Invalid package cache, file '${missing}' is missing\n` +
+          `Cannot find a valid extracted directory cache for '${leaf}.conda'\n` +
+          'critical Package cache error.',
+        stdoutTail: 'plan-noise'
+      }
+    })
+
+    expect(recoverWindowsMaxPathPackage(error, [cache], { platform: 'win32' })).toBe(true)
+    expect(existsSync(packageDir)).toBe(false)
+  })
+
   it('refuses traversal, cache-root targets, and ambiguous cache errors', () => {
     const cache = makeRoot()
     const outside = makeRoot()

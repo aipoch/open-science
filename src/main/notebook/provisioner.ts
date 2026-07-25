@@ -49,7 +49,12 @@ import {
   type MicromambaDeps
 } from './micromamba'
 import { defaultOperationChildLiveness, readProcessStartToken } from './operation-recovery'
-import { isChildUnconfirmedError, runMicromamba, verifyExecutable } from './provisioner-runtime'
+import {
+  isChildUnconfirmedError,
+  micromambaDiagnosticText,
+  runMicromamba,
+  verifyExecutable
+} from './provisioner-runtime'
 import { envsLockDir } from './runtime-relocation'
 import {
   DEFAULT_ENV_VERSION,
@@ -1394,7 +1399,9 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
 // clean. Deliberately specific — a bare "not empty" (which many unrelated fs errors contain) must NOT
 // trigger a cache repair, so it is anchored to micromamba's own "remove_all …" extraction phrasing.
 const isCorruptPkgsCacheError = (error: unknown): boolean => {
-  const message = error instanceof Error ? error.message : String(error)
+  // Parse the FULL micromamba diagnostics (data tails), not the short UI excerpt on `.message`, or the
+  // signature that decides a cache repair can fall outside the retained excerpt and self-healing skips.
+  const message = micromambaDiagnosticText(error)
   return (
     /incorrect downloads/i.test(message) ||
     /invalid package cache/i.test(message) ||

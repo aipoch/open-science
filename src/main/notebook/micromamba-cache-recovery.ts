@@ -2,6 +2,7 @@ import { type Dirent, existsSync, readFileSync, readdirSync, realpathSync, rmSyn
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { WINDOWS_MAX_USABLE_PATH } from './micromamba-cache'
+import { micromambaDiagnosticText } from './provisioner-runtime'
 
 const COMPLETE_MARKER = join('info', 'repodata_record.json')
 const CONDA_SUBDIR = /^(?:noarch|win-64|osx-(?:64|arm64)|linux-(?:64|aarch64|ppc64le|s390x))$/i
@@ -164,7 +165,10 @@ export const recoverWindowsMaxPathPackage = (
   deps: MaxPathRecoveryDeps = {}
 ): boolean => {
   if ((deps.platform ?? process.platform) !== 'win32') return false
-  const message = error instanceof Error ? error.message : String(error)
+  // Parse the FULL micromamba diagnostics (data tails), not the short UI excerpt on `.message`: the
+  // signature and the quoted over-budget path can fall outside the retained excerpt, which would skip
+  // the MAX_PATH repair and fail provisioning instead of self-healing.
+  const message = micromambaDiagnosticText(error)
   const hasMissingContext =
     /invalid package cache/i.test(message) && /(?:is missing|package cache error)/i.test(message)
   const hasRemoveContext =

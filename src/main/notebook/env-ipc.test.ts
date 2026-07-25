@@ -567,6 +567,31 @@ describe('runStartupGate', () => {
     )
   })
 
+  it('logs the FULL micromamba diagnostics (data tails) even though it broadcasts only the short message', async () => {
+    // This automatic path has no per-op logging, so the gate itself must record the structured
+    // `error.data` tails. Otherwise a launch-time failure leaves only a truncated UI excerpt and the
+    // real micromamba output never crosses the main-process boundary (regression the reviewers flagged).
+    loggerSpies.error.mockReset()
+    const micromambaError = Object.assign(
+      new Error('micromamba failed (exit 1; mm create): …tail-excerpt'),
+      {
+        code: 'MICROMAMBA_EXIT',
+        data: { argv: ['mm', 'create'], exitCode: 1, stderrTail: 'Invalid package cache signature' }
+      }
+    )
+    const provisioner = fakeProvisioner({
+      restoreRelocatedEnvs: vi.fn().mockRejectedValue(micromambaError)
+    })
+    const dir = mkdtempSync(join(tmpdir(), 'os-gate-log-'))
+    await runStartupGate(provisioner, dir, vi.fn())
+
+    expect(loggerSpies.error).toHaveBeenCalledOnce()
+    const [, fields] = loggerSpies.error.mock.calls[0] as [string, Record<string, unknown>]
+    // errorLogFields lifts the error's own `data`/`code` keys, so the tails are present in the log.
+    expect(fields.code).toBe('MICROMAMBA_EXIT')
+    expect(JSON.stringify(fields)).toContain('Invalid package cache signature')
+  })
+
   it('refuses to rebuild over a recovery-blocked prefix through the REAL provisioner self-guard', async () => {
     // The startup gate drives repair/upgrade/restore through the provisioner, so the block guarantee
     // must survive that real path — not just a mock guard on the UI handlers. Wire a real

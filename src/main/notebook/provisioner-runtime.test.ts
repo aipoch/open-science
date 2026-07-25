@@ -4,7 +4,13 @@ import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { killAndConfirmExit, md5File, runMicromamba, verifyExecutable } from './provisioner-runtime'
+import {
+  killAndConfirmExit,
+  md5File,
+  micromambaDiagnosticText,
+  runMicromamba,
+  verifyExecutable
+} from './provisioner-runtime'
 import { condaActivatedPath } from './runtime-paths'
 
 describe('verifyExecutable', () => {
@@ -254,5 +260,33 @@ describe('killAndConfirmExit', () => {
       once: () => undefined // never fires exit
     } as never
     expect(await killAndConfirmExit(fake, 40)).toBe(false)
+  })
+})
+
+describe('micromambaDiagnosticText', () => {
+  it('reconstructs the FULL diagnostics from data tails so recovery parsing survives the short message', () => {
+    // The UI message is a capped excerpt; a cache-corruption / MAX_PATH signature or over-budget path
+    // can sit only in the full stdout/stderr tails. The reconstructed text must expose both.
+    const error = Object.assign(new Error('micromamba failed (exit 1; mm create): …tail-excerpt'), {
+      code: 'MICROMAMBA_EXIT',
+      data: {
+        argv: ['mm', 'create'],
+        exitCode: 1,
+        stderrTail: "Invalid package cache, 'C:/very/long/path/pkg.conda' is missing",
+        stdoutTail: 'plan-line-1\nplan-line-2'
+      }
+    })
+    const text = micromambaDiagnosticText(error)
+    expect(text).toContain('micromamba failed (exit 1')
+    expect(text).toContain('Invalid package cache')
+    expect(text).toContain("'C:/very/long/path/pkg.conda' is missing")
+    expect(text).toContain('plan-line-1')
+  })
+
+  it('falls back to the plain message for an error without structured data (e.g. spawn failure)', () => {
+    expect(micromambaDiagnosticText(new Error('micromamba failed to start (mm): ENOENT'))).toBe(
+      'micromamba failed to start (mm): ENOENT'
+    )
+    expect(micromambaDiagnosticText('not-an-error')).toBe('not-an-error')
   })
 })
