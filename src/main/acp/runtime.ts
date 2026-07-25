@@ -107,8 +107,10 @@ import {
 import { getNotebookDataRoot, getNotebookSessionRoot } from '../notebook/repository'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
+import type { ResponsesBridgeSkillCandidate } from '../settings/responses-bridge'
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
+import { CodexSkillActivityProjector } from './codex-skill-activity'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
@@ -173,6 +175,17 @@ type AcpRuntimeSkillsOptions = {
   needForceLoad: (ids: string[]) => Promise<string[]>
   // Resolves picker ids to the names accepted by the agent's Skill tool.
   namesForIds: (ids: string[]) => Promise<string[]>
+  // Resolves picker ids to exact app-owned Codex Skill files. Codex carries these as private ACP
+  // metadata; Claude Code and OpenCode keep the existing text nudge.
+  descriptorsForIds?: (
+    ids: string[],
+    codexHome: string | undefined
+  ) => Promise<Array<{ name: string; path: string }>>
+  // Lists only enabled, materialized app-owned Skills from the active isolated Codex home. The
+  // Chat Completions compatibility selector receives name + description; paths remain local.
+  catalogForCodexHome?: (
+    codexHome: string | undefined
+  ) => Promise<ResponsesBridgeSkillCandidate[]>
 }
 
 type ReviewerSessionRequest = {
@@ -361,16 +374,6 @@ const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
   'After using the tool, mention the generated filename rather than an absolute filesystem path. The app will display the generated file list below your message.',
   'Never write files inside a skill directory — loaded skills are read-only; route any file a skill generates through `write_artifact_file`.',
   '</open_science_artifact_instructions>'
-].join('\n')
-
-// Steers the agent away from reading skill definition files, so the permission deny rules that block
-// those reads act as a backstop rather than the first line of defense.
-const SKILLS_READ_GUARD_SYSTEM_PROMPT_APPEND = [
-  '<open_science_skill_privacy_instructions>',
-  'Skills are provided for you to load and use through the normal skill mechanism — their definition files are not for inspection.',
-  'Do not read, open, cat, print, or otherwise reveal the contents of skill files (`SKILL.md` or any file under the application skills directory). Their contents must never be surfaced into the conversation.',
-  'If you need to know what a skill does, rely on its loaded description and the skill system — not on reading its files. Such reads are blocked by policy; do not attempt to work around them.',
-  '</open_science_skill_privacy_instructions>'
 ].join('\n')
 
 // Steers the agent away from reading large attached data files in their entirety, since a single big
@@ -664,6 +667,8 @@ class AcpRuntime {
   // Mutable: refreshed from resolveBackend on each connect so a framework switch applies on reconnect.
   private framework: AgentFramework
   private backendId: string | undefined
+  private codexHome: string | undefined
+  private readonly codexSkillActivity = new CodexSkillActivityProjector()
   private readonly mcpHttpHost: AgentMcpHttpHost | undefined
   // A Chat Completions provider uses the local Responses bridge. App-owned notebook, artifact, and
   // reviewer MCPs have explicit namespaced bridge mappings; other MCP tools still require Responses.
@@ -693,6 +698,8 @@ class AcpRuntime {
   private pendingAuthentication: ResolvedAgentBackend['authentication']
   private pendingProviderConfiguration: ResolvedAgentBackend['providerConfiguration']
   private responsesBridgeLease: ResolvedAgentBackend['responsesBridgeLease']
+  private readonly skillSelectorAbortControllers = new Map<string, AbortController>()
+  private readonly pendingPromptCancellations = new Map<string, Promise<void>>()
   // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
   private readonly resumeTimeoutMs: number
   private readonly cancelTimeoutMs: number
@@ -1941,6 +1948,8 @@ class AcpRuntime {
     try {
       for (const timer of this.cancelTimers.values()) this.clearTimer(timer)
       this.cancelTimers.clear()
+      for (const controller of this.skillSelectorAbortControllers.values()) controller.abort()
+      this.skillSelectorAbortControllers.clear()
       this.permissionBroker.cancelAllPending()
       this.clearReviewerSessionState()
       this.promptInFlightSessionIds.clear()
@@ -1960,6 +1969,7 @@ class AcpRuntime {
       this.latestSessionConfigOptions.clear()
       this.sessionMcpServerNames.clear()
       this.codexMcpToolIdentities.clear()
+      this.codexSkillActivity.clear()
       this.clearAllOpenCodePermissionToolContext()
       this.sessionProjectNames.clear()
       this.permissionProfiles.clear()
@@ -2095,6 +2105,13 @@ class AcpRuntime {
   private applyResolvedBackend(backend: ResolvedAgentBackend): void {
     this.framework = backend.framework
     this.backendId = backend.backendId
+    this.codexHome =
+      backend.framework.id === 'codex' && typeof backend.env.CODEX_HOME === 'string'
+        ? backend.env.CODEX_HOME
+        : undefined
+    this.codexSkillActivity.setSkillsRoot(
+      this.codexHome ? join(this.codexHome, 'skills') : undefined
+    )
     this.nativeMcpEnabled =
       backend.framework.id !== 'codex' || backend.providerConfiguration === undefined
     this.bridgeMcpAliasesEnabled =
@@ -2204,6 +2221,9 @@ class AcpRuntime {
     })
     let artifactRun: ActiveArtifactRun | undefined
     let artifactEmitted = false
+    let skillActivityInputs: Array<{ name: string; path: string }> = []
+    let skillActivitiesStarted = false
+    let skillActivitiesFinalized = false
 
     try {
       // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
@@ -2213,6 +2233,46 @@ class AcpRuntime {
       } else {
         this.activeArtifactRuns.delete(request.sessionId)
       }
+      let userMessageEmitted = false
+      const emitUserMessage = (): void => {
+        if (userMessageEmitted) return
+        userMessageEmitted = true
+        this.pushEvent({
+          kind: 'message',
+          level: 'info',
+          sessionId: request.sessionId,
+          role: 'user',
+          text: request.text
+        })
+      }
+      const finishCancelledBeforePrompt = async (): Promise<PromptResponse> => {
+        emitUserMessage()
+        await this.emitArtifactRunEvent(request.sessionId, artifactRun)
+        artifactEmitted = true
+        const response: PromptResponse = { stopReason: 'cancelled' }
+        log.info('prompt stopped', {
+          sessionId: request.sessionId,
+          stopReason: response.stopReason
+        })
+        this.pushEvent({
+          kind: 'stop',
+          level: 'info',
+          sessionId: request.sessionId,
+          title: 'Prompt stopped',
+          text: response.stopReason,
+          raw: response
+        })
+        return response
+      }
+      const turnWasCancelled = (): boolean =>
+        this.cancelledPromptTurnsBySession.get(request.sessionId) === promptTurn
+      const awaitPendingCancellation = async (): Promise<void> => {
+        await this.pendingPromptCancellations.get(request.sessionId)
+      }
+
+      await awaitPendingCancellation()
+      if (turnWasCancelled()) return finishCancelledBeforePrompt()
+
       // Prepend a short steering nudge naming the picked skills. It goes only into the content sent to
       // the agent; the user-facing message event keeps the original text (which already shows /Name).
       // Framework-neutral delivery of the system-prompt guidance: Claude carries the complete appends in
@@ -2223,24 +2283,52 @@ class AcpRuntime {
         turnPromptReminders: this.getTurnPromptReminders(),
         sessionOptions: this.pendingSessionOptions
       })
+      const selectorAbortController =
+        this.framework.id === 'codex' && forced.length === 0 && this.responsesBridgeLease?.selectSkills
+          ? new AbortController()
+          : undefined
+      if (selectorAbortController) {
+        this.skillSelectorAbortControllers.set(request.sessionId, selectorAbortController)
+      }
+      let codexSkillInputs: Array<{ name: string; path: string }>
+      try {
+        codexSkillInputs = await this.resolveCodexSkillInputs(
+          forced,
+          request.text,
+          selectorAbortController?.signal
+        )
+      } finally {
+        if (this.skillSelectorAbortControllers.get(request.sessionId) === selectorAbortController) {
+          this.skillSelectorAbortControllers.delete(request.sessionId)
+        }
+      }
+      await awaitPendingCancellation()
+      if (turnWasCancelled()) return finishCancelledBeforePrompt()
       const nudgedText = await this.applySkillNudge(request.text, forced)
       // A history preamble (transcript replayed after a context reset) leads, then the framework guidance
       // prefix, then the nudged user text. Absent segments drop out so the normal turn is unchanged.
       const promptText = [request.historyPreamble, promptPrefix, nudgedText]
         .filter((segment): segment is string => Boolean(segment))
         .join('\n\n')
-      const promptContent = await this.createPromptContent(request.sessionId, {
-        ...request,
-        text: promptText
-      })
+      const promptContent = this.attachCodexSkillInputs(
+        await this.createPromptContent(request.sessionId, {
+          ...request,
+          text: promptText
+        }),
+        codexSkillInputs
+      )
 
-      this.pushEvent({
-        kind: 'message',
-        level: 'info',
-        sessionId: request.sessionId,
-        role: 'user',
-        text: request.text
-      })
+      emitUserMessage()
+      skillActivityInputs = codexSkillInputs
+      if (skillActivityInputs.length > 0) {
+        this.emitCodexSkillInputActivities(
+          request.sessionId,
+          promptTurn,
+          skillActivityInputs,
+          'in_progress'
+        )
+        skillActivitiesStarted = true
+      }
 
       // Start the prompt and race it against routed updates from the active session queue.
       const promptFailure = new Promise<never>((_, reject) => {
@@ -2249,6 +2337,16 @@ class AcpRuntime {
 
       for (;;) {
         const message = await Promise.race([activeSession.nextUpdate(), promptFailure])
+
+        if (skillActivitiesStarted && !skillActivitiesFinalized) {
+          this.emitCodexSkillInputActivities(
+            request.sessionId,
+            promptTurn,
+            skillActivityInputs,
+            'completed'
+          )
+          skillActivitiesFinalized = true
+        }
 
         if (message.kind === 'stop') {
           this.recordCodexPromptResponseContextUsage(
@@ -2286,6 +2384,15 @@ class AcpRuntime {
         this.handleSessionUpdate(message.notification, request.sessionId)
       }
     } catch (error) {
+      if (skillActivitiesStarted && !skillActivitiesFinalized) {
+        this.emitCodexSkillInputActivities(
+          request.sessionId,
+          promptTurn,
+          skillActivityInputs,
+          'failed'
+        )
+        skillActivitiesFinalized = true
+      }
       // errorLogFields keeps the RequestError message/code/data visible in the file log — a raw Error
       // nested in the payload serializes without its (non-enumerable) message, which once hid the
       // provider's real rejection reason from the log.
@@ -2380,6 +2487,15 @@ class AcpRuntime {
     const activeSession = this.sessions.get(request.sessionId)
 
     if (this.connection && activeSession) {
+      // Publish the cancellation attempt before the first await so a selector completing concurrently
+      // waits for the protocol outcome instead of submitting a prompt in the gap. Abort the compatibility
+      // request immediately; its own timeout is only a backstop and must not delay cancellation.
+      let settleCancellation!: () => void
+      const pendingCancellation = new Promise<void>((resolve) => {
+        settleCancellation = resolve
+      })
+      this.pendingPromptCancellations.set(request.sessionId, pendingCancellation)
+      this.skillSelectorAbortControllers.get(request.sessionId)?.abort()
       const priorTimer = this.cancelTimers.get(request.sessionId)
       if (priorTimer) this.clearTimer(priorTimer)
       this.cancelTimers.set(
@@ -2405,6 +2521,11 @@ class AcpRuntime {
         if (timer) this.clearTimer(timer)
         this.cancelTimers.delete(request.sessionId)
         throw error
+      } finally {
+        settleCancellation()
+        if (this.pendingPromptCancellations.get(request.sessionId) === pendingCancellation) {
+          this.pendingPromptCancellations.delete(request.sessionId)
+        }
       }
       this.cancelPermissionFlowForSession(request.sessionId)
       this.pushEvent({
@@ -2464,6 +2585,8 @@ class AcpRuntime {
     const cancelTimer = this.cancelTimers.get(request.sessionId)
     if (cancelTimer) this.clearTimer(cancelTimer)
     this.cancelTimers.delete(request.sessionId)
+    this.skillSelectorAbortControllers.get(request.sessionId)?.abort()
+    this.skillSelectorAbortControllers.delete(request.sessionId)
     // Drop this session's http MCP host registrations (no-op when no host / stdio framework).
     this.unregisterHttpMcpSession(request.sessionId)
     this.sessions.delete(request.sessionId)
@@ -2525,12 +2648,98 @@ class AcpRuntime {
   // source prefix. Resolve the picker ids through settings so every nudge uses the name the agent's
   // Skill tool accepts.
   private async applySkillNudge(text: string, forcedSkillIds: string[]): Promise<string> {
-    if (!this.skillsHooks || forcedSkillIds.length === 0) return text
+    if (!this.skillsHooks || forcedSkillIds.length === 0 || this.framework.id === 'codex')
+      return text
 
     const names = await this.skillsHooks.namesForIds(forcedSkillIds)
     if (names.length === 0) return text
 
     return `Use the following skill(s) for this task: ${names.join(', ')}.\n\n${text}`
+  }
+
+  private async resolveCodexSkillInputs(
+    forcedSkillIds: string[],
+    text: string,
+    signal?: AbortSignal
+  ): Promise<Array<{ name: string; path: string }>> {
+    if (this.framework.id !== 'codex') return []
+
+    // An explicit picker choice is authoritative even when it no longer resolves. Never supplement
+    // it with model-selected Skills, which would make the user's visible choice nondeterministic.
+    if (forcedSkillIds.length > 0) {
+      if (!this.skillsHooks?.descriptorsForIds) return []
+      return this.skillsHooks.descriptorsForIds(forcedSkillIds, this.codexHome)
+    }
+
+    if (!this.responsesBridgeLease?.selectSkills || !this.skillsHooks?.catalogForCodexHome) {
+      return []
+    }
+
+    let catalog: ResponsesBridgeSkillCandidate[]
+    try {
+      catalog = await this.skillsHooks.catalogForCodexHome(this.codexHome)
+    } catch {
+      log.warn('Codex Skill selection failed', { reason: 'catalog-error' })
+      return []
+    }
+    if (catalog.length === 0) return []
+
+    try {
+      return await this.responsesBridgeLease.selectSkills(text, catalog, signal)
+    } catch {
+      log.warn('Codex Skill selection failed', { reason: 'selector-error' })
+      return []
+    }
+  }
+
+  private attachCodexSkillInputs(
+    content: string | ContentBlock[],
+    descriptors: Array<{ name: string; path: string }>
+  ): string | ContentBlock[] {
+    if (descriptors.length === 0) return content
+
+    const metadata = { 'open-science/skill-inputs': descriptors }
+    if (typeof content === 'string') {
+      return [{ type: 'text', text: content, _meta: metadata }]
+    }
+
+    const blocks = [...content]
+    const textIndex = blocks.findIndex((block) => block.type === 'text')
+    if (textIndex < 0) {
+      blocks.unshift({ type: 'text', text: '', _meta: metadata })
+      return blocks
+    }
+
+    const textBlock = blocks[textIndex]
+    if (textBlock.type === 'text') {
+      blocks[textIndex] = {
+        ...textBlock,
+        _meta: { ...(textBlock._meta ?? {}), ...metadata }
+      }
+    }
+    return blocks
+  }
+
+  // Native UserInput::Skill entries are consumed inside Codex and may not emit a filesystem read
+  // lifecycle over ACP. Project the same compact activity explicitly so selected and auto-routed
+  // Skills remain visible without sending their path or document to renderer state or persistence.
+  private emitCodexSkillInputActivities(
+    sessionId: string,
+    promptTurn: number,
+    inputs: ReadonlyArray<{ name: string }>,
+    status: 'in_progress' | 'completed' | 'failed'
+  ): void {
+    for (const [index, { name }] of inputs.entries()) {
+      this.pushEvent({
+        kind: 'tool',
+        level: status === 'failed' ? 'error' : 'info',
+        sessionId,
+        toolCallId: `open-science-skill-${promptTurn}-${index}`,
+        providerToolName: 'skill',
+        title: `Loaded skill: ${name}`,
+        status
+      })
+    }
   }
 
   // Turns the renderer prompt plus upload references into the ACP prompt payload.
@@ -3160,10 +3369,9 @@ class AcpRuntime {
     return servers
   }
 
-  // Collects the system-prompt guidance appended to every session: the skill-privacy guardrail (always
-  // — skills are materialized whenever the app runs), plus artifact/notebook tooling instructions when
-  // those services are wired. The active framework decides how these are delivered (Claude's preset
-  // append vs opencode's prompt prefix).
+  // Collects the system-prompt guidance appended to every session, plus artifact/notebook tooling
+  // instructions when those services are wired. Skill privacy is enforced at the presentation layer;
+  // agent prompts must not block native progressive loading of a selected SKILL.md.
   // Whether the local MCP transport can carry app tooling at all: the framework takes stdio MCP
   // directly (Claude, Codex) or an http host is wired (opencode). Must match createMcpServers so the
   // guidance is only sent for tools actually wired.
@@ -3192,7 +3400,6 @@ class AcpRuntime {
     // omit it otherwise so the agent isn't told to use tools it wasn't given.
     return [
       TURN_CONTINUITY_SYSTEM_PROMPT_APPEND,
-      SKILLS_READ_GUARD_SYSTEM_PROMPT_APPEND,
       LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND,
       ...this.pendingSystemPromptAppends,
       ...(this.activityGroupOptions && this.framework.acceptsStdioMcp
@@ -3884,7 +4091,7 @@ class AcpRuntime {
       }
     }
 
-    const event = toAcpRuntimeEvent(routed, this.nextEventId())
+    const event = this.codexSkillActivity.project(toAcpRuntimeEvent(routed, this.nextEventId()))
 
     // usage_update carries the session's context-window usage, not conversation content: record it per
     // session and emit state so the indicator updates, but never push it as a visible event.
@@ -4018,6 +4225,8 @@ class AcpRuntime {
     }
     for (const timer of this.cancelTimers.values()) this.clearTimer(timer)
     this.cancelTimers.clear()
+    for (const controller of this.skillSelectorAbortControllers.values()) controller.abort()
+    this.skillSelectorAbortControllers.clear()
     this.permissionBroker.cancelAllPending()
     this.clearReviewerSessionState()
     this.sessions.clear()
@@ -4027,6 +4236,7 @@ class AcpRuntime {
     this.latestSessionConfigOptions.clear()
     this.sessionMcpServerNames.clear()
     this.codexMcpToolIdentities.clear()
+    this.codexSkillActivity.clear()
     this.clearAllOpenCodePermissionToolContext()
     this.sessionProjectNames.clear()
     this.contextUsageBySession.clear()

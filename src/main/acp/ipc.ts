@@ -115,7 +115,10 @@ const createRuntime = ({
         mcpHttpHost: new AgentMcpHttpHost(),
         skills: {
           needForceLoad: (ids) => settingsService.skillsNeedingForceLoad(ids),
-          namesForIds: (ids) => settingsService.skillNudgeNamesForIds(ids)
+          namesForIds: (ids) => settingsService.skillNudgeNamesForIds(ids),
+          descriptorsForIds: (ids, codexHome) =>
+            settingsService.codexSkillDescriptorsForIds(ids, codexHome),
+          catalogForCodexHome: (codexHome) => settingsService.codexSkillCatalog(codexHome)
         },
         artifacts: {
           configRoot,

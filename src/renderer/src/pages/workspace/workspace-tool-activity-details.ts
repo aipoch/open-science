@@ -46,8 +46,8 @@ type ToolActivityDetails = {
 
 // Bounds very large tool payloads so a single read/execute row cannot flood the transcript.
 const MAX_CODE_CHARS = 20000
-const SKILL_ACTIVITY_TITLE_PATTERN = /^(?:run|loaded)\s+skill(?:\?|:|\s|$)/iu
-const LOADED_SKILL_NAME_PATTERN = /^loaded\s+skill:\s*(.+?)\s*$/iu
+const SKILL_ACTIVITY_TITLE_PATTERN = /^(?:run|loading|loaded)\s+skill(?:\?|:|\s|$)/iu
+const SKILL_NAME_PATTERN = /^(?:loading|loaded)\s+skill:\s*(.+?)\s*$/iu
 
 // Human-readable fallbacks for ACP tool kinds when the provider tool name is unavailable.
 const TOOL_KIND_LABELS: Record<ToolKind, string> = {
@@ -121,9 +121,9 @@ const isSkillActivity = (activity: ToolActivity): boolean =>
   activity.providerToolName?.trim().toLowerCase() === 'skill' ||
   SKILL_ACTIVITY_TITLE_PATTERN.test(activity.title.trim())
 
-// The completion title is the only stable, user-safe Skill name that OpenCode provides.
+// Projected lifecycle titles are the stable, user-safe Skill names shared across providers.
 const getLoadedSkillName = (activity: ToolActivity): string | undefined =>
-  trimDetail(LOADED_SKILL_NAME_PATTERN.exec(activity.title)?.[1])
+  trimDetail(SKILL_NAME_PATTERN.exec(activity.title)?.[1])
 
 // Converts supported ACP content block variants into displayable text snippets.
 const collectContentText = (content: ContentBlock): string[] => {

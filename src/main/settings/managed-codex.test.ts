@@ -1,11 +1,40 @@
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const PINNED_SKILL_MAPPER_FIXTURE = [
+  'function buildPromptItems(prompt) {',
+  '  return prompt.map((block) => {',
+  '    switch (block.type) {',
+  '      case "text":',
+  '        return { type: "text", text: block.text, text_elements: [] };',
+  '      default:',
+  '        return null;',
+  '    }',
+  '  }).filter((block) => block !== null);',
+  '}'
+].join('\n')
+
+const adapterFixture = (marker: string): Buffer =>
+  Buffer.from(`${marker}\n${PINNED_SKILL_MAPPER_FIXTURE}\n`)
+
+const withPinnedSkillMapper = (source: string): string =>
+  `${source}\n${PINNED_SKILL_MAPPER_FIXTURE}`
 
 // Injectable fault flags for the fs/promises mock — each targets one specific rename call:
 //   onStagedMove: throw EPERM when src is the .codex-install- scratch dir (staged→destination)
@@ -32,11 +61,15 @@ vi.mock('node:fs/promises', async (importActual) => {
   return {
     ...actual,
     rename: vi.fn(async (src: string, dest: string) => {
-      if (fsFaults.renameOnStagedMove && src.includes('.codex-install-')) {
+      if (fsFaults.renameOnStagedMove && src.includes('.codex-install-') && !src.endsWith('.tmp')) {
         fsFaults.renameOnStagedMove = false
         throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' })
       }
-      if (fsFaults.renameOnStagedMoveEio && src.includes('.codex-install-')) {
+      if (
+        fsFaults.renameOnStagedMoveEio &&
+        src.includes('.codex-install-') &&
+        !src.endsWith('.tmp')
+      ) {
         fsFaults.renameOnStagedMoveEio = false
         throw Object.assign(new Error('EIO: i/o error, rename'), { code: 'EIO' })
       }
@@ -127,6 +160,7 @@ import {
   managedCodexRoot,
   installManagedCodex,
   patchCodexAcpContextUsageSource,
+  patchCodexAcpSkillInputSource,
   resolveManagedCodexPlatform,
   sanitizeManagedCodexDiagnostic,
   verifyManagedCodexPair,
@@ -401,7 +435,7 @@ describe('installManagedCodex', () => {
     const adapterTgz = buildTgz([
       {
         name: 'package/dist/index.js',
-        content: Buffer.from('#!/usr/bin/env node\nconsole.log("codex-acp")\n'),
+        content: adapterFixture('#!/usr/bin/env node\nconsole.log("codex-acp")'),
         mode: 0o755
       }
     ])
@@ -485,7 +519,7 @@ describe('installManagedCodex', () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })
     const adapterTgz = buildTgz([
-      { name: 'package/dist/index.js', content: Buffer.from('adapter'), mode: 0o755 }
+      { name: 'package/dist/index.js', content: adapterFixture('adapter'), mode: 0o755 }
     ])
     const nativeTgz = buildTgz([
       {
@@ -541,7 +575,7 @@ describe('installManagedCodex', () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
     const adapterTgz = buildTgz([
-      { name: 'package/dist/index.js', content: Buffer.from('adapter'), mode: 0o755 }
+      { name: 'package/dist/index.js', content: adapterFixture('adapter'), mode: 0o755 }
     ])
     const nativeTgz = buildTgz([
       {
@@ -594,7 +628,7 @@ describe('installManagedCodex', () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'arm64' })
     const adapterTgz = buildTgz([
-      { name: 'package/dist/index.js', content: Buffer.from('adapter'), mode: 0o755 }
+      { name: 'package/dist/index.js', content: adapterFixture('adapter'), mode: 0o755 }
     ])
     const nativeTgz = buildTgz([
       {
@@ -645,7 +679,7 @@ describe('installManagedCodex', () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
     const adapterTgz = buildTgz([
-      { name: 'package/dist/index.js', content: Buffer.from('adapter-eperm'), mode: 0o755 }
+      { name: 'package/dist/index.js', content: adapterFixture('adapter-eperm'), mode: 0o755 }
     ])
     const nativeTgz = buildTgz([
       {
@@ -681,7 +715,7 @@ describe('installManagedCodex', () => {
       })
 
       expect(outcome.result.ok).toBe(true)
-      expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toBe('adapter-eperm')
+      expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toContain('adapter-eperm')
       expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe('codex-eperm')
     } finally {
       fsFaults.renameOnStagedMove = false
@@ -692,7 +726,7 @@ describe('installManagedCodex', () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
     const adapterTgz = buildTgz([
-      { name: 'package/dist/index.js', content: Buffer.from('adapter-upgrade'), mode: 0o755 }
+      { name: 'package/dist/index.js', content: adapterFixture('adapter-upgrade'), mode: 0o755 }
     ])
     const nativeTgz = buildTgz([
       {
@@ -732,7 +766,7 @@ describe('installManagedCodex', () => {
       })
 
       expect(outcome.result.ok).toBe(true)
-      expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toBe('adapter-upgrade')
+      expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toContain('adapter-upgrade')
       expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe('codex-upgrade')
       // Old runtime must be gone from the final destination.
       await expect(readFile(join(managedCodexRoot(root), 'old-runtime'))).rejects.toThrow()
@@ -745,7 +779,7 @@ describe('installManagedCodex', () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
     const adapterTgz = buildTgz([
-      { name: 'package/dist/index.js', content: Buffer.from('adapter-cp-fail'), mode: 0o755 }
+      { name: 'package/dist/index.js', content: adapterFixture('adapter-cp-fail'), mode: 0o755 }
     ])
     const nativeTgz = buildTgz([
       {
@@ -807,7 +841,7 @@ describe('installManagedCodex', () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
     const adapterTgz = buildTgz([
-      { name: 'package/dist/index.js', content: Buffer.from('adapter-restore'), mode: 0o755 }
+      { name: 'package/dist/index.js', content: adapterFixture('adapter-restore'), mode: 0o755 }
     ])
     const nativeTgz = buildTgz([
       {
@@ -871,7 +905,7 @@ describe('installManagedCodex', () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
     const adapterTgz = buildTgz([
-      { name: 'package/dist/index.js', content: Buffer.from('adapter-backup-fail'), mode: 0o755 }
+      { name: 'package/dist/index.js', content: adapterFixture('adapter-backup-fail'), mode: 0o755 }
     ])
     const nativeTgz = buildTgz([
       {
@@ -931,7 +965,7 @@ describe('installManagedCodex', () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
     const adapterTgz = buildTgz([
-      { name: 'package/dist/index.js', content: Buffer.from('adapter-eio'), mode: 0o755 }
+      { name: 'package/dist/index.js', content: adapterFixture('adapter-eio'), mode: 0o755 }
     ])
     const nativeTgz = buildTgz([
       {
@@ -991,7 +1025,7 @@ describe('installManagedCodex', () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
     const adapterTgz = buildTgz([
-      { name: 'package/dist/index.js', content: Buffer.from('adapter-local-fail'), mode: 0o755 }
+      { name: 'package/dist/index.js', content: adapterFixture('adapter-local-fail'), mode: 0o755 }
     ])
     const nativeTgz = buildTgz([
       {
@@ -1048,7 +1082,7 @@ describe('installManagedCodex', () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
     const adapterTgz = buildTgz([
-      { name: 'package/dist/index.js', content: Buffer.from('adapter-orphan'), mode: 0o755 }
+      { name: 'package/dist/index.js', content: adapterFixture('adapter-orphan'), mode: 0o755 }
     ])
     const nativeTgz = buildTgz([
       {
@@ -1185,11 +1219,13 @@ describe('patchCodexAcpContextUsageSource', () => {
       const adapterPath = join(patchRoot, 'index.js')
       await writeFile(
         adapterPath,
-        [
-          '  createUsageUpdate(params) {',
-          '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
-          '  }'
-        ].join('\n')
+        withPinnedSkillMapper(
+          [
+            '  createUsageUpdate(params) {',
+            '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
+            '  }'
+          ].join('\n')
+        )
       )
 
       await ensureManagedCodexContextUsage(adapterPath)
@@ -1211,11 +1247,13 @@ describe('patchCodexAcpContextUsageSource', () => {
         const adapterPath = join(patchRoot, 'index.js')
         await writeFile(
           adapterPath,
-          [
-            '  createUsageUpdate(params) {',
-            '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
-            '  }'
-          ].join('\n')
+          withPinnedSkillMapper(
+            [
+              '  createUsageUpdate(params) {',
+              '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
+              '  }'
+            ].join('\n')
+          )
         )
         await chmod(adapterPath, 0o755)
 
@@ -1236,11 +1274,13 @@ describe('patchCodexAcpContextUsageSource', () => {
         const adapterPath = join(patchRoot, 'index.js')
         await writeFile(
           adapterPath,
-          [
-            '  createUsageUpdate(params) {',
-            '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
-            '  }'
-          ].join('\n')
+          withPinnedSkillMapper(
+            [
+              '  createUsageUpdate(params) {',
+              '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
+              '  }'
+            ].join('\n')
+          )
         )
         fsFaults.adapterReplaceFailureCode = errorCode
         fsFaults.adapterReplaceFailures = 1
@@ -1265,14 +1305,16 @@ describe('patchCodexAcpContextUsageSource', () => {
       const adapterPath = join(patchRoot, 'index.js')
       await writeFile(
         adapterPath,
-        [
-          '  const usageSchema = { totalTokens: true };',
-          '  createUsageUpdate(params) {',
-          '    this.handleTokenUsageUpdated(params);',
-          '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
-          '    return { used };',
-          '  }'
-        ].join('\n')
+        withPinnedSkillMapper(
+          [
+            '  const usageSchema = { totalTokens: true };',
+            '  createUsageUpdate(params) {',
+            '    this.handleTokenUsageUpdated(params);',
+            '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
+            '    return { used };',
+            '  }'
+          ].join('\n')
+        )
       )
 
       const partialWritePublished = new Promise<void>((resolve) => {
@@ -1312,6 +1354,191 @@ describe('patchCodexAcpContextUsageSource', () => {
 
     expect(() => patchCodexAcpContextUsageSource(drifted)).toThrow(
       /context-usage patch no longer matches/
+    )
+  })
+})
+
+describe('patchCodexAcpSkillInputSource', () => {
+  it('maps a private ACP descriptor to native Skill input before unchanged text', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'managed-codex-skill-input-'))
+    const codexHome = join(root, 'codex-home')
+    const skillPath = join(codexHome, 'skills', 'mcp-pubmed', 'SKILL.md')
+    try {
+      await mkdir(dirname(skillPath), { recursive: true })
+      await writeFile(skillPath, '# PubMed')
+      const source = [
+        'function buildPromptItems(prompt) {',
+        '  return prompt.map((block) => {',
+        '    switch (block.type) {',
+        '      case "text":',
+        '        return { type: "text", text: block.text, text_elements: [] };',
+        '      default:',
+        '        return null;',
+        '    }',
+        '  }).filter((block) => block !== null);',
+        '}'
+      ].join('\n')
+
+      const patched = patchCodexAcpSkillInputSource(source)
+      const buildPromptItems = Function(
+        'path4',
+        'fs4',
+        'process',
+        `${patched}; return buildPromptItems;`
+      )(await import('node:path'), await import('node:fs'), { env: { CODEX_HOME: codexHome } }) as (
+        prompt: unknown[]
+      ) => unknown[]
+
+      expect(
+        buildPromptItems([
+          {
+            type: 'text',
+            text: 'Search PubMed',
+            _meta: {
+              'open-science/skill-inputs': [{ name: 'mcp-pubmed', path: skillPath }]
+            }
+          }
+        ])
+      ).toEqual([
+        { type: 'skill', name: 'mcp-pubmed', path: skillPath },
+        { type: 'text', text: 'Search PubMed', text_elements: [] }
+      ])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'ignores a descriptor whose apparent Skill path escapes through a symlink',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'managed-codex-skill-symlink-'))
+      const codexHome = join(root, 'codex-home')
+      const outsidePath = join(root, 'outside-SKILL.md')
+      const skillPath = join(codexHome, 'skills', 'escape', 'SKILL.md')
+      try {
+        await mkdir(dirname(skillPath), { recursive: true })
+        await writeFile(outsidePath, '# Outside')
+        await symlink(outsidePath, skillPath)
+        const source = [
+          'function buildPromptItems(prompt) {',
+          '  return prompt.map((block) => {',
+          '    switch (block.type) {',
+          '      case "text":',
+          '        return { type: "text", text: block.text, text_elements: [] };',
+          '      default:',
+          '        return null;',
+          '    }',
+          '  }).filter((block) => block !== null);',
+          '}'
+        ].join('\n')
+        const patched = patchCodexAcpSkillInputSource(source)
+        const buildPromptItems = Function(
+          'path4',
+          'fs4',
+          'process',
+          `${patched}; return buildPromptItems;`
+        )(await import('node:path'), await import('node:fs'), {
+          env: { CODEX_HOME: codexHome }
+        }) as (prompt: unknown[]) => unknown[]
+
+        expect(
+          buildPromptItems([
+            {
+              type: 'text',
+              text: 'Keep this text',
+              _meta: {
+                'open-science/skill-inputs': [{ name: 'escape', path: skillPath }]
+              }
+            }
+          ])
+        ).toEqual([{ type: 'text', text: 'Keep this text', text_elements: [] }])
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('ignores invalid and duplicate descriptors while preserving original text', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'managed-codex-skill-validation-'))
+    const codexHome = join(root, 'codex-home')
+    const validPath = join(codexHome, 'skills', 'mcp-pubmed', 'SKILL.md')
+    const outsidePath = join(root, 'outside', 'SKILL.md')
+    try {
+      await mkdir(dirname(validPath), { recursive: true })
+      await mkdir(dirname(outsidePath), { recursive: true })
+      await writeFile(validPath, '# PubMed')
+      await writeFile(outsidePath, '# Outside')
+      const source = [
+        'function buildPromptItems(prompt) {',
+        '  return prompt.map((block) => {',
+        '    switch (block.type) {',
+        '      case "text":',
+        '        return { type: "text", text: block.text, text_elements: [] };',
+        '      default:',
+        '        return null;',
+        '    }',
+        '  }).filter((block) => block !== null);',
+        '}'
+      ].join('\n')
+      const patched = patchCodexAcpSkillInputSource(source)
+      const buildPromptItems = Function(
+        'path4',
+        'fs4',
+        'process',
+        `${patched}; return buildPromptItems;`
+      )(await import('node:path'), await import('node:fs'), {
+        env: { CODEX_HOME: codexHome }
+      }) as (prompt: unknown[]) => unknown[]
+
+      expect(
+        buildPromptItems([
+          {
+            type: 'text',
+            text: 'Original text',
+            _meta: {
+              'open-science/skill-inputs': [
+                { name: 'mcp-pubmed', path: validPath },
+                { name: 'mcp-pubmed', path: validPath },
+                { name: '', path: validPath },
+                { name: 'relative', path: 'skills/relative/SKILL.md' },
+                { name: 'outside', path: outsidePath },
+                { name: 'missing', path: join(codexHome, 'skills', 'missing', 'SKILL.md') }
+              ]
+            }
+          },
+          { type: 'text', text: 'No metadata' }
+        ])
+      ).toEqual([
+        { type: 'skill', name: 'mcp-pubmed', path: validPath },
+        { type: 'text', text: 'Original text', text_elements: [] },
+        { type: 'text', text: 'No metadata', text_elements: [] }
+      ])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed when the pinned buildPromptItems source drifts', () => {
+    const drifted = [
+      'function buildPromptItems(prompt) {',
+      '  return prompt.map((block) => ({ type: "text", text: block.text }));',
+      '}'
+    ].join('\n')
+
+    expect(() => patchCodexAcpSkillInputSource(drifted)).toThrow(
+      /Skill-input patch no longer matches/
+    )
+  })
+
+  it('fails closed when the pinned prompt mapper is renamed or removed', () => {
+    const drifted = [
+      'function mapPromptItems(prompt) {',
+      '  return prompt.map((block) => ({ type: "text", text: block.text }));',
+      '}'
+    ].join('\n')
+
+    expect(() => patchCodexAcpSkillInputSource(drifted)).toThrow(
+      /Skill-input patch no longer matches/
     )
   })
 })

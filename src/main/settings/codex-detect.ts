@@ -21,8 +21,8 @@ const ACP_SMOKE_TIMEOUT_MS = 15_000
 export type CodexDetectResult = {
   adapterPath: string
   adapterVersion: string
-  managedCodexPath?: string
-  managedCodexVersion?: string
+  nativeCodexPath?: string
+  nativeCodexVersion?: string
 }
 
 export type CodexDetectDeps = {
@@ -81,9 +81,12 @@ const detectCodex = async (
     deps.platform === 'win32'
       ? ['codex-acp.cmd', 'codex-acp.exe', 'codex-acp.bat', 'codex-acp']
       : ['codex-acp']
-  const candidates = dirs.flatMap((dir) => names.map((name) => p.join(dir, name)))
-
-  if (deps.managedAdapterPath) candidates.push(deps.managedAdapterPath)
+  const discoveredCandidates = dirs.flatMap((dir) => names.map((name) => p.join(dir, name)))
+  // Open Science supplies managedAdapterPath in production. Once present, that path is the only
+  // adapter eligible to run; PATH/npm adapters are discovery noise and must never bypass the pinned
+  // app extension layer. The generic scan remains available to the standalone detector tests and
+  // diagnostics that do not declare an app-owned adapter.
+  const candidates = deps.managedAdapterPath ? [deps.managedAdapterPath] : discoveredCandidates
 
   for (const adapterPath of Array.from(new Set(candidates))) {
     if (!(await deps.isRunnable(adapterPath))) continue
@@ -93,14 +96,19 @@ const detectCodex = async (
     if (!adapterVersion) continue
 
     const result: CodexDetectResult = { adapterPath, adapterVersion }
-    if (adapterPath === deps.managedAdapterPath && deps.managedCodexPath) {
-      const codexOutput = await deps.getCodexVersion(deps.managedCodexPath)
-      const managedCodexVersion = codexOutput ? parseVersion(codexOutput) : undefined
-      // The app-managed runtime is one pinned pair. Never advertise only the adapter: without its
-      // native binary, ACP initialization can succeed but the first session cannot start.
-      if (!managedCodexVersion) continue
-      result.managedCodexPath = deps.managedCodexPath
-      result.managedCodexVersion = managedCodexVersion
+    if (adapterPath === deps.managedAdapterPath) {
+      const managedOutput = deps.managedCodexPath
+        ? await deps.getCodexVersion(deps.managedCodexPath)
+        : undefined
+      const managedVersion = managedOutput ? parseVersion(managedOutput) : undefined
+      const nativeCodex = managedVersion
+        ? { path: deps.managedCodexPath!, version: managedVersion }
+        : await detectNativeCodex(deps)
+      // The adapter is app-owned, while the native executable may be the bundled binary or a global
+      // installation. Pin the resolved executable through CODEX_PATH in either case.
+      if (!nativeCodex) continue
+      result.nativeCodexPath = nativeCodex.path
+      result.nativeCodexVersion = nativeCodex.version
     }
 
     // A version string is not enough: an adapter with a missing or mismatched native Codex passes
@@ -108,7 +116,7 @@ const detectCodex = async (
     // manual installs are held to the same bar as the managed pair.
     const smokeOk = await deps.smokeInitialize(
       adapterPath,
-      result.managedCodexPath ? { codexPath: result.managedCodexPath } : undefined
+      result.nativeCodexPath ? { codexPath: result.nativeCodexPath } : undefined
     )
     if (!smokeOk) continue
 
@@ -140,9 +148,20 @@ const detectCodexComponents = async (
     deps.platform === 'win32'
       ? ['codex-acp.cmd', 'codex-acp.exe', 'codex-acp.bat', 'codex-acp']
       : ['codex-acp']
-  const adapterCandidates = dirs.flatMap((dir) => adapterNames.map((name) => p.join(dir, name)))
+  const discoveredAdapterCandidates = dirs.flatMap((dir) =>
+    adapterNames.map((name) => p.join(dir, name))
+  )
+  const adapterCandidates = deps.managedAdapterPath
+    ? [deps.managedAdapterPath]
+    : discoveredAdapterCandidates
 
-  if (deps.managedAdapterPath) adapterCandidates.push(deps.managedAdapterPath)
+  const managedNativeOutput = deps.managedCodexPath
+    ? await deps.getCodexVersion(deps.managedCodexPath)
+    : undefined
+  const managedNativeVersion = managedNativeOutput ? parseVersion(managedNativeOutput) : undefined
+  const nativeCodex = managedNativeVersion
+    ? { path: deps.managedCodexPath!, version: managedNativeVersion }
+    : await detectNativeCodex(deps)
 
   let adapterFound = false
   let adapterPath: string | undefined
@@ -167,7 +186,10 @@ const detectCodexComponents = async (
     }
 
     // Version probe succeeded - now check if smoke test passes
-    const smokeOk = await deps.smokeInitialize(candidate)
+    const smokeOk = await deps.smokeInitialize(
+      candidate,
+      deps.managedAdapterPath && nativeCodex ? { codexPath: nativeCodex.path } : undefined
+    )
     if (smokeOk) {
       adapterFound = true
       adapterPath = candidate
@@ -184,9 +206,6 @@ const detectCodexComponents = async (
       }
     }
   }
-
-  // Check for native Codex independently
-  const nativeCodex = await detectNativeCodex(deps)
 
   return {
     nativeCliFound: !!nativeCodex,

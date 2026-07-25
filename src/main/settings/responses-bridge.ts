@@ -22,7 +22,6 @@ export type ResponsesBridgeTarget = {
   // upstream model id (for example, DeepSeek's model name).
   model?: string
   namespacedTools?: ResponsesBridgeNamespacedTool[]
-  connectorInstructions?: ResponsesBridgeConnectorInstruction[]
   // Forward reasoning.effort upstream as reasoning_effort ONLY when the user explicitly picked a
   // level. Codex emits its own default effort even when the app never configured one, so
   // unconditional forwarding would change what existing bridged users send to their gateway —
@@ -41,18 +40,54 @@ export type ResponsesBridgeNamespacedTool = {
   strict?: boolean
 }
 
-export type ResponsesBridgeConnectorInstruction = {
-  id: string
-  aliases: string[]
-  content: string
-}
-
 export type ResponsesBridgeConnection = {
   baseUrl: string
   token: string
 }
 
+export type ResponsesBridgeSkillCandidate = {
+  name: string
+  description: string
+  path: string
+}
+
+export type ResponsesBridgeSkillInput = Pick<ResponsesBridgeSkillCandidate, 'name' | 'path'>
+
+type ResponsesBridgeOptions = {
+  skillSelectorTimeoutMs?: number
+}
+
 type BridgeFetch = typeof fetch
+
+const MAX_SKILL_SELECTOR_CANDIDATES = 128
+const MAX_SKILL_SELECTOR_NAME_BYTES = 128
+const MAX_SKILL_SELECTOR_DESCRIPTION_BYTES = 2 * 1024
+const MAX_SKILL_SELECTOR_CATALOG_BYTES = 256 * 1024
+
+const boundedSkillSelectorCatalog = (
+  catalog: ResponsesBridgeSkillCandidate[]
+): ResponsesBridgeSkillCandidate[] => {
+  const bounded: ResponsesBridgeSkillCandidate[] = []
+  let catalogBytes = 2 // JSON array brackets
+  for (const candidate of catalog) {
+    if (bounded.length === MAX_SKILL_SELECTOR_CANDIDATES) break
+    if (
+      !candidate.name ||
+      Buffer.byteLength(candidate.name, 'utf8') > MAX_SKILL_SELECTOR_NAME_BYTES ||
+      Buffer.byteLength(candidate.description, 'utf8') > MAX_SKILL_SELECTOR_DESCRIPTION_BYTES
+    ) {
+      continue
+    }
+    const projectedBytes = Buffer.byteLength(
+      JSON.stringify({ name: candidate.name, description: candidate.description }),
+      'utf8'
+    )
+    if (catalogBytes + projectedBytes + 1 > MAX_SKILL_SELECTOR_CATALOG_BYTES) continue
+    catalogBytes += projectedBytes + 1
+    bounded.push(candidate)
+  }
+  return bounded
+}
 
 class BridgeHttpError extends Error {
   constructor(
@@ -286,65 +321,6 @@ const hasUpstreamImageField = (value: JsonObject): boolean =>
   value.image !== undefined ||
   value.image_url !== undefined ||
   value.output_image !== undefined
-
-const plainTextFromContent = (content: unknown): string => {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-  return content
-    .filter((part): part is JsonObject => part && typeof part === 'object')
-    .filter((part) => ['input_text', 'output_text', 'text'].includes(String(part.type)))
-    .map((part) => String(part.text ?? ''))
-    .join('\n')
-}
-
-const connectorMentioned = (text: string, alias: string): boolean => {
-  const normalizedAlias = alias.trim().toLowerCase()
-  if (!normalizedAlias) return false
-  const escaped = normalizedAlias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i').test(text)
-}
-
-const selectConnectorInstructions = (
-  body: JsonObject,
-  connectors: readonly ResponsesBridgeConnectorInstruction[]
-): ResponsesBridgeConnectorInstruction[] => {
-  const input =
-    typeof body.input === 'string' ? [{ role: 'user', content: body.input }] : body.input
-  if (!Array.isArray(input)) return []
-  // Route from the latest user turn only. Looking across the whole Responses history makes an old
-  // connector mention contaminate a later, unrelated request.
-  const latestUser = input.findLast(
-    (item) => item && typeof item === 'object' && item.role === 'user'
-  )
-  const userText = latestUser ? plainTextFromContent(latestUser.content).toLowerCase() : ''
-  if (!userText) return []
-
-  return connectors.filter((connector) =>
-    [connector.id, ...connector.aliases].some((alias) => connectorMentioned(userText, alias))
-  )
-}
-
-const withConnectorInstructions = (
-  body: JsonObject,
-  connectors: readonly ResponsesBridgeConnectorInstruction[]
-): { body: JsonObject; selectedIds: string[] } => {
-  const selected = selectConnectorInstructions(body, connectors)
-  if (selected.length === 0) return { body, selectedIds: [] }
-  const connectorText = [
-    '<open_science_connector_instructions>',
-    'The following connector instructions are mandatory for this turn.',
-    ...selected.map((connector) => connector.content),
-    '</open_science_connector_instructions>'
-  ].join('\n\n')
-  const instructions =
-    typeof body.instructions === 'string' && body.instructions.length > 0
-      ? `${body.instructions}\n\n${connectorText}`
-      : connectorText
-  return {
-    body: { ...body, instructions },
-    selectedIds: selected.map((connector) => connector.id)
-  }
-}
 
 const namespacedToolAlias = (
   tool: Pick<ResponsesBridgeNamespacedTool, 'namespace' | 'name'>
@@ -1078,9 +1054,131 @@ export class ResponsesBridge {
 
   constructor(
     target: ResponsesBridgeTarget,
-    private readonly fetchImpl: BridgeFetch = fetch
+    private readonly fetchImpl: BridgeFetch = fetch,
+    private readonly options: ResponsesBridgeOptions = {}
   ) {
     this.target = target
+  }
+
+  async selectSkills(
+    text: string,
+    catalog: ResponsesBridgeSkillCandidate[],
+    signal?: AbortSignal
+  ): Promise<ResponsesBridgeSkillInput[]> {
+    if (!text.trim() || catalog.length === 0 || signal?.aborted) return []
+    const selectorCatalog = boundedSkillSelectorCatalog(catalog)
+    if (selectorCatalog.length === 0) return []
+
+    const timeout = new AbortController()
+    let timedOut = false
+    const abortFromCaller = (): void => timeout.abort(signal?.reason)
+    signal?.addEventListener('abort', abortFromCaller, { once: true })
+    const timer = setTimeout(() => {
+      timedOut = true
+      timeout.abort()
+    }, this.options.skillSelectorTimeoutMs ?? 15_000)
+    timer.unref?.()
+    try {
+      const response = await this.fetchImpl(chatUrl(this.target.baseUrl), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(this.target.key ? { authorization: `Bearer ${this.target.key}` } : {})
+        },
+        body: JSON.stringify({
+          model: this.target.model,
+          stream: false,
+          temperature: 0,
+          max_tokens: 512,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are a Skill routing classifier. Select only the Skills needed to execute the current user request. Do not perform the task. Call select_skills exactly once. Use only catalog names. Return an empty list when no Skill applies.\n\nSkill catalog:\n' +
+                JSON.stringify(
+                  selectorCatalog.map(({ name, description }) => ({ name, description }))
+                )
+            },
+            { role: 'user', content: text }
+          ],
+          tools: [
+            {
+              type: 'function',
+              function: {
+                name: 'select_skills',
+                description: 'Select zero to three applicable Skills from the provided catalog.',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    skill_names: {
+                      type: 'array',
+                      maxItems: 3,
+                      items: { type: 'string', enum: selectorCatalog.map(({ name }) => name) }
+                    }
+                  },
+                  required: ['skill_names'],
+                  additionalProperties: false
+                }
+              }
+            }
+          ]
+        }),
+        signal: timeout.signal
+      })
+      if (!response.ok) {
+        log.warn('bridge skill selection failed', {
+          model: this.target.model,
+          reason: 'upstream-http',
+          status: response.status
+        })
+        return []
+      }
+
+      const completion = (await response.json()) as JsonObject
+      const calls = completion.choices?.[0]?.message?.tool_calls
+      const call = Array.isArray(calls)
+        ? calls.find((candidate) => candidate?.function?.name === 'select_skills')
+        : undefined
+      if (typeof call?.function?.arguments !== 'string') {
+        log.warn('bridge skill selection failed', {
+          model: this.target.model,
+          reason: 'missing-function-call'
+        })
+        return []
+      }
+
+      const args = JSON.parse(call.function.arguments) as JsonObject
+      const requested = Array.isArray(args.skill_names) ? args.skill_names : []
+      const byName = new Map(
+        selectorCatalog.map((candidate) => [candidate.name, candidate] as const)
+      )
+      const selected: ResponsesBridgeSkillInput[] = []
+      const seen = new Set<string>()
+      for (const name of requested) {
+        if (typeof name !== 'string' || seen.has(name)) continue
+        const candidate = byName.get(name)
+        if (!candidate) continue
+        seen.add(name)
+        selected.push({ name: candidate.name, path: candidate.path })
+        if (selected.length === 3) break
+      }
+      log.info('bridge skill selection completed', {
+        model: this.target.model,
+        catalogCount: catalog.length,
+        routedCatalogCount: selectorCatalog.length,
+        selectedNames: selected.map(({ name }) => name)
+      })
+      return selected
+    } catch {
+      log.warn('bridge skill selection failed', {
+        model: this.target.model,
+        reason: timedOut ? 'timeout' : signal?.aborted ? 'cancelled' : 'invalid-response'
+      })
+      return []
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abortFromCaller)
+    }
   }
 
   setTarget(target: ResponsesBridgeTarget): void {
@@ -1208,11 +1306,8 @@ export class ResponsesBridge {
       // For reviewer turns, replace the entire declaration set at the protocol boundary so the model
       // can call only the scope-bounded reviewer HTTP MCP functions.
       const scopedBody = reviewerScoped ? { ...body, tools: [], tool_choice: 'auto' } : body
-      const connectorSelection = reviewerScoped
-        ? { body: scopedBody, selectedIds: [] }
-        : withConnectorInstructions(scopedBody, this.target.connectorInstructions ?? [])
       const chatRequest = responsesToChatRequest(
-        connectorSelection.body,
+        scopedBody,
         this.target.model,
         this.reasoningByCallId,
         namespacedTools,
@@ -1238,7 +1333,6 @@ export class ResponsesBridge {
         ],
         incomingToolCount: incomingTools.length,
         outgoingToolNames,
-        selectedConnectors: connectorSelection.selectedIds,
         reviewerScoped,
         toolChoice: chatRequest.tool_choice ?? null
       })

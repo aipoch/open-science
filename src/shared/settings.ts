@@ -13,8 +13,8 @@ import type { CloseActionPreference } from './window-controls'
 export const SETTINGS_FILE_VERSION = 2
 
 // A provider targets a custom gateway, a built-in official vendor, an app-owned Claude
-// subscription, or one of Codex's two subscription profiles. Codex shared uses the machine's
-// normal CODEX_HOME; isolated uses the app-owned profile. claude-shared uses ~/.claude (browser
+// subscription, or a Codex subscription. `codex-shared` remains a legacy Provider/import
+// discriminator; both Codex variants use the app-owned profile at runtime. claude-shared uses ~/.claude (browser
 // OAuth login via `claude auth login`); claude-isolated uses an app-owned CLAUDE_CONFIG_DIR
 // (setup-token paste, no ~/.claude touch).
 export type ProviderType =

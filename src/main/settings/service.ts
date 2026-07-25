@@ -66,7 +66,6 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_ISOLATED_PROVIDER_ID,
-  CODEX_SHARED_PROVIDER_ID,
   claudeIsolatedProviderIdentity,
   claudeSharedProviderIdentity,
   codexSubscriptionProviderIdentity,
@@ -131,7 +130,7 @@ import {
 } from './managed-opencode'
 import { opencodeConfigDir } from '../agent-framework/opencode'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
-import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
+import { ClaudeCodeSkillMaterializer, OS_SKILL_PREFIX } from '../skills/materializer'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import { detectNpmAvailable, runInstallWithFallback, type InstallTarget } from './claude-install'
 import { OPENCODE_INSTALL_TARGET } from './opencode-install'
@@ -174,7 +173,7 @@ import { SettingsRepository } from './repository'
 import { sanitizeCustomMcpServer } from './repository'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { getConnectorTools } from '../connectors/registry'
-import { renderConnectorInstructions, renderSkillDoc } from '../connectors/skill-doc'
+import { renderConnectorInstructions } from '../connectors/skill-doc'
 import { syncConnectorSkillDocs } from '../connectors/provision'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { SAFE_SLUG, UserSkillRepository } from '../skills/user-skill-repository'
@@ -199,6 +198,7 @@ import type {
 import { classifyStatus, validateProvider } from './validate'
 import {
   CodexAuthController,
+  importCodexAuthentication,
   openCodexAuthSession,
   type CodexAuthControllerPort,
   type CodexAuthStatus
@@ -517,7 +517,10 @@ class SettingsService {
         openSession: async (mode) => {
           const settings = await this.repository.getSettings()
           return openCodexAuthSession({
-            adapterPath: await this.resolveCodexExecutable(settings.codex?.resolvedPath),
+            adapterPath: await this.resolveCodexExecutable(
+              settings.codex?.resolvedPath,
+              settings.codex?.nativePath
+            ),
             nativePath: settings.codex?.nativePath,
             mode,
             storageRoot: this.storageRoot
@@ -843,8 +846,8 @@ class SettingsService {
       await this.repository.setCodexInfo({
         resolvedPath: detected.adapterPath,
         version: detected.adapterVersion,
-        nativePath: detected.managedCodexPath,
-        nativeVersion: detected.managedCodexVersion
+        nativePath: detected.nativeCodexPath,
+        nativeVersion: detected.nativeCodexVersion
       })
     } else {
       const cached = (await this.repository.getSettings()).codex?.resolvedPath
@@ -891,6 +894,98 @@ class SettingsService {
     )
 
     return ids.map((id) => nameById.get(id)).filter((name): name is string => name !== undefined)
+  }
+
+  async codexSkillDescriptorsForIds(
+    ids: string[],
+    codexHome: string | undefined
+  ): Promise<Array<{ name: string; path: string }>> {
+    if (!codexHome || ids.length === 0) return []
+
+    const requestedHome = resolve(codexHome)
+    const allowedHomes = new Set([
+      resolve(codexStorageDir(this.storageRoot)),
+      resolve(codexSubscriptionStorageDir(this.storageRoot))
+    ])
+    if (!allowedHomes.has(requestedHome)) return []
+
+    const skillsRoot = join(requestedHome, 'skills')
+    const realSkillsRoot = await realpath(skillsRoot).catch(() => undefined)
+    if (!realSkillsRoot) return []
+    const rootWithSep = realSkillsRoot.endsWith(sep) ? realSkillsRoot : `${realSkillsRoot}${sep}`
+    const catalog = new Map((await this.skillCatalog()).map((skill) => [skill.id, skill] as const))
+    const descriptors: Array<{ name: string; path: string }> = []
+
+    for (const id of [...new Set(ids)]) {
+      const skill = catalog.get(id)
+      if (!skill) continue
+      const filePath = join(skillsRoot, `${OS_SKILL_PREFIX}${skill.id}`, 'SKILL.md')
+      const realFilePath = await realpath(filePath).catch(() => undefined)
+      if (!realFilePath || !realFilePath.startsWith(rootWithSep)) continue
+
+      descriptors.push({
+        name: skill.source === 'featured' ? skill.id : skill.name,
+        path: filePath
+      })
+    }
+
+    return descriptors
+  }
+
+  async codexSkillCatalog(
+    codexHome: string | undefined
+  ): Promise<Array<{ name: string; description: string; path: string }>> {
+    if (!codexHome) return []
+
+    const requestedHome = resolve(codexHome)
+    const allowedHomes = new Set([
+      resolve(codexStorageDir(this.storageRoot)),
+      resolve(codexSubscriptionStorageDir(this.storageRoot))
+    ])
+    if (!allowedHomes.has(requestedHome)) return []
+
+    const skillsRoot = join(requestedHome, 'skills')
+    const realSkillsRoot = await realpath(skillsRoot).catch(() => undefined)
+    if (!realSkillsRoot) return []
+    const rootWithSep = realSkillsRoot.endsWith(sep) ? realSkillsRoot : `${realSkillsRoot}${sep}`
+    const [skills, settings] = await Promise.all([
+      this.skillCatalog(),
+      this.repository.getSettings()
+    ])
+    const disabled = new Set(settings.disabledSkillIds ?? [])
+    const enabledSkills = skills
+      .filter((skill) => !disabled.has(skill.id))
+      .map((skill) => ({
+        directory: `${OS_SKILL_PREFIX}${skill.id}`,
+        name: skill.source === 'featured' ? skill.id : skill.name,
+        description: skill.description
+      }))
+    const enabledConnectors = this.enabledConnectorIds(settings.connectors).flatMap((id) => {
+      const connector = CONNECTOR_CATALOG.find((candidate) => candidate.id === id)
+      return connector
+        ? [
+            {
+              directory: `mcp-${id}`,
+              name: `mcp-${id}`,
+              description: connector.useWhen
+            }
+          ]
+        : []
+    })
+    const enabled = [...enabledSkills, ...enabledConnectors]
+    const nameCounts = new Map<string, number>()
+    for (const { name } of enabled) nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1)
+
+    const catalog: Array<{ name: string; description: string; path: string }> = []
+    for (const { directory, name, description } of enabled) {
+      if (nameCounts.get(name) !== 1) continue
+      const filePath = join(skillsRoot, directory, 'SKILL.md')
+      const realFilePath = await realpath(filePath).catch(() => undefined)
+      if (!realFilePath || !realFilePath.startsWith(rootWithSep)) continue
+      catalog.push({ name, description, path: filePath })
+    }
+
+    return catalog.sort((a, b) => a.name.localeCompare(b.name))
   }
 
   // Returns one skill's view plus its SKILL.md body for the detail view (any source).
@@ -1086,7 +1181,10 @@ class SettingsService {
       throw new Error(`Refusing to import agent-home skill outside its home: ${slug}`)
     }
 
-    return candidate
+    // Preserve the lexical source path after using the resolved target only for containment. The
+    // repository's copy filter must still see and reject a Skill-root symlink instead of receiving
+    // its already-resolved target and losing that provenance.
+    return lexicalCandidate
   }
 
   // Projects a catalog skill into its renderer-safe view given the disabled set.
@@ -1299,18 +1397,17 @@ class SettingsService {
       await this.repository.setCodexInfo({
         resolvedPath: detected.adapterPath,
         version: detected.adapterVersion,
-        nativePath: detected.managedCodexPath,
-        nativeVersion: detected.managedCodexVersion
+        nativePath: detected.nativeCodexPath,
+        nativeVersion: detected.nativeCodexVersion
       })
 
-      // Build codexComponents for successful detection. For managed adapters, use the bundled
-      // native CLI info. For PATH/npm adapters that passed smoke test, independently probe for
-      // native CLI so the UI can show both components.
-      let nativeCliFound = !!detected.managedCodexPath
-      let nativeCliPath = detected.managedCodexPath
-      let nativeCliVersion = detected.managedCodexVersion
+      // The controlled adapter is paired with an explicit native executable. Legacy generic
+      // detection can still omit it, so retain the independent display probe for that shape.
+      let nativeCliFound = !!detected.nativeCodexPath
+      let nativeCliPath = detected.nativeCodexPath
+      let nativeCliVersion = detected.nativeCodexVersion
 
-      if (!detected.managedCodexPath) {
+      if (!detected.nativeCodexPath) {
         // Non-managed adapter passed the ACP smoke test, which proves a working native CLI exists
         // (the handshake spawns a real session). Trust that: mark native as found even if the
         // independent probe below can't pinpoint the exact path, so a successful pairing never
@@ -1389,11 +1486,17 @@ class SettingsService {
   ): Promise<Pick<StoredCodexInfo, 'version' | 'nativeVersion'> | undefined> {
     if (!codex?.resolvedPath) return undefined
 
+    const controlledAdapterPath =
+      this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.storageRoot)
+    // A cached global adapter is legacy detection data, not an eligible runtime. Force a fresh
+    // controlled-pair detection so its native executable can be retained while the adapter is
+    // replaced with the app-owned one.
+    if (codex.resolvedPath !== controlledAdapterPath) return undefined
+
     const adapterOutput = await this.codexDetectDeps.getAdapterVersion(codex.resolvedPath)
     const version = adapterOutput ? parseCodexVersion(adapterOutput) : undefined
     if (!version) return undefined
 
-    if (!isManagedCodexPath(codex.resolvedPath, this.storageRoot)) return { version }
     if (!codex.nativePath) return undefined
 
     const nativeOutput = await this.codexDetectDeps.getCodexVersion(codex.nativePath)
@@ -1683,6 +1786,12 @@ class SettingsService {
   // Encrypts any new key, recomputes its mask, and inserts/updates the provider record.
   async upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot> {
     const settings = await this.repository.getSettings()
+    if (request.type === 'codex-shared') {
+      await importCodexAuthentication(
+        this.userCodexDir,
+        codexSubscriptionStorageDir(this.storageRoot)
+      )
+    }
     // Both Codex and Claude subscription providers use a fixed builtin id so the add path, the
     // token-save path, and every id-keyed lookup in this service converge on a single record.
     // Without this, a random id from `createProviderId()` would shadow the token-holding record
@@ -1701,7 +1810,9 @@ class SettingsService {
 
     const provider: StoredProvider = {
       id: subscriptionIdentity?.id ?? existing?.id ?? this.createProviderId(),
-      type: request.type,
+      // A legacy shared selection performs a one-time credential import above, then converges on the
+      // same app-owned runtime form as an in-app sign-in.
+      type: request.type === 'codex-shared' ? 'codex-isolated' : request.type,
       name:
         subscriptionIdentity?.name ??
         (request.name?.trim() || existing?.name || 'Untitled provider')
@@ -2992,7 +3103,6 @@ class SettingsService {
         executablePath,
         env: envOverrides,
         sessionOptions,
-        ...(connectorInstructions ? { systemPromptAppends: [connectorInstructions] } : {}),
         sessionEffort,
         contextWindow
       }
@@ -3000,33 +3110,25 @@ class SettingsService {
 
     const executablePath =
       framework.id === 'codex'
-        ? await this.resolveCodexExecutable(settings.codex?.resolvedPath)
+        ? await this.resolveCodexExecutable(
+            settings.codex?.resolvedPath,
+            settings.codex?.nativePath
+          )
         : await this.resolveOpencodeExecutable(settings.opencodePath)
-    if (framework.id === 'codex' && isManagedCodexPath(executablePath, this.storageRoot)) {
-      await ensureManagedCodexContextUsage(executablePath)
-    }
     const provider = this.resolveProvider(activeProvider, settings.activeModel)
-    // The settings UI intentionally stores one subscription card, but runtime sessions created
-    // under the shared and isolated profiles are not interchangeable. Preserve their legacy
-    // mode-specific backend ids so existing sessions still resume under the matching credentials,
-    // and switching the selector adopts a fresh session instead of crossing the auth boundary.
+    // `codex-shared` is accepted only as a legacy/provider-time import request. Every runtime
+    // subscription record converges on the same app-owned backend and profile boundary.
     const backendProviderId =
       framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)
-        ? provider.type === 'codex-shared'
-          ? CODEX_SHARED_PROVIDER_ID
-          : CODEX_ISOLATED_PROVIDER_ID
+        ? CODEX_ISOLATED_PROVIDER_ID
         : activeProvider.id
     const skillsRoot =
       framework.id === 'codex'
-        ? provider.type === 'codex-isolated'
+        ? isCodexSubscriptionProvider(provider.type)
           ? codexSubscriptionStorageDir(this.storageRoot)
           : codexStorageDir(this.storageRoot)
         : opencodeConfigDir(this.storageRoot)
-    // Shared mode exposes the user's normal Codex profile exactly as they own it. The app's skill
-    // synchronizer deliberately stays out of ~/.codex so same-named user skills are never replaced.
-    if (!(framework.id === 'codex' && provider.type === 'codex-shared')) {
-      await this.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
-    }
+    await this.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
     // The Chat Completions bridge only exists to let Codex (a Responses-only client) drive an
     // OpenAI Chat provider. A provider that also speaks native Responses is driven directly, so
     // starting the bridge for it would be dead weight — and worse, Codex would post to the bridge's
@@ -3038,7 +3140,7 @@ class SettingsService {
     // A bridge may still serve a live Codex runtime from an earlier framework generation. Do not stop
     // or retarget it merely because the newly selected framework/provider does not need one.
     const responsesBridge = needsResponsesBridge
-      ? await this.ensureResponsesBridge(provider, enabledConnectorIds, sessionEffort !== undefined)
+      ? await this.ensureResponsesBridge(provider, sessionEffort !== undefined)
       : undefined
     try {
       const modelConfig = framework.prepareModelConfig(provider, {
@@ -3066,9 +3168,6 @@ class SettingsService {
             : {})
         },
         args: modelConfig.args,
-        ...(framework.id === 'codex' && connectorInstructions
-          ? { systemPromptAppends: [connectorInstructions] }
-          : {}),
         sessionModel,
         ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type) && sessionModel
           ? { sessionModelRequired: true }
@@ -3087,7 +3186,6 @@ class SettingsService {
 
   private async ensureResponsesBridge(
     provider: ResolvedProvider,
-    enabledConnectorIds: string[],
     forwardReasoningEffort: boolean
   ): Promise<LeasedResponsesBridgeConnection> {
     // Resolve to the OpenAI base the bridge appends `/chat/completions` to: an official vendor's exact
@@ -3107,17 +3205,7 @@ class SettingsService {
       ],
       reviewerScope: {
         namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS
-      },
-      connectorInstructions: enabledConnectorIds.map((id) => {
-        const metadata = CONNECTOR_CATALOG.find((connector) => connector.id === id)
-        return {
-          id,
-          aliases: metadata
-            ? [metadata.displayName, ...(metadata.aliases ?? []), ...metadata.sources]
-            : [],
-          content: renderSkillDoc(id)
-        }
-      })
+      }
     }
     const fingerprint = this.responsesBridgeFingerprint(target)
     let entry = this.responsesBridges.get(fingerprint)
@@ -3148,6 +3236,8 @@ class SettingsService {
     return {
       ...connection,
       lease: {
+        selectSkills: (text, catalog, signal) =>
+          leasedEntry.bridge.selectSkills(text, catalog, signal),
         registerReviewerSession: (promptCacheKey) =>
           leasedEntry.bridge.registerReviewerSession(promptCacheKey),
         unregisterReviewerSession: (promptCacheKey) =>
@@ -3177,8 +3267,7 @@ class SettingsService {
       key: target.key,
       model: target.model,
       namespacedTools: target.namespacedTools,
-      reviewerScope: target.reviewerScope,
-      connectorInstructions: target.connectorInstructions
+      reviewerScope: target.reviewerScope
     }
     return createHash('sha256').update(JSON.stringify(pinnedTarget)).digest('hex')
   }
@@ -3201,15 +3290,26 @@ class SettingsService {
     return detected.resolvedPath
   }
 
-  private async resolveCodexExecutable(storedPath: string | undefined): Promise<string> {
-    if (storedPath && (await this.pathExists(storedPath))) return storedPath
-
-    const detected = await detectCodex(this.codexDetectDeps)
-    if (!detected) {
-      throw new Error('codex-acp executable not found. Install Codex in settings.')
+  private async resolveCodexExecutable(
+    storedPath: string | undefined,
+    nativePath: string | undefined
+  ): Promise<string> {
+    // `storedPath` can contain a legacy/global codex-acp path. It remains useful as migration
+    // evidence only; runtime and authentication must always cross the app-controlled adapter where
+    // Open Science applies its pinned ACP extensions. A global installation may supply CODEX_PATH,
+    // never the adapter process itself.
+    void storedPath
+    if (!nativePath) {
+      throw new Error('Codex native executable not found. Re-detect or install Codex in settings.')
+    }
+    const adapterPath =
+      this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.storageRoot)
+    if (!(await this.pathExists(adapterPath))) {
+      throw new Error('Open Science Codex ACP adapter not found. Install Codex in settings.')
     }
 
-    return detected.adapterPath
+    await ensureManagedCodexContextUsage(adapterPath)
+    return adapterPath
   }
 
   // Writes a framework's generated config files (e.g. opencode.json) to disk ahead of spawn.

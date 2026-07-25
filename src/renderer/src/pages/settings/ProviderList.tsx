@@ -263,7 +263,7 @@ const ProviderList = ({
                   </div>
                   <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
                     {provider.type === 'codex-shared' ? (
-                      <div>Uses your existing Codex profile · Managed by Codex CLI</div>
+                      <div>Authentication imported into Open Science</div>
                     ) : provider.type === 'codex-isolated' ? (
                       <div>Codex login stored separately by Open Science</div>
                     ) : provider.type === 'claude-isolated' && isClaudeIsolatedLoginPending ? (

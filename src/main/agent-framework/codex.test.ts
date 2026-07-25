@@ -27,6 +27,7 @@ describe('codexFramework', () => {
     )
 
     expect(config.env).toMatchObject({
+      HOME: join('/data', 'codex'),
       CODEX_HOME: join('/data', 'codex'),
       MODEL_PROVIDER: 'open-science',
       NO_BROWSER: '1'
@@ -147,14 +148,19 @@ describe('codexFramework', () => {
     expect(config.env?.CODEX_CONFIG).not.toContain('127.0.0.1:43123')
   })
 
-  it('reuses the normal Codex profile for a shared subscription without overriding it', () => {
+  it('maps the legacy shared subscription to the app-owned subscription home', () => {
     const framework = createCodexFramework()
     const config = framework.prepareModelConfig(
       { type: 'codex-shared', apiEndpoints: ['responses'] },
       { storageRoot: '/data', executablePath: '/runtime/codex-acp' }
     )
 
-    expect(config).toEqual({ env: {} })
+    expect(config).toEqual({
+      env: {
+        HOME: join('/data', 'codex-subscription'),
+        CODEX_HOME: join('/data', 'codex-subscription')
+      }
+    })
   })
 
   it('uses persistent app-owned storage for an isolated Codex subscription', () => {
@@ -164,7 +170,26 @@ describe('codexFramework', () => {
       { storageRoot: '/data', executablePath: '/runtime/codex-acp' }
     )
 
-    expect(config).toEqual({ env: { CODEX_HOME: join('/data', 'codex-subscription') } })
+    expect(config).toEqual({
+      env: {
+        HOME: join('/data', 'codex-subscription'),
+        CODEX_HOME: join('/data', 'codex-subscription')
+      }
+    })
+  })
+
+  it('isolates the native Windows home used for user-installed Skills', () => {
+    const framework = createCodexFramework({ platform: 'win32' })
+    const config = framework.prepareModelConfig(
+      { type: 'codex-isolated', apiEndpoints: ['responses'] },
+      { storageRoot: 'C:\\OpenScience', executablePath: 'C:\\runtime\\codex-acp.exe' }
+    )
+
+    expect(config.env).toMatchObject({
+      HOME: join('C:\\OpenScience', 'codex-subscription'),
+      USERPROFILE: join('C:\\OpenScience', 'codex-subscription'),
+      CODEX_HOME: join('C:\\OpenScience', 'codex-subscription')
+    })
   })
 
   it('seeds the selected model into CODEX_CONFIG for an isolated Codex subscription', () => {

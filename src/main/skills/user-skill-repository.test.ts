@@ -1,4 +1,14 @@
-import { mkdtemp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
@@ -1336,9 +1346,9 @@ describe('UserSkillRepository: agent-home import', () => {
     const home = await mkdtemp(join(tmpdir(), 'os-import-agent-'))
     // No seedSkill — the path resolves to a non-existent directory.
 
-    await expect(
-      repo.importAgentHomeSkill(join(home, 'skills', 'missing'))
-    ).rejects.toThrow(/not available/)
+    await expect(repo.importAgentHomeSkill(join(home, 'skills', 'missing'))).rejects.toThrow(
+      /not available/
+    )
     // No record should have been created on the failure path.
     expect(await repo.list()).toEqual([])
   })
@@ -1350,9 +1360,9 @@ describe('UserSkillRepository: agent-home import', () => {
     // Create a directory whose name fails the SAFE_SLUG regex.
     await mkdir(join(home, 'skills', 'has spaces'), { recursive: true })
 
-    await expect(
-      repo.importAgentHomeSkill(join(home, 'skills', 'has spaces'))
-    ).rejects.toThrow(/unsafe slug/)
+    await expect(repo.importAgentHomeSkill(join(home, 'skills', 'has spaces'))).rejects.toThrow(
+      /unsafe slug/
+    )
   })
 
   it('appends a unique-suffix when the same slug is imported twice (no clobber)', async () => {
@@ -1373,4 +1383,33 @@ describe('UserSkillRepository: agent-home import', () => {
     expect(skills.find((s) => s.id === 'imported-alpha')).toBeDefined()
     expect(skills.find((s) => s.id === 'imported-alpha-2')).toBeDefined()
   })
+
+  it.skipIf(process.platform === 'win32')('rejects a symlink used as the Skill root', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const home = await mkdtemp(join(tmpdir(), 'os-import-agent-symlink-root-'))
+    const target = await seedSkill(home, 'real-skill')
+    const link = join(home, 'skills', 'linked-skill')
+    await symlink(target, link)
+
+    await expect(repo.importAgentHomeSkill(link)).rejects.toThrow(/symbolic link/)
+    expect(await repo.list()).toEqual([])
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects a nested symlink in the Skill tree',
+    async () => {
+      const storage = await makeStorage()
+      const repo = new UserSkillRepository(storage)
+      const home = await mkdtemp(join(tmpdir(), 'os-import-agent-symlink-nested-'))
+      const source = await seedSkill(home, 'alpha')
+      const outside = join(home, 'outside.md')
+      await writeFile(outside, 'outside')
+      await mkdir(join(source, 'references'), { recursive: true })
+      await symlink(outside, join(source, 'references', 'outside.md'))
+
+      await expect(repo.importAgentHomeSkill(source)).rejects.toThrow(/symbolic link/)
+      expect(await repo.list()).toEqual([])
+    }
+  )
 })

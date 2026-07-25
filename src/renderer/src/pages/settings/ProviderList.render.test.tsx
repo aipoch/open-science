@@ -216,7 +216,7 @@ describe('ProviderList', () => {
     expect(container.querySelector('[aria-label="Connection verified"]')).toBeNull()
   })
 
-  it('keeps shared Codex account management under Codex CLI', () => {
+  it('describes legacy shared Codex data as imported authentication', () => {
     renderList([
       provider({
         id: 'builtin-codex-shared',
@@ -229,7 +229,7 @@ describe('ProviderList', () => {
       })
     ])
 
-    expect(container.textContent).toContain('Managed by Codex CLI')
+    expect(container.textContent).toContain('Authentication imported into Open Science')
     expect(buttonByLabel('Check Codex login')).toBeDefined()
     expect(buttonByLabel('Edit')).toBeDefined()
     expect(buttonByLabel('Delete')).toBeDefined()

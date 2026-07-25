@@ -118,6 +118,57 @@ const CODEX_ACP_CONTEXT_USAGE_REPLACEMENT = [
   '        : lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0);'
 ].join('\n')
 
+const CODEX_ACP_SKILL_INPUT_SOURCE = [
+  'function buildPromptItems(prompt) {',
+  '  return prompt.map((block) => {',
+  '    switch (block.type) {',
+  '      case "text":',
+  '        return { type: "text", text: block.text, text_elements: [] };'
+].join('\n')
+
+const CODEX_ACP_SKILL_INPUT_REPLACEMENT = [
+  'function buildPromptItems(prompt) {',
+  '  return prompt.flatMap((block) => {',
+  '    switch (block.type) {',
+  '      case "text": {',
+  '        const requestedSkills = Array.isArray(block._meta?.["open-science/skill-inputs"])',
+  '          ? block._meta["open-science/skill-inputs"]',
+  '          : [];',
+  '        const codexHome = typeof process.env.CODEX_HOME === "string" ? process.env.CODEX_HOME : "";',
+  '        const skillRoot = codexHome ? path4.join(codexHome, "skills") : "";',
+  '        const seen = new Set();',
+  '        const nativeSkills = requestedSkills.flatMap((skill) => {',
+  '          const name = typeof skill?.name === "string" ? skill.name.trim() : "";',
+  '          const skillPath = typeof skill?.path === "string" ? skill.path.trim() : "";',
+  '          const relative = skillRoot && path4.isAbsolute(skillPath)',
+  '            ? path4.relative(skillRoot, skillPath)',
+  '            : "..";',
+  '          let realRelative = "..";',
+  '          try {',
+  '            realRelative = path4.relative(fs4.realpathSync(skillRoot), fs4.realpathSync(skillPath));',
+  '          } catch {}',
+  '          const key = name + "\\0" + skillPath;',
+  '          if (',
+  '            !name ||',
+  '            !skillRoot ||',
+  '            relative === "" ||',
+  '            relative === ".." ||',
+  '            relative.startsWith(".." + path4.sep) ||',
+  '            path4.isAbsolute(relative) ||',
+  '            realRelative === ".." ||',
+  '            realRelative.startsWith(".." + path4.sep) ||',
+  '            path4.isAbsolute(realRelative) ||',
+  '            path4.basename(skillPath) !== "SKILL.md" ||',
+  '            !fs4.existsSync(skillPath) ||',
+  '            seen.has(key)',
+  '          ) return [];',
+  '          seen.add(key);',
+  '          return [{ type: "skill", name, path: skillPath }];',
+  '        });',
+  '        return [...nativeSkills, { type: "text", text: block.text, text_elements: [] }];',
+  '      }'
+].join('\n')
+
 const CODEX_ADAPTER_REPLACE_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const
 
 const renameWithTransientLockRetry = async (source: string, destination: string): Promise<void> => {
@@ -158,9 +209,23 @@ export const patchCodexAcpContextUsageSource = (source: string): string => {
   return source
 }
 
+// The pinned adapter normally flattens every ACP text block into a Codex text input, discarding
+// private extension metadata. Extend that exact source shape so an explicit app Skill selection
+// becomes Codex's native UserInput::Skill while preserving the original text byte-for-byte.
+export const patchCodexAcpSkillInputSource = (source: string): string => {
+  if (source.includes(CODEX_ACP_SKILL_INPUT_REPLACEMENT)) return source
+
+  const matches = source.split(CODEX_ACP_SKILL_INPUT_SOURCE).length - 1
+  if (matches === 1) {
+    return source.replace(CODEX_ACP_SKILL_INPUT_SOURCE, CODEX_ACP_SKILL_INPUT_REPLACEMENT)
+  }
+
+  throw new Error('Pinned Codex ACP Skill-input patch no longer matches the adapter bundle')
+}
+
 export const ensureManagedCodexContextUsage = async (adapterPath: string): Promise<void> => {
   const source = await readFile(adapterPath, 'utf8')
-  const patched = patchCodexAcpContextUsageSource(source)
+  const patched = patchCodexAcpSkillInputSource(patchCodexAcpContextUsageSource(source))
 
   if (patched === source) return
 

@@ -54,6 +54,18 @@ let storageRoot: string
 let repository: InstanceType<typeof SettingsRepository>
 const CODEX_SHARED_PROVIDER_ID = CODEX_SUBSCRIPTION_PROVIDER_ID
 const CODEX_ISOLATED_PROVIDER_ID = CODEX_SUBSCRIPTION_PROVIDER_ID
+const MANAGED_CODEX_ADAPTER_FIXTURE = [
+  'function buildPromptItems(prompt) {',
+  '  return prompt.map((block) => {',
+  '    switch (block.type) {',
+  '      case "text":',
+  '        return { type: "text", text: block.text, text_elements: [] };',
+  '      default:',
+  '        return null;',
+  '    }',
+  '  }).filter((block) => block !== null);',
+  '}'
+].join('\n')
 
 const validAnthropicResponse = (): Response =>
   new Response(
@@ -98,6 +110,8 @@ const createService = (
     // When set, opencode detection resolves this path/version; otherwise it finds nothing.
     opencodeDetected?: { path: string; version: string }
     codexDetected?: { path: string; version: string; nativePath?: string; nativeVersion?: string }
+    managedCodexAdapterPath?: string
+    managedCodexNativePath?: string
     // Simulates an external native Codex CLI reachable only via the augmented PATH (e.g. Homebrew),
     // so getCodexVersion resolves for this path even though it's not the managed nativePath.
     codexExternalNative?: { path: string; version: string }
@@ -154,25 +168,30 @@ const createService = (
       env: options.codexDetected ? { PATH: dirname(options.codexDetected.path) } : {},
       homePath: '/home',
       platform: 'linux',
-      isRunnable: (path) => Promise.resolve(path === options.codexDetected?.path),
+      isRunnable: (path) =>
+        Promise.resolve(
+          path === options.codexDetected?.path || path === options.managedCodexAdapterPath
+        ),
       getAdapterVersion: (path) =>
         Promise.resolve(
-          path === options.codexDetected?.path ? options.codexDetected.version : undefined
+          path === options.codexDetected?.path || path === options.managedCodexAdapterPath
+            ? (options.codexDetected?.version ?? 'codex-acp 1.1.4')
+            : undefined
         ),
       getCodexVersion: (path) =>
         Promise.resolve(
           path === options.codexDetected?.nativePath
             ? options.codexDetected.nativeVersion
-            : path === options.codexExternalNative?.path
-              ? options.codexExternalNative.version
-              : undefined
+            : path === options.managedCodexNativePath
+              ? 'codex-cli 0.144.6'
+              : path === options.codexExternalNative?.path
+                ? options.codexExternalNative.version
+                : undefined
         ),
       smokeInitialize: () => Promise.resolve(options.codexSmokeOk ?? true),
       resolveNpmBinDirs: () => Promise.resolve([]),
-      managedAdapterPath: options.codexDetected?.nativePath
-        ? options.codexDetected.path
-        : undefined,
-      managedCodexPath: options.codexDetected?.nativePath
+      managedAdapterPath: options.managedCodexAdapterPath ?? options.codexDetected?.path,
+      managedCodexPath: options.managedCodexNativePath ?? options.codexDetected?.nativePath
     },
     codexAuth: options.codexAuth,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -184,6 +203,9 @@ const createService = (
 beforeEach(async () => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-settings-service-'))
   repository = new SettingsRepository(storageRoot)
+  const userCodexDir = join(storageRoot, 'no-user-codex')
+  await mkdir(userCodexDir, { recursive: true })
+  await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"test"}}')
 })
 
 afterEach(async () => {
@@ -192,6 +214,31 @@ afterEach(async () => {
 })
 
 describe('SettingsService: providers', () => {
+  it('imports only existing Codex authentication and persists an isolated provider', async () => {
+    const userCodexDir = join(storageRoot, 'user-codex')
+    await mkdir(join(userCodexDir, 'skills', 'private'), { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+    await writeFile(join(userCodexDir, 'config.toml'), 'model = "private"\n')
+    await writeFile(join(userCodexDir, 'skills', 'private', 'SKILL.md'), '# Private')
+    const service = createService(undefined, { userCodexDir })
+
+    const snapshot = await service.upsertProvider({ type: 'codex-shared' })
+
+    expect(snapshot.providers[0]).toMatchObject({
+      id: CODEX_SUBSCRIPTION_PROVIDER_ID,
+      type: 'codex-isolated'
+    })
+    expect(await readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')).toBe(
+      '{"tokens":{"access_token":"secret"}}'
+    )
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'skills', 'private', 'SKILL.md'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it.each([
     ['codex-shared', CODEX_SHARED_PROVIDER_ID, 'Codex subscription'],
     ['codex-isolated', CODEX_ISOLATED_PROVIDER_ID, 'Codex subscription']
@@ -204,7 +251,7 @@ describe('SettingsService: providers', () => {
     expect(snapshot.providers.filter((provider) => provider.id === id)).toEqual([
       expect.objectContaining({
         id,
-        type,
+        type: 'codex-isolated',
         name,
         apiEndpoints: ['responses'],
         models: [
@@ -219,7 +266,7 @@ describe('SettingsService: providers', () => {
       })
     ])
     expect((await repository.getSettings()).providers).toEqual([
-      expect.objectContaining({ id, type, name, apiEndpoints: ['responses'] })
+      expect.objectContaining({ id, type: 'codex-isolated', name, apiEndpoints: ['responses'] })
     ])
   })
 
@@ -338,7 +385,7 @@ describe('SettingsService: providers', () => {
     expect((await repository.getSettings()).providers).toEqual([])
   })
 
-  it('validates shared and isolated subscriptions through read-only status checks', async () => {
+  it('validates imported and in-app subscription setup through the isolated status check', async () => {
     const codexAuth: CodexAuthControllerPort = {
       getStatus: vi.fn().mockResolvedValue({
         mode: 'shared',
@@ -363,7 +410,6 @@ describe('SettingsService: providers', () => {
     await expect(
       service.validateProvider({ providerId: CODEX_ISOLATED_PROVIDER_ID })
     ).resolves.toMatchObject({ ok: true })
-    expect(codexAuth.getStatus).toHaveBeenCalledWith('shared')
     expect(codexAuth.getStatus).toHaveBeenCalledWith('isolated')
     // Validation never opens the browser login; that is the explicit sign-in action's job.
     expect(codexAuth.loginIsolated).not.toHaveBeenCalled()
@@ -441,7 +487,7 @@ describe('SettingsService: providers', () => {
     })
   })
 
-  it('discards the sign-in outcome when the provider was switched to shared mid-flow', async () => {
+  it('keeps the sign-in outcome when existing authentication is reimported mid-flow', async () => {
     let resolveLogin!: (status: {
       mode: 'isolated'
       supported: boolean
@@ -463,18 +509,16 @@ describe('SettingsService: providers', () => {
     const service = createService(undefined, { codexAuth })
     await service.upsertProvider({ type: 'codex-isolated' })
 
-    // The provider is switched to shared while the browser flow is still open; the success landing
-    // afterwards must not stamp the (unauthenticated) shared profile as verified.
+    // Importing existing authentication converges on the same app-owned runtime profile, so it does
+    // not create a second profile boundary while the browser flow is open.
     const pending = service.loginIsolatedCodex()
     await service.upsertProvider({ type: 'codex-shared' })
     resolveLogin({ mode: 'isolated', supported: true, authenticated: true })
 
-    // ok reflects the sign-in itself, but applied:false marks it as discarded so a success-gated
-    // caller (onboarding) does not advance on a profile the store never recorded it against.
-    await expect(pending).resolves.toMatchObject({ ok: true, applied: false })
+    await expect(pending).resolves.toMatchObject({ ok: true, applied: true })
     const stored = (await repository.getSettings()).providers[0]
-    expect(stored.type).toBe('codex-shared')
-    expect(stored.lastValidatedAt).toBeUndefined()
+    expect(stored.type).toBe('codex-isolated')
+    expect(stored.lastValidatedAt).toBeDefined()
     expect(stored.lastValidationFailure).toBeUndefined()
   })
 
@@ -487,37 +531,31 @@ describe('SettingsService: providers', () => {
     expect(snapshot.activeModel).toBeUndefined()
   })
 
-  it.each([
-    ['codex-shared', 'codex-isolated'],
-    ['codex-isolated', 'codex-shared']
-  ] as const)(
-    'requires fresh validation after switching the Codex subscription from %s to %s',
-    async (initialType, nextType) => {
-      const codexAuth: CodexAuthControllerPort = {
-        getStatus: vi.fn().mockResolvedValue({
-          mode: 'shared',
-          supported: true,
-          authenticated: true
-        }),
-        loginIsolated: vi.fn().mockResolvedValue({
-          mode: 'isolated',
-          supported: true,
-          authenticated: true
-        }),
-        cancelLogin: vi.fn(),
-        logoutIsolated: vi.fn()
-      }
-      const service = createService(undefined, { codexAuth })
-      await service.upsertProvider({ type: initialType })
-      await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })
-      expect((await service.getSettingsView()).providers[0].lastValidatedAt).toBeDefined()
-
-      const snapshot = await service.upsertProvider({ type: nextType })
-
-      expect(snapshot.providers[0].type).toBe(nextType)
-      expect(snapshot.providers[0].lastValidatedAt).toBeUndefined()
+  it('requires fresh validation after importing existing Codex authentication', async () => {
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn().mockResolvedValue({
+        mode: 'shared',
+        supported: true,
+        authenticated: true
+      }),
+      loginIsolated: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: true
+      }),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
     }
-  )
+    const service = createService(undefined, { codexAuth })
+    await service.upsertProvider({ type: 'codex-isolated' })
+    await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })
+    expect((await service.getSettingsView()).providers[0].lastValidatedAt).toBeDefined()
+
+    const snapshot = await service.upsertProvider({ type: 'codex-shared' })
+
+    expect(snapshot.providers[0].type).toBe('codex-isolated')
+    expect(snapshot.providers[0].lastValidatedAt).toBeUndefined()
+  })
 
   it('cancels isolated login and clears provider readiness on logout', async () => {
     const codexAuth: CodexAuthControllerPort = {
@@ -1540,10 +1578,38 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(result.ready).toBe(true)
   })
 
-  it('trusts a paired external adapter for native readiness even when the path probe misses it', async () => {
-    // Regression (spec P1): the ACP handshake proves a working native CLI exists. If the independent
-    // probe can't pinpoint it (unusual install dir), native CLI must still count as found so a
-    // successful pairing never blocks Continue.
+  it('replaces a cached global adapter with the app-managed adapter while retaining global native Codex', async () => {
+    const { managedCodexAdapterEntry } = await import('./managed-codex')
+    const managedAdapterPath = managedCodexAdapterEntry(storageRoot)
+    const globalAdapterPath = '/opt/tools/codex-acp'
+    const globalNativePath = '/usr/local/bin/codex'
+    const service = createService(undefined, {
+      codexDetected: { path: globalAdapterPath, version: 'codex-acp 1.1.4' },
+      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.144.6' },
+      managedCodexAdapterPath: managedAdapterPath
+    })
+    await repository.setAgentFramework('codex')
+    await repository.setCodexInfo({
+      resolvedPath: globalAdapterPath,
+      version: '1.1.4',
+      nativePath: globalNativePath,
+      nativeVersion: '0.144.6'
+    })
+
+    const result = await service.checkEnvironment()
+
+    expect(result.ready).toBe(true)
+    expect((await repository.getSettings()).codex).toEqual({
+      resolvedPath: managedAdapterPath,
+      version: '1.1.4',
+      nativePath: globalNativePath,
+      nativeVersion: '0.144.6'
+    })
+  })
+
+  it('requires an explicit native Codex path for the app-managed adapter pairing', async () => {
+    // The adapter must receive a pinned CODEX_PATH. A smoke result without a discoverable native
+    // executable is not sufficient because runtime must not fall back to ambient profile discovery.
     await repository.setAgentFramework('codex')
     const service = createService(undefined, {
       codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 1.1.4' }
@@ -1556,10 +1622,10 @@ describe('SettingsService: preflight & spawn config', () => {
       .filter((row) => row.label.startsWith('Codex'))
 
     expect(codexRows.map((row) => `${row.label}:${row.status}`)).toEqual([
-      'Codex native CLI:passed',
+      'Codex native CLI:failed',
       'Codex ACP adapter:passed'
     ])
-    expect(result.ready).toBe(true)
+    expect(result.ready).toBe(false)
   })
 
   it('marks the Codex adapter row failed when it is present but fails the ACP handshake', async () => {
@@ -1600,7 +1666,8 @@ describe('SettingsService: preflight & spawn config', () => {
   it('resolves a forced Codex backend only for a Responses provider', async () => {
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
-    await writeFile(adapterPath, '', 'utf8')
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
     })
@@ -1641,10 +1708,10 @@ describe('SettingsService: preflight & spawn config', () => {
       methodId: 'api-key',
       _meta: { 'api-key': { apiKey: 'test-key' } }
     })
-    expect(backend.systemPromptAppends?.join('\n')).toContain(
-      'Load that skill before using a connector.'
-    )
-    expect(backend.systemPromptAppends?.join('\n')).toContain('host.mcp(')
+    // Codex discovers the Connector through its native Skill catalog. Supplying the connector
+    // calling convention as a global prompt lets bridged models skip progressive Skill loading and
+    // guess method names directly.
+    expect(backend.systemPromptAppends).toBeUndefined()
 
     expect(selection).toEqual({ frameworkId: 'codex' })
     expect(selection).not.toHaveProperty('key')
@@ -1670,7 +1737,8 @@ describe('SettingsService: preflight & spawn config', () => {
       [
         '  createUsageUpdate(params) {',
         '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
-        '  }'
+        '  }',
+        MANAGED_CODEX_ADAPTER_FIXTURE
       ].join('\n')
     )
     await chmod(adapterPath, 0o755)
@@ -1702,13 +1770,121 @@ describe('SettingsService: preflight & spawn config', () => {
     )
   })
 
-  it.each([
-    ['codex-shared', CODEX_SHARED_PROVIDER_ID],
-    ['codex-isolated', CODEX_ISOLATED_PROVIDER_ID]
-  ] as const)('resolves a validated %s subscription without API routing', async (type, id) => {
+  it('spawns the app-managed adapter while using a detected global native Codex executable', async () => {
+    const { managedCodexAdapterEntry } = await import('./managed-codex')
+    const managedAdapterPath = managedCodexAdapterEntry(storageRoot)
+    const globalAdapterPath = join(storageRoot, 'global', 'codex-acp')
+    const globalNativePath = join(storageRoot, 'global', 'codex')
+    await mkdir(dirname(managedAdapterPath), { recursive: true })
+    await mkdir(dirname(globalAdapterPath), { recursive: true })
+    await writeFile(managedAdapterPath, `#!/usr/bin/env node\n${MANAGED_CODEX_ADAPTER_FIXTURE}`)
+    await writeFile(globalAdapterPath, '#!/usr/bin/env node\n')
+    await writeFile(globalNativePath, '#!/usr/bin/env node\n')
+    await chmod(managedAdapterPath, 0o755)
+    await chmod(globalAdapterPath, 0o755)
+    await chmod(globalNativePath, 0o755)
+    const service = createService(undefined, {
+      codexDetected: { path: globalAdapterPath, version: 'codex-acp 1.1.4' },
+      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.144.6' },
+      managedCodexAdapterPath: managedAdapterPath
+    })
+    await repository.setCodexInfo({
+      resolvedPath: globalAdapterPath,
+      version: '1.1.4',
+      nativePath: globalNativePath,
+      nativeVersion: '0.144.6'
+    })
+    await repository.setAgentFramework('codex')
+    const provider = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'Managed Responses',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.openai.com/v1/responses',
+        model: 'gpt-5-codex',
+        key: 'test-key'
+      })
+    ).providers[0]
+    await service.setActiveProvider(provider.id)
+
+    const backend = await service.resolveActiveAgentBackend()
+
+    expect(backend.executablePath).toBe(managedAdapterPath)
+    expect(backend.env.CODEX_PATH).toBe(globalNativePath)
+    expect(backend.env.CODEX_HOME).toBe(join(storageRoot, 'codex'))
+  })
+
+  it('fails closed instead of spawning a detected global Codex ACP adapter', async () => {
+    const globalAdapterPath = join(storageRoot, 'global', 'codex-acp')
+    const globalNativePath = join(storageRoot, 'global', 'codex')
+    await mkdir(dirname(globalAdapterPath), { recursive: true })
+    await writeFile(globalAdapterPath, '#!/usr/bin/env node\n')
+    await writeFile(globalNativePath, '#!/usr/bin/env node\n')
+    await chmod(globalAdapterPath, 0o755)
+    await chmod(globalNativePath, 0o755)
+    const service = createService(undefined, {
+      codexDetected: { path: globalAdapterPath, version: 'codex-acp 1.1.4' },
+      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.144.6' },
+      managedCodexAdapterPath: join(storageRoot, 'missing-managed-adapter', 'index.js')
+    })
+    await repository.setCodexInfo({
+      resolvedPath: globalAdapterPath,
+      version: '1.1.4',
+      nativePath: globalNativePath,
+      nativeVersion: '0.144.6'
+    })
+    await repository.setAgentFramework('codex')
+    const provider = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'Managed Responses',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.openai.com/v1/responses',
+        model: 'gpt-5-codex',
+        key: 'test-key'
+      })
+    ).providers[0]
+    await service.setActiveProvider(provider.id)
+
+    await expect(service.resolveActiveAgentBackend()).rejects.toThrow(
+      'Open Science Codex ACP adapter not found. Install Codex in settings.'
+    )
+  })
+
+  it('fails closed when the controlled adapter has no explicit native Codex path', async () => {
+    const { managedCodexAdapterEntry } = await import('./managed-codex')
+    const managedAdapterPath = managedCodexAdapterEntry(storageRoot)
+    await mkdir(dirname(managedAdapterPath), { recursive: true })
+    await writeFile(managedAdapterPath, '#!/usr/bin/env node\n')
+    await chmod(managedAdapterPath, 0o755)
+    const service = createService(undefined, {
+      codexDetected: { path: managedAdapterPath, version: 'codex-acp 1.1.4' },
+      managedCodexAdapterPath: managedAdapterPath
+    })
+    await repository.setCodexInfo({ resolvedPath: managedAdapterPath, version: '1.1.4' })
+    await repository.setAgentFramework('codex')
+    const provider = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'Managed Responses',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.openai.com/v1/responses',
+        model: 'gpt-5-codex',
+        key: 'test-key'
+      })
+    ).providers[0]
+    await service.setActiveProvider(provider.id)
+
+    await expect(service.resolveActiveAgentBackend()).rejects.toThrow(
+      'Codex native executable not found. Re-detect or install Codex in settings.'
+    )
+  })
+
+  it('requires a fresh sign-in after migrating a validated codex-shared subscription', async () => {
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
-    await writeFile(adapterPath, '', 'utf8')
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
     })
@@ -1720,58 +1896,81 @@ describe('SettingsService: preflight & spawn config', () => {
     })
     await repository.setAgentFramework('codex')
     await repository.upsertProvider({
-      id,
-      type,
-      name: type,
+      id: CODEX_SHARED_PROVIDER_ID,
+      type: 'codex-shared',
+      name: 'codex-shared',
       apiEndpoints: ['responses'],
       lastValidatedAt: 100
     })
-    await service.setActiveProvider(id, 'gpt-5.6-terra')
-    if (type === 'codex-isolated') {
-      const configPath = join(storageRoot, 'codex', 'config.toml')
-      await mkdir(dirname(configPath), { recursive: true })
-      await writeFile(
-        configPath,
-        'model = "account-default"\ncli_auth_credentials_store = "ephemeral"\n',
-        'utf8'
-      )
-    }
+    await service.setActiveProvider(CODEX_SHARED_PROVIDER_ID, 'gpt-5.6-terra')
+
+    expect(await service.getPreflight()).toMatchObject({ activeProviderReady: false })
+    const migratedProviders = (await repository.getSettings()).providers
+
+    expect(migratedProviders).toEqual([
+      expect.objectContaining({
+        id: CODEX_ISOLATED_PROVIDER_ID,
+        type: 'codex-isolated'
+      })
+    ])
+    expect(migratedProviders[0].lastValidatedAt).toBeUndefined()
+  })
+
+  it('resolves a validated codex-isolated subscription without API routing', async () => {
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    await chmod(adapterPath, 0o755)
+    const service = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
+    })
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativePath: '/data/codex-managed/native/codex',
+      nativeVersion: '0.144.6'
+    })
+    await repository.setAgentFramework('codex')
+    await repository.upsertProvider({
+      id: CODEX_ISOLATED_PROVIDER_ID,
+      type: 'codex-isolated',
+      name: 'codex-isolated',
+      apiEndpoints: ['responses'],
+      lastValidatedAt: 100
+    })
+    await service.setActiveProvider(CODEX_ISOLATED_PROVIDER_ID, 'gpt-5.6-terra')
+    const configPath = join(storageRoot, 'codex', 'config.toml')
+    await mkdir(dirname(configPath), { recursive: true })
+    await writeFile(
+      configPath,
+      'model = "account-default"\ncli_auth_credentials_store = "ephemeral"\n',
+      'utf8'
+    )
 
     expect(await service.getPreflight()).toMatchObject({ activeProviderReady: true })
     const backend = await service.resolveActiveAgentBackend()
 
-    expect(backend.backendId).toBe(`codex:builtin-${type}`)
+    expect(backend.backendId).toBe('codex:builtin-codex-isolated')
     expect(backend.sessionModel).toBe('gpt-5.6-terra')
     expect(backend.sessionModelRequired).toBe(true)
     expect(backend.authentication).toBeUndefined()
     expect(backend.providerConfiguration).toBeUndefined()
     expect(backend.env.CODEX_API_KEY).toBeUndefined()
-    if (type === 'codex-isolated') {
-      // Seed the selected model into CODEX_CONFIG so codex-acp uses it from session start and the
-      // first prompt doesn't wait for the late session/set_config_option model switch (issue #277).
-      // The ChatGPT subscription is codex-acp's default provider, so no model_provider override.
-      expect(JSON.parse(backend.env.CODEX_CONFIG ?? '{}')).toEqual({ model: 'gpt-5.6-terra' })
-      expect(backend.env.MODEL_PROVIDER).toBeUndefined()
-    } else {
-      expect(backend.env.CODEX_CONFIG).toBeUndefined()
-      expect(backend.env.MODEL_PROVIDER).toBeUndefined()
-    }
+    expect(JSON.parse(backend.env.CODEX_CONFIG ?? '{}')).toEqual({ model: 'gpt-5.6-terra' })
+    expect(backend.env.MODEL_PROVIDER).toBeUndefined()
     expect(backend.env.NO_BROWSER).toBeUndefined()
     expect(backend.env.CODEX_PATH).toBe('/data/codex-managed/native/codex')
-    expect(backend.env.CODEX_HOME).toBe(
-      type === 'codex-isolated' ? join(storageRoot, 'codex-subscription') : undefined
+    expect(backend.env.CODEX_HOME).toBe(join(storageRoot, 'codex-subscription'))
+    expect(await readFile(join(storageRoot, 'codex', 'config.toml'), 'utf8')).toBe(
+      'model = "account-default"\ncli_auth_credentials_store = "ephemeral"\n'
     )
-    if (type === 'codex-isolated') {
-      expect(await readFile(join(storageRoot, 'codex', 'config.toml'), 'utf8')).toBe(
-        'model = "account-default"\ncli_auth_credentials_store = "ephemeral"\n'
-      )
-    }
   })
 
   it('resolves an unpinned subscription backend to the Codex account default', async () => {
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
-    await writeFile(adapterPath, '', 'utf8')
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
     })
@@ -1874,7 +2073,8 @@ describe('SettingsService: preflight & spawn config', () => {
     )
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
-    await writeFile(adapterPath, '', 'utf8')
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
     })
@@ -1952,14 +2152,9 @@ describe('SettingsService: preflight & spawn config', () => {
         })
       ])
     })
-    expect(upstreamRequest?.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          role: 'system',
-          content: expect.stringContaining('host.mcp("pubmed", "search_articles"')
-        })
-      ])
-    )
+    const upstreamMessages = JSON.stringify(upstreamRequest?.messages)
+    expect(upstreamMessages).not.toContain('<open_science_connector_instructions>')
+    expect(upstreamMessages).not.toContain('host.mcp("pubmed", "search_articles"')
 
     // Connector skill docs (host.mcp guidance) must be materialized into Codex's own home, not only
     // the Claude config dir, or bridged Codex never learns to reach connectors via the notebook.
@@ -2006,11 +2201,17 @@ describe('SettingsService: preflight & spawn config', () => {
     )
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
-    await writeFile(adapterPath, '', 'utf8')
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
     })
-    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.1.4' })
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativePath: '/data/native/codex',
+      nativeVersion: '0.144.6'
+    })
     await repository.setAgentFramework('codex')
     const first = (
       await service.upsertProvider({
@@ -2055,6 +2256,16 @@ describe('SettingsService: preflight & spawn config', () => {
       ).responsesBridges.values(),
       (entry) => entry.bridge
     )
+    const skillCatalog = [
+      { name: 'mcp-pubmed', description: 'Search PubMed.', path: '/skills/pubmed/SKILL.md' }
+    ]
+    const selectSkills = vi
+      .spyOn(bridges[0], 'selectSkills')
+      .mockResolvedValue([{ name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }])
+    await expect(
+      firstBackend.responsesBridgeLease?.selectSkills('search PubMed', skillCatalog)
+    ).resolves.toEqual([{ name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }])
+    expect(selectSkills).toHaveBeenCalledWith('search PubMed', skillCatalog, undefined)
     bridges[0].registerReviewerSession('reviewer-one')
     bridges[1].registerReviewerSession('reviewer-two')
 
@@ -2115,11 +2326,17 @@ describe('SettingsService: preflight & spawn config', () => {
     const closeSpy = vi.spyOn(ResponsesBridgeClass.prototype, 'close').mockResolvedValue(undefined)
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
-    await writeFile(adapterPath, '', 'utf8')
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
     })
-    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.1.4' })
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativePath: '/data/native/codex',
+      nativeVersion: '0.144.6'
+    })
     await repository.setAgentFramework('codex')
     const provider = (
       await service.upsertProvider({
@@ -2152,11 +2369,17 @@ describe('SettingsService: preflight & spawn config', () => {
     // post to its local URL (which would authenticate with the vendor key instead of the bridge token).
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
-    await writeFile(adapterPath, '', 'utf8')
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
     })
-    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.1.4' })
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativePath: '/data/native/codex',
+      nativeVersion: '0.144.6'
+    })
     await repository.setAgentFramework('codex')
     const provider = (
       await service.upsertProvider({
@@ -2826,7 +3049,8 @@ describe('SettingsService: skills', () => {
   it('materializes enabled skills into the app-owned CODEX_HOME before spawn', async () => {
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
-    await writeFile(adapterPath, '', 'utf8')
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    await chmod(adapterPath, 0o755)
     const service = new SettingsService({
       repository,
       storageRoot,
@@ -2842,10 +3066,16 @@ describe('SettingsService: skills', () => {
         getAdapterVersion: () => Promise.resolve('codex-acp 1.1.4'),
         getCodexVersion: () => Promise.resolve(undefined),
         smokeInitialize: () => Promise.resolve(true),
-        resolveNpmBinDirs: () => Promise.resolve([])
+        resolveNpmBinDirs: () => Promise.resolve([]),
+        managedAdapterPath: adapterPath
       }
     })
-    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.1.4' })
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativePath: '/data/native/codex',
+      nativeVersion: '0.144.6'
+    })
     await repository.setAgentFramework('codex')
     const provider = (
       await service.upsertProvider({
@@ -2863,17 +3093,43 @@ describe('SettingsService: skills', () => {
 
     const materializedDir = join(storageRoot, 'codex', 'skills', 'os-demo')
     const materializedFile = join(materializedDir, 'SKILL.md')
-    expect(await readFile(materializedFile, 'utf8')).toContain('demo body')
-    // The materializer intentionally makes agent-visible skills read-only; restore permissions so the
-    // test temp root can be removed on every platform.
-    await chmod(materializedFile, 0o644)
-    await chmod(materializedDir, 0o755)
+    try {
+      expect(await readFile(materializedFile, 'utf8')).toContain('demo body')
+      await expect(
+        service.codexSkillDescriptorsForIds(['demo', 'missing'], join(storageRoot, 'codex'))
+      ).resolves.toEqual([{ name: 'demo', path: materializedFile }])
+      const selectorCatalog = await service.codexSkillCatalog(join(storageRoot, 'codex'))
+      expect(selectorCatalog).toEqual(
+        expect.arrayContaining([
+          { name: 'demo', description: 'A demo skill.', path: materializedFile },
+          expect.objectContaining({
+            name: 'mcp-pubmed',
+            description: expect.stringContaining('biomedical literature'),
+            path: join(storageRoot, 'codex', 'skills', 'mcp-pubmed', 'SKILL.md')
+          })
+        ])
+      )
+
+      await service.setSkillEnabled({ id: 'demo', enabled: false })
+      const catalogWithoutDemo = await service.codexSkillCatalog(join(storageRoot, 'codex'))
+      expect(catalogWithoutDemo.some(({ name }) => name === 'demo')).toBe(false)
+      expect(catalogWithoutDemo.some(({ name }) => name === 'mcp-pubmed')).toBe(true)
+
+      await service.setConnectorEnabled({ id: 'pubmed', enabled: false })
+      const catalogWithoutPubmed = await service.codexSkillCatalog(join(storageRoot, 'codex'))
+      expect(catalogWithoutPubmed.some(({ name }) => name === 'mcp-pubmed')).toBe(false)
+    } finally {
+      // The materializer intentionally makes agent-visible skills read-only; restore permissions so
+      // the test temp root can be removed on every platform.
+      await chmod(materializedFile, 0o644)
+      await chmod(materializedDir, 0o755)
+    }
   })
 
-  it('does not synchronize app skills into the user-owned shared Codex profile', async () => {
+  it('migrates legacy shared Codex skills into the app-owned subscription home only', async () => {
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
-    await writeFile(adapterPath, '', 'utf8')
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = new SettingsService({
       repository,
@@ -2887,10 +3143,16 @@ describe('SettingsService: skills', () => {
         getAdapterVersion: () => Promise.resolve('codex-acp 1.1.4'),
         getCodexVersion: () => Promise.resolve(undefined),
         smokeInitialize: () => Promise.resolve(true),
-        resolveNpmBinDirs: () => Promise.resolve([])
+        resolveNpmBinDirs: () => Promise.resolve([]),
+        managedAdapterPath: adapterPath
       }
     })
-    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.1.4' })
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativePath: '/data/native/codex',
+      nativeVersion: '0.144.6'
+    })
     await repository.setAgentFramework('codex')
     await repository.upsertProvider({
       id: CODEX_SHARED_PROVIDER_ID,
@@ -2903,9 +3165,17 @@ describe('SettingsService: skills', () => {
 
     await service.resolveActiveAgentBackend()
 
+    expect(
+      await readFile(
+        join(storageRoot, 'codex-subscription', 'skills', 'os-demo', 'SKILL.md'),
+        'utf8'
+      )
+    ).toContain('demo body')
     await expect(
-      readFile(join(storageRoot, 'codex', 'skills', 'os-demo', 'SKILL.md'), 'utf8')
+      readFile(join(storageRoot, 'workspace', '.agents', 'skills', 'os-demo', 'SKILL.md'), 'utf8')
     ).rejects.toMatchObject({ code: 'ENOENT' })
+    await chmod(join(storageRoot, 'codex-subscription', 'skills', 'os-demo', 'SKILL.md'), 0o644)
+    await chmod(join(storageRoot, 'codex-subscription', 'skills', 'os-demo'), 0o755)
   })
 
   it('reports disabled picks and resolves agent-readable skill nudge names', async () => {
@@ -3344,7 +3614,8 @@ describe('SettingsService: uninstall managed runtime', () => {
     const { managedCodexAdapterEntry } = await import('./managed-codex')
     const adapterPath = managedCodexAdapterEntry(storageRoot)
     await mkdir(dirname(adapterPath), { recursive: true })
-    await writeFile(adapterPath, '', 'utf8')
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    await chmod(adapterPath, 0o755)
     await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.1.4' })
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
     await repository.setAgentFramework('codex')
@@ -3523,10 +3794,7 @@ describe('SettingsService: reasoning effort', () => {
 
     expect(backend.framework.id).toBe('claude-code')
     expect(backend.sessionEffort).toBe('low')
-    expect(backend.systemPromptAppends?.join('\n')).toContain(
-      'Load that skill before using a connector.'
-    )
-    expect(backend.systemPromptAppends?.join('\n')).toContain('host.mcp(')
+    expect(backend.systemPromptAppends).toBeUndefined()
   })
 
   it("leaves sessionEffort undefined when the level is 'default' or unset", async () => {
@@ -3577,7 +3845,8 @@ describe('SettingsService: reasoning effort', () => {
     )
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
-    await writeFile(adapterPath, '', 'utf8')
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
     })
@@ -4302,9 +4571,7 @@ describe('SettingsService: importAgentHomeSkill realpath containment', () => {
     )
   })
 
-  it('accepts a symlink that stays within the agent home', async () => {
-    // Sanity: a benign symlink (a sub-directory pointing to a sibling sub-directory) is still
-    // allowed. realpath-based containment is "escapes the home", not "uses a symlink at all".
+  it('rejects a Skill-root symlink even when it stays within the agent home', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-benign-'))
     const target = await seedSkill(userClaudeDir, 'real-skill')
     const linkDir = join(userClaudeDir, 'skills', 'linked-skill')
@@ -4313,8 +4580,9 @@ describe('SettingsService: importAgentHomeSkill realpath containment', () => {
     const service = createService(undefined, { userClaudeDir })
     await repository.setAgentFramework('claude-code')
 
-    const result = await service.importAgentHomeSkill({ slug: 'linked-skill' })
-    expect(result.status).toBe('imported')
+    await expect(service.importAgentHomeSkill({ slug: 'linked-skill' })).rejects.toThrow(
+      /symbolic link/
+    )
   })
 })
 

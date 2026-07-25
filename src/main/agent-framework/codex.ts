@@ -50,8 +50,10 @@ const CODEX_ENV_KEYS = [
   'CODEX_HOME',
   'CODEX_PATH',
   'DEFAULT_AUTH_REQUEST',
+  'HOME',
   'MODEL_PROVIDER',
-  'NO_BROWSER'
+  'NO_BROWSER',
+  'USERPROFILE'
 ] as const
 
 type SpawnProcess = (
@@ -70,6 +72,19 @@ type CodexFrameworkDeps = {
 export const codexStorageDir = (storageRoot: string): string => join(storageRoot, 'codex')
 export const codexSubscriptionStorageDir = (storageRoot: string): string =>
   join(storageRoot, 'codex-subscription')
+
+const isolatedCodexHomeEnv = (
+  codexHome: string,
+  platform: NodeJS.Platform
+): NodeJS.ProcessEnv => ({
+  // Codex discovers user-installed Skills under $HOME/.agents/skills in addition to
+  // $CODEX_HOME/skills. Point both roots at the app-owned profile so a session cannot inherit the
+  // desktop user's Skills. USERPROFILE is the native home source on Windows; HOME is retained there
+  // as well for child tools that use the Unix-compatible variable.
+  HOME: codexHome,
+  ...(platform === 'win32' ? { USERPROFILE: codexHome } : {}),
+  CODEX_HOME: codexHome
+})
 
 const normalizeResponsesBaseUrl = (value: string | undefined): string | undefined => {
   const normalized = value
@@ -244,28 +259,23 @@ export const createCodexFramework = ({
 
   prepareModelConfig(provider, ctx: ModelConfigContext): AgentModelConfig {
     if (isCodexSubscriptionProvider(provider.type)) {
-      if (provider.type === 'codex-isolated') {
-        // The isolated home has no pre-existing config.toml and no CODEX_CONFIG of its own, so without
-        // a model here codex-acp falls back to its account default and we have to switch models via
-        // session/set_config_option AFTER session creation. That late switch makes the first prompt of
-        // every new session wait ~2 min for the new model to come online (issue #277). Seed the model
-        // + reasoning effort into CODEX_CONFIG so codex-acp uses the right model from session start
-        // and the first prompt is fast. No model_provider/model_providers override here — the ChatGPT
-        // subscription is codex-acp's default provider, configured by the user's stored credentials.
-        const modelOptions = buildCodexModelOptions({
-          model: provider.model,
-          reasoningEffort: ctx.reasoningEffort
-        })
-        const codexConfigJson =
-          Object.keys(modelOptions).length > 0 ? JSON.stringify(modelOptions) : undefined
-        return {
-          env: {
-            CODEX_HOME: codexSubscriptionStorageDir(ctx.storageRoot),
-            ...(codexConfigJson ? { CODEX_CONFIG: codexConfigJson } : {})
-          }
+      // Every Open Science subscription session uses the same app-owned home. `codex-shared` is
+      // accepted only as a legacy Provider discriminator; it must never select the user's global
+      // Codex profile at runtime. Seed the model before session creation to avoid the slow late
+      // session/set_config_option switch (issue #277).
+      const modelOptions = buildCodexModelOptions({
+        model: provider.model,
+        reasoningEffort: ctx.reasoningEffort
+      })
+      const codexConfigJson =
+        Object.keys(modelOptions).length > 0 ? JSON.stringify(modelOptions) : undefined
+      const codexHome = codexSubscriptionStorageDir(ctx.storageRoot)
+      return {
+        env: {
+          ...isolatedCodexHomeEnv(codexHome, platform),
+          ...(codexConfigJson ? { CODEX_CONFIG: codexConfigJson } : {})
         }
       }
-      return { env: {} }
     }
 
     const bridge = ctx.responsesBridge
@@ -287,9 +297,10 @@ export const createCodexFramework = ({
           }
         : undefined
 
+    const codexHome = codexStorageDir(ctx.storageRoot)
     return {
       env: {
-        CODEX_HOME: codexStorageDir(ctx.storageRoot),
+        ...isolatedCodexHomeEnv(codexHome, platform),
         CODEX_CONFIG: JSON.stringify(
           buildCodexConfig({
             ...provider,

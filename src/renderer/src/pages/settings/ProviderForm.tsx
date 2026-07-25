@@ -255,19 +255,19 @@ const ProviderForm = ({
               <SelectTrigger aria-label="Codex authentication" disabled={disabled}>
                 <span>
                   {value.type === 'codex-shared'
-                    ? 'Use existing Codex profile'
+                    ? 'Import existing Codex sign-in'
                     : 'Sign in with Open Science'}
                 </span>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="codex-shared">Use existing Codex profile</SelectItem>
+                <SelectItem value="codex-shared">Import existing Codex sign-in</SelectItem>
                 <SelectItem value="codex-isolated">Sign in with Open Science</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <p className="text-xs text-muted-foreground">
             {value.type === 'codex-shared'
-              ? 'Uses the Codex profile in your user home directory. Authentication remains managed by Codex CLI.'
+              ? 'Copies only Codex authentication into Open Science app data. Global config, Skills and sessions are not imported.'
               : 'Stores a separate Codex login in Open Science app data without changing your Codex CLI profile.'}
           </p>
         </div>

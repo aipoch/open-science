@@ -84,9 +84,37 @@ describe('codex-detect', () => {
     expect(result).toEqual({
       adapterPath,
       adapterVersion: '1.1.4',
-      managedCodexPath: codexPath,
-      managedCodexVersion: '0.144.6'
+      nativeCodexPath: codexPath,
+      nativeCodexVersion: '0.144.6'
     })
+  })
+
+  it('pairs the managed adapter with a detected global native Codex executable', async () => {
+    const adapterPath = '/data/codex-managed/adapter/dist/index.js'
+    const managedCodexPath = '/data/codex-managed/codex/vendor/linux/bin/codex'
+    const globalCodexPath = '/usr/local/bin/codex'
+    const smokeInitialize = vi.fn().mockResolvedValue(true)
+
+    const result = await detectCodex(
+      createDeps(
+        { [adapterPath]: '@agentclientprotocol/codex-acp 1.1.4' },
+        {
+          managedAdapterPath: adapterPath,
+          managedCodexPath,
+          getCodexVersion: (candidate) =>
+            Promise.resolve(candidate === globalCodexPath ? 'codex-cli 0.144.6' : undefined),
+          smokeInitialize
+        }
+      )
+    )
+
+    expect(result).toEqual({
+      adapterPath,
+      adapterVersion: '1.1.4',
+      nativeCodexPath: globalCodexPath,
+      nativeCodexVersion: '0.144.6'
+    })
+    expect(smokeInitialize).toHaveBeenCalledWith(adapterPath, { codexPath: globalCodexPath })
   })
 
   it('rejects an app-managed adapter whose paired native Codex cannot run', async () => {
@@ -271,20 +299,24 @@ describe('codex-detect: real ACP initialize smoke', () => {
 
   const detectWithRealSmoke = (
     adapterPath: string
-  ): Promise<Awaited<ReturnType<typeof detectCodex>>> =>
-    detectCodex({
+  ): Promise<Awaited<ReturnType<typeof detectCodex>>> => {
+    const codexPath = join(tempRoot, 'codex')
+    return detectCodex({
       env: { PATH: '' },
       homePath: tempRoot,
       platform: process.platform,
       isRunnable: (candidate) => Promise.resolve(candidate === adapterPath),
       getAdapterVersion: (candidate) =>
         Promise.resolve(candidate === adapterPath ? 'codex-acp 1.1.4' : undefined),
-      getCodexVersion: () => Promise.resolve(undefined),
+      getCodexVersion: (candidate) =>
+        Promise.resolve(candidate === codexPath ? 'codex-cli 0.144.6' : undefined),
       // The production default dep — not a stub.
       smokeInitialize: runAcpInitializeSmoke(process.platform),
       resolveNpmBinDirs: () => Promise.resolve([]),
-      managedAdapterPath: adapterPath
+      managedAdapterPath: adapterPath,
+      managedCodexPath: codexPath
     })
+  }
 
   beforeEach(async () => {
     tempRoot = await mkdtemp(join(tmpdir(), 'os-codex-smoke-test-'))
@@ -302,7 +334,12 @@ describe('codex-detect: real ACP initialize smoke', () => {
 
     const result = await detectWithRealSmoke(adapterPath)
 
-    expect(result).toEqual({ adapterPath, adapterVersion: '1.1.4' })
+    expect(result).toEqual({
+      adapterPath,
+      adapterVersion: '1.1.4',
+      nativeCodexPath: join(tempRoot, 'codex'),
+      nativeCodexVersion: '0.144.6'
+    })
     // The smoke reaped the tree cleanly, so it must not emit the degraded-reap warning.
     expect(warnLogSpy).not.toHaveBeenCalled()
   })
@@ -317,7 +354,12 @@ describe('codex-detect: real ACP initialize smoke', () => {
     const result = await detectWithRealSmoke(adapterPath)
 
     // (a) Warn-and-succeed: the adapter is still ready despite the degraded reap.
-    expect(result).toEqual({ adapterPath, adapterVersion: '1.1.4' })
+    expect(result).toEqual({
+      adapterPath,
+      adapterVersion: '1.1.4',
+      nativeCodexPath: join(tempRoot, 'codex'),
+      nativeCodexVersion: '0.144.6'
+    })
     // (b) The degraded teardown is reported exactly once with the fully-reaped warning.
     expect(warnLogSpy).toHaveBeenCalledTimes(1)
     expect(warnLogSpy).toHaveBeenCalledWith(
@@ -462,6 +504,64 @@ describe('detectNativeCodex', () => {
 })
 
 describe('detectCodexComponents', () => {
+  it('ignores a global adapter when the app-owned adapter is missing', async () => {
+    const { detectCodexComponents } = await import('./codex-detect')
+    const managedAdapterPath = '/data/codex-managed/adapter/dist/index.js'
+    const globalAdapterPath = '/usr/local/bin/codex-acp'
+    const globalCodexPath = '/Applications/ChatGPT.app/Contents/Resources/codex'
+    const result = await detectCodexComponents({
+      platform: 'darwin',
+      env: { PATH: '/usr/local/bin' },
+      homePath: '/Users/test',
+      managedAdapterPath,
+      isRunnable: (path) => Promise.resolve(path === globalAdapterPath),
+      getAdapterVersion: (path) =>
+        Promise.resolve(path === globalAdapterPath ? 'codex-acp 1.0.0' : undefined),
+      getCodexVersion: (path) =>
+        Promise.resolve(path === globalCodexPath ? 'codex-cli 0.144.2' : undefined),
+      smokeInitialize: () => Promise.resolve(true),
+      resolveNpmBinDirs: () => Promise.resolve([])
+    })
+
+    expect(result).toMatchObject({
+      nativeCliFound: true,
+      nativeCliPath: globalCodexPath,
+      adapterFound: false,
+      adapterPath: undefined
+    })
+  })
+
+  it('smoke-checks the app-owned adapter with the detected global native executable', async () => {
+    const { detectCodexComponents } = await import('./codex-detect')
+    const managedAdapterPath = '/data/codex-managed/adapter/dist/index.js'
+    const globalCodexPath = '/Applications/ChatGPT.app/Contents/Resources/codex'
+    const smokeInitialize = vi.fn().mockResolvedValue(true)
+    const result = await detectCodexComponents({
+      platform: 'darwin',
+      env: { PATH: '/usr/bin' },
+      homePath: '/Users/test',
+      managedAdapterPath,
+      isRunnable: (path) => Promise.resolve(path === managedAdapterPath),
+      getAdapterVersion: (path) =>
+        Promise.resolve(path === managedAdapterPath ? 'codex-acp 1.0.0' : undefined),
+      getCodexVersion: (path) =>
+        Promise.resolve(path === globalCodexPath ? 'codex-cli 0.144.2' : undefined),
+      smokeInitialize,
+      resolveNpmBinDirs: () => Promise.resolve([])
+    })
+
+    expect(result).toMatchObject({
+      nativeCliFound: true,
+      nativeCliPath: globalCodexPath,
+      adapterFound: true,
+      adapterPath: managedAdapterPath,
+      adapterVersion: '1.0.0'
+    })
+    expect(smokeInitialize).toHaveBeenCalledWith(managedAdapterPath, {
+      codexPath: globalCodexPath
+    })
+  })
+
   it('reports both components found when adapter passes smoke test', async () => {
     const { detectCodexComponents } = await import('./codex-detect')
     const result = await detectCodexComponents({

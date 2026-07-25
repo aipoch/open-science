@@ -149,6 +149,34 @@ describe('settings repository', () => {
     expect(settings.activeProviderId).toBe('builtin-codex-subscription')
   })
 
+  it('migrates a legacy shared Codex provider to the isolated runtime form', () => {
+    const settings = sanitizeSettings({
+      activeProviderId: 'builtin-codex-shared',
+      providers: [
+        {
+          id: 'builtin-codex-shared',
+          type: 'codex-shared',
+          name: 'Existing Codex profile',
+          lastValidatedAt: 1710000000000,
+          lastValidationFailure: { at: 1710000000001, category: 'auth' },
+          expiresAt: 1710000000002
+        }
+      ]
+    })
+
+    expect(settings.providers).toEqual([
+      expect.objectContaining({
+        id: 'builtin-codex-subscription',
+        type: 'codex-isolated',
+        name: 'Codex subscription'
+      })
+    ])
+    expect(settings.providers[0].lastValidatedAt).toBeUndefined()
+    expect(settings.providers[0].lastValidationFailure).toBeUndefined()
+    expect(settings.providers[0].expiresAt).toBeUndefined()
+    expect(settings.activeProviderId).toBe('builtin-codex-subscription')
+  })
+
   it('returns empty settings when nothing is stored yet', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 

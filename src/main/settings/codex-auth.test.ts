@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -10,6 +10,7 @@ import {
   CodexAuthController,
   createCodexAuthEnvironment,
   ensureCodexAuthHome,
+  importCodexAuthentication,
   type CodexAuthSession
 } from './codex-auth'
 
@@ -28,15 +29,13 @@ const session = (overrides: Partial<CodexAuthSession> = {}): CodexAuthSession =>
 })
 
 describe('ensureCodexAuthHome', () => {
-  it('creates the isolated home up front and never touches the shared profile', async () => {
+  it('creates the same app-owned home for legacy shared and isolated modes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-auth-home-'))
     try {
-      // Shared mode uses the user's real ~/.codex; nothing may be created under the storage root.
       await ensureCodexAuthHome('shared', root)
-      expect(existsSync(codexSubscriptionStorageDir(root))).toBe(false)
+      expect(existsSync(codexSubscriptionStorageDir(root))).toBe(true)
 
-      // Codex exits hard when CODEX_HOME is missing (fatal on Windows), so the isolated home must
-      // exist before the first sign-in ever spawns the process.
+      await rm(codexSubscriptionStorageDir(root), { recursive: true, force: true })
       await ensureCodexAuthHome('isolated', root)
       expect(existsSync(codexSubscriptionStorageDir(root))).toBe(true)
     } finally {
@@ -46,7 +45,7 @@ describe('ensureCodexAuthHome', () => {
 })
 
 describe('createCodexAuthEnvironment', () => {
-  it('keeps the shared profile on native defaults and isolates the app login', () => {
+  it('isolates both legacy shared and app sign-in auth sessions', () => {
     const source = {
       PATH: 'bin',
       CODEX_HOME: 'wrong',
@@ -58,8 +57,10 @@ describe('createCodexAuthEnvironment', () => {
     }
 
     const shared = createCodexAuthEnvironment('shared', '/data', source)
-    expect(shared).toMatchObject({ PATH: expect.stringContaining('bin') })
-    expect(shared).not.toHaveProperty('CODEX_HOME')
+    expect(shared).toMatchObject({
+      PATH: expect.stringContaining('bin'),
+      CODEX_HOME: expect.stringMatching(/[\\/]data[\\/]codex-subscription$/)
+    })
     expect(shared).not.toHaveProperty('CODEX_PATH')
     expect(shared).not.toHaveProperty('CODEX_CONFIG')
     expect(shared).not.toHaveProperty('MODEL_PROVIDER')
@@ -70,6 +71,34 @@ describe('createCodexAuthEnvironment', () => {
       PATH: expect.stringContaining('bin'),
       CODEX_HOME: expect.stringMatching(/[\\/]data[\\/]codex-subscription$/)
     })
+  })
+})
+
+describe('importCodexAuthentication', () => {
+  it('copies only auth.json into the app-owned subscription home', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-import-'))
+    const source = join(root, 'source')
+    const destination = join(root, 'destination')
+    try {
+      await mkdir(join(source, 'skills', 'private-skill'), { recursive: true })
+      await mkdir(join(source, 'sessions'), { recursive: true })
+      await writeFile(join(source, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+      await writeFile(join(source, 'config.toml'), 'model = "private"\n')
+      await writeFile(join(source, 'skills', 'private-skill', 'SKILL.md'), '# Private')
+      await writeFile(join(source, 'sessions', 'session.jsonl'), 'private session')
+
+      await importCodexAuthentication(source, destination)
+
+      expect(await readFile(join(destination, 'auth.json'), 'utf8')).toBe(
+        '{"tokens":{"access_token":"secret"}}'
+      )
+      expect((await stat(join(destination, 'auth.json'))).mode & 0o777).toBe(0o600)
+      expect(existsSync(join(destination, 'config.toml'))).toBe(false)
+      expect(existsSync(join(destination, 'skills'))).toBe(false)
+      expect(existsSync(join(destination, 'sessions'))).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })
 

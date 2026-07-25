@@ -1,4 +1,13 @@
-import { mkdtemp, mkdir, readFile, readdir, stat, writeFile, chmod } from 'node:fs/promises'
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -141,6 +150,22 @@ describe('ClaudeCodeSkillMaterializer', () => {
 
     expect(await listSkillDirs(configDir)).toEqual([])
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'omits a legacy imported Skill whose source tree contains a symlink',
+    async () => {
+      const configDir = await skillsDir()
+      const skill = await makeSkill('linked')
+      const outsideRoot = await mkdtemp(join(tmpdir(), 'outside-skill-'))
+      const outside = join(outsideRoot, 'outside-secret.md')
+      await writeFile(outside, 'outside secret')
+      await symlink(outside, join(skill.sourceDir, 'scripts', 'outside.md'))
+
+      await new ClaudeCodeSkillMaterializer().sync(configDir, [skill])
+
+      expect(await listSkillDirs(configDir)).toEqual([])
+    }
+  )
 
   // Builds a source skill with a real frontmatter block so the notice injection has a header to sit
   // after; category/requirements are set on the returned object (the predicate reads those fields).

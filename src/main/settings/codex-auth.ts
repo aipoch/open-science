@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process'
-import { mkdir } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 
 import * as acp from '@agentclientprotocol/sdk'
@@ -59,15 +61,43 @@ const CODEX_ENV_KEYS = [
 ] as const
 
 export const createCodexAuthEnvironment = (
-  mode: CodexAuthMode,
+  _mode: CodexAuthMode,
   storageRoot: string,
   sourceEnv: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv => {
   const env = augmentedPathEnv(sourceEnv)
   for (const key of CODEX_ENV_KEYS) delete env[key]
 
-  if (mode === 'isolated') env.CODEX_HOME = codexSubscriptionStorageDir(storageRoot)
-  return env
+  return { ...env, CODEX_HOME: codexSubscriptionStorageDir(storageRoot) }
+}
+
+// Provider setup may import an existing login, but runtime isolation is strict: copy the credential
+// file only. Global config, Skills, sessions, memories, and hooks remain outside Open Science.
+export const importCodexAuthentication = async (
+  sourceHome: string,
+  destinationHome: string
+): Promise<void> => {
+  const sourcePath = join(sourceHome, 'auth.json')
+  const destinationPath = join(destinationHome, 'auth.json')
+  let content: string
+
+  try {
+    content = await readFile(sourcePath, 'utf8')
+    const parsed = JSON.parse(content) as unknown
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error()
+  } catch {
+    throw new Error('The selected Codex profile does not contain importable authentication.')
+  }
+
+  await mkdir(destinationHome, { recursive: true })
+  const temporaryPath = `${destinationPath}.${randomUUID()}.tmp`
+  try {
+    await writeFile(temporaryPath, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+    await chmod(temporaryPath, 0o600)
+    await rename(temporaryPath, destinationPath)
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined)
+  }
 }
 
 const abortError = (message: string): Error => {
@@ -173,7 +203,8 @@ export class CodexAuthController {
       this.statusTimeoutMs,
       async (session, signal) => {
         const initialized = await waitForOperation(session.initialize(), signal)
-        const supported = initialized.authMethods?.some((method) => method.id === 'chat-gpt') ?? false
+        const supported =
+          initialized.authMethods?.some((method) => method.id === 'chat-gpt') ?? false
 
         // Read the live status regardless of the advertised methods: an adapter can hold a usable
         // api-key/gateway credential without offering ChatGPT login, and that profile is
@@ -185,7 +216,12 @@ export class CodexAuthController {
 
         return toPublicStatus(mode, true, status)
       },
-      () => ({ mode, supported: true, authenticated: false, message: 'Codex status check timed out.' })
+      () => ({
+        mode,
+        supported: true,
+        authenticated: false,
+        message: 'Codex status check timed out.'
+      })
     )
   }
 
@@ -210,7 +246,8 @@ export class CodexAuthController {
       this.loginTimeoutMs,
       async (session, signal) => {
         const initialized = await waitForOperation(session.initialize(), signal)
-        const supported = initialized.authMethods?.some((method) => method.id === 'chat-gpt') ?? false
+        const supported =
+          initialized.authMethods?.some((method) => method.id === 'chat-gpt') ?? false
 
         // Read credential status before the capability gate, mirroring getStatus. An api-key/gateway
         // credential already in the app-managed isolated home is exactly what the runtime would use,
@@ -252,7 +289,8 @@ export class CodexAuthController {
       this.statusTimeoutMs,
       async (session, signal) => {
         const initialized = await waitForOperation(session.initialize(), signal)
-        const supported = initialized.authMethods?.some((method) => method.id === 'chat-gpt') ?? false
+        const supported =
+          initialized.authMethods?.some((method) => method.id === 'chat-gpt') ?? false
 
         // Clear whatever credential the isolated home holds, mirroring getStatus/loginIsolated: an
         // api-key/gateway login must be sign-out-able even on a build that never advertises chat-gpt.
@@ -278,16 +316,13 @@ export type CodexAuthControllerPort = Pick<
   'getStatus' | 'loginIsolated' | 'cancelLogin' | 'logoutIsolated'
 >
 
-// An auth session spawns Codex with CODEX_HOME pointed at the isolated home — which may not exist
-// yet before the first sign-in, and Codex exits hard when CODEX_HOME is missing (a fatal error on
-// Windows in particular). Runtime chat spawns get the same guarantee from the skill materializer;
-// auth sessions create it here. Shared mode touches nothing: it uses the user's real ~/.codex.
+// Every auth session uses the app-owned subscription home. `shared` is a legacy setup discriminator,
+// not permission to read the user's global Codex profile at runtime.
 export const ensureCodexAuthHome = async (
-  mode: CodexAuthMode,
+  _mode: CodexAuthMode,
   storageRoot: string
 ): Promise<void> => {
-  if (mode === 'isolated')
-    await mkdir(codexSubscriptionStorageDir(storageRoot), { recursive: true })
+  await mkdir(codexSubscriptionStorageDir(storageRoot), { recursive: true })
 }
 
 export const openCodexAuthSession = async ({

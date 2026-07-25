@@ -39,6 +39,14 @@ describe('workspace conversation items', () => {
     ).toBe('Loaded skill: mcp-pubmed')
   })
 
+  it('keeps the projected Codex Skill name when a load fails', () => {
+    expect(
+      formatActivityTitle(
+        createActivity({ title: 'Loading skill: mcp-pubmed', status: 'failed' })
+      )
+    ).toBe('Skill failed: mcp-pubmed')
+  })
+
   it('orders messages and activities by stable runtime sort index when timestamps match', () => {
     const session: ChatSession = {
       ...baseSession,

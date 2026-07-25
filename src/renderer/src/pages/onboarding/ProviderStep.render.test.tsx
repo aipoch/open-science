@@ -282,7 +282,7 @@ describe('ProviderStep', () => {
     expect(onAdvance).toHaveBeenCalledOnce()
   })
 
-  it('prefills the existing Codex subscription profile for Codex on mount', async () => {
+  it('prefills the Codex authentication import choice on mount', async () => {
     useSettingsStore.setState(codexReadyState())
 
     // No Continue click needed anymore: entering the step with Codex selected and an untouched
@@ -293,7 +293,7 @@ describe('ProviderStep', () => {
       'Codex subscription'
     )
     expect(container.querySelector('[aria-label="Codex authentication"]')?.textContent).toContain(
-      'Use existing Codex profile'
+      'Import existing Codex sign-in'
     )
     expect(container.querySelector('[aria-label="Base URL"]')).toBeNull()
     expect(container.querySelector('[aria-label="Model"]')).toBeNull()

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 
 import { dump as dumpYaml } from 'js-yaml'
@@ -1049,7 +1049,22 @@ class UserSkillRepository {
       const slug = await this.uniqueSlug('imported', basename(sourcePath))
       const destination = this.skillDir('imported', slug)
 
-      await cp(sourcePath, destination, { recursive: true, force: false, errorOnExist: true })
+      try {
+        await cp(sourcePath, destination, {
+          recursive: true,
+          force: false,
+          errorOnExist: true,
+          filter: async (entry) => {
+            if ((await lstat(entry)).isSymbolicLink()) {
+              throw new Error(`Refusing to import an agent-home Skill containing a symbolic link.`)
+            }
+            return true
+          }
+        })
+      } catch (error) {
+        await rm(destination, { recursive: true, force: true }).catch(() => undefined)
+        throw error
+      }
 
       return { status: 'imported', id: `imported-${slug}` }
     })

@@ -4,6 +4,7 @@ import type { ToolActivity } from '@/stores/session-store'
 
 import {
   buildToolActivityDetails,
+  getLoadedSkillName,
   getToolDisplayName,
   isEditActivity,
   isSkillActivity
@@ -43,6 +44,17 @@ describe('workspace tool activity details', () => {
     })
 
     expect(isSkillActivity(activity)).toBe(true)
+    expect(buildToolActivityDetails(activity)).toBeUndefined()
+  })
+
+  it('recognizes an in-progress projected Codex Skill activity and extracts its name', () => {
+    const activity = createActivity({
+      title: 'Loading skill: mcp-pubmed',
+      status: 'in_progress'
+    })
+
+    expect(isSkillActivity(activity)).toBe(true)
+    expect(getLoadedSkillName(activity)).toBe('mcp-pubmed')
     expect(buildToolActivityDetails(activity)).toBeUndefined()
   })
 

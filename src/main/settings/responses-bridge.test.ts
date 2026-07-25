@@ -958,14 +958,6 @@ describe('Responses-compatible bridge conversion', () => {
               required: ['code']
             }
           }
-        ],
-        connectorInstructions: [
-          {
-            id: 'pubmed',
-            aliases: ['PubMed'],
-            content:
-              'Reach this service ONLY via host.mcp. Example: host.mcp("pubmed", "search_articles", {"query": "cancer"})'
-          }
         ]
       },
       upstreamFetch
@@ -1015,14 +1007,6 @@ describe('Responses-compatible bridge conversion', () => {
         'exec_command',
         'mcp__open_science_notebook__notebook_execute'
       ])
-      expect(upstreamRequest?.messages).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            role: 'system',
-            content: expect.stringContaining('host.mcp("pubmed", "search_articles"')
-          })
-        ])
-      )
       expect(output).toContain('"type":"function_call"')
       expect(output).toContain('"namespace":"mcp__open_science_notebook"')
       expect(output).toContain('"name":"notebook_execute"')
@@ -1128,52 +1112,6 @@ describe('Responses-compatible bridge conversion', () => {
         function: { name: 'exec_command' }
       })
       expect(upstreamRequests[1]?.tool_choice).toBe('auto')
-    } finally {
-      await bridge.close()
-    }
-  })
-
-  it('selects connector guidance from the latest user turn instead of stale history', async () => {
-    const upstreamFetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-      const request = JSON.parse(String(init?.body))
-      expect(request.messages[0].content).toContain('GENES_GUIDANCE')
-      expect(request.messages[0].content).not.toContain('PUBMED_GUIDANCE')
-      return Response.json({
-        id: 'c-latest',
-        model: 'm',
-        choices: [{ message: { role: 'assistant', content: 'ok' } }]
-      })
-    })
-    const bridge = new ResponsesBridge(
-      {
-        baseUrl: 'https://vendor.example/v1',
-        connectorInstructions: [
-          { id: 'pubmed', aliases: ['PubMed'], content: 'PUBMED_GUIDANCE' },
-          { id: 'genes', aliases: ['mygene.info'], content: 'GENES_GUIDANCE' }
-        ]
-      },
-      upstreamFetch
-    )
-    const connection = await bridge.start()
-
-    try {
-      const response = await fetch(`${connection.baseUrl}/responses`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${connection.token}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'm',
-          stream: false,
-          input: [
-            { type: 'message', role: 'user', content: 'Use PubMed for cancer papers' },
-            { type: 'message', role: 'assistant', content: 'done' },
-            { type: 'message', role: 'user', content: 'Use mygene.info for TP53' }
-          ]
-        })
-      })
-      expect(response.status).toBe(200)
     } finally {
       await bridge.close()
     }
@@ -1611,5 +1549,194 @@ describe('Responses-compatible bridge conversion', () => {
     // Real provider switch: cache is cleared so stale reasoning can't leak across providers.
     bridge.setTarget({ baseUrl: 'https://b.example/v1', model: 'm2', key: 'k2' })
     expect(cache.size).toBe(0)
+  })
+})
+
+describe('Responses bridge Skill selector', () => {
+  const catalog = [
+    { name: 'mcp-pubmed', description: 'Search biomedical literature.', path: '/private/pubmed/SKILL.md' },
+    { name: 'literature-review', description: 'Plan a systematic review.', path: '/private/review/SKILL.md' },
+    { name: 'statistics', description: 'Analyze numerical data.', path: '/private/stats/SKILL.md' },
+    { name: 'writing', description: 'Improve prose.', path: '/private/writing/SKILL.md' }
+  ]
+
+  it('sends only current text plus names and descriptions and returns canonical bounded results', async () => {
+    let upstreamUrl = ''
+    let upstreamHeaders: HeadersInit | undefined
+    let upstreamBody: Record<string, unknown> = {}
+    const upstreamFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      upstreamUrl = String(input)
+      upstreamHeaders = init?.headers
+      upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  {
+                    function: {
+                      name: 'select_skills',
+                      arguments: JSON.stringify({
+                        skill_names: [
+                          'mcp-pubmed',
+                          'unknown',
+                          'mcp-pubmed',
+                          'literature-review',
+                          'statistics',
+                          'writing'
+                        ]
+                      })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }),
+        { headers: { 'content-type': 'application/json' } }
+      )
+    })
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', key: 'secret-key', model: 'deepseek-v4-flash' },
+      upstreamFetch
+    )
+
+    const selected = await bridge.selectSkills('用 PubMed 搜索肿瘤免疫文章', catalog)
+
+    expect(selected).toEqual(catalog.slice(0, 3).map(({ name, path }) => ({ name, path })))
+    expect(upstreamUrl).toBe('https://vendor.example/v1/chat/completions')
+    expect(upstreamHeaders).toMatchObject({ authorization: 'Bearer secret-key' })
+    expect(upstreamBody).toMatchObject({
+      model: 'deepseek-v4-flash',
+      stream: false,
+      temperature: 0,
+      max_tokens: 512,
+      messages: [
+        expect.objectContaining({ role: 'system' }),
+        { role: 'user', content: '用 PubMed 搜索肿瘤免疫文章' }
+      ],
+      tools: [
+        {
+          type: 'function',
+          function: expect.objectContaining({
+            name: 'select_skills',
+            parameters: expect.objectContaining({
+              properties: expect.objectContaining({
+                skill_names: expect.objectContaining({ maxItems: 3 })
+              })
+            })
+          })
+        }
+      ]
+    })
+    expect(upstreamBody).not.toHaveProperty('tool_choice')
+    const serialized = JSON.stringify(upstreamBody)
+    expect(serialized).toContain('Search biomedical literature.')
+    expect(serialized).not.toContain('/private/')
+    expect(serialized).not.toContain('secret-key')
+  })
+
+  it.each([
+    ['an upstream error', new Response('provider unavailable', { status: 503 })],
+    ['a malformed function result', new Response(JSON.stringify({ choices: [{ message: {} }] }))]
+  ])('fails open for %s', async (_label, response) => {
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      vi.fn(async () => response.clone())
+    )
+
+    await expect(bridge.selectSkills('hello', catalog)).resolves.toEqual([])
+  })
+
+  it('bounds candidate fields, catalog count, and the complete serialized request', async () => {
+    let upstreamBody = ''
+    const upstreamFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      upstreamBody = String(init?.body)
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  {
+                    function: {
+                      name: 'select_skills',
+                      arguments: JSON.stringify({ skill_names: [] })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      )
+    })
+    const oversizedCatalog = [
+      { name: 'oversized', description: 'x'.repeat(1_000_000), path: '/oversized/SKILL.md' },
+      ...Array.from({ length: 300 }, (_, index) => ({
+        name: `skill-${index}`,
+        description: `Description ${index}`,
+        path: `/skills/${index}/SKILL.md`
+      }))
+    ]
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      upstreamFetch
+    )
+
+    await expect(bridge.selectSkills('hello', oversizedCatalog)).resolves.toEqual([])
+
+    const request = JSON.parse(upstreamBody) as {
+      messages: Array<{ content: string }>
+      tools: Array<{ function: { parameters: { properties: { skill_names: { items: { enum: string[] } } } } } }>
+    }
+    const names = request.tools[0].function.parameters.properties.skill_names.items.enum
+    expect(names).toHaveLength(128)
+    expect(names).not.toContain('oversized')
+    expect(request.messages[0].content).not.toContain('x'.repeat(10_000))
+    expect(Buffer.byteLength(upstreamBody, 'utf8')).toBeLessThan(300 * 1024)
+  })
+
+  it('fails open when the selection deadline expires', async () => {
+    const upstreamFetch = vi.fn(
+      async (_input: string | URL | Request, init?: RequestInit): Promise<Response> =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+        })
+    )
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      upstreamFetch,
+      { skillSelectorTimeoutMs: 5 }
+    )
+
+    await expect(bridge.selectSkills('hello', catalog)).resolves.toEqual([])
+  })
+
+  it('aborts the upstream selection when the caller cancels the turn', async () => {
+    let markStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const upstreamFetch = vi.fn(
+      async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        markStarted()
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+        })
+      }
+    )
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      upstreamFetch
+    )
+    const controller = new AbortController()
+
+    const selecting = bridge.selectSkills('hello', catalog, controller.signal)
+    await started
+    controller.abort()
+
+    await expect(selecting).resolves.toEqual([])
   })
 })

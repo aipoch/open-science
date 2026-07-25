@@ -371,17 +371,29 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     (provider) => provider.id === legacyActiveProviderId
   )
   const selectedCodexProvider = activeCodexProvider ?? codexProviders[0]
+  const migratedCodexProvider = selectedCodexProvider
+    ? {
+        ...selectedCodexProvider,
+        id: CODEX_SUBSCRIPTION_PROVIDER_ID,
+        // `codex-shared` is legacy setup input only. Runtime always uses the app-owned
+        // subscription home, so sanitized/newly persisted state has one isolated form.
+        type: 'codex-isolated' as const,
+        name: codexSubscriptionProviderIdentity().name
+      }
+    : undefined
+
+  // A legacy shared provider's validation describes credentials in the user's global Codex home,
+  // not the isolated home selected above. Do not present that stale state as an app-owned login;
+  // the Settings card will offer a fresh sign-in instead.
+  if (selectedCodexProvider?.type === 'codex-shared' && migratedCodexProvider) {
+    delete migratedCodexProvider.lastValidatedAt
+    delete migratedCodexProvider.lastValidationFailure
+    delete migratedCodexProvider.expiresAt
+  }
+
   const providers = [
     ...sanitizedProviders.filter((provider) => !isCodexSubscriptionProvider(provider.type)),
-    ...(selectedCodexProvider
-      ? [
-          {
-            ...selectedCodexProvider,
-            id: CODEX_SUBSCRIPTION_PROVIDER_ID,
-            name: codexSubscriptionProviderIdentity().name
-          }
-        ]
-      : [])
+    ...(migratedCodexProvider ? [migratedCodexProvider] : [])
   ]
   const settings: StoredSettings = {
     version: SETTINGS_FILE_VERSION,

@@ -1,4 +1,4 @@
-import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { chmod, cp, lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { createLogger } from '../logger'
@@ -147,7 +147,16 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
         // Restore write bits before removal in case a prior sync left the dir read-only.
         await chmodTree(target, 'writable')
         await rm(target, { recursive: true, force: true })
-        await cp(skill.sourceDir, target, { recursive: true, force: true })
+        await cp(skill.sourceDir, target, {
+          recursive: true,
+          force: true,
+          filter: async (entry) => {
+            if ((await lstat(entry)).isSymbolicLink()) {
+              throw new Error(`Refusing to materialize a Skill containing a symbolic link.`)
+            }
+            return true
+          }
+        })
         // Skills whose model tooling needs a compute backend this app lacks get an up-front notice so
         // the agent reports cleanly instead of failing through the model commands. Done before the
         // read-only chmod, which would otherwise block the rewrite.
@@ -156,6 +165,7 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
         await chmodTree(target, 'readonly')
         versions[name] = version
       } catch (error) {
+        await rm(target, { recursive: true, force: true }).catch(() => undefined)
         log.warn('failed to materialize skill', { id: skill.id, error })
         delete versions[name]
       }

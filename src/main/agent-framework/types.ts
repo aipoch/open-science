@@ -5,7 +5,11 @@ import type { PermissionProfileApplication } from '../acp/permission-profile-con
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { AgentFrameworkId, ChatApiEndpoint, ReasoningEffort } from '../../shared/settings'
 import type { ResolvedProvider } from '../settings/provider-env'
-import type { ResponsesBridgeConnection } from '../settings/responses-bridge'
+import type {
+  ResponsesBridgeConnection,
+  ResponsesBridgeSkillCandidate,
+  ResponsesBridgeSkillInput
+} from '../settings/responses-bridge'
 
 // The agent frameworks the app can drive over ACP (id union defined in shared settings so the renderer
 // and persisted settings share it). Adding one means implementing AgentFramework.
@@ -167,6 +171,11 @@ export type ResolvedAgentBackend = {
   // A bridged backend owns one reference to its local loopback bridge. Runtime teardown releases it;
   // reviewer sessions register their Codex prompt_cache_key here so routing never depends on content.
   responsesBridgeLease?: {
+    selectSkills: (
+      text: string,
+      catalog: ResponsesBridgeSkillCandidate[],
+      signal?: AbortSignal
+    ) => Promise<ResponsesBridgeSkillInput[]>
     registerReviewerSession: (promptCacheKey: string) => void
     unregisterReviewerSession: (promptCacheKey: string) => boolean
     release: () => Promise<void>

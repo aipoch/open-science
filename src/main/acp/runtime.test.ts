@@ -15,7 +15,7 @@ import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime'
-import type { AcpPermissionRequest } from '../../shared/acp'
+import type { AcpPermissionRequest, AcpRuntimeEvent } from '../../shared/acp'
 import type { ReasoningEffort } from '../../shared/settings'
 import { terminateProcessTree } from '../process-tree'
 import { AgentMcpHttpHost } from './mcp-http-host'
@@ -2229,6 +2229,9 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.newSessions[0]._meta).toBeUndefined()
     expect(fakeAgent.prompts[0].text).toContain('hello opencode')
     expect(fakeAgent.prompts[0].text).toContain('write_artifact_file')
+    expect(fakeAgent.prompts[0].text).not.toContain(
+      '<open_science_skill_privacy_instructions>'
+    )
   })
 
   it('gives bridge-backed Codex the artifact server through its explicit function alias', async () => {
@@ -2312,6 +2315,27 @@ describe('ACP runtime session management', () => {
       'Notebook tool instructions (only applies when using open-science-notebook tools)'
     )
     expect(fakeAgent.prompts[0].text).not.toContain('<open_science_artifact_instructions>')
+  })
+
+  it('does not tell Codex to skip the native SKILL.md read required for progressive loading', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['codex-session'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only')
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Search PubMed' })
+
+    expect(fakeAgent.prompts[0].text).toContain('Search PubMed')
+    expect(fakeAgent.prompts[0].text).not.toContain(
+      '<open_science_skill_privacy_instructions>'
+    )
   })
 
   it('delivers the large-data-file guidance to Claude session metadata on create and resume', async () => {
@@ -4806,14 +4830,13 @@ describe('ACP runtime session management', () => {
         sessionId: 'remote-session-1',
         cwd: resolve('/workspace'),
         mcpServers: [],
-        // Every session (new or resumed) is restricted to the app-owned "user" settings scope, and
-        // carries the always-on skill-privacy guardrail in its system prompt.
+        // Every session (new or resumed) is restricted to the app-owned "user" settings scope.
         _meta: {
           claudeCode: { options: { settingSources: ['user'] } },
           systemPrompt: {
             type: 'preset',
             preset: 'claude_code',
-            append: expect.stringContaining('open_science_skill_privacy_instructions')
+            append: expect.not.stringContaining('open_science_skill_privacy_instructions')
           }
         }
       }
@@ -5723,6 +5746,7 @@ describe('ACP runtime session management', () => {
           headers: { authorization: 'Bearer bridge' }
         },
         responsesBridgeLease: {
+          selectSkills: vi.fn(async () => []),
           registerReviewerSession,
           unregisterReviewerSession,
           release: releaseBridge
@@ -5770,6 +5794,7 @@ describe('ACP runtime session management', () => {
         executablePath: '/bin/agent',
         env: {},
         responsesBridgeLease: {
+          selectSkills: vi.fn(async () => []),
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => true),
           release: releaseBridge
@@ -6291,15 +6316,15 @@ describe('ACP runtime session management', () => {
         append: expect.stringContaining('write_artifact_file')
       }
     })
-    // The skill-privacy guardrail is appended to the system prompt on both create and resume.
+    // Skill contents are hidden by the UI projection; the agent prompt must not block native loading.
     expect(fakeAgent.newSessions[0]._meta).toMatchObject({
       systemPrompt: {
-        append: expect.stringContaining('open_science_skill_privacy_instructions')
+        append: expect.not.stringContaining('open_science_skill_privacy_instructions')
       }
     })
     expect(fakeAgent.resumedSessions[0]._meta).toMatchObject({
       systemPrompt: {
-        append: expect.stringContaining('open_science_skill_privacy_instructions')
+        append: expect.not.stringContaining('open_science_skill_privacy_instructions')
       }
     })
   })
@@ -7142,14 +7167,35 @@ describe('ACP runtime skill force-load + nudge', () => {
   const createSkillsHooks = (options: {
     needForceLoad: string[]
     nudgeNames?: Record<string, string>
+    descriptors?: Record<string, { name: string; path: string }>
+    catalog?: Array<{ name: string; description: string; path: string }>
   }): {
     needForceLoad: ReturnType<typeof vi.fn<(ids: string[]) => Promise<string[]>>>
     namesForIds: ReturnType<typeof vi.fn<(ids: string[]) => Promise<string[]>>>
+    descriptorsForIds: ReturnType<
+      typeof vi.fn<
+        (ids: string[], codexHome: string | undefined) => Promise<{ name: string; path: string }[]>
+      >
+    >
+    catalogForCodexHome: ReturnType<
+      typeof vi.fn<
+        (
+          codexHome: string | undefined
+        ) => Promise<Array<{ name: string; description: string; path: string }>>
+      >
+    >
   } => ({
     needForceLoad: vi.fn<(ids: string[]) => Promise<string[]>>(async () => options.needForceLoad),
     namesForIds: vi.fn<(ids: string[]) => Promise<string[]>>(async (ids: string[]) =>
       ids.map((id) => options.nudgeNames?.[id] ?? id)
-    )
+    ),
+    descriptorsForIds: vi.fn(async (ids: string[]) =>
+      ids.flatMap((id) => {
+        const descriptor = options.descriptors?.[id]
+        return descriptor ? [descriptor] : []
+      })
+    ),
+    catalogForCodexHome: vi.fn(async () => options.catalog ?? [])
   })
 
   it('passes turn-forced skill ids to backend resolution per runtime instance', async () => {
@@ -7296,6 +7342,287 @@ describe('ACP runtime skill force-load + nudge', () => {
     expect(hooks.namesForIds).toHaveBeenCalledWith(['personal-my-skill'])
   })
 
+  it('sends a picked Codex Skill as private native-input metadata without changing text', async () => {
+    const process = new FakeAgentProcess()
+    let receivedPrompt: ContentBlock[] = []
+    startFakeAgent(process, ['codex-session-1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+      onPrompt: ({ prompt }) => {
+        receivedPrompt = prompt
+      }
+    })
+    const skillPath = '/data/codex-subscription/skills/os-research/SKILL.md'
+    const hooks = createSkillsHooks({
+      needForceLoad: [],
+      descriptors: { research: { name: 'research', path: skillPath } }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: { ...codexFramework, buildSessionSetup: () => ({}) },
+      skills: hooks
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: 'codex-session-1',
+      text: 'summarize the paper',
+      forcedSkillIds: ['research']
+    })
+
+    expect(receivedPrompt).toEqual([
+      {
+        type: 'text',
+        text: 'summarize the paper',
+        _meta: {
+          'open-science/skill-inputs': [{ name: 'research', path: skillPath }]
+        }
+      }
+    ])
+    expect(hooks.namesForIds).not.toHaveBeenCalled()
+  })
+
+  it('selects a bridged Codex Skill from current user text and attaches native-input metadata', async () => {
+    const process = new FakeAgentProcess()
+    let receivedPrompt: ContentBlock[] = []
+    const events: AcpRuntimeEvent[] = []
+    startFakeAgent(process, ['codex-session-1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+      onPrompt: ({ prompt }) => {
+        receivedPrompt = prompt
+      }
+    })
+    const skillPath = '/data/codex/skills/os-mcp-pubmed/SKILL.md'
+    const catalog = [
+      { name: 'mcp-pubmed', description: 'Search PubMed.', path: skillPath }
+    ]
+    const hooks = createSkillsHooks({ needForceLoad: [], catalog })
+    const selectSkills = vi.fn(async () => [{ name: 'mcp-pubmed', path: skillPath }])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: {
+          ...codexFramework,
+          spawn: () => asAgentProcess(process),
+          buildSessionSetup: () => ({ promptPrefix: 'framework guidance' })
+        },
+        executablePath: '/bin/codex-acp',
+        env: { CODEX_HOME: '/data/codex' },
+        responsesBridgeLease: {
+          selectSkills,
+          registerReviewerSession: vi.fn(),
+          unregisterReviewerSession: vi.fn(() => false),
+          release: vi.fn(async () => undefined)
+        }
+      }),
+      callbacks: { onEvent: (event) => events.push(event) },
+      skills: hooks
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: 'codex-session-1',
+      text: '用 PubMed 搜索肿瘤免疫文章',
+      historyPreamble: 'earlier conversation'
+    })
+
+    expect(hooks.catalogForCodexHome).toHaveBeenCalledWith('/data/codex')
+    expect(selectSkills).toHaveBeenCalledWith(
+      '用 PubMed 搜索肿瘤免疫文章',
+      catalog,
+      expect.any(AbortSignal)
+    )
+    expect(receivedPrompt).toEqual([
+      {
+        type: 'text',
+        text: 'earlier conversation\n\nframework guidance\n\n用 PubMed 搜索肿瘤免疫文章',
+        _meta: {
+          'open-science/skill-inputs': [{ name: 'mcp-pubmed', path: skillPath }]
+        }
+      }
+    ])
+    const skillEvents = events.filter((event) => event.providerToolName === 'skill')
+    expect(skillEvents).toEqual([
+      expect.objectContaining({
+        kind: 'tool',
+        title: 'Loaded skill: mcp-pubmed',
+        status: 'in_progress'
+      }),
+      expect.objectContaining({
+        kind: 'tool',
+        title: 'Loaded skill: mcp-pubmed',
+        status: 'completed'
+      })
+    ])
+    expect(skillEvents[0]?.toolCallId).toBe(skillEvents[1]?.toolCallId)
+    expect(JSON.stringify(skillEvents)).not.toContain(skillPath)
+  })
+
+  it('bypasses bridged Codex Skill selection when the picker supplies an explicit Skill', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['codex-session-1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only')
+    })
+    const explicitPath = '/data/codex/skills/os-research/SKILL.md'
+    const hooks = createSkillsHooks({
+      needForceLoad: [],
+      descriptors: { research: { name: 'research', path: explicitPath } },
+      catalog: [{ name: 'automatic', description: 'Automatic.', path: '/automatic/SKILL.md' }]
+    })
+    const selectSkills = vi.fn(async () => [{ name: 'automatic', path: '/automatic/SKILL.md' }])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: { CODEX_HOME: '/data/codex' },
+        responsesBridgeLease: {
+          selectSkills,
+          registerReviewerSession: vi.fn(),
+          unregisterReviewerSession: vi.fn(() => false),
+          release: vi.fn(async () => undefined)
+        }
+      }),
+      skills: hooks
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: 'codex-session-1',
+      text: 'use my explicit choice',
+      forcedSkillIds: ['research']
+    })
+
+    expect(hooks.descriptorsForIds).toHaveBeenCalledWith(['research'], '/data/codex')
+    expect(hooks.catalogForCodexHome).not.toHaveBeenCalled()
+    expect(selectSkills).not.toHaveBeenCalled()
+  })
+
+  it('keeps native Codex discovery untouched when no responses bridge is active', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['codex-session-1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only')
+    })
+    const hooks = createSkillsHooks({
+      needForceLoad: [],
+      catalog: [{ name: 'research', description: 'Research.', path: '/research/SKILL.md' }]
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: { ...codexFramework, buildSessionSetup: () => ({}) },
+      skills: hooks
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: 'codex-session-1', text: 'plain native request' })
+
+    expect(hooks.catalogForCodexHome).not.toHaveBeenCalled()
+    expect(agent.prompts).toEqual([{ sessionId: 'codex-session-1', text: 'plain native request' }])
+  })
+
+  it('fails open to the ordinary Codex turn when automatic Skill selection rejects', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['codex-session-1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only')
+    })
+    const hooks = createSkillsHooks({
+      needForceLoad: [],
+      catalog: [{ name: 'research', description: 'Research.', path: '/research/SKILL.md' }]
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: {
+          ...codexFramework,
+          spawn: () => asAgentProcess(process),
+          buildSessionSetup: () => ({})
+        },
+        executablePath: '/bin/codex-acp',
+        env: { CODEX_HOME: '/data/codex' },
+        responsesBridgeLease: {
+          selectSkills: vi.fn(async () => Promise.reject(new Error('selector unavailable'))),
+          registerReviewerSession: vi.fn(),
+          unregisterReviewerSession: vi.fn(() => false),
+          release: vi.fn(async () => undefined)
+        }
+      }),
+      skills: hooks
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: 'codex-session-1', text: 'ordinary request' })
+
+    expect(agent.prompts).toEqual([{ sessionId: 'codex-session-1', text: 'ordinary request' }])
+    expect(warnLogSpy).toHaveBeenCalledWith('Codex Skill selection failed', {
+      reason: 'selector-error'
+    })
+  })
+
+  it('cancels bridged Codex Skill selection before submitting the agent prompt', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['codex-session-1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only')
+    })
+    const selectorStarted = createDeferred()
+    const releaseSelector = createDeferred()
+    let selectorWasAborted = false
+    const selectSkills = vi.fn(
+      async (
+        _text: string,
+        _catalog: Array<{ name: string; description: string; path: string }>,
+        signal?: AbortSignal
+      ) => {
+        selectorStarted.resolve()
+        await releaseSelector.promise
+        selectorWasAborted = signal?.aborted ?? false
+        return []
+      }
+    )
+    const hooks = createSkillsHooks({
+      needForceLoad: [],
+      catalog: [{ name: 'research', description: 'Research.', path: '/research/SKILL.md' }]
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: {
+          ...codexFramework,
+          spawn: () => asAgentProcess(process),
+          buildSessionSetup: () => ({})
+        },
+        executablePath: '/bin/codex-acp',
+        env: { CODEX_HOME: '/data/codex' },
+        responsesBridgeLease: {
+          selectSkills,
+          registerReviewerSession: vi.fn(),
+          unregisterReviewerSession: vi.fn(() => false),
+          release: vi.fn(async () => undefined)
+        }
+      }),
+      skills: hooks
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompting = runtime.sendPrompt({
+      sessionId: 'codex-session-1',
+      text: 'select then run'
+    })
+    await selectorStarted.promise
+    await runtime.cancelPrompt({ sessionId: 'codex-session-1' })
+    releaseSelector.resolve()
+
+    await expect(prompting).resolves.toMatchObject({ stopReason: 'cancelled' })
+    expect(selectorWasAborted).toBe(true)
+    expect(agent.prompts).toEqual([])
+  })
+
   it('leaves the prompt untouched when no skills are picked', async () => {
     const spawner = createFreshAgentSpawner()
     const hooks = createSkillsHooks({ needForceLoad: ['research'] })
@@ -7352,6 +7679,63 @@ describe('ACP runtime skill force-load + nudge', () => {
         expect(prompt, `display name for "${skill.id}"`).not.toContain(skill.name)
       }
     }
+  })
+})
+
+describe('ACP runtime Codex Skill activity projection', () => {
+  it('emits only the Skill name for a native Codex SKILL.md read lifecycle', () => {
+    const events: AcpRuntimeEvent[] = []
+    const codexHome = join('/data', 'codex-subscription')
+    const skillPath = join(codexHome, 'skills', 'mcp-pubmed', 'SKILL.md')
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+    const internal = runtime as unknown as {
+      applyResolvedBackend: (backend: {
+        framework: typeof codexFramework
+        backendId: string
+        executablePath: string
+        env: NodeJS.ProcessEnv
+      }) => void
+      handleSessionUpdate: (notification: SessionNotification) => void
+    }
+    internal.applyResolvedBackend({
+      framework: codexFramework,
+      backendId: 'codex:isolated',
+      executablePath: '/data/codex-acp',
+      env: { CODEX_HOME: codexHome }
+    })
+
+    internal.handleSessionUpdate({
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'read-skill-1',
+        kind: 'read',
+        title: `Read file '${skillPath}'`,
+        status: 'in_progress',
+        locations: [{ path: skillPath }]
+      }
+    })
+    internal.handleSessionUpdate({
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'read-skill-1',
+        status: 'completed',
+        rawOutput: { formatted_output: 'FULL SKILL BODY', exit_code: 0 }
+      }
+    })
+
+    expect(events).toHaveLength(2)
+    expect(events.map((event) => event.title)).toEqual([
+      'Loading skill: mcp-pubmed',
+      'Loaded skill: mcp-pubmed'
+    ])
+    expect(JSON.stringify(events)).not.toContain(skillPath)
+    expect(JSON.stringify(events)).not.toContain('FULL SKILL BODY')
   })
 })
 

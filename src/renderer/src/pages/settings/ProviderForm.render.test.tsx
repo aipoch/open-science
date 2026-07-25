@@ -110,7 +110,7 @@ describe('ProviderForm field switching', () => {
     )
   })
 
-  it('shows a fixed shared Codex subscription without editable credentials or identity', () => {
+  it('describes existing Codex authentication as a one-time import', () => {
     render(
       createEmptyProviderFormValue({
         type: 'codex-shared',
@@ -123,7 +123,8 @@ describe('ProviderForm field switching', () => {
     expect(container.querySelector('[aria-label="Provider name"]')).toBeNull()
     expect(container.querySelector('[aria-label="API key"]')).toBeNull()
     expect(container.querySelector('[aria-label="Model"]')).toBeNull()
-    expect(container.textContent).toContain('managed by Codex CLI')
+    expect(container.textContent).toContain('Copies only Codex authentication into Open Science')
+    expect(container.textContent).toContain('Skills and sessions are not imported')
   })
 
   it('chooses the Codex authentication mode inside the single provider form', () => {
@@ -133,7 +134,7 @@ describe('ProviderForm field switching', () => {
 
     const trigger = container.querySelector('[aria-label="Codex authentication"]')
     expect(trigger).not.toBeNull()
-    expect(trigger?.textContent).toContain('Use existing Codex profile')
+    expect(trigger?.textContent).toContain('Import existing Codex sign-in')
   })
 
   it('shows a fixed Claude subscription without an editable name or API key', () => {
