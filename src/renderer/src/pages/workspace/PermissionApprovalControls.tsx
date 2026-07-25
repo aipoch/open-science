@@ -285,27 +285,28 @@ const useNotebookEnvironment = (
   lookup: NotebookSessionRequest | undefined,
   kernelKind: 'python' | 'r' | undefined
 ): string | undefined => {
-  const [envName, setEnvName] = useState<string | undefined>()
+  const [environment, setEnvironment] = useState<{ key: string; name: string | undefined }>()
   const lookupKey = lookup ? `${lookup.projectName ?? ''}:${lookup.sessionId}` : undefined
+  const key = lookupKey && kernelKind ? `${lookupKey}:${kernelKind}` : undefined
   useEffect(() => {
-    if (!lookup || !lookupKey || !kernelKind) return
+    if (!lookup || !key || !kernelKind) return
     let cancelled = false
-    const key = `${lookupKey}:${kernelKind}`
     let cached = notebookEnvCache.get(key)
     if (!cached) {
       cached = lookupNotebookEnvironment(lookup, kernelKind)
       notebookEnvCache.set(key, cached)
     }
     void cached.then((name) => {
-      if (!cancelled) setEnvName(name)
+      if (!cancelled) setEnvironment({ key, name })
     })
     return () => {
       cancelled = true
     }
     // lookup is a fresh object per render; the primitive key is the real dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lookupKey, kernelKind])
-  return kernelKind ? envName : undefined
+  }, [key, kernelKind])
+  if (!environment || environment.key !== key) return undefined
+  return environment.name
 }
 
 const PermissionImpactTip = ({ description }: { description: string }): React.JSX.Element => (

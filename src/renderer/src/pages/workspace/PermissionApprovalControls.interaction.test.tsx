@@ -595,4 +595,87 @@ describe('PermissionApprovalControls interactions', () => {
       delete (window as { api?: unknown }).api
     }
   })
+
+  it('does not retain a Python environment badge while switching to an R request', async () => {
+    const pythonRequest: AcpPermissionRequest = {
+      requestId: 'req-transition-python',
+      sessionId: 'session-runtime-transition',
+      toolCallId: 'tool-transition-python',
+      title: 'mcp__open-science-notebook__notebook_execute',
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      rawInput: { kernelKind: 'python', code: 'x = 1' },
+      options: [{ optionId: 'opt-once', name: 'Allow once', kind: 'allow_once' }]
+    }
+    const rRequest: AcpPermissionRequest = {
+      ...pythonRequest,
+      requestId: 'req-transition-r',
+      toolCallId: 'tool-transition-r',
+      rawInput: { kernelKind: 'r', code: 'x <- 1' }
+    }
+    ;(window as { api?: unknown }).api = {
+      notebook: { state: async () => ({ environments: [], runs: [] }) },
+      runtime: {
+        listEnvironments: async () => ({
+          python: [
+            {
+              language: 'python',
+              provenance: 'app-managed',
+              envId: '/envs/default-python',
+              interpreterPath: '/envs/default-python/bin/python',
+              label: 'default-python',
+              runnable: true
+            }
+          ],
+          r: [
+            {
+              language: 'r',
+              provenance: 'app-managed',
+              envId: '/envs/default-r',
+              interpreterPath: '/envs/default-r/bin/R',
+              label: 'default-r',
+              runnable: true
+            }
+          ]
+        }),
+        getEnablement: async () => ({ enabled: {}, installAuthorized: {} })
+      }
+    }
+    try {
+      act(() => {
+        root.render(
+          <PermissionApprovalControls
+            requests={[pythonRequest]}
+            onRespond={vi.fn()}
+            notebookLookup={{ sessionId: 'session-runtime-transition', workspaceCwd: '' }}
+          />
+        )
+      })
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      expect(container.querySelector('[data-testid="permission-env-badge"]')?.textContent).toBe(
+        'default-python'
+      )
+
+      act(() => {
+        root.render(
+          <PermissionApprovalControls
+            requests={[rRequest]}
+            onRespond={vi.fn()}
+            notebookLookup={{ sessionId: 'session-runtime-transition', workspaceCwd: '' }}
+          />
+        )
+      })
+      expect(container.querySelector('[data-testid="permission-env-badge"]')).toBeNull()
+
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      expect(container.querySelector('[data-testid="permission-env-badge"]')?.textContent).toBe(
+        'default-r'
+      )
+    } finally {
+      delete (window as { api?: unknown }).api
+    }
+  })
 })
