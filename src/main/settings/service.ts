@@ -861,8 +861,8 @@ class SettingsService {
     return [...featured, ...user]
   }
 
-  // Only user-visible skills cross renderer/user-input boundaries. Agent-only skills remain in the
-  // complete catalog used for provisioning, but cannot be listed, configured, or prompt-nudged.
+  // Only user-visible skills cross renderer discovery/configuration boundaries. Agent-only skills
+  // remain in the complete catalog used for provisioning and legacy runtime-supplied ids.
   private async userSkillCatalog(): Promise<BundledSkill[]> {
     return (await this.skillCatalog()).filter((skill) => skill.visibility === 'user')
   }
@@ -886,17 +886,18 @@ class SettingsService {
     return skills.map((skill) => this.toSkillView(skill, disabled))
   }
 
-  // Returns the subset of forced ids that are currently disabled in settings — i.e. the picks that need
-  // a respawn to materialize. Enabled picks are already present and need no reconnect.
+  // Returns known forced ids that are currently disabled in settings — i.e. the ids that need a
+  // respawn to materialize. This includes stale agent-only ids from pre-visibility settings so an old
+  // draft or headless request can repair an already-running runtime after upgrade.
   async skillsNeedingForceLoad(forcedIds: string[]): Promise<string[]> {
     const [skills, settings] = await Promise.all([
-      this.userSkillCatalog(),
+      this.skillCatalog(),
       this.repository.getSettings()
     ])
-    const visibleIds = new Set(skills.map((skill) => skill.id))
+    const knownIds = new Set(skills.map((skill) => skill.id))
     const disabled = new Set(settings.disabledSkillIds ?? [])
 
-    return forcedIds.filter((id) => visibleIds.has(id) && disabled.has(id))
+    return forcedIds.filter((id) => knownIds.has(id) && disabled.has(id))
   }
 
   // Resolves runtime-supplied ids to the names the agent's Skill tool accepts. This intentionally uses

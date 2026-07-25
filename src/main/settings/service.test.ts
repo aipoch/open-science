@@ -2653,7 +2653,7 @@ describe('SettingsService: skills', () => {
     expect(detail.body).toContain('demo body')
   })
 
-  it('keeps agent-only skills out of user APIs and forced-skill resolution', async () => {
+  it('keeps agent-only skills out of user APIs while force-loading stale disabled ids', async () => {
     const service = new SettingsService({
       repository,
       storageRoot,
@@ -2667,9 +2667,10 @@ describe('SettingsService: skills', () => {
     )
     expect((await repository.getSettings()).disabledSkillIds).toBeUndefined()
 
-    // A stale or manually edited setting cannot make the hidden skill user-selectable.
+    // A stale or manually edited setting cannot make the hidden skill user-selectable, but an old
+    // draft or API request must still reconnect once so an already-running runtime is reprovisioned.
     await repository.setSkillEnabled('demo', false)
-    expect(await service.skillsNeedingForceLoad(['demo'])).toEqual([])
+    expect(await service.skillsNeedingForceLoad(['demo'])).toEqual(['demo'])
     // Persisted drafts and headless API callers that already hold the id can still steer the ACP
     // agent, without exposing the skill through renderer-facing discovery.
     expect(await service.skillNudgeNamesForIds(['demo'])).toEqual(['demo'])
