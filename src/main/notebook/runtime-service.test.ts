@@ -10,6 +10,7 @@ import type { NotebookExecutionRequest, NotebookExecutionResult } from './runtim
 import {
   NotebookRuntimeService,
   buildShellEnv,
+  normalizePowerShellStderr,
   resolveDefaultExecutorOptions,
   resolveLoopScriptPaths,
   resolveShellInvocation,
@@ -92,6 +93,7 @@ describe('resolveShellInvocation', () => {
     const script = Buffer.from(invocation.args.at(-1) ?? '', 'base64').toString('utf16le')
     expect(script).toContain('[Console]::OutputEncoding = $openScienceUtf8')
     expect(script).toContain('$OutputEncoding = $openScienceUtf8')
+    expect(script).toContain("$ProgressPreference = 'SilentlyContinue'")
     expect(script).toContain("$ErrorActionPreference = 'Stop'")
     expect(script).toContain('catch {')
     expect(script).toContain('[Console]::Error.WriteLine($_.ToString())')
@@ -125,6 +127,36 @@ describe('resolveShellInvocation', () => {
 })
 
 describe('Windows shell support', () => {
+  const completedProgressClixml =
+    '#< CLIXML\n' +
+    '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">' +
+    '<Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj>' +
+    '<Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj>' +
+    '</Objs>\n'
+
+  it('drops progress-only PowerShell CLIXML stderr records', () => {
+    expect(normalizePowerShellStderr(completedProgressClixml, 'win32')).toBe('')
+  })
+
+  it('preserves real stderr around benign PowerShell CLIXML progress records', () => {
+    expect(
+      normalizePowerShellStderr(
+        `real warning\n${completedProgressClixml}\nstill important\n`,
+        'win32'
+      )
+    ).toBe('real warning\nstill important\n')
+  })
+
+  it('preserves non-progress PowerShell CLIXML records', () => {
+    const errorClixml =
+      '#< CLIXML\n' +
+      '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">' +
+      '<Obj S="Error" RefId="0"><MS><S N="Message">boom</S></MS></Obj>' +
+      '</Objs>\n'
+
+    expect(normalizePowerShellStderr(errorClixml, 'win32')).toBe(errorClixml)
+  })
+
   it('keeps Windows shell location variables while excluding host secrets', () => {
     const env = buildShellEnv('/notebook/handoff', 'win32', {
       PATH: 'C:\\Windows\\System32',

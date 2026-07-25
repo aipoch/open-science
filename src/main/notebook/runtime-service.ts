@@ -598,6 +598,54 @@ const buildShellEnv = (
   return env
 }
 
+const POWERSHELL_CLIXML_BLOCK = /#< CLIXML\r?\n<Objs\b[\s\S]*?<\/Objs>(?:\r?\n)?/gu
+
+const isPowerShellProgressClixml = (block: string): boolean => {
+  const xmlStart = block.indexOf('<Objs')
+  if (xmlStart === -1) return false
+
+  const xml = block.slice(xmlStart)
+  const objectStreamPattern = /<Obj\b[^>]*\bS=(["'])(.*?)\1/giu
+  let sawObject = false
+  let match: RegExpExecArray | null
+
+  while ((match = objectStreamPattern.exec(xml)) !== null) {
+    sawObject = true
+    if (match[2].toLowerCase() !== 'progress') return false
+  }
+
+  return sawObject
+}
+
+const skipOneLineBreak = (text: string, index: number): number => {
+  if (text.startsWith('\r\n', index)) return index + 2
+  if (text[index] === '\n' || text[index] === '\r') return index + 1
+  return index
+}
+
+const normalizePowerShellStderr = (
+  stderr: string,
+  platform: NodeJS.Platform = process.platform
+): string => {
+  if (platform !== 'win32' || !stderr.includes('#< CLIXML')) return stderr
+
+  let normalized = ''
+  let cursor = 0
+  let match: RegExpExecArray | null
+  POWERSHELL_CLIXML_BLOCK.lastIndex = 0
+
+  while ((match = POWERSHELL_CLIXML_BLOCK.exec(stderr)) !== null) {
+    if (!isPowerShellProgressClixml(match[0])) continue
+
+    normalized += stderr.slice(cursor, match.index)
+    cursor = match.index + match[0].length
+    if (normalized.endsWith('\n')) cursor = skipOneLineBreak(stderr, cursor)
+  }
+
+  if (cursor === 0) return stderr
+  return normalized + stderr.slice(cursor)
+}
+
 type ShellInvocation = {
   executable: string
   args: string[]
@@ -616,6 +664,7 @@ const encodePowerShellCommand = (command: string): string => {
     '$OutputEncoding = $openScienceUtf8',
     `$openScienceCommandBase64 = '${encodedCommand}'`,
     '$global:LASTEXITCODE = 0',
+    "$ProgressPreference = 'SilentlyContinue'",
     "$ErrorActionPreference = 'Stop'",
     'try {',
     '$openScienceCommandText = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($openScienceCommandBase64))',
@@ -698,7 +747,7 @@ const runShellCommand = (options: {
       if (settled) return
       settled = true
       clearTimeout(timeoutTimer)
-      resolve(result)
+      resolve({ ...result, stderr: normalizePowerShellStderr(result.stderr) })
     }
 
     const timeoutTimer = setTimeout(() => {
@@ -3122,6 +3171,7 @@ class NotebookRuntimeService {
 export {
   NotebookRuntimeService,
   buildShellEnv,
+  normalizePowerShellStderr,
   resolveDefaultExecutorOptions,
   resolveLoopScriptPaths,
   resolveShellInvocation,
