@@ -13,6 +13,7 @@ type PermissionPresentation = {
   categoryLabel: string
   description: string
   actionDetail?: string
+  hideToolIdentity?: boolean
   notebookRuntime?: NotebookRuntime
 }
 
@@ -136,14 +137,21 @@ const providerToolName = (request: AcpPermissionRequest): string | undefined =>
   request.providerToolName?.trim() || undefined
 
 // Keeps an otherwise-opaque MCP request distinguishable without surfacing its protocol spelling.
-// The request title is preferred because providers can reduce providerToolName to a bare leaf.
-const humanizeMcpAction = (request: AcpPermissionRequest): string | undefined => {
-  const name = request.title.trim() || providerToolName(request)
-  if (!name) return undefined
+// Provider names win when a bridge supplies only a boilerplate title.
+const isGenericMcpTitle = (title: string): boolean =>
+  /^(?:run )?(?:mcp )?(?:tool|tool request|tool call)$/iu.test(title)
 
+const isOpaqueToolCallId = (name: string): boolean => /^tool(?:u|call)?_[a-z0-9]+$/iu.test(name)
+
+const humanizeMcpAction = (request: AcpPermissionRequest): string | undefined => {
+  const title = request.title.trim()
+  const name = !title || isGenericMcpTitle(title) ? providerToolName(request) : title
+  if (!name || isOpaqueToolCallId(name)) return undefined
+
+  const usesDottedNamespace = /^mcp\./iu.test(name)
   const normalized = name.replace(/^mcp(?:__|\.)/u, '')
   const segments = normalized
-    .split(/__|\./u)
+    .split(usesDottedNamespace ? '.' : '__')
     .filter(Boolean)
     .map((segment) =>
       segment
@@ -162,69 +170,64 @@ const isNetworkTool = (request: AcpPermissionRequest): boolean => {
   return request.toolKind === 'fetch' || name === 'webfetch' || name === 'websearch'
 }
 
-const withMcpActionDetail = (
-  request: AcpPermissionRequest,
-  presentation: PermissionPresentation
-): PermissionPresentation =>
-  request.isMcp ? { ...presentation, actionDetail: humanizeMcpAction(request) } : presentation
-
 const describePermissionRequest = (request: AcpPermissionRequest): PermissionPresentation => {
   const notebookToolName = resolveNotebookRunToolName(request.providerToolName, request.title)
   if (notebookToolName) {
     const input = getRequestInput(request)
     const language = resolveNotebookLanguage(notebookToolName, input, getCode(input))
-    return notebookExecutionPresentation(toNotebookRuntime(language))
+    return { ...notebookExecutionPresentation(toNotebookRuntime(language)), hideToolIdentity: true }
   }
 
   const controlTool = [request.providerToolName, request.title]
     .map(matchNotebookControlTool)
     .find((tool): tool is string => tool !== undefined)
-  if (controlTool) return notebookControlPresentation(controlTool)
+  if (controlTool) return { ...notebookControlPresentation(controlTool), hideToolIdentity: true }
 
   // MCP metadata describes the provider's tool, not a trusted local capability. Only the
   // explicitly modeled notebook tools above receive a more specific native classification.
   if (request.isMcp) {
-    return withMcpActionDetail(request, {
+    return {
       actionTitle: 'Use external service?',
       categoryLabel: 'External service',
-      description: 'Uses an MCP service configured for this conversation.'
-    })
+      description: 'Uses an MCP service configured for this conversation.',
+      actionDetail: humanizeMcpAction(request)
+    }
   }
 
   if (isNetworkTool(request)) {
-    return withMcpActionDetail(request, {
+    return {
       actionTitle: 'Access network resource?',
       categoryLabel: 'Network access',
       description: 'Sends a request to an external network resource.'
-    })
+    }
   }
 
   switch (request.toolKind) {
     case 'read':
     case 'search':
-      return withMcpActionDetail(request, {
+      return {
         actionTitle: 'Read files?',
         categoryLabel: 'File access',
         description: 'Reads or searches the listed files.'
-      })
+      }
     case 'edit':
-      return withMcpActionDetail(request, {
+      return {
         actionTitle: 'Edit files?',
-        categoryLabel: 'File access',
+        categoryLabel: 'File change',
         description: 'Changes the listed files.'
-      })
+      }
     case 'delete':
-      return withMcpActionDetail(request, {
+      return {
         actionTitle: 'Delete files?',
-        categoryLabel: 'File access',
+        categoryLabel: 'File change',
         description: 'Deletes the listed files.'
-      })
+      }
     case 'move':
-      return withMcpActionDetail(request, {
+      return {
         actionTitle: 'Move files?',
-        categoryLabel: 'File access',
+        categoryLabel: 'File change',
         description: 'Moves the listed files.'
-      })
+      }
     default:
       break
   }

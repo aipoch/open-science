@@ -192,6 +192,27 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain('mcp.open-science-artifacts')
   })
 
+  it('keeps MCP execute payloads labeled as external service input', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            ...permissionRequest,
+            title: 'mcp__runner__execute',
+            providerToolName: 'mcp__runner__execute',
+            isMcp: true,
+            toolKind: 'execute',
+            rawInput: { command: 'export-report --publish' }
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+
+    expect(html).toContain('External service input')
+    expect(html).not.toContain('Run command')
+  })
+
   it('keeps an MCP request external while showing its humanized action and paths', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls
@@ -482,14 +503,14 @@ describe('PermissionApprovalControls', () => {
   })
 
   it('shows notebook control impact without exposing the MCP identifier', () => {
-    const identifier = 'mcp__open-science-notebook__notebook_restart'
+    const identifier = 'open_science_notebook_notebook_restart'
     const restart: AcpPermissionRequest = {
       requestId: 'restart-1',
       sessionId: 'session-1',
       toolCallId: 'tool-restart',
       title: identifier,
       providerToolName: identifier,
-      isMcp: true,
+      isMcp: false,
       options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
     }
 

@@ -43,11 +43,12 @@ describe('describePermissionRequest', () => {
           isMcp: true
         })
       )
-    ).toEqual({
+    ).toMatchObject({
       actionTitle: 'Restart notebook?',
       categoryLabel: 'Notebook control',
       description:
-        'Restarts the current notebook environment. Running processes and unsaved runtime state may be lost.'
+        'Restarts the current notebook environment. Running processes and unsaved runtime state may be lost.',
+      hideToolIdentity: true
     })
   })
 
@@ -85,6 +86,24 @@ describe('describePermissionRequest', () => {
     ).toBe('Open Science Artifacts / Write Artifact File')
   })
 
+  it('uses the provider identity when an MCP title is generic', () => {
+    expect(
+      describePermissionRequest(
+        request({
+          title: 'Run MCP tool',
+          providerToolName: 'mcp__open-science-artifacts__write_artifact_file',
+          isMcp: true
+        })
+      ).actionDetail
+    ).toBe('Open Science Artifacts / Write Artifact File')
+  })
+
+  it('does not split dots in a human-readable MCP title', () => {
+    expect(
+      describePermissionRequest(request({ title: 'Write report.md', isMcp: true })).actionDetail
+    ).toBe('Write report.md')
+  })
+
   it('keeps unrecognized MCP requests in the external-service category', () => {
     expect(
       describePermissionRequest(request({ isMcp: true, toolKind: 'edit' })).categoryLabel
@@ -92,5 +111,9 @@ describe('describePermissionRequest', () => {
     expect(
       describePermissionRequest(request({ isMcp: true, toolKind: 'fetch' })).categoryLabel
     ).toBe('External service')
+  })
+
+  it.each(['edit', 'delete', 'move'] as const)('classifies %s as a file change', (toolKind) => {
+    expect(describePermissionRequest(request({ toolKind })).categoryLabel).toBe('File change')
   })
 })

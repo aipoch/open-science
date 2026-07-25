@@ -189,6 +189,7 @@ const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | 
 // A friendly action title for the code card header, matching the transcript's activity phrasing.
 const getPermissionActionTitle = (request: AcpPermissionRequest, fallback: string): string => {
   if (resolveNotebookToolName(request)) return 'Run notebook cell'
+  if (request.isMcp) return 'External service input'
   if (request.toolKind === 'execute' || request.providerToolName === 'Bash') return 'Run command'
   return fallback
 }
@@ -344,9 +345,7 @@ const PermissionHeaderBadges = ({
               <Info className="size-3.5" aria-hidden="true" />
             </button>
           </TooltipTrigger>
-          <TooltipContent className="max-w-72 whitespace-normal">
-            {scopeDescription}
-          </TooltipContent>
+          <TooltipContent className="max-w-72 whitespace-normal">{scopeDescription}</TooltipContent>
         </Tooltip>
       </TooltipProvider>
     </span>
@@ -499,10 +498,9 @@ const PermissionApprovalControls = ({
   const allowOptionId = getAllowOptionId(request.options, effectiveScope)
   const denyOptionId = getDenyOptionId(request.options)
   const scopeLabel = effectiveScope === 'once' ? 'once' : 'for this conversation'
-  const scopeDescription =
-    !allowOptionId
-      ? 'No approval scope is available for this request.'
-      : effectiveScope === 'once'
+  const scopeDescription = !allowOptionId
+    ? 'No approval scope is available for this request.'
+    : effectiveScope === 'once'
       ? 'Approval applies to this call only.'
       : 'Approval applies until this conversation ends.'
   const hasScopePicker = availableScopes.size > 1
@@ -545,6 +543,7 @@ const PermissionApprovalControls = ({
   // the provider's raw protocol spelling. Files, commands, and other native tools retain their target.
   const headerName = request.providerToolName ?? request.title
   const titleDetail = ((): string | undefined => {
+    if (presentation.hideToolIdentity) return undefined
     if (request.isMcp) {
       return presentation.actionDetail
     }
