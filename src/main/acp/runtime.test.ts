@@ -6085,9 +6085,11 @@ describe('ACP runtime skill force-load + nudge', () => {
     nudgeNames?: Record<string, string>
   }): {
     needForceLoad: ReturnType<typeof vi.fn<(ids: string[]) => Promise<string[]>>>
+    markForceLoaded: ReturnType<typeof vi.fn<(ids: string[]) => Promise<void>>>
     namesForIds: ReturnType<typeof vi.fn<(ids: string[]) => Promise<string[]>>>
   } => ({
     needForceLoad: vi.fn<(ids: string[]) => Promise<string[]>>(async () => options.needForceLoad),
+    markForceLoaded: vi.fn<(ids: string[]) => Promise<void>>(async () => {}),
     namesForIds: vi.fn<(ids: string[]) => Promise<string[]>>(async (ids: string[]) =>
       ids.map((id) => options.nudgeNames?.[id] ?? id)
     )
@@ -6166,6 +6168,7 @@ describe('ACP runtime skill force-load + nudge', () => {
     // The picked skill was scoped to this runtime and the agent respawned before the prompt.
     expect(spawner.spawnCount()).toBe(2)
     expect(spawner.agents[1].resumedSessions).toHaveLength(1)
+    expect(hooks.markForceLoaded).toHaveBeenCalledWith(['research'])
 
     // The nudge names the skill by its slug id (the identifier the agent's Skill tool resolves),
     // NOT its human display name — a display name like "Deep Research" is unknown to the tool.
@@ -6179,6 +6182,38 @@ describe('ACP runtime skill force-load + nudge', () => {
     // After the turn the force set is cleared and a restore reconnect is scheduled (agent torn down).
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(runtime.getSnapshot().status).toBe('closed')
+  })
+
+  it('does not mark a forced skill loaded when the reprovisioning resume fails', async () => {
+    let spawnCount = 0
+    const hooks = createSkillsHooks({ needForceLoad: ['research'] })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => {
+        spawnCount += 1
+        const process = new FakeAgentProcess()
+        startFakeAgent(
+          process,
+          ['remote-session-1'],
+          spawnCount === 2 ? { resumeInternalErrorData: { errorKind: 'provider-error' } } : {}
+        )
+        return asAgentProcess(process)
+      },
+      skills: hooks
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await expect(
+      runtime.sendPrompt({
+        sessionId: 'remote-session-1',
+        text: 'summarize the paper',
+        forcedSkillIds: ['research']
+      })
+    ).rejects.toMatchObject({ data: { errorKind: 'provider-error' } })
+
+    expect(spawnCount).toBe(2)
+    expect(hooks.markForceLoaded).not.toHaveBeenCalled()
   })
 
   it('nudges without any reconnect when every picked skill is already enabled', async () => {

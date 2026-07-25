@@ -894,23 +894,24 @@ class SettingsService {
       this.skillCatalog(),
       this.repository.getSettings()
     ])
-    const skillById = new Map(skills.map((skill) => [skill.id, skill]))
+    const knownIds = new Set(skills.map((skill) => skill.id))
     const disabled = new Set(settings.disabledSkillIds ?? [])
-    const staleAgentOnlyIds = forcedIds.filter((id) => {
-      const skill = skillById.get(id)
-      return skill?.visibility === 'agent-only' && disabled.has(id)
-    })
-    const consumedAgentOnlyIds =
-      staleAgentOnlyIds.length > 0
-        ? new Set(await this.repository.consumeDisabledSkillIds(staleAgentOnlyIds))
-        : new Set<string>()
 
-    return forcedIds.filter((id) => {
-      const skill = skillById.get(id)
-      if (!skill) return false
+    return forcedIds.filter((id) => knownIds.has(id) && disabled.has(id))
+  }
 
-      return skill.visibility === 'agent-only' ? consumedAgentOnlyIds.has(id) : disabled.has(id)
-    })
+  // Clears only stale agent-only disable flags, and only after the runtime confirms its
+  // reprovisioned session resumed. User-visible disabled skills remain turn-scoped overrides.
+  async markSkillsForceLoaded(ids: string[]): Promise<void> {
+    const skills = await this.skillCatalog()
+    const agentOnlyIds = new Set(
+      skills.filter((skill) => skill.visibility === 'agent-only').map((skill) => skill.id)
+    )
+    const staleIds = ids.filter((id) => agentOnlyIds.has(id))
+
+    if (staleIds.length > 0) {
+      await this.repository.consumeDisabledSkillIds(staleIds)
+    }
   }
 
   // Resolves runtime-supplied ids to the names the agent's Skill tool accepts. This intentionally uses

@@ -166,6 +166,8 @@ type AcpRuntimeOptions = {
 type AcpRuntimeSkillsOptions = {
   // Returns the subset of forced ids that are currently disabled (i.e. need a respawn to materialize).
   needForceLoad: (ids: string[]) => Promise<string[]>
+  // Commits any upgrade-state migration only after the reprovisioned session resumes successfully.
+  markForceLoaded?: (ids: string[]) => Promise<void>
   // Resolves picker ids to the names accepted by the agent's Skill tool.
   namesForIds: (ids: string[]) => Promise<string[]>
 }
@@ -2105,6 +2107,7 @@ class AcpRuntime {
             throw new Error(`ACP session not found after force-load: ${request.sessionId}`)
           }
           activeSession = reloaded
+          await this.skillsHooks.markForceLoaded?.(toForce)
         }
       }
     } catch (error) {

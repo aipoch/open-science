@@ -2671,16 +2671,10 @@ describe('SettingsService: skills', () => {
     // draft or API request must still reconnect once so an already-running runtime is reprovisioned.
     await repository.setSkillEnabled('demo', false)
     expect(await service.skillsNeedingForceLoad(['demo'])).toEqual(['demo'])
+    expect((await repository.getSettings()).disabledSkillIds).toEqual(['demo'])
+    await service.markSkillsForceLoaded(['demo'])
     expect((await repository.getSettings()).disabledSkillIds).toBeUndefined()
     expect(await service.skillsNeedingForceLoad(['demo'])).toEqual([])
-
-    await repository.setSkillEnabled('demo', false)
-    const concurrentChecks = await Promise.all([
-      service.skillsNeedingForceLoad(['demo']),
-      service.skillsNeedingForceLoad(['demo'])
-    ])
-    expect(concurrentChecks.flat()).toEqual(['demo'])
-    expect((await repository.getSettings()).disabledSkillIds).toBeUndefined()
     // Persisted drafts and headless API callers that already hold the id can still steer the ACP
     // agent, without exposing the skill through renderer-facing discovery.
     expect(await service.skillNudgeNamesForIds(['demo'])).toEqual(['demo'])
