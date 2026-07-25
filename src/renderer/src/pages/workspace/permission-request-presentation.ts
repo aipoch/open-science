@@ -181,6 +181,16 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
     .find((tool): tool is string => tool !== undefined)
   if (controlTool) return notebookControlPresentation(controlTool)
 
+  // MCP metadata describes the provider's tool, not a trusted local capability. Only the
+  // explicitly modeled notebook tools above receive a more specific native classification.
+  if (request.isMcp) {
+    return withMcpActionDetail(request, {
+      actionTitle: 'Use external service?',
+      categoryLabel: 'External service',
+      description: 'Uses an MCP service configured for this conversation.'
+    })
+  }
+
   if (isNetworkTool(request)) {
     return withMcpActionDetail(request, {
       actionTitle: 'Access network resource?',
@@ -217,14 +227,6 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
       })
     default:
       break
-  }
-
-  if (request.isMcp) {
-    return withMcpActionDetail(request, {
-      actionTitle: 'Use external service?',
-      categoryLabel: 'External service',
-      description: 'Uses an MCP service configured for this conversation.'
-    })
   }
 
   if (request.providerToolName === 'Bash' || request.toolKind === 'execute') {

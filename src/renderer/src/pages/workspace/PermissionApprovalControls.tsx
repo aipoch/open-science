@@ -312,12 +312,12 @@ const PermissionHeaderBadges = ({
   lookup,
   runtime,
   categoryLabel,
-  description
+  scopeDescription
 }: {
   lookup: NotebookSessionRequest | undefined
   runtime?: NotebookRuntime
   categoryLabel: string
-  description: string
+  scopeDescription: string
 }): React.JSX.Element => {
   const kernelKind = runtime === 'python' ? 'python' : runtime === 'r' ? 'r' : undefined
   const envName = useNotebookEnvironment(lookup, kernelKind)
@@ -344,7 +344,9 @@ const PermissionHeaderBadges = ({
               <Info className="size-3.5" aria-hidden="true" />
             </button>
           </TooltipTrigger>
-          <TooltipContent className="max-w-72 whitespace-normal">{description}</TooltipContent>
+          <TooltipContent className="max-w-72 whitespace-normal">
+            {scopeDescription}
+          </TooltipContent>
         </Tooltip>
       </TooltipProvider>
     </span>
@@ -497,6 +499,12 @@ const PermissionApprovalControls = ({
   const allowOptionId = getAllowOptionId(request.options, effectiveScope)
   const denyOptionId = getDenyOptionId(request.options)
   const scopeLabel = effectiveScope === 'once' ? 'once' : 'for this conversation'
+  const scopeDescription =
+    !allowOptionId
+      ? 'No approval scope is available for this request.'
+      : effectiveScope === 'once'
+      ? 'Approval applies to this call only.'
+      : 'Approval applies until this conversation ends.'
   const hasScopePicker = availableScopes.size > 1
   const isSubmitting = submittingRequestId === request.requestId
   const respondOnce = (optionId?: string): void => {
@@ -533,9 +541,8 @@ const PermissionApprovalControls = ({
     request.isMcp !== true &&
     (request.toolKind === 'execute' || request.providerToolName === 'Bash')
 
-  // MCP identifiers are only needed when the request has no code, arguments, or locations to review.
-  // In that case, the presentation layer supplies a humanized service/action label rather than the
-  // provider's raw protocol spelling. Files, commands, and other native tools retain their target.
+  // MCP action context stays visible alongside any code, arguments, or locations without exposing
+  // the provider's raw protocol spelling. Files, commands, and other native tools retain their target.
   const headerName = request.providerToolName ?? request.title
   const titleDetail = ((): string | undefined => {
     if (request.isMcp) {
@@ -560,7 +567,7 @@ const PermissionApprovalControls = ({
           lookup={notebookLookup}
           runtime={presentation.notebookRuntime}
           categoryLabel={presentation.categoryLabel}
-          description={presentation.description}
+          scopeDescription={scopeDescription}
         />
       </div>
 

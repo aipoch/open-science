@@ -192,7 +192,7 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain('mcp.open-science-artifacts')
   })
 
-  it('keeps a humanized MCP action beside reviewable paths or arguments', () => {
+  it('keeps an MCP request external while showing its humanized action and paths', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls
         requests={[
@@ -209,7 +209,7 @@ describe('PermissionApprovalControls', () => {
       />
     )
 
-    expect(html).toContain('File access</span>')
+    expect(html).toContain('External service</span>')
     expect(html).toContain('Open Science Artifacts / Write Artifact File')
     expect(html).toContain('report.md')
   })

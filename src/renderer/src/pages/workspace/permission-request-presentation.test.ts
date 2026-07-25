@@ -85,12 +85,12 @@ describe('describePermissionRequest', () => {
     ).toBe('Open Science Artifacts / Write Artifact File')
   })
 
-  it('keeps trusted file and network classifications for MCP requests', () => {
+  it('keeps unrecognized MCP requests in the external-service category', () => {
     expect(
       describePermissionRequest(request({ isMcp: true, toolKind: 'edit' })).categoryLabel
-    ).toBe('File access')
+    ).toBe('External service')
     expect(
       describePermissionRequest(request({ isMcp: true, toolKind: 'fetch' })).categoryLabel
-    ).toBe('Network access')
+    ).toBe('External service')
   })
 })
