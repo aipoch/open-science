@@ -399,6 +399,26 @@ describe('validate: provider dispatch', () => {
     expect(result).toMatchObject({ ok: false, category: 'model-not-found', status: 400 })
   })
 
+  it('surfaces a 5xx error message from a bridge validation', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{"error":{"message":"Gateway timeout"}}', { status: 502 })
+      )
+
+    const result = await validateProvider(
+      { type: 'custom', apiEndpoints: ['openai'], baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch, requireBridgeToolCall: true }
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      category: 'server-error',
+      status: 502,
+      message: 'Gateway timeout'
+    })
+  })
+
   it('keeps a text-only Chat Completions provider unverified', async () => {
     const fetchImpl = vi
       .fn()

@@ -446,7 +446,7 @@ const validateProviderThroughResponsesBridge = async (
     if (category !== 'ok') {
       return toResult(category, {
         status: response.status,
-        ...(category === 'unknown' ? { message: providerMessage } : {})
+        ...(category === 'unknown' || category === 'server-error' ? { message: providerMessage } : {})
       })
     }
     if (!hasResponsesBridgeProbeToolCall(bodyText)) {
