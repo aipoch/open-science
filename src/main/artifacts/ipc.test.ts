@@ -375,15 +375,15 @@ describe('artifact IPC handlers', () => {
 describe('artifact IPC handler registration', () => {
   it('creates the default repository rooted at the data root', () => {
     // Line 139: createDefaultArtifactRepository must use resolveDataRoot (artifacts follow the
-    // relocatable data root), not the config root. Smoke-check the constructor wiring.
+    // relocatable data root), not the config root. Smoke-check the constructor wiring by reading the
+    // private `storageRoot` field the constructor assigns. Do NOT default to ARTIFACT_DATA_ROOT when
+    // the field is missing — that would hide a regression where someone passes the config root or
+    // stops forwarding resolveDataRoot() entirely.
     const repository = createDefaultArtifactRepository()
 
     expect(repository).toBeInstanceOf(ArtifactRepository)
-    // The repository exposes its root via listProjectArtifacts' storage; we round-trip through the
-    // repository to confirm the root is the one resolveDataRoot returned.
-    expect((repository as unknown as { root: string }).root ?? ARTIFACT_DATA_ROOT).toBe(
-      ARTIFACT_DATA_ROOT
-    )
+    const storedRoot = (repository as unknown as { storageRoot: string }).storageRoot
+    expect(storedRoot).toBe(ARTIFACT_DATA_ROOT)
   })
 
   it('registers every renderer-visible artifact channel exactly once', () => {

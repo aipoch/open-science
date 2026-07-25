@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpPromptRequest, AcpResumeSessionRequest } from '../../shared/acp'
+import type { AcpRuntime } from './runtime'
 import type {
   AcpRuntimeActivity,
   AcpRuntimeActivityOptions,
@@ -8,26 +9,43 @@ import type {
 } from './runtime-activity'
 
 // Builds a duck-typed stand-in that exposes only the methods AcpRuntimeActivity picks off AcpRuntime.
-// Keeping it minimal lets the Pick contract test fail typecheck if the picked methods ever drift off
-// AcpRuntime, without coupling to any of the other AcpRuntime surface that activity workflows must
-// not reach into. The vi.fn() return type is intentionally left as `Mock<...>`; we cast at the boundary
-// because that is the same pattern the runtime-coordinator test file uses for its hand-rolled runtime.
-const createActivityMock = (): {
-  buildReviewerSession: ReturnType<typeof vi.fn>
-  disposeReviewerSession: ReturnType<typeof vi.fn>
-  sendPrompt: ReturnType<typeof vi.fn>
-} => ({
-  buildReviewerSession: vi.fn(async () => ({ session: { sessionId: 'reviewer-1' } })),
-  disposeReviewerSession: vi.fn(() => ({ rejectedToolCalls: 0, reviewerBridgeScoped: undefined })),
-  sendPrompt: vi.fn(async () => ({ stopReason: 'end_turn' as const }))
+// The return type is anchored to `Pick<AcpRuntime, …>`, so the literal below is structurally checked
+// against AcpRuntime's real method signatures — any drift in argument shape or return type fails
+// typecheck here, which is exactly the contract the Pick<AcpRuntime, …> type exists to enforce.
+const createActivityMock = (): Pick<
+  AcpRuntime,
+  'buildReviewerSession' | 'disposeReviewerSession' | 'sendPrompt'
+> => ({
+  buildReviewerSession: vi.fn(async (req: Parameters<AcpRuntime['buildReviewerSession']>[0]) => {
+    // The parameter is required by the Pick<AcpRuntime, …> signature; the test body does not
+    // inspect it. Read it once to keep @typescript-eslint/no-unused-vars happy without changing
+    // the contract shape.
+    void req
+    return { session: { sessionId: 'reviewer-1' } } as Awaited<
+      ReturnType<AcpRuntime['buildReviewerSession']>
+    >
+  }),
+  disposeReviewerSession: vi.fn((session: Parameters<AcpRuntime['disposeReviewerSession']>[0]) => {
+    // Same rationale as buildReviewerSession above: the parameter exists for type-check only.
+    void session
+    return {
+      rejectedToolCalls: 0,
+      reviewerBridgeScoped: undefined
+    } as ReturnType<AcpRuntime['disposeReviewerSession']>
+  }),
+  sendPrompt: vi.fn(async (req: Parameters<AcpRuntime['sendPrompt']>[0]) => {
+    void req
+    return { stopReason: 'end_turn' as const } as Awaited<ReturnType<AcpRuntime['sendPrompt']>>
+  })
 })
 
 describe('AcpRuntimeActivity', () => {
   it('matches the Pick contract: a duck-typed mock with the three picked methods assigns to the type', () => {
     // The whole point of AcpRuntimeActivity is that it is exactly `Pick<AcpRuntime, ...>`. The
-    // assignment below would fail typecheck if any picked key changed name or signature, which is the
-    // only runtime-meaningful assertion a types-only module supports.
-    const mock = createActivityMock() as unknown as AcpRuntimeActivity
+    // satisfies below fails typecheck if any picked key changes name or signature — that is the only
+    // runtime-meaningful assertion a types-only module supports. Do NOT cast through `unknown` here;
+    // that would silently swallow structural drift and defeat the contract check.
+    const mock = createActivityMock() satisfies AcpRuntimeActivity
 
     expect(typeof mock.buildReviewerSession).toBe('function')
     expect(typeof mock.disposeReviewerSession).toBe('function')
@@ -63,7 +81,9 @@ describe('AcpRuntimeActivity', () => {
   })
 
   it('withActivity passes the scoped runtime to the work function and resolves with its return value', async () => {
-    const mock = createActivityMock() as unknown as AcpRuntimeActivity
+    // Keep the mock typed as AcpRuntimeActivity so the call below (`work(mock)`) requires the mock to
+    // actually be assignable to the runtime the owner passes to work — no `as unknown` bypass.
+    const mock = createActivityMock() satisfies AcpRuntimeActivity
     // Mirror the coordinator's one-line pass-through: withActivity just hands the scoped runtime to
     // work and forwards its result. We exercise it against the duck-typed mock so the test does not
     // depend on AcpRuntime internals.
@@ -88,7 +108,7 @@ describe('AcpRuntimeActivity', () => {
   })
 
   it('withActivity rejects with the work error when work throws', async () => {
-    const mock = createActivityMock() as unknown as AcpRuntimeActivity
+    const mock = createActivityMock() satisfies AcpRuntimeActivity
     const boom = new Error('work blew up')
     const owner: AcpRuntimeActivityOwner = {
       // The owner contract is "resolve with work's value or reject with work's error", nothing more:
