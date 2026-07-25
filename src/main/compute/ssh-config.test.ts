@@ -1,6 +1,46 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { parseSshConfigHostAliases } from './ssh-config'
+
+// ---------------------------------------------------------------------------
+// readSshConfigHostAliases — file I/O error paths
+// (covered separately so we can mock node:fs/promises without affecting the
+// pure parseSshConfigHostAliases tests above, which don't touch the FS.)
+// ---------------------------------------------------------------------------
+
+const { readFileMock } = vi.hoisted(() => ({ readFileMock: vi.fn() }))
+
+vi.mock('node:fs/promises', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs/promises')>()),
+  readFile: readFileMock
+}))
+
+// Imported lazily so the vi.mock above is in place when ssh-config is loaded
+// (otherwise its top-level `import { readFile } from 'node:fs/promises'`
+// captures the unmocked module).
+const { readSshConfigHostAliases } = await import('./ssh-config')
+
+describe('readSshConfigHostAliases — file I/O errors', () => {
+  it('returns [] when the config file does not exist (ENOENT)', async () => {
+    const err = Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' })
+    readFileMock.mockRejectedValueOnce(err)
+    const aliases = await readSshConfigHostAliases('/some/nonexistent/.ssh/config')
+    expect(aliases).toEqual([])
+  })
+
+  it('returns [] when the config file is unreadable (EACCES)', async () => {
+    const err = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+    readFileMock.mockRejectedValueOnce(err)
+    const aliases = await readSshConfigHostAliases('/some/unreadable/.ssh/config')
+    expect(aliases).toEqual([])
+  })
+
+  it('returns [] on any unexpected read failure', async () => {
+    readFileMock.mockRejectedValueOnce(new Error('disk on fire'))
+    const aliases = await readSshConfigHostAliases('/whatever/.ssh/config')
+    expect(aliases).toEqual([])
+  })
+})
 
 describe('parseSshConfigHostAliases', () => {
   it('extracts a simple Host alias', () => {

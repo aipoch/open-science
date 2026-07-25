@@ -1,13 +1,17 @@
-// Tests for scp-runner.ts pure helpers.
-// SystemScpRunner (the real spawner) is not tested here — it's covered by the fake-injection tests
-// in compute-service.test.ts, matching the pattern used for SshRunner.
+// Tests for scp-runner.ts pure helpers and the real SystemScpRunner spawner
+// (driven via a fake execFile so no real scp is invoked).
 
+import { EventEmitter } from 'node:events'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   MAX_DOWNLOAD_BYTES,
   MAX_IMPORT_BYTES,
   SCP_UPLOAD_TIMEOUT_MS,
+  SystemScpRunner,
   buildScpArgs,
   buildScpUploadArgs,
   inferMimeType,
@@ -16,12 +20,24 @@ import {
   shellSingleQuote,
   validateImportPath
 } from './scp-runner'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 import type { ScpRunner } from './scp-runner'
 import type { ResolvedSshTarget } from './ssh-runner'
+
+// ---------------------------------------------------------------------------
+// Hoisted execFile double — drives SystemScpRunner's child event lifecycle.
+// ---------------------------------------------------------------------------
+
+const { execFileMock } = vi.hoisted(() => ({ execFileMock: vi.fn() }))
+
+vi.mock('node:child_process', () => ({ execFile: execFileMock }))
+
+// Controllable ChildProcess double matching execFile's surface used by
+// SystemScpRunner: stderr is an EventEmitter, kill() records the signal.
+class FakeChild extends EventEmitter {
+  stderr = new EventEmitter()
+  kill = vi.fn(() => true)
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -400,5 +416,176 @@ describe('runScpUpload', () => {
     expect(localIdx).toBeGreaterThan(-1)
     expect(remoteIdx).toBeGreaterThan(-1)
     expect(localIdx).toBeLessThan(remoteIdx)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// validateImportPath — remaining branches (GLOB_CHARS and SHELL_UNSAFE_CHARS
+// edge cases not covered by the test block above)
+// ---------------------------------------------------------------------------
+
+describe('validateImportPath — remaining dangerous-character branches', () => {
+  it('rejects a path with a } glob char', () => {
+    expect(validateImportPath('/home/user/{a,b}.csv}')).toBe('outside_roots')
+  })
+
+  it('rejects a path with a backslash glob char', () => {
+    expect(validateImportPath('/home/user/back\\slash.csv')).toBe('outside_roots')
+  })
+
+  it('rejects a path with a backtick command substitution', () => {
+    expect(validateImportPath('/home/user/`id`.csv')).toBe('outside_roots')
+  })
+
+  it('rejects a path with an input redirection (<)', () => {
+    expect(validateImportPath('/home/user/a<b')).toBe('outside_roots')
+  })
+
+  it('rejects a path with a double quote', () => {
+    expect(validateImportPath('/home/user/a"b.csv')).toBe('outside_roots')
+  })
+
+  it('rejects a path with a single quote', () => {
+    expect(validateImportPath("/home/user/a'b.csv")).toBe('outside_roots')
+  })
+
+  it('rejects a path with a DEL control char (0x7f)', () => {
+    expect(validateImportPath('/home/user/a\x7fb.csv')).toBe('outside_roots')
+  })
+
+  it('rejects a path with an empty string', () => {
+    expect(validateImportPath('')).toBe('outside_roots')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SystemScpRunner — real scp spawner. Drives the child lifecycle via a fake
+// execFile so we can assert the close/error/timeout branches without spawning
+// real scp. Mirrors the SystemSshRunner test style in ssh-runner.test.ts.
+// ---------------------------------------------------------------------------
+
+describe('SystemScpRunner', () => {
+  let runner: SystemScpRunner
+
+  beforeEach(() => {
+    runner = new SystemScpRunner()
+    execFileMock.mockReset()
+  })
+
+  afterEach(() => {
+    execFileMock.mockReset()
+    vi.useRealTimers()
+  })
+
+  it('returns exitCode 0 and the captured stderr on a clean child close', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+
+    const promise = runner.copy('/usr/bin/scp', ['biowulf:/remote/x.csv', '/tmp/x.csv'])
+
+    child.stderr.emit('data', Buffer.from('progress noise\n'))
+    child.emit('close', 0)
+
+    const result = await promise
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('progress noise\n')
+    expect(result.timedOut).toBe(false)
+  })
+
+  it('returns a non-zero exitCode and the error message from stderr on failure', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+
+    const promise = runner.copy('/usr/bin/scp', ['biowulf:/remote/missing.csv', '/tmp/x.csv'])
+
+    child.stderr.emit('data', Buffer.from('scp: /remote/missing.csv: No such file or directory\n'))
+    child.emit('close', 1)
+
+    const result = await promise
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toBe('scp: /remote/missing.csv: No such file or directory\n')
+    expect(result.timedOut).toBe(false)
+  })
+
+  it('marks timedOut=true and kills the child when the timer fires before close', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+
+    const promise = runner.copy('/usr/bin/scp', ['biowulf:/remote/big.bin', '/tmp/big.bin'], 1000)
+
+    // Advance past the 1000ms timeout — the timer should SIGTERM the child.
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+
+    // Now let the child close (scp exited on SIGTERM, code is null).
+    child.emit('close', null)
+
+    const result = await promise
+    expect(result.timedOut).toBe(true)
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('forwards child.on("error") as exitCode=null and stderr=err.message', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+
+    const promise = runner.copy('/usr/bin/scp', ['biowulf:/remote/x', '/tmp/x'])
+
+    child.emit('error', new Error('spawn ENOENT scp'))
+
+    const result = await promise
+    expect(result.exitCode).toBeNull()
+    expect(result.stderr).toBe('spawn ENOENT scp')
+    expect(result.timedOut).toBe(false)
+  })
+
+  it('drops stderr chunks once the running total is already over the 8 KB cap', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+
+    const promise = runner.copy('/usr/bin/scp', ['biowulf:/remote/x', '/tmp/x'])
+
+    // Two 5 KB chunks push the total past 8 KB (10 KB). The implementation only
+    // checks "total < 8 KB" *before* pushing, so both fit. The cap is best-effort:
+    // it stops appending once we're already over.
+    child.stderr.emit('data', Buffer.alloc(5 * 1024, 'a'))
+    child.stderr.emit('data', Buffer.alloc(5 * 1024, 'b'))
+    // This third chunk sees total=10 KB, which is >= 8 KB, so it gets dropped.
+    child.stderr.emit('data', Buffer.alloc(1024, 'c'))
+    child.emit('close', 1)
+
+    const result = await promise
+    expect(result.stderr.length).toBe(10 * 1024)
+    expect(result.exitCode).toBe(1)
+  })
+
+  it('clears the timer on a normal close so a later SIGTERM never fires', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+
+    const promise = runner.copy('/usr/bin/scp', ['biowulf:/remote/x', '/tmp/x'], 1000)
+
+    child.emit('close', 0)
+    const result = await promise
+    expect(result.timedOut).toBe(false)
+    expect(child.kill).not.toHaveBeenCalled()
+
+    // Advance well past the timeout — the cleared timer must not fire a stale kill.
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(child.kill).not.toHaveBeenCalled()
+  })
+
+  it('uses the default SCP_TIMEOUT_MS when no timeout is provided', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+
+    const promise = runner.copy('/usr/bin/scp', ['biowulf:/remote/x', '/tmp/x'])
+
+    child.emit('close', 0)
+    const result = await promise
+    expect(result.exitCode).toBe(0)
+    expect(result.timedOut).toBe(false)
   })
 })

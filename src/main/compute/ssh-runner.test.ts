@@ -1,16 +1,75 @@
+import { EventEmitter } from 'node:events'
 import { mkdirSync } from 'node:fs'
 import { homedir, platform } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { parseProbeOutput } from './compute-service'
-import { CappedOutput, controlMasterArgs, resolveSshBinary, resolveSshTarget } from './ssh-runner'
+import {
+  CappedOutput,
+  SystemSshRunner,
+  controlMasterArgs,
+  resolveSshBinary,
+  resolveSshTarget
+} from './ssh-runner'
+
+// ---------------------------------------------------------------------------
+// Hoisted doubles (must exist before vi.mock factories run)
+// ---------------------------------------------------------------------------
+
+// execFile double — drives SystemSshRunner's child event lifecycle and the
+// default readEffectiveConfig path (ssh -G) without spawning a real process.
+//
+// Node's real execFile exposes a custom promisified wrapper via
+// `Symbol.for('nodejs.util.promisify.custom')` so util.promisify(execFile)
+// resolves with `{ stdout, stderr }` on success. We attach the same symbol to
+// our mock so resolveSshTarget's default readEffectiveConfig path
+// (`const { stdout } = await execFileAsync(...)`) works exactly like production.
+const { execFileMock } = vi.hoisted(() => {
+  const CUSTOM_PROMISIFY = Symbol.for('nodejs.util.promisify.custom')
+  const mock = vi.fn()
+  ;(mock as unknown as Record<symbol, unknown>)[CUSTOM_PROMISIFY] = (
+    ...args: unknown[]
+  ): Promise<{ stdout: string; stderr: string }> =>
+    new Promise((resolve, reject) => {
+      mock(...args, (err: Error | null, stdout: string, stderr: string) => {
+        if (err) reject(err)
+        else resolve({ stdout, stderr })
+      })
+    })
+  return { execFileMock: mock }
+})
+
+// platform double — lets us simulate Windows for controlMasterArgs and
+// resolveSshTarget without actually running on Windows. Defaults to the real
+// platform so existing platform-conditional skip guards keep matching reality.
+const { platformMock } = vi.hoisted(() => ({
+  platformMock: vi.fn(() => process.platform)
+}))
 
 // Mock only mkdirSync so we can assert the ~/.ssh/ctrl dir is created; everything else stays real.
 vi.mock('node:fs', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:fs')>()),
   mkdirSync: vi.fn()
 }))
+
+// Mock execFile so SystemSshRunner and the default readEffectiveConfig path
+// (when no fake readConfig is injected) can be driven by tests.
+vi.mock('node:child_process', () => ({ execFile: execFileMock }))
+
+// Mock platform() while keeping the rest of node:os real (homedir etc.).
+vi.mock('node:os', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:os')>()),
+  platform: platformMock
+}))
+
+// Controllable ChildProcess double matching execFile's surface used by
+// SystemSshRunner: stdout/stderr are EventEmitters, kill() records the signal.
+class FakeChild extends EventEmitter {
+  stdout = new EventEmitter()
+  stderr = new EventEmitter()
+  kill = vi.fn(() => true)
+}
 
 // ---------------------------------------------------------------------------
 // resolveSshBinary — on the current platform
@@ -29,7 +88,11 @@ describe('resolveSshBinary', () => {
 // ---------------------------------------------------------------------------
 
 describe('controlMasterArgs', () => {
-  afterEach(() => vi.mocked(mkdirSync).mockReset())
+  afterEach(() => {
+    vi.mocked(mkdirSync).mockReset()
+    // Restore platform mock so platform-conditional skip guards keep matching reality.
+    platformMock.mockReturnValue(process.platform)
+  })
 
   it('creates ~/.ssh/ctrl (0700) and injects a per-alias ControlPath on non-Windows', () => {
     if (platform() === 'win32') return // Windows returns [] — asserted separately below
@@ -60,6 +123,15 @@ describe('controlMasterArgs', () => {
   it('returns no args and creates no dir on Windows', () => {
     if (platform() !== 'win32') return // only meaningful on real Windows (see learnings.md)
     expect(controlMasterArgs('h')).toEqual([])
+    expect(mkdirSync).not.toHaveBeenCalled()
+  })
+
+  // Simulates the win32 branch without a real Windows runner — covers the
+  // `if (platform() === 'win32') return []` short-circuit that the platform-
+  // conditional skip above leaves untested on macOS / Linux.
+  it('returns an empty array and does not mkdir when platform() reports win32', () => {
+    platformMock.mockReturnValue('win32')
+    expect(controlMasterArgs('anyalias')).toEqual([])
     expect(mkdirSync).not.toHaveBeenCalled()
   })
 })
@@ -109,6 +181,52 @@ describe('CappedOutput', () => {
     out.push(Buffer.from('abc'))
     out.push(Buffer.from('def'))
     expect(out.toString()).toBe('abc')
+    expect(out.wasTruncated()).toBe(true)
+  })
+
+  // Exact-fit across multiple pushes: covers the `chunk.length === remaining` boundary
+  // where remaining > 0 and remaining is the entire new chunk (no truncation).
+  it('does not truncate when a final chunk exactly fills the remaining capacity', () => {
+    const out = new CappedOutput(10)
+    out.push(Buffer.from('abcde'))
+    out.push(Buffer.from('fghij'))
+    expect(out.toString()).toBe('abcdefghij')
+    expect(out.wasTruncated()).toBe(false)
+  })
+
+  // Overflow by exactly 1 byte: 3 already buffered, cap=5, push 3 → keep 2, drop 1.
+  it('truncates by exactly one byte when an overflow chunk is one longer than remaining', () => {
+    const out = new CappedOutput(5)
+    out.push(Buffer.from('abc')) // 3 bytes; 2 remaining
+    out.push(Buffer.from('defg')) // 4 bytes; only 'de' fits
+    expect(out.toString()).toBe('abcde')
+    expect(out.wasTruncated()).toBe(true)
+  })
+
+  // Many tiny pushes after the cap: the stream keeps emitting but the buffer is
+  // full and every subsequent chunk is dropped, leaving truncated stuck on true.
+  it('keeps truncated=true and discards every chunk pushed after the cap is full', () => {
+    const out = new CappedOutput(4)
+    for (const ch of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
+      out.push(Buffer.from(ch))
+    }
+    expect(out.toString()).toBe('abcd')
+    expect(out.wasTruncated()).toBe(true)
+  })
+
+  // Single chunk equal to the cap exactly: not truncated.
+  it('does not truncate when a single chunk equals the cap exactly', () => {
+    const out = new CappedOutput(4)
+    out.push(Buffer.from('abcd'))
+    expect(out.toString()).toBe('abcd')
+    expect(out.wasTruncated()).toBe(false)
+  })
+
+  // Overflow of an empty buffer: remaining === cap, push a huge chunk, keep cap bytes.
+  it('caps to the full cap when an empty buffer receives a chunk larger than the cap', () => {
+    const out = new CappedOutput(4)
+    out.push(Buffer.from('abcdefghij'))
+    expect(out.toString()).toBe('abcd')
     expect(out.wasTruncated()).toBe(true)
   })
 })
@@ -236,5 +354,206 @@ describe('resolveSshTarget', () => {
     })
     expect(target.host).toBe('bare-host')
     expect(target.extraArgs).toContain('BatchMode=yes')
+  })
+
+  // When ssh -G resolves to the same user as the alias, the explicit -o User=
+  // would be redundant with what ssh already applies via the alias; resolveSshTarget
+  // skips it. This guards the `resolvedUser !== alias` branch.
+  it('does not emit -o User= when ssh -G user equals the alias', async () => {
+    const target = await resolveSshTarget('aliyun-xt-test', undefined, async () => ({
+      user: 'aliyun-xt-test', // same as alias
+      hostname: '47.98.96.100',
+      port: '22'
+    }))
+    expect(target.extraArgs.some((a) => a.startsWith('User='))).toBe(false)
+  })
+
+  // Explicit overrides take precedence over ssh -G and also skip the redundant
+  // -o User= when the override equals the alias.
+  it('does not emit -o User= when an explicit user override equals the alias', async () => {
+    const target = await resolveSshTarget('aliyun-xt-test', { user: 'aliyun-xt-test' }, async () =>
+      fakeSshG()
+    )
+    expect(target.extraArgs.some((a) => a.startsWith('User='))).toBe(false)
+  })
+
+  // Trims whitespace from explicit user override before comparing with alias.
+  it('trims whitespace from an explicit user override', async () => {
+    const target = await resolveSshTarget('aliyun-xt-test', { user: '  ewen  ' }, async () =>
+      fakeSshG()
+    )
+    expect(target.extraArgs).toContain('User=ewen')
+  })
+
+  // Default readEffectiveConfig path (ssh -G) — covers the readConfig-throws /
+  // parseSshG-empty branches when execFile fails. The injected mock invokes the
+  // promisified callback with an error so readEffectiveConfig catches and returns {}.
+  it('falls back to defaults when the default readConfig rejects (ssh -G failure)', async () => {
+    execFileMock.mockImplementationOnce(
+      (
+        _file: string,
+        _args: string[],
+        _opts: unknown,
+        cb: (err: Error | null, stdout: string, stderr: string) => void
+      ) => {
+        cb(new Error('ssh binary not found'), '', '')
+        return new FakeChild()
+      }
+    )
+    const target = await resolveSshTarget('bare-host', undefined) // no injected readConfig
+    expect(target.host).toBe('bare-host')
+    expect(target.extraArgs).toContain('BatchMode=yes')
+    expect(target.extraArgs).toContain('ConnectTimeout=10')
+    expect(target.extraArgs.some((a) => a.startsWith('User='))).toBe(false)
+  })
+
+  // parseSshG edge cases — driven through the default readConfig path (no injected
+  // fake), so the mocked execFile stdout flows through parseSshG:
+  //   - line with no space → skipped
+  //   - empty line → skipped
+  //   - line with only spaces → key/value both empty → skipped
+  //   - normal "key value" line → kept
+  it('ignores non-key-value lines in ssh -G output via the default readConfig path', async () => {
+    execFileMock.mockImplementationOnce(
+      (
+        _file: string,
+        _args: string[],
+        _opts: unknown,
+        cb: (err: Error | null, stdout: string, stderr: string) => void
+      ) => {
+        cb(
+          null,
+          [
+            'no-space-line', // no space → skipped
+            '', // empty → skipped
+            ' ', // space-only → key empty + value empty → skipped
+            'user alice',
+            'hostname foo',
+            'port 22'
+          ].join('\n'),
+          ''
+        )
+        return new FakeChild()
+      }
+    )
+    const target = await resolveSshTarget('myhost', undefined)
+    expect(target.extraArgs).toContain('User=alice')
+    expect(target.extraArgs).not.toContain('-p') // port 22 is the default
+    expect(target.extraArgs.some((a) => a.startsWith('User='))).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SystemSshRunner — real ssh spawner. Drives the child lifecycle via a fake
+// execFile so we can assert the close/error/timeout branches without a real ssh.
+// ---------------------------------------------------------------------------
+
+describe('SystemSshRunner', () => {
+  let runner: SystemSshRunner
+
+  beforeEach(() => {
+    runner = new SystemSshRunner()
+    execFileMock.mockReset()
+  })
+
+  afterEach(() => {
+    execFileMock.mockReset()
+    vi.useRealTimers()
+  })
+
+  const target = (): { sshBinary: string; host: string; extraArgs: string[] } => ({
+    sshBinary: '/usr/bin/ssh',
+    host: 'aliyun-xt-test',
+    extraArgs: []
+  })
+
+  it('captures stdout/stderr and reports exitCode on a clean child close', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+
+    const promise = runner.run(target(), 'echo hello', { timeoutMs: 5000 })
+
+    child.stdout.emit('data', Buffer.from('hello\n'))
+    child.stderr.emit('data', Buffer.from('warn\n'))
+    child.emit('close', 0)
+
+    const result = await promise
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toBe('hello\n')
+    expect(result.stderr).toBe('warn\n')
+    expect(result.truncated).toBe(false)
+    expect(result.timedOut).toBe(false)
+  })
+
+  it('forwards child.on("error") as exitCode=null and stderr=err.message', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+
+    const promise = runner.run(target(), 'echo hello', { timeoutMs: 5000 })
+
+    child.emit('error', new Error('spawn ENOENT ssh'))
+
+    const result = await promise
+    expect(result.exitCode).toBeNull()
+    expect(result.stderr).toBe('spawn ENOENT ssh')
+    expect(result.stdout).toBe('')
+    expect(result.truncated).toBe(false)
+    expect(result.timedOut).toBe(false)
+  })
+
+  it('marks timedOut=true and kills the child when the timeout fires before close', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+
+    const promise = runner.run(target(), 'long-running', { timeoutMs: 1000 })
+
+    // Advance past the 1000ms timeout — the timer should fire and SIGTERM the child.
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+
+    // Now let the child close (ssh exited on SIGTERM).
+    child.emit('close', null)
+
+    const result = await promise
+    expect(result.timedOut).toBe(true)
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('wraps the command in bash -lc when loginShell=true', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+
+    const promise = runner.run(target(), 'echo $PATH', {
+      timeoutMs: 5000,
+      loginShell: true
+    })
+
+    child.emit('close', 0)
+    await promise
+
+    const callArgs = execFileMock.mock.calls[0]
+    expect(callArgs).toBeDefined()
+    // The remote command must be the last positional argument, JSON-quoted and
+    // wrapped so module / conda PATHs load on the remote.
+    const lastArg = callArgs?.[1]?.[callArgs[1].length - 1] as string
+    expect(lastArg.startsWith('bash -lc ')).toBe(true)
+    expect(lastArg).toContain('echo $PATH')
+  })
+
+  it('truncates stream buffers independently when maxOutputBytes is small', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+
+    const promise = runner.run(target(), 'big', { timeoutMs: 5000, maxOutputBytes: 4 })
+
+    child.stdout.emit('data', Buffer.from('abcdefgh'))
+    child.stderr.emit('data', Buffer.from('12345678'))
+    child.emit('close', 0)
+
+    const result = await promise
+    expect(result.stdout).toBe('abcd')
+    expect(result.stderr).toBe('1234')
+    expect(result.truncated).toBe(true)
   })
 })
