@@ -14,6 +14,9 @@ type DocumentState =
   | { requestKey: string; status: 'ready'; document: PdfDocument }
   | { requestKey: string; status: 'error'; error: unknown }
 
+// Bound the backing-store resolution so an over-magnified small page cannot exhaust GPU memory.
+const MAX_RENDER_SCALE = 4
+
 // Owns one lazy page canvas and releases its decoded bitmap outside the overscan window.
 const PdfPageCanvas = ({
   document,
@@ -24,10 +27,38 @@ const PdfPageCanvas = ({
   pageNumber: number
   registerDisposer: (dispose: () => void) => () => void
 }): React.JSX.Element => {
-  const [setContainer, isNearViewport] = useNearViewport<HTMLDivElement>()
+  const [setNearViewportRef, isNearViewport] = useNearViewport<HTMLDivElement>()
+  const containerRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [aspectRatio, setAspectRatio] = useState(3 / 4)
+  // The CSS width the canvas is stretched to; drives backing-store resolution so text stays sharp.
+  const [renderWidth, setRenderWidth] = useState(0)
+
+  const setContainer = useCallback(
+    (element: HTMLDivElement | null): void => {
+      containerRef.current = element
+      setNearViewportRef(element)
+    },
+    [setNearViewportRef]
+  )
+
+  // Track the on-screen width and only grow the target: shrinking reuses the crisp bitmap via CSS.
+  useEffect(() => {
+    const element = containerRef.current
+    if (!element) return
+
+    const measure = (): void => {
+      const width = element.clientWidth
+      if (width > 0) setRenderWidth((current) => (width > current ? width : current))
+    }
+    measure()
+
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     if (!isNearViewport) return
@@ -61,7 +92,14 @@ const PdfPageCanvas = ({
           return
         }
 
-        const scale = Math.min(2, Math.max(1, window.devicePixelRatio || 1))
+        const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1)
+        const baseViewport = loadedPage.getViewport({ scale: 1 })
+        // Rasterize at the physical pixels the page occupies on screen, capped to protect memory.
+        const targetCssWidth = renderWidth > 0 ? renderWidth : baseViewport.width
+        const scale = Math.min(
+          MAX_RENDER_SCALE,
+          Math.max(1, (targetCssWidth * devicePixelRatio) / baseViewport.width)
+        )
         const viewport = loadedPage.getViewport({ scale })
         const context = canvas.getContext('2d')
         if (!context) throw new Error('Canvas 2D context unavailable.')
@@ -85,7 +123,7 @@ const PdfPageCanvas = ({
       unregisterDisposer()
       dispose()
     }
-  }, [document, isNearViewport, pageNumber, registerDisposer])
+  }, [document, isNearViewport, pageNumber, registerDisposer, renderWidth])
 
   const displayedStatus = isNearViewport ? status : 'idle'
 

@@ -108,6 +108,40 @@ describe('PdfPreviewContent', () => {
     )
   })
 
+  it('rasterizes at the on-screen width times device pixel ratio, not the page point size', async () => {
+    const clientWidthSpy = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockReturnValue(700)
+    vi.stubGlobal('devicePixelRatio', 2)
+    // Base page is 350pt wide; a 700px frame at 2x should back the canvas at 1400px (scale 4).
+    const render = vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() }))
+    getPage.mockResolvedValue({
+      getViewport: vi.fn(({ scale }: { scale: number }) => ({
+        width: 350 * scale,
+        height: 500 * scale
+      })),
+      render,
+      cleanup: vi.fn()
+    })
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/sharp.pdf" name="sharp.pdf" source="artifact" />
+      )
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const canvas = container.querySelector<HTMLCanvasElement>('canvas')
+    expect(canvas?.width).toBe(1400)
+    expect(canvas?.height).toBe(2000)
+
+    clientWidthSpy.mockRestore()
+  })
+
   it('destroys the loading task when PDF parsing fails', async () => {
     const destroyLoadingTask = vi.fn().mockResolvedValue(undefined)
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
