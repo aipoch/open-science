@@ -587,10 +587,13 @@ describe('toJobSummary — harvest features and left_on_remote parsing', () => {
     const summary = await toJobSummary(sampleJob(), 'Biowulf HPC', storageRoot)
 
     // Relative to <storageRoot>/notebooks/proj-1/sess-1 (workspaceCwd = harvestDir/../..).
-    expect((summary.featured_files ?? []).sort()).toEqual([
-      'hpc/job-harvest/featured/result.csv',
-      'hpc/job-harvest/featured/sub/nested.txt'
-    ])
+    // path.relative() yields the platform-native separator, so build the expected paths with
+    // join() rather than hard-coding '/' — otherwise the test fails on Windows.
+    const expected = [
+      join('hpc', 'job-harvest', 'featured', 'result.csv'),
+      join('hpc', 'job-harvest', 'featured', 'sub', 'nested.txt')
+    ].sort()
+    expect((summary.featured_files ?? []).sort()).toEqual(expected)
     expect(summary.featured_file_count).toBe(2)
   })
 
