@@ -17,9 +17,12 @@ const EnvStatusBanner = ({
   const show = (ui.kind === 'preparing' && ui.scope === 'upgrade') || ui.kind === 'error'
   if (!show) return null
 
-  // A preparing banner is a compact single-line pill; an error can carry a long provisioner reason, so
-  // it uses a wider rounded card (matching the app's dialog chrome) with the message clamped to a few
-  // lines. Full diagnostics live in the logs, not this banner (see provisioner-runtime.briefTail).
+  // A preparing banner is a compact single-line pill; an error can carry a longer provisioner reason,
+  // so it uses a wider rounded card (matching the app's dialog chrome). This banner is the ONLY error
+  // surface outside the notebook pane (it renders globally from App, incl. Home where there is no
+  // EnvProvisionOverlay), so the reason must stay fully readable — bound it to a scrollable box rather
+  // than clamping lines, which could hide the actionable tail. The source excerpt is already short
+  // (provisioner-runtime.briefTail); full diagnostics also live in the logs.
   const isError = ui.kind === 'error'
 
   return (
@@ -35,7 +38,9 @@ const EnvStatusBanner = ({
         <>
           <div className="min-w-0 flex-1">
             <p className="font-medium text-foreground">Environment update failed</p>
-            <p className="mt-0.5 line-clamp-3 break-words text-muted-foreground">{ui.message}</p>
+            <p className="mt-0.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-muted-foreground">
+              {ui.message}
+            </p>
           </div>
           {onRetry ? (
             <button

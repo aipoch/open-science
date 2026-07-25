@@ -113,10 +113,10 @@ describe('EnvStatusBanner', () => {
     expect(retried).toBe(1)
   })
 
-  it('clamps a long error reason and uses the dialog card chrome instead of an unbounded pill', () => {
-    // A provisioner failure can carry thousands of characters (the micromamba package plan). The
-    // banner must not grow unbounded: the reason is line-clamped and the panel adopts the rounded
-    // dialog card. Full diagnostics live in the logs, not this banner.
+  it('bounds a long error reason in a scrollable box and uses the dialog card chrome, keeping the full text readable', () => {
+    // A provisioner failure can carry a long reason. This banner is the ONLY error surface outside the
+    // notebook pane (Home has no overlay), so the reason must stay fully readable: bound it to a
+    // scrollable box (max-h + overflow) rather than clamping lines, which could hide the actionable tail.
     const longReason = `micromamba failed (exit 1): ${'pkg==1.0=hbuild_0 - '.repeat(400)}`
     act(() =>
       root.render(
@@ -129,11 +129,16 @@ describe('EnvStatusBanner', () => {
     expect(banner.className).toContain('rounded-xl')
     expect(banner.className).toContain('bg-card')
     expect(banner.className).toContain('shadow-dialog')
-    // The reason is present but rendered in a line-clamped node so the banner can't fill the screen.
-    const reason = banner.querySelector('.line-clamp-3') as HTMLElement
+    // The reason is bounded (max-h) and scrollable (overflow-y-auto) rather than line-clamped, so the
+    // banner cannot fill the screen yet the full excerpt remains reachable — no line-clamp truncation.
+    const reason = banner.querySelector('.overflow-y-auto') as HTMLElement
     expect(reason).not.toBeNull()
+    expect(reason.className).toMatch(/max-h-/)
+    expect(reason.className).not.toContain('line-clamp')
     expect(reason.textContent).toContain('micromamba failed (exit 1)')
-    // The standing title is separate from the clamped reason.
+    // The full reason text is rendered (not truncated in the DOM), so scrolling exposes all of it.
+    expect(reason.textContent).toBe(longReason)
+    // The standing title is separate from the scrollable reason.
     expect(banner.textContent).toContain('Environment update failed')
   })
 

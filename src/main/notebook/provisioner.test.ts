@@ -662,6 +662,52 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     expect(creates).toBe(2)
   })
 
+  it('retains BOTH full micromamba tails on MaxPathRetryError.data when the errors are runMicromamba-style', async () => {
+    // runMicromamba now caps Error.message to a short excerpt and keeps the full tails on error.data.
+    // The MAX_PATH retry wrapper composes its message from the two short .message excerpts, so without
+    // capturing error.data it would lose both full outputs — the exact post-mortem this PR preserves.
+    const root = makeRoot()
+    const cache = pkgsCache(root)
+    const leaf = 'broken-package-1.0-0'
+    const packageDir = join(cache, 'https', 'host', 'channel', 'noarch', leaf)
+    mkdirSync(packageDir, { recursive: true })
+    const missing = join(packageDir, 'Library', 'x'.repeat(280))
+    let creates = 0
+    const provisioner = new DefaultRuntimeProvisioner(
+      makeDeps(root, {
+        platform: 'win32',
+        cache: { path: cache, lockKey: cache },
+        fetchBundle: async (): Promise<FetchedBundle> => ({
+          lockPath: join(root, 'p.lock'),
+          pathBudget: { maxCacheRelativePath: 1, maxEnvRelativePath: 1 }
+        }),
+        runArgv: async () => {
+          creates += 1
+          // Both spawns fail runMicromamba-style: short message excerpt, full tail only on `data`.
+          const stderrTail =
+            creates === 1
+              ? `Invalid package cache, file '${missing}' is missing for '${leaf}.conda'; Package cache error`
+              : 'ORIGINAL_FULL_TAIL_MARKER: a different disk error with lots of detail'
+          throw Object.assign(new Error(`micromamba failed (exit 1; mm create): …short-excerpt`), {
+            code: 'MICROMAMBA_EXIT',
+            data: { argv: ['mm', 'create'], exitCode: 1, stderrTail }
+          })
+        }
+      })
+    )
+
+    const failure = provisioner.provisionPython(() => {}).catch((error: unknown) => error)
+    const error = (await failure) as Error & {
+      data?: { originalDiagnostics?: string; retryDiagnostics?: string }
+    }
+    expect(error.name).toBe('MaxPathRetryError')
+    // The full tails of BOTH the original failure and the retry survive on the structured data.
+    expect(error.data?.originalDiagnostics).toContain('Invalid package cache')
+    expect(error.data?.originalDiagnostics).toContain(missing)
+    expect(error.data?.retryDiagnostics).toContain('ORIGINAL_FULL_TAIL_MARKER')
+    expect(creates).toBe(2)
+  })
+
   it('wires the spawned micromamba child pid into the materialize journal, then clears it on completion', async () => {
     const root = makeRoot()
     const prefix = envPrefix(root, DEFAULT_PY_ENV)

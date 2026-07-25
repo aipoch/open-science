@@ -1417,6 +1417,12 @@ const isCorruptPkgsCacheError = (error: unknown): boolean => {
 // offline-rebuild material survives; the removed dirs are simply re-extracted from those tarballs.
 // Returns true if it removed anything (so the caller only retries when there was something to repair).
 class MaxPathRetryError extends Error {
+  // Full micromamba diagnostics of BOTH the original failure and the post-recovery retry. The message
+  // (below) stays short for the UI banner — it composes only the two excerpt-level `.message`s — so the
+  // untruncated stdout/stderr tails would otherwise be lost here. errorLogFields lifts this `data`, so a
+  // recovery-failure post-mortem keeps both full outputs even though neither reaches the banner.
+  readonly data: { originalDiagnostics: string; retryDiagnostics: string }
+
   constructor(original: unknown, retry: unknown) {
     const originalMessage = original instanceof Error ? original.message : String(original)
     const retryMessage = retry instanceof Error ? retry.message : String(retry)
@@ -1427,6 +1433,10 @@ class MaxPathRetryError extends Error {
       { cause: retry }
     )
     this.name = 'MaxPathRetryError'
+    this.data = {
+      originalDiagnostics: micromambaDiagnosticText(original),
+      retryDiagnostics: micromambaDiagnosticText(retry)
+    }
   }
 }
 
