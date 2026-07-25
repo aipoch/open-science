@@ -529,8 +529,8 @@ describe('PermissionApprovalControls interactions', () => {
         'default-python'
       )
       expect(
-        container.querySelector('[data-testid="permission-language-badge"]')?.textContent
-      ).toBe('python')
+        container.querySelector('[data-testid="permission-category-badge"]')?.textContent
+      ).toBe('Python execution')
     } finally {
       delete (window as { api?: unknown }).api
     }

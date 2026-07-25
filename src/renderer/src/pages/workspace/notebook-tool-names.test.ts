@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { isNotebookExecuteToolName, matchNotebookRunTool } from './notebook-tool-names'
+import {
+  isNotebookExecuteToolName,
+  matchNotebookControlTool,
+  matchNotebookRunTool
+} from './notebook-tool-names'
 
 describe('isNotebookExecuteToolName', () => {
   it('matches the notebook server run tools in Claude Code mcp__ form', () => {
@@ -62,6 +66,16 @@ describe('isNotebookExecuteToolName', () => {
 
   it('rejects notebook server tools that are not kernel-run tools', () => {
     expect(isNotebookExecuteToolName('mcp__open-science-notebook__notebook_state')).toBe(false)
+  })
+
+  it('matches notebook controls with the same exact server boundary', () => {
+    expect(matchNotebookControlTool('mcp__open-science-notebook__notebook_restart')).toBe(
+      'notebook_restart'
+    )
+    expect(matchNotebookControlTool('open_science_notebook_notebook_shutdown')).toBe(
+      'notebook_shutdown'
+    )
+    expect(matchNotebookControlTool('mcp__acme-db__notebook_restart')).toBeUndefined()
   })
 
   it('rejects empty or missing names', () => {

@@ -148,7 +148,7 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain(secondRequestTitle)
   })
 
-  it('labels non-notebook MCP approvals as MCP instead of command execution', () => {
+  it('labels non-notebook MCP approvals as an external service instead of command execution', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls
         requests={[
@@ -164,14 +164,11 @@ describe('PermissionApprovalControls', () => {
       />
     )
 
-    expect(html).toContain('MCP tool access</span>')
+    expect(html).toContain('External service</span>')
     expect(html).not.toContain('Command execution</span>')
   })
 
-  it('keeps the tool identity visible for execute-kind MCP requests', () => {
-    // An MCP tool reporting kind:'execute' (write_artifact_file) must not collapse into the
-    // generic "Run command?" shell wording — the provider name is the only identity left when
-    // the request carries no previewable command payload.
+  it('hides the protocol identity for execute-kind MCP requests', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls
         requests={[
@@ -188,8 +185,10 @@ describe('PermissionApprovalControls', () => {
       />
     )
 
-    expect(html).toContain('Run write_artifact_file?')
+    expect(html).toContain('Use external service?')
     expect(html).not.toContain('Run command?')
+    expect(html).not.toContain('write_artifact_file')
+    expect(html).not.toContain('mcp.open-science-artifacts')
   })
 
   it('shows the title for a non-Bash execute request with no command preview', () => {
@@ -344,31 +343,32 @@ describe('PermissionApprovalControls', () => {
         onRespond={() => undefined}
       />
     )
-    expect(html).toContain('data-testid="permission-language-badge"')
+    expect(html).toContain('data-testid="permission-category-badge"')
     expect(html).toContain('data-testid="permission-tool-info"')
-    expect(html).not.toContain('MCP tool access</span>')
+    expect(html).toContain('Python execution</span>')
+    expect(html).not.toContain('External service</span>')
   })
 
-  it('shows the kernel language badge for notebook prompts, matching the code highlight', () => {
+  it('shows a distinct execution category for each notebook runtime', () => {
     const pythonHtml = renderToStaticMarkup(
       <PermissionApprovalControls
         requests={[notebookPermissionRequest]}
         onRespond={() => undefined}
       />
     )
-    expect(pythonHtml).toContain('>python</span>')
+    expect(pythonHtml).toContain('>Python execution</span>')
 
     // The badge follows the inferred code language even without an explicit kernel field.
     const rHtml = renderToStaticMarkup(
       <PermissionApprovalControls requests={[rNotebookRequest]} onRespond={() => undefined} />
     )
-    expect(rHtml).toContain('>r</span>')
+    expect(rHtml).toContain('>R execution</span>')
 
     // repl_execute pins JavaScript even though its code looks generic.
     const replHtml = renderToStaticMarkup(
       <PermissionApprovalControls requests={[replRequest]} onRespond={() => undefined} />
     )
-    expect(replHtml).toContain('>javascript</span>')
+    expect(replHtml).toContain('>JS REPL</span>')
   })
 
   it('renders no code block when rawInput is absent', () => {
@@ -419,7 +419,7 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('data-language="json"')
     expect(html).toContain('prod')
     expect(html).not.toContain('Run notebook cell')
-    expect(html).not.toContain('Notebook execution</span>')
+    expect(html).toContain('External service</span>')
   })
 
   it('shows the request title as a detail line when the header hides the target', () => {
@@ -437,6 +437,29 @@ describe('PermissionApprovalControls', () => {
       <PermissionApprovalControls requests={[write]} onRespond={() => undefined} />
     )
     expect(html).toContain('Write report.md')
+  })
+
+  it('shows notebook control impact without exposing the MCP identifier', () => {
+    const identifier = 'mcp__open-science-notebook__notebook_restart'
+    const restart: AcpPermissionRequest = {
+      requestId: 'restart-1',
+      sessionId: 'session-1',
+      toolCallId: 'tool-restart',
+      title: identifier,
+      providerToolName: identifier,
+      isMcp: true,
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+    }
+
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls requests={[restart]} onRespond={() => undefined} />
+    )
+
+    expect(html).toContain('Restart notebook?')
+    expect(html).toContain('Notebook control</span>')
+    expect(html).toContain('Running processes and unsaved runtime state may be lost.')
+    expect(html).toContain('data-testid="permission-tool-info"')
+    expect(html).not.toContain(identifier)
   })
 
   it('surfaces a non-canonical option kind as its own labeled button', () => {
