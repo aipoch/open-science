@@ -57,12 +57,15 @@ export type AppIconControllerDeps = {
   platform?: NodeJS.Platform
 }
 
-// Owns the app icon shown on the window (Windows/Linux) and dock (macOS). The selected variant is
-// applied to every current window and re-applied to each new window as it is created, so the choice
-// survives window recreation (macOS activate, second-instance surface). The installed bundle/exe icon
-// is baked in and unaffected — this only changes the runtime-mutable surfaces the OS allows.
+// Owns the runtime app icon: the per-window icon off macOS (title bar / Alt-Tab, and the taskbar on
+// most Linux WMs) and the Dock on macOS. The selected variant is applied to every current window and
+// re-applied to each new window as it is created, so the choice survives window recreation (macOS
+// activate, second-instance surface). NOTE: on Windows setIcon changes the window's own icon but NOT
+// the taskbar button, which Windows keys off the AppUserModelID / the baked-in exe icon — so the
+// taskbar there is intentionally out of scope. The installed bundle/exe icon is baked in and unaffected.
 export type AppIconController = {
-  // Applies a variant to every open window + the dock and remembers it for windows created later.
+  // Applies a variant to every open window (off macOS) or the Dock (macOS) and remembers it for
+  // windows created later.
   setVariant: (variant: AppIconVariant) => void
   // The variant currently applied.
   getVariant: () => AppIconVariant

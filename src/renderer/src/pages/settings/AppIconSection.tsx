@@ -8,9 +8,9 @@ import { SettingsSection } from './SettingsLayout'
 
 // Lets the user switch the app icon between the built-in variants. Previews are rendered in the main
 // process from the bundled assets, so the tile shows exactly what will be applied. The chosen variant
-// is applied live to the window and dock/taskbar; the static installed icon (Finder .app, Windows
-// .exe in Explorer/Start menu, Linux launcher) is the one baked into the build and is never rewritten
-// at runtime — the note below says so, so users don't expect the Finder/Explorer icon to follow.
+// is applied live to the app window icon (all platforms) and the macOS Dock; the static installed
+// icon (Finder .app, Windows .exe in Explorer/Start menu/taskbar, Linux launcher) is baked into the
+// build and is never rewritten at runtime — the note below says so, so users don't expect it to follow.
 const AppIconSection = (): React.JSX.Element => {
   const appIconVariant = useSettingsStore((state) => state.appIconVariant)
   const setAppIconVariant = useSettingsStore((state) => state.setAppIconVariant)
@@ -39,7 +39,7 @@ const AppIconSection = (): React.JSX.Element => {
   return (
     <SettingsSection
       title="App icon"
-      description="Choose the built-in icon shown in the window and dock or taskbar."
+      description="Choose the built-in icon shown in the app window, and in the Dock on macOS."
       aria-label="App icon"
       separated
     >
@@ -83,8 +83,9 @@ const AppIconSection = (): React.JSX.Element => {
       </div>
 
       <p className="mt-3 text-xs text-muted-foreground">
-        The new icon appears right away in the window and dock or taskbar. The icon in Finder,
-        Explorer, or the Start menu is part of the installed app and stays the same.
+        The new icon appears right away in the app window, and in the Dock on macOS. The icon in
+        Finder, Explorer, the taskbar, or the Start menu is part of the installed app and stays the
+        same.
       </p>
     </SettingsSection>
   )

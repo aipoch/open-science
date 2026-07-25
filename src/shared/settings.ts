@@ -274,8 +274,8 @@ export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
 
 // The selectable app-icon look. 'light' is the current dotted mark (shipped default); 'dark' is the
 // original Open Science icon from the first release. Both are built-in assets; the choice is applied
-// at runtime to the window and dock/taskbar where the OS allows it (the static installed icon in
-// Finder/Explorer is baked into the build and never changes).
+// at runtime to the app window icon (all platforms) and the macOS Dock (the static installed icon in
+// Finder/Explorer/taskbar is baked into the build and never changes).
 export type AppIconVariant = 'light' | 'dark'
 
 export const DEFAULT_APP_ICON_VARIANT: AppIconVariant = 'light'
@@ -344,7 +344,7 @@ export type SettingsSnapshot = {
   notificationsEnabled: boolean
   // Saved Windows titlebar-close behavior. Undefined means ask every time.
   closePreference?: CloseActionPreference
-  // The selected built-in app-icon look, applied to the window and dock/taskbar. Defaults to 'light'.
+  // The selected built-in app-icon look, applied to the window icon and macOS Dock. Defaults to 'light'.
   appIconVariant: AppIconVariant
 }
 
