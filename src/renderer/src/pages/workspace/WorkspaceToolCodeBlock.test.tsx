@@ -75,4 +75,20 @@ describe('WorkspaceToolCodeBlock', () => {
     expect(writeText).toHaveBeenCalledWith('import')
     expect(container.querySelector('[aria-label="Copied"]')).toBeNull()
   })
+
+  it('pins the copy button outside the scrollable code area', async () => {
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<WorkspaceToolCodeBlock code="import" language="python" copyable />)
+    })
+
+    const codeBlock = container.querySelector('[data-testid="tool-code-block"]')
+    const copyButton = container.querySelector('[data-testid="code-copy-button"]')
+
+    expect(codeBlock?.tagName).toBe('PRE')
+    expect(codeBlock?.className).toContain('overflow-auto')
+    expect(codeBlock?.parentElement?.className).toContain('relative')
+    expect(copyButton?.parentElement).toBe(codeBlock?.parentElement)
+    expect(copyButton?.className).toContain('z-10')
+  })
 })

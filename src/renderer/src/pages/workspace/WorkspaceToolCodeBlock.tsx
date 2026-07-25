@@ -83,11 +83,9 @@ const WorkspaceToolCodeBlock = ({
   const tokens = highlighted?.key === highlightKey ? highlighted.result.tokens : undefined
 
   return (
-    <pre
-      data-testid="tool-code-block"
-      data-language={language}
+    <div
       className={cn(
-        'relative max-h-[320px] overflow-auto rounded-md border border-border-200 bg-bg-000 px-3 py-2.5',
+        'group relative max-h-[320px] overflow-hidden rounded-md border border-border-200 bg-bg-000',
         className
       )}
     >
@@ -97,35 +95,41 @@ const WorkspaceToolCodeBlock = ({
           data-testid="code-copy-button"
           aria-label={copied ? 'Copied' : 'Copy code'}
           onClick={() => void copyCode()}
-          className="absolute right-2 top-2 rounded bg-bg-100/80 p-1.5 text-text-200 hover:bg-bg-200 hover:text-text-100"
+          className="absolute right-2 top-2 z-10 rounded bg-bg-100/80 p-1.5 text-text-200 backdrop-blur-sm hover:bg-bg-200 hover:text-text-100"
         >
           <Copy className="size-3.5" aria-hidden />
         </button>
       )}
-      <code className="block whitespace-pre font-mono text-[12px] leading-relaxed text-text-000">
-        {tokens
-          ? tokens.map((line, lineIndex) => (
-              <Fragment key={lineIndex}>
-                {line.map((token, tokenIndex) => (
-                  <span
-                    key={tokenIndex}
-                    // Dual-theme Shiki output puts the color (and a --shiki-dark var) in htmlStyle,
-                    // not token.color, so apply htmlStyle and fall back to color for single themes.
-                    style={{
-                      color: token.color,
-                      ...(token.htmlStyle as React.CSSProperties | undefined),
-                      ...fontStyleToCss(token.fontStyle)
-                    }}
-                  >
-                    {token.content}
-                  </span>
-                ))}
-                {lineIndex < tokens.length - 1 ? '\n' : null}
-              </Fragment>
-            ))
-          : source}
-      </code>
-    </pre>
+      <pre
+        data-testid="tool-code-block"
+        data-language={language}
+        className="m-0 max-h-[320px] overflow-auto px-3 py-2.5"
+      >
+        <code className="block whitespace-pre font-mono text-[12px] leading-relaxed text-text-000">
+          {tokens
+            ? tokens.map((line, lineIndex) => (
+                <Fragment key={lineIndex}>
+                  {line.map((token, tokenIndex) => (
+                    <span
+                      key={tokenIndex}
+                      // Dual-theme Shiki output puts the color (and a --shiki-dark var) in htmlStyle,
+                      // not token.color, so apply htmlStyle and fall back to color for single themes.
+                      style={{
+                        color: token.color,
+                        ...(token.htmlStyle as React.CSSProperties | undefined),
+                        ...fontStyleToCss(token.fontStyle)
+                      }}
+                    >
+                      {token.content}
+                    </span>
+                  ))}
+                  {lineIndex < tokens.length - 1 ? '\n' : null}
+                </Fragment>
+              ))
+            : source}
+        </code>
+      </pre>
+    </div>
   )
 }
 
