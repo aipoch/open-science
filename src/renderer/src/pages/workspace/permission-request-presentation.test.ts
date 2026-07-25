@@ -86,6 +86,22 @@ describe('describePermissionRequest', () => {
     ).toBe('Open Science Artifacts / Write Artifact File')
   })
 
+  it('classifies a raw MCP protocol name even when the provider omits isMcp', () => {
+    expect(
+      describePermissionRequest(
+        request({
+          title: 'mcp__open-science-artifacts__write_artifact_file',
+          isMcp: false,
+          toolKind: 'execute'
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'Use external service?',
+      categoryLabel: 'External service',
+      actionDetail: 'Open Science Artifacts / Write Artifact File'
+    })
+  })
+
   it('uses the provider identity when an MCP title is generic', () => {
     expect(
       describePermissionRequest(

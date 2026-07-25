@@ -136,6 +136,16 @@ const notebookControlPresentation = (tool: string): PermissionPresentation => {
 const providerToolName = (request: AcpPermissionRequest): string | undefined =>
   request.providerToolName?.trim() || undefined
 
+const hasMcpProtocolPrefix = (name: string | undefined): boolean =>
+  /^mcp(?:__|\.)/iu.test(name ?? '')
+
+// Broker-projected isMcp is authoritative when present, but raw protocol names are also enough for
+// the renderer to avoid exposing or misclassifying a request when a provider omitted that flag.
+const isMcpPermissionRequest = (request: AcpPermissionRequest): boolean =>
+  request.isMcp ||
+  hasMcpProtocolPrefix(request.title) ||
+  hasMcpProtocolPrefix(request.providerToolName)
+
 // Keeps an otherwise-opaque MCP request distinguishable without surfacing its protocol spelling.
 // Provider names win when a bridge supplies only a boilerplate title.
 const isGenericMcpTitle = (title: string): boolean =>
@@ -149,7 +159,7 @@ const humanizeMcpAction = (request: AcpPermissionRequest): string | undefined =>
   if (!name || isOpaqueToolCallId(name)) return undefined
 
   const usesDottedNamespace = /^mcp\./iu.test(name)
-  const normalized = name.replace(/^mcp(?:__|\.)/u, '')
+  const normalized = name.replace(/^mcp(?:__|\.)/iu, '')
   const segments = normalized
     .split(usesDottedNamespace ? '.' : '__')
     .filter(Boolean)
@@ -185,7 +195,7 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
 
   // MCP metadata describes the provider's tool, not a trusted local capability. Only the
   // explicitly modeled notebook tools above receive a more specific native classification.
-  if (request.isMcp) {
+  if (isMcpPermissionRequest(request)) {
     return {
       actionTitle: 'Use external service?',
       categoryLabel: 'External service',
@@ -247,5 +257,5 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
   }
 }
 
-export { describePermissionRequest }
+export { describePermissionRequest, isMcpPermissionRequest }
 export type { NotebookRuntime, PermissionPresentation }

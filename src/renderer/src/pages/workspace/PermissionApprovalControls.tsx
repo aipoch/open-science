@@ -10,7 +10,11 @@ import { dialogTitleClassName } from '@/components/ui/dialog-chrome'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
-import { describePermissionRequest, type NotebookRuntime } from './permission-request-presentation'
+import {
+  describePermissionRequest,
+  isMcpPermissionRequest,
+  type NotebookRuntime
+} from './permission-request-presentation'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 
 type PermissionApprovalControlsProps = {
@@ -189,7 +193,7 @@ const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | 
 // A friendly action title for the code card header, matching the transcript's activity phrasing.
 const getPermissionActionTitle = (request: AcpPermissionRequest, fallback: string): string => {
   if (resolveNotebookToolName(request)) return 'Run notebook cell'
-  if (request.isMcp) return 'External service input'
+  if (isMcpPermissionRequest(request)) return 'External service input'
   if (request.toolKind === 'execute' || request.providerToolName === 'Bash') return 'Run command'
   return fallback
 }
@@ -557,16 +561,15 @@ const PermissionApprovalControls = ({
     denyOptionId
   )
 
-  const isShell =
-    request.isMcp !== true &&
-    (request.toolKind === 'execute' || request.providerToolName === 'Bash')
+  const isMcp = isMcpPermissionRequest(request)
+  const isShell = !isMcp && (request.toolKind === 'execute' || request.providerToolName === 'Bash')
 
   // MCP action context stays visible alongside any code, arguments, or locations without exposing
   // the provider's raw protocol spelling. Files, commands, and other native tools retain their target.
   const headerName = request.providerToolName ?? request.title
   const titleDetail = ((): string | undefined => {
     if (presentation.hideToolIdentity) return undefined
-    if (request.isMcp) {
+    if (isMcp) {
       return presentation.actionDetail
     }
     if (!request.title || request.title === permCode?.code) return undefined

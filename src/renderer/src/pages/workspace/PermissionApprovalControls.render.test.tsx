@@ -192,6 +192,29 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain('mcp.open-science-artifacts')
   })
 
+  it('humanizes a raw MCP protocol title even when isMcp is omitted', () => {
+    const rawTitle = 'mcp__open-science-artifacts__write_artifact_file'
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            ...permissionRequest,
+            title: rawTitle,
+            providerToolName: rawTitle,
+            isMcp: false,
+            toolKind: 'execute'
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+
+    expect(html).toContain('Use external service?')
+    expect(html).toContain('Open Science Artifacts / Write Artifact File')
+    expect(html).not.toContain(rawTitle)
+    expect(html).not.toContain('Run command?')
+  })
+
   it('keeps MCP execute payloads labeled as external service input', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls
