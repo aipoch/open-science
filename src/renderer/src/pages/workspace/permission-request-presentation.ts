@@ -98,6 +98,12 @@ const notebookControlPresentation = (tool: string): PermissionPresentation => {
         categoryLabel: 'Notebook control',
         description: 'Reads the current notebook environment and runtime state.'
       }
+    case 'list_notebook_runtimes':
+      return {
+        actionTitle: 'View notebook runtimes?',
+        categoryLabel: 'Notebook control',
+        description: 'Lists the notebook runtimes available to this conversation.'
+      }
     case 'notebook_bind_runtime':
     case 'notebook_switch_runtime':
       return {
@@ -156,6 +162,12 @@ const isNetworkTool = (request: AcpPermissionRequest): boolean => {
   return request.toolKind === 'fetch' || name === 'webfetch' || name === 'websearch'
 }
 
+const withMcpActionDetail = (
+  request: AcpPermissionRequest,
+  presentation: PermissionPresentation
+): PermissionPresentation =>
+  request.isMcp ? { ...presentation, actionDetail: humanizeMcpAction(request) } : presentation
+
 const describePermissionRequest = (request: AcpPermissionRequest): PermissionPresentation => {
   const notebookToolName = resolveNotebookRunToolName(request.providerToolName, request.title)
   if (notebookToolName) {
@@ -169,13 +181,50 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
     .find((tool): tool is string => tool !== undefined)
   if (controlTool) return notebookControlPresentation(controlTool)
 
+  if (isNetworkTool(request)) {
+    return withMcpActionDetail(request, {
+      actionTitle: 'Access network resource?',
+      categoryLabel: 'Network access',
+      description: 'Sends a request to an external network resource.'
+    })
+  }
+
+  switch (request.toolKind) {
+    case 'read':
+    case 'search':
+      return withMcpActionDetail(request, {
+        actionTitle: 'Read files?',
+        categoryLabel: 'File access',
+        description: 'Reads or searches the listed files.'
+      })
+    case 'edit':
+      return withMcpActionDetail(request, {
+        actionTitle: 'Edit files?',
+        categoryLabel: 'File access',
+        description: 'Changes the listed files.'
+      })
+    case 'delete':
+      return withMcpActionDetail(request, {
+        actionTitle: 'Delete files?',
+        categoryLabel: 'File access',
+        description: 'Deletes the listed files.'
+      })
+    case 'move':
+      return withMcpActionDetail(request, {
+        actionTitle: 'Move files?',
+        categoryLabel: 'File access',
+        description: 'Moves the listed files.'
+      })
+    default:
+      break
+  }
+
   if (request.isMcp) {
-    return {
+    return withMcpActionDetail(request, {
       actionTitle: 'Use external service?',
       categoryLabel: 'External service',
-      description: 'Uses an MCP service configured for this conversation.',
-      actionDetail: humanizeMcpAction(request)
-    }
+      description: 'Uses an MCP service configured for this conversation.'
+    })
   }
 
   if (request.providerToolName === 'Bash' || request.toolKind === 'execute') {
@@ -186,46 +235,10 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
     }
   }
 
-  if (isNetworkTool(request)) {
-    return {
-      actionTitle: 'Access network resource?',
-      categoryLabel: 'Network access',
-      description: 'Sends a request to an external network resource.'
-    }
-  }
-
-  switch (request.toolKind) {
-    case 'read':
-    case 'search':
-      return {
-        actionTitle: 'Read files?',
-        categoryLabel: 'File access',
-        description: 'Reads or searches the listed files.'
-      }
-    case 'edit':
-      return {
-        actionTitle: 'Edit files?',
-        categoryLabel: 'File access',
-        description: 'Changes the listed files.'
-      }
-    case 'delete':
-      return {
-        actionTitle: 'Delete files?',
-        categoryLabel: 'File access',
-        description: 'Deletes the listed files.'
-      }
-    case 'move':
-      return {
-        actionTitle: 'Move files?',
-        categoryLabel: 'File access',
-        description: 'Moves the listed files.'
-      }
-    default:
-      return {
-        actionTitle: 'Allow tool access?',
-        categoryLabel: 'Tool access',
-        description: 'Allows this tool to run with the details shown below.'
-      }
+  return {
+    actionTitle: 'Allow tool access?',
+    categoryLabel: 'Tool access',
+    description: 'Allows this tool to run with the details shown below.'
   }
 }
 

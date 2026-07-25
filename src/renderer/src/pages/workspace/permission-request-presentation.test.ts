@@ -51,6 +51,20 @@ describe('describePermissionRequest', () => {
     })
   })
 
+  it('describes listing notebook runtimes as a read-only action', () => {
+    expect(
+      describePermissionRequest(
+        request({
+          title: 'mcp__open-science-notebook__list_notebook_runtimes',
+          isMcp: true
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'View notebook runtimes?',
+      description: 'Lists the notebook runtimes available to this conversation.'
+    })
+  })
+
   it.each([
     [request({ toolKind: 'read' }), 'File access'],
     [request({ toolKind: 'fetch' }), 'Network access'],
@@ -69,5 +83,14 @@ describe('describePermissionRequest', () => {
         })
       ).actionDetail
     ).toBe('Open Science Artifacts / Write Artifact File')
+  })
+
+  it('keeps trusted file and network classifications for MCP requests', () => {
+    expect(
+      describePermissionRequest(request({ isMcp: true, toolKind: 'edit' })).categoryLabel
+    ).toBe('File access')
+    expect(
+      describePermissionRequest(request({ isMcp: true, toolKind: 'fetch' })).categoryLabel
+    ).toBe('Network access')
   })
 })

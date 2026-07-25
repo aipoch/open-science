@@ -187,10 +187,10 @@ const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | 
 }
 
 // A friendly action title for the code card header, matching the transcript's activity phrasing.
-const getPermissionActionTitle = (request: AcpPermissionRequest): string => {
+const getPermissionActionTitle = (request: AcpPermissionRequest, fallback: string): string => {
   if (resolveNotebookToolName(request)) return 'Run notebook cell'
   if (request.toolKind === 'execute' || request.providerToolName === 'Bash') return 'Run command'
-  return request.providerToolName ?? request.title
+  return fallback
 }
 
 // Activity-style collapsible card that shows the code about to run, defaulting to expanded.
@@ -539,14 +539,14 @@ const PermissionApprovalControls = ({
   const headerName = request.providerToolName ?? request.title
   const titleDetail = ((): string | undefined => {
     if (request.isMcp) {
-      return !permCode && !request.toolLocations?.length ? presentation.actionDetail : undefined
+      return presentation.actionDetail
     }
     if (!request.title || request.title === permCode?.code) return undefined
     if (!request.providerToolName) return request.title
     if (isShell) {
       return !permCode && request.title !== request.providerToolName ? request.title : undefined
     }
-    return request.title !== headerName ? request.title : undefined
+    return request.title !== headerName ? request.title : request.providerToolName
   })()
 
   return (
@@ -586,7 +586,10 @@ const PermissionApprovalControls = ({
       {permCode && (
         <PermissionCodeSection
           key={requestId}
-          title={getPermissionActionTitle(request)}
+          title={getPermissionActionTitle(
+            request,
+            presentation.actionDetail ?? presentation.actionTitle
+          )}
           code={permCode.code}
           language={permCode.language}
         />

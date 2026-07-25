@@ -192,6 +192,28 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain('mcp.open-science-artifacts')
   })
 
+  it('keeps a humanized MCP action beside reviewable paths or arguments', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            ...permissionRequest,
+            title: 'mcp__open-science-artifacts__write_artifact_file',
+            isMcp: true,
+            toolKind: 'edit',
+            toolLocations: [{ path: 'report.md' }],
+            rawInput: { value: 'updated' }
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+
+    expect(html).toContain('File access</span>')
+    expect(html).toContain('Open Science Artifacts / Write Artifact File')
+    expect(html).toContain('report.md')
+  })
+
   it('shows the title for a non-Bash execute request with no command preview', () => {
     // A non-Bash execute request whose command lives only in the title: extractPermissionCode
     // has no Bash fallback here, so the title is the only place the command can appear — the
@@ -438,6 +460,25 @@ describe('PermissionApprovalControls', () => {
       <PermissionApprovalControls requests={[write]} onRespond={() => undefined} />
     )
     expect(html).toContain('Write report.md')
+  })
+
+  it('shows a stable built-in provider name when the title is generic', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            ...permissionRequest,
+            title: 'WebFetch',
+            providerToolName: 'WebFetch',
+            toolKind: 'fetch'
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+
+    expect(html).toContain('Network access</span>')
+    expect(html).toContain('WebFetch')
   })
 
   it('shows notebook control impact without exposing the MCP identifier', () => {
