@@ -187,7 +187,7 @@ This section describes durable product capabilities rather than a version-specif
 | **Built-in cloud providers** | Choose from the provider list shown by the installed app and authenticate with the requested key. |
 | **Custom Gateway**           | Supply a compatible Base URL, API Key, and exact model ID.                                        |
 | **Codex Subscription**       | Select the Codex agent framework first, then you can select Codex subscription in provider type   |
-| **Claude Subscription**      | Run `claude setup-token` in a terminal and paste the resulting long-lived token into the Open Science sign-in prompt. The token is stored encrypted in app data and Claude always runs under an app-owned `CLAUDE_CONFIG_DIR`, isolated from your `~/.claude/`. |
+| **Claude Subscription**      | Sign in with a Claude subscription in two modes: **shared** (a browser login that stores credentials in your default `~/.claude` profile) or **isolated** (an app-managed `claude setup-token` run under an app-owned `CLAUDE_CONFIG_DIR`, fully isolated from `~/.claude/`, with a browser flow plus a paste-a-token fallback). |
 
 The legacy **Local Claude** provider has been removed. Previously stored Local Claude entries are
 dropped during upgrade; add **Claude Subscription** and authenticate with `claude setup-token`
