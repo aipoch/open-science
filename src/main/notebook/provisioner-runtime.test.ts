@@ -59,7 +59,9 @@ describe('runMicromamba', () => {
     ).resolves.toBeUndefined()
   })
 
-  it('rejects with a stderr summary on non-zero exit', async () => {
+  it('rejects with a short stderr excerpt on non-zero exit, keeping full tails in data', async () => {
+    // The user-facing message prefers the stderr reason (not the package-plan stdout) so the
+    // provisioning banner never floods; both full tails stay on the error's structured `data`.
     await expect(
       runMicromamba(
         [
@@ -69,7 +71,45 @@ describe('runMicromamba', () => {
         ],
         { MM_STDOUT: 'stdout-only-token', MM_STDERR: 'stderr-only-token' }
       )
-    ).rejects.toThrow(/exit 3[^]*stdout-only-token[^]*stderr-only-token/)
+    ).rejects.toMatchObject({
+      code: 'MICROMAMBA_EXIT',
+      message: expect.stringMatching(/exit 3[^]*stderr-only-token/),
+      data: {
+        exitCode: 3,
+        stderrTail: 'stderr-only-token',
+        stdoutTail: 'stdout-only-token'
+      }
+    })
+  })
+
+  it('omits the stdout package plan from the exit message when stderr carries the reason', async () => {
+    await expect(
+      runMicromamba(
+        [
+          process.execPath,
+          '-e',
+          'process.stdout.write(process.env.MM_STDOUT); process.stderr.write(process.env.MM_STDERR); process.exit(1)'
+        ],
+        { MM_STDOUT: 'plan-noise-token', MM_STDERR: 'the-real-reason' }
+      )
+    ).rejects.toThrow(/^(?:(?!plan-noise-token)[^])*the-real-reason(?:(?!plan-noise-token)[^])*$/)
+  })
+
+  it('caps the exit message excerpt while retaining the full stderr tail in data', async () => {
+    // 2 KB of stderr must not reach the message verbatim (the banner-flood bug); the excerpt is
+    // bounded and prefixed with an ellipsis, but the full tail is preserved on `data`.
+    await expect(
+      runMicromamba([
+        process.execPath,
+        '-e',
+        "process.stderr.write('X'.repeat(2048)); process.exit(2)"
+      ])
+    ).rejects.toMatchObject({
+      code: 'MICROMAMBA_EXIT',
+      // The ellipsis-prefixed excerpt ends in EXACTLY 500 X's — proof the 2048-char tail was capped.
+      message: expect.stringMatching(/…X{500}$/),
+      data: { stderrTail: 'X'.repeat(2048) }
+    })
   })
 
   it('distinguishes timeout from an ordinary non-zero exit and keeps output tails', async () => {

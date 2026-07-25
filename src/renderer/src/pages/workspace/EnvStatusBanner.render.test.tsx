@@ -113,6 +113,30 @@ describe('EnvStatusBanner', () => {
     expect(retried).toBe(1)
   })
 
+  it('clamps a long error reason and uses the dialog card chrome instead of an unbounded pill', () => {
+    // A provisioner failure can carry thousands of characters (the micromamba package plan). The
+    // banner must not grow unbounded: the reason is line-clamped and the panel adopts the rounded
+    // dialog card. Full diagnostics live in the logs, not this banner.
+    const longReason = `micromamba failed (exit 1): ${'pkg==1.0=hbuild_0 - '.repeat(400)}`
+    act(() =>
+      root.render(
+        <EnvStatusBanner ui={{ kind: 'error', message: longReason }} onRetry={() => {}} />
+      )
+    )
+    const banner = container.querySelector('[data-testid="env-status-banner"]') as HTMLElement
+    expect(banner).not.toBeNull()
+    // Dialog chrome (matches dialog-chrome.ts): rounded card, card surface, dialog shadow.
+    expect(banner.className).toContain('rounded-xl')
+    expect(banner.className).toContain('bg-card')
+    expect(banner.className).toContain('shadow-dialog')
+    // The reason is present but rendered in a line-clamped node so the banner can't fill the screen.
+    const reason = banner.querySelector('.line-clamp-3') as HTMLElement
+    expect(reason).not.toBeNull()
+    expect(reason.textContent).toContain('micromamba failed (exit 1)')
+    // The standing title is separate from the clamped reason.
+    expect(banner.textContent).toContain('Environment update failed')
+  })
+
   it('is hidden for a first-run python preparation (that is the onboarding/gate surface, not a banner)', () => {
     act(() =>
       root.render(

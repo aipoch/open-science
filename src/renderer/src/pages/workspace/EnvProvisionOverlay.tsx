@@ -47,7 +47,11 @@ const EnvProvisionOverlay = ({
         </>
       ) : (
         <>
-          <p className="text-xs text-text-300">{ui.message}</p>
+          {/* A provisioner failure reason can be long; bound it to a scrollable box so the overlay
+              never grows unbounded. Full diagnostics live in the logs (provisioner-runtime.briefTail). */}
+          <p className="max-h-24 max-w-md overflow-y-auto break-words whitespace-pre-wrap text-xs text-text-300">
+            {ui.message}
+          </p>
           {onRetry ? (
             <button
               type="button"
