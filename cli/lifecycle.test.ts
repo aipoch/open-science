@@ -1,10 +1,15 @@
 import { EventEmitter } from 'node:events'
+import { closeSync } from 'node:fs'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import {
   buildAppLaunchArgs,
   formatStartupFailure,
+  openLaunchLog,
   statusCommand,
   stopCommand,
   terminateDaemon,
@@ -104,6 +109,20 @@ describe('terminateDaemon', () => {
 })
 
 describe('headless startup', () => {
+  it('starts each launch with an empty diagnostic log', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-log-'))
+    const logPath = join(directory, 'cli-daemon.log')
+    try {
+      await writeFile(logPath, 'stale SUID sandbox failure')
+
+      closeSync(openLaunchLog(logPath))
+
+      await expect(readFile(logPath, 'utf8')).resolves.toBe('')
+    } finally {
+      await rm(directory, { recursive: true })
+    }
+  })
+
   it('places the no-sandbox runtime switch before the development app path', () => {
     expect(buildAppLaunchArgs(['app-root'], { noSandbox: true }, 44100)).toEqual([
       '--no-sandbox',

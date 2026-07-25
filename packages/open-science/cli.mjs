@@ -339,6 +339,8 @@ const readLogTail = async (logPath) => {
   }
 }
 
+export const openLaunchLog = (logPath) => openSync(logPath, 'w')
+
 export const buildAppLaunchArgs = (appArgs, options, port) => [
   ...(options.noSandbox ? ['--no-sandbox'] : []),
   ...appArgs,
@@ -394,7 +396,7 @@ const startCommand = async (options, deps = DEFAULT_DEPS) => {
   await deps.removeState(configRoot)
 
   const logPath = join(configRoot, 'cli-daemon.log')
-  const logFd = openSync(logPath, 'a')
+  const logFd = openLaunchLog(logPath)
   const port = options.port ?? DEFAULT_PORT
   const childEnv = {
     ...process.env,
@@ -413,10 +415,11 @@ const startCommand = async (options, deps = DEFAULT_DEPS) => {
     windowsHide: true,
     env: childEnv
   })
+  const startupPromise = waitForStartup(configRoot, child, deps)
   child.unref()
   closeSync(logFd)
 
-  const startup = await waitForStartup(configRoot, child, deps)
+  const startup = await startupPromise
   if (startup.kind !== 'ready') {
     const logTail = await readLogTail(logPath)
     if (startup.kind !== 'timeout') {
