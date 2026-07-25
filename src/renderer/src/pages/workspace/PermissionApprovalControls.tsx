@@ -308,19 +308,35 @@ const useNotebookEnvironment = (
   return kernelKind ? envName : undefined
 }
 
+const PermissionImpactTip = ({ description }: { description: string }): React.JSX.Element => (
+  <TooltipProvider delayDuration={200}>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label="Permission impact information"
+          data-testid="permission-impact-info"
+          className="flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <Info className="size-3.5" aria-hidden="true" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-none whitespace-nowrap">{description}</TooltipContent>
+    </Tooltip>
+  </TooltipProvider>
+)
+
 // Header cluster for permission prompts: a user-facing category, an available notebook environment,
-// and the existing information affordance.
+// and the authorization-scope information affordance.
 const PermissionHeaderBadges = ({
   lookup,
   runtime,
   categoryLabel,
-  description,
   scopeDescription
 }: {
   lookup: NotebookSessionRequest | undefined
   runtime?: NotebookRuntime
   categoryLabel: string
-  description: string
   scopeDescription: string
 }): React.JSX.Element => {
   const kernelKind = runtime === 'python' ? 'python' : runtime === 'r' ? 'r' : undefined
@@ -349,10 +365,7 @@ const PermissionHeaderBadges = ({
             </button>
           </TooltipTrigger>
           <TooltipContent className="max-w-none whitespace-nowrap">
-            <div className="space-y-1">
-              <p>{description}</p>
-              <p className="text-muted-foreground">{scopeDescription}</p>
-            </div>
+            {scopeDescription}
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
@@ -567,14 +580,16 @@ const PermissionApprovalControls = ({
     <div className="mb-2 flex w-full max-w-full flex-col gap-3 rounded-xl border border-border bg-card p-5 text-xs leading-5 text-card-foreground shadow-dialog outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
       {/* Header: plain-language action plus its classification and notebook context. */}
       <div className="flex min-w-0 items-center gap-2">
-        <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>
-          {presentation.actionTitle}
-        </span>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>
+            {presentation.actionTitle}
+          </span>
+          <PermissionImpactTip description={presentation.description} />
+        </div>
         <PermissionHeaderBadges
           lookup={notebookLookup}
           runtime={presentation.notebookRuntime}
           categoryLabel={presentation.categoryLabel}
-          description={presentation.description}
           scopeDescription={scopeDescription}
         />
       </div>
