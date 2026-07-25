@@ -272,6 +272,33 @@ const REASONING_EFFORTS: readonly ReasoningEffort[] = ['default', 'low', 'medium
 export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
   typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
 
+// The selectable app-icon look. 'light' is the current dotted mark (shipped default); 'dark' is the
+// original Open Science icon from the first release. Both are built-in assets; the choice is applied
+// at runtime to the window and dock/taskbar where the OS allows it (the static installed icon in
+// Finder/Explorer is baked into the build and never changes).
+export type AppIconVariant = 'light' | 'dark'
+
+export const DEFAULT_APP_ICON_VARIANT: AppIconVariant = 'light'
+
+const APP_ICON_VARIANTS: readonly AppIconVariant[] = ['light', 'dark']
+
+// Runtime guard for untrusted values (IPC payloads, settings.json): only the known variants pass.
+export const isAppIconVariant = (value: unknown): value is AppIconVariant =>
+  typeof value === 'string' && (APP_ICON_VARIANTS as readonly string[]).includes(value)
+
+// Static, non-secret descriptor for one selectable icon variant, driving the Appearance picker.
+export type AppIconVariantInfo = {
+  id: AppIconVariant
+  label: string
+  description: string
+}
+
+// The ordered icon variants shown in Settings. The default (light) leads.
+export const APP_ICON_VARIANT_INFOS: readonly AppIconVariantInfo[] = [
+  { id: 'light', label: 'Light', description: 'The current light dotted mark.' },
+  { id: 'dark', label: 'Dark', description: 'The original Open Science icon.' }
+]
+
 // Renderer-facing descriptor for one selectable agent framework (built from the main registry).
 export type AgentFrameworkView = {
   id: AgentFrameworkId
@@ -317,6 +344,8 @@ export type SettingsSnapshot = {
   notificationsEnabled: boolean
   // Saved Windows titlebar-close behavior. Undefined means ask every time.
   closePreference?: CloseActionPreference
+  // The selected built-in app-icon look, applied to the window and dock/taskbar. Defaults to 'light'.
+  appIconVariant: AppIconVariant
 }
 
 // Request to set (or clear, via omitted fields) the package-mirror configuration.
@@ -336,6 +365,17 @@ export type SetNotificationsEnabledRequest = {
 
 export type SetClosePreferenceRequest = {
   preference?: CloseActionPreference
+}
+
+export type SetAppIconVariantRequest = {
+  variant: AppIconVariant
+}
+
+// A built-in icon variant plus a small preview image (data URL) generated in the main process from the
+// bundled asset, so the renderer shows exactly what will be applied without shipping the asset twice.
+export type AppIconPreview = AppIconVariantInfo & {
+  // A small PNG data URL of the variant's icon, sized for the settings preview tile.
+  previewDataUrl: string
 }
 
 // The hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.

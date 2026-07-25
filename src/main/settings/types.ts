@@ -1,4 +1,5 @@
 import type {
+  AppIconVariant,
   ChatApiEndpoint,
   ClaudeSubscriptionProviderId,
   ClaudeInfo,
@@ -116,6 +117,8 @@ export type StoredSettings = {
   notificationsEnabled?: boolean
   // Windows titlebar-close behavior. Absent means ask every time.
   closePreference?: CloseActionPreference
+  // Selected built-in app-icon look. Absent means the default ('light').
+  appIconVariant?: AppIconVariant
   // Detected opencode executable path + reported version (for the status card). Absent = detect on PATH.
   opencodePath?: string
   opencodeVersion?: string

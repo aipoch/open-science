@@ -9,6 +9,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import type { CloseActionPreference } from '../../../../shared/window-controls'
 import type { CliLauncherStatus } from '../../../../shared/cli'
 import { APP } from '../../../../shared/app-config'
+import { AppIconSection } from './AppIconSection'
 import { AppVersionSection } from './AppVersionSection'
 import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
 
@@ -172,6 +173,8 @@ const GeneralPanel = (): React.JSX.Element => {
           notification permission the first time one appears.
         </p>
       </SettingsSection>
+
+      <AppIconSection />
 
       <SettingsSection
         title="Diagnostics"

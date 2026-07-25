@@ -5,6 +5,7 @@ import {
   codexSubscriptionProviderIdentity,
   claudeSharedProviderIdentity,
   claudeIsolatedProviderIdentity,
+  DEFAULT_APP_ICON_VARIANT,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
   isClaudeSubscriptionProvider,
@@ -37,6 +38,7 @@ import type {
   RefreshProviderModelsResult,
   ReasoningEffort,
   SettingsSnapshot,
+  AppIconVariant,
   SkillView,
   AgentHomeSkillView,
   CreateSkillRequest,
@@ -144,6 +146,8 @@ type SettingsStoreData = {
   notificationsEnabled: boolean
   // Saved Windows titlebar-close behavior. Undefined means ask every time.
   closePreference: CloseActionPreference | undefined
+  // Selected built-in app-icon look, applied to the window and dock/taskbar. Defaults to 'light'.
+  appIconVariant: AppIconVariant
 }
 
 type SettingsStore = SettingsStoreData & {
@@ -213,6 +217,8 @@ type SettingsStore = SettingsStoreData & {
   // Toggles desktop notifications for finished/failed agent tasks; applies immediately.
   setNotificationsEnabled: (enabled: boolean) => Promise<void>
   setClosePreference: (preference: CloseActionPreference | undefined) => Promise<void>
+  // Sets the app-icon look; main applies it live to the window and dock/taskbar.
+  setAppIconVariant: (variant: AppIconVariant) => Promise<void>
   deleteProvider: (providerId: string) => Promise<void>
   openSettings: () => void
   openSettingsToPanel: (panel: SettingsPanelId) => void
@@ -354,7 +360,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   packageMirror: undefined,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
-  closePreference: undefined
+  closePreference: undefined,
+  appIconVariant: DEFAULT_APP_ICON_VARIANT
 })
 
 // Applies a fresh main-process snapshot to the renderer cache.
@@ -371,6 +378,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   // write undefined into the boolean preference.
   notificationsEnabled: snapshot.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
   closePreference: snapshot.closePreference,
+  appIconVariant: snapshot.appIconVariant ?? DEFAULT_APP_ICON_VARIANT,
   agentFrameworkId: snapshot.agentFrameworkId,
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,
@@ -967,6 +975,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     } catch (error) {
       set({ closePreference: previous })
       console.error('Failed to set close preference', error)
+    }
+  },
+
+  // Sets the app-icon look. Optimistic like the other preference setters: apply the pick, reconcile
+  // from the returned snapshot, and revert if the write fails.
+  setAppIconVariant: async (variant) => {
+    const previous = get().appIconVariant
+    set({ appIconVariant: variant })
+
+    try {
+      set(applySnapshot(await window.api.settings.setAppIconVariant({ variant })))
+    } catch (error) {
+      set({ appIconVariant: previous })
+      console.error('Failed to set app icon variant', error)
     }
   },
 

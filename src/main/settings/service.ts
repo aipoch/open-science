@@ -44,6 +44,7 @@ import type {
   SetSkillEnabledRequest,
   SetToolPermissionRequest,
   SettingsSnapshot,
+  AppIconVariant,
   SkillDetailView,
   SkillView,
   ToolPermission,
@@ -70,6 +71,7 @@ import {
   claudeIsolatedProviderIdentity,
   claudeSharedProviderIdentity,
   codexSubscriptionProviderIdentity,
+  DEFAULT_APP_ICON_VARIANT,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
   isClaudeSubscriptionProvider,
@@ -633,6 +635,7 @@ class SettingsService {
       reasoningEffort: settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
       notificationsEnabled: settings.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
       closePreference: settings.closePreference,
+      appIconVariant: settings.appIconVariant ?? DEFAULT_APP_ICON_VARIANT,
       agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       agentFrameworks: listAgentFrameworks().map((framework) => ({
         id: framework.id,
@@ -811,6 +814,18 @@ class SettingsService {
     preference: CloseActionPreference | undefined
   ): Promise<SettingsSnapshot> {
     await this.repository.setClosePreference(preference)
+
+    return this.getSettingsView()
+  }
+
+  // The selected app-icon look, read fresh so the startup apply reflects the latest saved choice.
+  async getAppIconVariant(): Promise<AppIconVariant> {
+    return (await this.repository.getSettings()).appIconVariant ?? DEFAULT_APP_ICON_VARIANT
+  }
+
+  // Persists the app-icon look; the caller applies it live to the window and dock/taskbar.
+  async setAppIconVariant(variant: AppIconVariant): Promise<SettingsSnapshot> {
+    await this.repository.setAppIconVariant(variant)
 
     return this.getSettingsView()
   }

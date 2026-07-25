@@ -28,6 +28,8 @@ let cliApi: {
 let settingsApi: {
   setNotificationsEnabled: ReturnType<typeof vi.fn>
   setClosePreference: ReturnType<typeof vi.fn>
+  setAppIconVariant: ReturnType<typeof vi.fn>
+  listAppIcons: ReturnType<typeof vi.fn>
 }
 
 const findButton = (pattern: RegExp): HTMLButtonElement | undefined =>
@@ -78,9 +80,27 @@ beforeEach(() => {
       .fn()
       .mockImplementation((request: { preference?: 'minimize' | 'quit' }) =>
         Promise.resolve({ closePreference: request.preference })
-      )
+      ),
+    setAppIconVariant: vi
+      .fn()
+      .mockImplementation((request: { variant: 'light' | 'dark' }) =>
+        Promise.resolve({ appIconVariant: request.variant })
+      ),
+    listAppIcons: vi.fn().mockResolvedValue([
+      {
+        id: 'light',
+        label: 'Light',
+        description: 'Light',
+        previewDataUrl: 'data:image/png;base64,L'
+      },
+      { id: 'dark', label: 'Dark', description: 'Dark', previewDataUrl: 'data:image/png;base64,D' }
+    ])
   }
-  useSettingsStore.setState({ notificationsEnabled: true, closePreference: undefined })
+  useSettingsStore.setState({
+    notificationsEnabled: true,
+    closePreference: undefined,
+    appIconVariant: 'light'
+  })
   ;(window as unknown as { api: unknown }).api = {
     logs: {
       getPath: vi.fn().mockResolvedValue('/logs/main.log'),
@@ -200,5 +220,37 @@ describe('GeneralPanel close behavior', () => {
 
     expect(settingsApi.setClosePreference).toHaveBeenCalledWith({ preference: 'quit' })
     expect(useSettingsStore.getState().closePreference).toBe('quit')
+  })
+})
+
+describe('GeneralPanel app icon', () => {
+  it('renders a preview tile per variant and switches the icon on click', async () => {
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    expect(settingsApi.listAppIcons).toHaveBeenCalledTimes(1)
+
+    const group = document.body.querySelector<HTMLElement>(
+      '[role="radiogroup"][aria-label="App icon"]'
+    )
+    expect(group).toBeDefined()
+    const tiles = Array.from(group?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? [])
+    expect(tiles).toHaveLength(2)
+
+    // Light is the selected default; Dark is not.
+    const light = tiles.find((tile) => tile.getAttribute('aria-label') === 'Light')
+    const dark = tiles.find((tile) => tile.getAttribute('aria-label') === 'Dark')
+    expect(light?.getAttribute('aria-checked')).toBe('true')
+    expect(dark?.getAttribute('aria-checked')).toBe('false')
+
+    await act(async () => {
+      dark?.click()
+    })
+    await flush()
+
+    expect(settingsApi.setAppIconVariant).toHaveBeenCalledWith({ variant: 'dark' })
+    expect(useSettingsStore.getState().appIconVariant).toBe('dark')
   })
 })

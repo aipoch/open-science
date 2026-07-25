@@ -34,6 +34,7 @@ type SettingsApi = {
   setReasoningEffort: ReturnType<typeof vi.fn>
   setNotificationsEnabled: ReturnType<typeof vi.fn>
   setClosePreference: ReturnType<typeof vi.fn>
+  setAppIconVariant: ReturnType<typeof vi.fn>
   upsertProvider: ReturnType<typeof vi.fn>
   validateProvider: ReturnType<typeof vi.fn>
   cancelCodexLogin: ReturnType<typeof vi.fn>
@@ -86,7 +87,8 @@ const snapshot = (providers: SettingsSnapshot['providers']): SettingsSnapshot =>
   opencodeManaged: false,
   codexManaged: false,
   reasoningEffort: 'default',
-  notificationsEnabled: true
+  notificationsEnabled: true,
+  appIconVariant: 'light'
 })
 
 const providerView = (id: string): SettingsSnapshot['providers'][number] => ({
@@ -158,6 +160,11 @@ beforeEach(() => {
       .fn()
       .mockImplementation((request: { preference?: 'minimize' | 'quit' }) =>
         Promise.resolve({ ...snapshot([]), closePreference: request.preference })
+      ),
+    setAppIconVariant: vi
+      .fn()
+      .mockImplementation((request: { variant: 'light' | 'dark' }) =>
+        Promise.resolve({ ...snapshot([]), appIconVariant: request.variant })
       ),
     upsertProvider: vi.fn(),
     validateProvider: vi.fn(),
@@ -1471,5 +1478,33 @@ describe('settings store: setClosePreference', () => {
     await useSettingsStore.getState().load()
 
     expect(useSettingsStore.getState().closePreference).toBe('minimize')
+  })
+})
+
+describe('settings store: setAppIconVariant', () => {
+  it('forwards the variant to main and caches the returned snapshot', async () => {
+    await useSettingsStore.getState().setAppIconVariant('dark')
+
+    expect(api.setAppIconVariant).toHaveBeenCalledWith({ variant: 'dark' })
+    expect(useSettingsStore.getState().appIconVariant).toBe('dark')
+  })
+
+  it('reverts to the previous variant and logs when main rejects', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    useSettingsStore.setState({ appIconVariant: 'light' })
+    api.setAppIconVariant.mockRejectedValue(new Error('ipc down'))
+
+    await useSettingsStore.getState().setAppIconVariant('dark')
+
+    expect(useSettingsStore.getState().appIconVariant).toBe('light')
+    expect(consoleError).toHaveBeenCalledWith('Failed to set app icon variant', expect.any(Error))
+  })
+
+  it('load() picks up a saved variant from the settings snapshot', async () => {
+    api.getSettings.mockResolvedValue({ ...snapshot([]), appIconVariant: 'dark' })
+
+    await useSettingsStore.getState().load()
+
+    expect(useSettingsStore.getState().appIconVariant).toBe('dark')
   })
 })

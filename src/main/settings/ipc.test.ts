@@ -41,6 +41,7 @@ type FakeSettingsService = Record<
   | 'setReasoningEffort'
   | 'setNotificationsEnabled'
   | 'setClosePreference'
+  | 'setAppIconVariant'
   | 'upsertProvider'
   | 'deleteProvider'
   | 'setActiveProvider'
@@ -105,6 +106,9 @@ const createFakeService = (): FakeSettingsService => ({
   setClosePreference: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], closePreference: 'quit' }),
+  setAppIconVariant: vi
+    .fn()
+    .mockResolvedValue({ claude: {}, providers: [], appIconVariant: 'dark' }),
   upsertProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   deleteProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   setActiveProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
@@ -767,6 +771,61 @@ describe('settings IPC handlers', () => {
     await expect(invoke('settings:set-close-preference', { preference: 'close' })).rejects.toThrow(
       'Invalid close preference'
     )
+  })
+
+  it('persists the app icon variant and applies it live on set-app-icon-variant', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const snapshot = { claude: {}, providers: [], appIconVariant: 'dark' }
+    service.setAppIconVariant.mockResolvedValue(snapshot)
+    const onAppIconVariantChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onAppIconVariantChanged })
+
+    const result = await invoke('settings:set-app-icon-variant', { variant: 'dark' })
+
+    // The handler unwraps the request to the bare variant the service expects, then applies it live.
+    expect(service.setAppIconVariant).toHaveBeenCalledWith('dark')
+    expect(onAppIconVariantChanged).toHaveBeenCalledWith('dark')
+    expect(result).toBe(snapshot)
+  })
+
+  it('rejects an unknown app icon variant without touching the service', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onAppIconVariantChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onAppIconVariantChanged })
+
+    await expect(invoke('settings:set-app-icon-variant', { variant: 'sparkle' })).rejects.toThrow(
+      'Unknown app icon variant'
+    )
+    await expect(invoke('settings:set-app-icon-variant', {})).rejects.toThrow(
+      'Unknown app icon variant'
+    )
+    expect(service.setAppIconVariant).not.toHaveBeenCalled()
+    expect(onAppIconVariantChanged).not.toHaveBeenCalled()
+  })
+
+  it('returns the icon previews from list-app-icons, or an empty list when unavailable', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const previews: { id: 'light'; label: string; description: string; previewDataUrl: string }[] =
+      [
+        {
+          id: 'light',
+          label: 'Light',
+          description: 'x',
+          previewDataUrl: 'data:image/png;base64,AA'
+        }
+      ]
+    registerSettingsIpcHandlers({
+      service: asService(service),
+      listAppIconPreviews: () => previews
+    })
+    expect(await invoke('settings:list-app-icons')).toBe(previews)
+
+    handlers.clear()
+    registerSettingsIpcHandlers({ service: asService(createFakeService()) })
+    expect(await invoke('settings:list-app-icons')).toEqual([])
   })
 
   it('surfaces a service error thrown by install-opencode', async () => {

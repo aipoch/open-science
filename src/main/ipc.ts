@@ -88,6 +88,7 @@ import { registerSettingsIpcHandlers } from './settings/ipc'
 import { getAppClaudeConfigDir } from './settings/provider-env'
 import { createDefaultSettingsService, type SettingsService } from './settings/service'
 import type { StoredConnectors } from './settings/types'
+import type { AppIconPreview, AppIconVariant } from '../shared/settings'
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
 import {
@@ -107,6 +108,11 @@ type IpcRegistrationOptions = {
   // Headless web-serve launches (--serve) have no local desktop user; task notifications are
   // disabled there by contract, not just incidentally via Notification.isSupported().
   headless?: boolean
+  // Applies a newly-selected app-icon variant to the window + dock/taskbar. Supplied by the desktop
+  // startup path; absent in web/headless mode (no local window to re-skin).
+  onAppIconVariantChanged?: (variant: AppIconVariant) => void
+  // Renders the built-in icon variants to preview data URLs for the Appearance picker.
+  listAppIconPreviews?: () => AppIconPreview[]
 }
 
 // Builds a short, human-readable preview of a connector call's arguments for the approval card.
@@ -157,7 +163,9 @@ const refreshConnectorSkillDocs = async (
 // window so every IPC channel (incl. notebook-env) is registered before the renderer can call it.
 const registerIpcHandlers = async ({
   mainEntryPath,
-  headless = false
+  headless = false,
+  onAppIconVariantChanged,
+  listAppIconPreviews
 }: IpcRegistrationOptions): Promise<{
   runtime: ReturnType<typeof registerAcpIpcHandlers>
   notebook: ReturnType<typeof createDefaultNotebookRuntimeService>
@@ -499,7 +507,9 @@ const registerIpcHandlers = async ({
             }
           ),
         () => void runtime.requestSkillsReload()
-      )
+      ),
+    onAppIconVariantChanged,
+    listAppIconPreviews
   })
   registerNotebookIpcHandlers(notebookService)
   // Runtime selection UI (Settings/Onboarding): survey managed+external per language, persist the

@@ -128,9 +128,11 @@ import type {
   SetAgentFrameworkRequest,
   SetNotificationsEnabledRequest,
   SetClosePreferenceRequest,
+  SetAppIconVariantRequest,
   SetReasoningEffortRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
+  AppIconPreview,
   SkillDetailView,
   SkillView,
   CreateSkillRequest,
@@ -251,6 +253,8 @@ interface OpenScienceAPI {
     setReasoningEffort(request: SetReasoningEffortRequest): Promise<SettingsSnapshot>
     setNotificationsEnabled(request: SetNotificationsEnabledRequest): Promise<SettingsSnapshot>
     setClosePreference(request: SetClosePreferenceRequest): Promise<SettingsSnapshot>
+    setAppIconVariant(request: SetAppIconVariantRequest): Promise<SettingsSnapshot>
+    listAppIcons(): Promise<AppIconPreview[]>
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
     cancelCodexLogin(): Promise<void>
     cancelClaudeLogin(): Promise<void>

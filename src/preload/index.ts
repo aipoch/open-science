@@ -137,9 +137,11 @@ import type {
   SetAgentFrameworkRequest,
   SetNotificationsEnabledRequest,
   SetClosePreferenceRequest,
+  SetAppIconVariantRequest,
   SetReasoningEffortRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
+  AppIconPreview,
   SkillDetailView,
   SkillView,
   CreateSkillRequest,
@@ -283,6 +285,8 @@ type OpenScienceAPI = {
     setReasoningEffort: (request: SetReasoningEffortRequest) => Promise<SettingsSnapshot>
     setNotificationsEnabled: (request: SetNotificationsEnabledRequest) => Promise<SettingsSnapshot>
     setClosePreference: (request: SetClosePreferenceRequest) => Promise<SettingsSnapshot>
+    setAppIconVariant: (request: SetAppIconVariantRequest) => Promise<SettingsSnapshot>
+    listAppIcons: () => Promise<AppIconPreview[]>
     validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
     cancelCodexLogin: () => Promise<void>
     cancelClaudeLogin: () => Promise<void>
@@ -694,6 +698,9 @@ const api: OpenScienceAPI = {
       ) as Promise<SettingsSnapshot>,
     setClosePreference: (request) =>
       ipcRenderer.invoke('settings:set-close-preference', request) as Promise<SettingsSnapshot>,
+    setAppIconVariant: (request) =>
+      ipcRenderer.invoke('settings:set-app-icon-variant', request) as Promise<SettingsSnapshot>,
+    listAppIcons: () => ipcRenderer.invoke('settings:list-app-icons') as Promise<AppIconPreview[]>,
     validateProvider: (request) =>
       ipcRenderer.invoke('settings:validate-provider', request) as Promise<ValidateProviderResult>,
     cancelCodexLogin: () => ipcRenderer.invoke('settings:cancel-codex-login') as Promise<void>,

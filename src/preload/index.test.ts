@@ -46,6 +46,8 @@ type PreloadApi = {
     setAgentFramework: (request: unknown) => unknown
     setNotificationsEnabled: (request: unknown) => unknown
     setClosePreference: (request: unknown) => unknown
+    setAppIconVariant: (request: unknown) => unknown
+    listAppIcons: () => unknown
     uninstallClaude: () => unknown
     uninstallOpencode: () => unknown
     uninstallCodex: () => unknown
@@ -187,6 +189,18 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.settings.setClosePreference({ preference: 'minimize' }),
     channel: 'settings:set-close-preference',
     args: [{ preference: 'minimize' }]
+  },
+  {
+    name: 'settings.setAppIconVariant → settings:set-app-icon-variant',
+    invoke: (a) => a.settings.setAppIconVariant({ variant: 'dark' }),
+    channel: 'settings:set-app-icon-variant',
+    args: [{ variant: 'dark' }]
+  },
+  {
+    name: 'settings.listAppIcons → settings:list-app-icons (no args)',
+    invoke: (a) => a.settings.listAppIcons(),
+    channel: 'settings:list-app-icons',
+    args: []
   },
   {
     name: 'settings.uninstallClaude → settings:uninstall-claude (no args)',

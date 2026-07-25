@@ -42,6 +42,8 @@ const installApi = (): void => {
       getPreflight: vi.fn().mockResolvedValue({ claudeReady: true, activeProviderReady: true }),
       isEncryptionAvailable: vi.fn().mockResolvedValue(true),
       isNpmAvailable: vi.fn().mockResolvedValue(true),
+      listAppIcons: vi.fn().mockResolvedValue([]),
+      setAppIconVariant: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
       listSkills: vi.fn().mockResolvedValue([
         {
           id: 'alpha',
@@ -623,8 +625,8 @@ describe('SettingsPage layout', () => {
       generalTab?.click()
     })
 
-    // AppVersion, Notifications, Diagnostics, Command line tool, Community.
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(5)
+    // AppVersion, Notifications, App icon, Diagnostics, Command line tool, Community.
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(6)
     expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
 
     // The Diagnostics panel surfaces the log file path plus Open and Reveal controls.

@@ -4,9 +4,13 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
+  isAppIconVariant,
   isReasoningEffort,
   type AgentFrameworkId,
+  type AppIconPreview,
+  type AppIconVariant,
   type ReasoningEffort,
+  type SetAppIconVariantRequest,
   type SettingsSnapshot,
   type CreateSkillRequest,
   type DeleteProviderRequest,
@@ -66,6 +70,12 @@ export type SettingsIpcOptions = {
   onSkillsChanged?: () => void
   // Called after a connector/tool/credential change so bundled + custom skill docs re-sync.
   onConnectorsChanged?: () => void
+  // Called after the app-icon variant changes so the main process applies it live to the window and
+  // dock/taskbar. Absent (e.g. web mode) means only the persisted value changes.
+  onAppIconVariantChanged?: (variant: AppIconVariant) => void
+  // Renders the built-in icon variants to preview data URLs for the Appearance picker. Absent means
+  // the picker gets an empty list (no bundled assets available, e.g. an environment without them).
+  listAppIconPreviews?: () => AppIconPreview[]
 }
 
 // Streams one install event (log line or progress tick) to every open renderer window.
@@ -81,7 +91,9 @@ const registerSettingsIpcHandlers = ({
   onAgentFrameworkChanged,
   onReasoningEffortChanged,
   onSkillsChanged,
-  onConnectorsChanged
+  onConnectorsChanged,
+  onAppIconVariantChanged,
+  listAppIconPreviews
 }: SettingsIpcOptions = {}): void => {
   const notifyAfterRuntimeUninstall = (
     uninstalledFramework: AgentFrameworkId,
@@ -240,6 +252,24 @@ const registerSettingsIpcHandlers = ({
 
       log.info('set close preference requested', { preference: preference ?? 'ask' })
       return service.setClosePreference(preference)
+    }
+  )
+  ipcMain.handle('settings:list-app-icons', (): AppIconPreview[] => listAppIconPreviews?.() ?? [])
+  ipcMain.handle(
+    'settings:set-app-icon-variant',
+    async (_event, request: SetAppIconVariantRequest) => {
+      // Renderer payloads are untyped at runtime: only a known variant may persist.
+      if (!isAppIconVariant(request?.variant)) {
+        throw new Error(`Unknown app icon variant: ${String(request?.variant)}`)
+      }
+
+      log.info('set app icon variant requested', { variant: request.variant })
+      const snapshot = await service.setAppIconVariant(request.variant)
+
+      // Apply live to the window + dock/taskbar so the change is visible without a restart.
+      onAppIconVariantChanged?.(request.variant)
+
+      return snapshot
     }
   )
   ipcMain.handle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>

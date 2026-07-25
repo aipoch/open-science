@@ -3666,6 +3666,25 @@ describe('SettingsService: close preference', () => {
   })
 })
 
+describe('SettingsService: app icon variant', () => {
+  it('projects the default light variant when none is stored', async () => {
+    const service = createService()
+
+    expect((await service.getSettingsView()).appIconVariant).toBe('light')
+    expect(await service.getAppIconVariant()).toBe('light')
+  })
+
+  it('persists the variant and returns the refreshed snapshot', async () => {
+    const service = createService()
+
+    const snapshot = await service.setAppIconVariant('dark')
+
+    expect(snapshot.appIconVariant).toBe('dark')
+    expect(await service.getAppIconVariant()).toBe('dark')
+    expect((await repository.getSettings()).appIconVariant).toBe('dark')
+  })
+})
+
 describe('SettingsService: listAgentHomeSkills framework routing', () => {
   // The agent-home skill import is framework-agnostic: claude-code scans `~/.claude/skills/`,
   // codex scans `~/.codex/skills/`, and opencode (which has no global skills convention) returns

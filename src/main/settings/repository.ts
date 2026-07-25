@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from 'node:util'
 
 import type {
   AgentFrameworkId,
+  AppIconVariant,
   ChatApiEndpoint,
   ClaudeSubscriptionProviderId,
   ClaudeInfo,
@@ -19,6 +20,7 @@ import {
   SETTINGS_FILE_VERSION,
   claudeIsolatedProviderIdentity,
   codexSubscriptionProviderIdentity,
+  isAppIconVariant,
   isClaudeSubscriptionProvider,
   isClaudeSubscriptionProviderId,
   isCodexSubscriptionProvider,
@@ -506,6 +508,13 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     settings.closePreference = closePreference
   }
 
+  // App-icon look; only a known variant survives so a bad value can't leak through.
+  const appIconVariant = value.appIconVariant
+
+  if (isAppIconVariant(appIconVariant)) {
+    settings.appIconVariant = appIconVariant
+  }
+
   const opencodePath = asString(value.opencodePath)
 
   if (opencodePath) {
@@ -880,6 +889,11 @@ class SettingsRepository {
   // Persists the Windows titlebar-close behavior; undefined restores the confirmation dialog.
   async setClosePreference(preference: CloseActionPreference | undefined): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, closePreference: preference }))
+  }
+
+  // Persists the selected app-icon look; applied live to the window and dock/taskbar by the caller.
+  async setAppIconVariant(variant: AppIconVariant): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, appIconVariant: variant }))
   }
 
   // Records the detected opencode executable path + version for later spawns + the settings status card.

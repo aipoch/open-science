@@ -249,6 +249,29 @@ describe('settings repository', () => {
     expect((await repository.getSettings()).closePreference).toBeUndefined()
   })
 
+  it('persists the app icon variant across a sanitized read and a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.setAppIconVariant('dark')
+
+    // sanitizeSettings must not strip the variant on read-back, or the picker can never switch.
+    expect((await repository.getSettings()).appIconVariant).toBe('dark')
+
+    // A fresh repository on the same storage dir models an app restart: the variant is read back.
+    expect((await new SettingsRepository(root).getSettings()).appIconVariant).toBe('dark')
+  })
+
+  it.each(['light', 'dark'] as const)('keeps the %s app icon variant on load', (variant) => {
+    expect(sanitizeSettings({ appIconVariant: variant }).appIconVariant).toBe(variant)
+  })
+
+  it('drops an unknown app icon variant on load', () => {
+    expect(sanitizeSettings({ appIconVariant: 'sparkle' }).appIconVariant).toBeUndefined()
+    expect(sanitizeSettings({ appIconVariant: 3 }).appIconVariant).toBeUndefined()
+    expect(sanitizeSettings({}).appIconVariant).toBeUndefined()
+  })
+
   it('persists the Codex adapter and paired native runtime across a sanitized read', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 
