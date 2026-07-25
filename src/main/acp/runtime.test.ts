@@ -4916,6 +4916,90 @@ describe('ACP runtime session management', () => {
     expect(process.killed).toBe(true)
   })
 
+  it('keeps a retiring runtime alive until every nested withActivity lease is released', async () => {
+    // Nested withActivity calls stack the lease counter; retirement is gated on hasRetirementBlockingActivity
+    // which only returns false once every nested lease has run its finally. We probe the counter via the
+    // public observable: requestRetirement must not kill the agent process while any inner lease still
+    // holds, even after a sibling nest-mate returns.
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const innerStarted = createDeferred()
+    const releaseInner = createDeferred()
+    const outerStarted = createDeferred()
+    const releaseOuter = createDeferred()
+
+    const inner = runtime.withActivity({}, async () => {
+      innerStarted.resolve()
+      await releaseInner.promise
+    })
+    await innerStarted.promise
+
+    // Outer enters while inner is still in flight → lease counter is 2.
+    const outer = runtime.withActivity({}, async () => {
+      outerStarted.resolve()
+      await releaseOuter.promise
+    })
+    await outerStarted.promise
+
+    await runtime.requestRetirement()
+    expect(process.killed).toBe(false)
+
+    // Releasing the inner only drops the counter to 1; outer still owns a lease, so retirement must stay
+    // deferred. This is the edge the existing single-lease test does not cover.
+    releaseInner.resolve()
+    await inner
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    await runtime.requestRetirement()
+    expect(process.killed).toBe(false)
+
+    // Both leases released → finally chain on the outer finally drives the deferred retirement, and the
+    // agent process is reaped exactly once.
+    releaseOuter.resolve()
+    await outer
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(process.killed).toBe(true)
+  })
+
+  it('releases the withActivity lease through finally when the work function throws', async () => {
+    // The lease counter is decremented inside the same try/finally as the awaiting of `work`. A throw
+    // must take the finally branch — otherwise the activity would leak leases on every error path and
+    // retirement would never fire. We assert the public consequence: once the work promise rejects,
+    // requestRetirement can retire the generation immediately.
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const boom = new Error('workflow blew up')
+    const activityStarted = createDeferred()
+    const activity = runtime.withActivity({}, async () => {
+      activityStarted.resolve()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      throw boom
+    })
+
+    await activityStarted.promise
+    await expect(activity).rejects.toBe(boom)
+
+    // The lease must be back to 0 by now — the finally block ran before the rejection surfaced.
+    // Retirement therefore fires synchronously here; no second setTimeout is needed.
+    await runtime.requestRetirement()
+    expect(process.killed).toBe(true)
+  })
+
   it('createSession waits for a pending provider reconnect before using the new connection', async () => {
     const oldProcess = new FakeAgentProcess()
     const newProcess = new FakeAgentProcess()
