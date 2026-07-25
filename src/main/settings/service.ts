@@ -176,7 +176,7 @@ import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { getConnectorTools } from '../connectors/registry'
 import { renderConnectorInstructions, renderSkillDoc } from '../connectors/skill-doc'
 import { syncConnectorSkillDocs } from '../connectors/provision'
-import { SkillRegistry, type BundledSkill } from '../skills/registry'
+import { isSkillEnabledForAgent, SkillRegistry, type BundledSkill } from '../skills/registry'
 import { SAFE_SLUG, UserSkillRepository } from '../skills/user-skill-repository'
 import { netFetch, netFetchStandard } from '../skills/net-fetch'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
@@ -861,10 +861,24 @@ class SettingsService {
     return [...featured, ...user]
   }
 
-  // Lists all skills (featured + imported + personal) with enabled state from the stored disabled set.
+  // Only user-visible skills cross renderer/user-input boundaries. Agent-only skills remain in the
+  // complete catalog used for provisioning, but cannot be listed, configured, or prompt-nudged.
+  private async userSkillCatalog(): Promise<BundledSkill[]> {
+    return (await this.skillCatalog()).filter((skill) => skill.visibility === 'user')
+  }
+
+  private async requireUserSkill(id: string): Promise<BundledSkill> {
+    const skill = (await this.userSkillCatalog()).find((entry) => entry.id === id)
+
+    if (!skill) throw new Error(`Unknown skill: ${id}`)
+
+    return skill
+  }
+
+  // Lists user-visible skills (featured + imported + personal) with their stored enabled state.
   async listSkills(): Promise<SkillView[]> {
     const [skills, settings] = await Promise.all([
-      this.skillCatalog(),
+      this.userSkillCatalog(),
       this.repository.getSettings()
     ])
     const disabled = new Set(settings.disabledSkillIds ?? [])
@@ -875,17 +889,21 @@ class SettingsService {
   // Returns the subset of forced ids that are currently disabled in settings — i.e. the picks that need
   // a respawn to materialize. Enabled picks are already present and need no reconnect.
   async skillsNeedingForceLoad(forcedIds: string[]): Promise<string[]> {
-    const settings = await this.repository.getSettings()
+    const [skills, settings] = await Promise.all([
+      this.userSkillCatalog(),
+      this.repository.getSettings()
+    ])
+    const visibleIds = new Set(skills.map((skill) => skill.id))
     const disabled = new Set(settings.disabledSkillIds ?? [])
 
-    return forcedIds.filter((id) => disabled.has(id))
+    return forcedIds.filter((id) => visibleIds.has(id) && disabled.has(id))
   }
 
   // Resolves picker ids to the names the agent's Skill tool accepts. Bundled skills use their
   // manifest id as frontmatter name, while personal/imported ids have an app-owned source prefix and
   // must use the frontmatter name kept in the user skill catalog.
   async skillNudgeNamesForIds(ids: string[]): Promise<string[]> {
-    const skills = await this.skillCatalog()
+    const skills = await this.userSkillCatalog()
     const nameById = new Map(
       skills.map((skill) => [skill.id, skill.source === 'featured' ? skill.id : skill.name])
     )
@@ -893,10 +911,10 @@ class SettingsService {
     return ids.map((id) => nameById.get(id)).filter((name): name is string => name !== undefined)
   }
 
-  // Returns one skill's view plus its SKILL.md body for the detail view (any source).
+  // Returns one user-visible skill's view plus its SKILL.md body for the detail view (any source).
   async getSkillDetail(id: string): Promise<SkillDetailView> {
     const [skills, settings] = await Promise.all([
-      this.skillCatalog(),
+      this.userSkillCatalog(),
       this.repository.getSettings()
     ])
     const skill = skills.find((entry) => entry.id === id)
@@ -929,6 +947,7 @@ class SettingsService {
   // Toggles a skill and returns the refreshed list. The agent picks up the change on its next reconnect
   // (driven by the IPC layer's onSkillsChanged), which re-provisions the config dir.
   async setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]> {
+    await this.requireUserSkill(request.id)
     await this.repository.setSkillEnabled(request.id, request.enabled)
 
     return this.listSkills()
@@ -2550,7 +2569,9 @@ class SettingsService {
     const disabled = new Set(
       (settings.disabledSkillIds ?? []).filter((id) => !forcedSkillIds.has(id))
     )
-    const enabled = (await this.skillCatalog()).filter((skill) => !disabled.has(skill.id))
+    const enabled = (await this.skillCatalog()).filter((skill) =>
+      isSkillEnabledForAgent(skill, disabled)
+    )
 
     await new ClaudeCodeSkillMaterializer().sync(configRoot, enabled)
 

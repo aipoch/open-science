@@ -175,7 +175,8 @@ describe('UserSkillRepository', () => {
       id: 'personal-my-skill',
       name: 'My Skill',
       description: 'Does a thing.',
-      source: 'personal'
+      source: 'personal',
+      visibility: 'user'
     })
 
     expect(await repo.body(id)).toContain('# My Skill')

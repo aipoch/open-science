@@ -26,4 +26,14 @@ describe('bundled skill nudge identity', () => {
       expect(frontmatterName, `skill "${skill.id}" frontmatter name`).toBe(skill.id)
     }
   })
+
+  it('ships Remote Compute as the only agent-only skill', async () => {
+    const skills = await new SkillRegistry(skillsRoot).list()
+    const agentOnlyIds = skills
+      .filter((skill) => skill.visibility === 'agent-only')
+      .map((skill) => skill.id)
+
+    expect(agentOnlyIds).toEqual(['remote-compute-ssh'])
+    expect(skills.filter((skill) => skill.visibility === 'user')).toHaveLength(skills.length - 1)
+  })
 })

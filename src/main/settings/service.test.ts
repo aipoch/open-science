@@ -2599,7 +2599,7 @@ describe('SettingsService: onboarding', () => {
 
 describe('SettingsService: skills', () => {
   // Seeds a bundled-skills root with one "demo" skill + manifest for an injectable registry.
-  const seedBundle = async (): Promise<string> => {
+  const seedBundle = async (visibility: 'user' | 'agent-only' = 'user'): Promise<string> => {
     const bundle = await mkdtemp(join(tmpdir(), 'os-skills-bundle-'))
     await mkdir(join(bundle, 'demo'), { recursive: true })
     await writeFile(
@@ -2612,7 +2612,13 @@ describe('SettingsService: skills', () => {
       JSON.stringify({
         version: 1,
         skills: [
-          { id: 'demo', name: 'Demo', source: 'featured', updatedAt: '2026-01-01T00:00:00.000Z' }
+          {
+            id: 'demo',
+            name: 'Demo',
+            source: 'featured',
+            ...(visibility === 'agent-only' ? { visibility } : {}),
+            updatedAt: '2026-01-01T00:00:00.000Z'
+          }
         ]
       }),
       'utf8'
@@ -2645,6 +2651,26 @@ describe('SettingsService: skills', () => {
 
     const detail = await service.getSkillDetail('demo')
     expect(detail.body).toContain('demo body')
+  })
+
+  it('keeps agent-only skills out of user APIs and forced-skill resolution', async () => {
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      skillRegistry: new SkillRegistry(await seedBundle('agent-only'))
+    })
+
+    expect(await service.listSkills()).toEqual([])
+    await expect(service.getSkillDetail('demo')).rejects.toThrow('Unknown skill: demo')
+    await expect(service.setSkillEnabled({ id: 'demo', enabled: false })).rejects.toThrow(
+      'Unknown skill: demo'
+    )
+    expect((await repository.getSettings()).disabledSkillIds).toBeUndefined()
+
+    // A stale or manually edited setting cannot make the hidden skill user-selectable.
+    await repository.setSkillEnabled('demo', false)
+    expect(await service.skillsNeedingForceLoad(['demo'])).toEqual([])
+    expect(await service.skillNudgeNamesForIds(['demo'])).toEqual([])
   })
 
   it('creates, edits, and deletes a personal skill alongside featured skills', async () => {
@@ -2819,14 +2845,14 @@ describe('SettingsService: skills', () => {
     })
   })
 
-  it('materializes enabled skills into the app-owned CODEX_HOME before spawn', async () => {
+  it('keeps agent-only skills materialized in app-owned CODEX_HOME when stored as disabled', async () => {
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
     await writeFile(adapterPath, '', 'utf8')
     const service = new SettingsService({
       repository,
       storageRoot,
-      skillRegistry: new SkillRegistry(await seedBundle()),
+      skillRegistry: new SkillRegistry(await seedBundle('agent-only')),
       codexDetectDeps: {
         env: { PATH: dirname(adapterPath) },
         homePath: '/home',
@@ -2854,6 +2880,7 @@ describe('SettingsService: skills', () => {
       })
     ).providers[0]
     await service.setActiveProvider(provider.id)
+    await repository.setSkillEnabled('demo', false)
 
     await service.resolveActiveAgentBackend()
 
@@ -2934,6 +2961,7 @@ describe('SettingsService: skills', () => {
               name: 'Data Explorer',
               description: 'Explore imported data.',
               source: 'imported' as const,
+              visibility: 'user' as const,
               updatedAt: '2026-07-23T00:00:00.000Z',
               sourceDir: join(storageRoot, 'skills', 'imported', 'data-explorer')
             }

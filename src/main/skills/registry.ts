@@ -17,6 +17,7 @@ export type BundledSkill = {
   name: string
   description: string
   source: SkillSource
+  visibility: SkillVisibility
   updatedAt: string
   sourceDir: string
   author?: string
@@ -26,7 +27,20 @@ export type BundledSkill = {
   requirements?: string
 }
 
-type ManifestEntry = { id: string; name: string; source: SkillSource; updatedAt: string }
+export type SkillVisibility = 'user' | 'agent-only'
+
+export const isSkillEnabledForAgent = (
+  skill: BundledSkill,
+  disabledSkillIds: ReadonlySet<string>
+): boolean => skill.visibility === 'agent-only' || !disabledSkillIds.has(skill.id)
+
+type ManifestEntry = {
+  id: string
+  name: string
+  source: SkillSource
+  visibility?: SkillVisibility
+  updatedAt: string
+}
 
 const SAFE_ID = /^[a-z0-9-]+$/
 
@@ -51,6 +65,9 @@ const readManifest = async (rootDir: string): Promise<ManifestEntry[]> => {
         SAFE_ID.test(record.id) &&
         typeof record?.name === 'string' &&
         record?.source === 'featured' &&
+        (record?.visibility === undefined ||
+          record.visibility === 'user' ||
+          record.visibility === 'agent-only') &&
         typeof record?.updatedAt === 'string'
       )
     })
@@ -89,6 +106,7 @@ class SkillRegistry {
           name: entry.name,
           description: fields.description ?? '',
           source: entry.source,
+          visibility: entry.visibility ?? 'user',
           updatedAt: entry.updatedAt,
           sourceDir,
           author: fields.author,

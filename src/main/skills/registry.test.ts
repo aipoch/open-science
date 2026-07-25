@@ -49,6 +49,7 @@ describe('SkillRegistry', () => {
       name: 'Demo',
       description: 'A demo skill.',
       source: 'featured',
+      visibility: 'user',
       author: 'Test Author',
       license: 'Test License',
       thirdParty: 'Weights — Example (CC-BY-4.0)',
@@ -57,6 +58,53 @@ describe('SkillRegistry', () => {
       // materializer only substring-matches gpu/compute, so this stays equivalent.
       requirements: 'gpu'
     })
+  })
+
+  it('retains agent-only visibility from the bundled manifest', async () => {
+    const root = await seedRoot()
+    await writeFile(
+      join(root, 'manifest.json'),
+      JSON.stringify({
+        version: 1,
+        skills: [
+          {
+            id: 'demo',
+            name: 'Demo',
+            source: 'featured',
+            visibility: 'agent-only',
+            updatedAt: '2026-01-01T00:00:00.000Z'
+          }
+        ]
+      }),
+      'utf8'
+    )
+
+    expect((await new SkillRegistry(root).list())[0]).toMatchObject({
+      id: 'demo',
+      visibility: 'agent-only'
+    })
+  })
+
+  it('skips manifest entries with an unsupported visibility', async () => {
+    const root = await seedRoot()
+    await writeFile(
+      join(root, 'manifest.json'),
+      JSON.stringify({
+        version: 1,
+        skills: [
+          {
+            id: 'demo',
+            name: 'Demo',
+            source: 'featured',
+            visibility: 'hidden',
+            updatedAt: '2026-01-01T00:00:00.000Z'
+          }
+        ]
+      }),
+      'utf8'
+    )
+
+    expect(await new SkillRegistry(root).list()).toEqual([])
   })
 
   it('returns the SKILL.md body via body(id)', async () => {

@@ -432,6 +432,7 @@ class UserSkillRepository {
             name: fields.name || slug,
             description: fields.description ?? '',
             source,
+            visibility: 'user',
             updatedAt,
             sourceDir: skillDir,
             author: fields.author,

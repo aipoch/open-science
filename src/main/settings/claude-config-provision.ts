@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { ClaudeCodeSkillMaterializer, type SkillMaterializer } from '../skills/materializer'
-import { SkillRegistry, type BundledSkill } from '../skills/registry'
+import { isSkillEnabledForAgent, SkillRegistry, type BundledSkill } from '../skills/registry'
 
 // The app owns `<storageRoot>/claude` and provisions its settings and skills there. Isolated/API-key
 // providers use it as CLAUDE_CONFIG_DIR; shared auth keeps CLAUDE_CONFIG_DIR=~/.claude and loads this
@@ -113,7 +113,7 @@ const provisionAppClaudeConfigDir = async (
   const materializer = options.materializer ?? new ClaudeCodeSkillMaterializer()
   const skills = options.skills ?? (await new SkillRegistry().list())
   const disabled = new Set(options.disabledSkillIds ?? [])
-  const enabled = skills.filter((skill) => !disabled.has(skill.id))
+  const enabled = skills.filter((skill) => isSkillEnabledForAgent(skill, disabled))
 
   await materializer.sync(configDir, enabled)
 }

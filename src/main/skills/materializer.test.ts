@@ -12,7 +12,15 @@ const makeSkill = async (name: string): Promise<BundledSkill> => {
   await mkdir(join(root, 'scripts'), { recursive: true })
   await writeFile(join(root, 'SKILL.md'), `# ${name}`, 'utf8')
   await writeFile(join(root, 'scripts', 'main.py'), 'print(1)', 'utf8')
-  return { id: name, name, description: '', source: 'featured', updatedAt: '', sourceDir: root }
+  return {
+    id: name,
+    name,
+    description: '',
+    source: 'featured',
+    visibility: 'user',
+    updatedAt: '',
+    sourceDir: root
+  }
 }
 
 const skillsDir = async (): Promise<string> => {
@@ -163,7 +171,8 @@ describe('ClaudeCodeSkillMaterializer', () => {
       source: 'featured',
       updatedAt: '',
       sourceDir: root,
-      ...extra
+      ...extra,
+      visibility: extra.visibility ?? 'user'
     }
   }
 

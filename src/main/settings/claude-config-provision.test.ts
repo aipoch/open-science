@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -188,5 +188,25 @@ describe('provisionAppClaudeConfigDir', () => {
     expect(
       (await readdir(join(configDir, 'skills'))).filter((name) => !name.startsWith('.'))
     ).toEqual([])
+  })
+
+  it('materializes agent-only skills even when their ids are stored as disabled', async () => {
+    root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
+    const configDir = join(root, 'claude')
+    const skills = await new SkillRegistry(await seedBundle()).list()
+    skills[0].visibility = 'agent-only'
+
+    await provisionAppClaudeConfigDir(configDir, {
+      skills,
+      materializer: new ClaudeCodeSkillMaterializer(),
+      disabledSkillIds: ['demo']
+    })
+
+    expect(
+      (await readdir(join(configDir, 'skills'))).filter((name) => !name.startsWith('.'))
+    ).toEqual(['os-demo'])
+
+    await chmod(join(configDir, 'skills', 'os-demo', 'SKILL.md'), 0o644)
+    await chmod(join(configDir, 'skills', 'os-demo'), 0o755)
   })
 })
