@@ -22,14 +22,19 @@ const session: ActiveSessionInfo = {
 }
 
 // Builds a coordinator with controllable renderer plumbing. `emit` lets the test play the renderer.
+//
+// `getClosePreference` and `setClosePreference` are exposed to tests as references to the SAME
+// functions that the coordinator invokes, even when tests pass overrides — otherwise a test that
+// overrides one of those deps would silently assert against a no-op spy and miss any regression
+// that re-introduced a preference read/write.
 const makeHarness = (
   overrides: Partial<CloseConfirmDeps> = {}
 ): {
   confirm: ReturnType<typeof createCloseConfirm>
   sent: CloseConfirmRequest[]
   nativeFallback: ReturnType<typeof vi.fn>
-  getClosePreference: ReturnType<typeof vi.fn>
-  setClosePreference: ReturnType<typeof vi.fn>
+  getClosePreference: CloseConfirmDeps['getClosePreference']
+  setClosePreference: CloseConfirmDeps['setClosePreference']
   ack: () => void
   choose: (choice: CloseConfirmResponse['choice']) => void
   reply: (payload: CloseConfirmResponse) => void
@@ -42,8 +47,14 @@ const makeHarness = (
   let hangCbs: { onHang: () => void; onRecover: () => void } | undefined
   const sent: CloseConfirmRequest[] = []
   const nativeFallback = vi.fn(async (): Promise<NativeCloseConfirmResult> => ({ choice: 'quit' }))
-  const getClosePreference = vi.fn(async (): Promise<undefined> => undefined)
-  const setClosePreference = vi.fn(async () => undefined)
+  const localGetClosePreference = vi.fn(async (): Promise<undefined> => undefined)
+  const localSetClosePreference = vi.fn(async () => undefined)
+  // Resolve to the override spy when supplied; otherwise fall back to the local default. These are
+  // what we hand to createCloseConfirm AND what we expose to the test — keeping them in lockstep is
+  // the whole point of the fix.
+  const effectiveGetClosePreference = (overrides.getClosePreference ??
+    localGetClosePreference) as CloseConfirmDeps['getClosePreference']
+  const effectiveSetClosePreference = overrides.setClosePreference ?? localSetClosePreference
   const deps: CloseConfirmDeps = {
     send: (payload) => sent.push(payload),
     onResponse: (cb) => {
@@ -66,8 +77,8 @@ const makeHarness = (
       }
     },
     nativeFallback,
-    getClosePreference: getClosePreference as CloseConfirmDeps['getClosePreference'],
-    setClosePreference,
+    getClosePreference: effectiveGetClosePreference,
+    setClosePreference: effectiveSetClosePreference,
     newRequestId: () => 'req-1',
     ackTimeoutMs: 10,
     hangGraceMs: 10,
@@ -77,8 +88,8 @@ const makeHarness = (
     confirm: createCloseConfirm(deps),
     sent,
     nativeFallback,
-    getClosePreference,
-    setClosePreference,
+    getClosePreference: effectiveGetClosePreference,
+    setClosePreference: effectiveSetClosePreference,
     ack: () => responder?.({ requestId: 'req-1', ack: true }),
     choose: (choice: CloseConfirmResponse['choice']) => responder?.({ requestId: 'req-1', choice }),
     reply: (payload: CloseConfirmResponse) => responder?.(payload),
