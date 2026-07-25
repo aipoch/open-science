@@ -5,13 +5,8 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost, ComputeJob, CreateComputeHostRequest } from '../../shared/compute'
-import type {
-  DirListing,
-  DownloadDest,
-  LocalFile,
-  SerializableRemoteFsError
-} from '../../shared/remote-fs'
-import { decodeRemoteFsError, encodeRemoteFsError } from '../../shared/remote-fs'
+import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
+import { decodeRemoteFsError } from '../../shared/remote-fs'
 import type { ComputeService } from './compute-service'
 import {
   COMPUTE_JOB_UPDATED_CHANNEL,
@@ -1130,45 +1125,10 @@ describe('registerComputeIpcHandlers — remoteFsError serialization', () => {
     await rm(storageRoot, { recursive: true, force: true })
   })
 
-  // Builds the same try/catch wrapper that registerComputeIpcHandlers uses around listDir and
-  // download, then re-registers the handler on the channel so the error path is exercised. The
-  // production handler can't be intercepted directly (no service injection point in register),
-  // but the wrapper shape is the bit worth testing — the call site just calls encodeRemoteFsError
-  // on a caught error carrying .remoteFsError.
-  const wrapListDirHandler = (service: ComputeService): void => {
-    handlers.set('compute:list-dir', (async (_event: unknown, providerId: string, path: string) => {
-      try {
-        return await service.listDir(providerId, path)
-      } catch (err) {
-        const e = err as Error & { remoteFsError?: SerializableRemoteFsError }
-        if (e.remoteFsError) {
-          throw new Error(encodeRemoteFsError(e.message, e.remoteFsError))
-        }
-        throw err
-      }
-    }) as unknown as (event: unknown, ...args: unknown[]) => unknown)
-  }
-
-  const wrapDownloadHandler = (service: ComputeService): void => {
-    handlers.set('compute:download', (async (
-      _event: unknown,
-      providerId: string,
-      remotePath: string,
-      dest: DownloadDest
-    ) => {
-      try {
-        return await service.download(providerId, remotePath, dest)
-      } catch (err) {
-        const e = err as Error & { remoteFsError?: SerializableRemoteFsError }
-        if (e.remoteFsError) {
-          throw new Error(encodeRemoteFsError(e.message, e.remoteFsError))
-        }
-        throw err
-      }
-    }) as unknown as (event: unknown, ...args: unknown[]) => unknown)
-  }
-
-  it('encodes a remoteFsError on the compute:list-dir channel via the IPC handler wrapper', async () => {
+  // Drive the handler installed by registerComputeIpcHandlers directly. registerComputeIpcHandlers
+  // accepts a `service` seam so the renderer-callable try/catch wrapper around listDir / download
+  // is exercised end-to-end against a fake service — no hand-rolled wrapper duplication.
+  it('encodes a remoteFsError on the compute:list-dir channel via the production handler wrapper', async () => {
     const fsErr = new Error('no such file or directory') as Error & {
       remoteFsError: { detail: string; remoteKind: 'not_found'; retry_after_user_action: boolean }
     }
@@ -1180,8 +1140,7 @@ describe('registerComputeIpcHandlers — remoteFsError serialization', () => {
     const listDir = vi.fn(() => Promise.reject(fsErr))
     const service = mockService({ listDir })
 
-    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}))
-    wrapListDirHandler(service)
+    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}), undefined, service)
 
     const err = await invokeExpectingError('compute:list-dir', 'ssh:biowulf', '/missing')
 
@@ -1195,7 +1154,7 @@ describe('registerComputeIpcHandlers — remoteFsError serialization', () => {
     expect(listDir).toHaveBeenCalledWith('ssh:biowulf', '/missing')
   })
 
-  it('encodes a remoteFsError on the compute:download channel via the IPC handler wrapper', async () => {
+  it('encodes a remoteFsError on the compute:download channel via the production handler wrapper', async () => {
     const fsErr = new Error('Path is a directory.') as Error & {
       remoteFsError: { detail: string; remoteKind: 'not_a_file' }
     }
@@ -1203,8 +1162,7 @@ describe('registerComputeIpcHandlers — remoteFsError serialization', () => {
     const download = vi.fn(() => Promise.reject(fsErr))
     const service = mockService({ download })
 
-    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}))
-    wrapDownloadHandler(service)
+    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}), undefined, service)
 
     const dest: DownloadDest = { kind: 'os-downloads' }
     const err = await invokeExpectingError('compute:download', 'ssh:biowulf', '/some/dir', dest)
@@ -1220,8 +1178,7 @@ describe('registerComputeIpcHandlers — remoteFsError serialization', () => {
     const download = vi.fn(() => Promise.reject(new Error('boom: plain failure')))
     const service = mockService({ download })
 
-    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}))
-    wrapDownloadHandler(service)
+    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}), undefined, service)
 
     const dest: DownloadDest = { kind: 'os-downloads' }
     const err = await invokeExpectingError('compute:download', 'ssh:biowulf', '/x', dest)

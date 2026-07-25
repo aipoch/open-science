@@ -50,10 +50,11 @@ const broadcastFixLoopEnd = (sessionId: string): void => {
   broadcastToRenderers(REVIEWER_IPC.FIX_LOOP_END, { sessionId })
 }
 
-// Creates the shared ReviewRepository backed by the production SQLite client.
-const createDefaultReviewRepository = (): ReviewRepository => {
-  const storageRoot = resolveStorageRoot()
-
+// Creates the shared ReviewRepository backed by the production SQLite client. The injected
+// storageRoot (when provided) MUST be respected — registerReviewerIpcHandlers threads its
+// options.storageRoot through here so reviewers can be wired against a non-default config root
+// (e.g. a relocated user data dir).
+const createDefaultReviewRepository = (storageRoot: string): ReviewRepository => {
   return new ReviewRepository(() => getProjectDbClient(storageRoot))
 }
 
@@ -75,7 +76,7 @@ const registerReviewerIpcHandlers = (
 } => {
   const storageRoot = options.storageRoot ?? resolveStorageRoot()
   const dataRoot = options.dataRoot ?? resolveDataRoot()
-  const reviewRepository = createDefaultReviewRepository()
+  const reviewRepository = createDefaultReviewRepository(storageRoot)
   const sessionRepository = new SessionRepository(storageRoot)
 
   // Per-session AbortControllers for active fix loops. Keyed by the main session id (not the

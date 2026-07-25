@@ -31,22 +31,40 @@ vi.mock('./orchestrator', () => ({
 }))
 
 // Controllable review lookup so a test can make main's auto-idempotency check find an existing review.
+// The thunk passed to ReviewRepository (`() => getProjectDbClient(storageRoot)`) closes over the
+// resolved storageRoot. Capturing the thunk in the constructor lets the injected-config-root test
+// invoke it directly and observe which storageRoot the thunk was constructed against.
+const reviewRepositoryThunks: Array<() => unknown> = []
 const getReviewsForSession = vi.fn().mockResolvedValue([])
 vi.mock('./repository', () => ({
   ReviewRepository: class {
+    constructor(thunk: () => unknown) {
+      reviewRepositoryThunks.push(thunk)
+    }
     getReviewsForSession = getReviewsForSession
   }
 }))
 
+// Spies on getProjectDbClient so the injected-config-root test can assert that
+// registerReviewerIpcHandlers really passes options.storageRoot into the prisma-client getter that
+// the ReviewRepository's lazy thunk captures. A regression that re-introduces resolveStorageRoot()
+// here would otherwise slip past unnoticed.
+const getProjectDbClient = vi.fn()
 vi.mock('../projects/prisma-client', () => ({
-  getProjectDbClient: vi.fn()
+  getProjectDbClient: (...args: unknown[]) =>
+    (getProjectDbClient as unknown as (...a: unknown[]) => unknown)(...args)
 }))
 
 // Shared, controllable session loader so a test can make the pre-runReview session load fail.
+// Same capture pattern as ReviewRepository above.
+const sessionRepositoryRoots: string[] = []
 const sessionLoadAll = vi.fn().mockResolvedValue({ sessions: [] })
 const sessionLoadOne = vi.fn().mockResolvedValue({ id: 'session-1' })
 vi.mock('../session-persistence/repository', () => ({
   SessionRepository: class {
+    constructor(root: string) {
+      sessionRepositoryRoots.push(root)
+    }
     loadAll = sessionLoadAll
     loadSession = sessionLoadOne
   },
@@ -120,6 +138,10 @@ describe('reviewer IPC handlers', () => {
 
   it('lets injected options override the config/data split independently', async () => {
     runReview.mockClear()
+    // Reset the captured-roots recorders so this test only observes its own wiring.
+    reviewRepositoryThunks.length = 0
+    sessionRepositoryRoots.length = 0
+    getProjectDbClient.mockReset()
     registerReviewerIpcHandlers({
       acpRuntime,
       storageRoot: '/tmp/injected-config',
@@ -133,6 +155,15 @@ describe('reviewer IPC handlers', () => {
 
     const passed = runReview.mock.calls[0][0] as { artifactStorageRoot: string }
     expect(passed.artifactStorageRoot).toBe('/tmp/injected-data')
+    // ReviewRepository is constructed against the injected config root, not the resolveStorageRoot()
+    // default. The repository captures a thunk `() => getProjectDbClient(storageRoot)`; invoke it
+    // and assert the captured storageRoot surfaces through the getProjectDbClient spy.
+    expect(reviewRepositoryThunks).toHaveLength(1)
+    reviewRepositoryThunks[0]?.()
+    expect(getProjectDbClient).toHaveBeenCalledWith('/tmp/injected-config')
+    expect(getProjectDbClient).not.toHaveBeenCalledWith(CONFIG_ROOT)
+    // SessionRepository takes a plain root string, captured by the mock constructor.
+    expect(sessionRepositoryRoots).toEqual(['/tmp/injected-config'])
   })
 
   it('forwards scopeTurnMessageId so a re-run audits the scope turn, grouped under turnMessageId', async () => {

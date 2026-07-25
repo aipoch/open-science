@@ -366,7 +366,11 @@ const registerComputeIpcHandlers = (
   jobRepository = createDefaultComputeJobRepository(),
   // Resolves artifact-store paths for job input staging. Optional: when omitted, artifact inputs
   // (absolute src) throw a clear error while workspace and remote_path inputs still work.
-  artifactResolver?: ArtifactResolver
+  artifactResolver?: ArtifactResolver,
+  // Test seam: when supplied, the IPC handlers are wired to this service instead of the production
+  // one constructed by createComputeHandlers. Lets the renderer-callable error wrapper around
+  // `compute:list-dir` / `compute:download` be exercised end-to-end against a fake service.
+  injectedService?: ComputeService
 ): {
   computeService: ComputeService
   jobRepository: ComputeJobRepository
@@ -384,7 +388,7 @@ const registerComputeIpcHandlers = (
   const handlers = createComputeHandlers(
     repository,
     undefined,
-    undefined,
+    injectedService,
     undefined,
     settingsRepo,
     jobRepository,
