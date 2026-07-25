@@ -348,7 +348,7 @@ const PermissionHeaderBadges = ({
               <Info className="size-3.5" aria-hidden="true" />
             </button>
           </TooltipTrigger>
-          <TooltipContent className="max-w-72 whitespace-normal">
+          <TooltipContent className="max-w-none whitespace-nowrap">
             <div className="space-y-1">
               <p>{description}</p>
               <p className="text-muted-foreground">{scopeDescription}</p>
