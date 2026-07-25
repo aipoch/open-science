@@ -535,4 +535,64 @@ describe('PermissionApprovalControls interactions', () => {
       delete (window as { api?: unknown }).api
     }
   })
+
+  it('does not use a live Python environment for an R permission request', async () => {
+    const rNotebookRequest: AcpPermissionRequest = {
+      requestId: 'req-r-env',
+      sessionId: 'session-r-env',
+      toolCallId: 'tool-r-env',
+      title: 'mcp__open-science-notebook__notebook_execute',
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      rawInput: { kernelKind: 'r', code: 'x <- 1' },
+      options: [{ optionId: 'opt-once', name: 'Allow once', kind: 'allow_once' }]
+    }
+    ;(window as { api?: unknown }).api = {
+      notebook: {
+        state: async () => ({
+          environments: [
+            { kind: 'python', environment: 'default-python', processKey: 'python:default-python' }
+          ],
+          runs: []
+        })
+      },
+      runtime: {
+        listEnvironments: async () => ({
+          python: [],
+          r: [
+            {
+              language: 'r',
+              provenance: 'app-managed',
+              envId: '/envs/default-r',
+              interpreterPath: '/envs/default-r/bin/R',
+              label: 'default-r',
+              runnable: true
+            }
+          ]
+        }),
+        getEnablement: async () => ({ enabled: {}, installAuthorized: {} })
+      }
+    }
+    try {
+      act(() => {
+        root.render(
+          <PermissionApprovalControls
+            requests={[rNotebookRequest]}
+            onRespond={vi.fn()}
+            notebookLookup={{ sessionId: 'session-r-env', workspaceCwd: '' }}
+          />
+        )
+      })
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      expect(container.querySelector('[data-testid="permission-env-badge"]')?.textContent).toBe(
+        'default-r'
+      )
+      expect(
+        container.querySelector('[data-testid="permission-category-badge"]')?.textContent
+      ).toBe('R execution')
+    } finally {
+      delete (window as { api?: unknown }).api
+    }
+  })
 })

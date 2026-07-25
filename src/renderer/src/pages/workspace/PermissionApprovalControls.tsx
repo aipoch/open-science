@@ -239,9 +239,9 @@ const PermissionCodeSection = ({
 // Keyed by sessionId + kernel kind so a python badge and an R badge never share a stale answer.
 const notebookEnvCache = new Map<string, Promise<string | undefined>>()
 
-// Resolves the environment a session's notebook kernels run in, best-known first: the live kernel
-// matching the requested kind, then any live env, then the most recent run's recorded env, and
-// finally the enabled runtime from Settings → Runtimes (what a kernel started now would bind).
+// Resolves the environment a session's notebook kernel of the requested kind runs in, best-known
+// first: the matching live kernel, then the latest matching run, and finally the enabled runtime
+// from Settings → Runtimes (what a kernel of that kind started now would bind).
 // Sessions with no notebook history and no bridge (tests) resolve to undefined — no badge.
 const lookupNotebookEnvironment = async (
   request: NotebookSessionRequest,
@@ -251,12 +251,13 @@ const lookupNotebookEnvironment = async (
   if (notebookApi) {
     try {
       const state = await notebookApi.state(request)
-      const live =
-        state.environments.find((e) => e.kind === kernelKind && e.environment)?.environment ??
-        state.environments.find((e) => e.environment)?.environment
+      const live = state.environments.find(
+        (environment) => environment.kind === kernelKind && environment.environment
+      )?.environment
       if (live) return live
       for (let i = state.runs.length - 1; i >= 0; i -= 1) {
-        const env = state.runs[i].environment
+        const run = state.runs[i]
+        const env = run.kernelKind === kernelKind ? run.environment : undefined
         if (env) return env
       }
     } catch {
