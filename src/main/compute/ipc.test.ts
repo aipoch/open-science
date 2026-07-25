@@ -1,11 +1,57 @@
-import { describe, expect, it, vi } from 'vitest'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost, ComputeJob, CreateComputeHostRequest } from '../../shared/compute'
-import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
+import type {
+  DirListing,
+  DownloadDest,
+  LocalFile,
+  SerializableRemoteFsError
+} from '../../shared/remote-fs'
+import { decodeRemoteFsError, encodeRemoteFsError } from '../../shared/remote-fs'
 import type { ComputeService } from './compute-service'
-import { createComputeHandlers, toJobSummary } from './ipc'
+import {
+  COMPUTE_JOB_UPDATED_CHANNEL,
+  COMPUTE_JOBS_LIST_CHANNEL,
+  broadcastJobUpdated,
+  createComputeHandlers,
+  createJobUpdatedBroadcaster,
+  registerComputeIpcHandlers,
+  toJobSummary
+} from './ipc'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
+import { EnabledComputeHostsRegistry } from './enabled-hosts-registry'
+import { addRendererBroadcastSink } from '../renderer-broadcast'
+
+// ---------------------------------------------------------------------------
+// electron mock — captures ipcMain.handle registrations and stubs BrowserWindow
+// so the broadcaster path never tries to walk real renderer windows. Also
+// stubs `app` so resolveStorageRoot() resolves against a controllable home
+// directory (OPEN_SCIENCE_STORAGE_ROOT is preferred when set).
+// ---------------------------------------------------------------------------
+
+const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>()
+
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: (channel: string, handler: (event: unknown, ...args: unknown[]) => unknown) => {
+      handlers.set(channel, handler)
+    }
+  },
+  BrowserWindow: { getAllWindows: () => [] },
+  shell: { showItemInFolder: () => undefined },
+  app: {
+    isPackaged: false,
+    getPath: (key: string) => {
+      if (key !== 'home') return '/tmp'
+      return process.env.OPEN_SCIENCE_STORAGE_ROOT ?? '/tmp'
+    }
+  }
+}))
 
 const sampleHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   id: 'host-1',
@@ -480,5 +526,705 @@ describe('session concurrency control handlers', () => {
     const result = await handlers.getSessionConcurrencyStatus('session-123')
     expect(result.provider_ceilings['ssh:host-a']).toBe(20)
     expect(result.provider_ceilings['ssh:host-b']).toBe(10)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// toJobSummary — harvest directory scanning and left_on_remote parsing
+// ---------------------------------------------------------------------------
+
+describe('toJobSummary — harvest features and left_on_remote parsing', () => {
+  let storageRoot: string
+
+  beforeEach(async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'compute-ipc-summary-'))
+  })
+
+  afterEach(async () => {
+    await rm(storageRoot, { recursive: true, force: true })
+  })
+
+  // Mirrors getJobHarvestDir: <storageRoot>/notebooks/<project>/<session>/hpc/<jobId>
+  const featuredDirFor = (projectId: string, sessionId: string, jobId: string): string =>
+    join(storageRoot, 'notebooks', projectId, sessionId, 'hpc', jobId, 'featured')
+
+  const sampleJob = (overrides: Partial<ComputeJob> = {}): ComputeJob => ({
+    job_id: 'job-harvest',
+    provider_id: 'ssh:biowulf',
+    shape: 'direct_ssh',
+    session_id: 'sess-1',
+    project_id: 'proj-1',
+    status: 'success',
+    intent: 'analysis',
+    command: 'echo',
+    command_hash: 'abc',
+    environment: undefined,
+    resource_request: undefined,
+    input_manifest: undefined,
+    output_manifest: undefined,
+    harvest_config: undefined,
+    timeout_seconds: undefined,
+    remote_workdir: '/scratch/work',
+    remote_handle: undefined,
+    exit_code: 0,
+    stdout_tail: undefined,
+    stderr_tail: undefined,
+    error_code: undefined,
+    created_at: 0,
+    submitted_at: undefined,
+    started_at: undefined,
+    finished_at: undefined,
+    harvested_at: undefined,
+    ...overrides
+  })
+
+  it('walks the featured directory recursively and emits paths relative to the session workspace', async () => {
+    const featuredDir = featuredDirFor('proj-1', 'sess-1', 'job-harvest')
+    await mkdir(join(featuredDir, 'sub'), { recursive: true })
+    await writeFile(join(featuredDir, 'result.csv'), 'a,b\n1,2\n')
+    await writeFile(join(featuredDir, 'sub', 'nested.txt'), 'nested')
+
+    const summary = await toJobSummary(sampleJob(), 'Biowulf HPC', storageRoot)
+
+    // Relative to <storageRoot>/notebooks/proj-1/sess-1 (workspaceCwd = harvestDir/../..).
+    expect((summary.featured_files ?? []).sort()).toEqual([
+      'hpc/job-harvest/featured/result.csv',
+      'hpc/job-harvest/featured/sub/nested.txt'
+    ])
+    expect(summary.featured_file_count).toBe(2)
+  })
+
+  it('parses left_on_remote JSON and exposes the array plus count', async () => {
+    const summary = await toJobSummary(
+      sampleJob({
+        left_on_remote: JSON.stringify([
+          { uri: 'big.bin', size_mb: 2048, reason: 'exceeds size limit' },
+          { uri: 'extra.log', size_mb: 12, reason: 'not in output_manifest' }
+        ])
+      }),
+      'Biowulf HPC',
+      storageRoot
+    )
+
+    expect(summary.left_on_remote_count).toBe(2)
+    expect(summary.left_on_remote).toEqual([
+      { uri: 'big.bin', size_mb: 2048, reason: 'exceeds size limit' },
+      { uri: 'extra.log', size_mb: 12, reason: 'not in output_manifest' }
+    ])
+  })
+
+  it('falls back to an empty array when left_on_remote JSON is malformed', async () => {
+    const summary = await toJobSummary(
+      sampleJob({ left_on_remote: 'this is { not json' }),
+      'Biowulf HPC',
+      storageRoot
+    )
+
+    expect(summary.left_on_remote).toEqual([])
+    expect(summary.left_on_remote_count).toBe(0)
+  })
+
+  it('treats a missing harvest directory as an empty featured list (harvest_failed shape)', async () => {
+    // No featured/ directory created — common when the harvest step failed before copying outputs.
+    const summary = await toJobSummary(sampleJob(), 'Biowulf HPC', storageRoot)
+
+    expect(summary.featured_files).toEqual([])
+    expect(summary.featured_file_count).toBe(0)
+    // Other fields still pass through correctly.
+    expect(summary.display_name).toBe('Biowulf HPC')
+    expect(summary.session_id).toBe('sess-1')
+    expect(summary.status).toBe('success')
+  })
+
+  it('treats an absent left_on_remote field as an empty array', async () => {
+    const summary = await toJobSummary(sampleJob(), 'Biowulf HPC', storageRoot)
+
+    expect(summary.left_on_remote).toEqual([])
+    expect(summary.left_on_remote_count).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// createJobUpdatedBroadcaster — host lookup success vs fallback
+// ---------------------------------------------------------------------------
+
+describe('createJobUpdatedBroadcaster', () => {
+  let storageRoot: string
+
+  beforeEach(async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'compute-ipc-broadcaster-'))
+  })
+
+  afterEach(async () => {
+    await rm(storageRoot, { recursive: true, force: true })
+  })
+
+  const sampleJob = (overrides: Partial<ComputeJob> = {}): ComputeJob => ({
+    job_id: 'job-bcast',
+    provider_id: 'ssh:biowulf',
+    shape: 'direct_ssh',
+    session_id: 'sess-1',
+    project_id: 'proj-1',
+    status: 'running',
+    intent: 'analysis',
+    command: 'echo',
+    command_hash: 'abc',
+    environment: undefined,
+    resource_request: undefined,
+    input_manifest: undefined,
+    output_manifest: undefined,
+    harvest_config: undefined,
+    timeout_seconds: undefined,
+    remote_workdir: undefined,
+    remote_handle: undefined,
+    exit_code: undefined,
+    stdout_tail: undefined,
+    stderr_tail: undefined,
+    error_code: undefined,
+    created_at: 0,
+    submitted_at: undefined,
+    started_at: undefined,
+    finished_at: undefined,
+    harvested_at: undefined,
+    ...overrides
+  })
+
+  // Renderer broadcasts are dropped onto no sinks because BrowserWindow.getAllWindows() returns []
+  // (mocked above); the captured channel + payload is what we assert on. We subscribe via the
+  // renderer-broadcast sink so we can introspect exactly what was broadcast.
+  const captureNextBroadcast = (): Promise<{ channel: string; payload: unknown }> => {
+    return new Promise((resolve) => {
+      const remove = addRendererBroadcastSink((channel, payload) => {
+        remove()
+        resolve({ channel, payload })
+      })
+    })
+  }
+
+  it('looks up the host by provider_id and uses its display_name on success', async () => {
+    const get = vi.fn(() =>
+      Promise.resolve(sampleHost({ providerId: 'ssh:biowulf', displayName: 'Biowulf HPC' }))
+    )
+    const broadcaster = createJobUpdatedBroadcaster(mockRepository({ get }), storageRoot)
+
+    const captured = captureNextBroadcast()
+    broadcaster(sampleJob())
+    const result = await captured
+
+    expect(get).toHaveBeenCalledWith('ssh:biowulf')
+    expect(result.channel).toBe(COMPUTE_JOB_UPDATED_CHANNEL)
+    const summary = result.payload as { provider_id: string; display_name: string; job_id: string }
+    expect(summary.provider_id).toBe('ssh:biowulf')
+    expect(summary.display_name).toBe('Biowulf HPC')
+    expect(summary.job_id).toBe('job-bcast')
+  })
+
+  it('falls back to the provider_id as display_name when hostRepository.get rejects', async () => {
+    const get = vi.fn(() => Promise.reject(new Error('db locked')))
+    const broadcaster = createJobUpdatedBroadcaster(mockRepository({ get }), storageRoot)
+
+    const captured = captureNextBroadcast()
+    broadcaster(sampleJob({ provider_id: 'ssh:lab-gpu' }))
+    const result = await captured
+
+    expect(get).toHaveBeenCalledWith('ssh:lab-gpu')
+    const summary = result.payload as { provider_id: string; display_name: string }
+    expect(summary.display_name).toBe('ssh:lab-gpu')
+  })
+
+  it('falls back to the provider_id as display_name when the host row is missing', async () => {
+    const get = vi.fn(() => Promise.resolve(null))
+    const broadcaster = createJobUpdatedBroadcaster(mockRepository({ get }), storageRoot)
+
+    const captured = captureNextBroadcast()
+    broadcaster(sampleJob({ provider_id: 'ssh:unknown' }))
+    const result = await captured
+
+    const summary = result.payload as { provider_id: string; display_name: string }
+    expect(summary.display_name).toBe('ssh:unknown')
+  })
+
+  it('broadcastJobUpdated is a thin wrapper that emits on the documented channel', async () => {
+    const captured = captureNextBroadcast()
+    broadcastJobUpdated({
+      job_id: 'j',
+      provider_id: 'ssh:biowulf',
+      display_name: 'Biowulf HPC',
+      shape: 'direct_ssh',
+      session_id: 'sess-1',
+      status: 'running',
+      intent: 'analysis',
+      created_at: 0,
+      started_at: undefined,
+      finished_at: undefined,
+      exit_code: undefined,
+      error_code: undefined,
+      remote_workdir: undefined,
+      stdout_tail: undefined,
+      stderr_tail: undefined,
+      notified_at: undefined,
+      notification_consumed_at: undefined,
+      featured_files: [],
+      featured_file_count: 0,
+      left_on_remote_count: 0,
+      left_on_remote: [],
+      harvest_error: undefined
+    })
+    const result = await captured
+    expect(result.channel).toBe(COMPUTE_JOB_UPDATED_CHANNEL)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// jobsList — status filter pass-through and storageRoot fallback
+// ---------------------------------------------------------------------------
+
+describe('compute handlers — jobsList status filter and storageRoot fallback', () => {
+  const makeJob = (overrides: Partial<ComputeJob> = {}): ComputeJob => ({
+    job_id: 'job-1',
+    provider_id: 'ssh:biowulf',
+    shape: 'direct_ssh',
+    session_id: 'sess-1',
+    project_id: 'proj-1',
+    status: 'running',
+    intent: 'Smoke test',
+    command: 'echo hi',
+    command_hash: 'deadbeef',
+    environment: undefined,
+    resource_request: undefined,
+    input_manifest: undefined,
+    output_manifest: undefined,
+    harvest_config: undefined,
+    timeout_seconds: undefined,
+    remote_workdir: undefined,
+    remote_handle: undefined,
+    exit_code: undefined,
+    stdout_tail: undefined,
+    stderr_tail: undefined,
+    error_code: undefined,
+    created_at: 1000,
+    submitted_at: undefined,
+    started_at: undefined,
+    finished_at: undefined,
+    harvested_at: undefined,
+    ...overrides
+  })
+
+  it('passes the status filter through to jobRepository.findBySession', async () => {
+    const list = vi.fn().mockResolvedValue([])
+    const findBySession = vi.fn().mockResolvedValue([])
+    const handlers = createComputeHandlers(
+      mockRepository({ list }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ findBySession }),
+      undefined,
+      undefined,
+      '/tmp/test-storage'
+    )
+
+    await handlers.jobsList({ sessionId: 'sess-1', status: ['success', 'failed'] })
+
+    expect(findBySession).toHaveBeenCalledWith('sess-1', ['success', 'failed'])
+  })
+
+  it('returns an empty array when storageRoot is not provided to createComputeHandlers', async () => {
+    // Even when jobRepository is injected, the jobsList handler short-circuits to [] without
+    // storageRoot because toJobSummary needs a real path to scan the harvest dir. The repository
+    // must not be called in this case (defensive: it might be a heavy query).
+    const list = vi.fn().mockResolvedValue([])
+    const findBySession = vi.fn().mockResolvedValue([makeJob()])
+    const handlers = createComputeHandlers(
+      mockRepository({ list }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ findBySession })
+      // no storageRoot
+    )
+
+    const result = await handlers.jobsList({ sessionId: 'sess-1' })
+
+    expect(result).toEqual([])
+    expect(findBySession).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// jobsPendingNotification — findPendingNotifications + JobSummary conversion
+// ---------------------------------------------------------------------------
+
+describe('compute handlers — jobsPendingNotification', () => {
+  let storageRoot: string
+
+  beforeEach(async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'compute-ipc-pending-'))
+  })
+
+  afterEach(async () => {
+    await rm(storageRoot, { recursive: true, force: true })
+  })
+
+  const makeJob = (overrides: Partial<ComputeJob> = {}): ComputeJob => ({
+    job_id: 'job-pending',
+    provider_id: 'ssh:biowulf',
+    shape: 'direct_ssh',
+    session_id: 'sess-1',
+    project_id: 'proj-1',
+    status: 'success',
+    intent: 'analysis',
+    command: 'echo',
+    command_hash: 'abc',
+    environment: undefined,
+    resource_request: undefined,
+    input_manifest: undefined,
+    output_manifest: undefined,
+    harvest_config: undefined,
+    timeout_seconds: undefined,
+    remote_workdir: undefined,
+    remote_handle: undefined,
+    exit_code: 0,
+    stdout_tail: undefined,
+    stderr_tail: undefined,
+    error_code: undefined,
+    created_at: 1000,
+    submitted_at: undefined,
+    started_at: undefined,
+    finished_at: undefined,
+    harvested_at: undefined,
+    notified_at: 5000,
+    notification_consumed_at: undefined,
+    ...overrides
+  })
+
+  it('returns JobSummary[] for jobs whose notification has not been consumed yet', async () => {
+    const host = sampleHost({ providerId: 'ssh:biowulf', displayName: 'Biowulf HPC' })
+    const list = vi.fn().mockResolvedValue([host])
+    const job = makeJob()
+    const findPendingNotifications = vi.fn().mockResolvedValue([job])
+
+    const handlers = createComputeHandlers(
+      mockRepository({ list }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ findPendingNotifications }),
+      undefined,
+      undefined,
+      storageRoot
+    )
+
+    const result = await handlers.jobsPendingNotification('sess-1')
+
+    expect(findPendingNotifications).toHaveBeenCalledWith('sess-1')
+    expect(result).toHaveLength(1)
+    expect(result[0]!.job_id).toBe('job-pending')
+    expect(result[0]!.display_name).toBe('Biowulf HPC')
+    expect(result[0]!.notified_at).toBe(5000)
+    expect(result[0]!.notification_consumed_at).toBeUndefined()
+  })
+
+  it('returns an empty array when no jobRepository is injected', async () => {
+    const handlers = createComputeHandlers(mockRepository({}))
+    const result = await handlers.jobsPendingNotification('sess-1')
+    expect(result).toEqual([])
+  })
+
+  it('returns an empty array when storageRoot is not injected (defensive)', async () => {
+    const findPendingNotifications = vi.fn().mockResolvedValue([makeJob()])
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn().mockResolvedValue([]) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ findPendingNotifications })
+    )
+
+    const result = await handlers.jobsPendingNotification('sess-1')
+    expect(result).toEqual([])
+    expect(findPendingNotifications).not.toHaveBeenCalled()
+  })
+
+  it('falls back to provider_id when the host row is missing', async () => {
+    const list = vi.fn().mockResolvedValue([])
+    const findPendingNotifications = vi.fn().mockResolvedValue([makeJob()])
+    const handlers = createComputeHandlers(
+      mockRepository({ list }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ findPendingNotifications }),
+      undefined,
+      undefined,
+      storageRoot
+    )
+
+    const result = await handlers.jobsPendingNotification('sess-1')
+    expect(result[0]!.display_name).toBe('ssh:biowulf')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// jobsMarkConsumed — delegation to jobRepository.markNotificationsConsumed
+// ---------------------------------------------------------------------------
+
+describe('compute handlers — jobsMarkConsumed', () => {
+  it('forwards the job ids to jobRepository.markNotificationsConsumed', async () => {
+    const markNotificationsConsumed = vi.fn(() => Promise.resolve())
+    const handlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ markNotificationsConsumed })
+    )
+
+    await handlers.jobsMarkConsumed('sess-1', ['job-a', 'job-b', 'job-c'])
+
+    expect(markNotificationsConsumed).toHaveBeenCalledWith(['job-a', 'job-b', 'job-c'])
+  })
+
+  it('is a no-op when no jobRepository is injected (defensive)', async () => {
+    const handlers = createComputeHandlers(mockRepository({}))
+    // The sessionId is ignored without a repository — guard against any accidental propagation.
+    await expect(handlers.jobsMarkConsumed('sess-1', ['job-a'])).resolves.toBeUndefined()
+  })
+
+  it('propagates repository errors so callers can retry', async () => {
+    const markNotificationsConsumed = vi.fn(() => Promise.reject(new Error('db write failed')))
+    const handlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ markNotificationsConsumed })
+    )
+
+    await expect(handlers.jobsMarkConsumed('sess-1', ['job-a'])).rejects.toThrow(/db write failed/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// registerComputeIpcHandlers — channel registration + enabled-hosts + error serialization
+// ---------------------------------------------------------------------------
+
+const invokeHandler = async (channel: string, ...args: unknown[]): Promise<unknown> => {
+  const handler = handlers.get(channel)
+  if (!handler) throw new Error(`No handler registered for channel "${channel}"`)
+  return handler({} as never, ...args)
+}
+
+// Calls a handler that is expected to reject and returns the thrown error. Use this when the test
+// asserts on the IPC-encoded error message rather than the success value.
+const invokeExpectingError = async (channel: string, ...args: unknown[]): Promise<Error> => {
+  try {
+    await invokeHandler(channel, ...args)
+  } catch (err) {
+    return err as Error
+  }
+  throw new Error(`Handler ${channel} resolved unexpectedly; expected it to reject`)
+}
+
+describe('registerComputeIpcHandlers', () => {
+  let storageRoot: string
+
+  beforeEach(async () => {
+    handlers.clear()
+    storageRoot = await mkdtemp(join(tmpdir(), 'compute-ipc-register-'))
+    process.env.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
+  })
+
+  afterEach(async () => {
+    delete process.env.OPEN_SCIENCE_STORAGE_ROOT
+    await rm(storageRoot, { recursive: true, force: true })
+  })
+
+  it('registers every compute:* channel that the renderer can invoke', () => {
+    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}))
+
+    const expected = [
+      'compute:list',
+      'compute:get',
+      'compute:create',
+      'compute:delete',
+      'compute:ssh-config-aliases',
+      'compute:probe',
+      'compute:details:get',
+      'compute:details:save',
+      'compute:scratch:set',
+      'compute:concurrency:set',
+      'compute:session:set-concurrency-limit',
+      'compute:session:status',
+      'compute:list-dir',
+      'compute:download',
+      'compute:reveal-in-folder',
+      'compute:approval-respond',
+      COMPUTE_JOBS_LIST_CHANNEL,
+      'compute:jobs:pending-notification',
+      'compute:jobs:mark-consumed',
+      'compute:enabled-hosts:get',
+      'compute:enabled-hosts:set'
+    ]
+    for (const channel of expected) {
+      expect(handlers.has(channel)).toBe(true)
+    }
+  })
+
+  it('round-trips the enabled-hosts registry through get/set IPC channels', async () => {
+    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}))
+
+    // Initially empty for an unseen session.
+    const initial = await invokeHandler('compute:enabled-hosts:get', 'sess-fresh')
+    expect(initial).toEqual([])
+
+    // Setting must persist across subsequent get calls.
+    await invokeHandler('compute:enabled-hosts:set', 'sess-fresh', ['ssh:biowulf', 'ssh:lab-gpu'])
+    const afterSet = await invokeHandler('compute:enabled-hosts:get', 'sess-fresh')
+    expect(afterSet).toEqual(['ssh:biowulf', 'ssh:lab-gpu'])
+
+    // Setting again replaces (set semantics), preserving order.
+    await invokeHandler('compute:enabled-hosts:set', 'sess-fresh', ['ssh:biowulf'])
+    const afterReplace = await invokeHandler('compute:enabled-hosts:get', 'sess-fresh')
+    expect(afterReplace).toEqual(['ssh:biowulf'])
+
+    // Different sessions are independent.
+    await invokeHandler('compute:enabled-hosts:set', 'sess-other', ['ssh:lab-gpu'])
+    const other = await invokeHandler('compute:enabled-hosts:get', 'sess-other')
+    expect(other).toEqual(['ssh:lab-gpu'])
+    const firstAgain = await invokeHandler('compute:enabled-hosts:get', 'sess-fresh')
+    expect(firstAgain).toEqual(['ssh:biowulf'])
+  })
+
+  it('returns the production computeService and jobRepository so downstream wiring can use them', () => {
+    const result = registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}))
+
+    expect(result.computeService).toBeDefined()
+    expect(result.jobRepository).toBeDefined()
+    expect(result.hostRepository).toBeDefined()
+    expect(result.enabledComputeHostsRegistry).toBeInstanceOf(EnabledComputeHostsRegistry)
+  })
+})
+
+describe('registerComputeIpcHandlers — remoteFsError serialization', () => {
+  let storageRoot: string
+
+  beforeEach(async () => {
+    handlers.clear()
+    storageRoot = await mkdtemp(join(tmpdir(), 'compute-ipc-err-'))
+    process.env.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
+  })
+
+  afterEach(async () => {
+    delete process.env.OPEN_SCIENCE_STORAGE_ROOT
+    await rm(storageRoot, { recursive: true, force: true })
+  })
+
+  // Builds the same try/catch wrapper that registerComputeIpcHandlers uses around listDir and
+  // download, then re-registers the handler on the channel so the error path is exercised. The
+  // production handler can't be intercepted directly (no service injection point in register),
+  // but the wrapper shape is the bit worth testing — the call site just calls encodeRemoteFsError
+  // on a caught error carrying .remoteFsError.
+  const wrapListDirHandler = (service: ComputeService): void => {
+    handlers.set('compute:list-dir', (async (_event: unknown, providerId: string, path: string) => {
+      try {
+        return await service.listDir(providerId, path)
+      } catch (err) {
+        const e = err as Error & { remoteFsError?: SerializableRemoteFsError }
+        if (e.remoteFsError) {
+          throw new Error(encodeRemoteFsError(e.message, e.remoteFsError))
+        }
+        throw err
+      }
+    }) as unknown as (event: unknown, ...args: unknown[]) => unknown)
+  }
+
+  const wrapDownloadHandler = (service: ComputeService): void => {
+    handlers.set('compute:download', (async (
+      _event: unknown,
+      providerId: string,
+      remotePath: string,
+      dest: DownloadDest
+    ) => {
+      try {
+        return await service.download(providerId, remotePath, dest)
+      } catch (err) {
+        const e = err as Error & { remoteFsError?: SerializableRemoteFsError }
+        if (e.remoteFsError) {
+          throw new Error(encodeRemoteFsError(e.message, e.remoteFsError))
+        }
+        throw err
+      }
+    }) as unknown as (event: unknown, ...args: unknown[]) => unknown)
+  }
+
+  it('encodes a remoteFsError on the compute:list-dir channel via the IPC handler wrapper', async () => {
+    const fsErr = new Error('no such file or directory') as Error & {
+      remoteFsError: { detail: string; remoteKind: 'not_found'; retry_after_user_action: boolean }
+    }
+    fsErr.remoteFsError = {
+      detail: 'no such file or directory',
+      remoteKind: 'not_found',
+      retry_after_user_action: false
+    }
+    const listDir = vi.fn(() => Promise.reject(fsErr))
+    const service = mockService({ listDir })
+
+    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}))
+    wrapListDirHandler(service)
+
+    const err = await invokeExpectingError('compute:list-dir', 'ssh:biowulf', '/missing')
+
+    // The encoded message carries the JSON-serialized fsErr after the marker.
+    expect(err.message).toContain('no such file or directory')
+    expect(decodeRemoteFsError(err.message)).toEqual({
+      detail: 'no such file or directory',
+      remoteKind: 'not_found',
+      retry_after_user_action: false
+    })
+    expect(listDir).toHaveBeenCalledWith('ssh:biowulf', '/missing')
+  })
+
+  it('encodes a remoteFsError on the compute:download channel via the IPC handler wrapper', async () => {
+    const fsErr = new Error('Path is a directory.') as Error & {
+      remoteFsError: { detail: string; remoteKind: 'not_a_file' }
+    }
+    fsErr.remoteFsError = { detail: 'Path is a directory.', remoteKind: 'not_a_file' }
+    const download = vi.fn(() => Promise.reject(fsErr))
+    const service = mockService({ download })
+
+    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}))
+    wrapDownloadHandler(service)
+
+    const dest: DownloadDest = { kind: 'os-downloads' }
+    const err = await invokeExpectingError('compute:download', 'ssh:biowulf', '/some/dir', dest)
+
+    expect(decodeRemoteFsError(err.message)).toEqual({
+      detail: 'Path is a directory.',
+      remoteKind: 'not_a_file'
+    })
+    expect(download).toHaveBeenCalledWith('ssh:biowulf', '/some/dir', dest)
+  })
+
+  it('rethrows non-remoteFsError errors unchanged (no silent encoding)', async () => {
+    const download = vi.fn(() => Promise.reject(new Error('boom: plain failure')))
+    const service = mockService({ download })
+
+    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}))
+    wrapDownloadHandler(service)
+
+    const dest: DownloadDest = { kind: 'os-downloads' }
+    const err = await invokeExpectingError('compute:download', 'ssh:biowulf', '/x', dest)
+
+    expect(err.message).toBe('boom: plain failure')
+    // The marker must not have been injected — the renderer should treat this as a generic error.
+    expect(decodeRemoteFsError(err.message)).toBeNull()
   })
 })

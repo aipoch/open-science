@@ -60,6 +60,16 @@ vi.mock('../session-persistence/repository', () => ({
 const broadcastToRenderers = vi.fn()
 vi.mock('../renderer-broadcast', () => ({ broadcastToRenderers }))
 
+// Treat stale-review detection as a no-op identity function so GET_FOR_SESSION tests stay focused
+// on the IPC wiring (no scope resolution / file IO). Tests that exercise staleness use a real
+// repository-driven setup, not this stubbed path. The mock forwards ALL args so the spy records the
+// full call (reviews, session, dataRoot) the way the production function receives it.
+const flagStaleReviews = vi.fn(async (reviews: unknown) => reviews)
+vi.mock('./stale-reviews', () => ({
+  flagStaleReviews: (...args: unknown[]) =>
+    (flagStaleReviews as unknown as (...a: unknown[]) => unknown)(...args)
+}))
+
 const { registerReviewerIpcHandlers } = await import('./ipc')
 
 const acpRuntime = {} as AcpRuntime
@@ -79,6 +89,8 @@ beforeEach(() => {
     return Promise.resolve(undefined)
   })
   broadcastToRenderers.mockClear()
+  flagStaleReviews.mockReset()
+  flagStaleReviews.mockImplementation(async (reviews: unknown) => reviews)
   sessionLoadAll.mockReset()
   sessionLoadAll.mockResolvedValue({ sessions: [{ id: 'session-1' }] })
   sessionLoadOne.mockReset()
@@ -315,5 +327,308 @@ describe('reviewer IPC handlers', () => {
     expect(result).toEqual({ started: true })
     expect(getReviewsForSession).not.toHaveBeenCalled()
     expect(runReview).toHaveBeenCalledTimes(1)
+  })
+
+  describe('reviewer:get-for-session handler', () => {
+    it('loads persisted reviews and runs them through the stale-review detector', async () => {
+      const reviews = [
+        { id: 'review-1', turnMessageId: 'message-1' },
+        { id: 'review-2', turnMessageId: 'message-1' }
+      ]
+      const flagged = [
+        { ...reviews[0], stale: false },
+        { ...reviews[1], stale: true }
+      ]
+      getReviewsForSession.mockResolvedValue(reviews)
+      // The default sessionLoadAll mock returns [{ id: 'session-1' }], which matches the request.
+      flagStaleReviews.mockResolvedValue(flagged as never)
+      registerReviewerIpcHandlers({ acpRuntime })
+
+      const getHandler = handlers.get(REVIEWER_IPC.GET_FOR_SESSION)
+      expect(getHandler).toBeDefined()
+
+      const result = await getHandler?.({}, 'session-1')
+
+      expect(getReviewsForSession).toHaveBeenCalledWith('session-1')
+      expect(flagStaleReviews).toHaveBeenCalledWith(
+        reviews,
+        expect.objectContaining({ id: 'session-1' }),
+        DATA_ROOT
+      )
+      expect(result).toEqual(flagged)
+    })
+
+    it('returns unflagged reviews when the session is not in the loaded list', async () => {
+      const reviews = [{ id: 'review-1', turnMessageId: 'message-1' }]
+      getReviewsForSession.mockResolvedValue(reviews)
+      // sessionLoadAll returns [{ id: 'session-1' }] by default; look up a different session id.
+      registerReviewerIpcHandlers({ acpRuntime })
+
+      const getHandler = handlers.get(REVIEWER_IPC.GET_FOR_SESSION)
+      const result = await getHandler?.({}, 'missing-session')
+
+      expect(sessionLoadAll).toHaveBeenCalled()
+      // flagStaleReviews is fail-open: a missing session means staleness was not computed, so the
+      // reviews pass through without modification.
+      expect(flagStaleReviews).toHaveBeenCalledWith(reviews, undefined, DATA_ROOT)
+      expect(result).toBe(reviews)
+    })
+
+    it('returns reviews unflagged when the session load throws', async () => {
+      const reviews = [{ id: 'review-1', turnMessageId: 'message-1' }]
+      getReviewsForSession.mockResolvedValue(reviews)
+      sessionLoadAll.mockRejectedValueOnce(new Error('session store unavailable'))
+      registerReviewerIpcHandlers({ acpRuntime })
+
+      const getHandler = handlers.get(REVIEWER_IPC.GET_FOR_SESSION)
+      const result = await getHandler?.({}, 'session-1')
+
+      expect(result).toBe(reviews)
+      // Fail-open: a load failure must not hide stale findings by leaving the detector un-runnable.
+      expect(flagStaleReviews).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('reviewer:abort-fix-loop handler', () => {
+    it('is registered and a no-op (with a warn log) when no fix loop is active for the session', () => {
+      registerReviewerIpcHandlers({ acpRuntime })
+
+      const abortHandler = handlers.get(REVIEWER_IPC.ABORT_FIX_LOOP)
+      expect(abortHandler).toBeDefined()
+
+      // No throw + no return value — the renderer awaits only to confirm Electron processed it.
+      expect(abortHandler?.({}, 'session-without-loop')).toBeUndefined()
+    })
+
+    it('aborts the active fix loop controller when one is registered by the orchestrator', async () => {
+      // Capture the runReview options so we can drive the orchestrator callbacks ourselves.
+      let captured: {
+        onStarted?: () => void
+        onFixLoopStart?: () => void
+        onFixLoopEnd?: () => void
+        fixLoopAbortSignal?: AbortSignal
+      } = {}
+      runReview.mockReset()
+      runReview.mockImplementation((opts?: typeof captured) => {
+        captured = opts ?? {}
+        opts?.onStarted?.()
+        return Promise.resolve(undefined)
+      })
+
+      registerReviewerIpcHandlers({ acpRuntime })
+
+      // Trigger a review so the orchestrator options are captured.
+      const runHandler = handlers.get(REVIEWER_IPC.RUN)
+      const promise = runHandler?.({}, createRequest())
+      await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
+
+      // The orchestrator would call onFixLoopStart when the loop actually starts; we simulate it.
+      captured.onFixLoopStart?.()
+      expect(captured.fixLoopAbortSignal).toBeDefined()
+      // The signal is the one the IPC layer handed to runReview — the handler's abort call must
+      // reach it through fixLoopAbortControllers look-up keyed by effectiveMainSessionId.
+      const abortEvent = vi.fn()
+      captured.fixLoopAbortSignal?.addEventListener('abort', abortEvent)
+
+      const abortHandler = handlers.get(REVIEWER_IPC.ABORT_FIX_LOOP)
+      expect(abortHandler?.({}, 'session-1')).toBeUndefined()
+      expect(abortEvent).toHaveBeenCalledTimes(1)
+
+      // The fix-loop-end callback deregisters the controller so a second abort is a no-op
+      // (matches the warn-log path above).
+      captured.onFixLoopEnd?.()
+      const second = abortHandler?.({}, 'session-1')
+      expect(abortEvent).toHaveBeenCalledTimes(1)
+      expect(second).toBeUndefined()
+
+      // Settle the original review promise so the mock's pending state is released.
+      await expect(promise).resolves.toEqual({ started: true })
+    })
+  })
+
+  describe('orchestrator callback wiring', () => {
+    type OrchestratorCallbacks = {
+      onStarted?: () => void
+      onReviewUpdate?: (review: unknown) => void
+      onCorrectionPrompt?: () => void
+      onCorrectionFailed?: () => void
+      onFixLoopStart?: () => void
+      onFixLoopEnd?: () => void
+    }
+
+    const captureCallbacks = (): { captured: OrchestratorCallbacks; promise: Promise<unknown> } => {
+      const captured: OrchestratorCallbacks = {}
+      runReview.mockReset()
+      runReview.mockImplementation((opts?: OrchestratorCallbacks) => {
+        Object.assign(captured, opts)
+        opts?.onStarted?.()
+        return Promise.resolve(undefined)
+      })
+      registerReviewerIpcHandlers({ acpRuntime })
+      const runHandler = handlers.get(REVIEWER_IPC.RUN)
+      // Fire-and-forget the triggerReview call so vi.waitFor can flush the microtask queue. The
+      // synchronous call path resolves either with started:true (no in-flight lock) or one of the
+      // started:false reasons; we cast the handler's `unknown` return into a typed Promise so the
+      // test sites can await it cleanly.
+      const promise = runHandler?.({}, createRequest()) as unknown as Promise<unknown>
+      return { captured, promise }
+    }
+
+    it('broadcasts REVIEWER_IPC.UPDATED when the orchestrator reports a review update', async () => {
+      const { captured, promise } = captureCallbacks()
+
+      await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
+
+      const review = { id: 'review-1', turnMessageId: 'message-1' }
+      captured.onReviewUpdate?.(review)
+
+      expect(broadcastToRenderers).toHaveBeenCalledWith(REVIEWER_IPC.UPDATED, { review })
+      await expect(promise).resolves.toEqual({ started: true })
+    })
+
+    it('broadcasts SUPPRESS_NEXT_AUTO_REVIEW for the main session when the correction prompt fires', async () => {
+      const { captured, promise } = captureCallbacks()
+
+      // The orchestrator only carries mainSessionId when the renderer supplied one; this is the
+      // real path used by the auto-review follow-up after a flagged review.
+      const runHandler = handlers.get(REVIEWER_IPC.RUN)
+      const second = runHandler?.(
+        {},
+        {
+          sessionId: 'reviewer-session-1',
+          turnMessageId: 'message-1',
+          projectId: 'project-1',
+          mainSessionId: 'main-session-1'
+        }
+      )
+      await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(2))
+
+      // The second invocation's callbacks are the ones the triggerReview returned; invoke them.
+      // (triggerReview is fire-and-forget; we read off the most recent runReview call's options.)
+      const latest = runReview.mock.calls[1]?.[0] as OrchestratorCallbacks
+      latest.onCorrectionPrompt?.()
+
+      expect(broadcastToRenderers).toHaveBeenCalledWith(REVIEWER_IPC.SUPPRESS_NEXT_AUTO_REVIEW, {
+        sessionId: 'main-session-1',
+        clear: false
+      })
+      expect(captured.onCorrectionPrompt).toBeDefined() // run-1 captured too, but unused here
+      await expect(second).resolves.toEqual({ started: true })
+      await expect(promise).resolves.toEqual({ started: true })
+    })
+
+    it('clears the auto-review suppression (clear:true) when the correction turn fails to send', async () => {
+      const { promise } = captureCallbacks()
+
+      const runHandler = handlers.get(REVIEWER_IPC.RUN)
+      await runHandler?.(
+        {},
+        {
+          sessionId: 'reviewer-session-1',
+          turnMessageId: 'message-1',
+          projectId: 'project-1',
+          mainSessionId: 'main-session-1'
+        }
+      )
+      await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(2))
+
+      const latest = runReview.mock.calls[1]?.[0] as OrchestratorCallbacks
+      latest.onCorrectionFailed?.()
+
+      expect(broadcastToRenderers).toHaveBeenCalledWith(REVIEWER_IPC.SUPPRESS_NEXT_AUTO_REVIEW, {
+        sessionId: 'main-session-1',
+        clear: true
+      })
+      await expect(promise).resolves.toEqual({ started: true })
+    })
+
+    it('falls back to the reviewer sessionId for fix-loop broadcasts when no mainSessionId is provided', async () => {
+      // Triggers line 225: `const effectiveMainSessionId = mainSessionId ?? sessionId`. No mainSessionId
+      // means the fix-loop start/end broadcasts (and the abort lookup) must use sessionId directly.
+      const { captured, promise } = captureCallbacks()
+
+      await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
+
+      captured.onFixLoopStart?.()
+      expect(broadcastToRenderers).toHaveBeenCalledWith(REVIEWER_IPC.FIX_LOOP_START, {
+        sessionId: 'session-1'
+      })
+
+      captured.onFixLoopEnd?.()
+      expect(broadcastToRenderers).toHaveBeenCalledWith(REVIEWER_IPC.FIX_LOOP_END, {
+        sessionId: 'session-1'
+      })
+
+      await expect(promise).resolves.toEqual({ started: true })
+    })
+
+    it('broadcasts FIX_LOOP_START/END keyed by mainSessionId when one is supplied', async () => {
+      // Same as above but with mainSessionId, confirming the wiring picks the supplied value over the
+      // reviewer sessionId when deciding where the renderer should lock the composer send button.
+      const { promise } = captureCallbacks()
+      const runHandler = handlers.get(REVIEWER_IPC.RUN)
+      await runHandler?.(
+        {},
+        {
+          sessionId: 'reviewer-session-1',
+          turnMessageId: 'message-1',
+          projectId: 'project-1',
+          mainSessionId: 'main-session-9'
+        }
+      )
+      await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(2))
+
+      const latest = runReview.mock.calls[1]?.[0] as OrchestratorCallbacks
+      latest.onFixLoopStart?.()
+      latest.onFixLoopEnd?.()
+
+      expect(broadcastToRenderers).toHaveBeenCalledWith(REVIEWER_IPC.FIX_LOOP_START, {
+        sessionId: 'main-session-9'
+      })
+      expect(broadcastToRenderers).toHaveBeenCalledWith(REVIEWER_IPC.FIX_LOOP_END, {
+        sessionId: 'main-session-9'
+      })
+      await expect(promise).resolves.toEqual({ started: true })
+    })
+
+    it('skips correction broadcasts when no mainSessionId is supplied', () => {
+      // The IPC layer only suppresses the next auto-review for the MAIN session; a reviewer that
+      // was spawned without a mainSessionId (e.g. an ad-hoc CLI) has no parent to suppress for.
+      const { captured } = captureCallbacks()
+
+      // captureCallbacks already kicked off a run; wait a microtask for runReview to be invoked.
+      // (vi.advanceTimersByTime is not used here — we wait the actual microtask flush.)
+      return Promise.resolve().then(() => {
+        captured.onCorrectionPrompt?.()
+        captured.onCorrectionFailed?.()
+
+        const suppressCalls = broadcastToRenderers.mock.calls.filter(
+          ([channel]) => channel === REVIEWER_IPC.SUPPRESS_NEXT_AUTO_REVIEW
+        )
+        expect(suppressCalls).toEqual([])
+      })
+    })
+  })
+
+  describe('triggerReview session loading', () => {
+    it('falls back to loadAll when the request omits projectId', async () => {
+      // Lines 174-176: no projectId means the per-project loadSession path is unavailable, so the
+      // loader scans every session file. Make sure that branch is exercised and the right loader wins.
+      const loadAllSpy = vi.fn().mockResolvedValue({ sessions: [{ id: 'session-1' }] })
+      sessionLoadAll.mockImplementation(loadAllSpy)
+      sessionLoadOne.mockClear()
+
+      runReview.mockClear()
+      registerReviewerIpcHandlers({ acpRuntime })
+
+      const runHandler = handlers.get(REVIEWER_IPC.RUN)
+      const result = await runHandler?.({}, { sessionId: 'session-1', turnMessageId: 'message-1' })
+
+      expect(result).toEqual({ started: true })
+      // No projectId → the per-project loadSession path must NOT be called.
+      expect(sessionLoadOne).not.toHaveBeenCalled()
+      expect(loadAllSpy).toHaveBeenCalled()
+      await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
+    })
   })
 })

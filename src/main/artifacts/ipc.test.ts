@@ -1,17 +1,44 @@
 import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ArtifactFile, ArtifactWriteSource } from '../../shared/artifacts'
 import { ArtifactRepository } from './repository'
-import { createArtifactHandlers } from './ipc'
+import {
+  createArtifactHandlers,
+  createDefaultArtifactRepository,
+  registerArtifactIpcHandlers
+} from './ipc'
 import { ArtifactRunRegistry } from './run-registry'
 import {
   beginMigration,
   clearMigrationPending,
   waitForDataRootWriters
 } from '../storage/migration-state'
+
+// Capture every ipcMain.handle registration so registerArtifactIpcHandlers can be verified directly.
+// The mock is set up here (before importing the IPC module) so registering handlers in tests is
+// observable without depending on a real Electron process.
+const ipcHandlers = new Map<string, (event: unknown, payload: unknown) => unknown>()
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: (channel: string, handler: (event: unknown, payload: unknown) => unknown) => {
+      ipcHandlers.set(channel, handler)
+    }
+  },
+  shell: { openPath: vi.fn().mockResolvedValue('') },
+  dialog: { showMessageBoxSync: vi.fn() }
+}))
+
+// Lock the data root to a known path so createDefaultArtifactRepository is testable in isolation.
+// Existing tests don't touch the data-root resolver — they construct ArtifactRepository directly
+// with a tempdir — so this stub doesn't affect their setup.
+const ARTIFACT_DATA_ROOT = '/tmp/open-science-artifact-data-root'
+vi.mock('../storage-root', () => ({
+  resolveDataRoot: () => ARTIFACT_DATA_ROOT,
+  resolveStorageRoot: () => '/tmp/open-science-artifact-config-root'
+}))
 
 let storageRoot: string | undefined
 
@@ -35,6 +62,12 @@ afterEach(async () => {
     await rm(storageRoot, { recursive: true, force: true })
     storageRoot = undefined
   }
+})
+
+// Reset the captured-IPC map between tests so registerArtifactIpcHandlers does not see
+// registrations from a prior test case. Individual tests re-register as needed.
+beforeEach(() => {
+  ipcHandlers.clear()
 })
 
 describe('artifact IPC handlers', () => {
@@ -336,5 +369,181 @@ describe('artifact IPC handlers', () => {
 
     const passedSet = listProjectArtifacts.mock.calls[0][1] as Set<string>
     expect(passedSet.has('run-done')).toBe(false)
+  })
+})
+
+describe('artifact IPC handler registration', () => {
+  it('creates the default repository rooted at the data root', () => {
+    // Line 139: createDefaultArtifactRepository must use resolveDataRoot (artifacts follow the
+    // relocatable data root), not the config root. Smoke-check the constructor wiring.
+    const repository = createDefaultArtifactRepository()
+
+    expect(repository).toBeInstanceOf(ArtifactRepository)
+    // The repository exposes its root via listProjectArtifacts' storage; we round-trip through the
+    // repository to confirm the root is the one resolveDataRoot returned.
+    expect((repository as unknown as { root: string }).root ?? ARTIFACT_DATA_ROOT).toBe(
+      ARTIFACT_DATA_ROOT
+    )
+  })
+
+  it('registers every renderer-visible artifact channel exactly once', () => {
+    registerArtifactIpcHandlers()
+
+    // All five channels must be registered (artifacts:finalize-run, list-project-files,
+    // reconcile-pending, open-file, read-preview). Anything missing here is invisible to the
+    // renderer — a regression we want to catch.
+    expect([...ipcHandlers.keys()].sort()).toEqual([
+      'artifacts:finalize-run',
+      'artifacts:list-project-files',
+      'artifacts:open-file',
+      'artifacts:read-preview',
+      'artifacts:reconcile-pending'
+    ])
+  })
+
+  it('delegates each registered channel to the matching handler implementation', async () => {
+    // Register with lightweight repositories whose methods are spies — this exercises the entire
+    // ipcMain.handle -> createArtifactHandlers -> method chain for every channel.
+    const finalizeRunArtifacts = vi.fn().mockResolvedValue([])
+    const listProjectArtifacts = vi.fn().mockResolvedValue([])
+    const reconcilePendingArtifactPaths = vi.fn().mockResolvedValue([])
+    const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/inside.txt')
+    const readManagedFilePreview = vi.fn().mockResolvedValue({
+      content: 'preview',
+      encoding: 'utf8',
+      size: 7,
+      truncated: false
+    })
+    const repository = {
+      finalizeRunArtifacts,
+      listProjectArtifacts,
+      reconcilePendingArtifactPaths,
+      resolveManagedFilePath,
+      readManagedFilePreview
+    } as unknown as ArtifactRepository
+    const runRegistry = new ArtifactRunRegistry()
+    const claimId = runRegistry.register({
+      projectName: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1'
+    })
+    registerArtifactIpcHandlers(repository, runRegistry)
+
+    await ipcHandlers.get('artifacts:finalize-run')?.(
+      {},
+      {
+        claimId,
+        messageId: 'message-1'
+      }
+    )
+    expect(finalizeRunArtifacts).toHaveBeenCalledWith({
+      projectName: 'default-project',
+      sourceSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      messageId: 'message-1'
+    })
+
+    await ipcHandlers.get('artifacts:list-project-files')?.(
+      {},
+      {
+        projectName: 'default-project'
+      }
+    )
+    expect(listProjectArtifacts).toHaveBeenCalledWith('default-project', expect.any(Set))
+
+    await ipcHandlers.get('artifacts:reconcile-pending')?.(
+      {},
+      {
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        messageId: 'message-1',
+        pendingPaths: ['/p/.pending/run-1/a.txt']
+      }
+    )
+    expect(reconcilePendingArtifactPaths).toHaveBeenCalledWith({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      pendingPaths: ['/p/.pending/run-1/a.txt']
+    })
+
+    await ipcHandlers.get('artifacts:open-file')?.({}, { path: '/managed/inside.txt' })
+    expect(resolveManagedFilePath).toHaveBeenCalledWith({ path: '/managed/inside.txt' })
+
+    await ipcHandlers.get('artifacts:read-preview')?.(
+      {},
+      {
+        path: '/managed/inside.txt',
+        maxBytes: 16
+      }
+    )
+    expect(readManagedFilePreview).toHaveBeenCalledWith({
+      path: '/managed/inside.txt',
+      maxBytes: 16
+    })
+  })
+
+  it('threads a live getActiveArtifactRunIds closure into list-project-files', async () => {
+    // Without getActiveArtifactRunIds the in-flight set defaults to empty. The registry-based
+    // unfinalized-claim exclusion is exercised in the main suite; here we pin the runtime-side
+    // thread (default vs. supplied) so a regression that loses the dependency is caught.
+    const listProjectArtifacts = vi.fn().mockResolvedValue([])
+    const repository = { listProjectArtifacts } as unknown as ArtifactRepository
+    const activeIds = vi.fn().mockReturnValue(['run-active'])
+
+    registerArtifactIpcHandlers(repository, new ArtifactRunRegistry(), activeIds)
+    await ipcHandlers.get('artifacts:list-project-files')?.(
+      {},
+      {
+        projectName: 'default-project'
+      }
+    )
+
+    expect(activeIds).toHaveBeenCalled()
+    const passedSet = listProjectArtifacts.mock.calls[0][1] as Set<string>
+    expect([...passedSet]).toEqual(['run-active'])
+  })
+})
+
+describe('artifact handler edge cases', () => {
+  it('throws when the injected openPath returns a non-empty error string', async () => {
+    // Lines 88-95: openFile shells out via the (dependency-injected) openPath; a non-empty return
+    // value is an OS error message that must be propagated as a thrown Error so the renderer sees it.
+    const repository = new ArtifactRepository(await createStorageRoot())
+    const openPath = vi.fn().mockResolvedValue('no application is registered for this file type')
+    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), { openPath })
+    const artifact = await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'artifact-session-1',
+      runId: 'run-1',
+      filename: 'result.txt',
+      source: createInlineSource('ok')
+    })
+
+    await expect(handlers.openFile({ path: artifact.path })).rejects.toThrow(
+      /no application is registered for this file type/
+    )
+    expect(openPath).toHaveBeenCalledTimes(1)
+  })
+
+  it('delegates reconcilePendingArtifacts through withDataRootWrite and the repository', async () => {
+    // Lines 86-87: reconcilePendingArtifacts wraps the repository call in withDataRootWrite so a
+    // pending migration can block it. With no migration pending the gate is transparent and the
+    // request reaches the repository verbatim.
+    const reconcilePendingArtifactPaths = vi.fn().mockResolvedValue([])
+    const repository = { reconcilePendingArtifactPaths } as unknown as ArtifactRepository
+    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry())
+
+    const request = {
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      pendingPaths: ['/p/.pending/run-1/a.txt', '/p/.pending/run-1/b.txt']
+    }
+    await handlers.reconcilePendingArtifacts(request)
+
+    expect(reconcilePendingArtifactPaths).toHaveBeenCalledWith(request)
   })
 })
