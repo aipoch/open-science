@@ -176,6 +176,23 @@ describe('ProviderList', () => {
     expect(container.textContent).toContain('authentication rejected')
   })
 
+  it('flags a provider whose last test failed with a server error', () => {
+    renderList([
+      provider({
+        lastValidatedAt: 1,
+        lastValidationFailure: {
+          at: 2,
+          category: 'server-error',
+          status: 503,
+          message: 'Service temporarily unavailable'
+        }
+      })
+    ])
+
+    expect(container.textContent).toContain('Service temporarily unavailable')
+    expect(container.textContent).toContain('HTTP 503')
+  })
+
   it('does not flag a provider whose latest validation succeeded', () => {
     // A stale failure older than the last success is not a warning.
     renderList([

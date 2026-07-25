@@ -82,6 +82,11 @@ const describeValidationFailure = (failure: ProviderValidationFailure): string =
     case 'incompatible':
       // The pairing, not the credential, is the problem — carry the specific route-mismatch reason.
       return failure.message ?? 'Not compatible with the active agent framework.'
+    case 'server-error':
+      // Gateway or upstream service temporarily unavailable — surface the specific error when present.
+      return failure.message
+        ? `Test failed: ${failure.message}${failure.status ? ` (HTTP ${failure.status})` : ''}`
+        : 'Test failed: the gateway or upstream service is temporarily unavailable.'
     default:
       return failure.message ? `Test failed: ${failure.message}` : 'Connection test failed.'
   }
