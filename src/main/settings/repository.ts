@@ -1051,6 +1051,25 @@ class SettingsRepository {
     })
   }
 
+  // Atomically removes and returns disabled ids that still exist. The returned set is consumed by
+  // one caller only, so concurrent upgrade-path checks cannot both schedule the same reload.
+  async consumeDisabledSkillIds(ids: string[]): Promise<string[]> {
+    const requested = [...new Set(ids)]
+    let consumed: string[] = []
+
+    await this.mutate((settings) => {
+      const current = new Set(settings.disabledSkillIds ?? [])
+      consumed = requested.filter((id) => current.delete(id))
+      const disabledSkillIds = [...current]
+
+      return disabledSkillIds.length > 0
+        ? { ...settings, disabledSkillIds }
+        : { ...settings, disabledSkillIds: undefined }
+    })
+
+    return consumed
+  }
+
   // Adds or removes a bundled connector id from the disabled set (default-on model).
   async setConnectorDisabled(id: string, disabled: boolean): Promise<StoredSettings> {
     return this.mutateConnectors((connectors) => {

@@ -894,10 +894,23 @@ class SettingsService {
       this.skillCatalog(),
       this.repository.getSettings()
     ])
-    const knownIds = new Set(skills.map((skill) => skill.id))
+    const skillById = new Map(skills.map((skill) => [skill.id, skill]))
     const disabled = new Set(settings.disabledSkillIds ?? [])
+    const staleAgentOnlyIds = forcedIds.filter((id) => {
+      const skill = skillById.get(id)
+      return skill?.visibility === 'agent-only' && disabled.has(id)
+    })
+    const consumedAgentOnlyIds =
+      staleAgentOnlyIds.length > 0
+        ? new Set(await this.repository.consumeDisabledSkillIds(staleAgentOnlyIds))
+        : new Set<string>()
 
-    return forcedIds.filter((id) => knownIds.has(id) && disabled.has(id))
+    return forcedIds.filter((id) => {
+      const skill = skillById.get(id)
+      if (!skill) return false
+
+      return skill.visibility === 'agent-only' ? consumedAgentOnlyIds.has(id) : disabled.has(id)
+    })
   }
 
   // Resolves runtime-supplied ids to the names the agent's Skill tool accepts. This intentionally uses
