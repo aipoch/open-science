@@ -516,11 +516,11 @@ const validateCustomProvider = async (
       }
     }
 
-    // Only the catch-all 'unknown' status (402 billing, 429 rate limit, 5xx, …) lacks guidance of its
-    // own, so surface the gateway's error text there — whatever it actually says — rather than an
-    // assumed meaning. auth/model-not-found already map to targeted advice, so their raw bodies would
-    // only muddy it.
-    if (category === 'unknown') {
+    // Only the catch-all 'unknown' status (402 billing, 429 rate limit, …) and 'server-error' (5xx)
+    // lack guidance of their own, so surface the gateway's error text there — whatever it actually
+    // says — rather than an assumed meaning. auth/model-not-found already map to targeted advice, so
+    // their raw bodies would only muddy it.
+    if (category === 'unknown' || category === 'server-error') {
       return toResult(category, {
         status: response.status,
         message: providerMessage

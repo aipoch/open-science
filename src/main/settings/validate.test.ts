@@ -177,7 +177,8 @@ describe('validate: classification', () => {
     expect(classifyStatus(403)).toBe('auth')
     expect(classifyStatus(404)).toBe('model-not-found')
     expect(classifyStatus(400)).toBe('unknown')
-    expect(classifyStatus(500)).toBe('unknown')
+    expect(classifyStatus(500)).toBe('server-error')
+    expect(classifyStatus(503)).toBe('server-error')
   })
 
   it('maps thrown errors to categories', () => {
@@ -469,7 +470,7 @@ describe('validate: provider dispatch', () => {
 
     expect(result).toMatchObject({
       ok: false,
-      category: 'unknown',
+      category: 'server-error',
       status: 503,
       message: 'Service temporarily unavailable'
     })
@@ -486,7 +487,7 @@ describe('validate: provider dispatch', () => {
       { fetchImpl: fetchImpl as unknown as typeof fetch }
     )
 
-    expect(result).toMatchObject({ ok: false, category: 'unknown', status: 500 })
+    expect(result).toMatchObject({ ok: false, category: 'server-error', status: 500 })
     expect(result.message).toBeUndefined()
   })
 

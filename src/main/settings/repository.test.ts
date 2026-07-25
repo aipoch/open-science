@@ -404,6 +404,30 @@ describe('settings repository', () => {
     })
   })
 
+  it('round-trips a server-error validation failure across a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.upsertProvider(
+      provider({
+        lastValidationFailure: {
+          at: 1717000000000,
+          category: 'server-error',
+          status: 503,
+          message: 'Service temporarily unavailable'
+        }
+      })
+    )
+
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.providers[0].lastValidationFailure).toEqual({
+      at: 1717000000000,
+      category: 'server-error',
+      status: 503,
+      message: 'Service temporarily unavailable'
+    })
+  })
+
   it('drops a malformed validation failure (bad category or missing timestamp) on load', async () => {
     const root = await createStorageRoot()
 

@@ -62,6 +62,7 @@ const VALIDATION_CATEGORIES = new Set<ValidationCategory>([
   'bad-url',
   'timeout',
   'incompatible',
+  'server-error',
   'unknown'
 ])
 
