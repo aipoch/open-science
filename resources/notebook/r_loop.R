@@ -28,13 +28,14 @@ read_request <- function() {
   list(req_id = req_id, code = code)
 }
 
-# Content-addresses each non-empty PNG page produced on the device into figures_dir.
-harvest_figures <- function(pattern_dir) {
+# Content-addresses each non-empty PNG page produced on the device into figures_dir. Raw pages are
+# always removed, including when the device was unused and produced a platform-specific blank PNG.
+harvest_figures <- function(pattern_dir, include = TRUE) {
   files <- list.files(pattern_dir, pattern = "^page-\\d+\\.png$", full.names = TRUE)
   out <- list()
   for (f in files) {
     info <- file.info(f)
-    if (!is.na(info$size) && info$size > 0) {
+    if (include && !is.na(info$size) && info$size > 0) {
       digest <- content_hash(f)
       dest <- file.path(figures_dir, paste0(digest, ".png"))
       file.copy(f, dest, overwrite = TRUE)
@@ -45,6 +46,19 @@ harvest_figures <- function(pattern_dir) {
     unlink(f)
   }
   out
+}
+
+# A print device can create a blank PNG merely by being opened and closed (notably on Windows).
+# Enable the display list and use its recorded operations to distinguish that empty device from a
+# cell that actually drew a plot. If recording is unavailable, retain the figure rather than risk
+# dropping a legitimate output.
+has_recorded_graphics <- function(dev_id) {
+  tryCatch({
+    if (!(dev_id %in% grDevices::dev.list())) return(TRUE)
+    grDevices::dev.set(dev_id)
+    recorded <- grDevices::recordPlot()
+    length(recorded) > 0L && length(recorded[[1L]]) > 0L
+  }, error = function(cnd) TRUE)
 }
 
 # Content hash of a file for figure dedup, using base R's tools::md5sum (no new dependency). The
@@ -58,6 +72,7 @@ run <- function(req) {
   pattern <- file.path(page_dir, "page-%03d.png")
   grDevices::png(filename = pattern, width = 800, height = 600, res = 96)
   dev_id <- grDevices::dev.cur()
+  grDevices::dev.control(displaylist = "enable")
   error <- NULL
   error_line <- NA_integer_
   stdout_text <- ""
@@ -85,8 +100,9 @@ run <- function(req) {
       interrupt = function(cnd) error <<- "interrupted")
     }
   }), collapse = "\n")
+  has_graphics <- has_recorded_graphics(dev_id)
   suppressWarnings(try(grDevices::dev.off(dev_id), silent = TRUE))
-  figures <- if (nzchar(figures_dir)) harvest_figures(page_dir) else list()
+  figures <- if (nzchar(figures_dir)) harvest_figures(page_dir, has_graphics) else list()
   list(stdout = stdout_text, stderr = "", error = if (is.null(error)) NA else error,
        error_line = if (is.na(error_line)) NULL else error_line,
        result = NA, cwd = getwd(), figures = figures)

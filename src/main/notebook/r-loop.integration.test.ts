@@ -88,6 +88,22 @@ gate('r_loop.R', () => {
     }
   }, 60_000)
 
+  it('does not capture a figure when a cell emits only text', async () => {
+    const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-text-'))
+    const { child, send } = startLoop(rscriptBin(), {
+      OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
+    })
+    try {
+      const r = await send('print("text only")')
+      expect(r.error).toBeNull()
+      expect(r.stdout).toContain('text only')
+      expect(r.figures).toEqual([])
+    } finally {
+      child.kill()
+      rmSync(figuresDir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
   it('captures a base graphics figure as a content-addressed PNG', async () => {
     const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-'))
     const { child, send } = startLoop(rscriptBin(), {
@@ -96,13 +112,43 @@ gate('r_loop.R', () => {
     try {
       const r = await send('plot(1:3)')
       expect(r.error).toBeNull()
-      expect(r.figures.length).toBeGreaterThan(0)
+      expect(r.figures).toHaveLength(1)
       const fig = r.figures[0]
       expect(existsSync(fig.path)).toBe(true)
       const bytes = readFileSync(fig.path)
       // PNG magic bytes.
       expect(bytes[0]).toBe(0x89)
       expect(bytes.subarray(1, 4).toString('ascii')).toBe('PNG')
+    } finally {
+      child.kill()
+      rmSync(figuresDir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('captures the kernel figure when user code opens another graphics device', async () => {
+    const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-device-'))
+    const { child, send } = startLoop(rscriptBin(), {
+      OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
+    })
+    try {
+      const r = await send('plot(1:3)\npdf(tempfile())')
+      expect(r.error).toBeNull()
+      expect(r.figures).toHaveLength(1)
+    } finally {
+      child.kill()
+      rmSync(figuresDir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('captures one figure for each base graphics plot', async () => {
+    const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-multi-'))
+    const { child, send } = startLoop(rscriptBin(), {
+      OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
+    })
+    try {
+      const r = await send('plot(1:3)\nplot(3:1)')
+      expect(r.error).toBeNull()
+      expect(r.figures).toHaveLength(2)
     } finally {
       child.kill()
       rmSync(figuresDir, { recursive: true, force: true })
