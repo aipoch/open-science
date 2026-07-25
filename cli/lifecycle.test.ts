@@ -104,10 +104,10 @@ describe('terminateDaemon', () => {
 })
 
 describe('headless startup', () => {
-  it('forwards the explicit no-sandbox fallback to Electron', () => {
+  it('places the no-sandbox runtime switch before the development app path', () => {
     expect(buildAppLaunchArgs(['app-root'], { noSandbox: true }, 44100)).toEqual([
-      'app-root',
       '--no-sandbox',
+      'app-root',
       '--open-science-headless',
       '--serve=44100'
     ])

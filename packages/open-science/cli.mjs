@@ -340,8 +340,8 @@ const readLogTail = async (logPath) => {
 }
 
 export const buildAppLaunchArgs = (appArgs, options, port) => [
-  ...appArgs,
   ...(options.noSandbox ? ['--no-sandbox'] : []),
+  ...appArgs,
   // `--open-science-headless` instead of `--headless`: Chromium consumes `--headless` and renders
   // native menus (like the tray context menu) invisibly on Windows (electron/electron#48982).
   '--open-science-headless',
