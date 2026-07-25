@@ -886,32 +886,21 @@ class SettingsService {
     return skills.map((skill) => this.toSkillView(skill, disabled))
   }
 
-  // Returns known forced ids that are currently disabled in settings — i.e. the ids that need a
-  // respawn to materialize. This includes stale agent-only ids from pre-visibility settings so an old
-  // draft or headless request can repair an already-running runtime after upgrade.
+  // Returns known forced ids that are not materialized under the current provisioning policy.
+  // Agent-only skills are always present in app-managed runtime generations, so stale disable flags
+  // from older versions must never trigger a prompt-time reconnect.
   async skillsNeedingForceLoad(forcedIds: string[]): Promise<string[]> {
     const [skills, settings] = await Promise.all([
       this.skillCatalog(),
       this.repository.getSettings()
     ])
-    const knownIds = new Set(skills.map((skill) => skill.id))
+    const skillById = new Map(skills.map((skill) => [skill.id, skill]))
     const disabled = new Set(settings.disabledSkillIds ?? [])
 
-    return forcedIds.filter((id) => knownIds.has(id) && disabled.has(id))
-  }
-
-  // Clears only stale agent-only disable flags, and only after the runtime confirms its
-  // reprovisioned session resumed. User-visible disabled skills remain turn-scoped overrides.
-  async markSkillsForceLoaded(ids: string[]): Promise<void> {
-    const skills = await this.skillCatalog()
-    const agentOnlyIds = new Set(
-      skills.filter((skill) => skill.visibility === 'agent-only').map((skill) => skill.id)
-    )
-    const staleIds = ids.filter((id) => agentOnlyIds.has(id))
-
-    if (staleIds.length > 0) {
-      await this.repository.consumeDisabledSkillIds(staleIds)
-    }
+    return forcedIds.filter((id) => {
+      const skill = skillById.get(id)
+      return skill !== undefined && !isSkillEnabledForAgent(skill, disabled)
+    })
   }
 
   // Resolves runtime-supplied ids to the names the agent's Skill tool accepts. This intentionally uses
