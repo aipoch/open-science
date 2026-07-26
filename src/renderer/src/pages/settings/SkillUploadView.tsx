@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SKILL_IMPORT_LIMITS } from '../../../../shared/skill-import-limits'
+import { parseFrontmatter } from '../../../../shared/skill-frontmatter'
 import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
 import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
@@ -86,8 +87,8 @@ const cleanMessage = (error: unknown): string => {
   return message.replace(/^Error invoking remote method '[^']*':\s*/, '').replace(/^Error:\s*/, '')
 }
 
-// Pulls name/description out of a .md frontmatter block, returning the stripped body (mirrors the
-// editor's consumeFrontmatter so an uploaded SKILL.md fills the same fields).
+// Pulls name/description out of a .md frontmatter block with the same YAML semantics as main-process
+// bundle, GitHub, and installed-skill imports.
 const consumeFrontmatter = (
   text: string
 ): {
@@ -96,22 +97,10 @@ const consumeFrontmatter = (
   metadata: Record<string, string>
   body: string
 } => {
-  const normalized = text.replace(/\r\n?/g, '\n')
-  const match = /^---\n([\s\S]*?)\n---\n?/.exec(normalized)
-  if (!match) return { metadata: {}, body: text }
-
-  const fields: Record<string, string> = {}
-  for (const line of match[1].split('\n')) {
-    const field = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line)
-    if (field) fields[field[1].toLowerCase()] = field[2].trim()
-  }
+  const { fields, body } = parseFrontmatter(text)
   const { name, description, ...metadata } = fields
-  return {
-    name,
-    description,
-    metadata,
-    body: normalized.slice(match[0].length).replace(/^\n+/, '')
-  }
+
+  return { name, description, metadata, body }
 }
 
 // Reads a File as base64 (for binary-safe bundle transport to the main process).

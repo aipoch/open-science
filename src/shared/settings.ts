@@ -736,6 +736,7 @@ export type SkillView = {
 // `references/` directory, for the detail/edit view.
 export type SkillDetailView = SkillView & {
   body: string
+  metadata?: Record<string, string>
   references: SkillReferenceInfo[]
 }
 
@@ -773,6 +774,7 @@ export type UpdateSkillRequest = {
   name: string
   description: string
   body: string
+  metadata?: Record<string, string>
   references?: SkillReference[]
 }
 

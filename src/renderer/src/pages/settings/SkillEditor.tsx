@@ -15,6 +15,7 @@ export type SkillDraft = {
   name: string
   description: string
   body: string
+  metadata?: Record<string, string>
   slug?: string
   references?: SkillReference[]
 }
@@ -168,6 +169,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
         name: name.trim(),
         description: description.trim(),
         body,
+        metadata: initial.metadata,
         slug: isCreate ? currentSlug : undefined,
         references: references.map((ref) => ({ path: ref.path, dataBase64: ref.dataBase64 }))
       })
@@ -411,6 +413,7 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
           name: detail.name,
           description: detail.description,
           body: detail.body,
+          metadata: detail.metadata,
           references: detail.references.map((ref) => ({ path: ref.path }))
         })
       }
@@ -432,6 +435,7 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
           name: next.name,
           description: next.description,
           body: next.body,
+          metadata: next.metadata,
           references: next.references
         })
         onDone()

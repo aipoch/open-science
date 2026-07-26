@@ -2882,7 +2882,8 @@ describe('SettingsService: skills', () => {
     let skills = await service.createSkill({
       name: 'My Skill',
       description: 'Mine.',
-      body: '# Mine'
+      body: '# Mine',
+      metadata: { author: 'Ada', license: 'MIT', category: 'research' }
     })
     // Featured (demo) + the new personal skill, both enabled by default.
     expect(skills.map((skill) => skill.id).sort()).toEqual(['demo', 'personal-my-skill'])
@@ -2891,14 +2892,19 @@ describe('SettingsService: skills', () => {
 
     const detail = await service.getSkillDetail('personal-my-skill')
     expect(detail.body).toContain('# Mine')
+    expect(detail.metadata).toEqual({ author: 'Ada', license: 'MIT', category: 'research' })
 
     skills = await service.updateSkill({
       id: 'personal-my-skill',
       name: 'My Skill',
       description: 'Edited.',
-      body: '# Edited'
+      body: '# Edited',
+      metadata: detail.metadata
     })
     expect(skills.find((skill) => skill.id === 'personal-my-skill')?.description).toBe('Edited.')
+    await expect(service.getSkillDetail('personal-my-skill')).resolves.toMatchObject({
+      metadata: { author: 'Ada', license: 'MIT', category: 'research' }
+    })
 
     skills = await service.deleteSkill({ id: 'personal-my-skill' })
     expect(skills.map((skill) => skill.id)).toEqual(['demo'])

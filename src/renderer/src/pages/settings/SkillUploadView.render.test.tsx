@@ -266,6 +266,48 @@ describe('SkillUploadView (batch upload)', () => {
     })
   })
 
+  it('preserves YAML lists and block scalars from a markdown candidate', async () => {
+    act(() => {
+      root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
+    })
+
+    const md = new File(
+      [
+        [
+          '---',
+          'name: Complex',
+          'description: >',
+          '  A folded',
+          '  description.',
+          'tags:',
+          '  - alpha',
+          '  - beta',
+          'notes: |',
+          '  line one',
+          '  line two',
+          '---',
+          '# Body'
+        ].join('\n')
+      ],
+      'complex.md',
+      { type: 'text/markdown' }
+    )
+    await dropFiles([md])
+
+    act(() =>
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Complex"]')?.click()
+    )
+    clickButton('Import selected')
+    await flush()
+
+    expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
+      name: 'Complex',
+      description: 'A folded description.\n',
+      metadata: { tags: 'alpha, beta', notes: 'line one\nline two\n' },
+      body: '# Body'
+    })
+  })
+
   it('previews a bare Markdown candidate from its in-renderer body without changing selection', async () => {
     act(() => {
       root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)

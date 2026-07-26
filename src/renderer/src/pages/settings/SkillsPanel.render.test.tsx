@@ -267,6 +267,47 @@ describe('SkillsPanel (list view)', () => {
 })
 
 describe('SkillsPanel (sub-views)', () => {
+  it('preserves imported frontmatter metadata when saving an edited skill', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        getSkillDetail: vi.fn().mockResolvedValue({
+          id: 'personal-mine',
+          name: 'Mine',
+          description: 'Custom',
+          source: 'personal',
+          updatedAt: '2026-07-08T00:00:00.000Z',
+          enabled: true,
+          body: '# Body',
+          metadata: { author: 'Ada', license: 'MIT', category: 'research' },
+          references: []
+        })
+      }
+    }
+
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'edit', id: 'personal-mine' }} onNavigate={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save'
+    )
+    await act(async () => {
+      save?.click()
+      await Promise.resolve()
+    })
+
+    expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
+      id: 'personal-mine',
+      name: 'Mine',
+      description: 'Custom',
+      body: '# Body',
+      metadata: { author: 'Ada', license: 'MIT', category: 'research' },
+      references: []
+    })
+  })
+
   it('creates a skill from the create view and returns to the list', () => {
     const onNavigate = vi.fn()
     act(() => {

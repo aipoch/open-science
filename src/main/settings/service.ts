@@ -1038,10 +1038,13 @@ class SettingsService {
     }
 
     const disabled = new Set(settings.disabledSkillIds ?? [])
-    const { body } = await readSkillFile(skill.sourceDir)
+    const { fields, body } = await readSkillFile(skill.sourceDir)
+    const metadata = Object.fromEntries(
+      Object.entries(fields).filter(([key]) => key !== 'name' && key !== 'description')
+    )
     const references = await this.listSkillReferences(skill.sourceDir)
 
-    return { ...this.toSkillView(skill, disabled), body, references }
+    return { ...this.toSkillView(skill, disabled), body, metadata, references }
   }
 
   // Lists the file names directly under a skill's `references/` directory (empty when absent).
@@ -1079,6 +1082,7 @@ class SettingsService {
       name: request.name,
       description: request.description,
       body: request.body,
+      metadata: request.metadata,
       references: request.references
     })
 
