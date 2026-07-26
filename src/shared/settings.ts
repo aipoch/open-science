@@ -869,8 +869,8 @@ export type AgentHomeSkillView = {
   // Parsed from SKILL.md frontmatter; falls back to the slug when the name is absent or unparseable.
   name: string
   description: string
-  // True when an imported-skill record with the same slug already exists, so the UI can mark it as
-  // already pulled in and disable its checkbox.
+  // True when either the same source, slug, and content are already represented by an imported-skill
+  // record, or a controlled legacy slug fallback claims this row, so the UI can disable its checkbox.
   alreadyImported: boolean
 }
 
@@ -892,7 +892,7 @@ export type ImportAgentHomeSkillItemResult =
       id: string
       error?: undefined
     })
-  | (AgentHomeSkillRef & {
+  | (Partial<AgentHomeSkillRef> & {
       status?: undefined
       id?: undefined
       error: string

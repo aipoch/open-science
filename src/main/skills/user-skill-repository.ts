@@ -809,13 +809,13 @@ class UserSkillRepository {
     }
   }
 
-  private async importedAgentHomeKeys(): Promise<Set<string>> {
-    const keys = new Set<string>()
+  private async importedAgentHomeSignatures(): Promise<Map<string, string | undefined>> {
+    const signatures = new Map<string, string | undefined>()
     for (const slug of await this.listSlugs('imported')) {
       const source = await this.readSource(slug)
-      if (source?.agentHome) keys.add(agentHomeKey(source.agentHome))
+      if (source?.agentHome) signatures.set(agentHomeKey(source.agentHome), source.signature)
     }
-    return keys
+    return signatures
   }
 
   private async fallbackImportedSlugs(): Promise<Set<string>> {
@@ -838,6 +838,95 @@ class UserSkillRepository {
       if (allowSlugFallback && !source?.agentHome && slug === skill.slug) fallbackSlug = slug
     }
     return fallbackSlug
+  }
+
+  // Hashes one installed-skill tree without following symlinks. Paths use archive-style `/`
+  // separators so the same tree has the same identity on Windows and POSIX; directory entries and
+  // portable permission bits are included because cp preserves empty directories and executable
+  // scripts. Applying the shared per-skill caps also bounds local scan reads.
+  private async signatureOfAgentHomeSkill(root: string): Promise<string> {
+    const entries: (
+      | { kind: 'directory'; relativePath: string; mode: number }
+      | { kind: 'file'; path: string; relativePath: string; mode: number }
+    )[] = []
+    let declaredTotal = 0
+    let fileCount = 0
+
+    const visit = async (dir: string, prefix: string, depth: number): Promise<void> => {
+      const dirStat = await lstat(dir)
+      if (dirStat.isSymbolicLink()) {
+        throw new Error('Refusing to import an agent-home Skill containing a symbolic link.')
+      }
+      if (!dirStat.isDirectory()) throw new Error('Agent-home Skill source must be a directory.')
+      if (depth > SKILL_IMPORT_LIMITS.maxDepth) {
+        throw new Error(`Agent-home Skill exceeds the maximum directory depth.`)
+      }
+      entries.push({ kind: 'directory', relativePath: prefix, mode: dirStat.mode & 0o777 })
+
+      const children = (await readdir(dir, { withFileTypes: true })).sort((a, b) =>
+        a.name.localeCompare(b.name)
+      )
+      for (const entry of children) {
+        const path = join(dir, entry.name)
+        const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
+        const entryStat = await lstat(path)
+        if (entryStat.isSymbolicLink()) {
+          throw new Error('Refusing to import an agent-home Skill containing a symbolic link.')
+        }
+        if (entryStat.isDirectory()) {
+          await visit(path, relativePath, depth + 1)
+          continue
+        }
+        if (!entryStat.isFile()) {
+          throw new Error(`Agent-home Skill contains an unsupported filesystem entry.`)
+        }
+        if (relativePath === SOURCE_MANIFEST) {
+          throw new Error(`Skill import may not include the reserved file ${SOURCE_MANIFEST}.`)
+        }
+        if (fileCount >= SKILL_IMPORT_LIMITS.maxFiles) {
+          throw new Error(`Agent-home Skill has more than ${SKILL_IMPORT_LIMITS.maxFiles} files.`)
+        }
+        if (entryStat.size > SKILL_IMPORT_LIMITS.maxFileBytes) {
+          throw new Error(
+            `Agent-home Skill contains a file over ${mb(SKILL_IMPORT_LIMITS.maxFileBytes)}.`
+          )
+        }
+        declaredTotal += entryStat.size
+        if (declaredTotal > SKILL_IMPORT_LIMITS.maxTotalBytes) {
+          throw new Error(`Agent-home Skill exceeds ${mb(SKILL_IMPORT_LIMITS.maxTotalBytes)}.`)
+        }
+        fileCount += 1
+        entries.push({ kind: 'file', path, relativePath, mode: entryStat.mode & 0o777 })
+      }
+    }
+
+    await visit(root, '', 0)
+
+    const hash = createHash('sha256')
+    let actualTotal = 0
+    for (const entry of entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath))) {
+      hash.update(entry.kind)
+      hash.update('\0')
+      hash.update(entry.relativePath)
+      hash.update('\0')
+      hash.update(entry.mode.toString(8))
+      hash.update('\0')
+      if (entry.kind === 'directory') continue
+
+      const content = await readFile(entry.path)
+      if (content.length > SKILL_IMPORT_LIMITS.maxFileBytes) {
+        throw new Error(
+          `Agent-home Skill contains a file over ${mb(SKILL_IMPORT_LIMITS.maxFileBytes)}.`
+        )
+      }
+      actualTotal += content.length
+      if (actualTotal > SKILL_IMPORT_LIMITS.maxTotalBytes) {
+        throw new Error(`Agent-home Skill exceeds ${mb(SKILL_IMPORT_LIMITS.maxTotalBytes)}.`)
+      }
+      hash.update(content)
+      hash.update('\0')
+    }
+    return hash.digest('hex')
   }
 
   // Writes an imported skill's files (replacing any prior copy) plus its source manifest.
@@ -887,7 +976,6 @@ class UserSkillRepository {
     const stem = basename(dir)
     const generation = nextGeneration()
     const staging = join(parent, `.${stem}.import-${generation}`)
-    const backup = join(parent, `.${stem}.backup-${generation}`)
     // Build the whole new copy in staging first; any failure here discards staging and never touches
     // the live skill.
     try {
@@ -914,6 +1002,18 @@ class UserSkillRepository {
       throw buildError
     }
 
+    await this.swapImportedStaging(slug, staging, generation)
+  }
+
+  // Atomically promotes a fully-built sibling staging directory. This is shared by downloaded and
+  // installed-skill imports so both refresh paths preserve the previous live copy on swap failure.
+  private async swapImportedStaging(
+    slug: string,
+    staging: string,
+    generation: string
+  ): Promise<void> {
+    const dir = this.skillDir('imported', slug)
+    const backup = join(dirname(dir), `.${basename(dir)}.backup-${generation}`)
     // Swap: move the old copy aside to the backup, move staging into place, then drop the backup. This
     // runs inside the caller's operation-level critical section (recovery + dedup + slug + swap share
     // one runExclusive), so it must NOT re-acquire the lock here — that would deadlock. If a crash
@@ -948,6 +1048,46 @@ class UserSkillRepository {
     } catch (error) {
       // Any swap failure leaves staging behind; discard it (the backup, if any, is intentionally kept).
       await rm(staging, { recursive: true, force: true }).catch(() => {})
+      throw error
+    }
+  }
+
+  // Copies a local installed skill into a sibling staging directory, validates the copied snapshot,
+  // and records both its stable source identity and content signature. The caller decides whether
+  // that snapshot is unchanged or should be promoted over the live imported copy.
+  private async stageAgentHomeSkill(
+    slug: string,
+    sourcePath: string,
+    skill: AgentHomeSkillRef
+  ): Promise<{ staging: string; generation: string; signature: string }> {
+    const destination = this.skillDir('imported', slug)
+    const generation = nextGeneration()
+    const staging = join(dirname(destination), `.${basename(destination)}.import-${generation}`)
+
+    try {
+      await cp(sourcePath, staging, {
+        recursive: true,
+        force: false,
+        errorOnExist: true,
+        filter: async (entry) => {
+          if (resolve(entry) === resolve(sourcePath, SOURCE_MANIFEST)) {
+            throw new Error(`Skill import may not include the reserved file ${SOURCE_MANIFEST}.`)
+          }
+          if ((await lstat(entry)).isSymbolicLink()) {
+            throw new Error(`Refusing to import an agent-home Skill containing a symbolic link.`)
+          }
+          return true
+        }
+      })
+      const signature = await this.signatureOfAgentHomeSkill(staging)
+      await writeFile(
+        join(staging, SOURCE_MANIFEST),
+        JSON.stringify({ signature, agentHome: skill }, null, 2),
+        { flag: 'wx' }
+      )
+      return { staging, generation, signature }
+    } catch (error) {
+      await rm(staging, { recursive: true, force: true }).catch(() => undefined)
       throw error
     }
   }
@@ -1052,7 +1192,7 @@ class UserSkillRepository {
     // Cross-check existing source identities once (rather than per row) so the "already imported"
     // badge distinguishes same-slug skills discovered in different global sources.
     const [importedSkills, fallbackSlugs] = await Promise.all([
-      this.importedAgentHomeKeys(),
+      this.importedAgentHomeSignatures(),
       this.fallbackImportedSlugs()
     ])
 
@@ -1077,12 +1217,24 @@ class UserSkillRepository {
         continue
       }
 
+      const key = agentHomeKey({ source, slug })
+      let alreadyImported = false
+      if (importedSkills.has(key)) {
+        try {
+          alreadyImported = importedSkills.get(key) === (await this.signatureOfAgentHomeSkill(path))
+        } catch {
+          // Keep a readable row selectable. Import performs the same validation and reports a
+          // per-item error, rather than one malformed installed tree hiding the rest of the scan.
+          alreadyImported = false
+        }
+      }
+
       out.push({
         slug,
         name,
         description,
         path,
-        alreadyImported: importedSkills.has(agentHomeKey({ source, slug })),
+        alreadyImported,
         fallbackImported: fallbackSlugs.has(slug)
       })
     }
@@ -1123,37 +1275,28 @@ class UserSkillRepository {
         skill,
         options.allowSlugFallback === true
       )
-      if (existingSlug) return { status: 'unchanged', id: `imported-${existingSlug}` }
-
-      const slug = await this.uniqueSlug('imported', requestedSlug)
-      const destination = this.skillDir('imported', slug)
-
-      try {
-        await cp(sourcePath, destination, {
-          recursive: true,
-          force: false,
-          errorOnExist: true,
-          filter: async (entry) => {
-            if (resolve(entry) === resolve(sourcePath, SOURCE_MANIFEST)) {
-              throw new Error(`Skill import may not include the reserved file ${SOURCE_MANIFEST}.`)
-            }
-            if ((await lstat(entry)).isSymbolicLink()) {
-              throw new Error(`Refusing to import an agent-home Skill containing a symbolic link.`)
-            }
-            return true
-          }
-        })
-        await writeFile(
-          join(destination, SOURCE_MANIFEST),
-          JSON.stringify({ agentHome: skill }, null, 2),
-          { flag: 'wx' }
-        )
-      } catch (error) {
-        await rm(destination, { recursive: true, force: true }).catch(() => undefined)
-        throw error
+      const existing = existingSlug ? await this.readSource(existingSlug) : null
+      if (
+        existingSlug &&
+        (!existing?.agentHome || agentHomeKey(existing.agentHome) !== agentHomeKey(skill))
+      ) {
+        // A controlled legacy/GitHub/ZIP slug fallback prevents a duplicate, but cannot safely claim
+        // that unrelated record as this installed source or replace its contents.
+        return { status: 'unchanged', id: `imported-${existingSlug}` }
       }
 
-      return { status: 'imported', id: `imported-${slug}` }
+      const slug = existingSlug ?? (await this.uniqueSlug('imported', requestedSlug))
+      const staged = await this.stageAgentHomeSkill(slug, sourcePath, skill)
+      if (existingSlug && existing?.signature === staged.signature) {
+        await rm(staged.staging, { recursive: true, force: true })
+        return { status: 'unchanged', id: `imported-${existingSlug}` }
+      }
+
+      await this.swapImportedStaging(slug, staged.staging, staged.generation)
+      return {
+        status: existingSlug ? 'updated' : 'imported',
+        id: `imported-${slug}`
+      }
     })
   }
 }

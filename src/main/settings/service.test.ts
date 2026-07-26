@@ -4309,6 +4309,25 @@ describe('SettingsService: importAgentHomeSkills', () => {
     expect(result.results[1]).toMatchObject({ error: expect.stringMatching(/unsafe slug/) })
     expect(result.results[2]).toMatchObject({ error: expect.stringMatching(/not available/) })
   })
+
+  it('reports malformed batch entries without aborting valid selected skills', async () => {
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-agent-malformed-'))
+    await seedSkill(userAgentsDir, 'safe')
+    const service = createService(undefined, { userAgentsDir })
+
+    const result = await service.importAgentHomeSkills({
+      skills: [null, { source: 'agents', slug: 'safe' }, undefined] as never
+    })
+
+    expect(result.results).toHaveLength(3)
+    expect(result.results[0]).toMatchObject({
+      error: expect.stringMatching(/valid source and slug/)
+    })
+    expect(result.results[1]).toMatchObject({ status: 'imported', id: 'imported-safe' })
+    expect(result.results[2]).toMatchObject({
+      error: expect.stringMatching(/valid source and slug/)
+    })
+  })
 })
 
 describe('SettingsService: claude-isolated login + status coordination', () => {

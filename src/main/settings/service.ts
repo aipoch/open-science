@@ -1253,12 +1253,28 @@ class SettingsService {
     const results: ImportAgentHomeSkillsResult['results'] = []
 
     for (const skill of request.skills) {
-      const ref = { source: skill.source, slug: skill.slug }
+      const candidate =
+        typeof skill === 'object' && skill !== null
+          ? (skill as { source?: unknown; slug?: unknown })
+          : undefined
+      const ref: Partial<AgentHomeSkillRef> = {}
+      if (
+        candidate?.source === 'agents' ||
+        candidate?.source === 'claude' ||
+        candidate?.source === 'codex'
+      ) {
+        ref.source = candidate.source
+      }
+      if (typeof candidate?.slug === 'string') ref.slug = candidate.slug
 
       try {
+        if (!ref.source || ref.slug === undefined) {
+          throw new Error('Installed skill entries must include a valid source and slug.')
+        }
+        const validatedRef: AgentHomeSkillRef = { source: ref.source, slug: ref.slug }
         const sourcePath = await this.resolveAgentHomeSkillPath(
-          skill.source,
-          skill.slug,
+          validatedRef.source,
+          validatedRef.slug,
           availableSources
         )
         const canonicalSkill = await this.canonicalAgentHomeSkillRef(sourcePath, availableSources)
@@ -1269,7 +1285,7 @@ class SettingsService {
           allowSlugFallback: knownImported.has(`${canonicalSkill.source}:${canonicalSkill.slug}`)
         })
 
-        results.push({ ...ref, status: outcome.status, id: outcome.id })
+        results.push({ ...validatedRef, status: outcome.status, id: outcome.id })
       } catch (error) {
         results.push({
           ...ref,
