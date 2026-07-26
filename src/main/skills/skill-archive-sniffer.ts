@@ -2,7 +2,8 @@ import { open, type FileHandle } from 'node:fs/promises'
 import { inflateRaw } from 'node:zlib'
 
 import { parseSkillDocument } from './frontmatter'
-import { isSkillManifestPath } from './skill-bundle-paths'
+import { SKILL_IMPORT_LIMITS } from './import-limits'
+import { selectSkillManifestRoots, skillManifestRootPath } from './skill-bundle-paths'
 
 const EOCD_SIGNATURE = 0x06054b50
 const CENTRAL_SIGNATURE = 0x02014b50
@@ -10,18 +11,10 @@ const LOCAL_SIGNATURE = 0x04034b50
 const EOCD_MIN_SIZE = 22
 const MAX_ZIP_COMMENT_BYTES = 0xffff
 
-// Prompt assembly needs only enough evidence to choose the Skill-import reference path. These caps
-// are deliberately much smaller than the real import limits: the importer performs the complete,
-// user-approved archive validation later, while this sniff must stay cheap on Electron's main thread.
-const SKILL_ARCHIVE_SNIFF_LIMITS = {
-  maxCentralDirectoryBytes: 1024 * 1024,
-  maxEntries: 4096,
-  maxManifestCandidates: 32,
-  maxManifestBytes: 512 * 1024,
-  maxCompressedManifestBytes: 512 * 1024,
-  maxTotalCompressedManifestBytes: 1024 * 1024,
-  maxDepth: 8
-} as const
+type ArchiveReader = {
+  size: number
+  read: (position: number, length: number) => Promise<Buffer | undefined>
+}
 
 type CentralEntry = {
   name: string
@@ -31,16 +24,89 @@ type CentralEntry = {
   localOffset: number
 }
 
-const readExact = async (
+type ArchiveScan = {
+  accepted: CentralEntry[]
+  skippedPaths: string[]
+}
+
+type ScanLimits = {
+  maxFiles: number
+  maxFileBytes: number
+  maxTotalBytes: number
+  maxDepth: number
+  strictCaps: boolean
+}
+
+const OUTER_SCAN_LIMITS: ScanLimits = {
+  maxFiles: SKILL_IMPORT_LIMITS.maxBundleEntries,
+  maxFileBytes: SKILL_IMPORT_LIMITS.maxSkillArchiveBytes,
+  maxTotalBytes: SKILL_IMPORT_LIMITS.maxBundleBytes,
+  maxDepth: SKILL_IMPORT_LIMITS.maxDepth,
+  strictCaps: false
+}
+
+const INNER_SCAN_LIMITS: ScanLimits = {
+  maxFiles: SKILL_IMPORT_LIMITS.maxFiles,
+  maxFileBytes: SKILL_IMPORT_LIMITS.maxFileBytes,
+  maxTotalBytes: SKILL_IMPORT_LIMITS.maxTotalBytes,
+  maxDepth: SKILL_IMPORT_LIMITS.maxDepth,
+  strictCaps: true
+}
+
+const readFromHandle = async (
   handle: FileHandle,
+  fileSize: number,
   position: number,
   length: number
 ): Promise<Buffer | undefined> => {
-  if (!Number.isSafeInteger(position) || position < 0 || length < 0) return undefined
+  if (
+    !Number.isSafeInteger(position) ||
+    !Number.isSafeInteger(length) ||
+    position < 0 ||
+    length < 0 ||
+    position + length > fileSize
+  ) {
+    return undefined
+  }
 
   const buffer = Buffer.allocUnsafe(length)
-  const { bytesRead } = await handle.read(buffer, 0, length, position)
-  return bytesRead === length ? buffer : undefined
+  let bytesRead = 0
+  while (bytesRead < length) {
+    const result = await handle.read(buffer, bytesRead, length - bytesRead, position + bytesRead)
+    if (result.bytesRead === 0) return undefined
+    bytesRead += result.bytesRead
+  }
+  return buffer
+}
+
+const fileReader = (handle: FileHandle, size: number): ArchiveReader => ({
+  size,
+  read: (position, length) => readFromHandle(handle, size, position, length)
+})
+
+const bufferReader = (buffer: Buffer): ArchiveReader => ({
+  size: buffer.length,
+  read: async (position, length) => {
+    if (position < 0 || length < 0 || position + length > buffer.length) return undefined
+    return buffer.subarray(position, position + length)
+  }
+})
+
+const subrangeReader = (
+  parent: ArchiveReader,
+  offset: number,
+  size: number
+): ArchiveReader | undefined => {
+  if (offset < 0 || size < 0 || offset + size > parent.size) return undefined
+  return {
+    size,
+    read: (position, length) => {
+      if (position < 0 || length < 0 || position + length > size) {
+        return Promise.resolve(undefined)
+      }
+      return parent.read(offset + position, length)
+    }
+  }
 }
 
 const findEocd = (tail: Buffer): number => {
@@ -53,22 +119,31 @@ const findEocd = (tail: Buffer): number => {
   return -1
 }
 
-const isSafeArchivePath = (path: string): boolean =>
-  path.length > 0 &&
-  !path.includes('\\') &&
-  !path.startsWith('/') &&
-  !path.startsWith('.') &&
-  !path.startsWith('__MACOSX/') &&
-  !/^[A-Za-z]:/.test(path) &&
-  !path.split('/').some((segment) => segment === '..') &&
-  path.split('/').length - 1 <= SKILL_ARCHIVE_SNIFF_LIMITS.maxDepth
+const isMetadataPath = (path: string): boolean =>
+  path.startsWith('__MACOSX/') || path.startsWith('.')
 
-const readCentralEntries = async (
-  handle: FileHandle,
-  fileSize: number
-): Promise<CentralEntry[] | undefined> => {
-  const tailSize = Math.min(fileSize, EOCD_MIN_SIZE + MAX_ZIP_COMMENT_BYTES)
-  const tail = await readExact(handle, fileSize - tailSize, tailSize)
+const isUnsafeArchivePath = (path: string): boolean =>
+  path.length === 0 ||
+  path.includes('\\') ||
+  path.startsWith('/') ||
+  /^[A-Za-z]:/.test(path) ||
+  path.split('/').some((segment) => segment === '..')
+
+const isNestedArchive = (path: string): boolean => /\.(zip|skill)$/i.test(path)
+
+const extractedEntrySize = (
+  entry: Pick<CentralEntry, 'method' | 'compressedSize' | 'uncompressedSize'>
+): number => (entry.method === 0 ? entry.compressedSize : entry.uncompressedSize)
+
+// Streams central-directory records instead of reading the whole ZIP or inflating unrelated files.
+// Size/count decisions mirror extractZipLenient (outer) and extractZip (one nested archive) using the
+// central metadata; candidate entry bytes are checked against their local header when actually read.
+const scanArchive = async (
+  reader: ArchiveReader,
+  limits: ScanLimits
+): Promise<ArchiveScan | undefined> => {
+  const tailSize = Math.min(reader.size, EOCD_MIN_SIZE + MAX_ZIP_COMMENT_BYTES)
+  const tail = await reader.read(reader.size - tailSize, tailSize)
   if (!tail) return undefined
 
   const eocd = findEocd(tail)
@@ -80,9 +155,9 @@ const readCentralEntries = async (
   const entryCount = tail.readUInt16LE(eocd + 10)
   const centralSize = tail.readUInt32LE(eocd + 12)
   const centralOffset = tail.readUInt32LE(eocd + 16)
+  const centralEnd = centralOffset + centralSize
 
-  // Multi-disk and ZIP64 archives are outside this prompt-time sniff. They remain ordinary resources
-  // and can still be inspected without doing expensive or ambiguous work in the main process.
+  // Multi-disk and ZIP64 archives are unsupported by the real importer too.
   if (
     diskNumber !== 0 ||
     centralDisk !== 0 ||
@@ -90,127 +165,235 @@ const readCentralEntries = async (
     entryCount === 0xffff ||
     centralSize === 0xffffffff ||
     centralOffset === 0xffffffff ||
-    entryCount > SKILL_ARCHIVE_SNIFF_LIMITS.maxEntries ||
-    centralSize > SKILL_ARCHIVE_SNIFF_LIMITS.maxCentralDirectoryBytes ||
-    centralOffset + centralSize > fileSize
+    centralEnd > reader.size
   ) {
     return undefined
   }
 
-  const directory = await readExact(handle, centralOffset, centralSize)
-  if (!directory) return undefined
+  const accepted: CentralEntry[] = []
+  const skippedPaths: string[] = []
+  let totalBytes = 0
+  let pointer = centralOffset
 
-  const entries: CentralEntry[] = []
-  let pointer = 0
   for (let index = 0; index < entryCount; index += 1) {
-    if (pointer + 46 > directory.length || directory.readUInt32LE(pointer) !== CENTRAL_SIGNATURE) {
-      return undefined
+    const header = await reader.read(pointer, 46)
+    if (!header || header.readUInt32LE(0) !== CENTRAL_SIGNATURE) return undefined
+
+    const method = header.readUInt16LE(10)
+    const compressedSize = header.readUInt32LE(20)
+    const uncompressedSize = header.readUInt32LE(24)
+    const nameLength = header.readUInt16LE(28)
+    const extraLength = header.readUInt16LE(30)
+    const commentLength = header.readUInt16LE(32)
+    const startDisk = header.readUInt16LE(34)
+    const localOffset = header.readUInt32LE(42)
+    const next = pointer + 46 + nameLength + extraLength + commentLength
+    if (startDisk !== 0 || next > centralEnd) return undefined
+
+    const nameBytes = await reader.read(pointer + 46, nameLength)
+    if (!nameBytes) return undefined
+    const name = nameBytes.toString('utf8')
+    pointer = next
+
+    // Match zip-extract's silent skips for directories, metadata, unsafe paths, and unsupported
+    // methods. The outer lenient walk records real unsafe/method failures so a containing loose root
+    // is rejected rather than classified from an incomplete bundle.
+    if (name.endsWith('/') || isMetadataPath(name)) continue
+    if (isUnsafeArchivePath(name) || (method !== 0 && method !== 8)) {
+      if (!limits.strictCaps) skippedPaths.push(name)
+      continue
     }
 
-    const method = directory.readUInt16LE(pointer + 10)
-    const compressedSize = directory.readUInt32LE(pointer + 20)
-    const uncompressedSize = directory.readUInt32LE(pointer + 24)
-    const nameLength = directory.readUInt16LE(pointer + 28)
-    const extraLength = directory.readUInt16LE(pointer + 30)
-    const commentLength = directory.readUInt16LE(pointer + 32)
-    const localOffset = directory.readUInt32LE(pointer + 42)
-    const next = pointer + 46 + nameLength + extraLength + commentLength
-    if (next > directory.length) return undefined
+    const depth = name.split('/').length - 1
+    const outputSize = method === 0 ? compressedSize : uncompressedSize
+    const violatesCaps =
+      depth > limits.maxDepth ||
+      accepted.length >= limits.maxFiles ||
+      outputSize > limits.maxFileBytes ||
+      totalBytes + outputSize > limits.maxTotalBytes
+    if (violatesCaps) {
+      if (limits.strictCaps) return undefined
+      skippedPaths.push(name)
+      continue
+    }
 
-    entries.push({
-      name: directory.toString('utf8', pointer + 46, pointer + 46 + nameLength),
-      method,
-      compressedSize,
-      uncompressedSize,
-      localOffset
-    })
-    pointer = next
+    accepted.push({ name, method, compressedSize, uncompressedSize, localOffset })
+    totalBytes += outputSize
   }
 
-  return entries
+  return { accepted, skippedPaths }
 }
 
-const inflateManifest = (compressed: Buffer): Promise<Buffer> =>
-  new Promise((resolve, reject) => {
-    inflateRaw(
-      compressed,
-      { maxOutputLength: SKILL_ARCHIVE_SNIFF_LIMITS.maxManifestBytes },
-      (error, result) => {
-        if (error) reject(error)
-        else resolve(result)
-      }
-    )
-  })
-
-const readManifest = async (
-  handle: FileHandle,
-  fileSize: number,
+const entryDataOffset = async (
+  reader: ArchiveReader,
   entry: CentralEntry
-): Promise<Buffer | undefined> => {
+): Promise<number | undefined> => {
+  const header = await reader.read(entry.localOffset, 30)
   if (
-    (entry.method !== 0 && entry.method !== 8) ||
-    entry.uncompressedSize > SKILL_ARCHIVE_SNIFF_LIMITS.maxManifestBytes ||
-    entry.compressedSize > SKILL_ARCHIVE_SNIFF_LIMITS.maxCompressedManifestBytes
+    !header ||
+    header.readUInt32LE(0) !== LOCAL_SIGNATURE ||
+    header.readUInt16LE(8) !== entry.method
   ) {
     return undefined
   }
 
-  const localHeader = await readExact(handle, entry.localOffset, 30)
-  if (!localHeader || localHeader.readUInt32LE(0) !== LOCAL_SIGNATURE) return undefined
+  const offset = entry.localOffset + 30 + header.readUInt16LE(26) + header.readUInt16LE(28)
+  return offset + entry.compressedSize <= reader.size ? offset : undefined
+}
 
-  const nameLength = localHeader.readUInt16LE(26)
-  const extraLength = localHeader.readUInt16LE(28)
-  const dataOffset = entry.localOffset + 30 + nameLength + extraLength
-  if (dataOffset + entry.compressedSize > fileSize) return undefined
+const inflateBounded = (compressed: Buffer, maxOutputLength: number): Promise<Buffer> =>
+  new Promise((resolve, reject) => {
+    inflateRaw(compressed, { maxOutputLength }, (error, result) => {
+      if (error) reject(error)
+      else resolve(result)
+    })
+  })
 
-  const compressed = await readExact(handle, dataOffset, entry.compressedSize)
+const readEntry = async (
+  reader: ArchiveReader,
+  entry: CentralEntry,
+  maxOutputLength: number
+): Promise<Buffer | undefined> => {
+  if (entry.uncompressedSize > maxOutputLength) return undefined
+
+  const offset = await entryDataOffset(reader, entry)
+  if (offset === undefined) return undefined
+  const compressed = await reader.read(offset, entry.compressedSize)
   if (!compressed) return undefined
 
   try {
-    return entry.method === 0 ? compressed : await inflateManifest(compressed)
+    if (entry.method === 0) {
+      return compressed.length <= maxOutputLength ? compressed : undefined
+    }
+    return await inflateBounded(compressed, maxOutputLength)
   } catch {
     return undefined
   }
 }
 
-// Classifies a ZIP by reading only its bounded central directory and candidate SKILL.md entries. It
-// never loads the whole archive or inflates unrelated assets. False is intentionally a safe fallback:
-// the attachment remains a generic resource instead of advertising an import path we cannot confirm.
+const manifestHasName = async (reader: ArchiveReader, entry: CentralEntry): Promise<boolean> => {
+  const manifest = await readEntry(reader, entry, SKILL_IMPORT_LIMITS.maxFileBytes)
+  if (!manifest) return false
+
+  try {
+    return Boolean(parseSkillDocument(manifest.toString('utf8')).name?.trim())
+  } catch {
+    return false
+  }
+}
+
+const skippedPathBelongsToRoot = (root: string, path: string): boolean =>
+  root === '' || path === root || path.startsWith(`${root}/`)
+
+const acceptedPathBelongsToRoot = (root: string, path: string): boolean =>
+  root === '' || path.startsWith(`${root}/`)
+
+const looseRootIsComplete = (root: string, scan: ArchiveScan): boolean => {
+  if (scan.skippedPaths.some((path) => skippedPathBelongsToRoot(root, path))) return false
+
+  const files = scan.accepted.filter((entry) => acceptedPathBelongsToRoot(root, entry.name))
+  return (
+    files.length <= SKILL_IMPORT_LIMITS.maxFiles &&
+    files.every((entry) => extractedEntrySize(entry) <= SKILL_IMPORT_LIMITS.maxFileBytes) &&
+    files.reduce((total, entry) => total + extractedEntrySize(entry), 0) <=
+      SKILL_IMPORT_LIMITS.maxTotalBytes
+  )
+}
+
+const inspectManifestRoots = async (
+  reader: ArchiveReader,
+  scan: ArchiveScan,
+  requireCompleteLooseRoot: boolean
+): Promise<{ roots: string[]; named: boolean[] }> => {
+  const manifestEntries = scan.accepted.filter(
+    (entry) => !isNestedArchive(entry.name) && skillManifestRootPath(entry.name) !== undefined
+  )
+  const roots = selectSkillManifestRoots(manifestEntries.map((entry) => entry.name))
+  const named: boolean[] = []
+
+  for (const root of roots) {
+    if (requireCompleteLooseRoot && !looseRootIsComplete(root, scan)) {
+      named.push(false)
+      continue
+    }
+
+    // Full preview uses the first case-insensitive SKILL.md at the selected root, so duplicate-cased
+    // entries cannot let the sniffer pick a different manifest than the importer.
+    const manifest = manifestEntries.find((entry) => skillManifestRootPath(entry.name) === root)
+    named.push(manifest ? await manifestHasName(reader, manifest) : false)
+  }
+
+  return { roots, named }
+}
+
+const nestedArchiveReader = async (
+  parent: ArchiveReader,
+  entry: CentralEntry
+): Promise<ArchiveReader | undefined> => {
+  const offset = await entryDataOffset(parent, entry)
+  if (offset === undefined) return undefined
+
+  if (entry.method === 0) {
+    if (entry.compressedSize > SKILL_IMPORT_LIMITS.maxSkillArchiveBytes) return undefined
+    return subrangeReader(parent, offset, entry.compressedSize)
+  }
+
+  const bytes = await readEntry(parent, entry, SKILL_IMPORT_LIMITS.maxSkillArchiveBytes)
+  return bytes ? bufferReader(bytes) : undefined
+}
+
+const inspectNestedArchive = async (
+  parent: ArchiveReader,
+  entry: CentralEntry
+): Promise<boolean[]> => {
+  const nested = await nestedArchiveReader(parent, entry)
+  if (!nested) return []
+
+  const scan = await scanArchive(nested, INNER_SCAN_LIMITS)
+  if (!scan) return []
+  return (await inspectManifestRoots(nested, scan, false)).named
+}
+
+const inspectOuterArchive = async (reader: ArchiveReader): Promise<boolean> => {
+  const scan = await scanArchive(reader, OUTER_SCAN_LIMITS)
+  if (!scan) return false
+
+  const loose = await inspectManifestRoots(reader, scan, true)
+  const candidateLimit = SKILL_IMPORT_LIMITS.maxSkillsPerBundle
+  const consideredLoose = loose.named.slice(0, candidateLimit)
+  if (consideredLoose.some(Boolean)) return true
+
+  let remainingCandidates = Math.max(0, candidateLimit - loose.roots.length)
+  if (remainingCandidates === 0) return false
+
+  const rootPrefixes = loose.roots.map((root) => (root === '' ? '' : `${root}/`))
+  const standaloneArchives = scan.accepted.filter(
+    (entry) =>
+      isNestedArchive(entry.name) &&
+      !rootPrefixes.some((prefix) => prefix === '' || entry.name.startsWith(prefix))
+  )
+
+  for (const archive of standaloneArchives) {
+    const nestedCandidates = await inspectNestedArchive(reader, archive)
+    const considered = nestedCandidates.slice(0, remainingCandidates)
+    if (considered.some(Boolean)) return true
+    remainingCandidates -= considered.length
+    if (remainingCandidates <= 0) break
+  }
+
+  return false
+}
+
+// Classifies a ZIP without loading the whole upload or inflating unrelated assets. Central records
+// are streamed; only selected manifests are inflated, plus one importer-supported level of nested
+// archive (asynchronously and under the same 64 MB cap as full discovery). Any ambiguity fails closed
+// to the ordinary resource path; the real importer still performs full preview/validation on approval.
 const isImportableSkillArchivePath = async (filePath: string): Promise<boolean> => {
   let handle: FileHandle | undefined
   try {
     handle = await open(filePath, 'r')
     const { size } = await handle.stat()
-    const entries = await readCentralEntries(handle, size)
-    if (!entries) return false
-
-    let candidateCount = 0
-    let totalCompressedBytes = 0
-    for (const entry of entries) {
-      if (!isSafeArchivePath(entry.name) || entry.name.endsWith('/')) continue
-
-      if (!isSkillManifestPath(entry.name)) continue
-
-      candidateCount += 1
-      totalCompressedBytes += entry.compressedSize
-      if (
-        candidateCount > SKILL_ARCHIVE_SNIFF_LIMITS.maxManifestCandidates ||
-        totalCompressedBytes > SKILL_ARCHIVE_SNIFF_LIMITS.maxTotalCompressedManifestBytes
-      ) {
-        return false
-      }
-
-      const manifest = await readManifest(handle, size, entry)
-      if (!manifest) continue
-
-      try {
-        if (parseSkillDocument(manifest.toString('utf8')).name?.trim()) return true
-      } catch {
-        // A malformed candidate does not prevent a later valid Skill root in the same bundle.
-      }
-    }
-
-    return false
+    return await inspectOuterArchive(fileReader(handle, size))
   } catch {
     return false
   } finally {
@@ -218,4 +401,4 @@ const isImportableSkillArchivePath = async (filePath: string): Promise<boolean> 
   }
 }
 
-export { SKILL_ARCHIVE_SNIFF_LIMITS, isImportableSkillArchivePath }
+export { isImportableSkillArchivePath }

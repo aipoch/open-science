@@ -5,7 +5,8 @@ import { deflateRawSync } from 'node:zlib'
 
 import { describe, expect, it } from 'vitest'
 
-import { SKILL_ARCHIVE_SNIFF_LIMITS, isImportableSkillArchivePath } from './skill-archive-sniffer'
+import { isImportableSkillArchivePath } from './skill-archive-sniffer'
+import { UserSkillRepository } from './user-skill-repository'
 
 type ZipInput = { path: string; content: Buffer; method?: 0 | 8 }
 
@@ -77,6 +78,17 @@ const inspect = async (archive: Buffer): Promise<boolean> => {
   }
 }
 
+const expectMatchesPreview = async (archive: Buffer, expected: boolean): Promise<void> => {
+  const storage = await mkdtemp(join(tmpdir(), 'skill-archive-preview-'))
+  try {
+    const preview = await new UserSkillRepository(storage).previewZip(archive)
+    await expect(inspect(archive)).resolves.toBe(expected)
+    expect(preview.previews.length > 0).toBe(expected)
+  } finally {
+    await rm(storage, { recursive: true, force: true })
+  }
+}
+
 describe('isImportableSkillArchivePath', () => {
   it('finds a named Skill manifest without inflating unrelated large entries', async () => {
     const archive = buildZip([
@@ -90,22 +102,14 @@ describe('isImportableSkillArchivePath', () => {
     await expect(inspect(archive)).resolves.toBe(true)
   })
 
-  it('rejects ordinary, unnamed, corrupt, and oversized-manifest archives', async () => {
+  it('rejects ordinary, unnamed, and corrupt archives', async () => {
     const ordinary = buildZip([{ path: 'README.md', content: Buffer.from('dataset archive') }])
     const unnamed = buildZip([
       { path: 'SKILL.md', content: Buffer.from('---\ndescription: Missing name.\n---\nBody') }
     ])
-    const oversized = buildZip([
-      {
-        path: 'SKILL.md',
-        content: Buffer.alloc(SKILL_ARCHIVE_SNIFF_LIMITS.maxManifestBytes + 1, 97)
-      }
-    ])
-
     await expect(inspect(ordinary)).resolves.toBe(false)
     await expect(inspect(unnamed)).resolves.toBe(false)
     await expect(inspect(Buffer.from('not a zip'))).resolves.toBe(false)
-    await expect(inspect(oversized)).resolves.toBe(false)
   })
 
   it('does not classify an ordinary ZIP by a nested filename or an ineligible deep manifest', async () => {
@@ -125,5 +129,50 @@ describe('isImportableSkillArchivePath', () => {
 
     await expect(inspect(nestedFilename)).resolves.toBe(false)
     await expect(inspect(deepManifest)).resolves.toBe(false)
+  })
+
+  it('uses the same shallowest-root selection as full bundle discovery', async () => {
+    const archive = buildZip([
+      {
+        path: 'a/SKILL.md',
+        content: Buffer.from('---\ndescription: Missing name.\n---\nBody')
+      },
+      {
+        path: 'a/b/SKILL.md',
+        content: Buffer.from('---\nname: Hidden Nested Skill\n---\nBody')
+      }
+    ])
+
+    await expectMatchesPreview(archive, false)
+  })
+
+  it('recognizes one importer-supported level of nested Skill archive', async () => {
+    const inner = buildZip([
+      {
+        path: 'SKILL.md',
+        content: Buffer.from('---\nname: Nested Skill\ndescription: nested\n---\nBody')
+      }
+    ])
+    const storedOuter = buildZip([{ path: 'nested/alpha.zip', content: inner, method: 0 }])
+    const deflatedOuter = buildZip([{ path: 'nested/alpha.zip', content: inner }])
+
+    await expectMatchesPreview(storedOuter, true)
+    await expectMatchesPreview(deflatedOuter, true)
+  })
+
+  it('accepts importer-supported candidate counts and manifest sizes', async () => {
+    const candidates = Array.from({ length: 33 }, (_, index) => ({
+      path: `skill-${index.toString().padStart(2, '0')}/SKILL.md`,
+      content: Buffer.from(
+        index === 32 ? '---\nname: Candidate 33\n---\nBody' : '---\ndescription: no name\n---\nBody'
+      )
+    }))
+    const largeManifest = Buffer.concat([
+      Buffer.from('---\nname: Large Manifest\n---\n'),
+      Buffer.alloc(512 * 1024 + 1, 97)
+    ])
+
+    await expectMatchesPreview(buildZip(candidates), true)
+    await expectMatchesPreview(buildZip([{ path: 'large/SKILL.md', content: largeManifest }]), true)
   })
 })
