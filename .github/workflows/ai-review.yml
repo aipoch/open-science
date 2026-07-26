@@ -1,10 +1,14 @@
 name: AI PR Review
 
-# Required repository configuration:
-# - Shared fallback secrets: OPENAI_API_KEY and CODEX_BASE_URL
+# Authentication defaults to API keys. See docs/ai-review.md for the supported API-key and Codex
+# subscription configurations and their security boundaries.
+# - Shared fallback API secrets: OPENAI_API_KEY and CODEX_BASE_URL
 # - Reviewer-specific secrets: CODEX_CORRECTNESS_API_KEY / CODEX_CORRECTNESS_BASE_URL and
 #   CODEX_ARCHITECTURE_API_KEY / CODEX_ARCHITECTURE_BASE_URL
 #   (base URLs may omit the trailing slash or include the full /v1/responses endpoint)
+# - Subscription bootstrap secret: CODEX_AUTH_JSON
+# Set CODEX_REVIEW_AUTH_MODE to api-key (default) or subscription. Subscription mode uses a
+# GitHub-hosted runner and is limited to manually dispatched reviews of same-repository PRs.
 # Set ENABLE_CODEX_REVIEW=false to disable all automated reviewers. Set CODEX_REVIEW_MODE to both,
 # correctness, architecture, or disabled for automatic pull request events (default: correctness).
 # CODEX_REVIEW_MODEL and CODEX_REVIEW_EFFORT provide shared defaults. Override either reviewer with
@@ -42,7 +46,7 @@ on:
 
 concurrency:
   group: ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.reviewer || 'both' }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ (vars.CODEX_REVIEW_AUTH_MODE || 'api-key') != 'subscription' }}
 
 jobs:
   review_target:
@@ -63,6 +67,7 @@ jobs:
       review_allowed: ${{ steps.target.outputs.review_allowed }}
       correctness_enabled: ${{ steps.target.outputs.correctness_enabled }}
       architecture_enabled: ${{ steps.target.outputs.architecture_enabled }}
+      auth_mode: ${{ steps.target.outputs.auth_mode }}
     steps:
       - name: Resolve pull request metadata
         id: target
@@ -72,6 +77,7 @@ jobs:
           DISPATCH_PR_NUMBER: ${{ github.event.inputs.pull_request_number }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           FORK_REVIEW_MODE: ${{ vars.FORK_REVIEW_MODE || 'manual' }}
+          CODEX_REVIEW_AUTH_MODE: ${{ vars.CODEX_REVIEW_AUTH_MODE || 'api-key' }}
           ENABLE_CODEX_REVIEW: ${{ vars.ENABLE_CODEX_REVIEW || 'true' }}
           CODEX_REVIEW_MODE: ${{ vars.CODEX_REVIEW_MODE || 'correctness' }}
           DISPATCH_REVIEWER: ${{ github.event.inputs.reviewer }}
@@ -100,7 +106,13 @@ jobs:
               exit 1
               ;;
           esac
-
+          case "$CODEX_REVIEW_AUTH_MODE" in
+            api-key|subscription) ;;
+            *)
+              echo "CODEX_REVIEW_AUTH_MODE must be api-key or subscription." >&2
+              exit 1
+              ;;
+          esac
           pr_number="${DISPATCH_PR_NUMBER:-$EVENT_PR_NUMBER}"
           if [[ -z "$pr_number" ]]; then
             echo "No pull request number available (workflow_dispatch input or pull_request event)." >&2
@@ -127,6 +139,10 @@ jobs:
             [[ "$REVIEW_EVENT" == "workflow_dispatch" && "$FORK_REVIEW_MODE" != "disabled" ]] ||
             [[ "$REVIEW_EVENT" != "workflow_dispatch" && "$FORK_REVIEW_MODE" == "automatic" ]]; then
             review_allowed=true
+          fi
+          if [[ "$CODEX_REVIEW_AUTH_MODE" == "subscription" ]] &&
+            [[ "$REVIEW_EVENT" != "workflow_dispatch" || "$is_fork" == "true" ]]; then
+            review_allowed=false
           fi
 
           selected_mode="$CODEX_REVIEW_MODE"
@@ -165,6 +181,7 @@ jobs:
             echo "review_allowed=$review_allowed"
             echo "correctness_enabled=$correctness_enabled"
             echo "architecture_enabled=$architecture_enabled"
+            echo "auth_mode=$CODEX_REVIEW_AUTH_MODE"
           } >> "$GITHUB_OUTPUT"
 
   codex_review_gate:
@@ -250,6 +267,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/ai-codex-review.yml
     with:
+      auth_mode: ${{ needs.review_target.outputs.auth_mode }}
       scope: correctness
       pull_request_number: ${{ needs.review_target.outputs.number }}
       head_ref: ${{ needs.review_target.outputs.head_ref }}
@@ -264,6 +282,7 @@ jobs:
       model: ${{ vars.CODEX_CORRECTNESS_MODEL || vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}
       effort: ${{ vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_REVIEW_EFFORT || 'high' }}
     secrets:
+      CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
       OPENAI_API_KEY: ${{ secrets.CODEX_CORRECTNESS_API_KEY || secrets.OPENAI_API_KEY }}
       CODEX_BASE_URL: ${{ secrets.CODEX_CORRECTNESS_BASE_URL || secrets.CODEX_BASE_URL }}
 
@@ -275,6 +294,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/ai-codex-review.yml
     with:
+      auth_mode: ${{ needs.review_target.outputs.auth_mode }}
       scope: architecture
       pull_request_number: ${{ needs.review_target.outputs.number }}
       head_ref: ${{ needs.review_target.outputs.head_ref }}
@@ -289,6 +309,7 @@ jobs:
       model: ${{ vars.CODEX_ARCHITECTURE_MODEL || vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}
       effort: ${{ vars.CODEX_ARCHITECTURE_EFFORT || vars.CODEX_REVIEW_EFFORT || 'high' }}
     secrets:
+      CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
       OPENAI_API_KEY: ${{ secrets.CODEX_ARCHITECTURE_API_KEY || secrets.OPENAI_API_KEY }}
       CODEX_BASE_URL: ${{ secrets.CODEX_ARCHITECTURE_BASE_URL || secrets.CODEX_BASE_URL }}
 
