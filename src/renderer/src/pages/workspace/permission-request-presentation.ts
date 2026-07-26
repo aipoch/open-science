@@ -161,16 +161,16 @@ const isArtifactWriteToolName = (toolName: string | undefined): boolean => {
 }
 
 const isArtifactWriteRequest = (request: AcpPermissionRequest): boolean =>
-  isMcpPermissionRequest(request) &&
-  isArtifactWriteToolName(request.mcpIdentity)
+  isMcpPermissionRequest(request) && isArtifactWriteToolName(request.mcpIdentity)
 
-// The broker resolves a stable `server/tool` identity before the request reaches the renderer.
-// Keep it in the impact tip so a human-readable provider title cannot obscure the granted tool.
-const humanizeMcpIdentity = (identity: string | undefined): string | undefined => {
-  if (!identity) return undefined
+const humanizeMcpName = (name: string | undefined): string | undefined => {
+  const normalized = name?.trim().replace(/^mcp(?:__|\.)/iu, '') ?? ''
+  if (!normalized || /^(?:run )?(?:mcp )?(?:tool|tool request|tool call)$/iu.test(normalized)) {
+    return undefined
+  }
 
-  const segments = identity
-    .split('/')
+  const segments = normalized
+    .split(/__|\.|\//u)
     .filter(Boolean)
     .map((segment) =>
       segment
@@ -183,6 +183,16 @@ const humanizeMcpIdentity = (identity: string | undefined): string | undefined =
 
   return segments.length > 0 ? segments.join(' / ') : undefined
 }
+
+// The broker resolves a stable `server/tool` identity before the request reaches the renderer.
+// Keep it in the impact tip so a human-readable provider title cannot obscure the granted tool.
+const humanizeMcpIdentity = (identity: string | undefined): string | undefined =>
+  humanizeMcpName(identity)
+
+// A broker-classified MCP request can lack a stable grant identity (for example, a server-only
+// request). Keep that approval distinguishable without trusting the name for a privileged category.
+const humanizeUnresolvedMcp = (request: AcpPermissionRequest): string | undefined =>
+  humanizeMcpName(providerToolName(request) ?? request.title)
 
 const isNetworkTool = (request: AcpPermissionRequest): boolean => {
   const name = providerToolName(request)?.toLowerCase()
@@ -212,11 +222,12 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
   // MCP metadata describes the provider's tool, not a trusted local capability. Only the
   // explicitly modeled notebook tools above receive a more specific native classification.
   if (isMcpPermissionRequest(request)) {
+    const actionDetail = humanizeMcpIdentity(request.mcpIdentity) ?? humanizeUnresolvedMcp(request)
     return {
-      actionTitle: 'Use external service?',
+      actionTitle: actionDetail ? `Use ${actionDetail}?` : 'Use external service?',
       categoryLabel: 'External service',
       description: 'Uses an MCP service configured for this conversation.',
-      actionDetail: humanizeMcpIdentity(request.mcpIdentity)
+      actionDetail
     }
   }
 

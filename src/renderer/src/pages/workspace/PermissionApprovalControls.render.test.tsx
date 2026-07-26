@@ -270,10 +270,7 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('report.md')
   })
 
-  it('keeps a non-Bash execute title in the impact tip when no command preview exists', () => {
-    // A non-Bash execute request whose command lives only in the title: extractPermissionCode
-    // has no Bash fallback here, so the title is the only place the command can appear — the
-    // generic "Run command?" header must not leave the prompt opaque.
+  it('shows a title-only non-MCP execute command in the code preview', () => {
     const executeTitleOnly: AcpPermissionRequest = {
       requestId: 'exec-title-1',
       sessionId: 'session-1',
@@ -286,8 +283,9 @@ describe('PermissionApprovalControls', () => {
       <PermissionApprovalControls requests={[executeTitleOnly]} onRespond={() => undefined} />
     )
     expect(html).toContain('Run command?')
-    expect(html).toContain('data-testid="permission-impact-info"')
-    expect(html).not.toContain('python scripts/run_pipeline.py --full')
+    expect(html).toContain('data-testid="tool-code-block"')
+    expect(html).toContain('python scripts/run_pipeline.py --full')
+    expect(html).toContain('data-language="bash"')
   })
 
   it('serializes prompts by rendering only the first pending request', () => {

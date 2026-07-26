@@ -168,14 +168,13 @@ const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | 
     return undefined
   }
 
-  // Shell execute (Bash tool): prefer the structured command field (verbatim), but fall back to
-  // the request title so the full command stays inspectable even when rawInput is absent (the
-  // command may live only in title). Only trust title-as-bash for providerToolName === 'Bash';
-  // other MCP execute tools (arbitrary servers, diverse semantics) must not assume shell syntax.
+  // Shell execute: prefer the structured command field (verbatim), but for a broker-classified
+  // non-MCP execute request also fall back to its title so the exact command remains reviewable.
+  // MCP execute inputs are arbitrary tool arguments and must not be reinterpreted as local shell.
   if (isExecute) {
     const cmd = rawInput.command
     if (typeof cmd === 'string' && cmd.trim()) return { code: cmd, language: 'bash' }
-    if (request.providerToolName === 'Bash' && request.title?.trim()) {
+    if (!isMcpPermissionRequest(request) && request.title?.trim()) {
       return { code: request.title, language: 'bash' }
     }
   }

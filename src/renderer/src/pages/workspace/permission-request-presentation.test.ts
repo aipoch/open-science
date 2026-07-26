@@ -116,6 +116,16 @@ describe('describePermissionRequest', () => {
     ).toBe('External service')
   })
 
+  it('keeps an unresolved MCP request distinguishable without granting it a special category', () => {
+    expect(
+      describePermissionRequest(request({ title: 'open-science-notebook', isMcp: true }))
+    ).toMatchObject({
+      actionTitle: 'Use Open Science Notebook?',
+      categoryLabel: 'External service',
+      actionDetail: 'Open Science Notebook'
+    })
+  })
+
   it('does not infer MCP origin from a raw protocol name in the renderer', () => {
     expect(
       describePermissionRequest(
