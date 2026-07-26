@@ -7,6 +7,10 @@ import {
   resolveReasoningEffortProfile
 } from '../../../../shared/reasoning-effort'
 import { resolveVendorModelReasoningEffort } from '../../../../shared/provider-registry'
+import {
+  isClaudeSubscriptionProvider,
+  isCodexSubscriptionProvider
+} from '../../../../shared/settings'
 
 // Segmented effort selector: the highlight block slides to the picked level. Fixed-width segments
 // keep the thumb math exact. Mirrored on ToolPermissionControl's radiogroup pattern. The new level
@@ -22,7 +26,11 @@ const ReasoningEffortSelect = (): React.JSX.Element => {
   const profile =
     activeProvider?.type === 'official' && activeProvider.vendorId
       ? resolveVendorModelReasoningEffort(activeProvider.vendorId, activeModel)
-      : resolveReasoningEffortProfile(activeProvider?.reasoningEffortPreset)
+      : activeProvider && isCodexSubscriptionProvider(activeProvider.type)
+        ? resolveVendorModelReasoningEffort('openai', activeModel)
+        : activeProvider && isClaudeSubscriptionProvider(activeProvider.type)
+          ? resolveVendorModelReasoningEffort('anthropic', activeModel)
+          : resolveReasoningEffortProfile(activeProvider?.reasoningEffortPreset)
   const control = resolveReasoningEffortControl(reasoningEffort, profile)
   const options = [
     { value: undefined, label: 'Default', intent: 'default' as const },

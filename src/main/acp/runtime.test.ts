@@ -8234,6 +8234,51 @@ describe('ACP runtime — session effort', () => {
     expect(setReasoningEffort).toHaveBeenNthCalledWith(2, undefined)
   })
 
+  it('defers a new-model effort while the old provider is waiting to reconnect', async () => {
+    const process = new FakeAgentProcess()
+    const promptStarted = createDeferred()
+    const finishPrompt = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['s-old-model'], {
+      configOptions: [thoughtLevelOption(['default', 'high', 'max'])],
+      onPrompt: async () => {
+        promptStarted.resolve()
+        await finishPrompt.promise
+        return { stopReason: 'end_turn' }
+      }
+    })
+    const setReasoningEffort = vi.fn()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: {
+          ...claudeCodeFramework,
+          spawn: () => asAgentProcess(process)
+        },
+        executablePath: '/bin/claude',
+        env: {},
+        responsesBridgeLease: {
+          selectSkills: vi.fn(async () => []),
+          registerReviewerSession: vi.fn(),
+          unregisterReviewerSession: vi.fn(() => false),
+          setReasoningEffort,
+          release: vi.fn(async () => undefined)
+        }
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's-old-model', text: 'keep working' })
+    await promptStarted.promise
+    await runtime.requestProviderReconnect()
+
+    await expect(runtime.applyReasoningEffortChange('max')).resolves.toBe(false)
+    expect(fakeAgent.configChanges).toEqual([])
+    expect(setReasoningEffort).not.toHaveBeenCalled()
+
+    finishPrompt.resolve()
+    await prompt
+  })
+
   it('hands control back to the agent default when the level is cleared live', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['s-live'], {

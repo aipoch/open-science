@@ -936,6 +936,10 @@ class AcpRuntime {
   // this process inherit it; the persisted setting covers the next respawn.
   async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
     if (!this.framework.supportsLiveEffortChange) return false
+    // A provider/model switch may be waiting for an in-flight turn to finish. The incoming effort was
+    // resolved against that newly selected model, while this connection still owns the old one. Let
+    // the persisted setting reach the fresh backend after reconnect instead of leaking it here.
+    if (this.pendingProviderReconnect) return false
 
     this.pendingSessionEffort = effort === 'default' ? undefined : effort
     this.responsesBridgeLease?.setReasoningEffort?.(this.pendingSessionEffort)

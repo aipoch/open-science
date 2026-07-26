@@ -145,6 +145,59 @@ describe('ReasoningEffortSelect', () => {
     ).toEqual(['Default', 'None', 'High'])
   })
 
+  it('uses the OpenAI model profile for a Codex subscription', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'builtin-codex-subscription',
+      activeModel: 'gpt-5.6-sol',
+      providers: [
+        {
+          id: 'builtin-codex-subscription',
+          type: 'codex-isolated',
+          name: 'Codex subscription',
+          models: ['gpt-5.6-sol'],
+          supportsImageInput: true,
+          hasKey: false,
+          needsKey: false
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(<ReasoningEffortSelect />)
+    })
+
+    expect(
+      Array.from(container.querySelectorAll('[role="radio"]')).map((element) =>
+        element.textContent?.trim()
+      )
+    ).toEqual(['Default', 'Low', 'Medium', 'High', 'XHigh', 'Ultra'])
+  })
+
+  it('uses the Anthropic model profile for a Claude subscription', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'builtin-claude-isolated',
+      activeModel: 'claude-haiku-4-5-20251001',
+      providers: [
+        {
+          id: 'builtin-claude-isolated',
+          type: 'claude-isolated',
+          name: 'Claude subscription',
+          models: ['claude-haiku-4-5-20251001'],
+          supportsImageInput: true,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(<ReasoningEffortSelect />)
+    })
+
+    expect(container.querySelectorAll('[role="radio"]')).toHaveLength(1)
+    expect(container.querySelector('[role="radio"]')?.textContent).toBe('Default')
+  })
+
   it('defaults an unconfigured custom model to five choices', async () => {
     useSettingsStore.setState({
       activeProviderId: 'custom',
