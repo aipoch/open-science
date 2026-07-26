@@ -45,6 +45,18 @@ describe('resolveProviderEffectiveModel', () => {
       )
     ).toBeUndefined()
   })
+
+  it('keeps an unpinned Claude subscription model unknown instead of using its catalog', () => {
+    expect(
+      resolveProviderEffectiveModel(
+        {
+          type: 'claude-shared',
+          models: ['claude-opus-5', 'claude-haiku-4-5-20251001']
+        },
+        undefined
+      )
+    ).toBeUndefined()
+  })
 })
 
 describe('resolveProviderReasoningEffortProfile', () => {
@@ -81,6 +93,7 @@ describe('resolveProviderReasoningEffortProfile', () => {
       'claude-haiku-4-5-20251001',
       { supported: false }
     ],
+    ['unpinned Claude subscription', { type: 'claude-shared' }, undefined, { supported: false }],
     [
       'custom model preset',
       { type: 'custom', reasoningEffortPreset: 'none-high' },

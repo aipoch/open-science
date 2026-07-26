@@ -281,6 +281,31 @@ describe('ReasoningEffortSelect', () => {
     expect(container.querySelector('[role="radio"]')?.textContent).toBe('Default')
   })
 
+  it('shows only Default when a Claude subscription delegates model selection to the CLI', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'builtin-claude-shared',
+      activeModel: undefined,
+      providers: [
+        {
+          id: 'builtin-claude-shared',
+          type: 'claude-shared',
+          name: 'Claude subscription',
+          models: [],
+          supportsImageInput: true,
+          hasKey: false,
+          needsKey: false
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(<ReasoningEffortSelect />)
+    })
+
+    expect(container.querySelectorAll('[role="radio"]')).toHaveLength(1)
+    expect(container.querySelector('[role="radio"]')?.textContent).toBe('Default')
+  })
+
   it('defaults an unconfigured custom model to five choices', async () => {
     useSettingsStore.setState({
       activeProviderId: 'custom',

@@ -137,19 +137,19 @@ const resolveOpencodeEndpoint = (
 }
 
 // Current OpenCode accepts the provider-neutral ladder through `reasoningEffort` up to `max`.
-// `ultra` is a Codex-specific top rung, so omit it rather than silently approximating it as `max`.
+// `ultra` is a Codex-specific top rung, so map it to OpenCode's highest transport value rather than
+// dropping the user's explicit top-effort selection and falling back to the provider default.
 // Provider-specific wire shapes (thinking switches and OpenRouter's reasoning object) are resolved
 // separately and passed through model options by the openai-compatible AI SDK.
 const opencodeReasoningOptions = (
   provider: ResolvedProvider,
   effort: ModelReasoningEffort
-): Record<string, unknown> | undefined => {
-  if (effort === 'ultra') return undefined
-
+): Record<string, unknown> => {
+  const transportEffort = effort === 'ultra' ? 'max' : effort
   const transport = resolveChatReasoningTransport(
     provider.vendorId,
     provider.model,
-    effort,
+    transportEffort,
     provider.reasoningEffortTransport
   )
 
@@ -170,15 +170,11 @@ const buildModelCapabilities = (
   provider: ResolvedProvider,
   reasoningEffort?: ModelReasoningEffort
 ): Record<string, unknown> => {
-  const reasoningOptions = reasoningEffort
-    ? opencodeReasoningOptions(provider, reasoningEffort)
-    : undefined
-
   return {
     ...(provider.supportsImageInput
       ? { attachment: true, modalities: { input: ['text', 'image'] } }
       : {}),
-    ...(reasoningOptions ? { options: reasoningOptions } : {})
+    ...(reasoningEffort ? { options: opencodeReasoningOptions(provider, reasoningEffort) } : {})
   }
 }
 

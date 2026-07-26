@@ -3884,6 +3884,22 @@ describe('SettingsService: reasoning effort', () => {
     expect((await service.resolveActiveAgentBackend()).sessionEffort).toBeUndefined()
   })
 
+  it('does not guess an effort profile for an unpinned Claude subscription model', async () => {
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'claude-code')
+    const service = createService()
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    const claude = (await service.upsertProvider({ type: 'claude-shared' })).providers.find(
+      (provider) => provider.type === 'claude-shared'
+    )!
+    await service.setActiveProvider(claude.id)
+    await repository.setReasoningEffort('max')
+
+    expect(await service.resolveActiveReasoningEffort('max')).toBe('default')
+    const backend = await service.resolveActiveAgentBackend()
+    expect(backend.sessionEffort).toBeUndefined()
+    expect(backend.env).not.toHaveProperty('ANTHROPIC_MODEL')
+  })
+
   it('passes the model-mapped effort to both OpenCode delivery channels', async () => {
     // resolveActiveAgentBackend honors this forced-framework env above stored settings; set it
     // explicitly (a prior test may leave it stubbed) so this resolves OpenCode.

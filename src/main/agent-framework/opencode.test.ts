@@ -257,7 +257,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     ['high', 'high'],
     ['xhigh', 'xhigh'],
     ['max', 'max'],
-    ['ultra', undefined]
+    ['ultra', 'max']
   ] as const)('encodes model effort %s as OpenCode transport level %s', (effort, expected) => {
     const config = opencodeFramework.prepareModelConfig(
       { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
@@ -269,7 +269,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     )
     const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
 
-    const expectedModel = expected ? { options: { reasoningEffort: expected } } : {}
+    const expectedModel = { options: { reasoningEffort: expected } }
     expect(fileConfig.provider.anthropic.models).toEqual({ m: expectedModel })
     expect(content.provider.anthropic.models).toEqual({ m: expectedModel })
   })

@@ -4,7 +4,11 @@ import {
   type ReasoningEffortPresetSetting,
   type ReasoningEffortProfile
 } from './reasoning-effort'
-import { isCodexSubscriptionProvider, type ProviderType } from './settings'
+import {
+  isClaudeSubscriptionProvider,
+  isCodexSubscriptionProvider,
+  type ProviderType
+} from './settings'
 
 export type ProviderReasoningEffortSource = {
   type: ProviderType
@@ -14,9 +18,9 @@ export type ProviderReasoningEffortSource = {
   reasoningEffortPreset?: ReasoningEffortPresetSetting
 }
 
-// Resolves the effective selection with the same rules in main and renderer. Codex subscriptions
-// deliberately keep an omitted selection unknown because the account runtime owns its default model;
-// every other provider falls back through its saved default and then its available catalog.
+// Resolves the effective selection with the same rules in main and renderer. Subscription runtimes
+// keep an omitted selection unknown because the account/CLI owns its default model. A saved Claude
+// override remains explicit; other providers fall back through their saved default and catalog.
 export const resolveProviderEffectiveModel = (
   provider: ProviderReasoningEffortSource | undefined,
   requestedModel: string | undefined
@@ -37,6 +41,7 @@ export const resolveProviderEffectiveModel = (
   ) {
     return provider.model
   }
+  if (isClaudeSubscriptionProvider(provider.type)) return undefined
 
   return availableModels[0] ?? provider.model
 }
@@ -49,8 +54,8 @@ const unsupportedProviderType = (providerType: never): ReasoningEffortProfile =>
 }
 
 // Resolves the static effort capability shared by settings execution and renderer controls. The
-// selected model owns the visible vocabulary; subscriptions alias their vendor catalogs, while an
-// unpinned Codex subscription stays unknown until the runtime model is explicit.
+// selected model owns the visible vocabulary; subscriptions alias their vendor catalogs only after
+// a model is pinned, while an account/CLI-owned default stays unknown.
 export const resolveProviderReasoningEffortProfile = (
   provider: ProviderReasoningEffortSource | undefined,
   model: string | undefined
@@ -72,7 +77,7 @@ export const resolveProviderReasoningEffortProfile = (
       return model ? resolveVendorModelReasoningEffort('openai', model) : { supported: false }
     case 'claude-shared':
     case 'claude-isolated':
-      return resolveVendorModelReasoningEffort('anthropic', model)
+      return model ? resolveVendorModelReasoningEffort('anthropic', model) : { supported: false }
     case 'custom':
       return resolveReasoningEffortProfile(provider.reasoningEffortPreset)
   }
