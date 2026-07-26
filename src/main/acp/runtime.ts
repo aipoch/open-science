@@ -104,6 +104,11 @@ import {
   type NotebookMcpEnvironment,
   type NotebookRpcConnection
 } from '../notebook/mcp-server'
+import {
+  SKILL_IMPORT_SYSTEM_PROMPT_APPEND,
+  createSkillImportMcpServerConfig,
+  type SkillImportRpcConnection
+} from '../skills/mcp-server'
 import { getNotebookDataRoot, getNotebookSessionRoot } from '../notebook/repository'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
@@ -149,6 +154,7 @@ type AcpRuntimeOptions = {
   artifacts?: AcpRuntimeArtifactOptions
   uploads?: AcpRuntimeUploadOptions
   notebook?: AcpRuntimeNotebookOptions
+  skillImport?: AcpRuntimeSkillImportOptions
   activityGroups?: AcpRuntimeActivityGroupOptions
   skills?: AcpRuntimeSkillsOptions
   // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
@@ -232,6 +238,13 @@ type AcpRuntimeNotebookOptions = {
   mcpEntryPath: string
   mcpCommand?: string
   getRpcConnection?: () => Promise<NotebookRpcConnection>
+  registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
+}
+
+type AcpRuntimeSkillImportOptions = {
+  mcpEntryPath: string
+  mcpCommand?: string
+  getRpcConnection: () => Promise<SkillImportRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
 }
 
@@ -709,6 +722,7 @@ class AcpRuntime {
   private readonly cancelTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
   private readonly notebookOptions: AcpRuntimeNotebookOptions | undefined
+  private readonly skillImportOptions: AcpRuntimeSkillImportOptions | undefined
   private readonly activityGroupOptions: AcpRuntimeActivityGroupOptions | undefined
   private readonly artifactRepository: ArtifactRepository | undefined
   private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
@@ -720,6 +734,7 @@ class AcpRuntime {
   private artifactSessionSequence = 0
   private artifactRunSequence = 0
   private notebookSessionSequence = 0
+  private skillImportSessionSequence = 0
   // The in-flight artifact run keyed by app session id, so app-side tools (e.g. molecule preview)
   // attach a generated file to the run of the session that triggered the call. Parallel sessions each
   // keep their own entry — a single global field would let one session's turn capture another's write.
@@ -741,6 +756,7 @@ class AcpRuntime {
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle))
     this.artifactOptions = options.artifacts
     this.notebookOptions = options.notebook
+    this.skillImportOptions = options.skillImport
     this.activityGroupOptions = options.activityGroups
     this.artifactRepository = options.artifacts
       ? (options.artifacts.repository ?? new ArtifactRepository(options.artifacts.dataRoot))
@@ -1263,11 +1279,17 @@ class AcpRuntime {
       const connection = await this.ensureConnected(sessionCwd)
       const artifactSessionId = this.createArtifactSessionId()
       const notebookSessionId = this.createNotebookSessionId()
+      const skillImportSessionId = this.createSkillImportSessionId()
 
-      log.info('createSession: createMcpServers', { artifactSessionId, notebookSessionId })
+      log.info('createSession: createMcpServers', {
+        artifactSessionId,
+        notebookSessionId,
+        skillImportSessionId
+      })
       const mcpServers = await this.createMcpServers({
         artifactSessionId,
         notebookSessionId,
+        skillImportSessionId,
         sessionCwd,
         projectName
       })
@@ -1310,6 +1332,7 @@ class AcpRuntime {
       if (this.backendId) this.sessionBackendIds.set(session.sessionId, this.backendId)
       this.rememberArtifactSession(session.sessionId, artifactSessionId)
       this.rememberNotebookSession(session.sessionId, notebookSessionId)
+      this.rememberSkillImportSession(session.sessionId, skillImportSessionId)
       this.currentSessionId = session.sessionId
       this.cwd = sessionCwd
       this.pushEvent({
@@ -1527,6 +1550,7 @@ class AcpRuntime {
     const mcpServers = await this.createMcpServers({
       artifactSessionId: request.sessionId,
       notebookSessionId: request.sessionId,
+      skillImportSessionId: request.sessionId,
       sessionCwd,
       projectName
     })
@@ -1614,6 +1638,7 @@ class AcpRuntime {
     const mcpServers = await this.createMcpServers({
       artifactSessionId: request.sessionId,
       notebookSessionId: request.sessionId,
+      skillImportSessionId: request.sessionId,
       sessionCwd,
       projectName
     })
@@ -3180,6 +3205,21 @@ class AcpRuntime {
     this.notebookOptions.registerSessionAlias?.(notebookSessionId, sessionId)
   }
 
+  private createSkillImportSessionId(): string {
+    if (!this.skillImportOptions) return ''
+
+    this.skillImportSessionSequence += 1
+    return `skill-import-session-${Date.now()}-${this.skillImportSessionSequence}`
+  }
+
+  private rememberSkillImportSession(sessionId: string, routingSessionId: string): void {
+    if (!this.skillImportOptions || !routingSessionId) return
+
+    if (routingSessionId !== sessionId) {
+      this.skillImportOptions.registerSessionAlias?.(routingSessionId, sessionId)
+    }
+  }
+
   private createActivityGroupMcpServers(): McpServer[] {
     if (!this.activityGroupOptions) return []
 
@@ -3246,15 +3286,32 @@ class AcpRuntime {
     throw new Error('Notebook runtime RPC connection is not configured.')
   }
 
+  private async createSkillImportMcpServers(routingSessionId: string): Promise<McpServer[]> {
+    if (!this.skillImportOptions || !routingSessionId) return []
+
+    const connection = await this.skillImportOptions.getRpcConnection()
+    return [
+      createSkillImportMcpServerConfig({
+        command: this.skillImportOptions.mcpCommand ?? process.execPath,
+        entryPath: this.skillImportOptions.mcpEntryPath,
+        endpoint: connection.endpoint,
+        token: connection.token,
+        sessionId: routingSessionId
+      })
+    ]
+  }
+
   // Combines every MCP config that should be visible to the agent for one session.
   private async createMcpServers({
     artifactSessionId,
     notebookSessionId,
+    skillImportSessionId,
     sessionCwd,
     projectName
   }: {
     artifactSessionId: string
     notebookSessionId: string
+    skillImportSessionId: string
     sessionCwd: string
     projectName: string
   }): Promise<McpServer[]> {
@@ -3272,7 +3329,8 @@ class AcpRuntime {
           ...(artifactEnabled
             ? this.createArtifactMcpServers(artifactSessionId, sessionCwd, projectName)
             : []),
-          ...(await this.createNotebookMcpServers(notebookSessionId, sessionCwd, projectName))
+          ...(await this.createNotebookMcpServers(notebookSessionId, sessionCwd, projectName)),
+          ...(await this.createSkillImportMcpServers(skillImportSessionId))
         ]
       : await this.createHttpMcpServers(
           artifactSessionId,
@@ -3385,6 +3443,10 @@ class AcpRuntime {
     return this.mcpTransportAvailable() && Boolean(this.notebookOptions)
   }
 
+  private skillImportToolingAvailable(): boolean {
+    return this.framework.acceptsStdioMcp && Boolean(this.skillImportOptions)
+  }
+
   // The artifact write tool is only wired when full native MCP is enabled (off for the bridge), so its
   // guidance follows that flag.
   private artifactToolingAvailable(): boolean {
@@ -3406,7 +3468,8 @@ class AcpRuntime {
         ? [ACTIVITY_GROUP_SYSTEM_PROMPT_APPEND]
         : []),
       ...(this.artifactToolingAvailable() ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
-      ...(this.notebookToolingAvailable() ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : [])
+      ...(this.notebookToolingAvailable() ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : []),
+      ...(this.skillImportToolingAvailable() ? [SKILL_IMPORT_SYSTEM_PROMPT_APPEND] : [])
     ]
   }
 

@@ -6455,6 +6455,46 @@ describe('ACP runtime session management', () => {
     expect(createdSessionMeta).not.toContain('`notebook_execute`')
   })
 
+  it('passes the conversation Skill import tool a session-scoped route', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const aliases: Array<{ aliasSessionId: string; sessionId: string }> = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      skillImport: {
+        mcpEntryPath: '/app/out/main/index.js',
+        mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'secret-token'
+        }),
+        registerSessionAlias: (aliasSessionId, sessionId) => {
+          aliases.push({ aliasSessionId, sessionId })
+        }
+      }
+    })
+
+    const createdSession = await runtime.createSession({ cwd: '/workspace' })
+
+    expect(fakeAgent.newSessions[0].mcpServers).toHaveLength(1)
+    expect(fakeAgent.newSessions[0].mcpServers[0]).toMatchObject({
+      name: 'open-science-skills',
+      command: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+      args: ['/app/out/main/index.js', '--open-science-skill-import-mcp']
+    })
+    const aliasSessionId = getEnvValue(
+      fakeAgent.newSessions[0].mcpServers[0],
+      'OPEN_SCIENCE_SKILL_IMPORT_SESSION_ID'
+    )
+    expect(aliasSessionId).toMatch(/^skill-import-session-/)
+    expect(aliases).toEqual([{ aliasSessionId, sessionId: createdSession.sessionId }])
+    expect(JSON.stringify(fakeAgent.newSessions[0]._meta)).toContain(
+      'mcp__open-science-skills__request_skill_import'
+    )
+  })
+
   it('passes only the workspace as a static allowed import root, not the pre-start notebook alias', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'])

@@ -871,6 +871,33 @@ export type SkillBundlePreviewResult = {
   skipped: SkippedSkill[]
 }
 
+// A Skill package import requested by an agent tool. The main process owns the archive bytes and
+// sends only the parsed, bounded preview to the renderer for an explicit user decision.
+export type ConversationSkillImportApprovalRequest = SkillBundlePreviewResult & {
+  id: string
+  sessionId: string
+  attachmentName: string
+}
+
+export type ConversationSkillImportSelection = {
+  subPath: string
+  replaceId?: string
+}
+
+export type ConversationSkillImportApprovalResponse =
+  | { id: string; cancelled: true; items?: undefined }
+  | { id: string; cancelled?: false; items: ConversationSkillImportSelection[] }
+
+export type ConversationSkillImportResult = {
+  status: 'imported' | 'unchanged' | 'partial' | 'cancelled'
+  skills: Array<{
+    id: string
+    name: string
+    status: 'imported' | 'unchanged' | 'updated'
+  }>
+  errors?: Array<{ name: string; error: string }>
+}
+
 // Scan a GitHub repo (owner/repo, owner/repo@ref, or a URL) for skill directories.
 export type ScanRepoRequest = {
   repo: string

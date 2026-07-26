@@ -189,6 +189,12 @@ import { parseGitHubSkillUrl } from '../skills/github-import'
 import { netFetch, netFetchStandard } from '../skills/net-fetch'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
 import { readSkillFile } from '../skills/skill-files'
+import { requestSkillImportToolSchema } from '../skills/mcp-server'
+import {
+  REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
+  REQUEST_SKILL_IMPORT_TOOL_NAME,
+  SKILL_IMPORT_MCP_SERVER_NAME
+} from '../../shared/skill-import'
 import { NOTEBOOK_MCP_SERVER_NAME, NOTEBOOK_RPC_TOOLS } from '../notebook/mcp-server'
 import { ARTIFACT_MCP_SERVER_NAME, writeArtifactFileToolSchema } from '../artifacts/mcp-server'
 import { beginActivityGroupToolSchema } from '../activity-groups/mcp-server'
@@ -305,6 +311,20 @@ const CODEX_BRIDGE_ACTIVITY_TOOLS: ResponsesBridgeNamespacedTool[] = [
     description:
       'Declare the concise purpose of the next coherent group of tool calls. Call once before the first tool in that group, not once per step.',
     parameters: z.toJSONSchema(z.object(beginActivityGroupToolSchema), {
+      target: 'draft-7'
+    }) as ResponsesBridgeNamespacedTool['parameters']
+  }
+]
+const CODEX_SKILL_IMPORT_TOOL_NAMESPACE = `mcp__${SKILL_IMPORT_MCP_SERVER_NAME.replace(
+  /[^a-zA-Z0-9_]/g,
+  '_'
+)}`
+const CODEX_BRIDGE_SKILL_IMPORT_TOOLS: ResponsesBridgeNamespacedTool[] = [
+  {
+    namespace: CODEX_SKILL_IMPORT_TOOL_NAMESPACE,
+    name: REQUEST_SKILL_IMPORT_TOOL_NAME,
+    description: REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
+    parameters: z.toJSONSchema(z.object(requestSkillImportToolSchema), {
       target: 'draft-7'
     }) as ResponsesBridgeNamespacedTool['parameters']
   }
@@ -1124,7 +1144,7 @@ class SettingsService {
     request: ImportSkillZipBatchRequest
   ): Promise<ImportSkillZipBatchResult> {
     const zip = decodeBoundedBase64(request.dataBase64, SKILL_IMPORT_LIMITS.maxBundleBytes)
-    const outcomes = await this.userSkills.importFromZipBatch(zip, request.items)
+    const outcomes = await this.importSkillArchiveBatch(zip, request.items)
     // Success and failure are mutually exclusive: a succeeded item carries status+id, a failed one
     // carries only error (never a placeholder status).
     const results: ImportSkillZipBatchResult['results'] = outcomes.map((entry) =>
@@ -1138,9 +1158,22 @@ class SettingsService {
   // Parses an uploaded bundle for a confirm-before-import preview, without writing anything. Returns
   // the importable skills plus any the bundle contained that were skipped (too large, no SKILL.md, ...).
   async previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreviewResult> {
-    return this.userSkills.previewZip(
+    return this.previewSkillArchive(
       decodeBoundedBase64(request.dataBase64, SKILL_IMPORT_LIMITS.maxBundleBytes)
     )
+  }
+
+  // Main-process callers that already own validated bytes use these archive-level methods directly;
+  // renderer IPC remains base64-shaped, while conversation imports avoid a redundant encode/decode.
+  async previewSkillArchive(zip: Buffer): Promise<SkillBundlePreviewResult> {
+    return this.userSkills.previewZip(zip)
+  }
+
+  async importSkillArchiveBatch(
+    zip: Buffer,
+    items: ImportSkillZipBatchRequest['items']
+  ): ReturnType<UserSkillRepository['importFromZipBatch']> {
+    return this.userSkills.importFromZipBatch(zip, items)
   }
 
   // Lazily loads one selected GitHub candidate. The repository's bounded helper downloads only its
@@ -3525,7 +3558,8 @@ class SettingsService {
       namespacedTools: [
         ...CODEX_BRIDGE_NOTEBOOK_TOOLS,
         ...CODEX_BRIDGE_ARTIFACT_TOOLS,
-        ...CODEX_BRIDGE_ACTIVITY_TOOLS
+        ...CODEX_BRIDGE_ACTIVITY_TOOLS,
+        ...CODEX_BRIDGE_SKILL_IMPORT_TOOLS
       ],
       reviewerScope: {
         namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS

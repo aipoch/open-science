@@ -190,6 +190,19 @@ class UploadRepository {
     return resolvedFilePath
   }
 
+  // Resolves an upload only when it belongs to the named durable session. Agent-facing tools use
+  // this stricter seam so a model cannot point a capability at another conversation's attachment.
+  async resolveSessionUploadPath(sessionId: string, request: DeleteUploadRequest): Promise<string> {
+    const safeSessionId = assertSafePathSegment(sessionId)
+    const filePath = await this.resolveManagedUploadPath(request)
+    const sessionRoot = await realpath(this.getSessionUploadDir(safeSessionId)).catch(() => {
+      throw new Error('Upload file belongs to a different session.')
+    })
+
+    assertPathInsideRoot(sessionRoot, filePath, 'Upload file belongs to a different session.')
+    return filePath
+  }
+
   // Reads upload previews through the shared bounded reader after upload-specific path validation.
   async readManagedUploadPreview(
     request: ReadArtifactPreviewRequest

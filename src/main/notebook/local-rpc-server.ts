@@ -10,6 +10,10 @@ import type {
 } from '../../shared/notebook'
 import type { NotebookRpcConnection } from './mcp-server'
 import type { NotebookRuntimeService } from './runtime-service'
+import type {
+  ConversationSkillImporter,
+  ConversationSkillImportRequest
+} from '../skills/conversation-import'
 
 type NotebookLocalRpcServerOptions = {
   token?: string
@@ -72,6 +76,7 @@ type NotebookLocalRpcServerOptions = {
       provider_ceilings: Record<string, number>
     }>
   }
+  skillImporter?: Pick<ConversationSkillImporter, 'request'>
 }
 
 type NotebookRpcPayload = {
@@ -113,6 +118,7 @@ class NotebookLocalRpcServer {
   private readonly host: string
   private readonly connectorService: NotebookLocalRpcServerOptions['connectorService']
   private readonly computeService: NotebookLocalRpcServerOptions['computeService']
+  private readonly skillImporter: NotebookLocalRpcServerOptions['skillImporter']
   private server: Server | undefined
   private startPromise: Promise<NotebookRpcConnection> | undefined
   private readonly sessionAliases = new Map<string, string>()
@@ -125,6 +131,7 @@ class NotebookLocalRpcServer {
     this.host = options.host ?? '127.0.0.1'
     this.connectorService = options.connectorService
     this.computeService = options.computeService
+    this.skillImporter = options.skillImporter
   }
 
   // Starts the server once on an ephemeral port and returns the connection details for MCP env.
@@ -208,6 +215,18 @@ class NotebookLocalRpcServer {
 
   // Maps the narrow RPC method names to strongly-typed runtime service calls.
   private async dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
+    if (method === 'skillImport') {
+      if (!this.skillImporter) throw new Error('Conversation Skill import is not configured.')
+      if (typeof params.sessionId !== 'string' || typeof params.attachmentUri !== 'string') {
+        throw new Error('Skill import RPC params must include sessionId and attachmentUri.')
+      }
+      const request: ConversationSkillImportRequest = {
+        sessionId: params.sessionId,
+        attachmentUri: params.attachmentUri
+      }
+      return this.skillImporter.request(request)
+    }
+
     // mcpCall carries no runtime routing fields, so it bypasses assertSessionParams below. It does
     // forward the caller's session id (already alias-resolved above) as call context so a local tool
     // handler can attribute side effects to the session that invoked it.

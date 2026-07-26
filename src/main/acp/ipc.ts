@@ -54,6 +54,7 @@ type AcpIpcOptions = AcpIpcArtifacts & {
   // Observes prompt starts and terminal turn events for desktop notifications. Optional so tests
   // and headless setups can run without a notification surface.
   taskNotifications?: TaskNotificationService
+  onSessionCancelled?: (sessionId: string) => void
 }
 
 // Sends one runtime payload to every currently open renderer window.
@@ -136,6 +137,12 @@ const createRuntime = ({
           registerSessionAlias: (aliasSessionId, sessionId) =>
             notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId)
         },
+        skillImport: {
+          mcpEntryPath,
+          getRpcConnection: () => notebookRpcServer.ensureStarted(),
+          registerSessionAlias: (aliasSessionId, sessionId) =>
+            notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId)
+        },
         activityGroups: { mcpEntryPath },
         callbacks: runtimeCallbacks,
         permissionGrantStore
@@ -205,12 +212,14 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator =
 
     return runtime.getSnapshot()
   })
-  ipcMain.handle('acp:cancel', (_event, request: AcpCancelPromptRequest) =>
-    runtime.cancelPrompt(request)
-  )
-  ipcMain.handle('acp:delete-session', (_event, request: AcpDeleteSessionRequest) =>
-    runtime.deleteSession(request)
-  )
+  ipcMain.handle('acp:cancel', (_event, request: AcpCancelPromptRequest) => {
+    options.onSessionCancelled?.(request.sessionId)
+    return runtime.cancelPrompt(request)
+  })
+  ipcMain.handle('acp:delete-session', (_event, request: AcpDeleteSessionRequest) => {
+    options.onSessionCancelled?.(request.sessionId)
+    return runtime.deleteSession(request)
+  })
   ipcMain.handle('acp:respond-permission', (_event, response: AcpPermissionResponse) =>
     runtime.respondToPermission(response)
   )

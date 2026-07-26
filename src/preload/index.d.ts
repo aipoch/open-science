@@ -164,6 +164,8 @@ import type {
   RemoveCustomServerRequest,
   UpdateCustomServerRequest,
   ConnectorApprovalRequest,
+  ConversationSkillImportApprovalRequest,
+  ConversationSkillImportApprovalResponse,
   RespondApprovalRequest,
   UpsertProviderRequest,
   ValidateProviderRequest,
@@ -306,6 +308,11 @@ interface OpenScienceAPI {
     removeCustomServer(request: RemoveCustomServerRequest): Promise<ConnectorsSnapshot>
     updateCustomServer(request: UpdateCustomServerRequest): Promise<ConnectorsSnapshot>
     onConnectorApprovalRequest(listener: AcpListener<ConnectorApprovalRequest>): RemoveListener
+    onSkillImportApprovalRequest(
+      listener: AcpListener<ConversationSkillImportApprovalRequest>
+    ): RemoveListener
+    onSkillImportApprovalSettled(listener: AcpListener<string>): RemoveListener
+    respondSkillImportApproval(response: ConversationSkillImportApprovalResponse): Promise<void>
     respondConnectorApproval(request: RespondApprovalRequest): Promise<void>
     onInstallLog(listener: AcpListener<ClaudeInstallEvent>): RemoveListener
   }

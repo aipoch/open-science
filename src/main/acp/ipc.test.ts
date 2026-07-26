@@ -34,37 +34,56 @@ vi.mock('node:fs/promises', () => ({ mkdir, rm }))
 
 // A fake runtime whose methods are spies; registration wires closures over these, so only the invoked
 // handler's method needs meaningful behavior. Hoisted so the (hoisted) vi.mock factory can reference it.
-const { createSession, resetSessionContext, resumeSession, sendPrompt, AcpRuntimeMock } =
-  vi.hoisted(() => {
-    const createSession = vi
-      .fn()
-      .mockImplementation(async (request) => ({ sessionId: 's-new', cwd: request.cwd }))
-    const resetSessionContext = vi
-      .fn()
-      .mockResolvedValue({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
-    const resumeSession = vi.fn().mockResolvedValue({ sessionId: 's-1', cwd: '/workspace' })
-    const sendPrompt = vi.fn().mockResolvedValue(undefined)
-    const AcpRuntimeMock = vi.fn().mockImplementation(function () {
-      return {
-        createSession,
-        resetSessionContext,
-        resumeSession,
-        sendPrompt,
-        getSnapshot: vi.fn().mockReturnValue({
-          status: 'idle',
-          cwd: '/workspace',
-          sessionIds: [],
-          events: [],
-          pendingPermissions: [],
-          permissionProfiles: {},
-          permissionGrants: {},
-          promptInFlight: false,
-          promptInFlightSessionIds: []
-        })
-      }
-    })
-    return { createSession, resetSessionContext, resumeSession, sendPrompt, AcpRuntimeMock }
+const {
+  cancelPrompt,
+  createSession,
+  deleteSession,
+  resetSessionContext,
+  resumeSession,
+  sendPrompt,
+  AcpRuntimeMock
+} = vi.hoisted(() => {
+  const cancelPrompt = vi.fn().mockResolvedValue({})
+  const createSession = vi
+    .fn()
+    .mockImplementation(async (request) => ({ sessionId: 's-new', cwd: request.cwd }))
+  const deleteSession = vi.fn().mockResolvedValue({})
+  const resetSessionContext = vi
+    .fn()
+    .mockResolvedValue({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
+  const resumeSession = vi.fn().mockResolvedValue({ sessionId: 's-1', cwd: '/workspace' })
+  const sendPrompt = vi.fn().mockResolvedValue(undefined)
+  const AcpRuntimeMock = vi.fn().mockImplementation(function () {
+    return {
+      createSession,
+      cancelPrompt,
+      deleteSession,
+      resetSessionContext,
+      resumeSession,
+      sendPrompt,
+      getSnapshot: vi.fn().mockReturnValue({
+        status: 'idle',
+        cwd: '/workspace',
+        sessionIds: [],
+        events: [],
+        pendingPermissions: [],
+        permissionProfiles: {},
+        permissionGrants: {},
+        promptInFlight: false,
+        promptInFlightSessionIds: []
+      })
+    }
   })
+  return {
+    cancelPrompt,
+    createSession,
+    deleteSession,
+    resetSessionContext,
+    resumeSession,
+    sendPrompt,
+    AcpRuntimeMock
+  }
+})
 
 // Spy on the file logger so the create-session failure path can be asserted (routes to main.log, not a
 // bare console.error). errorLogFields stays real so the assertion also covers its output shape.
@@ -94,6 +113,7 @@ const registerWithFakes = (overrides?: {
     trackPrompt: ReturnType<typeof vi.fn>
     untrackPrompt: ReturnType<typeof vi.fn>
   }
+  onSessionCancelled?: (sessionId: string) => void
 }): void => {
   const taskNotifications =
     overrides?.taskNotifications ??
@@ -113,6 +133,7 @@ const registerWithFakes = (overrides?: {
       resolveAgentBackend: vi.fn().mockResolvedValue({})
     } as never,
     taskNotifications: taskNotifications as never,
+    onSessionCancelled: overrides?.onSessionCancelled,
     initializationBarrier: overrides?.initializationBarrier
   }
 
@@ -127,10 +148,27 @@ afterEach(() => {
   createSession.mockReset()
   createSession.mockImplementation(async (request) => ({ sessionId: 's-new', cwd: request.cwd }))
   resetSessionContext.mockClear()
+  cancelPrompt.mockClear()
+  deleteSession.mockClear()
   resumeSession.mockClear()
   sendPrompt.mockReset()
   sendPrompt.mockResolvedValue(undefined)
   errorLogSpy.mockClear()
+})
+
+describe('registerAcpIpcHandlers — Skill import cancellation lifecycle', () => {
+  it('invalidates pending imports when a prompt is stopped or its session is deleted', async () => {
+    const onSessionCancelled = vi.fn()
+    registerWithFakes({ onSessionCancelled })
+
+    await handlers.get('acp:cancel')?.({}, { sessionId: 'session-1' })
+    await handlers.get('acp:delete-session')?.({}, { sessionId: 'session-2' })
+
+    expect(onSessionCancelled).toHaveBeenNthCalledWith(1, 'session-1')
+    expect(onSessionCancelled).toHaveBeenNthCalledWith(2, 'session-2')
+    expect(cancelPrompt).toHaveBeenCalledWith({ sessionId: 'session-1' })
+    expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'session-2' })
+  })
 })
 
 describe('registerAcpIpcHandlers — managed session workspace', () => {

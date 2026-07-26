@@ -12,6 +12,7 @@ import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
 import { resolveStartupView } from '@/pages/onboarding/startup-gate'
 import { ComputeApprovalDialog } from '@/pages/settings/ComputeApprovalDialog'
 import { ConnectorApprovalDialog } from '@/pages/settings/ConnectorApprovalDialog'
+import { SkillImportApprovalDialog } from '@/pages/settings/SkillImportApprovalDialog'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
@@ -23,6 +24,7 @@ import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useComputeStore } from '@/stores/compute-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
+import { useSkillImportStore } from '@/stores/skill-import-store'
 import { useUpdateStore } from '@/stores/update-store'
 
 const App = (): React.JSX.Element | null => {
@@ -42,6 +44,8 @@ const App = (): React.JSX.Element | null => {
   const closeSettings = useSettingsStore((state) => state.closeSettings)
   const enqueueApproval = useSettingsStore((state) => state.enqueueApproval)
   const enqueueComputeApproval = useComputeStore((state) => state.enqueueApproval)
+  const enqueueSkillImport = useSkillImportStore((state) => state.enqueue)
+  const dismissSkillImport = useSkillImportStore((state) => state.dismiss)
   const applyJobUpdate = useSessionJobStore((state) => state.applyUpdate)
   const initUpdates = useUpdateStore((state) => state.init)
   const initEnv = useNotebookEnvStore((state) => state.init)
@@ -86,6 +90,15 @@ const App = (): React.JSX.Element | null => {
   useEffect(
     () => window.api.settings.onConnectorApprovalRequest(enqueueApproval),
     [enqueueApproval]
+  )
+
+  useEffect(
+    () => window.api.settings.onSkillImportApprovalRequest(enqueueSkillImport),
+    [enqueueSkillImport]
+  )
+  useEffect(
+    () => window.api.settings.onSkillImportApprovalSettled(dismissSkillImport),
+    [dismissSkillImport]
   )
 
   // Clicking a desktop notification opens the conversation the finished/failed task belongs to.
@@ -166,6 +179,7 @@ const App = (): React.JSX.Element | null => {
       )}
       <SettingsPage open={isSettingsOpen} onClose={closeSettings} />
       <ConnectorApprovalDialog />
+      <SkillImportApprovalDialog />
       <LifecycleToast
         notice={lifecycleSync.notice}
         onDismiss={lifecycleSync.dismissNotice}

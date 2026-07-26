@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => {
       checkEnvironment: vi.fn().mockResolvedValue(undefined),
       closeSettings: vi.fn()
     },
+    skillImport: { enqueue: vi.fn(), dismiss: vi.fn() },
     navigation: { view: 'home' as 'home' | 'workspace' },
     environment: {
       ui: { state: 'idle' },
@@ -77,6 +78,10 @@ vi.mock('@/stores/settings-store', () => ({
   useSettingsStore: <T,>(selector: (state: typeof mocks.settings) => T): T =>
     selector(mocks.settings)
 }))
+vi.mock('@/stores/skill-import-store', () => ({
+  useSkillImportStore: <T,>(selector: (state: typeof mocks.skillImport) => T): T =>
+    selector(mocks.skillImport)
+}))
 vi.mock('@/stores/update-store', () => ({
   useUpdateStore: <T,>(selector: (state: { init: typeof mocks.initUpdates }) => T): T =>
     selector({ init: mocks.initUpdates })
@@ -116,6 +121,9 @@ vi.mock('@/pages/onboarding/OnboardingWizard', () => ({
 }))
 vi.mock('@/pages/settings/ConnectorApprovalDialog', () => ({
   ConnectorApprovalDialog: (): React.JSX.Element => <div data-testid="approval-dialog" />
+}))
+vi.mock('@/pages/settings/SkillImportApprovalDialog', () => ({
+  SkillImportApprovalDialog: (): React.JSX.Element => <div data-testid="skill-import-dialog" />
 }))
 vi.mock('@/pages/settings/SettingsPage', () => ({
   SettingsPage: ({ open }: { open: boolean }): React.JSX.Element => (
@@ -161,7 +169,11 @@ describe('App startup routing', () => {
     })
     window.api = {
       storage: { getInfo: mocks.getInfo },
-      settings: { onConnectorApprovalRequest: vi.fn(() => vi.fn()) },
+      settings: {
+        onConnectorApprovalRequest: vi.fn(() => vi.fn()),
+        onSkillImportApprovalRequest: vi.fn(() => vi.fn()),
+        onSkillImportApprovalSettled: vi.fn(() => vi.fn())
+      },
       notifications: mocks.notifications,
       compute: {
         onApprovalRequest: vi.fn(() => vi.fn()),

@@ -31,7 +31,8 @@ const CLAUDE_MCP_TOOL_NAMES = [
   ['notebook_restart', 'mcp__open-science-notebook__notebook_restart'],
   ['notebook_shutdown', 'mcp__open-science-notebook__notebook_shutdown'],
   ['manage_packages', 'mcp__open-science-notebook__manage_packages'],
-  ['manage_environments', 'mcp__open-science-notebook__manage_environments']
+  ['manage_environments', 'mcp__open-science-notebook__manage_environments'],
+  ['request_skill_import', 'mcp__open-science-skills__request_skill_import']
 ] as const
 
 const renderClaudeMcpToolNames = (append: string): string =>

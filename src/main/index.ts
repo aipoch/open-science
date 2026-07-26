@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url'
 import {
   ACTIVITY_GROUP_MCP_SERVER_ARG,
   ARTIFACT_MCP_SERVER_ARG,
-  NOTEBOOK_MCP_SERVER_ARG
+  NOTEBOOK_MCP_SERVER_ARG,
+  SKILL_IMPORT_MCP_SERVER_ARG
 } from './mcp-server-args'
 
 const APP_NAME = 'Open Science'
@@ -14,6 +15,7 @@ const APP_USER_MODEL_ID = 'com.aipoch.open-science'
 const shouldRunArtifactMcpServer = process.argv.includes(ARTIFACT_MCP_SERVER_ARG)
 const shouldRunNotebookMcpServer = process.argv.includes(NOTEBOOK_MCP_SERVER_ARG)
 const shouldRunActivityGroupMcpServer = process.argv.includes(ACTIVITY_GROUP_MCP_SERVER_ARG)
+const shouldRunSkillImportMcpServer = process.argv.includes(SKILL_IMPORT_MCP_SERVER_ARG)
 
 if (shouldRunArtifactMcpServer) {
   // Reuse the packaged entry point as a Node stdio MCP server; import it only in this mode.
@@ -34,6 +36,13 @@ if (shouldRunArtifactMcpServer) {
 } else if (shouldRunActivityGroupMcpServer) {
   void import('./activity-groups/mcp-server')
     .then(({ runActivityGroupMcpServer }) => runActivityGroupMcpServer())
+    .catch((error: unknown) => {
+      console.error(error)
+      process.exitCode = 1
+    })
+} else if (shouldRunSkillImportMcpServer) {
+  void import('./skills/mcp-server')
+    .then(({ runSkillImportMcpServer }) => runSkillImportMcpServer())
     .catch((error: unknown) => {
       console.error(error)
       process.exitCode = 1

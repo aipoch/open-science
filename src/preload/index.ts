@@ -173,6 +173,8 @@ import type {
   RemoveCustomServerRequest,
   UpdateCustomServerRequest,
   ConnectorApprovalRequest,
+  ConversationSkillImportApprovalRequest,
+  ConversationSkillImportApprovalResponse,
   RespondApprovalRequest,
   UpsertProviderRequest,
   ValidateProviderRequest,
@@ -338,6 +340,11 @@ type OpenScienceAPI = {
     removeCustomServer: (request: RemoveCustomServerRequest) => Promise<ConnectorsSnapshot>
     updateCustomServer: (request: UpdateCustomServerRequest) => Promise<ConnectorsSnapshot>
     onConnectorApprovalRequest: (listener: AcpListener<ConnectorApprovalRequest>) => RemoveListener
+    onSkillImportApprovalRequest: (
+      listener: AcpListener<ConversationSkillImportApprovalRequest>
+    ) => RemoveListener
+    onSkillImportApprovalSettled: (listener: AcpListener<string>) => RemoveListener
+    respondSkillImportApproval: (response: ConversationSkillImportApprovalResponse) => Promise<void>
     respondConnectorApproval: (request: RespondApprovalRequest) => Promise<void>
     onInstallLog: (listener: AcpListener<ClaudeInstallEvent>) => RemoveListener
   }
@@ -822,6 +829,12 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('settings:update-custom-server', request) as Promise<ConnectorsSnapshot>,
     // Fires when a connector call needs the user's approval (external data-egress gate).
     onConnectorApprovalRequest: (listener) => onIpcMessage('connectors:approval-request', listener),
+    onSkillImportApprovalRequest: (listener) =>
+      onIpcMessage('skills:conversation-import-request', listener),
+    onSkillImportApprovalSettled: (listener) =>
+      onIpcMessage('skills:conversation-import-settled', listener),
+    respondSkillImportApproval: (response) =>
+      ipcRenderer.invoke('skills:conversation-import-respond', response) as Promise<void>,
     respondConnectorApproval: (request: RespondApprovalRequest) =>
       ipcRenderer.invoke('connectors:approval-respond', request) as Promise<void>,
     // Streams live installer output while a one-click install runs.
