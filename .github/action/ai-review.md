@@ -39,6 +39,10 @@ the job fails closed if the sandbox or sudo boundary is ineffective. A runner-gl
 executable is not required. Manual dispatch remains a trust decision because OpenAI does not
 recommend ChatGPT-managed auth for public or open-source CI.
 
+The subscription path installs the pinned Codex CLI directly and does not pass subscription
+credentials through `openai/codex-action`. API-key mode continues using the pinned action for its
+Responses API proxy and key-isolation behavior.
+
 ### 1. Create file-backed credentials
 
 On a trusted machine, configure the Codex CLI to store credentials in a file:

@@ -80,6 +80,23 @@ jobs:
       pr_number: ${{ inputs.pull_request_number }}
       head_sha: ${{ inputs.head_sha }}
     steps:
+      # Install before credentials are written or untrusted repository files are checked out.
+      - name: Set up Node.js for subscription auth
+        if: ${{ inputs.auth_mode == 'subscription' }}
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '24'
+
+      - name: Install Codex CLI for subscription auth
+        if: ${{ inputs.auth_mode == 'subscription' }}
+        env:
+          CODEX_VERSION: 0.144.6
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g "@openai/codex@${CODEX_VERSION}"
+          codex --version
+
       - name: Prepare Codex authentication
         id: codex_auth
         env:
@@ -337,9 +354,8 @@ jobs:
             echo "review_header=$review_header"
           } >> "$GITHUB_OUTPUT"
 
-      # The pinned codex-action enables these only when it receives an API key or prompt. In
-      # subscription mode it is intentionally install-only, so prepare bubblewrap here before the
-      # later direct `codex exec` call.
+      # The API action enables these only when it receives an API key or prompt. Subscription mode
+      # installs the CLI directly, so prepare the packaged Linux sandbox before `codex exec`.
       - name: Prepare GitHub-hosted sandbox for subscription auth
         if: ${{ inputs.auth_mode == 'subscription' }}
         shell: bash
@@ -358,6 +374,7 @@ jobs:
           fi
 
       - name: Prepare Codex review runtime
+        if: ${{ inputs.auth_mode == 'api-key' }}
         uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1
         with:
           openai-api-key: ${{ inputs.auth_mode == 'api-key' && secrets.OPENAI_API_KEY || '' }}
@@ -366,8 +383,8 @@ jobs:
           codex-version: 0.144.6
           allow-users: ${{ inputs.is_fork && inputs.fork_mode == 'automatic' && '*' || '' }}
 
-      # The action drops sudo when it receives an API key. Subscription auth is install-only, so
-      # apply the same boundary explicitly before reviewing untrusted repository content.
+      # The API action drops sudo itself. Apply the same boundary to the directly installed
+      # subscription CLI before reviewing untrusted repository content.
       - name: Harden subscription review runtime
         if: ${{ inputs.auth_mode == 'subscription' }}
         env:

@@ -617,8 +617,9 @@ describe('dual Codex workflow contract', () => {
     expect(fork.stderr).toContain('same-repository pull requests')
   })
 
-  it('uses the API proxy only for API-key authentication', () => {
+  it('uses the API action only for API-key auth and installs the CLI directly for subscription auth', () => {
     const prepareRuntime = getStep(codexWorkflow, 'review', 'Prepare Codex review runtime')
+    expect(prepareRuntime.if).toBe("${{ inputs.auth_mode == 'api-key' }}")
     expect(prepareRuntime.with).toMatchObject({
       'codex-home': '${{ steps.codex_auth.outputs.codex_home }}',
       'codex-version': '0.144.6',
@@ -627,6 +628,22 @@ describe('dual Codex workflow contract', () => {
     })
     expect(getStep(codexWorkflow, 'review', 'Resolve Responses API endpoint').if).toBe(
       "${{ inputs.auth_mode == 'api-key' }}"
+    )
+    const setupNode = getStep(codexWorkflow, 'review', 'Set up Node.js for subscription auth')
+    expect(setupNode.if).toBe("${{ inputs.auth_mode == 'subscription' }}")
+    expect(setupNode.uses).toBe('actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f')
+    expect(setupNode.with).toEqual({ 'node-version': '24' })
+    const installCli = getStep(codexWorkflow, 'review', 'Install Codex CLI for subscription auth')
+    expect(installCli.if).toBe("${{ inputs.auth_mode == 'subscription' }}")
+    expect(installCli.env).toEqual({ CODEX_VERSION: '0.144.6' })
+    expect(installCli.run).toContain('npm install -g "@openai/codex@${CODEX_VERSION}"')
+    expect(installCli.run).toContain('codex --version')
+    const stepNames = codexWorkflow.jobs.review.steps?.map(({ name }) => name) ?? []
+    expect(stepNames.indexOf('Install Codex CLI for subscription auth')).toBeLessThan(
+      stepNames.indexOf('Prepare Codex authentication')
+    )
+    expect(stepNames.indexOf('Prepare Codex authentication')).toBeLessThan(
+      stepNames.indexOf('Checkout pull request review commit')
     )
   })
 
