@@ -1278,7 +1278,17 @@ describe('UserSkillRepository', () => {
   it('writes frontmatter that the reader can parse back', async () => {
     const storage = await makeStorage()
     const repo = new UserSkillRepository(storage)
-    const id = await repo.createPersonal({ name: 'Round Trip', description: 'desc', body: 'hello' })
+    const id = await repo.createPersonal({
+      name: 'Round Trip',
+      description: 'desc',
+      metadata: {
+        author: 'Ada',
+        license: 'MIT',
+        name: 'Untrusted override',
+        description: 'Untrusted override'
+      },
+      body: 'hello'
+    })
 
     const raw = await readFile(
       join(storage, 'skills', 'personal', 'round-trip', 'SKILL.md'),
@@ -1286,6 +1296,12 @@ describe('UserSkillRepository', () => {
     )
     expect(raw).toContain('name: Round Trip')
     expect(raw).toContain('description: desc')
+    expect(parseFrontmatter(raw).fields).toMatchObject({
+      name: 'Round Trip',
+      description: 'desc',
+      author: 'Ada',
+      license: 'MIT'
+    })
     expect(await repo.body(id)).toBe('hello')
   })
 })

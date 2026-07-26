@@ -240,9 +240,11 @@ describe('SkillUploadView (batch upload)', () => {
       root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
     })
 
-    const md = new File(['---\nname: Solo\ndescription: A solo skill\n---\n# Body'], 'solo.md', {
-      type: 'text/markdown'
-    })
+    const md = new File(
+      ['---\nname: Solo\ndescription: A solo skill\nauthor: Ada\nlicense: MIT\n---\n# Body'],
+      'solo.md',
+      { type: 'text/markdown' }
+    )
     await dropFiles([md])
 
     // A single markdown candidate appears, unchecked; the bundle preview path is not used.
@@ -259,6 +261,7 @@ describe('SkillUploadView (batch upload)', () => {
     expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
       name: 'Solo',
       description: 'A solo skill',
+      metadata: { author: 'Ada', license: 'MIT' },
       body: '# Body'
     })
   })

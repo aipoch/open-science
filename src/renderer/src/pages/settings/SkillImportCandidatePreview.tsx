@@ -95,7 +95,7 @@ const SkillImportCandidatePreview = ({
 
                 <section className="mt-5 border-t border-border pt-4">
                   <h2 className="mb-3 text-sm font-semibold text-foreground">SKILL.md</h2>
-                  <AgentMarkdown content={content.body} />
+                  <AgentMarkdown content={content.body} allowMedia={false} />
                 </section>
 
                 {metadata.length > 0 ? (

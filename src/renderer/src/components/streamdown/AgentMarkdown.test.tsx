@@ -4,7 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const streamdownHarness = vi.hoisted(() => ({
-  shouldThrow: true
+  shouldThrow: true,
+  disallowedElements: undefined as readonly string[] | undefined
 }))
 
 vi.mock('@streamdown/code', () => ({ code: {} }))
@@ -12,8 +13,12 @@ vi.mock('@streamdown/cjk', () => ({ cjk: {} }))
 vi.mock('@streamdown/math', () => ({ createMathPlugin: () => ({}) }))
 vi.mock('@streamdown/mermaid', () => ({ mermaid: {} }))
 vi.mock('streamdown', () => ({
-  Streamdown: ({ children }: PropsWithChildren): React.JSX.Element => {
+  Streamdown: ({
+    children,
+    disallowedElements
+  }: PropsWithChildren<{ disallowedElements?: readonly string[] }>): React.JSX.Element => {
     if (streamdownHarness.shouldThrow) throw new Error('optimized Markdown chunk failed to load')
+    streamdownHarness.disallowedElements = disallowedElements
 
     return <div data-testid="rich-markdown">{children}</div>
   }
@@ -27,6 +32,7 @@ describe('AgentMarkdown renderer recovery', () => {
 
   beforeEach(() => {
     streamdownHarness.shouldThrow = true
+    streamdownHarness.disallowedElements = undefined
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -70,6 +76,18 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(container.querySelector('[data-agent-markdown-fallback]')).toBeNull()
     expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe(
       'Recovered message'
+    )
+  })
+
+  it('blocks network-fetching media elements when media is disabled', async () => {
+    streamdownHarness.shouldThrow = false
+
+    await act(async () => {
+      root.render(<AgentMarkdown content="Untrusted preview" allowMedia={false} />)
+    })
+
+    expect(streamdownHarness.disallowedElements).toEqual(
+      expect.arrayContaining(['img', 'video', 'audio', 'source', 'track', 'use'])
     )
   })
 })

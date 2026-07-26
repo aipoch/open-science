@@ -762,6 +762,7 @@ export type CreateSkillRequest = {
   name: string
   description: string
   body: string
+  metadata?: Record<string, string>
   slug?: string
   references?: SkillReference[]
 }

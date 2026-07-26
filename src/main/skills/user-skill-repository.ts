@@ -83,7 +83,7 @@ const toSlug = (name: string): string =>
 // every field round-trips LOSSLESSLY and always as a string through any conformant YAML parser. The
 // leading `---`/trailing `---` document markers are added by the caller. `lineWidth: -1` disables line
 // folding so long descriptions aren't rewrapped (which would not be byte-lossless).
-const frontmatterBlock = (fields: { name: string; description: string }): string =>
+const frontmatterBlock = (fields: Record<string, string>): string =>
   dumpYaml(fields, { lineWidth: -1 })
 
 // A skill id is `<source>-<slug>`; parse it back to its source + slug (null for bundled/unknown ids).
@@ -104,6 +104,7 @@ type WriteSkillInput = {
   name: string
   description: string
   body: string
+  metadata?: Record<string, string>
   references?: SkillReference[]
 }
 
@@ -1316,7 +1317,7 @@ class UserSkillRepository {
     return (await this.listSlugs(source)).includes(slug)
   }
 
-  // Writes a SKILL.md with a minimal frontmatter block (name/description) followed by the body.
+  // Writes a SKILL.md with authoritative name/description plus optional imported frontmatter.
   private async writeSkill(
     source: (typeof USER_SOURCES)[number],
     slug: string,
@@ -1325,8 +1326,23 @@ class UserSkillRepository {
     const dir = this.skillDir(source, slug)
     await mkdir(dir, { recursive: true })
 
+    // Renderer requests are untrusted: accept only the flat keys this app can read, keep every value
+    // a string, and never let imported metadata override the authoritative name or description.
+    const metadata = Object.fromEntries(
+      Object.entries(input.metadata ?? {}).filter(
+        ([key, value]) =>
+          key !== 'name' &&
+          key !== 'description' &&
+          /^[A-Za-z0-9_-]+$/.test(key) &&
+          typeof value === 'string'
+      )
+    )
     // js-yaml.dump already ends with a newline, so the closing fence follows directly.
-    const frontmatter = `---\n${frontmatterBlock({ name: input.name, description: input.description })}---`
+    const frontmatter = `---\n${frontmatterBlock({
+      name: input.name,
+      description: input.description,
+      ...metadata
+    })}---`
     const contents = `${frontmatter}\n\n${input.body.trimStart()}`
 
     await writeFile(join(dir, 'SKILL.md'), contents, 'utf8')

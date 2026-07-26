@@ -293,6 +293,7 @@ const SkillUploadView = ({
         await createSkill({
           name: candidate.name,
           description: candidate.description,
+          metadata: candidate.metadata,
           body: candidate.body
         })
         imported += 1

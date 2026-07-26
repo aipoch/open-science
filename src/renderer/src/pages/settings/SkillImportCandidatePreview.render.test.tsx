@@ -7,8 +7,10 @@ import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
 import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
-  AgentMarkdown: ({ content }: { content: string }) => (
-    <div data-testid="agent-markdown">{content}</div>
+  AgentMarkdown: ({ content, allowMedia }: { content: string; allowMedia?: boolean }) => (
+    <div data-testid="agent-markdown" data-allow-media={String(allowMedia)}>
+      {content}
+    </div>
   )
 }))
 
@@ -57,6 +59,9 @@ describe('SkillImportCandidatePreview', () => {
     expect(dialog?.textContent).toContain('references/style.md')
     expect(dialog?.textContent).toContain('Ada')
     expect(dialog?.querySelector('[role="switch"]')).toBeNull()
+    expect(
+      dialog?.querySelector('[data-testid="agent-markdown"]')?.getAttribute('data-allow-media')
+    ).toBe('false')
 
     act(() => dialog?.querySelector<HTMLButtonElement>('[aria-label="Close preview"]')?.click())
     expect(onOpenChange).toHaveBeenCalledWith(false)

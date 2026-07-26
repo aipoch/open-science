@@ -14,7 +14,23 @@ import { cn } from '@/lib/utils'
 type AgentMarkdownProps = {
   content: string
   isAnimating?: boolean
+  allowMedia?: boolean
 }
+
+// Import previews render untrusted Markdown. Removing every element that can initiate a media fetch
+// prevents opening a candidate from disclosing viewer activity to an external host. `use` is
+// included because an SVG use element may reference a remote document.
+const NETWORK_FETCHING_MEDIA_ELEMENTS = [
+  'img',
+  'video',
+  'audio',
+  'source',
+  'track',
+  'iframe',
+  'object',
+  'embed',
+  'use'
+] as const
 
 type AgentMarkdownErrorBoundaryProps = {
   content: string
@@ -116,7 +132,7 @@ class AgentMarkdownErrorBoundary extends Component<
 
 // Renders agent markdown with Streamdown tuned for incremental AI output.
 const RichAgentMarkdown = memo(
-  ({ content, isAnimating = false }: AgentMarkdownProps): React.JSX.Element => {
+  ({ content, isAnimating = false, allowMedia = true }: AgentMarkdownProps): React.JSX.Element => {
     const renderedContent = useMemo(() => normalizeAgentMarkdown(content), [content])
 
     return (
@@ -138,6 +154,7 @@ const RichAgentMarkdown = memo(
           parseIncompleteMarkdown={isAnimating}
           normalizeHtmlIndentation={!isAnimating}
           allowedTags={AGENT_ALLOWED_TAGS}
+          disallowedElements={allowMedia ? undefined : NETWORK_FETCHING_MEDIA_ELEMENTS}
           shikiTheme={['github-light', 'github-light']}
           mermaid={mermaidOptions}
         >
@@ -152,9 +169,9 @@ RichAgentMarkdown.displayName = 'RichAgentMarkdown'
 
 // Keeps renderer-specific failures from unmounting the surrounding workspace.
 const AgentMarkdown = memo(
-  ({ content, isAnimating = false }: AgentMarkdownProps): React.JSX.Element => (
+  ({ content, isAnimating = false, allowMedia = true }: AgentMarkdownProps): React.JSX.Element => (
     <AgentMarkdownErrorBoundary content={content}>
-      <RichAgentMarkdown content={content} isAnimating={isAnimating} />
+      <RichAgentMarkdown content={content} isAnimating={isAnimating} allowMedia={allowMedia} />
     </AgentMarkdownErrorBoundary>
   )
 )
