@@ -528,6 +528,32 @@ describe('isImportableSkillArchivePath', () => {
     await expect(inspectOuterArchive(reader(), 128 * 1024)).resolves.toBe(true)
   })
 
+  it('reserves a separate bounded pass for manifest classification after entry validation', async () => {
+    const archive = buildZip([
+      {
+        path: 'near-validation-cap/SKILL.md',
+        content: Buffer.concat([
+          Buffer.from('---\nname: Near Validation Cap\n---\n'),
+          Buffer.alloc(120 * 1024, 97)
+        ])
+      }
+    ])
+    const reader = (): {
+      size: number
+      read: (position: number, length: number) => Promise<Buffer | undefined>
+    } => ({
+      size: archive.length,
+      read: async (position: number, length: number): Promise<Buffer | undefined> => {
+        if (position < 0 || length < 0 || position + length > archive.length) return undefined
+        return archive.subarray(position, position + length)
+      }
+    })
+
+    // Validation legitimately consumes almost this entire phase budget. Classification gets a fresh
+    // budget of the same size instead of double-charging the accepted manifest entry.
+    await expect(inspectOuterArchive(reader(), 128 * 1024)).resolves.toBe(true)
+  })
+
   it('fails closed when cumulative stored-entry reads exhaust its work budget', async () => {
     const archive = buildZip([
       { path: 'first.bin', content: Buffer.alloc(48 * 1024, 97), method: 0 },
@@ -580,7 +606,7 @@ describe('isImportableSkillArchivePath', () => {
     })
 
     await expect(inspectOuterArchive(reader())).resolves.toBe(true)
-    await expect(inspectOuterArchive(reader(), 64 * 1024)).resolves.toBe(false)
+    await expect(inspectOuterArchive(reader(), 32 * 1024)).resolves.toBe(false)
   })
 
   it('rejects an early named nested root when later manifest work exhausts the budget', async () => {

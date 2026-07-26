@@ -381,6 +381,12 @@ const consumeInflateBudget = (budget: InflateBudget, bytes: number): boolean => 
   return false
 }
 
+const resetInflateBudget = (budget: InflateBudget): void => {
+  budget.readBytes = 0
+  budget.inflatedBytes = 0
+  budget.exhausted = false
+}
+
 const compressedEntryChunks = async function* (
   reader: ArchiveReader,
   offset: number,
@@ -775,6 +781,11 @@ const inspectOuterArchive = async (
   if (!parsed) return false
   const scan = await validateArchiveEntries(reader, parsed, OUTER_SCAN_LIMITS, inflateBudget)
   if (!scan) return false
+
+  // Complete entry validation and post-validation classification are each independently bounded.
+  // Give metadata/nested-candidate reads their own pass so an importer-valid archive at the outer
+  // decompressed-size cap is not rejected merely because its manifest must be read again for `name`.
+  resetInflateBudget(inflateBudget)
 
   const candidateLimit = SKILL_IMPORT_LIMITS.maxSkillsPerBundle
   const loose = await inspectManifestRoots(reader, scan, true, candidateLimit, inflateBudget)
