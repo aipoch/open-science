@@ -48,6 +48,7 @@ import type {
   ImportSkillResult,
   ImportSkillZipBatchResult,
   SkillBundlePreviewResult,
+  SkillImportPreviewContent,
   ScanRepoResult,
   UpsertProviderRequest,
   ValidateProviderRequest,
@@ -261,10 +262,12 @@ type SettingsStore = SettingsStoreData & {
   // Parses an uploaded bundle without importing it, for a confirm-before-import preview. Returns the
   // importable skills plus any the bundle contained that were skipped and why.
   previewSkillZip: (dataBase64: string) => Promise<SkillBundlePreviewResult>
+  previewGitHubSkill: (url: string) => Promise<SkillImportPreviewContent>
   // Scans a GitHub repo for importable skill directories (does not mutate state).
   scanRepoSkills: (repo: string) => Promise<ScanRepoResult>
   // Lists the shared global skills plus the active framework's installed skills.
   listAgentHomeSkills: () => Promise<AgentHomeSkillView[]>
+  previewAgentHomeSkill: (skill: AgentHomeSkillRef) => Promise<SkillImportPreviewContent>
   // Copies checked installed skills into the imported-skill store in one batch.
   importAgentHomeSkills: (skills: AgentHomeSkillRef[]) => Promise<ImportAgentHomeSkillsResult>
   // Loads the bundled-connector list (enabled/auto-allow + NCBI credential state) from main.
@@ -1094,10 +1097,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   previewSkillZip: async (dataBase64) => window.api.settings.previewSkillZip({ dataBase64 }),
 
+  previewGitHubSkill: async (url) => window.api.settings.previewGitHubSkill({ url }),
+
   scanRepoSkills: async (repo) => window.api.settings.scanRepoSkills({ repo }),
 
   // Installed-skill discovery is read-only. Batch import returns the refreshed catalog directly.
   listAgentHomeSkills: async () => window.api.settings.listAgentHomeSkills(),
+  previewAgentHomeSkill: async (skill) => window.api.settings.previewAgentHomeSkill(skill),
   importAgentHomeSkills: async (skills) => {
     const result = await window.api.settings.importAgentHomeSkills({ skills })
     set({ skills: result.skills })

@@ -68,6 +68,8 @@ beforeEach(() => {
           subPath: 'skills/one',
           name: 'One',
           description: 'First bundled skill',
+          metadata: { author: 'Ada' },
+          body: '# First bundle body',
           files: ['SKILL.md'],
           alreadyImported: false
         },
@@ -75,6 +77,8 @@ beforeEach(() => {
           subPath: 'skills/two',
           name: 'Two',
           description: 'Second bundled skill',
+          metadata: {},
+          body: '# Second bundle body',
           files: ['SKILL.md'],
           alreadyImported: false
         }
@@ -147,6 +151,38 @@ describe('SkillUploadView (batch upload)', () => {
       { subPath: 'skills/two', replaceId: undefined }
     ])
     expect(onUploaded).toHaveBeenCalled()
+  })
+
+  it('opens bundle candidate content from the bounded parse result without changing selection', async () => {
+    act(() => {
+      root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
+    })
+    await dropFiles([
+      new File([new Uint8Array([1, 2, 3])], 'pack.zip', { type: 'application/zip' })
+    ])
+
+    const checkbox = document.body.querySelector<HTMLInputElement>('[aria-label="Select One"]')
+    expect(checkbox?.checked).toBe(false)
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Preview One"]')?.click()
+      await Promise.resolve()
+    })
+
+    expect(useSettingsStore.getState().previewSkillZip).toHaveBeenCalledTimes(1)
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain(
+      'First bundle body'
+    )
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Ada')
+    expect(checkbox?.checked).toBe(false)
+
+    act(() => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Close preview"]')?.click()
+    })
+    expect(checkbox?.checked).toBe(false)
+    act(() => checkbox?.click())
+    expect(checkbox?.checked).toBe(true)
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 
   it('rejects an oversized markdown file on file.size, before reading its contents', async () => {
@@ -225,5 +261,34 @@ describe('SkillUploadView (batch upload)', () => {
       description: 'A solo skill',
       body: '# Body'
     })
+  })
+
+  it('previews a bare Markdown candidate from its in-renderer body without changing selection', async () => {
+    act(() => {
+      root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
+    })
+    const md = new File(
+      ['---\nname: Solo\ndescription: A solo skill\nauthor: Ada\n---\n# Bare body'],
+      'solo.md',
+      { type: 'text/markdown' }
+    )
+    await dropFiles([md])
+
+    const checkbox = document.body.querySelector<HTMLInputElement>('[aria-label="Select Solo"]')
+    expect(checkbox?.checked).toBe(false)
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Preview Solo"]')?.click()
+      await Promise.resolve()
+    })
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
+    expect(dialog?.textContent).toContain('Bare body')
+    expect(dialog?.textContent).toContain('Ada')
+    expect(dialog?.textContent).toContain('solo.md')
+    expect(checkbox?.checked).toBe(false)
+
+    act(() => dialog?.querySelector<HTMLButtonElement>('[aria-label="Close preview"]')?.click())
+    expect(checkbox?.checked).toBe(false)
   })
 })

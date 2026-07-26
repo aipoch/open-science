@@ -3256,6 +3256,29 @@ describe('SettingsService: skills', () => {
 
     expect(scanRepo).toHaveBeenCalledWith('o/r', netFetch)
   })
+
+  it('previews a selected GitHub skill through the proxy-aware bounded repository path', async () => {
+    const previewGitHubSkill = vi.fn().mockResolvedValue({
+      name: 'Demo',
+      description: 'Remote skill',
+      metadata: { license: 'MIT' },
+      body: '# Demo',
+      files: ['SKILL.md']
+    })
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      userSkills: { previewGitHubSkill } as any
+    })
+    const url = 'https://github.com/o/r/tree/main/skills/demo'
+
+    await expect(service.previewGitHubSkill({ url })).resolves.toMatchObject({
+      sourceLabel: 'github.com/o/r/skills/demo',
+      body: '# Demo'
+    })
+    expect(previewGitHubSkill).toHaveBeenCalledWith(url, netFetch)
+  })
 })
 
 describe('installClaude (app-managed source)', () => {
@@ -4023,6 +4046,54 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
     await expect(service.listAgentHomeSkills()).rejects.toMatchObject({ code: 'ENOTDIR' })
   })
 
+  it('previews an installed candidate through its trusted source and slug without exposing host paths', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-preview-agent-claude-'))
+    await seedSkill(userClaudeDir, 'alpha')
+    await writeFile(
+      join(userClaudeDir, 'skills', 'alpha', 'SKILL.md'),
+      '---\nname: Alpha\ndescription: Preview me\nauthor: Ada\n---\n# Safe body\n'
+    )
+    const service = createService(undefined, { userClaudeDir })
+    await repository.setAgentFramework('claude-code')
+
+    const preview = await service.previewAgentHomeSkill({ source: 'claude', slug: 'alpha' })
+
+    expect(preview).toEqual({
+      name: 'Alpha',
+      description: 'Preview me',
+      sourceLabel: '~/.claude/skills/alpha',
+      metadata: { author: 'Ada' },
+      body: '# Safe body\n',
+      files: ['SKILL.md']
+    })
+    expect(JSON.stringify(preview)).not.toContain(userClaudeDir)
+  })
+
+  it('redacts the installed skill host path from preview errors', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-preview-agent-error-'))
+    await seedSkill(userClaudeDir, 'alpha')
+    const hostSkillPath = join(userClaudeDir, 'skills', 'alpha')
+    const previewAgentHomeSkill = vi
+      .fn()
+      .mockRejectedValue(new Error(`EACCES: ${join(hostSkillPath, 'SKILL.md')}`))
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      userClaudeDir,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      userSkills: { previewAgentHomeSkill } as any
+    })
+    await repository.setAgentFramework('claude-code')
+
+    const error = await service
+      .previewAgentHomeSkill({ source: 'claude', slug: 'alpha' })
+      .catch((reason: unknown) => reason)
+
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).not.toContain(userClaudeDir)
+    expect((error as Error).message).toContain('~/.claude/skills/alpha/SKILL.md')
+  })
+
   it('scans shared and Codex homes when the active framework is codex', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
     const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
@@ -4771,6 +4842,10 @@ describe('SettingsService: importAgentHomeSkills realpath containment', () => {
     const result = await service.importAgentHomeSkills({
       skills: [{ source: 'claude', slug: 'payload' }]
     })
+
+    await expect(
+      service.previewAgentHomeSkill({ source: 'claude', slug: 'payload' })
+    ).rejects.toThrow(/outside its source/)
 
     expect(result.results[0]).toMatchObject({
       error: expect.stringMatching(/outside its source/)

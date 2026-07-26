@@ -155,8 +155,11 @@ import type {
   ImportAgentHomeSkillsRequest,
   ImportAgentHomeSkillsResult,
   AgentHomeSkillView,
+  PreviewAgentHomeSkillRequest,
+  PreviewGitHubSkillRequest,
   PreviewSkillZipRequest,
   SkillBundlePreviewResult,
+  SkillImportPreviewContent,
   ScanRepoRequest,
   ScanRepoResult,
   ConnectorsSnapshot,
@@ -315,8 +318,12 @@ type OpenScienceAPI = {
     importSkillZip: (request: ImportSkillZipRequest) => Promise<ImportSkillResult>
     importSkillZipBatch: (request: ImportSkillZipBatchRequest) => Promise<ImportSkillZipBatchResult>
     previewSkillZip: (request: PreviewSkillZipRequest) => Promise<SkillBundlePreviewResult>
+    previewGitHubSkill: (request: PreviewGitHubSkillRequest) => Promise<SkillImportPreviewContent>
     scanRepoSkills: (request: ScanRepoRequest) => Promise<ScanRepoResult>
     listAgentHomeSkills: () => Promise<AgentHomeSkillView[]>
+    previewAgentHomeSkill: (
+      request: PreviewAgentHomeSkillRequest
+    ) => Promise<SkillImportPreviewContent>
     importAgentHomeSkills: (
       request: ImportAgentHomeSkillsRequest
     ) => Promise<ImportAgentHomeSkillsResult>
@@ -767,11 +774,21 @@ const api: OpenScienceAPI = {
         'settings:preview-skill-zip',
         request
       ) as Promise<SkillBundlePreviewResult>,
+    previewGitHubSkill: (request: PreviewGitHubSkillRequest) =>
+      ipcRenderer.invoke(
+        'settings:preview-github-skill',
+        request
+      ) as Promise<SkillImportPreviewContent>,
     scanRepoSkills: (request: ScanRepoRequest) =>
       ipcRenderer.invoke('settings:scan-repo-skills', request) as Promise<ScanRepoResult>,
     // Lists installed skills from the shared global source plus the active framework's source.
     listAgentHomeSkills: () =>
       ipcRenderer.invoke('settings:list-agent-home-skills') as Promise<AgentHomeSkillView[]>,
+    previewAgentHomeSkill: (request: PreviewAgentHomeSkillRequest) =>
+      ipcRenderer.invoke(
+        'settings:preview-agent-home-skill',
+        request
+      ) as Promise<SkillImportPreviewContent>,
     importAgentHomeSkills: (request: ImportAgentHomeSkillsRequest) =>
       ipcRenderer.invoke(
         'settings:import-agent-home-skills',

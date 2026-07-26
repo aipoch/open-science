@@ -61,6 +61,8 @@ beforeEach(() => {
           subPath: '',
           name: 'Bundled',
           description: 'From a bundle',
+          metadata: { license: 'MIT' },
+          body: '# Bundled body',
           files: ['SKILL.md'],
           alreadyImported: false
         }
@@ -76,6 +78,14 @@ beforeEach(() => {
           alreadyImported: false
         }
       ]
+    }),
+    previewGitHubSkill: vi.fn().mockResolvedValue({
+      name: 'Foo',
+      description: 'Remote preview',
+      sourceLabel: 'github.com/acme/skills/pack/foo',
+      metadata: { license: 'MIT' },
+      body: '# Remote body',
+      files: ['SKILL.md']
     }),
     listAgentHomeSkills: vi.fn().mockResolvedValue([
       {
@@ -100,6 +110,14 @@ beforeEach(() => {
         alreadyImported: true
       }
     ]),
+    previewAgentHomeSkill: vi.fn().mockResolvedValue({
+      name: 'Shared',
+      description: 'Shared agent skill',
+      sourceLabel: '~/.agents/skills/shared',
+      metadata: { author: 'Ada' },
+      body: '# Installed body',
+      files: ['SKILL.md', 'references/guide.md']
+    }),
     importAgentHomeSkills: vi.fn().mockResolvedValue({
       results: [
         {
@@ -317,6 +335,42 @@ describe('SkillsPanel (sub-views)', () => {
     )
   })
 
+  it('opens and closes a GitHub candidate preview without changing its selection', async () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+    })
+    setValue('GitHub skill URL or repo', 'acme/skills')
+    const runScan = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Preview'
+    )
+    await act(async () => {
+      runScan?.click()
+      await Promise.resolve()
+    })
+
+    const checkbox = document.body.querySelector<HTMLInputElement>('[aria-label="Select Foo"]')
+    expect(checkbox?.checked).toBe(true)
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Preview Foo"]')?.click()
+      await Promise.resolve()
+    })
+
+    expect(useSettingsStore.getState().previewGitHubSkill).toHaveBeenCalledWith(
+      'https://github.com/acme/skills/tree/main/pack/foo'
+    )
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Remote body')
+    expect(checkbox?.checked).toBe(true)
+
+    act(() => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Close preview"]')?.click()
+    })
+    expect(checkbox?.checked).toBe(true)
+    act(() => checkbox?.click())
+    expect(checkbox?.checked).toBe(false)
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
   it('preselects available installed skills and batch-imports the checked rows', async () => {
     await act(async () => {
       root.render(<SkillsPanel view={{ kind: 'import-agent-home' }} onNavigate={vi.fn()} />)
@@ -504,6 +558,39 @@ describe('SkillsPanel (sub-views)', () => {
     expect(document.body.textContent).toContain('Codex Beta')
     expect(document.body.textContent).not.toContain('Stale Claude')
     expect(document.body.textContent).not.toContain('Scanning…')
+  })
+
+  it('opens and closes an installed candidate preview without changing its selection', async () => {
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'import-agent-home' }} onNavigate={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const checkbox = document.body.querySelector<HTMLInputElement>('[aria-label="Select Shared"]')
+    expect(checkbox?.checked).toBe(true)
+
+    const preview = document.body.querySelector<HTMLButtonElement>('[aria-label="Preview Shared"]')
+    await act(async () => {
+      preview?.click()
+      await Promise.resolve()
+    })
+
+    expect(useSettingsStore.getState().previewAgentHomeSkill).toHaveBeenCalledWith({
+      source: 'agents',
+      slug: 'shared'
+    })
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Installed body')
+    expect(checkbox?.checked).toBe(true)
+
+    act(() => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Close preview"]')?.click()
+    })
+    expect(checkbox?.checked).toBe(true)
+
+    act(() => checkbox?.click())
+    expect(checkbox?.checked).toBe(false)
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 
   it('renders the upload view and returns to the create view on "Write from scratch instead"', () => {

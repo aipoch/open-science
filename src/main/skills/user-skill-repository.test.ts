@@ -8,6 +8,7 @@ import {
   rm,
   stat,
   symlink,
+  truncate,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -336,6 +337,32 @@ describe('UserSkillRepository', () => {
     expect(await new UserSkillRepository(await makeStorage()).list()).toEqual([])
   })
 
+  it('previews one selected GitHub skill without importing it', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const preview = await repo.previewGitHubSkill(
+      SKILL_URL,
+      fakeFetch(
+        [
+          '---',
+          'name: Foo',
+          'description: A remote skill.',
+          'license: MIT',
+          '---',
+          '# Preview body'
+        ].join('\n')
+      )
+    )
+
+    expect(preview).toEqual({
+      name: 'Foo',
+      description: 'A remote skill.',
+      metadata: { license: 'MIT' },
+      body: '# Preview body',
+      files: ['SKILL.md']
+    })
+    expect(await repo.list()).toEqual([])
+  })
+
   it('imports a .zip bundle (SKILL.md + files) and dedups an identical re-import', async () => {
     const storage = await makeStorage()
     const repo = new UserSkillRepository(storage)
@@ -489,6 +516,8 @@ describe('UserSkillRepository', () => {
         {
           name: 'Bundled',
           description: 'A test bundle.',
+          metadata: {},
+          body: 'body',
           files: ['SKILL.md', 'scripts/run.py'],
           alreadyImported: false,
           replaceableId: undefined,
@@ -1292,6 +1321,60 @@ describe('UserSkillRepository: agent-home import', () => {
     expect(items.every((i) => i.alreadyImported === false)).toBe(true)
     expect(items[0].path).toBe(join(home, 'skills', items[0].slug))
   })
+
+  it('previews an installed skill body, metadata, and file names without importing it', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const home = await mkdtemp(join(tmpdir(), 'os-preview-agent-'))
+    const source = await seedSkill(home, 'alpha')
+    await writeFile(
+      join(source, 'SKILL.md'),
+      [
+        '---',
+        'name: Alpha',
+        'description: Installed preview.',
+        'license: Apache-2.0',
+        '---',
+        '# Installed body'
+      ].join('\n')
+    )
+    await mkdir(join(source, 'references'))
+    await writeFile(join(source, 'references', 'guide.md'), 'Guide')
+
+    await expect(repo.previewAgentHomeSkill(source)).resolves.toEqual({
+      name: 'Alpha',
+      description: 'Installed preview.',
+      metadata: { license: 'Apache-2.0' },
+      body: '# Installed body',
+      files: ['SKILL.md', 'references/guide.md']
+    })
+    expect(await repo.list()).toEqual([])
+  })
+
+  it('rejects an installed preview whose declared file sizes exceed the skill cap', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const home = await mkdtemp(join(tmpdir(), 'os-preview-agent-large-'))
+    const source = await seedSkill(home, 'alpha')
+    const largeReference = join(source, 'large.bin')
+    await writeFile(largeReference, '')
+    await truncate(largeReference, SKILL_IMPORT_LIMITS.maxFileBytes + 1)
+
+    await expect(repo.previewAgentHomeSkill(source)).rejects.toThrow(/file over/)
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects a nested symlink while previewing an installed skill',
+    async () => {
+      const repo = new UserSkillRepository(await makeStorage())
+      const home = await mkdtemp(join(tmpdir(), 'os-preview-agent-link-'))
+      const source = await seedSkill(home, 'alpha')
+      const outside = join(home, 'outside.md')
+      await writeFile(outside, 'outside')
+      await mkdir(join(source, 'references'))
+      await symlink(outside, join(source, 'references', 'outside.md'))
+
+      await expect(repo.previewAgentHomeSkill(source)).rejects.toThrow(/symbolic link/)
+    }
+  )
 
   it('marks a skill as alreadyImported when the same source identity exists', async () => {
     // The renderer uses alreadyImported to flip the row to a "Imported" badge and hide the action

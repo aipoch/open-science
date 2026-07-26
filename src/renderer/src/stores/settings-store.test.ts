@@ -56,6 +56,8 @@ type SettingsApi = {
   importSkillZip: ReturnType<typeof vi.fn>
   importSkillZipBatch: ReturnType<typeof vi.fn>
   previewSkillZip: ReturnType<typeof vi.fn>
+  previewGitHubSkill: ReturnType<typeof vi.fn>
+  previewAgentHomeSkill: ReturnType<typeof vi.fn>
   listConnectors: ReturnType<typeof vi.fn>
   getConnectorDetail: ReturnType<typeof vi.fn>
   setConnectorEnabled: ReturnType<typeof vi.fn>
@@ -192,6 +194,8 @@ beforeEach(() => {
     importSkillZip: vi.fn().mockResolvedValue({ status: 'imported', id: 'z', skills: [] }),
     importSkillZipBatch: vi.fn().mockResolvedValue({ results: [], skills: [] }),
     previewSkillZip: vi.fn().mockResolvedValue({ previews: [], skipped: [] }),
+    previewGitHubSkill: vi.fn(),
+    previewAgentHomeSkill: vi.fn(),
     listConnectors: vi
       .fn()
       .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
@@ -970,6 +974,35 @@ describe('settings store: openSettingsToPanel', () => {
   })
 })
 
+describe('settings store: skill import candidate previews', () => {
+  it('forwards renderer-safe GitHub and installed candidate identities', async () => {
+    const preview = {
+      name: 'Alpha',
+      description: 'Preview',
+      sourceLabel: 'source/alpha',
+      metadata: {},
+      body: '# Alpha',
+      files: ['SKILL.md']
+    }
+    api.previewGitHubSkill.mockResolvedValue(preview)
+    api.previewAgentHomeSkill.mockResolvedValue(preview)
+
+    await expect(
+      useSettingsStore
+        .getState()
+        .previewGitHubSkill('https://github.com/acme/skills/tree/main/alpha')
+    ).resolves.toBe(preview)
+    await expect(
+      useSettingsStore.getState().previewAgentHomeSkill({ source: 'agents', slug: 'alpha' })
+    ).resolves.toBe(preview)
+
+    expect(api.previewGitHubSkill).toHaveBeenCalledWith({
+      url: 'https://github.com/acme/skills/tree/main/alpha'
+    })
+    expect(api.previewAgentHomeSkill).toHaveBeenCalledWith({ source: 'agents', slug: 'alpha' })
+  })
+})
+
 describe('settings store: skill bundle upload', () => {
   it('previewSkillZip returns the importable previews plus any skipped skills', async () => {
     api.previewSkillZip.mockResolvedValue({
@@ -978,6 +1011,8 @@ describe('settings store: skill bundle upload', () => {
           subPath: 'skills/alpha',
           name: 'Alpha',
           description: '',
+          metadata: {},
+          body: '# Alpha',
           files: ['SKILL.md'],
           alreadyImported: false
         },
@@ -985,6 +1020,8 @@ describe('settings store: skill bundle upload', () => {
           subPath: 'skills/beta',
           name: 'Beta',
           description: '',
+          metadata: {},
+          body: '# Beta',
           files: ['SKILL.md'],
           alreadyImported: true
         }

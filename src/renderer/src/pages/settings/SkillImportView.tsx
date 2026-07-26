@@ -4,6 +4,8 @@ import type { ScannedSkillView, SkillView } from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useSettingsStore } from '@/stores/settings-store'
+import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
+import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
 type SkillImportViewProps = {
   onImported: () => void
@@ -15,11 +17,13 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
   const skills = useSettingsStore((state) => state.skills)
   const importSkill = useSettingsStore((state) => state.importSkill)
   const scanRepoSkills = useSettingsStore((state) => state.scanRepoSkills)
+  const previewGitHubSkill = useSettingsStore((state) => state.previewGitHubSkill)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [scanned, setScanned] = useState<ScannedSkillView[] | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const candidatePreview = useSkillImportCandidatePreview()
 
   const imported = skills.filter((skill: SkillView) => skill.source === 'imported')
 
@@ -157,15 +161,24 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                   onChange={() => toggle(skill.url)}
                   className="size-4 shrink-0"
                 />
-                <div className="min-w-0 flex-1">
-                  <span className="block truncate text-sm text-foreground">{skill.name}</span>
-                  <span className="block truncate text-xs text-muted-foreground">{skill.path}</span>
-                </div>
-                {skill.alreadyImported ? (
-                  <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                    Imported
+                <button
+                  type="button"
+                  aria-label={`Preview ${skill.name}`}
+                  onClick={() => candidatePreview.openPreview(() => previewGitHubSkill(skill.url))}
+                  className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span className="min-w-0 flex-1 px-1 py-1">
+                    <span className="block truncate text-sm text-foreground">{skill.name}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {skill.path}
+                    </span>
                   </span>
-                ) : null}
+                  {skill.alreadyImported ? (
+                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                      Imported
+                    </span>
+                  ) : null}
+                </button>
               </li>
             ))}
           </ul>
@@ -187,6 +200,8 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
           No imported skills yet. Repos you import from will appear here.
         </p>
       )}
+
+      <SkillImportCandidatePreview {...candidatePreview.previewProps} />
     </div>
   )
 }

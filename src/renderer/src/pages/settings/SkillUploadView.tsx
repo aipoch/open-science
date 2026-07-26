@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SKILL_IMPORT_LIMITS } from '../../../../shared/skill-import-limits'
+import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
+import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
 // Rounds a byte count to whole MB for a user-facing size-limit message.
 const mb = (bytes: number): string => `${Math.round(bytes / (1024 * 1024))} MB`
@@ -53,6 +55,8 @@ type Candidate =
       subPath: string
       name: string
       description: string
+      metadata: Record<string, string>
+      body: string
       files: string[]
       alreadyImported: boolean
       replaceableId?: string
@@ -63,6 +67,7 @@ type Candidate =
       fileName: string
       name: string
       description: string
+      metadata: Record<string, string>
       body: string
     }
 
@@ -85,19 +90,27 @@ const cleanMessage = (error: unknown): string => {
 // editor's consumeFrontmatter so an uploaded SKILL.md fills the same fields).
 const consumeFrontmatter = (
   text: string
-): { name?: string; description?: string; body: string } => {
-  const match = /^---\n([\s\S]*?)\n---\n?/.exec(text)
-  if (!match) return { body: text }
+): {
+  name?: string
+  description?: string
+  metadata: Record<string, string>
+  body: string
+} => {
+  const normalized = text.replace(/\r\n?/g, '\n')
+  const match = /^---\n([\s\S]*?)\n---\n?/.exec(normalized)
+  if (!match) return { metadata: {}, body: text }
 
   const fields: Record<string, string> = {}
   for (const line of match[1].split('\n')) {
     const field = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line)
     if (field) fields[field[1].toLowerCase()] = field[2].trim()
   }
+  const { name, description, ...metadata } = fields
   return {
-    name: fields.name,
-    description: fields.description,
-    body: text.slice(match[0].length).replace(/^\n+/, '')
+    name,
+    description,
+    metadata,
+    body: normalized.slice(match[0].length).replace(/^\n+/, '')
   }
 }
 
@@ -127,6 +140,7 @@ const SkillUploadView = ({
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [summary, setSummary] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const candidatePreview = useSkillImportCandidatePreview()
 
   // Parses one picked file into its candidates, capturing a per-file error instead of throwing.
   const parseFile = async (file: File): Promise<ParseResult> => {
@@ -163,6 +177,8 @@ const SkillUploadView = ({
             subPath: preview.subPath,
             name: preview.name,
             description: preview.description,
+            metadata: preview.metadata,
+            body: preview.body,
             files: preview.files,
             alreadyImported: preview.alreadyImported,
             replaceableId: preview.replaceableId
@@ -187,6 +203,7 @@ const SkillUploadView = ({
             fileName: file.name,
             name: parsed.name,
             description: parsed.description ?? '',
+            metadata: parsed.metadata,
             body: parsed.body
           }
         ]
@@ -393,21 +410,42 @@ const SkillUploadView = ({
                     disabled={busy}
                     className="size-4 shrink-0"
                   />
-                  <div className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-foreground">{candidate.name}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {secondary}
+                  <button
+                    type="button"
+                    aria-label={`Preview ${candidate.name}`}
+                    onClick={() =>
+                      candidatePreview.openPreview(() =>
+                        Promise.resolve({
+                          name: candidate.name,
+                          description: candidate.description,
+                          sourceLabel: secondary,
+                          metadata: candidate.metadata,
+                          body: candidate.body,
+                          files:
+                            candidate.kind === 'bundle' ? candidate.files : [candidate.fileName]
+                        })
+                      )
+                    }
+                    className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <span className="min-w-0 flex-1 px-1 py-1">
+                      <span className="block truncate text-sm text-foreground">
+                        {candidate.name}
+                      </span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {secondary}
+                      </span>
                     </span>
-                  </div>
-                  {alreadyImported ? (
-                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                      Already imported
-                    </span>
-                  ) : nameExists ? (
-                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                      Name exists
-                    </span>
-                  ) : null}
+                    {alreadyImported ? (
+                      <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                        Already imported
+                      </span>
+                    ) : nameExists ? (
+                      <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                        Name exists
+                      </span>
+                    ) : null}
+                  </button>
                 </li>
               )
             })}
@@ -437,6 +475,7 @@ const SkillUploadView = ({
             Choose different files
           </Button>
         </div>
+        <SkillImportCandidatePreview {...candidatePreview.previewProps} />
       </div>
     )
   }
