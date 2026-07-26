@@ -224,7 +224,9 @@ const buildCodexNativeModelCatalog = (provider: {
         availability_nux: null,
         upgrade: null,
         base_instructions: codexNativeModelInstructions,
-        include_skills_usage_instructions: false,
+        // Skill discovery is an app/runtime capability, not an optional upstream Responses tool.
+        // Keep Codex's native Skill guidance so materialized mcp-* connector skills remain usable.
+        include_skills_usage_instructions: true,
         supports_reasoning_summaries: false,
         default_reasoning_summary: 'none',
         support_verbosity: false,

@@ -275,6 +275,7 @@ describe('codexFramework', () => {
           base_instructions: expect.stringContaining(
             'inside Open Science through the Agent Client Protocol'
           ),
+          include_skills_usage_instructions: true,
           default_reasoning_level: 'none',
           supported_reasoning_levels: [
             { effort: 'none', description: 'None reasoning effort' },
