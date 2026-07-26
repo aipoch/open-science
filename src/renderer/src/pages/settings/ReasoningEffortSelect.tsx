@@ -27,7 +27,9 @@ const ReasoningEffortSelect = (): React.JSX.Element => {
     activeProvider?.type === 'official' && activeProvider.vendorId
       ? resolveVendorModelReasoningEffort(activeProvider.vendorId, activeModel)
       : activeProvider && isCodexSubscriptionProvider(activeProvider.type)
-        ? resolveVendorModelReasoningEffort('openai', activeModel)
+        ? activeModel
+          ? resolveVendorModelReasoningEffort('openai', activeModel)
+          : { supported: false as const }
         : activeProvider && isClaudeSubscriptionProvider(activeProvider.type)
           ? resolveVendorModelReasoningEffort('anthropic', activeModel)
           : resolveReasoningEffortProfile(activeProvider?.reasoningEffortPreset)

@@ -3853,6 +3853,30 @@ describe('SettingsService: reasoning effort', () => {
     expect(await service.resolveActiveReasoningEffort('max')).toBe('default')
   })
 
+  it('does not guess an effort profile for an unpinned Codex subscription model', async () => {
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    await chmod(adapterPath, 0o755)
+    const service = createService(undefined, {
+      managedCodexAdapterPath: adapterPath,
+      managedCodexNativePath: execPath
+    })
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativePath: execPath,
+      nativeVersion: '0.144.6'
+    })
+    const codex = (await service.upsertProvider({ type: 'codex-isolated' })).providers[0]
+    await service.setActiveProvider(codex.id)
+
+    expect(await service.resolveActiveReasoningEffort('max')).toBe('default')
+
+    await repository.setReasoningEffort('max')
+    expect((await service.resolveActiveAgentBackend()).sessionEffort).toBeUndefined()
+  })
+
   it('passes the model-mapped effort to both OpenCode delivery channels', async () => {
     // resolveActiveAgentBackend honors this forced-framework env above stored settings; set it
     // explicitly (a prior test may leave it stubbed) so this resolves OpenCode.

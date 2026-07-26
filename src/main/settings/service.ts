@@ -3768,7 +3768,10 @@ class SettingsService {
     }
 
     if (isCodexSubscriptionProvider(provider.type)) {
-      return resolveVendorModelReasoningEffort('openai', model ?? '')
+      // An unpinned Codex subscription delegates model selection to the account/runtime. Until the
+      // runtime reports that model, its effort vocabulary is unknown, so do not guess from the
+      // bundled OpenAI default and accidentally send a mismatched override.
+      return model ? resolveVendorModelReasoningEffort('openai', model) : { supported: false }
     }
 
     if (isClaudeSubscriptionProvider(provider.type)) {

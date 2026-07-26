@@ -173,6 +173,31 @@ describe('ReasoningEffortSelect', () => {
     ).toEqual(['Default', 'Low', 'Medium', 'High', 'XHigh', 'Ultra'])
   })
 
+  it('shows only Default when a Codex subscription delegates model selection to the runtime', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'builtin-codex-subscription',
+      activeModel: undefined,
+      providers: [
+        {
+          id: 'builtin-codex-subscription',
+          type: 'codex-isolated',
+          name: 'Codex subscription',
+          models: ['gpt-5.6-sol'],
+          supportsImageInput: true,
+          hasKey: false,
+          needsKey: false
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(<ReasoningEffortSelect />)
+    })
+
+    expect(container.querySelectorAll('[role="radio"]')).toHaveLength(1)
+    expect(container.querySelector('[role="radio"]')?.textContent).toBe('Default')
+  })
+
   it('uses the Anthropic model profile for a Claude subscription', async () => {
     useSettingsStore.setState({
       activeProviderId: 'builtin-claude-isolated',
