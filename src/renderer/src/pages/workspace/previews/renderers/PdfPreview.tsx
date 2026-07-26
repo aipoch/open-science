@@ -296,14 +296,15 @@ export const PdfPreviewContent = ({
   }, [])
 
   // Measure the content-box width before paint (zero-height probe, unaffected by page overflow) so
-  // pages rasterize once at the right width on open, and only grow it so a shrink reuses the bitmap.
+  // pages rasterize once at the right width on open. Tracks the current width so pages stay
+  // responsive: narrowing the panel (or returning from full screen) shrinks them back to fit.
   useLayoutEffect(() => {
     const element = measureRef.current
     if (!element) return
 
     const measure = (): void => {
       const width = Math.min(element.clientWidth, FIT_PAGE_WIDTH)
-      if (width > 0) setFitWidth((current) => (width > current ? width : current))
+      if (width > 0) setFitWidth((current) => (width === current ? current : width))
     }
     measure()
 

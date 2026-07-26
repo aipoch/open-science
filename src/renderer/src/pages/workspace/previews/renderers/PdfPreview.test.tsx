@@ -228,6 +228,26 @@ describe('PdfPreviewContent', () => {
     await vi.waitFor(() => expect(render).toHaveBeenCalledTimes(2))
     expect(getPage).toHaveBeenCalledTimes(1)
     expect(container.querySelector<HTMLCanvasElement>('canvas')?.width).toBe(600)
+    expect(container.querySelector<HTMLElement>('[data-page-number="1"]')?.style.width).toBe(
+      '600px'
+    )
+
+    // Narrowing the panel (or returning from full screen) must shrink the displayed page back to
+    // fit, not leave it pinned at the old larger width forcing horizontal scroll at 100%.
+    await act(async () => {
+      measuredWidth = 300
+      resizeCallbacks[0]?.([] as unknown as ResizeObserverEntry[], {} as ResizeObserver)
+      await Promise.resolve()
+    })
+    await vi.waitFor(() =>
+      expect(container.querySelector<HTMLElement>('[data-page-number="1"]')?.style.width).toBe(
+        '300px'
+      )
+    )
+    expect(getPage).toHaveBeenCalledTimes(1)
+    // Displayed width is responsive (300px), while the backing store never drops below the page's
+    // intrinsic 400px width — the crisp bitmap simply downscales via CSS.
+    expect(container.querySelector<HTMLCanvasElement>('canvas')?.width).toBe(400)
 
     clientWidthSpy.mockRestore()
   })
