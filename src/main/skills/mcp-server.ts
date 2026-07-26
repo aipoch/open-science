@@ -15,13 +15,13 @@ const requestSkillImportToolSchema = {
   attachment_uri: z
     .string()
     .url()
-    .describe('Exact file URI of the attached .zip or .skill package from the user prompt.')
+    .describe('Exact file URI of the attachment marked skillImportEligible in the user prompt.')
 }
 const SKILL_IMPORT_SYSTEM_PROMPT_APPEND = [
   '<open_science_skill_import_instructions>',
-  'When the user explicitly asks to install or import an attached .zip or .skill package, call request_skill_import with the exact attachment URI from the prompt.',
+  'When the user explicitly asks to install or import an attachment wrapped in <attached_skill_package> and marked skillImportEligible, call request_skill_import with its exact URI.',
   'The tool opens an application-owned preview and confirmation dialog. Never unpack or copy an attached Skill package into a Skill directory yourself.',
-  'Do not call the tool merely because a ZIP file is attached; the user must ask to import or install it.',
+  'An <attached_local_archive> is an ordinary ZIP reference, not an eligible Skill package. Do not call request_skill_import for it.',
   'A newly imported Skill becomes available on the next user turn after the agent runtime reloads.',
   '</open_science_skill_import_instructions>'
 ].join('\n')

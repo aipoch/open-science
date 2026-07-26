@@ -70,7 +70,8 @@ import {
   buildOversizedAttachmentNotice,
   imageAttachmentMimeType,
   isTabularAttachment,
-  isTextLikeAttachment
+  isTextLikeAttachment,
+  mimeEssence
 } from './attachment-content'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
 import {
@@ -2962,21 +2963,31 @@ class AcpRuntime {
       descriptor
 
     // ACP providers such as OpenCode reject ZIP uploads before the prompt reaches the agent
-    // (`file part media type application/zip functionality not supported`). Skill packages only need
-    // to expose their exact local URI: the agent passes it to the app-owned request_skill_import tool,
-    // which performs parsing, validation and user confirmation. Keep the reference as JSON text so it
-    // also remains usable when the user wants to inspect the archive instead of importing it.
+    // (`file part media type application/zip functionality not supported`). Keep all ZIPs off that
+    // file-part path, but mark only importer-owned, manifest-confirmed archives as Skill packages so an
+    // ordinary ZIP remains inspectable without advertising request_skill_import.
+    const attachmentTextReference = (
+      tag: 'attached_skill_package' | 'attached_local_archive',
+      skillImportEligible: boolean
+    ): ContentBlock => ({
+      type: 'text',
+      text: [
+        `<${tag}>`,
+        JSON.stringify({ name, uri, mimeType, size, skillImportEligible }),
+        `</${tag}>`
+      ].join('\n')
+    })
     if (allowSkillImportReference && (await this.isSkillPackageFile(name, absolutePath))) {
-      return [
-        {
-          type: 'text',
-          text: [
-            '<attached_local_file>',
-            JSON.stringify({ name, uri, mimeType, size }),
-            '</attached_local_file>'
-          ].join('\n')
-        }
-      ]
+      return [attachmentTextReference('attached_skill_package', true)]
+    }
+
+    const normalizedMimeType = mimeEssence(mimeType)
+    if (
+      name.toLowerCase().endsWith('.zip') ||
+      normalizedMimeType === 'application/zip' ||
+      normalizedMimeType === 'application/x-zip-compressed'
+    ) {
+      return [attachmentTextReference('attached_local_archive', false)]
     }
 
     // Images are embedded as base64 so vision-capable agents receive the actual pixels.

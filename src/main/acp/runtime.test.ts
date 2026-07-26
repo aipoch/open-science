@@ -1315,7 +1315,7 @@ describe('ACP runtime session management', () => {
     ).resolves.toBe('hello from upload')
   })
 
-  it('keeps ordinary ZIP uploads as resources while sending explicit Skill packages as text', async () => {
+  it('keeps ordinary ZIPs on provider-safe references and marks only Skill packages eligible', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
     const stagedAttachments = await uploadRepository.stageFiles({
@@ -1323,6 +1323,11 @@ describe('ACP runtime session management', () => {
         {
           name: 'ordinary-data.zip',
           mimeType: 'application/zip',
+          content: Buffer.from('zip-bytes').toString('base64')
+        },
+        {
+          name: 'ordinary-data.bin',
+          mimeType: ' Application/ZIP ; charset=binary ',
           content: Buffer.from('zip-bytes').toString('base64')
         },
         {
@@ -1355,17 +1360,21 @@ describe('ACP runtime session management', () => {
 
     expect(receivedPrompts).toHaveLength(1)
     expect(receivedPrompts[0][1]).toMatchObject({
-      type: 'resource_link',
-      name: 'ordinary-data.zip',
-      mimeType: 'application/zip',
-      uri: expect.stringMatching(
-        /file:\/\/\/.*\/uploads\/default-project\/remote-session-1\/ordinary-data\.zip/
+      type: 'text',
+      text: expect.stringMatching(
+        /<attached_local_archive>[\s\S]*ordinary-data\.zip[\s\S]*"skillImportEligible":false/
       )
     })
     expect(receivedPrompts[0][2]).toMatchObject({
       type: 'text',
       text: expect.stringMatching(
-        /"uri":"file:\/\/\/.*\/uploads\/default-project\/remote-session-1\/example-package\.skill"/
+        /<attached_local_archive>[\s\S]*ordinary-data\.bin[\s\S]*"skillImportEligible":false/
+      )
+    })
+    expect(receivedPrompts[0][3]).toMatchObject({
+      type: 'text',
+      text: expect.stringMatching(
+        /<attached_skill_package>[\s\S]*example-package\.skill[\s\S]*"skillImportEligible":true/
       )
     })
   })
@@ -2279,7 +2288,7 @@ describe('ACP runtime session management', () => {
 
     expect(receivedPrompts[0][1]).toMatchObject({
       type: 'text',
-      text: expect.stringMatching(/<attached_local_file>[\s\S]*current\.skill/)
+      text: expect.stringMatching(/<attached_skill_package>[\s\S]*current\.skill/)
     })
     expect(receivedPrompts[0][2]).toMatchObject({
       type: 'resource_link',

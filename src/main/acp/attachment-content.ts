@@ -87,7 +87,7 @@ const GENERIC_MIME_TYPES = new Set(['application/octet-stream', 'binary/octet-st
 // The lower-cased MIME essence (type/subtype) with any parameters and casing stripped, or undefined when
 // none was given. A real MIME arrives as `Text/CSV` or `application/json; charset=utf-8`, so every
 // comparison must run against this — not the raw string — or a valid text MIME reads as a concrete binary.
-const mimeEssence = (mimeType?: string): string | undefined => {
+export const mimeEssence = (mimeType?: string): string | undefined => {
   const essence = mimeType?.split(';', 1)[0]?.trim().toLowerCase()
 
   return essence ? essence : undefined
