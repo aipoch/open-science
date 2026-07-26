@@ -5,7 +5,10 @@
 // only while the user is actively typing one in.
 
 import type { OfficialVendorId } from './provider-registry'
-import type { ReasoningEffortPresetSetting } from './reasoning-effort'
+import type {
+  CustomReasoningEffortTransport,
+  ReasoningEffortPresetSetting
+} from './reasoning-effort'
 import type { PackageMirror } from './mirror'
 import type { CloseActionPreference } from './window-controls'
 
@@ -218,6 +221,9 @@ export type ProviderView = {
   supportsImageInput: boolean
   // Custom-model effort declaration. Absence intentionally means the standard five-level preset.
   reasoningEffortPreset?: ReasoningEffortPresetSetting
+  // Request-body shape used to deliver the selected effort to a custom model endpoint. Absence uses
+  // the broadly compatible `reasoning_effort` field for existing settings.
+  reasoningEffortTransport?: CustomReasoningEffortTransport
   // Set for official-vendor providers: which vendor and (where applicable) which regional endpoint.
   vendorId?: OfficialVendorId
   region?: string
@@ -414,6 +420,8 @@ export type ProviderDraft = {
   supportsImageInput?: boolean
   // Optional custom-model effort declaration. Absence defaults to the standard five-level preset.
   reasoningEffortPreset?: ReasoningEffortPresetSetting
+  // Optional custom-gateway request shape. Absence defaults to the literal `reasoning_effort` field.
+  reasoningEffortTransport?: CustomReasoningEffortTransport
   // Which chat APIs a custom gateway speaks (form selector). Official providers take it from the
   // registry; omitted defaults to ['anthropic'].
   apiEndpoints?: ChatApiEndpoint[]

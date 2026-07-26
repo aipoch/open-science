@@ -669,7 +669,7 @@ describe('SettingsService: providers', () => {
     expect(JSON.stringify(stored)).not.toContain('sk-super-secret')
   })
 
-  it('persists and exposes a custom model reasoning effort preset', async () => {
+  it('persists and exposes custom model reasoning effort settings', async () => {
     const service = createService()
 
     const snapshot = await service.upsertProvider({
@@ -678,11 +678,14 @@ describe('SettingsService: providers', () => {
       baseUrl: 'https://g/v1',
       model: 'm',
       reasoningEffortPreset: 'none-high',
+      reasoningEffortTransport: 'deepseek',
       key: 'sk-super-secret'
     })
 
     expect(snapshot.providers[0].reasoningEffortPreset).toBe('none-high')
+    expect(snapshot.providers[0].reasoningEffortTransport).toBe('deepseek')
     expect((await repository.getSettings()).providers[0].reasoningEffortPreset).toBe('none-high')
+    expect((await repository.getSettings()).providers[0].reasoningEffortTransport).toBe('deepseek')
   })
 
   it('persists a custom context window and carries it into the OpenCode model metadata', async () => {
@@ -3909,6 +3912,34 @@ describe('SettingsService: reasoning effort', () => {
     expect(content.provider['openai-compatible'].models['deepseek-v4-pro']).toEqual(
       expect.objectContaining({ options: { thinking: { type: 'disabled' } } })
     )
+  })
+
+  it('uses one effective catalog model for both the backend and its effort profile', async () => {
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'opencode')
+    await repository.setAgentFramework('opencode')
+    const service = createService(undefined, {
+      opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.19.0' }
+    })
+    const provider = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'Anthropic',
+        vendorId: 'anthropic',
+        key: 'k'
+      })
+    ).providers[0]
+    await service.setActiveProvider(provider.id, 'claude-haiku-4-5-20251001')
+    await repository.setReasoningEffort('max')
+
+    const stored = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({ ...stored, fetchedModels: ['claude-opus-5'] })
+
+    const backend = await service.resolveActiveAgentBackend()
+    const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+
+    expect(backend.sessionModel).toBe('claude-opus-5')
+    expect(backend.sessionEffort).toBe('max')
+    expect(content.model).toBe('anthropic/claude-opus-5')
   })
 
   it('isolates live effort changes between overlapping bridge generations', async () => {

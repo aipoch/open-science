@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 
 import type { ChatApiEndpoint, ProviderType } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
+import type { CustomReasoningEffortTransport } from '../../shared/reasoning-effort'
 import { normalizeAnthropicBaseUrl } from './base-url'
 
 // Resolves an active provider into the environment overrides that the ACP agent (and the claude
@@ -30,6 +31,8 @@ export type ResolvedProvider = {
   // Whether the active model accepts image input. opencode strips image parts for a custom/registered
   // model whose config does not declare vision, so this is surfaced into its per-model capabilities.
   supportsImageInput?: boolean
+  // Explicit only for user-defined gateways; official providers use vendorId for transport mapping.
+  reasoningEffortTransport?: CustomReasoningEffortTransport
 }
 
 export type ProviderEnvOptions = {

@@ -426,6 +426,31 @@ describe('settings repository', () => {
     ).toBeUndefined()
   })
 
+  it('keeps only a known custom-model reasoning effort transport', () => {
+    const base = { id: 'p1', type: 'custom', name: 'Gateway' }
+
+    expect(
+      sanitizeSettings({ providers: [{ ...base, reasoningEffortTransport: 'deepseek' }] })
+        .providers[0].reasoningEffortTransport
+    ).toBe('deepseek')
+    expect(
+      sanitizeSettings({ providers: [{ ...base, reasoningEffortTransport: 'guessed' }] })
+        .providers[0].reasoningEffortTransport
+    ).toBeUndefined()
+    expect(
+      sanitizeSettings({
+        providers: [
+          {
+            ...base,
+            type: 'official',
+            vendorId: 'deepseek',
+            reasoningEffortTransport: 'openrouter'
+          }
+        ]
+      }).providers[0].reasoningEffortTransport
+    ).toBeUndefined()
+  })
+
   it('round-trips a recorded validation failure across a reload', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)

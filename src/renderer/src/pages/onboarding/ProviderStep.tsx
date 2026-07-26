@@ -38,6 +38,7 @@ const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
   apiEndpoints: [value.apiEndpoint],
   supportsImageInput: value.supportsImageInput,
   reasoningEffortPreset: value.type === 'custom' ? value.reasoningEffortPreset : undefined,
+  reasoningEffortTransport: value.type === 'custom' ? value.reasoningEffortTransport : undefined,
   key: value.key || undefined
 })
 

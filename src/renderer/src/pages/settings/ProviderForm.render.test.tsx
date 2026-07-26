@@ -114,7 +114,8 @@ describe('ProviderForm field switching', () => {
     render(
       createEmptyProviderFormValue({
         type: 'custom',
-        reasoningEffortPreset: 'none-high'
+        reasoningEffortPreset: 'none-high',
+        reasoningEffortTransport: 'deepseek'
       })
     )
 
@@ -128,6 +129,9 @@ describe('ProviderForm field switching', () => {
     ).toContain('None / High')
     expect(container.textContent).toContain('exact effort levels accepted by this model')
     expect(container.textContent).toContain('maps five relative strengths onto them')
+    expect(
+      container.querySelector('[aria-label="Reasoning effort request format"]')?.textContent
+    ).toContain('DeepSeek thinking + effort')
   })
 
   it('lets a custom model explicitly disable reasoning effort', () => {

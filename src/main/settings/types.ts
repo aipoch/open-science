@@ -10,7 +10,10 @@ import type {
 } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
-import type { ReasoningEffortPresetSetting } from '../../shared/reasoning-effort'
+import type {
+  CustomReasoningEffortTransport,
+  ReasoningEffortPresetSetting
+} from '../../shared/reasoning-effort'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
@@ -38,6 +41,8 @@ export type StoredProvider = {
   supportsImageInput?: boolean
   // Custom-model effort capability. Absence resolves to the standard five-level preset.
   reasoningEffortPreset?: ReasoningEffortPresetSetting
+  // Custom-gateway request shape. Absence resolves to the literal `reasoning_effort` field.
+  reasoningEffortTransport?: CustomReasoningEffortTransport
   // Set for official-vendor providers only.
   vendorId?: OfficialVendorId
   region?: string

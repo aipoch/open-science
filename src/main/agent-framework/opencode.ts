@@ -137,18 +137,20 @@ const resolveOpencodeEndpoint = (
 }
 
 // Current OpenCode accepts the provider-neutral ladder through `reasoningEffort` up to `max`.
-// `ultra` is a Codex-specific top rung, so it is the only value that needs an agent-level clamp.
+// `ultra` is a Codex-specific top rung, so omit it rather than silently approximating it as `max`.
 // Provider-specific wire shapes (thinking switches and OpenRouter's reasoning object) are resolved
 // separately and passed through model options by the openai-compatible AI SDK.
 const opencodeReasoningOptions = (
   provider: ResolvedProvider,
   effort: ModelReasoningEffort
-): Record<string, unknown> => {
-  const normalizedEffort = effort === 'ultra' ? 'max' : effort
+): Record<string, unknown> | undefined => {
+  if (effort === 'ultra') return undefined
+
   const transport = resolveChatReasoningTransport(
     provider.vendorId,
     provider.model,
-    normalizedEffort
+    effort,
+    provider.reasoningEffortTransport
   )
 
   return {
@@ -167,12 +169,18 @@ const opencodeReasoningOptions = (
 const buildModelCapabilities = (
   provider: ResolvedProvider,
   reasoningEffort?: ModelReasoningEffort
-): Record<string, unknown> => ({
-  ...(provider.supportsImageInput
-    ? { attachment: true, modalities: { input: ['text', 'image'] } }
-    : {}),
-  ...(reasoningEffort ? { options: opencodeReasoningOptions(provider, reasoningEffort) } : {})
-})
+): Record<string, unknown> => {
+  const reasoningOptions = reasoningEffort
+    ? opencodeReasoningOptions(provider, reasoningEffort)
+    : undefined
+
+  return {
+    ...(provider.supportsImageInput
+      ? { attachment: true, modalities: { input: ['text', 'image'] } }
+      : {}),
+    ...(reasoningOptions ? { options: reasoningOptions } : {})
+  }
+}
 
 // The app-authoritative config layer (model + provider block + permission policy) passed verbatim to
 // opencode via OPENCODE_CONFIG_CONTENT, which opencode deep-merges ABOVE both the app-owned global config

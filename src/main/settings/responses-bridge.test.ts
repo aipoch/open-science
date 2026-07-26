@@ -583,6 +583,31 @@ describe('Responses-compatible bridge conversion', () => {
     ).toMatchObject({ reasoning: { enabled: false } })
   })
 
+  it('uses the selected native transport for a custom gateway', () => {
+    const request = responsesToChatRequest(
+      { model: 'catalog', input: 'hi' },
+      'private-model',
+      undefined,
+      [],
+      {
+        reasoningEffortOverride: 'none',
+        reasoningEffortTransport: 'minimax'
+      }
+    )
+
+    expect(request).toMatchObject({ thinking: { type: 'disabled' } })
+    expect(request).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('does not infer the built-in OpenRouter Qwen toggle for a custom gateway', () => {
+    expect(
+      responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'qwen/qwen3.7-max', undefined, [], {
+        reasoningEffortOverride: 'high',
+        reasoningEffortTransport: 'openrouter'
+      })
+    ).toMatchObject({ reasoning: { effort: 'high' } })
+  })
+
   it('uses OpenRouter reasoning objects and keeps GLM none as a literal effort', () => {
     expect(
       responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'openai/gpt-5.5', undefined, [], {

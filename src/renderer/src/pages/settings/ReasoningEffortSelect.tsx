@@ -2,7 +2,10 @@ import { useState } from 'react'
 
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
-import { resolveProviderReasoningEffortProfile } from '../../../../shared/provider-reasoning-effort'
+import {
+  resolveProviderEffectiveModel,
+  resolveProviderReasoningEffortProfile
+} from '../../../../shared/provider-reasoning-effort'
 import { resolveReasoningEffortControl } from '../../../../shared/reasoning-effort'
 
 // Segmented effort selector: the highlight block slides to the picked level. Fixed-width segments
@@ -16,7 +19,8 @@ const ReasoningEffortSelect = (): React.JSX.Element => {
   const activeModel = useSettingsStore((state) => state.activeModel)
   const providers = useSettingsStore((state) => state.providers)
   const activeProvider = providers.find((provider) => provider.id === activeProviderId)
-  const profile = resolveProviderReasoningEffortProfile(activeProvider, activeModel)
+  const effectiveModel = resolveProviderEffectiveModel(activeProvider, activeModel)
+  const profile = resolveProviderReasoningEffortProfile(activeProvider, effectiveModel)
   const control = resolveReasoningEffortControl(reasoningEffort, profile)
   const options = [
     { value: undefined, label: 'Default', intent: 'default' as const },

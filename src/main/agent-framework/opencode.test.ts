@@ -257,7 +257,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     ['high', 'high'],
     ['xhigh', 'xhigh'],
     ['max', 'max'],
-    ['ultra', 'max']
+    ['ultra', undefined]
   ] as const)('encodes model effort %s as OpenCode transport level %s', (effort, expected) => {
     const config = opencodeFramework.prepareModelConfig(
       { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
@@ -269,12 +269,9 @@ describe('opencodeFramework.prepareModelConfig', () => {
     )
     const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
 
-    expect(fileConfig.provider.anthropic.models).toEqual({
-      m: { options: { reasoningEffort: expected } }
-    })
-    expect(content.provider.anthropic.models).toEqual({
-      m: { options: { reasoningEffort: expected } }
-    })
+    const expectedModel = expected ? { options: { reasoningEffort: expected } } : {}
+    expect(fileConfig.provider.anthropic.models).toEqual({ m: expectedModel })
+    expect(content.provider.anthropic.models).toEqual({ m: expectedModel })
   })
 
   it.each([
@@ -316,6 +313,26 @@ describe('opencodeFramework.prepareModelConfig', () => {
       expect(content.provider['openai-compatible'].models[model].options).toEqual(expected)
     }
   )
+
+  it('uses an explicit custom-provider transport without guessing from its URL or model', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      {
+        type: 'custom',
+        baseUrl: 'https://private-gateway.example/v1',
+        apiEndpoints: ['openai'],
+        model: 'private-model',
+        key: 'k',
+        reasoningEffortTransport: 'deepseek'
+      },
+      { storageRoot: '/data', executablePath: '/bin/opencode', reasoningEffort: 'none' }
+    )
+
+    const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+
+    expect(content.provider['openai-compatible'].models['private-model'].options).toEqual({
+      thinking: { type: 'disabled' }
+    })
+  })
 
   it('leaves the model block empty when no reasoning effort is set', () => {
     const config = opencodeFramework.prepareModelConfig(

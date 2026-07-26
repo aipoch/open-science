@@ -4,12 +4,41 @@ import {
   type ReasoningEffortPresetSetting,
   type ReasoningEffortProfile
 } from './reasoning-effort'
-import type { ProviderType } from './settings'
+import { isCodexSubscriptionProvider, type ProviderType } from './settings'
 
 export type ProviderReasoningEffortSource = {
   type: ProviderType
   vendorId?: OfficialVendorId
+  model?: string
+  models?: readonly string[]
   reasoningEffortPreset?: ReasoningEffortPresetSetting
+}
+
+// Resolves the effective selection with the same rules in main and renderer. Codex subscriptions
+// deliberately keep an omitted selection unknown because the account runtime owns its default model;
+// every other provider falls back through its saved default and then its available catalog.
+export const resolveProviderEffectiveModel = (
+  provider: ProviderReasoningEffortSource | undefined,
+  requestedModel: string | undefined
+): string | undefined => {
+  if (!provider) return undefined
+
+  const availableModels = provider.models ?? []
+  if (
+    requestedModel &&
+    (availableModels.length === 0 || availableModels.includes(requestedModel))
+  ) {
+    return requestedModel
+  }
+  if (isCodexSubscriptionProvider(provider.type)) return undefined
+  if (
+    provider.model &&
+    (availableModels.length === 0 || availableModels.includes(provider.model))
+  ) {
+    return provider.model
+  }
+
+  return availableModels[0] ?? provider.model
 }
 
 // Keeps a safe runtime fallback for malformed persisted data while making a newly-added ProviderType

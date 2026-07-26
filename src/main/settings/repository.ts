@@ -28,7 +28,10 @@ import {
   isReasoningEffort
 } from '../../shared/settings'
 import { isOfficialVendorId } from '../../shared/provider-registry'
-import { isReasoningEffortPresetSetting } from '../../shared/reasoning-effort'
+import {
+  isCustomReasoningEffortTransport,
+  isReasoningEffortPresetSetting
+} from '../../shared/reasoning-effort'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
@@ -202,6 +205,9 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   const reasoningEffortPreset = isReasoningEffortPresetSetting(value.reasoningEffortPreset)
     ? value.reasoningEffortPreset
     : undefined
+  const reasoningEffortTransport = isCustomReasoningEffortTransport(value.reasoningEffortTransport)
+    ? value.reasoningEffortTransport
+    : undefined
   const region = asString(value.region)
   const keyRef = asString(value.keyRef)
   const keyMask = asString(value.keyMask)
@@ -241,6 +247,9 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   if (supportsImageInput !== undefined) provider.supportsImageInput = supportsImageInput
   if (reasoningEffortPreset !== undefined && type === 'custom') {
     provider.reasoningEffortPreset = reasoningEffortPreset
+  }
+  if (reasoningEffortTransport !== undefined && type === 'custom') {
+    provider.reasoningEffortTransport = reasoningEffortTransport
   }
   if (apiEndpoints.length > 0) provider.apiEndpoints = apiEndpoints
   if (vendorId) provider.vendorId = vendorId

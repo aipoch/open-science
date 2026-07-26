@@ -17,6 +17,8 @@ import {
 } from '../../../../shared/provider-registry'
 import {
   CUSTOM_REASONING_EFFORT_PRESETS,
+  CUSTOM_REASONING_EFFORT_TRANSPORTS,
+  type CustomReasoningEffortTransport,
   type ReasoningEffortPresetId
 } from '../../../../shared/reasoning-effort'
 import { getApiKeySecurityCopy } from './provider-key-security'
@@ -418,8 +420,8 @@ const ProviderForm = ({
                 <span className="block text-xs font-medium">Reasoning effort</span>
                 <span className="block text-xs text-muted-foreground">
                   Choose the exact effort levels accepted by this model. Open Science maps five
-                  relative strengths onto them. Disable when the model does not accept an effort
-                  parameter.
+                  relative strengths onto them, then sends the selected level using the request
+                  format below. Disable when the model does not accept an effort parameter.
                 </span>
               </label>
               <Switch
@@ -436,32 +438,65 @@ const ProviderForm = ({
             </div>
 
             {value.reasoningEffortPreset !== 'unsupported' ? (
-              <Select
-                value={value.reasoningEffortPreset}
-                disabled={disabled}
-                onValueChange={(reasoningEffortPreset) =>
-                  onChange({
-                    reasoningEffortPreset: reasoningEffortPreset as ReasoningEffortPresetId
-                  })
-                }
-              >
-                <SelectTrigger aria-label="Reasoning effort levels" disabled={disabled}>
-                  <span>
-                    {
-                      CUSTOM_REASONING_EFFORT_PRESETS.find(
-                        (preset) => preset.id === value.reasoningEffortPreset
-                      )?.label
+              <div className="space-y-3">
+                <Select
+                  value={value.reasoningEffortPreset}
+                  disabled={disabled}
+                  onValueChange={(reasoningEffortPreset) =>
+                    onChange({
+                      reasoningEffortPreset: reasoningEffortPreset as ReasoningEffortPresetId
+                    })
+                  }
+                >
+                  <SelectTrigger aria-label="Reasoning effort levels" disabled={disabled}>
+                    <span>
+                      {
+                        CUSTOM_REASONING_EFFORT_PRESETS.find(
+                          (preset) => preset.id === value.reasoningEffortPreset
+                        )?.label
+                      }
+                    </span>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CUSTOM_REASONING_EFFORT_PRESETS.map((preset) => (
+                      <SelectItem key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <div className="space-y-1.5">
+                  <span className="block text-xs font-medium">Request format</span>
+                  <Select
+                    value={value.reasoningEffortTransport}
+                    disabled={disabled}
+                    onValueChange={(reasoningEffortTransport) =>
+                      onChange({
+                        reasoningEffortTransport:
+                          reasoningEffortTransport as CustomReasoningEffortTransport
+                      })
                     }
-                  </span>
-                </SelectTrigger>
-                <SelectContent>
-                  {CUSTOM_REASONING_EFFORT_PRESETS.map((preset) => (
-                    <SelectItem key={preset.id} value={preset.id}>
-                      {preset.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  >
+                    <SelectTrigger aria-label="Reasoning effort request format" disabled={disabled}>
+                      <span>
+                        {
+                          CUSTOM_REASONING_EFFORT_TRANSPORTS.find(
+                            (transport) => transport.id === value.reasoningEffortTransport
+                          )?.label
+                        }
+                      </span>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CUSTOM_REASONING_EFFORT_TRANSPORTS.map((transport) => (
+                        <SelectItem key={transport.id} value={transport.id}>
+                          {transport.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             ) : null}
           </div>
 

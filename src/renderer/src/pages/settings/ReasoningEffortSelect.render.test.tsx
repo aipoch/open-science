@@ -82,6 +82,35 @@ describe('ReasoningEffortSelect', () => {
     ).toEqual(['Default', 'Low', 'Medium', 'High'])
   })
 
+  it('uses an official provider catalog default when no active model override is stored', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'openai',
+      activeModel: undefined,
+      providers: [
+        {
+          id: 'openai',
+          type: 'official',
+          name: 'OpenAI',
+          vendorId: 'openai',
+          models: ['gpt-5.6-sol', 'gpt-5.5'],
+          supportsImageInput: true,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(<ReasoningEffortSelect />)
+    })
+
+    expect(
+      Array.from(container.querySelectorAll('[role="radio"]')).map((element) =>
+        element.textContent?.trim()
+      )
+    ).toEqual(['Default', 'Low', 'Medium', 'High', 'XHigh', 'Ultra'])
+  })
+
   it('shows the documented thinking switch for MiniMax-M3', async () => {
     useSettingsStore.setState({
       activeProviderId: 'minimax',

@@ -5,7 +5,10 @@ import { createLogger } from '../logger'
 import { appendChatCompletions } from './base-url'
 import { resolveChatReasoningTransport } from './reasoning-transport'
 import type { OfficialVendorId } from '../../shared/provider-registry'
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import type {
+  CustomReasoningEffortTransport,
+  ModelReasoningEffort
+} from '../../shared/reasoning-effort'
 
 // The bridge deliberately keeps protocol payloads open-ended; validation rejects unsupported shapes
 // at the boundary before values reach the upstream request.
@@ -22,6 +25,7 @@ export type ResponsesBridgeTarget = {
   baseUrl: string
   key?: string
   vendorId?: OfficialVendorId
+  reasoningEffortTransport?: CustomReasoningEffortTransport
   // Codex uses a catalog model for its local metadata; bridge providers may need a different
   // upstream model id (for example, DeepSeek's model name).
   model?: string
@@ -571,6 +575,7 @@ export const responsesToChatRequest = (
   options?: {
     reasoningEffortOverride?: ModelReasoningEffort
     vendorId?: OfficialVendorId
+    reasoningEffortTransport?: CustomReasoningEffortTransport
   }
 ): JsonObject => {
   for (const field of UNSUPPORTED_FIELDS) {
@@ -647,7 +652,12 @@ export const responsesToChatRequest = (
   // supports. Undefined intentionally strips Codex's own effort from the Chat request.
   const chatReasoningEffort = options?.reasoningEffortOverride
   const reasoningTransport = chatReasoningEffort
-    ? resolveChatReasoningTransport(options?.vendorId, upstreamModel, chatReasoningEffort)
+    ? resolveChatReasoningTransport(
+        options?.vendorId,
+        upstreamModel,
+        chatReasoningEffort,
+        options?.reasoningEffortTransport
+      )
     : undefined
 
   return {
@@ -1194,6 +1204,7 @@ export class ResponsesBridge {
       this.target.baseUrl !== target.baseUrl ||
       this.target.model !== target.model ||
       this.target.vendorId !== target.vendorId ||
+      this.target.reasoningEffortTransport !== target.reasoningEffortTransport ||
       this.target.key !== target.key
     this.target = target
     if (changed) this.reasoningByCallId.clear()
@@ -1317,7 +1328,8 @@ export class ResponsesBridge {
         namespacedTools,
         {
           reasoningEffortOverride: this.target.reasoningEffort,
-          vendorId: this.target.vendorId
+          vendorId: this.target.vendorId,
+          reasoningEffortTransport: this.target.reasoningEffortTransport
         }
       )
 

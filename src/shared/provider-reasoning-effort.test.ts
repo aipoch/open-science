@@ -1,9 +1,51 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  resolveProviderEffectiveModel,
   resolveProviderReasoningEffortProfile,
   type ProviderReasoningEffortSource
 } from './provider-reasoning-effort'
+
+describe('resolveProviderEffectiveModel', () => {
+  it('uses the catalog default when an official provider has no active override', () => {
+    expect(
+      resolveProviderEffectiveModel(
+        {
+          type: 'official',
+          vendorId: 'openai',
+          models: ['gpt-5.6-sol', 'gpt-5.5']
+        },
+        undefined
+      )
+    ).toBe('gpt-5.6-sol')
+  })
+
+  it('prefers a saved provider default and rejects a stale active override', () => {
+    expect(
+      resolveProviderEffectiveModel(
+        {
+          type: 'claude-isolated',
+          model: 'claude-haiku-4-5-20251001',
+          models: ['claude-haiku-4-5-20251001']
+        },
+        'removed-model'
+      )
+    ).toBe('claude-haiku-4-5-20251001')
+  })
+
+  it('keeps an unpinned Codex subscription model unknown', () => {
+    expect(
+      resolveProviderEffectiveModel(
+        {
+          type: 'codex-isolated',
+          model: 'gpt-5.6-sol',
+          models: ['gpt-5.6-sol']
+        },
+        undefined
+      )
+    ).toBeUndefined()
+  })
+})
 
 describe('resolveProviderReasoningEffortProfile', () => {
   it.each<

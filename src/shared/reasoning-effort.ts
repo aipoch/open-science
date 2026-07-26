@@ -26,6 +26,32 @@ export type ReasoningEffortPresetId =
 
 export type ReasoningEffortPresetSetting = ReasoningEffortPresetId | 'unsupported'
 
+// Custom gateways can expose the same model-effort vocabulary through different wire shapes. Keep
+// this explicit instead of guessing from a user-entered URL or model id: a compatible proxy may use
+// any hostname while still requiring its upstream provider's native request body.
+export type CustomReasoningEffortTransport =
+  'reasoning-effort' | 'deepseek' | 'minimax' | 'xiaomimimo' | 'openrouter'
+
+export const CUSTOM_REASONING_EFFORT_TRANSPORTS: ReadonlyArray<{
+  id: CustomReasoningEffortTransport
+  label: string
+}> = [
+  { id: 'reasoning-effort', label: 'OpenAI-compatible reasoning_effort' },
+  { id: 'deepseek', label: 'DeepSeek thinking + effort' },
+  { id: 'minimax', label: 'MiniMax adaptive thinking' },
+  { id: 'xiaomimimo', label: 'MiMo thinking switch' },
+  { id: 'openrouter', label: 'OpenRouter reasoning object' }
+]
+
+const CUSTOM_REASONING_EFFORT_TRANSPORT_IDS = new Set<string>(
+  CUSTOM_REASONING_EFFORT_TRANSPORTS.map(({ id }) => id)
+)
+
+export const isCustomReasoningEffortTransport = (
+  value: unknown
+): value is CustomReasoningEffortTransport =>
+  typeof value === 'string' && CUSTOM_REASONING_EFFORT_TRANSPORT_IDS.has(value)
+
 export const CUSTOM_REASONING_EFFORT_PRESETS: ReadonlyArray<{
   id: ReasoningEffortPresetId
   label: string
