@@ -180,16 +180,92 @@ describe('PdfPreviewContent', () => {
     expect(container.querySelector<HTMLCanvasElement>('canvas')?.width).toBe(400)
 
     // Widening the panel must re-rasterize the already-loaded page, not fetch it again.
+    // Both widths stay under the fit-width cap so pageWidth tracks the measured width directly.
     await act(async () => {
-      measuredWidth = 800
+      measuredWidth = 600
       resizeCallbacks[0]?.([] as unknown as ResizeObserverEntry[], {} as ResizeObserver)
       await Promise.resolve()
     })
     await vi.waitFor(() => expect(render).toHaveBeenCalledTimes(2))
     expect(getPage).toHaveBeenCalledTimes(1)
-    expect(container.querySelector<HTMLCanvasElement>('canvas')?.width).toBe(800)
+    expect(container.querySelector<HTMLCanvasElement>('canvas')?.width).toBe(600)
 
     clientWidthSpy.mockRestore()
+  })
+
+  it('treats a render canceled by scroll-out as teardown, not a page failure', async () => {
+    let intersectionCallback: IntersectionObserverCallback | undefined
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe = vi.fn()
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+
+        constructor(callback: IntersectionObserverCallback) {
+          intersectionCallback = callback
+        }
+      }
+    )
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    // A render whose promise rejects with PDF.js's cancellation error when cancel() is called.
+    const cancelRender = vi.fn()
+    let rejectRender: ((error: Error) => void) | undefined
+    getPage.mockResolvedValue({
+      getViewport: vi.fn(({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale
+      })),
+      render: vi.fn(() => ({
+        promise: new Promise((_, reject) => {
+          rejectRender = reject
+        }),
+        cancel: () => {
+          cancelRender()
+          rejectRender?.(
+            Object.assign(new Error('Rendering cancelled'), {
+              name: 'RenderingCancelledException'
+            })
+          )
+        }
+      })),
+      cleanup: vi.fn()
+    })
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/scroll.pdf" name="scroll.pdf" source="artifact" />
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      intersectionCallback?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // Scroll the page out: its acquire effect disposes and cancels the in-flight render.
+    await act(async () => {
+      intersectionCallback?.(
+        [{ isIntersecting: false } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(cancelRender).toHaveBeenCalled()
+    // The cancellation must not be logged as a render failure nor shown as a page error.
+    const loggedRenderFailure = consoleError.mock.calls.some((call) =>
+      String(call[0]).includes('Failed to render PDF page')
+    )
+    expect(loggedRenderFailure).toBe(false)
+    expect(container.textContent).not.toContain('could not be rendered')
+
+    consoleError.mockRestore()
   })
 
   it('destroys the loading task when PDF parsing fails', async () => {

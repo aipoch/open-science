@@ -14,21 +14,29 @@ type DocumentState =
   | { requestKey: string; status: 'ready'; document: PdfDocument }
   | { requestKey: string; status: 'error'; error: unknown }
 
+// Comfortable reading width a page fills; also caps the backing resolution the parent measures.
+const FIT_PAGE_WIDTH = 768
 // Bound the backing-store resolution so an over-magnified small page cannot exhaust GPU memory.
 const MAX_RENDER_SCALE = 4
+
+// PDF.js rejects an in-flight render with this when cancel() is called; it is an expected teardown,
+// not a page failure, so scroll-out, preview switches, and resize rerenders must not surface it.
+const isRenderCancel = (error: unknown): boolean =>
+  error instanceof Error && error.name === 'RenderingCancelledException'
 
 // Owns one lazy page canvas and releases its decoded bitmap outside the overscan window.
 const PdfPageCanvas = ({
   document,
   pageNumber,
+  pageWidth,
   registerDisposer
 }: {
   document: PdfDocument
   pageNumber: number
+  pageWidth: number
   registerDisposer: (dispose: () => void) => () => void
 }): React.JSX.Element => {
   const [setNearViewportRef, isNearViewport] = useNearViewport<HTMLDivElement>()
-  const containerRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const pageRef = useRef<Awaited<ReturnType<PdfDocument['getPage']>> | undefined>(undefined)
   const renderTaskRef = useRef<
@@ -38,34 +46,6 @@ const PdfPageCanvas = ({
   const [aspectRatio, setAspectRatio] = useState(3 / 4)
   // Bumped when a fresh page proxy is acquired so rasterization re-runs against the new page.
   const [pageEpoch, setPageEpoch] = useState(0)
-  // The CSS width the canvas is stretched to; drives backing-store resolution so text stays sharp.
-  const [renderWidth, setRenderWidth] = useState(0)
-
-  const setContainer = useCallback(
-    (element: HTMLDivElement | null): void => {
-      containerRef.current = element
-      setNearViewportRef(element)
-    },
-    [setNearViewportRef]
-  )
-
-  // Measure synchronously before paint so the first rasterization already knows the target width
-  // and only grow it: shrinking reuses the crisp bitmap via CSS instead of re-rasterizing.
-  useLayoutEffect(() => {
-    const element = containerRef.current
-    if (!element) return
-
-    const measure = (): void => {
-      const width = element.clientWidth
-      if (width > 0) setRenderWidth((current) => (width > current ? width : current))
-    }
-    measure()
-
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(measure)
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [])
 
   // Acquire the page once while it is near the viewport and keep it alive; width changes then
   // re-rasterize this same page rather than reloading it through the range transport.
@@ -114,7 +94,7 @@ const PdfPageCanvas = ({
     }
   }, [document, isNearViewport, pageNumber, registerDisposer])
 
-  // Rasterize the live page at the measured width; re-runs on width change without reacquiring it.
+  // Rasterize the live page at the target width; re-runs on width change without reacquiring it.
   useEffect(() => {
     const page = pageRef.current
     const canvas = canvasRef.current
@@ -122,10 +102,19 @@ const PdfPageCanvas = ({
 
     let canceled = false
     const draw = async (): Promise<void> => {
+      // Serialize against the previous render: PDF.js forbids two renders on one canvas, and its
+      // cancel() settles asynchronously, so a resize-driven rerun must await the prior task first.
+      const previous = renderTaskRef.current
+      if (previous) {
+        previous.cancel()
+        await previous.promise.catch(() => undefined)
+      }
+      if (canceled) return
+
       const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1)
       const baseViewport = page.getViewport({ scale: 1 })
       // Rasterize at the physical pixels the page occupies on screen, capped to protect memory.
-      const targetCssWidth = renderWidth > 0 ? renderWidth : baseViewport.width
+      const targetCssWidth = pageWidth > 0 ? pageWidth : baseViewport.width
       const scale = Math.min(
         MAX_RENDER_SCALE,
         Math.max(1, (targetCssWidth * devicePixelRatio) / baseViewport.width)
@@ -141,29 +130,28 @@ const PdfPageCanvas = ({
       const renderTask = page.render({ canvas, canvasContext: context, viewport })
       renderTaskRef.current = renderTask
       await renderTask.promise
-      renderTaskRef.current = undefined
+      if (renderTaskRef.current === renderTask) renderTaskRef.current = undefined
       if (!canceled) setStatus('ready')
     }
 
     void draw().catch((error: unknown) => {
-      if (!canceled) {
-        console.error(`Failed to render PDF page ${pageNumber}`, error)
-        setStatus('error')
-      }
+      // A canceled render (scroll-out, preview switch, or superseding resize) is expected teardown.
+      if (canceled || isRenderCancel(error)) return
+      console.error(`Failed to render PDF page ${pageNumber}`, error)
+      setStatus('error')
     })
 
     return () => {
       canceled = true
       renderTaskRef.current?.cancel()
-      renderTaskRef.current = undefined
     }
-  }, [pageEpoch, pageNumber, renderWidth])
+  }, [pageEpoch, pageNumber, pageWidth])
 
   const displayedStatus = isNearViewport ? status : 'idle'
 
   return (
     <div
-      ref={setContainer}
+      ref={setNearViewportRef}
       className="relative mx-auto mb-3 w-full max-w-3xl bg-bg-000 shadow-sm"
       style={{ aspectRatio }}
       data-page-number={pageNumber}
@@ -202,10 +190,32 @@ export const PdfPreviewContent = ({
 }): React.JSX.Element => {
   const requestKey = createPreviewResourceKey({ source, path, mimeType, size, mtimeMs })
   const [documentState, setDocumentState] = useState<DocumentState | null>(null)
+  // The width one page fills: the content box, capped to a comfortable reading width. Owned here so
+  // one ResizeObserver serves the whole document instead of one per page.
+  const [fitWidth, setFitWidth] = useState(0)
+  const measureRef = useRef<HTMLDivElement | null>(null)
   const pageDisposersRef = useRef(new Set<() => void>())
   const registerPageDisposer = useCallback((dispose: () => void): (() => void) => {
     pageDisposersRef.current.add(dispose)
     return () => pageDisposersRef.current.delete(dispose)
+  }, [])
+
+  // Measure the content-box width before paint (zero-height probe, unaffected by page overflow) so
+  // pages rasterize once at the right width on open, and only grow it so a shrink reuses the bitmap.
+  useLayoutEffect(() => {
+    const element = measureRef.current
+    if (!element) return
+
+    const measure = (): void => {
+      const width = Math.min(element.clientWidth, FIT_PAGE_WIDTH)
+      if (width > 0) setFitWidth((current) => (width > current ? width : current))
+    }
+    measure()
+
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
   }, [])
 
   useEffect(() => {
@@ -290,6 +300,8 @@ export const PdfPreviewContent = ({
 
   return (
     <div className="relative size-full overflow-auto bg-bg-20 p-4">
+      {/* Zero-height probe: reports the content-box width once for every page. */}
+      <div ref={measureRef} className="h-0 w-full" aria-hidden="true" />
       {!document ? (
         <div className="absolute inset-0">
           <PreviewLoadingContent />
@@ -302,6 +314,7 @@ export const PdfPreviewContent = ({
               key={index + 1}
               document={document}
               pageNumber={index + 1}
+              pageWidth={fitWidth}
               registerDisposer={registerPageDisposer}
             />
           ))
