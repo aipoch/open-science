@@ -5,10 +5,10 @@ import { deflateRawSync } from 'node:zlib'
 
 import { describe, expect, it } from 'vitest'
 
-import { isImportableSkillArchivePath } from './skill-archive-sniffer'
+import { inspectOuterArchive, isImportableSkillArchivePath } from './skill-archive-sniffer'
 import { UserSkillRepository } from './user-skill-repository'
 
-type ZipInput = { path: string; content: Buffer; method?: 0 | 8 }
+type ZipInput = { path: string; content: Buffer; method?: number }
 
 const crc32 = (buffer: Buffer): number => {
   let crc = 0xffffffff
@@ -30,7 +30,7 @@ const buildZip = (inputs: ZipInput[]): Buffer => {
   for (const input of inputs) {
     const method = input.method ?? 8
     const name = Buffer.from(input.path, 'utf8')
-    const compressed = method === 0 ? input.content : deflateRawSync(input.content)
+    const compressed = method === 8 ? deflateRawSync(input.content) : input.content
     const checksum = crc32(input.content)
     const local = Buffer.alloc(30 + name.length)
     local.writeUInt32LE(0x04034b50, 0)
@@ -87,6 +87,18 @@ const expectMatchesPreview = async (archive: Buffer, expected: boolean): Promise
   } finally {
     await rm(storage, { recursive: true, force: true })
   }
+}
+
+const incompressibleBytes = (size: number): Buffer => {
+  const bytes = Buffer.allocUnsafe(size)
+  let state = 0x12345678
+  for (let index = 0; index < size; index += 1) {
+    state ^= state << 13
+    state ^= state >>> 17
+    state ^= state << 5
+    bytes[index] = state & 0xff
+  }
+  return bytes
 }
 
 describe('isImportableSkillArchivePath', () => {
@@ -160,6 +172,53 @@ describe('isImportableSkillArchivePath', () => {
     await expectMatchesPreview(deflatedOuter, true)
   })
 
+  it('streams raw central records that the importer does not count as files', async () => {
+    const directories = Array.from({ length: 5_000 }, (_, index): ZipInput => ({
+      path: `metadata-${index}/`,
+      content: Buffer.alloc(0),
+      method: 0
+    }))
+    const archive = buildZip([
+      ...directories,
+      {
+        path: 'valid/SKILL.md',
+        content: Buffer.from('---\nname: Valid After Directories\n---\nBody')
+      }
+    ])
+
+    await expectMatchesPreview(archive, true)
+  })
+
+  it('fails closed when a deflated entry becomes unreadable during streaming', async () => {
+    const path = 'racy/SKILL.md'
+    const archive = buildZip([
+      {
+        path,
+        content: Buffer.concat([
+          Buffer.from('---\nname: Racy Skill\n---\n'),
+          incompressibleBytes(256 * 1024)
+        ])
+      }
+    ])
+    const dataOffset = 30 + Buffer.byteLength(path)
+    let dataReads = 0
+
+    await expect(
+      inspectOuterArchive({
+        size: archive.length,
+        read: async (position, length) => {
+          if (position === dataOffset || position === dataOffset + 64 * 1024) {
+            dataReads += 1
+            if (dataReads === 2) throw new Error('file truncated during read')
+          }
+          if (position < 0 || length < 0 || position + length > archive.length) return undefined
+          return archive.subarray(position, position + length)
+        }
+      })
+    ).resolves.toBe(false)
+    expect(dataReads).toBe(2)
+  })
+
   it('accepts importer-supported candidate counts and manifest sizes', async () => {
     const candidates = Array.from({ length: 33 }, (_, index) => ({
       path: `skill-${index.toString().padStart(2, '0')}/SKILL.md`,
@@ -169,10 +228,64 @@ describe('isImportableSkillArchivePath', () => {
     }))
     const largeManifest = Buffer.concat([
       Buffer.from('---\nname: Large Manifest\n---\n'),
-      Buffer.alloc(512 * 1024 + 1, 97)
+      Buffer.alloc(8 * 1024 * 1024, 97)
+    ])
+    const largeDeflatedManifest = Buffer.concat([
+      Buffer.from('---\nname: Large Deflated Manifest\n---\n'),
+      Buffer.alloc(8 * 1024 * 1024, 98)
+    ])
+    const largeFrontmatter = Buffer.concat([
+      Buffer.from('---\nname: Large Frontmatter\ndescription: |\n  '),
+      Buffer.alloc(4 * 1024 * 1024 + 1, 97),
+      Buffer.from('\n---\nBody')
     ])
 
     await expectMatchesPreview(buildZip(candidates), true)
-    await expectMatchesPreview(buildZip([{ path: 'large/SKILL.md', content: largeManifest }]), true)
+    await expectMatchesPreview(
+      buildZip([{ path: 'large/SKILL.md', content: largeManifest, method: 0 }]),
+      true
+    )
+    await expectMatchesPreview(
+      buildZip([{ path: 'large-deflated/SKILL.md', content: largeDeflatedManifest }]),
+      true
+    )
+    await expectMatchesPreview(
+      buildZip([{ path: 'large-frontmatter/SKILL.md', content: largeFrontmatter }]),
+      true
+    )
+    await expectMatchesPreview(
+      buildZip([
+        {
+          path: 'cr-only/SKILL.md',
+          content: Buffer.from('---\rname: CR-only Manifest\r---\rBody')
+        }
+      ]),
+      true
+    )
+  })
+
+  it('does not charge rejected loose roots against the nested candidate budget', async () => {
+    const rejectedLooseRoots = Array.from({ length: 256 }, (_, index): ZipInput[] => [
+      {
+        path: `rejected-${index.toString().padStart(3, '0')}/SKILL.md`,
+        content: Buffer.from(`---\nname: Rejected ${index}\n---\nBody`)
+      },
+      {
+        path: `rejected-${index.toString().padStart(3, '0')}/unsupported.bin`,
+        content: Buffer.from('cannot import'),
+        method: 99
+      }
+    ]).flat()
+    const nestedSkill = buildZip([
+      {
+        path: 'SKILL.md',
+        content: Buffer.from('---\nname: Nested After Rejections\n---\nBody')
+      }
+    ])
+
+    await expectMatchesPreview(
+      buildZip([...rejectedLooseRoots, { path: 'zz-valid.zip', content: nestedSkill, method: 0 }]),
+      true
+    )
   })
 })

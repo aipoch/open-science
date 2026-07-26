@@ -21,12 +21,15 @@ const selectSkillManifestRoots = (paths: Iterable<string>): string[] => {
     if (root !== undefined) candidates.add(root)
   }
 
-  const all = [...candidates]
-  return all
-    .filter(
-      (root) =>
-        !all.some((other) => other !== root && (other === '' || root.startsWith(`${other}/`)))
-    )
+  return [...candidates]
+    .filter((root) => {
+      if (root === '') return true
+      const segments = root.split('/')
+      for (let length = 0; length < segments.length; length += 1) {
+        if (candidates.has(segments.slice(0, length).join('/'))) return false
+      }
+      return true
+    })
     .sort((left, right) => left.localeCompare(right))
 }
 
