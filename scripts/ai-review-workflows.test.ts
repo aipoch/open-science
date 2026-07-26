@@ -645,6 +645,7 @@ describe('dual Codex workflow contract', () => {
     const hardening = getStep(codexWorkflow, 'review', 'Harden subscription review runtime')
     expect(hardening.if).toBe("${{ inputs.auth_mode == 'subscription' }}")
     expect(hardening.run).toContain('/etc/sudoers.d/*')
+    expect(hardening.run).toContain('command -v bwrap')
     expect(hardening.run).toContain('sudo -n true')
     expect(hardening.run).toContain('codex sandbox --permission-profile ai_review')
     expect(hardening.run).toContain('test -r "$CODEX_HOME/auth.json"')

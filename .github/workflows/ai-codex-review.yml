@@ -375,6 +375,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if ! command -v bwrap > /dev/null 2>&1; then
+            echo "GitHub-hosted subscription reviews require bubblewrap." >&2
+            exit 1
+          fi
+
           current_user="$(id -un)"
           sudo -n bash -c '
             set -euo pipefail
