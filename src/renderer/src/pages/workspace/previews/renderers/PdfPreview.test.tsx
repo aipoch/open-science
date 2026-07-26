@@ -141,6 +141,45 @@ describe('PdfPreviewContent', () => {
     clientWidthSpy.mockRestore()
   })
 
+  it('re-rasterizes at a higher resolution when the user zooms in', async () => {
+    const clientWidthSpy = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockReturnValue(400)
+    vi.stubGlobal('devicePixelRatio', 1)
+    getPage.mockResolvedValue({
+      getViewport: vi.fn(({ scale }: { scale: number }) => ({
+        width: 400 * scale,
+        height: 560 * scale
+      })),
+      render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+      cleanup: vi.fn()
+    })
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/zoom.pdf" name="zoom.pdf" source="artifact" />
+      )
+    })
+    // At fit width (100%) the 400pt page backs the canvas at its own width.
+    await vi.waitFor(() =>
+      expect(container.querySelector<HTMLCanvasElement>('canvas')?.width).toBe(400)
+    )
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.click()
+      await Promise.resolve()
+    })
+
+    // 125% zoom widens the page and re-rasterizes rather than upscaling the old bitmap.
+    await vi.waitFor(() =>
+      expect(container.querySelector<HTMLCanvasElement>('canvas')?.width).toBe(500)
+    )
+    expect(container.textContent).toContain('125%')
+    expect(container.querySelector<HTMLCanvasElement>('canvas')?.height).toBe(700)
+
+    clientWidthSpy.mockRestore()
+  })
+
   it('re-rasterizes a widened page without reloading it through the range transport', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
