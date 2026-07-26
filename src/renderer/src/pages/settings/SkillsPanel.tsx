@@ -102,6 +102,7 @@ const SkillsPanel = ({
             name: draft.name,
             description: draft.description,
             body: draft.body,
+            ...(draft.metadata === undefined ? {} : { metadata: draft.metadata }),
             slug: draft.slug,
             references: draft.references
           })

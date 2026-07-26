@@ -308,6 +308,61 @@ describe('SkillsPanel (sub-views)', () => {
     })
   })
 
+  it('saves the current frontmatter metadata after replacing editor content', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        getSkillDetail: vi.fn().mockResolvedValue({
+          id: 'personal-mine',
+          name: 'Mine',
+          description: 'Custom',
+          source: 'personal',
+          updatedAt: '2026-07-08T00:00:00.000Z',
+          enabled: true,
+          body: '# Old body',
+          metadata: { author: 'Ada', license: 'MIT' },
+          references: []
+        })
+      }
+    }
+
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'edit', id: 'personal-mine' }} onNavigate={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    setValue(
+      'Skill body',
+      [
+        '---',
+        'name: Mine',
+        'description: Custom',
+        'author: Grace',
+        'tags:',
+        '  - analysis',
+        '  - writing',
+        '---',
+        '# New body'
+      ].join('\n')
+    )
+
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save'
+    )
+    await act(async () => {
+      save?.click()
+      await Promise.resolve()
+    })
+
+    expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
+      id: 'personal-mine',
+      name: 'Mine',
+      description: 'Custom',
+      body: '# New body',
+      metadata: { author: 'Grace', tags: 'analysis, writing' },
+      references: []
+    })
+  })
+
   it('creates a skill from the create view and returns to the list', () => {
     const onNavigate = vi.fn()
     act(() => {
@@ -334,6 +389,38 @@ describe('SkillsPanel (sub-views)', () => {
       description: '',
       body: '# Body',
       slug: 'my-new-skill',
+      references: []
+    })
+  })
+
+  it('preserves frontmatter metadata pasted into the create editor', () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={vi.fn()} />)
+    })
+
+    setValue(
+      'Skill body',
+      [
+        '---',
+        'name: Pasted Skill',
+        'description: Pasted description',
+        'author: Ada',
+        'category: research',
+        '---',
+        '# Body'
+      ].join('\n')
+    )
+    const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Publish'
+    )
+    act(() => publish?.click())
+
+    expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
+      name: 'Pasted Skill',
+      description: 'Pasted description',
+      body: '# Body',
+      metadata: { author: 'Ada', category: 'research' },
+      slug: 'pasted-skill',
       references: []
     })
   })

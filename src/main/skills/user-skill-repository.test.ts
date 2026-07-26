@@ -534,6 +534,27 @@ describe('UserSkillRepository', () => {
     expect((await repo.previewZip(zip)).previews[0].alreadyImported).toBe(true)
   })
 
+  it('bounds the cumulative SKILL.md content returned by a bundle preview', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const largeBody = Buffer.alloc(3 * 1024 * 1024, 0x61)
+    const skillMd = (name: string): Buffer =>
+      Buffer.concat([
+        Buffer.from(`---\nname: ${name}\ndescription: Large preview\n---\n`),
+        largeBody
+      ])
+    const zip = buildZip([
+      { path: 'alpha/SKILL.md', content: skillMd('Alpha') },
+      { path: 'beta/SKILL.md', content: skillMd('Beta') }
+    ])
+
+    const { previews, skipped } = await repo.previewZip(zip)
+
+    expect(previews.map((preview) => preview.name)).toEqual(['Alpha'])
+    expect(skipped).toEqual([
+      { source: 'beta', reason: expect.stringMatching(/preview content.*limit/i) }
+    ])
+  })
+
   it('skips a preview whose SKILL.md has no name (instead of failing the bundle)', async () => {
     const repo = new UserSkillRepository(await makeStorage())
     const zip = buildZip([

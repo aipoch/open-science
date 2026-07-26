@@ -14,6 +14,9 @@ export const SKILL_IMPORT_LIMITS = {
   // Maximum total decompressed size of ONE skill (all files in a single skill root / inner bundle).
   // Comfortably above the single-file cap so a skill can carry a large file plus its other resources.
   maxTotalBytes: 128 * 1024 * 1024,
+  // Maximum cumulative raw SKILL.md bytes included in ONE bundle preview response. Import keeps the
+  // larger per-skill caps above, but renderer-bound preview text must stay small enough for IPC.
+  maxPreviewContentBytes: 4 * 1024 * 1024,
   // Maximum directory nesting either source is allowed to descend (zip subdirectories / GitHub dirs).
   maxDepth: 8,
   // Maximum GitHub API/download requests one import may issue, so a wide or mostly-empty directory

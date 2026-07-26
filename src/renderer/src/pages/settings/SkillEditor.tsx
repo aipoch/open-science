@@ -2,6 +2,7 @@ import { FileUp, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { SkillReference } from '../../../../shared/settings'
+import { parseFrontmatter } from '../../../../shared/skill-frontmatter'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -41,23 +42,15 @@ const toSlug = (name: string): string =>
     .replace(/^-+|-+$/g, '')
     .slice(0, 64)
 
-// Pulls name/description out of a pasted SKILL.md frontmatter block, returning the stripped body.
+// Pulls identity and extra metadata out of pasted/uploaded SKILL.md content using the same parser as
+// every import surface, while returning the stripped body for the editor.
 const consumeFrontmatter = (
   text: string
-): { name?: string; description?: string; body: string } => {
-  const match = /^---\n([\s\S]*?)\n---\n?/.exec(text)
-  if (!match) return { body: text }
+): { name?: string; description?: string; metadata: Record<string, string>; body: string } => {
+  const { fields, body } = parseFrontmatter(text)
+  const { name, description, ...metadata } = fields
 
-  const fields: Record<string, string> = {}
-  for (const line of match[1].split('\n')) {
-    const field = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line)
-    if (field) fields[field[1].toLowerCase()] = field[2].trim()
-  }
-  return {
-    name: fields.name,
-    description: fields.description,
-    body: text.slice(match[0].length).replace(/^\n+/, '')
-  }
+  return { name, description, metadata, body }
 }
 
 type SkillEditorProps = {
@@ -74,6 +67,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   const [name, setName] = useState(initial.name)
   const [description, setDescription] = useState(initial.description)
   const [body, setBody] = useState(initial.body)
+  const [metadata, setMetadata] = useState(initial.metadata)
   const [contentMode, setContentMode] = useState<'write' | 'upload'>('write')
   const [references, setReferences] = useState<{ path: string; dataBase64?: string }[]>(() =>
     (initial.references ?? []).map((ref) => ({ path: ref.path, dataBase64: ref.dataBase64 }))
@@ -109,6 +103,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     if (parsed.name || parsed.description) {
       if (parsed.name && !name.trim()) setName(parsed.name)
       if (parsed.description && !description.trim()) setDescription(parsed.description)
+      setMetadata(parsed.metadata)
       setBody(parsed.body)
     } else {
       setBody(value)
@@ -169,7 +164,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
         name: name.trim(),
         description: description.trim(),
         body,
-        metadata: initial.metadata,
+        metadata,
         slug: isCreate ? currentSlug : undefined,
         references: references.map((ref) => ({ path: ref.path, dataBase64: ref.dataBase64 }))
       })

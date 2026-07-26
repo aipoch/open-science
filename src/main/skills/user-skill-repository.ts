@@ -628,11 +628,22 @@ class UserSkillRepository {
       await this.doRecoverImportedTransactions()
 
       const previews: SkillBundlePreview[] = []
+      let previewContentBytes = 0
       // A root that can't be parsed into a valid preview (no name, bad frontmatter) is skipped with a
       // reason instead of failing the whole bundle — so the importable skills still come through.
       for (const root of roots) {
         try {
           const skillMd = root.files.find((file) => file.relativePath.toLowerCase() === 'skill.md')!
+          if (
+            previewContentBytes + skillMd.content.length >
+            SKILL_IMPORT_LIMITS.maxPreviewContentBytes
+          ) {
+            skipped.push({
+              source: root.subPath || 'skill',
+              reason: `SKILL.md preview content exceeds the ${mb(SKILL_IMPORT_LIMITS.maxPreviewContentBytes)} cumulative limit`
+            })
+            continue
+          }
           const { fields, body } = parseFrontmatter(skillMd.content.toString('utf8'))
           const name = fields.name?.trim()
           if (!name) {
@@ -648,6 +659,7 @@ class UserSkillRepository {
           const metadata = Object.fromEntries(
             Object.entries(fields).filter(([key]) => key !== 'name' && key !== 'description')
           )
+          previewContentBytes += skillMd.content.length
           previews.push({
             name,
             description: fields.description ?? '',
