@@ -123,6 +123,7 @@ describe('codexFramework', () => {
     expect(JSON.parse(modelCatalogFile?.content ?? '').models[0]).toMatchObject({
       slug: 'gpt-5.4',
       apply_patch_tool_type: null,
+      web_search_tool_type: null,
       supports_parallel_tool_calls: false,
       supports_search_tool: false
     })
@@ -154,6 +155,7 @@ describe('codexFramework', () => {
     expect(modelMetadata).toMatchObject({
       slug: 'gpt-5.4',
       apply_patch_tool_type: null,
+      web_search_tool_type: null,
       supports_parallel_tool_calls: false,
       supports_search_tool: false
     })
@@ -276,6 +278,7 @@ describe('codexFramework', () => {
             { effort: 'high', description: 'High reasoning effort' }
           ],
           apply_patch_tool_type: null,
+          web_search_tool_type: null,
           supports_parallel_tool_calls: false,
           supports_image_detail_original: false,
           context_window: 1_000_000,
