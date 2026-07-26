@@ -345,7 +345,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Apply ready-to-merge from published review outputs
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           PR_NUMBER: ${{ needs.review_target.outputs.number }}
           REVIEW_HEAD_SHA: ${{ needs.review_target.outputs.head_sha }}

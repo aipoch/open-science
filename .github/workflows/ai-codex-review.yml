@@ -442,7 +442,7 @@ jobs:
 
       - name: Normalize Codex review
         id: normalize
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           CODEX_FINAL_MESSAGE: ${{ steps.run_codex.outputs.final-message }}
           REVIEW_HEADER: ${{ steps.review_inputs.outputs.review_header }}

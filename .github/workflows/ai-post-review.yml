@@ -44,7 +44,7 @@ jobs:
     steps:
       - name: Post Codex review
         id: post
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           REVIEW_BODY: ${{ inputs.review_body }}
           REVIEW_HEADER: ${{ inputs.header }}
