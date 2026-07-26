@@ -2471,10 +2471,11 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.prompts[0].text).toContain('hello opencode')
   })
 
-  it('serves artifact/notebook MCP over the http host for an http-only framework', async () => {
+  it('serves app MCP tools over the http host for an http-only framework', async () => {
     const root = await createTemporaryRoot()
     const httpHost = new AgentMcpHttpHost()
     const closeHttpHost = vi.spyOn(httpHost, 'close')
+    const unregisterHttpSession = vi.spyOn(httpHost, 'unregister')
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['oc-session'])
     const runtime = new AcpRuntime({
@@ -2495,11 +2496,19 @@ describe('ACP runtime session management', () => {
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:1/notebook', token: 'nb' })
+      },
+      skillImport: {
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:1/skill-import',
+          token: 'skill'
+        })
       }
     })
 
     try {
-      await runtime.createSession({ cwd: '/workspace' })
+      const session = await runtime.createSession({ cwd: '/workspace' })
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'install this skill' })
 
       const servers = fakeAgent.newSessions[0].mcpServers as Array<{
         type?: string
@@ -2509,13 +2518,26 @@ describe('ACP runtime session management', () => {
       }>
 
       // opencode gets http MCP configs (not stdio) pointing at the local host, with bearer auth.
-      expect(servers.map((server) => server.type)).toEqual(['http', 'http'])
+      expect(servers.map((server) => server.type)).toEqual(['http', 'http', 'http'])
       expect(servers.map((server) => server.name)).toEqual(
-        expect.arrayContaining(['open-science-artifacts', 'open-science-notebook'])
+        expect.arrayContaining([
+          'open-science-artifacts',
+          'open-science-notebook',
+          'open-science-skills'
+        ])
       )
       const artifactServer = servers.find((server) => server.name === 'open-science-artifacts')
       expect(artifactServer?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp\/artifact\//)
       expect(artifactServer?.headers?.[0]).toMatchObject({ name: 'authorization' })
+      const skillImportServer = servers.find((server) => server.name === 'open-science-skills')
+      expect(skillImportServer?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp\/skill-import\//)
+      expect(fakeAgent.prompts[0].text).toContain('request_skill_import')
+
+      const skillImportRoutingId = decodeURIComponent(
+        new URL(skillImportServer?.url ?? '').pathname.split('/').at(-1) ?? ''
+      )
+      await runtime.deleteSession({ sessionId: session.sessionId })
+      expect(unregisterHttpSession).toHaveBeenCalledWith(skillImportRoutingId)
 
       await runtime.requestRetirement()
       expect(closeHttpHost).toHaveBeenCalledOnce()

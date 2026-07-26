@@ -105,8 +105,10 @@ import {
   type NotebookRpcConnection
 } from '../notebook/mcp-server'
 import {
+  SKILL_IMPORT_MCP_SERVER_NAME,
   SKILL_IMPORT_SYSTEM_PROMPT_APPEND,
   createSkillImportMcpServerConfig,
+  type SkillImportMcpEnvironment,
   type SkillImportRpcConnection
 } from '../skills/mcp-server'
 import { getNotebookDataRoot, getNotebookSessionRoot } from '../notebook/repository'
@@ -160,8 +162,8 @@ type AcpRuntimeOptions = {
   // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
   // framework-coupled behavior (spawn, session meta, permission-mode mapping) via AgentFramework.
   framework?: AgentFramework
-  // Local http host for the artifact/notebook MCP servers, used for frameworks that reject stdio MCP
-  // (opencode). Absent ⇒ those frameworks run without artifact/notebook tooling.
+  // Local http host for app-owned session MCP servers, used for frameworks that reject stdio MCP.
+  // Absent ⇒ those frameworks run without the corresponding app tooling.
   mcpHttpHost?: AgentMcpHttpHost
   // Bounds the network-bound reconnect+resume so Resume always resolves; the fast attached-session
   // path is never timed. Injectable timer mirrors the approval broker so tests stay deterministic.
@@ -731,6 +733,7 @@ class AcpRuntime {
   // app session id -> the notebook routing id registered with the http MCP host, so it can be
   // unregistered on session delete (the artifact routing id is tracked in artifactSessionIds).
   private readonly notebookRoutingIds = new Map<string, string>()
+  private readonly skillImportRoutingIds = new Map<string, string>()
   private artifactSessionSequence = 0
   private artifactRunSequence = 0
   private notebookSessionSequence = 0
@@ -1380,6 +1383,7 @@ class AcpRuntime {
     if (this.backendId) this.sessionBackendIds.set(appSessionId, this.backendId)
     this.rememberArtifactSession(appSessionId, appSessionId)
     this.rememberNotebookSession(appSessionId, appSessionId)
+    this.rememberSkillImportSession(appSessionId, appSessionId)
     this.currentSessionId = appSessionId
     this.cwd = cwd
   }
@@ -1606,6 +1610,7 @@ class AcpRuntime {
     this.sessionFrameworks.set(request.sessionId, this.framework.id)
     if (this.backendId) this.sessionBackendIds.set(request.sessionId, this.backendId)
     this.rememberArtifactSession(request.sessionId, request.sessionId)
+    this.rememberSkillImportSession(request.sessionId, request.sessionId)
     this.currentSessionId = request.sessionId
     this.cwd = sessionCwd
     this.pushEvent({
@@ -2000,6 +2005,7 @@ class AcpRuntime {
       this.permissionProfiles.clear()
       this.artifactSessionIds.clear()
       this.notebookRoutingIds.clear()
+      this.skillImportRoutingIds.clear()
       this.mcpHttpHost?.clear()
       this.agentToAppSessionId.clear()
       this.currentSessionId = undefined
@@ -2630,6 +2636,7 @@ class AcpRuntime {
     this.permissionProfiles.delete(request.sessionId)
     this.artifactSessionIds.delete(request.sessionId)
     this.notebookRoutingIds.delete(request.sessionId)
+    this.skillImportRoutingIds.delete(request.sessionId)
     this.promptInFlightSessionIds.delete(request.sessionId)
 
     // Only announce a deletion and shift the current session when something was actually attached; a
@@ -3215,6 +3222,8 @@ class AcpRuntime {
   private rememberSkillImportSession(sessionId: string, routingSessionId: string): void {
     if (!this.skillImportOptions || !routingSessionId) return
 
+    this.skillImportRoutingIds.set(sessionId, routingSessionId)
+
     if (routingSessionId !== sessionId) {
       this.skillImportOptions.registerSessionAlias?.(routingSessionId, sessionId)
     }
@@ -3286,17 +3295,24 @@ class AcpRuntime {
     throw new Error('Notebook runtime RPC connection is not configured.')
   }
 
-  private async createSkillImportMcpServers(routingSessionId: string): Promise<McpServer[]> {
-    if (!this.skillImportOptions || !routingSessionId) return []
+  private async buildSkillImportEnvironment(
+    routingSessionId: string
+  ): Promise<SkillImportMcpEnvironment | undefined> {
+    if (!this.skillImportOptions || !routingSessionId) return undefined
 
     const connection = await this.skillImportOptions.getRpcConnection()
+    return { ...connection, sessionId: routingSessionId }
+  }
+
+  private async createSkillImportMcpServers(routingSessionId: string): Promise<McpServer[]> {
+    const environment = await this.buildSkillImportEnvironment(routingSessionId)
+    if (!environment || !this.skillImportOptions) return []
+
     return [
       createSkillImportMcpServerConfig({
         command: this.skillImportOptions.mcpCommand ?? process.execPath,
         entryPath: this.skillImportOptions.mcpEntryPath,
-        endpoint: connection.endpoint,
-        token: connection.token,
-        sessionId: routingSessionId
+        ...environment
       })
     ]
   }
@@ -3320,7 +3336,7 @@ class AcpRuntime {
     // and execution. The artifact server stays gated on native Responses; non-bridge sessions get both.
     const artifactEnabled = this.nativeMcpEnabled || this.bridgeMcpAliasesEnabled
 
-    // The artifact/notebook servers are stdio. A framework that only accepts http/sse MCP (opencode)
+    // App-owned session servers use stdio when supported. A framework that only accepts http/sse MCP
     // gets them over the http host when one is wired; without a host it gets none so a basic turn still
     // runs instead of failing on an unsupported stdio server config.
     const servers = this.framework.acceptsStdioMcp
@@ -3335,6 +3351,7 @@ class AcpRuntime {
       : await this.createHttpMcpServers(
           artifactSessionId,
           notebookSessionId,
+          skillImportSessionId,
           sessionCwd,
           projectName
         )
@@ -3366,7 +3383,7 @@ class AcpRuntime {
       .filter((name): name is string => typeof name === 'string')
   }
 
-  // Drops one session's artifact/notebook registrations from the http MCP host (no-op without a host).
+  // Drops one session's app-tool registrations from the http MCP host (no-op without a host).
   private unregisterHttpMcpSession(appSessionId: string): void {
     if (!this.mcpHttpHost) return
 
@@ -3375,14 +3392,18 @@ class AcpRuntime {
 
     const notebookRoutingId = this.notebookRoutingIds.get(appSessionId)
     if (notebookRoutingId) this.mcpHttpHost.unregister(notebookRoutingId)
+
+    const skillImportRoutingId = this.skillImportRoutingIds.get(appSessionId)
+    if (skillImportRoutingId) this.mcpHttpHost.unregister(skillImportRoutingId)
   }
 
-  // Serves the artifact/notebook MCP over the local http host for frameworks that reject stdio MCP.
+  // Serves app-owned session MCP over the local http host for frameworks that reject stdio MCP.
   // Registers each session's environment under its app-owned id and returns http McpServer configs
   // pointing at the host, authenticated with the host token. No host wired ⇒ no servers (basic turn).
   private async createHttpMcpServers(
     artifactSessionId: string,
     notebookSessionId: string,
+    skillImportSessionId: string,
     sessionCwd: string,
     projectName: string
   ): Promise<McpServer[]> {
@@ -3424,10 +3445,22 @@ class AcpRuntime {
       })
     }
 
+    const skillImportEnvironment = await this.buildSkillImportEnvironment(skillImportSessionId)
+
+    if (skillImportEnvironment) {
+      this.mcpHttpHost.registerSkillImport(skillImportSessionId, skillImportEnvironment)
+      servers.push({
+        type: 'http',
+        name: SKILL_IMPORT_MCP_SERVER_NAME,
+        url: this.mcpHttpHost.urlFor('skill-import', skillImportSessionId),
+        headers: [authHeader]
+      })
+    }
+
     return servers
   }
 
-  // Collects the system-prompt guidance appended to every session, plus artifact/notebook tooling
+  // Collects the system-prompt guidance appended to every session, plus app tooling
   // instructions when those services are wired. Skill privacy is enforced at the presentation layer;
   // agent prompts must not block native progressive loading of a selected SKILL.md.
   // Whether the local MCP transport can carry app tooling at all: the framework takes stdio MCP
@@ -3444,7 +3477,7 @@ class AcpRuntime {
   }
 
   private skillImportToolingAvailable(): boolean {
-    return this.framework.acceptsStdioMcp && Boolean(this.skillImportOptions)
+    return this.mcpTransportAvailable() && Boolean(this.skillImportOptions)
   }
 
   // The artifact write tool is only wired when full native MCP is enabled (off for the bridge), so its
@@ -4305,6 +4338,7 @@ class AcpRuntime {
     this.contextUsageBySession.clear()
     this.artifactSessionIds.clear()
     this.notebookRoutingIds.clear()
+    this.skillImportRoutingIds.clear()
     this.mcpHttpHost?.clear()
     this.agentToAppSessionId.clear()
     this.currentSessionId = undefined

@@ -7,6 +7,11 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { createArtifactMcpServer, type ArtifactMcpEnvironment } from '../artifacts/mcp-server'
 import { ArtifactRepository } from '../artifacts/repository'
 import { createNotebookMcpServer, type NotebookMcpEnvironment } from '../notebook/mcp-server'
+import {
+  callSkillImportRpc,
+  createSkillImportMcpServer,
+  type SkillImportMcpEnvironment
+} from '../skills/mcp-server'
 import { createLogger } from '../logger'
 
 const log = createLogger('mcp-http-host')
@@ -17,7 +22,7 @@ type HostConnection = {
 }
 
 // The MCP server kinds this host serves; each maps to a factory + a per-session environment.
-const SERVER_KINDS = ['artifact', 'notebook'] as const
+const SERVER_KINDS = ['artifact', 'notebook', 'skill-import'] as const
 type ServerKind = (typeof SERVER_KINDS)[number]
 
 const isServerKind = (value: string): value is ServerKind =>
@@ -27,6 +32,7 @@ const isServerKind = (value: string): value is ServerKind =>
 type SessionEntry = {
   artifact?: ArtifactMcpEnvironment
   notebook?: NotebookMcpEnvironment
+  skillImport?: SkillImportMcpEnvironment
 }
 
 // Reads and JSON-parses a POST body so it can be handed to the transport as a pre-parsed payload.
@@ -47,8 +53,8 @@ const writeJson = (response: ServerResponse, statusCode: number, payload: unknow
   response.end(`${JSON.stringify(payload)}\n`)
 }
 
-// Hosts the app's artifact + notebook MCP servers over a local, token-authenticated HTTP endpoint, for
-// agent frameworks that only accept http/sse MCP (opencode advertises no stdio). The runtime registers
+// Hosts the app's session-scoped MCP servers over a local, token-authenticated HTTP endpoint, for
+// agent frameworks that only accept http/sse MCP. The runtime registers
 // each session's per-kind environment and passes the agent an http McpServer config pointing here;
 // requests are routed by `/mcp/<kind>/<sessionId>`. Stateless: a fresh MCP server + transport is built
 // per request from the registered environment, mirroring the one-server-per-spawn stdio model.
@@ -124,6 +130,12 @@ class AgentMcpHttpHost {
     this.sessions.set(routingId, entry)
   }
 
+  registerSkillImport(routingId: string, environment: SkillImportMcpEnvironment): void {
+    const entry = this.sessions.get(routingId) ?? {}
+    entry.skillImport = environment
+    this.sessions.set(routingId, entry)
+  }
+
   // Drops a routing id's registered environments once its session is gone.
   unregister(routingId: string): void {
     this.sessions.delete(routingId)
@@ -159,9 +171,18 @@ class AgentMcpHttpHost {
       )
     }
 
-    if (!entry.notebook) return undefined
+    if (kind === 'notebook') {
+      if (!entry.notebook) return undefined
 
-    return createNotebookMcpServer(entry.notebook)
+      return createNotebookMcpServer(entry.notebook)
+    }
+
+    const skillImportEnvironment = entry.skillImport
+    if (!skillImportEnvironment) return undefined
+
+    return createSkillImportMcpServer({
+      requestImport: (attachmentUri) => callSkillImportRpc(skillImportEnvironment, attachmentUri)
+    })
   }
 
   // Authenticates, routes by path, and serves one MCP request from a fresh stateless server+transport.
