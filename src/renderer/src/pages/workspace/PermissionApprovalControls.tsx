@@ -168,13 +168,13 @@ const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | 
     return undefined
   }
 
-  // Shell execute: prefer the structured command field (verbatim), but for a broker-classified
-  // non-MCP execute request also fall back to its title so the exact command remains reviewable.
+  // Shell execute: prefer the structured command field (verbatim), then use the title only for
+  // the known Bash provider. Other execute titles can be generic labels, not concrete commands.
   // MCP execute inputs are arbitrary tool arguments and must not be reinterpreted as local shell.
   if (isExecute) {
     const cmd = rawInput.command
     if (typeof cmd === 'string' && cmd.trim()) return { code: cmd, language: 'bash' }
-    if (!isMcpPermissionRequest(request) && request.title?.trim()) {
+    if (request.providerToolName === 'Bash' && request.title?.trim()) {
       return { code: request.title, language: 'bash' }
     }
   }
@@ -584,7 +584,8 @@ const PermissionApprovalControls = ({
   const isMcp = isMcpPermissionRequest(request)
   const isShell = !isMcp && (request.toolKind === 'execute' || request.providerToolName === 'Bash')
 
-  // Identity details are retained in the impact tip rather than consuming a line above the preview.
+  // Most identity details stay in the impact tip. When no path or preview exists, retain the only
+  // actionable target inline so the approval is reviewable without relying on hover.
   const headerName = request.providerToolName ?? request.title
   const titleDetail = ((): string | undefined => {
     if (presentation.hideToolIdentity) return undefined
@@ -598,6 +599,8 @@ const PermissionApprovalControls = ({
     }
     return request.title !== headerName ? request.title : request.providerToolName
   })()
+  const showInlineDetail =
+    !isMcp && Boolean(titleDetail) && !permCode && !request.toolLocations?.length
 
   return (
     <div className="mb-2 flex w-full max-w-full flex-col gap-3 rounded-xl border border-border bg-card p-5 text-xs leading-5 text-card-foreground shadow-dialog outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
@@ -625,6 +628,10 @@ const PermissionApprovalControls = ({
             <span key={location.path}>{location.path}</span>
           ))}
         </div>
+      ) : null}
+
+      {showInlineDetail ? (
+        <p className="break-all text-xs text-muted-foreground">{titleDetail}</p>
       ) : null}
 
       {/* Activity-style card showing the code that will run.
