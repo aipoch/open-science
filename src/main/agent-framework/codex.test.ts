@@ -269,7 +269,7 @@ describe('codexFramework', () => {
           slug: 'MiniMax-M3',
           display_name: 'MiniMax-M3',
           shell_type: 'shell_command',
-          visibility: 'none',
+          visibility: 'list',
           supported_in_api: true,
           base_instructions: expect.stringContaining(
             'inside Open Science through the Agent Client Protocol'

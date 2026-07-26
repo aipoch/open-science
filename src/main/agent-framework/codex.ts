@@ -213,7 +213,9 @@ const buildCodexNativeModelCatalog = (provider: {
           description: `${effort === 'xhigh' ? 'Extra high' : effort.charAt(0).toUpperCase() + effort.slice(1)} reasoning effort`
         })),
         shell_type: 'shell_command',
-        visibility: 'none',
+        // codex-acp obtains its session model options from app-server model/list. A hidden-only
+        // static catalog produces an empty list and makes session/new fail before the first prompt.
+        visibility: 'list',
         supported_in_api: true,
         priority: 99,
         additional_speed_tiers: [],

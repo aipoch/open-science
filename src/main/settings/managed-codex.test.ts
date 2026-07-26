@@ -30,11 +30,27 @@ const PINNED_SKILL_MAPPER_FIXTURE = [
   '}'
 ].join('\n')
 
+const PINNED_MODEL_CATALOG_STARTUP_FIXTURE = [
+  'function startCodexConnection(codexPath, env) {',
+  '  const spawnEnv = env ?? process.env;',
+  '  let codex;',
+  '  if (codexPath) {',
+  '    codex = process.platform === "win32" ? spawn(`"${codexPath}" app-server`, { shell: true, env: spawnEnv }) : spawn(codexPath, ["app-server"], { env: spawnEnv });',
+  '  } else {',
+  '    const bundledCodexPath = createRequire(import.meta.url).resolve("@openai/codex/bin/codex.js");',
+  '    codex = spawn(process.execPath, [bundledCodexPath, "app-server"], { env: spawnEnv });',
+  '  }',
+  '  return codex;',
+  '}'
+].join('\n')
+
 const adapterFixture = (marker: string): Buffer =>
-  Buffer.from(`${marker}\n${PINNED_SKILL_MAPPER_FIXTURE}\n`)
+  Buffer.from(
+    `${marker}\n${PINNED_SKILL_MAPPER_FIXTURE}\n${PINNED_MODEL_CATALOG_STARTUP_FIXTURE}\n`
+  )
 
 const withPinnedSkillMapper = (source: string): string =>
-  `${source}\n${PINNED_SKILL_MAPPER_FIXTURE}`
+  `${source}\n${PINNED_SKILL_MAPPER_FIXTURE}\n${PINNED_MODEL_CATALOG_STARTUP_FIXTURE}`
 
 // Injectable fault flags for the fs/promises mock — each targets one specific rename call:
 //   onStagedMove: throw EPERM when src is the .codex-install- scratch dir (staged→destination)
@@ -160,6 +176,7 @@ import {
   managedCodexRoot,
   installManagedCodex,
   patchCodexAcpContextUsageSource,
+  patchCodexAcpModelCatalogStartupSource,
   patchCodexAcpSkillInputSource,
   resolveManagedCodexPlatform,
   sanitizeManagedCodexDiagnostic,
@@ -1354,6 +1371,73 @@ describe('patchCodexAcpContextUsageSource', () => {
 
     expect(() => patchCodexAcpContextUsageSource(drifted)).toThrow(
       /context-usage patch no longer matches/
+    )
+  })
+})
+
+describe('patchCodexAcpModelCatalogStartupSource', () => {
+  it('passes a generated model catalog to the native app-server at process startup', () => {
+    const patched = patchCodexAcpModelCatalogStartupSource(PINNED_MODEL_CATALOG_STARTUP_FIXTURE)
+    const spawn = vi.fn(() => ({ pid: 1 }))
+    const startCodexConnection = Function(
+      'spawn',
+      'process',
+      'createRequire',
+      'importMetaUrl',
+      `${patched.replace('import.meta.url', 'importMetaUrl')}; return startCodexConnection;`
+    )(
+      spawn,
+      { platform: 'darwin', execPath: '/runtime/node', env: {} },
+      () => ({ resolve: () => '/runtime/bundled-codex.js' }),
+      'file:///runtime/adapter.js'
+    ) as (codexPath: string, env: NodeJS.ProcessEnv) => unknown
+    const catalogPath = '/data/codex/model-catalog-with spaces.json'
+
+    startCodexConnection('/runtime/codex', {
+      CODEX_CONFIG: JSON.stringify({ model_catalog_json: catalogPath, model: 'MiniMax-M3' })
+    })
+
+    expect(spawn).toHaveBeenCalledWith(
+      '/runtime/codex',
+      ['app-server', '-c', `model_catalog_json=${JSON.stringify(catalogPath)}`],
+      expect.objectContaining({ env: expect.any(Object) })
+    )
+    expect(patchCodexAcpModelCatalogStartupSource(patched)).toBe(patched)
+  })
+
+  it('keeps the native app-server command unchanged without a generated catalog', () => {
+    const patched = patchCodexAcpModelCatalogStartupSource(PINNED_MODEL_CATALOG_STARTUP_FIXTURE)
+    const spawn = vi.fn(() => ({ pid: 1 }))
+    const startCodexConnection = Function(
+      'spawn',
+      'process',
+      'createRequire',
+      'importMetaUrl',
+      `${patched.replace('import.meta.url', 'importMetaUrl')}; return startCodexConnection;`
+    )(
+      spawn,
+      { platform: 'darwin', execPath: '/runtime/node', env: {} },
+      () => ({ resolve: () => '/runtime/bundled-codex.js' }),
+      'file:///runtime/adapter.js'
+    ) as (codexPath: string, env: NodeJS.ProcessEnv) => unknown
+
+    startCodexConnection('/runtime/codex', { CODEX_CONFIG: JSON.stringify({ model: 'gpt-5.4' }) })
+
+    expect(spawn).toHaveBeenCalledWith(
+      '/runtime/codex',
+      ['app-server'],
+      expect.objectContaining({ env: expect.any(Object) })
+    )
+  })
+
+  it('fails closed when the pinned app-server spawn source drifts', () => {
+    const drifted = PINNED_MODEL_CATALOG_STARTUP_FIXTURE.replace(
+      'spawn(codexPath, ["app-server"], { env: spawnEnv })',
+      'spawn(codexPath, ["app-server", "--stdio"], { env: spawnEnv })'
+    )
+
+    expect(() => patchCodexAcpModelCatalogStartupSource(drifted)).toThrow(
+      /model-catalog startup patch no longer matches/
     )
   })
 })

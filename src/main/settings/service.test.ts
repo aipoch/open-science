@@ -55,6 +55,16 @@ let repository: InstanceType<typeof SettingsRepository>
 const CODEX_SHARED_PROVIDER_ID = CODEX_SUBSCRIPTION_PROVIDER_ID
 const CODEX_ISOLATED_PROVIDER_ID = CODEX_SUBSCRIPTION_PROVIDER_ID
 const MANAGED_CODEX_ADAPTER_FIXTURE = [
+  'function startCodexConnection(codexPath, env) {',
+  '  const spawnEnv = env ?? process.env;',
+  '  let codex;',
+  '  if (codexPath) {',
+  '    codex = process.platform === "win32" ? spawn(`"${codexPath}" app-server`, { shell: true, env: spawnEnv }) : spawn(codexPath, ["app-server"], { env: spawnEnv });',
+  '  } else {',
+  '    const bundledCodexPath = createRequire(import.meta.url).resolve("@openai/codex/bin/codex.js");',
+  '    codex = spawn(process.execPath, [bundledCodexPath, "app-server"], { env: spawnEnv });',
+  '  }',
+  '}',
   'function buildPromptItems(prompt) {',
   '  return prompt.map((block) => {',
   '    switch (block.type) {',
@@ -1747,6 +1757,81 @@ describe('SettingsService: preflight & spawn config', () => {
       methodId: 'api-key',
       _meta: { 'api-key': { apiKey: 'test-key' } }
     })
+  })
+
+  it('trusts bundled model metadata only after a live native version probe', async () => {
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    const nativePath = join(storageRoot, 'bin', 'codex')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    await writeFile(nativePath, '#!/usr/bin/env node\n', 'utf8')
+    await chmod(adapterPath, 0o755)
+    await chmod(nativePath, 0o755)
+    const service = createService(undefined, {
+      codexDetected: {
+        path: adapterPath,
+        version: 'codex-acp 1.1.4',
+        nativePath,
+        nativeVersion: 'codex-cli 0.144.6'
+      }
+    })
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativePath
+    })
+    const provider = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'OpenAI',
+        vendorId: 'openai',
+        key: 'test-key'
+      })
+    ).providers[0]
+    await service.setActiveProvider(provider.id, 'gpt-5.4')
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
+
+    const backend = await service.resolveActiveAgentBackend()
+
+    expect(JSON.parse(backend.env.CODEX_CONFIG ?? '{}')).not.toHaveProperty('model_catalog_json')
+  })
+
+  it('ignores a stale trusted native version when the live probe is unrecognized', async () => {
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    const nativePath = join(storageRoot, 'bin', 'codex')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    await writeFile(nativePath, '#!/usr/bin/env node\n', 'utf8')
+    await chmod(adapterPath, 0o755)
+    await chmod(nativePath, 0o755)
+    const service = createService(undefined, {
+      codexDetected: {
+        path: adapterPath,
+        version: 'codex-acp 1.1.4',
+        nativePath,
+        nativeVersion: 'codex-cli 0.144.2'
+      }
+    })
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativePath,
+      nativeVersion: '0.144.6'
+    })
+    const provider = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'OpenAI',
+        vendorId: 'openai',
+        key: 'test-key'
+      })
+    ).providers[0]
+    await service.setActiveProvider(provider.id, 'gpt-5.4')
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
+
+    const backend = await service.resolveActiveAgentBackend()
+
+    expect(JSON.parse(backend.env.CODEX_CONFIG ?? '{}')).toHaveProperty('model_catalog_json')
   })
 
   it('patches an existing app-managed Codex adapter before returning the backend', async () => {

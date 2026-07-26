@@ -3499,6 +3499,13 @@ class SettingsService {
             settings.codex?.nativePath
           )
         : await this.resolveOpencodeExecutable(settings.opencodePath)
+    // Model metadata is a compatibility contract with the native Codex binary that is about to
+    // start. Probe that exact executable now instead of trusting a cached version from detection;
+    // a missing or stale cache must only make us choose the conservative generated catalog.
+    const codexNativeVersion =
+      framework.id === 'codex'
+        ? await this.probeCodexNativeVersion(settings.codex?.nativePath)
+        : undefined
     const provider = this.resolveProvider(activeProvider, effectiveModel)
     // `codex-shared` is accepted only as a legacy/provider-time import request. Every runtime
     // subscription record converges on the same app-owned backend and profile boundary.
@@ -3530,9 +3537,7 @@ class SettingsService {
       const modelConfig = framework.prepareModelConfig(provider, {
         storageRoot: this.storageRoot,
         executablePath,
-        ...(framework.id === 'codex' && settings.codex?.nativeVersion
-          ? { nativeVersion: settings.codex.nativeVersion }
-          : {}),
+        ...(codexNativeVersion ? { nativeVersion: codexNativeVersion } : {}),
         responsesBridge,
         reasoningEffort: sessionEffort,
         reasoningEfforts: supportedReasoningEfforts,
@@ -3673,6 +3678,15 @@ class SettingsService {
 
     await ensureManagedCodexContextUsage(adapterPath)
     return adapterPath
+  }
+
+  private async probeCodexNativeVersion(
+    nativePath: string | undefined
+  ): Promise<string | undefined> {
+    if (!nativePath) return undefined
+
+    const output = await this.codexDetectDeps.getCodexVersion(nativePath).catch(() => undefined)
+    return output ? parseCodexVersion(output) : undefined
   }
 
   // Writes a framework's generated config files (e.g. opencode.json) to disk ahead of spawn.

@@ -169,6 +169,40 @@ const CODEX_ACP_SKILL_INPUT_REPLACEMENT = [
   '      }'
 ].join('\n')
 
+const CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE = [
+  'function startCodexConnection(codexPath, env) {',
+  '  const spawnEnv = env ?? process.env;',
+  '  let codex;',
+  '  if (codexPath) {',
+  '    codex = process.platform === "win32" ? spawn(`"${codexPath}" app-server`, { shell: true, env: spawnEnv }) : spawn(codexPath, ["app-server"], { env: spawnEnv });',
+  '  } else {',
+  '    const bundledCodexPath = createRequire(import.meta.url).resolve("@openai/codex/bin/codex.js");',
+  '    codex = spawn(process.execPath, [bundledCodexPath, "app-server"], { env: spawnEnv });',
+  '  }'
+].join('\n')
+
+const CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT = [
+  'function startCodexConnection(codexPath, env) {',
+  '  const spawnEnv = env ?? process.env;',
+  '  const startupConfigString = spawnEnv["CODEX_CONFIG"];',
+  '  const startupConfig = startupConfigString ? JSON.parse(startupConfigString) : void 0;',
+  '  const modelCatalogPath = typeof startupConfig?.model_catalog_json === "string"',
+  '    ? startupConfig.model_catalog_json',
+  '    : void 0;',
+  '  const appServerArgs = modelCatalogPath',
+  '    ? ["app-server", "-c", `model_catalog_json=${JSON.stringify(modelCatalogPath)}`]',
+  '    : ["app-server"];',
+  '  let codex;',
+  '  if (codexPath) {',
+  '    codex = process.platform === "win32"',
+  '      ? spawn(`"${codexPath}" app-server`, appServerArgs.slice(1), { shell: true, env: spawnEnv })',
+  '      : spawn(codexPath, appServerArgs, { env: spawnEnv });',
+  '  } else {',
+  '    const bundledCodexPath = createRequire(import.meta.url).resolve("@openai/codex/bin/codex.js");',
+  '    codex = spawn(process.execPath, [bundledCodexPath, ...appServerArgs], { env: spawnEnv });',
+  '  }'
+].join('\n')
+
 const CODEX_ADAPTER_REPLACE_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const
 
 const renameWithTransientLockRetry = async (source: string, destination: string): Promise<void> => {
@@ -223,9 +257,31 @@ export const patchCodexAcpSkillInputSource = (source: string): string => {
   throw new Error('Pinned Codex ACP Skill-input patch no longer matches the adapter bundle')
 }
 
+// Codex builds its ModelsManager once when app-server starts. The adapter otherwise forwards
+// CODEX_CONFIG only in thread/start, which is too late for a generated model catalog to participate
+// in model lookup. Project just that immutable catalog path into this native process's CLI override;
+// the remaining request-scoped config continues through codex-acp unchanged.
+export const patchCodexAcpModelCatalogStartupSource = (source: string): string => {
+  if (source.includes(CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT)) return source
+
+  const matches = source.split(CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE).length - 1
+  if (matches === 1) {
+    return source.replace(
+      CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE,
+      CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT
+    )
+  }
+
+  throw new Error(
+    'Pinned Codex ACP model-catalog startup patch no longer matches the adapter bundle'
+  )
+}
+
 export const ensureManagedCodexContextUsage = async (adapterPath: string): Promise<void> => {
   const source = await readFile(adapterPath, 'utf8')
-  const patched = patchCodexAcpSkillInputSource(patchCodexAcpContextUsageSource(source))
+  const patched = patchCodexAcpModelCatalogStartupSource(
+    patchCodexAcpSkillInputSource(patchCodexAcpContextUsageSource(source))
+  )
 
   if (patched === source) return
 
