@@ -3,6 +3,7 @@ import {
   type ChildProcessWithoutNullStreams,
   type SpawnOptionsWithoutStdio
 } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import type { SessionModeState } from '@agentclientprotocol/sdk'
 
@@ -24,6 +25,8 @@ import type {
   SessionSetupContext
 } from './types'
 import { isCodexSubscriptionProvider } from '../../shared/settings'
+import { CODEX_VERSION } from '../settings/managed-codex'
+import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
 
 const CODEX_PROVIDER_ID = 'open-science'
 // Catalog model used only for Codex's local metadata; the Responses bridge rewrites it to the selected
@@ -37,6 +40,20 @@ const CODEX_PROVIDER_ID = 'open-science'
 // filters, so file edits route through shell rather than the dedicated patch tool.)
 export const CODEX_BRIDGE_MODEL = 'gpt-5.4'
 const CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95
+const CODEX_NATIVE_MODEL_CATALOG_FILENAME_PREFIX = 'model-catalog-'
+const CODEX_BUNDLED_MODEL_IDS_BY_VERSION = {
+  '0.144.6': [
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+    'gpt-5.5',
+    'gpt-5.4',
+    'gpt-5.4-mini',
+    'gpt-5.2',
+    'codex-auto-review'
+  ]
+} satisfies Record<typeof CODEX_VERSION, readonly string[]>
+const CODEX_BUNDLED_MODEL_IDS = new Set(CODEX_BUNDLED_MODEL_IDS_BY_VERSION[CODEX_VERSION])
 const CODEX_MODE_IDS = {
   ask: 'read-only',
   auto: 'agent',
@@ -150,6 +167,61 @@ const buildCodexConfig = (provider: {
     }
     // Tool-search configuration is intentionally left at Codex defaults. The Chat bridge exposes its
     // app-owned tools through explicit namespaced aliases and does not depend on deferred tool_search.
+  }
+}
+
+const buildCodexNativeModelCatalog = (provider: {
+  model?: string
+  contextWindow?: number
+  supportsImageInput?: boolean
+}): Record<string, unknown> | undefined => {
+  const model = provider.model?.trim()
+  if (!model || CODEX_BUNDLED_MODEL_IDS.has(model)) return undefined
+
+  const contextWindow =
+    provider.contextWindow && provider.contextWindow > 0 ? provider.contextWindow : 272_000
+
+  return {
+    models: [
+      {
+        slug: model,
+        display_name: model,
+        description: null,
+        default_reasoning_level: null,
+        supported_reasoning_levels: [],
+        shell_type: 'shell_command',
+        visibility: 'none',
+        supported_in_api: true,
+        priority: 99,
+        additional_speed_tiers: [],
+        service_tiers: [],
+        default_service_tier: null,
+        availability_nux: null,
+        upgrade: null,
+        base_instructions: codexNativeModelInstructions,
+        include_skills_usage_instructions: false,
+        supports_reasoning_summaries: false,
+        default_reasoning_summary: 'none',
+        support_verbosity: false,
+        default_verbosity: null,
+        apply_patch_tool_type: null,
+        web_search_tool_type: 'text',
+        truncation_policy: { mode: 'tokens', limit: 10_000 },
+        supports_parallel_tool_calls: false,
+        supports_image_detail_original: false,
+        context_window: contextWindow,
+        max_context_window: contextWindow,
+        comp_hash: null,
+        effective_context_window_percent: CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+        experimental_supported_tools: [],
+        input_modalities: provider.supportsImageInput ? ['text', 'image'] : ['text'],
+        supports_search_tool: false,
+        use_responses_lite: false,
+        auto_review_model_override: null,
+        tool_mode: null,
+        multi_agent_version: null
+      }
+    ]
   }
 }
 
@@ -285,21 +357,33 @@ export const createCodexFramework = ({
         : undefined
 
     const codexHome = codexStorageDir(ctx.storageRoot)
+    const modelCatalog = useBridge ? undefined : buildCodexNativeModelCatalog(provider)
+    const modelCatalogContent = modelCatalog
+      ? `${JSON.stringify(modelCatalog, null, 2)}\n`
+      : undefined
+    // Multiple Codex sessions share this app-owned home. A content-addressed filename keeps each
+    // process pinned to immutable metadata even when different native models start concurrently.
+    const modelCatalogPath = modelCatalogContent
+      ? join(
+          codexHome,
+          `${CODEX_NATIVE_MODEL_CATALOG_FILENAME_PREFIX}${createHash('sha256').update(modelCatalogContent).digest('hex')}.json`
+        )
+      : undefined
+    const codexConfig = {
+      ...buildCodexConfig({
+        ...provider,
+        model: codexModel,
+        contextWindow: provider.contextWindow,
+        baseUrl: responsesBaseUrl,
+        key: useBridge ? undefined : provider.key,
+        reasoningEffort: ctx.reasoningEffort
+      }),
+      ...(modelCatalogPath ? { model_catalog_json: modelCatalogPath } : {})
+    }
     return {
       env: {
         ...isolatedCodexHomeEnv(codexHome, platform),
-        CODEX_CONFIG: JSON.stringify(
-          buildCodexConfig({
-            ...provider,
-            model: codexModel,
-            // Bind ACP usage to the selected upstream model for both native Responses and the bridge;
-            // the latter deliberately uses a local catalog model only for tool metadata.
-            contextWindow: provider.contextWindow,
-            baseUrl: responsesBaseUrl,
-            key: useBridge ? undefined : provider.key,
-            reasoningEffort: ctx.reasoningEffort
-          })
-        ),
+        CODEX_CONFIG: JSON.stringify(codexConfig),
         MODEL_PROVIDER: CODEX_PROVIDER_ID,
         NO_BROWSER: '1'
       },
@@ -308,7 +392,16 @@ export const createCodexFramework = ({
           path: join(codexStorageDir(ctx.storageRoot), 'config.toml'),
           content: 'cli_auth_credentials_store = "ephemeral"\n',
           mode: 0o600
-        }
+        },
+        ...(modelCatalogPath && modelCatalogContent
+          ? [
+              {
+                path: modelCatalogPath,
+                content: modelCatalogContent,
+                mode: 0o600
+              }
+            ]
+          : [])
       ],
       ...(authentication ? { authentication } : {}),
       ...(useBridge

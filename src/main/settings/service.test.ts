@@ -2433,11 +2433,25 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.sessionModel).toBe('MiniMax-M3')
     // Codex posts native Responses to the vendor's own /v1 base with the vendor key.
     const codexConfig = JSON.parse(backend.env.CODEX_CONFIG ?? '{}')
+    expect(codexConfig.model_catalog_json).toMatch(
+      new RegExp(
+        `^${join(storageRoot, 'codex', 'model-catalog-').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[a-f0-9]{64}\\.json$`
+      )
+    )
     expect(codexConfig.model_providers['open-science']).toMatchObject({
       base_url: 'https://api.minimax.io/v1',
       wire_api: 'responses',
       requires_openai_auth: true
     })
+    const modelCatalog = JSON.parse(await readFile(codexConfig.model_catalog_json, 'utf8'))
+    expect(modelCatalog.models).toEqual([
+      expect.objectContaining({
+        slug: 'MiniMax-M3',
+        context_window: 1_000_000,
+        max_context_window: 1_000_000,
+        supported_in_api: true
+      })
+    ])
     expect(backend.authentication).toEqual({
       methodId: 'api-key',
       _meta: { 'api-key': { apiKey: 'mm-secret' } }

@@ -37,19 +37,23 @@ describe('codexFramework', () => {
       methodId: 'api-key',
       _meta: { 'api-key': { apiKey: 'sk-plaintext-secret' } }
     })
-    expect(config.configFiles).toEqual([
-      {
-        path: join('/data', 'codex', 'config.toml'),
-        content: 'cli_auth_credentials_store = "ephemeral"\n',
-        mode: 0o600
-      }
-    ])
+    expect(config.configFiles?.[0]).toEqual({
+      path: join('/data', 'codex', 'config.toml'),
+      content: 'cli_auth_credentials_store = "ephemeral"\n',
+      mode: 0o600
+    })
+    const modelCatalogFile = config.configFiles?.[1]
+    expect(modelCatalogFile).toMatchObject({
+      path: expect.stringMatching(/[/\\]codex[/\\]model-catalog-[a-f0-9]{64}\.json$/),
+      mode: 0o600
+    })
 
     const serialized = config.env?.CODEX_CONFIG ?? ''
     expect(serialized).not.toContain('sk-plaintext-secret')
     expect(JSON.parse(serialized)).toMatchObject({
       model: 'gpt-coding',
       model_provider: 'open-science',
+      model_catalog_json: modelCatalogFile?.path,
       model_providers: {
         'open-science': {
           base_url: 'https://gateway.example/v1',
@@ -58,6 +62,29 @@ describe('codexFramework', () => {
         }
       }
     })
+  })
+
+  it('keeps Codex bundled model metadata when a native Responses provider selects a known model', () => {
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://gateway.example/v1',
+        model: 'gpt-5.4',
+        key: 'sk-plaintext-secret'
+      },
+      { storageRoot: '/data', executablePath: '/runtime/codex-acp' }
+    )
+
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).not.toHaveProperty('model_catalog_json')
+    expect(config.configFiles).toEqual([
+      {
+        path: join('/data', 'codex', 'config.toml'),
+        content: 'cli_auth_credentials_store = "ephemeral"\n',
+        mode: 0o600
+      }
+    ])
   })
 
   it('routes Chat Completions providers through the main-process Responses bridge', () => {
@@ -127,7 +154,8 @@ describe('codexFramework', () => {
       }
     )
 
-    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
+    const codexConfig = JSON.parse(config.env?.CODEX_CONFIG ?? '')
+    expect(codexConfig).toMatchObject({
       model: 'MiniMax-M3',
       model_reasoning_effort: 'none',
       model_context_window: 1_000_000,
@@ -148,6 +176,62 @@ describe('codexFramework', () => {
     expect(config.providerConfiguration).toBeUndefined()
     expect(config.sessionModel).toBeUndefined()
     expect(config.env?.CODEX_CONFIG).not.toContain('127.0.0.1:43123')
+
+    const modelCatalogFile = config.configFiles?.find(
+      (file) => file.path === codexConfig.model_catalog_json
+    )
+    expect(modelCatalogFile).toMatchObject({
+      path: expect.stringMatching(/[/\\]codex[/\\]model-catalog-[a-f0-9]{64}\.json$/),
+      mode: 0o600
+    })
+    expect(codexConfig.model_catalog_json).toBe(modelCatalogFile?.path)
+    expect(JSON.parse(modelCatalogFile?.content ?? '')).toMatchObject({
+      models: [
+        {
+          slug: 'MiniMax-M3',
+          display_name: 'MiniMax-M3',
+          shell_type: 'shell_command',
+          visibility: 'none',
+          supported_in_api: true,
+          base_instructions: expect.stringContaining('You are a coding agent'),
+          apply_patch_tool_type: null,
+          supports_parallel_tool_calls: false,
+          supports_image_detail_original: false,
+          context_window: 1_000_000,
+          max_context_window: 1_000_000,
+          input_modalities: ['text'],
+          supports_search_tool: false,
+          use_responses_lite: false
+        }
+      ]
+    })
+    expect(modelCatalogFile?.content).not.toContain('used_fallback_model_metadata')
+  })
+
+  it('keeps concurrent native model metadata in distinct immutable catalogs', () => {
+    const framework = createCodexFramework()
+    const prepare = (model: string): ReturnType<typeof framework.prepareModelConfig> =>
+      framework.prepareModelConfig(
+        {
+          type: 'custom',
+          apiEndpoints: ['responses'],
+          baseUrl: 'https://gateway.example/v1',
+          model,
+          key: 'secret'
+        },
+        { storageRoot: '/data', executablePath: '/runtime/codex-acp' }
+      )
+
+    const first = prepare('vendor-model-a')
+    const second = prepare('vendor-model-b')
+    const firstCatalog = first.configFiles?.[1]
+    const secondCatalog = second.configFiles?.[1]
+
+    expect(firstCatalog?.path).not.toBe(secondCatalog?.path)
+    expect(JSON.parse(firstCatalog?.content ?? '').models[0].slug).toBe('vendor-model-a')
+    expect(JSON.parse(secondCatalog?.content ?? '').models[0].slug).toBe('vendor-model-b')
+    expect(JSON.parse(first.env?.CODEX_CONFIG ?? '').model_catalog_json).toBe(firstCatalog?.path)
+    expect(JSON.parse(second.env?.CODEX_CONFIG ?? '').model_catalog_json).toBe(secondCatalog?.path)
   })
 
   it('maps the legacy shared subscription to the app-owned subscription home', () => {
