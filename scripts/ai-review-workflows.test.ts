@@ -872,8 +872,7 @@ printf '%s\n' \\
       'cancel-in-progress': "${{ (vars.CODEX_REVIEW_AUTH_MODE || 'api-key') != 'subscription' }}"
     })
     expect(codexWorkflow.jobs.review.concurrency).toEqual({
-      group:
-        "${{ inputs.auth_mode == 'subscription' && format('codex-subscription-review-{0}', github.repository) || format('codex-{0}-review-{1}', inputs.scope, inputs.pull_request_number) }}",
+      group: "${{ format('codex-{0}-review-{1}', inputs.scope, inputs.pull_request_number) }}",
       'cancel-in-progress': "${{ inputs.auth_mode != 'subscription' }}"
     })
     expect(mainWorkflow.jobs.codex_correctness_review.needs).toEqual([

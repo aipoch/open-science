@@ -86,8 +86,8 @@ secrets configured if those review paths should remain active.
 GitHub-hosted runners are ephemeral. Codex may refresh `auth.json` during a job, but the updated file
 is discarded with that runner and is not written back to the GitHub secret. If authentication starts
 returning `401` or can no longer refresh, run `codex login` again on the trusted machine and repeat
-the `gh secret set CODEX_AUTH_JSON` command. Subscription jobs are serialized to avoid concurrent
-use of the same credential copy.
+the `gh secret set CODEX_AUTH_JSON` command. Each reviewer gets an independent temporary credential
+copy, so correctness and architecture reviews can run in parallel without a repository-wide lock.
 
 Never commit, log, upload as an artifact, or cache `auth.json`. For fully automatic refresh, use the
 official trusted private-runner or external secret-manager pattern instead.
