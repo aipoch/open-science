@@ -4012,6 +4012,17 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
     ])
   })
 
+  it('rejects the scan when every configured source fails', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-unreadable-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-list-agent-shared-unreadable-'))
+    await writeFile(join(userClaudeDir, 'skills'), 'not a directory')
+    await writeFile(join(userAgentsDir, 'skills'), 'not a directory')
+    const service = createService(undefined, { userClaudeDir, userAgentsDir })
+    await repository.setAgentFramework('claude-code')
+
+    await expect(service.listAgentHomeSkills()).rejects.toMatchObject({ code: 'ENOTDIR' })
+  })
+
   it('scans shared and Codex homes when the active framework is codex', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
     const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
