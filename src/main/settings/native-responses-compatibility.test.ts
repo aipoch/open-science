@@ -200,4 +200,78 @@ describe('native Responses compatibility', () => {
       tools: [expect.objectContaining({ type: 'function', name: 'select_skills' })]
     })
   })
+
+  it('replaces reviewer-session tools with only the scope-bounded reviewer surface', async () => {
+    const upstreamRequests: Record<string, unknown>[] = []
+    const fetchImpl = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return new Response(JSON.stringify({ id: 'review-response', output: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+      }
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      {
+        baseUrl: 'https://api.minimaxi.com/v1',
+        model: 'MiniMax-M3',
+        reviewerScope: {
+          namespacedTools: [
+            {
+              namespace: 'mcp__open_science_reviewer',
+              name: 'submit_findings',
+              description: 'Submit review findings.',
+              parameters: { type: 'object' }
+            }
+          ]
+        }
+      },
+      fetchImpl
+    )
+    const connection = await proxy.start()
+    try {
+      expect(proxy.unregisterReviewerSession('never-observed')).toBe(false)
+      proxy.registerReviewerSession('reviewer-session')
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'MiniMax-M3',
+          prompt_cache_key: 'reviewer-session',
+          stream: false,
+          tools: [
+            { type: 'function', name: 'shell_command', parameters: { type: 'object' } },
+            {
+              type: 'namespace',
+              name: 'mcp__open_science_notebook',
+              tools: [{ type: 'function', name: 'repl_execute', parameters: { type: 'object' } }]
+            }
+          ]
+        })
+      })
+      expect(response.ok).toBe(true)
+      expect(upstreamRequests).toHaveLength(1)
+      expect(upstreamRequests[0]).toMatchObject({
+        prompt_cache_key: 'reviewer-session',
+        tool_choice: 'auto',
+        tools: [
+          {
+            type: 'function',
+            name: 'mcp__open_science_reviewer__submit_findings',
+            description: 'Submit review findings.',
+            parameters: { type: 'object' }
+          }
+        ]
+      })
+      expect(JSON.stringify(upstreamRequests[0])).not.toContain('shell_command')
+      expect(JSON.stringify(upstreamRequests[0])).not.toContain('repl_execute')
+      expect(proxy.unregisterReviewerSession('reviewer-session')).toBe(true)
+    } finally {
+      await proxy.close()
+    }
+  })
 })

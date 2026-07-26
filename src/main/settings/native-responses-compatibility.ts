@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createLogger } from '../logger'
 import type {
   ResponsesBridgeConnection,
+  ResponsesBridgeNamespacedTool,
   ResponsesBridgeSkillCandidate,
   ResponsesBridgeSkillInput
 } from './responses-bridge'
@@ -17,6 +18,9 @@ type NativeResponsesCompatibilityTarget = {
   baseUrl: string
   key?: string
   model?: string
+  reviewerScope?: {
+    namespacedTools: ResponsesBridgeNamespacedTool[]
+  }
 }
 
 type NativeResponsesCompatibilityOptions = {
@@ -276,9 +280,31 @@ const boundedSkillCatalog = (
   return bounded
 }
 
+const namespaceToolDeclarations = (tools: ResponsesBridgeNamespacedTool[]): JsonObject[] => {
+  const byNamespace = new Map<string, JsonObject[]>()
+  for (const tool of tools) {
+    const children = byNamespace.get(tool.namespace) ?? []
+    children.push({
+      type: 'function',
+      name: tool.name,
+      ...(tool.description ? { description: tool.description } : {}),
+      parameters: tool.parameters,
+      ...(tool.strict === undefined ? {} : { strict: tool.strict })
+    })
+    byNamespace.set(tool.namespace, children)
+  }
+  return Array.from(byNamespace, ([name, children]) => ({
+    type: 'namespace',
+    name,
+    tools: children
+  }))
+}
+
 export class NativeResponsesCompatibilityProxy {
   private server: Server | undefined
   private connection: ResponsesBridgeConnection | undefined
+  private readonly reviewerSessionKeys = new Set<string>()
+  private readonly scopedReviewerSessionKeys = new Set<string>()
 
   constructor(
     private readonly target: NativeResponsesCompatibilityTarget,
@@ -432,10 +458,22 @@ export class NativeResponsesCompatibilityProxy {
     }
   }
 
+  registerReviewerSession(promptCacheKey: string): void {
+    this.reviewerSessionKeys.add(promptCacheKey)
+    this.scopedReviewerSessionKeys.delete(promptCacheKey)
+  }
+
+  unregisterReviewerSession(promptCacheKey: string): boolean {
+    this.reviewerSessionKeys.delete(promptCacheKey)
+    return this.scopedReviewerSessionKeys.delete(promptCacheKey)
+  }
+
   async close(): Promise<void> {
     const server = this.server
     this.server = undefined
     this.connection = undefined
+    this.reviewerSessionKeys.clear()
+    this.scopedReviewerSessionKeys.clear()
     if (!server) return
     const closing = new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
@@ -468,11 +506,27 @@ export class NativeResponsesCompatibilityProxy {
 
     try {
       const body = await readBody(request)
-      const { request: upstreamRequest, aliases } = flattenNativeResponsesRequest(body)
+      const promptCacheKey =
+        typeof body.prompt_cache_key === 'string' ? body.prompt_cache_key : undefined
+      const reviewerScoped =
+        promptCacheKey !== undefined && this.reviewerSessionKeys.has(promptCacheKey)
+      if (reviewerScoped) this.scopedReviewerSessionKeys.add(promptCacheKey)
+      // Codex currently advertises built-in tools even when reviewer session metadata disables them.
+      // Replace the full declaration set at this boundary so reviewer turns can reach only their
+      // scope-bounded reviewer MCP, matching the Chat bridge's fail-closed contract.
+      const scopedBody = reviewerScoped
+        ? {
+            ...body,
+            tools: namespaceToolDeclarations(this.target.reviewerScope?.namespacedTools ?? []),
+            tool_choice: 'auto'
+          }
+        : body
+      const { request: upstreamRequest, aliases } = flattenNativeResponsesRequest(scopedBody)
       log.info('native Responses compatibility request', {
         model: body.model,
         namespaceToolCount: aliases.size,
-        stream: body.stream === true
+        stream: body.stream === true,
+        reviewerScoped
       })
       const upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
         method: 'POST',

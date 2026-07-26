@@ -3682,7 +3682,8 @@ class SettingsService {
     const proxy = new NativeResponsesCompatibilityProxy({
       baseUrl: targetBaseUrl,
       key: provider.key,
-      model: provider.model
+      model: provider.model,
+      reviewerScope: { namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS }
     })
     const entry = { proxy, connection: proxy.start() }
     this.nativeResponsesCompatibilityProxies.set(proxyId, entry)
@@ -3705,8 +3706,10 @@ class SettingsService {
       lease: {
         selectSkills: (text, catalog, signal) =>
           leasedEntry.proxy.selectSkills(text, catalog, signal),
-        registerReviewerSession: () => undefined,
-        unregisterReviewerSession: () => false,
+        registerReviewerSession: (promptCacheKey) =>
+          leasedEntry.proxy.registerReviewerSession(promptCacheKey),
+        unregisterReviewerSession: (promptCacheKey) =>
+          leasedEntry.proxy.unregisterReviewerSession(promptCacheKey),
         release: async () => {
           if (released) return
           released = true
