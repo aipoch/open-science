@@ -568,6 +568,35 @@ describe('UserSkillRepository', () => {
     ])
   })
 
+  it('omits oversized frontmatter fields from a still-importable bundle preview', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const oversizedDescription = 'x'.repeat(SKILL_IMPORT_LIMITS.maxPreviewContentBytes)
+    const zip = buildZip([
+      {
+        path: 'large-frontmatter/SKILL.md',
+        content: Buffer.from(
+          `---\nname: Large frontmatter\ndescription: ${oversizedDescription}\nauthor: Ada\n---\n# Body`
+        )
+      }
+    ])
+
+    const { previews, skipped } = await repo.previewZip(zip)
+
+    expect(previews).toEqual([
+      expect.objectContaining({
+        name: 'Large frontmatter',
+        description: '',
+        metadata: {},
+        body: '',
+        previewError: expect.stringMatching(/preview content.*limit/i)
+      })
+    ])
+    expect(skipped).toEqual([])
+    await expect(
+      repo.importFromZipBatch(zip, [{ subPath: 'large-frontmatter' }])
+    ).resolves.toMatchObject([{ outcome: { status: 'imported' } }])
+  })
+
   it('skips a preview whose SKILL.md has no name (instead of failing the bundle)', async () => {
     const repo = new UserSkillRepository(await makeStorage())
     const zip = buildZip([

@@ -655,8 +655,8 @@ class UserSkillRepository {
           if (!previewContentUnavailable) previewContentBytes += skillMd.content.length
           previews.push({
             name,
-            description: fields.description ?? '',
-            metadata,
+            description: previewContentUnavailable ? '' : (fields.description ?? ''),
+            metadata: previewContentUnavailable ? {} : metadata,
             body: previewContentUnavailable ? '' : body,
             previewError: previewContentUnavailable
               ? `SKILL.md preview content exceeds the ${mb(SKILL_IMPORT_LIMITS.maxPreviewContentBytes)} cumulative limit. You can still import it.`
