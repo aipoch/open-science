@@ -2,15 +2,8 @@ import { useState } from 'react'
 
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
-import {
-  resolveReasoningEffortControl,
-  resolveReasoningEffortProfile
-} from '../../../../shared/reasoning-effort'
-import { resolveVendorModelReasoningEffort } from '../../../../shared/provider-registry'
-import {
-  isClaudeSubscriptionProvider,
-  isCodexSubscriptionProvider
-} from '../../../../shared/settings'
+import { resolveProviderReasoningEffortProfile } from '../../../../shared/provider-reasoning-effort'
+import { resolveReasoningEffortControl } from '../../../../shared/reasoning-effort'
 
 // Segmented effort selector: the highlight block slides to the picked level. Fixed-width segments
 // keep the thumb math exact. Mirrored on ToolPermissionControl's radiogroup pattern. The new level
@@ -23,16 +16,7 @@ const ReasoningEffortSelect = (): React.JSX.Element => {
   const activeModel = useSettingsStore((state) => state.activeModel)
   const providers = useSettingsStore((state) => state.providers)
   const activeProvider = providers.find((provider) => provider.id === activeProviderId)
-  const profile =
-    activeProvider?.type === 'official' && activeProvider.vendorId
-      ? resolveVendorModelReasoningEffort(activeProvider.vendorId, activeModel)
-      : activeProvider && isCodexSubscriptionProvider(activeProvider.type)
-        ? activeModel
-          ? resolveVendorModelReasoningEffort('openai', activeModel)
-          : { supported: false as const }
-        : activeProvider && isClaudeSubscriptionProvider(activeProvider.type)
-          ? resolveVendorModelReasoningEffort('anthropic', activeModel)
-          : resolveReasoningEffortProfile(activeProvider?.reasoningEffortPreset)
+  const profile = resolveProviderReasoningEffortProfile(activeProvider, activeModel)
   const control = resolveReasoningEffortControl(reasoningEffort, profile)
   const options = [
     { value: undefined, label: 'Default', intent: 'default' as const },

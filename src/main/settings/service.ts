@@ -99,17 +99,15 @@ import {
   isVendorModelMultimodal,
   resolveCustomModelContextWindow,
   resolveModelContextWindow,
-  resolveVendorModelReasoningEffort,
   resolveVendorApiEndpoints,
   resolveVendorBaseUrl,
   resolveVendorModelsUrl,
   resolveVendorOpenAiBaseUrl
 } from '../../shared/provider-registry'
+import { resolveProviderReasoningEffortProfile } from '../../shared/provider-reasoning-effort'
 import {
-  resolveReasoningEffortProfile,
   resolveReasoningEffortValue,
   type ModelReasoningEffort,
-  type ReasoningEffortProfile,
   type ResolvedReasoningEffort
 } from '../../shared/reasoning-effort'
 import { resolveStorageRoot } from '../storage-root'
@@ -3751,38 +3749,12 @@ class SettingsService {
       : undefined
     if (!provider) return DEFAULT_REASONING_EFFORT
 
-    const profile = this.resolveProviderReasoningEffortProfile(
+    const profile = resolveProviderReasoningEffortProfile(
       provider,
       this.resolveActiveModel(provider, settings.activeModel)
     )
 
     return resolveReasoningEffortValue(intent, profile)
-  }
-
-  private resolveProviderReasoningEffortProfile(
-    provider: StoredProvider,
-    model: string | undefined
-  ): ReasoningEffortProfile {
-    if (provider.type === 'official' && provider.vendorId) {
-      return resolveVendorModelReasoningEffort(provider.vendorId, model ?? '')
-    }
-
-    if (isCodexSubscriptionProvider(provider.type)) {
-      // An unpinned Codex subscription delegates model selection to the account/runtime. Until the
-      // runtime reports that model, its effort vocabulary is unknown, so do not guess from the
-      // bundled OpenAI default and accidentally send a mismatched override.
-      return model ? resolveVendorModelReasoningEffort('openai', model) : { supported: false }
-    }
-
-    if (isClaudeSubscriptionProvider(provider.type)) {
-      return resolveVendorModelReasoningEffort('anthropic', model ?? '')
-    }
-
-    if (provider.type === 'custom') {
-      return resolveReasoningEffortProfile(provider.reasoningEffortPreset)
-    }
-
-    return { supported: false }
   }
 
   // Decrypts a stored provider into the spawn/validation shape (plaintext key held only transiently).
