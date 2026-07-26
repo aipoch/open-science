@@ -49,7 +49,7 @@
     "@prisma/client": "^6.19.3",
     "@radix-ui/react-focus-scope": "^1.1.11",
     "electron-updater": "^6.3.9",
-    "js-yaml": "^4.1.0",
+    "js-yaml": "^5.2.2",
     "openchemlib": "^9.24.0",
     "pdfjs-dist": "5.4.624",
     "tar": "^7.5.20",
