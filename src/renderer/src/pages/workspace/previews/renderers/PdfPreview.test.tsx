@@ -180,6 +180,49 @@ describe('PdfPreviewContent', () => {
     clientWidthSpy.mockRestore()
   })
 
+  it('left-aligns pages once zoomed past fit so the left edge stays reachable', async () => {
+    const clientWidthSpy = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockReturnValue(400)
+    vi.stubGlobal('devicePixelRatio', 1)
+    getPage.mockResolvedValue({
+      getViewport: vi.fn(({ scale }: { scale: number }) => ({
+        width: 400 * scale,
+        height: 560 * scale
+      })),
+      render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+      cleanup: vi.fn()
+    })
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/align.pdf" name="align.pdf" source="artifact" />
+      )
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBe(400))
+
+    // At fit width the pages column is centered.
+    const column = container.querySelector('[data-page-number]')?.parentElement
+    expect(column?.className).toContain('items-center')
+    expect(column?.className).not.toContain('items-start')
+
+    // Zoomed wider than the pane, it must left-align so scrollLeft=0 reaches the true left edge.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.click()
+      await Promise.resolve()
+    })
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-page-number]')?.parentElement?.className).toContain(
+        'items-start'
+      )
+    )
+    expect(container.querySelector('[data-page-number]')?.parentElement?.className).not.toContain(
+      'items-center'
+    )
+
+    clientWidthSpy.mockRestore()
+  })
+
   it('zooms on Ctrl/Cmd+wheel and ignores a plain wheel scroll', async () => {
     const clientWidthSpy = vi
       .spyOn(HTMLElement.prototype, 'clientWidth', 'get')

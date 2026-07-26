@@ -223,8 +223,9 @@ const PdfPageCanvas = ({
     <div
       ref={setNearViewportRef}
       className={cn(
-        'relative mx-auto bg-bg-000 shadow-sm',
-        // Fall back to a responsive width until the parent has measured the fit width.
+        'relative bg-bg-000 shadow-sm',
+        // Alignment is owned by the parent column; fall back to a responsive width until it has
+        // measured the fit width.
         pageWidth > 0 ? 'max-w-none' : 'w-full max-w-3xl'
       )}
       style={pageWidth > 0 ? { aspectRatio, width: pageWidth } : { aspectRatio }}
@@ -411,7 +412,14 @@ export const PdfPreviewContent = ({
           </div>
         ) : null}
         {document ? (
-          <div className="flex min-w-full flex-col items-center gap-3">
+          // Center pages while they fit, but left-align once a zoomed page overflows: a centered
+          // overflow puts the left margin before scrollLeft=0, making it unreachable.
+          <div
+            className={cn(
+              'flex min-w-full flex-col gap-3',
+              pageWidth > 0 && pageWidth > fitWidth ? 'items-start' : 'items-center'
+            )}
+          >
             {Array.from({ length: pageCount }, (_, index) => (
               // Each page mounts its canvas only inside the viewport overscan window.
               <PdfPageCanvas
