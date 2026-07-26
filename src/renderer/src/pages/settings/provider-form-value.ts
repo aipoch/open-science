@@ -10,6 +10,7 @@ import {
   getOfficialVendor,
   type OfficialVendorId
 } from '../../../../shared/provider-registry'
+import type { ReasoningEffortPresetSetting } from '../../../../shared/reasoning-effort'
 
 // Editable value for the provider form, kept in its own module so the component file only exports a
 // component (satisfying react-refresh) while the wizard and settings page share this shape/factory.
@@ -25,6 +26,8 @@ export type ProviderFormValue = {
   // the registry); it is stored as the single-entry apiEndpoints array.
   apiEndpoint: ChatApiEndpoint
   supportsImageInput: boolean
+  // Optional at rest for backwards compatibility; the form always materializes the five-level default.
+  reasoningEffortPreset: ReasoningEffortPresetSetting
   // Set when type is 'official': the chosen vendor and (for multi-region vendors) the endpoint. Base
   // URL and the model catalog then come from the registry rather than these free-text fields.
   vendorId?: OfficialVendorId
@@ -44,6 +47,7 @@ export const createEmptyProviderFormValue = (
   contextWindow: '',
   apiEndpoint: 'anthropic',
   supportsImageInput: false,
+  reasoningEffortPreset: 'standard-5',
   key: '',
   ...overrides
 })

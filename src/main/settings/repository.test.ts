@@ -228,7 +228,7 @@ describe('settings repository', () => {
     expect(reloaded.reasoningEffort).toBe('high')
   })
 
-  it.each(['default', 'low', 'medium', 'high', 'max'] as const)(
+  it.each(['default', 'low', 'medium', 'high', 'xhigh', 'max'] as const)(
     'keeps the %s reasoning effort on load',
     (effort) => {
       expect(sanitizeSettings({ reasoningEffort: effort }).reasoningEffort).toBe(effort)
@@ -407,6 +407,23 @@ describe('settings repository', () => {
         sanitizeSettings({ providers: [{ ...base, contextWindow }] }).providers[0].contextWindow
       ).toBeUndefined()
     }
+  })
+
+  it('keeps only a known custom-model reasoning effort preset', () => {
+    const base = { id: 'p1', type: 'custom', name: 'Gateway' }
+
+    expect(
+      sanitizeSettings({ providers: [{ ...base, reasoningEffortPreset: 'none-high' }] })
+        .providers[0].reasoningEffortPreset
+    ).toBe('none-high')
+    expect(
+      sanitizeSettings({ providers: [{ ...base, reasoningEffortPreset: 'unsupported' }] })
+        .providers[0].reasoningEffortPreset
+    ).toBe('unsupported')
+    expect(
+      sanitizeSettings({ providers: [{ ...base, reasoningEffortPreset: 'dynamic' }] }).providers[0]
+        .reasoningEffortPreset
+    ).toBeUndefined()
   })
 
   it('round-trips a recorded validation failure across a reload', async () => {

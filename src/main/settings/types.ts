@@ -10,6 +10,7 @@ import type {
 } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
+import type { ReasoningEffortPresetSetting } from '../../shared/reasoning-effort'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
@@ -35,6 +36,8 @@ export type StoredProvider = {
   // Optional custom-model override. Absence is meaningful and resolves to the shared 200k default.
   contextWindow?: number
   supportsImageInput?: boolean
+  // Custom-model effort capability. Absence resolves to the standard five-level preset.
+  reasoningEffortPreset?: ReasoningEffortPresetSetting
   // Set for official-vendor providers only.
   vendorId?: OfficialVendorId
   region?: string

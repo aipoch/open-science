@@ -13,7 +13,7 @@ import type {
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
-import type { ReasoningEffort } from '../../shared/settings'
+import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import { AcpRuntime, type AcpRuntimeCallbacks } from './runtime'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import { ConversationPermissionGrantStore } from './permission-broker'
@@ -250,20 +250,11 @@ class AcpRuntimeCoordinator {
     return this.getActiveRuntime().requestSkillsReload()
   }
 
-  async applyReasoningEffortChange(effort: ReasoningEffort): Promise<boolean> {
-    const active = this.getActiveRuntime()
-    const activeResult = active.applyReasoningEffortChange(effort)
-    const otherResults = Array.from(this.runtimes)
-      .filter((runtime) => runtime !== active)
-      .map((runtime) => runtime.applyReasoningEffortChange(effort))
-
-    // Effort is a non-disruptive live session option, so every still-running generation receives the
-    // global preference. Only the active result controls reconnect fallback: an old generation that
-    // cannot apply effort or rejects must not force the selected generation to respawn unnecessarily.
-    const results = await Promise.allSettled([activeResult, ...otherResults])
-    const activeOutcome = results[0]
-    if (activeOutcome.status === 'rejected') throw activeOutcome.reason
-    return activeOutcome.value
+  async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
+    // The settings layer resolved this value against the currently selected model. Retiring
+    // generations stay pinned to their own provider/model and therefore must not receive a value
+    // resolved for a different model profile.
+    return this.getActiveRuntime().applyReasoningEffortChange(effort)
   }
 
   writeArtifactForCurrentRun(

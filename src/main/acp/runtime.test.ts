@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime'
 import type { AcpPermissionRequest, AcpRuntimeEvent } from '../../shared/acp'
-import type { ReasoningEffort } from '../../shared/settings'
+import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import { terminateProcessTree } from '../process-tree'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { SkillRegistry } from '../skills/registry'
@@ -2229,9 +2229,7 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.newSessions[0]._meta).toBeUndefined()
     expect(fakeAgent.prompts[0].text).toContain('hello opencode')
     expect(fakeAgent.prompts[0].text).toContain('write_artifact_file')
-    expect(fakeAgent.prompts[0].text).not.toContain(
-      '<open_science_skill_privacy_instructions>'
-    )
+    expect(fakeAgent.prompts[0].text).not.toContain('<open_science_skill_privacy_instructions>')
   })
 
   it('gives bridge-backed Codex the artifact server through its explicit function alias', async () => {
@@ -2333,9 +2331,7 @@ describe('ACP runtime session management', () => {
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Search PubMed' })
 
     expect(fakeAgent.prompts[0].text).toContain('Search PubMed')
-    expect(fakeAgent.prompts[0].text).not.toContain(
-      '<open_science_skill_privacy_instructions>'
-    )
+    expect(fakeAgent.prompts[0].text).not.toContain('<open_science_skill_privacy_instructions>')
   })
 
   it('delivers the large-data-file guidance to Claude session metadata on create and resume', async () => {
@@ -7394,9 +7390,7 @@ describe('ACP runtime skill force-load + nudge', () => {
       }
     })
     const skillPath = '/data/codex/skills/os-mcp-pubmed/SKILL.md'
-    const catalog = [
-      { name: 'mcp-pubmed', description: 'Search PubMed.', path: skillPath }
-    ]
+    const catalog = [{ name: 'mcp-pubmed', description: 'Search PubMed.', path: skillPath }]
     const hooks = createSkillsHooks({ needForceLoad: [], catalog })
     const selectSkills = vi.fn(async () => [{ name: 'mcp-pubmed', path: skillPath }])
     const runtime = new AcpRuntime({
@@ -8081,7 +8075,7 @@ describe('ACP runtime — session effort', () => {
 
   const createEffortRuntime = (
     process: FakeAgentProcess,
-    sessionEffort: ReasoningEffort | undefined,
+    sessionEffort: ModelReasoningEffort | undefined,
     sessionModel?: string
   ): AcpRuntime =>
     new AcpRuntime({
@@ -8123,7 +8117,7 @@ describe('ACP runtime — session effort', () => {
     expect(fakeAgent.configChanges).toEqual([])
   })
 
-  it('clamps the desired level to the closest advertised value', async () => {
+  it('does not reinterpret an unadvertised model-resolved effort', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['s-effort'], {
       configOptions: [thoughtLevelOption(['low', 'medium'])]
@@ -8132,10 +8126,8 @@ describe('ACP runtime — session effort', () => {
 
     await runtime.createSession({ cwd: '/workspace' })
 
-    // 'max' is not advertised; the model's top level takes its place instead of a no-op.
-    expect(fakeAgent.configChanges).toEqual([
-      { sessionId: 's-effort', configId: 'effort', value: 'medium' }
-    ])
+    // The Agent layer is only a transport. It must not replace max with medium.
+    expect(fakeAgent.configChanges).toEqual([])
   })
 
   it('resolves effort against the option set reported after a model switch', async () => {
@@ -8160,11 +8152,9 @@ describe('ACP runtime — session effort', () => {
 
     await runtime.createSession({ cwd: '/workspace' })
 
-    // Clamping against the pre-switch set would apply 'high' — invalid for model-b. The post-switch
-    // set yields 'medium' instead.
+    // Neither the stale nor the post-switch option set contains the model-resolved max value.
     expect(fakeAgent.configChanges).toEqual([
-      { sessionId: 's-effort', configId: 'model', value: 'model-b' },
-      { sessionId: 's-effort', configId: 'effort', value: 'medium' }
+      { sessionId: 's-effort', configId: 'model', value: 'model-b' }
     ])
   })
 
@@ -8199,9 +8189,9 @@ describe('ACP runtime — session effort', () => {
     await runtime.createSession({ cwd: '/workspace' })
     expect(fakeAgent.configChanges).toEqual([])
 
-    const applied = await runtime.applyReasoningEffortChange('max')
+    const applied = await runtime.applyReasoningEffortChange('high')
 
-    // The open session gets the closest advertised level over ACP, still on the original process.
+    // The open session gets the exact model-resolved level over ACP, still on the original process.
     expect(applied).toBe(true)
     expect(spawn).toHaveBeenCalledTimes(1)
     expect(fakeAgent.configChanges).toEqual([
@@ -8211,6 +8201,37 @@ describe('ACP runtime — session effort', () => {
     // Sessions created later in the same process inherit the new level.
     await runtime.createSession({ cwd: '/workspace' })
     expect(fakeAgent.configChanges[1]).toMatchObject({ configId: 'effort', value: 'high' })
+  })
+
+  it('updates only the runtime-owned Responses bridge with a live effort change', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s-bridge-effort'], {
+      configOptions: [thoughtLevelOption(['default', 'high'])]
+    })
+    const setReasoningEffort = vi.fn()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/claude',
+        env: {},
+        responsesBridgeLease: {
+          selectSkills: vi.fn(async () => []),
+          registerReviewerSession: vi.fn(),
+          unregisterReviewerSession: vi.fn(() => false),
+          setReasoningEffort,
+          release: vi.fn(async () => undefined)
+        }
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    await runtime.applyReasoningEffortChange('high')
+    await runtime.applyReasoningEffortChange('default')
+
+    expect(setReasoningEffort).toHaveBeenNthCalledWith(1, 'high')
+    expect(setReasoningEffort).toHaveBeenNthCalledWith(2, undefined)
   })
 
   it('hands control back to the agent default when the level is cleared live', async () => {
@@ -8228,7 +8249,7 @@ describe('ACP runtime — session effort', () => {
       })
     })
     await runtime.createSession({ cwd: '/workspace' })
-    await runtime.applyReasoningEffortChange('max')
+    await runtime.applyReasoningEffortChange('high')
 
     const applied = await runtime.applyReasoningEffortChange('default')
 
@@ -8273,11 +8294,9 @@ describe('ACP runtime — session effort', () => {
 
     const applied = await runtime.applyReasoningEffortChange('max')
 
-    // The post-switch set tops out at 'medium'; the stale session/new set would wrongly yield 'high'.
+    // The post-switch set does not expose max, so the transport must not substitute medium.
     expect(applied).toBe(true)
-    expect(fakeAgent.configChanges).toEqual([
-      { sessionId: 's-live', configId: 'effort', value: 'medium' }
-    ])
+    expect(fakeAgent.configChanges).toEqual([])
   })
 
   it('reports failure so the caller reconnects when a live apply is rejected', async () => {

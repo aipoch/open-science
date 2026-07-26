@@ -39,6 +39,7 @@ type FakeSettingsService = Record<
   | 'uninstallCodex'
   | 'setAgentFramework'
   | 'setReasoningEffort'
+  | 'resolveActiveReasoningEffort'
   | 'setNotificationsEnabled'
   | 'setClosePreference'
   | 'setAppIconVariant'
@@ -102,6 +103,7 @@ const createFakeService = (): FakeSettingsService => ({
   setReasoningEffort: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], reasoningEffort: 'high' }),
+  resolveActiveReasoningEffort: vi.fn().mockResolvedValue('high'),
   setNotificationsEnabled: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], notificationsEnabled: false }),
@@ -733,6 +735,7 @@ describe('settings IPC handlers', () => {
     const service = createFakeService()
     const snapshot = { claude: {}, providers: [], reasoningEffort: 'high' }
     service.setReasoningEffort.mockResolvedValue(snapshot)
+    service.resolveActiveReasoningEffort.mockResolvedValue('max')
     const onActiveProviderChanged = vi.fn()
     const onReasoningEffortChanged = vi.fn().mockResolvedValue(true)
     registerSettingsIpcHandlers({
@@ -745,7 +748,8 @@ describe('settings IPC handlers', () => {
 
     // A live ACP application (Claude Code, Codex) makes the level stick without a respawn.
     expect(service.setReasoningEffort).toHaveBeenCalledWith('high')
-    expect(onReasoningEffortChanged).toHaveBeenCalledWith('high')
+    expect(service.resolveActiveReasoningEffort).toHaveBeenCalledWith('high')
+    expect(onReasoningEffortChanged).toHaveBeenCalledWith('max')
     expect(onActiveProviderChanged).not.toHaveBeenCalled()
     expect(result).toBe(snapshot)
   })

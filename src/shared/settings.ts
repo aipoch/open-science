@@ -5,6 +5,7 @@
 // only while the user is actively typing one in.
 
 import type { OfficialVendorId } from './provider-registry'
+import type { ReasoningEffortPresetSetting } from './reasoning-effort'
 import type { PackageMirror } from './mirror'
 import type { CloseActionPreference } from './window-controls'
 
@@ -215,6 +216,8 @@ export type ProviderView = {
   // User-configured context-window size for a custom model. Omitted means the runtime uses 200k.
   contextWindow?: number
   supportsImageInput: boolean
+  // Custom-model effort declaration. Absence intentionally means the standard five-level preset.
+  reasoningEffortPreset?: ReasoningEffortPresetSetting
   // Set for official-vendor providers: which vendor and (where applicable) which regional endpoint.
   vendorId?: OfficialVendorId
   region?: string
@@ -256,9 +259,9 @@ export type AgentFrameworkId = 'claude-code' | 'opencode' | 'codex'
 
 // How much reasoning effort the user asks the agent to spend. 'default' means "don't override": the
 // agent keeps its own default and nothing is sent. The concrete levels form a relative scale
-// (low < medium < high < max): each agent/model maps the level onto its own supported rungs, using
-// the closest one it has (e.g. 'max' becomes the model's top level).
-export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'max'
+// (low < medium < high < xhigh < max): the active model's static profile maps the level onto its
+// concrete supported rungs (e.g. 'max' becomes the model's top level).
+export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'default'
 
@@ -266,7 +269,14 @@ export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'default'
 // is unfocused, so the default surprises no one staring at the window.
 export const DEFAULT_NOTIFICATIONS_ENABLED = true
 
-const REASONING_EFFORTS: readonly ReasoningEffort[] = ['default', 'low', 'medium', 'high', 'max']
+const REASONING_EFFORTS: readonly ReasoningEffort[] = [
+  'default',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max'
+]
 
 // Runtime guard for untrusted values (IPC payloads, settings.json): only the known levels pass.
 export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
@@ -402,6 +412,8 @@ export type ProviderDraft = {
   // leaves it unchanged on partial edits. A provider with no override resolves to 200k at runtime.
   contextWindow?: number | null
   supportsImageInput?: boolean
+  // Optional custom-model effort declaration. Absence defaults to the standard five-level preset.
+  reasoningEffortPreset?: ReasoningEffortPresetSetting
   // Which chat APIs a custom gateway speaks (form selector). Official providers take it from the
   // registry; omitted defaults to ['anthropic'].
   apiEndpoints?: ChatApiEndpoint[]

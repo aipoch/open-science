@@ -174,32 +174,24 @@ describe('resolveSessionEffortOption', () => {
     })
   })
 
-  it('clamps max to the model\u2019s highest advertised level, skipping the default sentinel', () => {
-    // Claude Code's effort select: a 'default' sentinel plus the model's supported levels.
+  it('does not reinterpret a model-resolved effort when the agent advertises different levels', () => {
+    // The model profile has already resolved the user's intent to max. The ACP adapter is only a
+    // transport and must not silently turn that into a different model API value.
     const options = [effortOption(['default', 'low', 'medium', 'high'])]
 
-    expect(resolveSessionEffortOption(options, 'max')).toEqual({
-      configId: 'thought_level',
-      value: 'high'
-    })
+    expect(resolveSessionEffortOption(options, 'max')).toBeUndefined()
   })
 
-  it('clamps low to the model\u2019s lowest advertised level', () => {
+  it('does not raise a model-resolved effort to the agent\u2019s lowest advertised level', () => {
     const options = [effortOption(['medium', 'high'])]
 
-    expect(resolveSessionEffortOption(options, 'low')).toEqual({
-      configId: 'thought_level',
-      value: 'medium'
-    })
+    expect(resolveSessionEffortOption(options, 'low')).toBeUndefined()
   })
 
-  it('resolves equidistant levels to the lower (cheaper) one', () => {
+  it('does not choose a neighboring level when the exact effort is absent', () => {
     const options = [effortOption(['medium', 'xhigh'])]
 
-    expect(resolveSessionEffortOption(options, 'high')).toEqual({
-      configId: 'thought_level',
-      value: 'medium'
-    })
+    expect(resolveSessionEffortOption(options, 'high')).toBeUndefined()
   })
 
   it('matches the literal default sentinel when the agent advertises it', () => {
@@ -214,11 +206,11 @@ describe('resolveSessionEffortOption', () => {
   })
 
   it('returns undefined when there is nothing usable to apply', () => {
-    // Only the 'default' sentinel advertised: no real level to clamp onto.
+    // Only the 'default' sentinel advertised: no exact concrete value is available.
     expect(resolveSessionEffortOption([effortOption(['default'])], 'high')).toBeUndefined()
     // 'default' without an advertised sentinel cannot be cleared; unknown levels never apply.
     expect(resolveSessionEffortOption([effortOption(['low'])], 'default')).toBeUndefined()
-    expect(resolveSessionEffortOption([effortOption(['low'])], 'turbo')).toBeUndefined()
+    expect(resolveSessionEffortOption([effortOption(['low'])], 'turbo' as never)).toBeUndefined()
     expect(resolveSessionEffortOption([effortOption(['low'])], undefined)).toBeUndefined()
     expect(resolveSessionEffortOption([], 'high')).toBeUndefined()
     expect(resolveSessionEffortOption(undefined, 'high')).toBeUndefined()

@@ -8,6 +8,11 @@
 // documented endpoint belongs here, including native Responses providers.
 
 import type { ChatApiEndpoint } from './settings'
+import {
+  resolveReasoningEffortProfile,
+  type ReasoningEffortPresetSetting,
+  type ReasoningEffortProfile
+} from './reasoning-effort'
 
 export type OfficialVendorId =
   | 'openai'
@@ -45,6 +50,8 @@ export type OfficialModel = {
   id: string
   // Advertised context-window size for this exact model, in tokens.
   contextWindow: number
+  // Optional override for a model whose effort levels differ from the vendor default.
+  reasoningEffort?: ReasoningEffortPresetSetting
 }
 
 export type OfficialVendor = {
@@ -58,6 +65,9 @@ export type OfficialVendor = {
   // Model ids offered in the composer once a key is stored. First entry is the default selection when
   // the vendor is first added.
   models: OfficialModel[]
+  // Static model capability used to project the app's five intent slots into the model's real
+  // 2-5 effort choices. Model entries may override it; no runtime capability fetch is required.
+  reasoningEffort: ReasoningEffortPresetSetting
   // Models this vendor is known (via our own dev testing, before release) NOT to drive cleanly over
   // the Codex Responses->Chat bridge. Ships with the app so such models are greyed in the picker
   // rather than user-tested. Absent/empty ⇒ every listed model is bridge-compatible.
@@ -95,15 +105,24 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'openai',
     label: 'OpenAI',
+    reasoningEffort: 'low-medium-high-xhigh',
     apiEndpoints: ['responses'],
     baseUrl: 'https://api.openai.com',
     apiKeyUrl: 'https://platform.openai.com/api-keys',
     // The API exposes a broader mixed catalog (embeddings, image, and audio models); keep the coding
     // catalog curated here instead of importing every id from /v1/models.
     models: [
-      { id: 'gpt-5.6-sol', contextWindow: 1_050_000 },
-      { id: 'gpt-5.6-terra', contextWindow: 1_050_000 },
-      { id: 'gpt-5.6-luna', contextWindow: 1_050_000 },
+      {
+        id: 'gpt-5.6-sol',
+        contextWindow: 1_050_000,
+        reasoningEffort: 'low-medium-high-xhigh-ultra'
+      },
+      {
+        id: 'gpt-5.6-terra',
+        contextWindow: 1_050_000,
+        reasoningEffort: 'low-medium-high-xhigh-ultra'
+      },
+      { id: 'gpt-5.6-luna', contextWindow: 1_050_000, reasoningEffort: 'standard-5' },
       { id: 'gpt-5.5', contextWindow: 1_050_000 },
       { id: 'gpt-5.4', contextWindow: 1_050_000 },
       { id: 'gpt-5.4-mini', contextWindow: 400_000 }
@@ -114,6 +133,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'anthropic',
     label: 'Anthropic',
+    reasoningEffort: 'standard-5',
     baseUrl: 'https://api.anthropic.com',
     apiKeyUrl: 'https://console.anthropic.com/settings/keys',
     modelsListUrl: 'https://api.anthropic.com/v1/models',
@@ -123,7 +143,11 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       { id: 'claude-opus-4-8', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-8[1m]', contextWindow: 1_000_000 },
       { id: 'claude-sonnet-5', contextWindow: 1_000_000 },
-      { id: 'claude-haiku-4-5-20251001', contextWindow: 200_000 }
+      {
+        id: 'claude-haiku-4-5-20251001',
+        contextWindow: 200_000,
+        reasoningEffort: 'unsupported'
+      }
     ],
     // Every current Claude model is vision-capable, including any surfaced by the live model-list
     // refresh above — so this is a blanket rule, not the four bundled ids.
@@ -132,6 +156,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'deepseek',
     label: 'DeepSeek',
+    reasoningEffort: 'high-max',
     // DeepSeek exposes both routes: Anthropic /v1/messages under `/anthropic`, and the OpenAI-compatible
     // route under `/v1`. The same model ids work on both, so it's safe to prefer OpenAI where the
     // framework supports it (e.g. OpenCode). openaiBaseUrl is the exact version-carrying base clients
@@ -151,6 +176,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'zhipu',
     label: 'Zhipu AI (GLM)',
+    reasoningEffort: 'unsupported',
     // GLM serves overseas from Z.AI and mainland China from BigModel (智谱) — different hosts and
     // separate consoles, so they are distinct endpoints rather than one base URL. Each region also
     // publishes an OpenAI-compatible route under `/api/paas/v4` (not `/v1`), so Codex can bridge it.
@@ -172,7 +198,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       }
     ],
     models: [
-      { id: 'glm-5.2', contextWindow: 1_000_000 },
+      { id: 'glm-5.2', contextWindow: 1_000_000, reasoningEffort: 'none-high-max' },
       { id: 'glm-5.1', contextWindow: 200_000 },
       { id: 'glm-5', contextWindow: 200_000 },
       { id: 'glm-5v-turbo', contextWindow: 200_000 },
@@ -185,6 +211,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'glmcodingplan',
     label: 'GLM Coding Plan',
+    reasoningEffort: 'unsupported',
     // The GLM Coding Plan subscription (Z.AI's z.ai/subscribe, BigModel's glm-coding): a quota-based
     // plan that reuses GLM's regions but routes the OpenAI path through `/api/coding/paas/v4` instead
     // of `/api/paas/v4`. The Anthropic route (`/api/anthropic`) is unchanged from the pay-as-you-go
@@ -209,7 +236,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // The coding plan does not serve GLM's vision variant, so glm-5v-turbo is omitted and there is no
     // `multimodal` rule (image input stays disabled for this endpoint).
     models: [
-      { id: 'glm-5.2', contextWindow: 1_000_000 },
+      { id: 'glm-5.2', contextWindow: 1_000_000, reasoningEffort: 'none-high-max' },
       { id: 'glm-5.1', contextWindow: 200_000 },
       { id: 'glm-5', contextWindow: 200_000 },
       { id: 'glm-5-turbo', contextWindow: 200_000 }
@@ -218,6 +245,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'kimi',
     label: 'Kimi (Moonshot)',
+    reasoningEffort: 'standard-5',
     // Moonshot serves both routes on one host: Anthropic /v1/messages under `/anthropic` and the
     // OpenAI-compatible /v1/chat/completions under `/v1` (see the live model list below). `both` lets
     // Codex drive it through the Responses->Chat bridge.
@@ -238,6 +266,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'kimiforcode',
     label: 'Kimi For Coding',
+    reasoningEffort: 'low-high-max',
     // The Kimi Code subscription endpoint: quota-based models (billed against a periodically refreshing
     // quota rather than per token), so it ships a fixed catalog and exposes no live model list. It
     // serves both the Anthropic route and the OpenAI-compatible /v1/chat/completions under `/coding/v1`
@@ -247,7 +276,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     openaiBaseUrl: 'https://api.kimi.com/coding/v1',
     apiKeyUrl: 'https://www.kimi.com/code/docs',
     models: [
-      { id: 'kimi-k3', contextWindow: 1_000_000 },
+      { id: 'kimi-k3', contextWindow: 1_000_000, reasoningEffort: 'standard-5' },
       { id: 'kimi-for-coding', contextWindow: 256_000 },
       { id: 'kimi-for-coding-highspeed', contextWindow: 256_000 }
     ],
@@ -257,6 +286,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'minimax',
     label: 'MiniMax',
+    reasoningEffort: 'unsupported',
     // MiniMax serves the Anthropic /v1/messages route under `/anthropic`, plus the OpenAI-compatible
     // /v1/chat/completions and OpenAI Responses /v1/responses under `/v1`, from a Global host (.io) and
     // a mainland-China one (.com). `baseUrl` is the Anthropic route; `openaiBaseUrl` is the `/v1` base
@@ -289,6 +319,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'stepfun',
     label: 'StepFun',
+    reasoningEffort: 'low-medium-high',
     // StepFun serves all three routes on one host per region — Anthropic /v1/messages, the
     // OpenAI-compatible /v1/chat/completions, and OpenAI Responses /v1/responses — from an overseas
     // console (.ai) and a mainland-China one (.com). `baseUrl` is the bare root (the Anthropic client
@@ -323,6 +354,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'stepplan',
     label: 'Step Plan',
+    reasoningEffort: 'low-medium-high',
     // StepFun's Step Plan is a quota-based subscription (platform.stepfun.com/plan-subscribe) that
     // routes under `/step_plan` on the mainland-China host: Anthropic /v1/messages and the
     // OpenAI-compatible /v1/chat/completions. `baseUrl` is the `/step_plan` root the Anthropic client
@@ -337,7 +369,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     models: [
       { id: 'step-3.7-flash', contextWindow: 262_144 },
       { id: 'step-3.5-flash', contextWindow: 262_144 },
-      { id: 'step-3.5-flash-2603', contextWindow: 262_144 },
+      { id: 'step-3.5-flash-2603', contextWindow: 262_144, reasoningEffort: 'low-high' },
       { id: 'step-router-v1', contextWindow: 262_144 }
     ],
     // Only the step-3.7-flash flagship is multimodal (vision); the agent/code builds are text-only.
@@ -346,6 +378,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'xiaomimimo',
     label: 'Xiaomi MIMO',
+    reasoningEffort: 'none-high',
     // Xiaomi MiMo exposes both routes: Anthropic /v1/messages under `/anthropic` and the OpenAI-compatible
     // /v1/chat/completions under `/v1`. The same model ids work on both.
     apiEndpoints: ['anthropic', 'openai'],
@@ -362,6 +395,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'sensenova',
     label: 'SenseNova',
+    reasoningEffort: 'unsupported',
     // SenseTime's SenseNova serves both routes on one host: the Anthropic-compatible /v1/messages
     // at the bare root and the OpenAI-compatible /v1/chat/completions under /v1. The same model ids
     // work on both. No modelsListUrl: the live /v1/models list also serves the image-generation-only
@@ -381,6 +415,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'volcengine',
     label: 'Volcengine Ark',
+    reasoningEffort: 'minimal-low-medium-high',
     // ByteDance's Volcengine Ark serves all three routes on one host: the Anthropic-compatible
     // /v1/messages under /api/compatible, the OpenAI-compatible /v1/chat/completions under /api/v3,
     // and OpenAI Responses at /api/v3/responses (the probe derives it from `openaiBaseUrl`). The same
@@ -414,6 +449,9 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'openrouter',
     label: 'OpenRouter',
+    // The gateway aggregates unrelated model families, so every curated entry below declares its
+    // own capability. Unknown additions stay conservative instead of pretending to support five.
+    reasoningEffort: 'unsupported',
     // Multi-vendor gateway: Anthropic /v1/messages under `/api` and the OpenAI-compatible
     // /v1/chat/completions under `/api/v1`. Its live catalog is 300+ ids, so this ships a curated set of
     // the top models across vendors (no modelsListUrl) rather than a "refresh from vendor" that would
@@ -424,27 +462,99 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     apiKeyUrl: 'https://openrouter.ai/workspaces/default/keys',
     models: [
       // Anthropic
-      { id: 'anthropic/claude-opus-4.8', contextWindow: 1_000_000 },
-      { id: 'anthropic/claude-sonnet-5', contextWindow: 1_000_000 },
-      { id: 'anthropic/claude-haiku-4.5', contextWindow: 200_000 },
+      {
+        id: 'anthropic/claude-opus-4.8',
+        contextWindow: 1_000_000,
+        reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'anthropic/claude-sonnet-5',
+        contextWindow: 1_000_000,
+        reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'anthropic/claude-haiku-4.5',
+        contextWindow: 200_000,
+        reasoningEffort: 'unsupported'
+      },
       // OpenAI
-      { id: 'openai/gpt-5.6-terra-pro', contextWindow: 1_050_000 },
-      { id: 'openai/gpt-5.6-terra', contextWindow: 1_050_000 },
-      { id: 'openai/gpt-5.6-sol-pro', contextWindow: 1_050_000 },
-      { id: 'openai/gpt-5.6-sol', contextWindow: 1_050_000 },
-      { id: 'openai/gpt-5.6-luna-pro', contextWindow: 1_050_000 },
-      { id: 'openai/gpt-5.6-luna', contextWindow: 1_050_000 },
-      { id: 'openai/gpt-5.5-pro', contextWindow: 1_050_000 },
-      { id: 'openai/gpt-5.5', contextWindow: 1_050_000 },
-      { id: 'openai/gpt-5.3-codex', contextWindow: 400_000 },
+      {
+        id: 'openai/gpt-5.6-terra-pro',
+        contextWindow: 1_050_000,
+        reasoningEffort: 'low-medium-high-xhigh-ultra'
+      },
+      {
+        id: 'openai/gpt-5.6-terra',
+        contextWindow: 1_050_000,
+        reasoningEffort: 'low-medium-high-xhigh-ultra'
+      },
+      {
+        id: 'openai/gpt-5.6-sol-pro',
+        contextWindow: 1_050_000,
+        reasoningEffort: 'low-medium-high-xhigh-ultra'
+      },
+      {
+        id: 'openai/gpt-5.6-sol',
+        contextWindow: 1_050_000,
+        reasoningEffort: 'low-medium-high-xhigh-ultra'
+      },
+      {
+        id: 'openai/gpt-5.6-luna-pro',
+        contextWindow: 1_050_000,
+        reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'openai/gpt-5.6-luna',
+        contextWindow: 1_050_000,
+        reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'openai/gpt-5.5-pro',
+        contextWindow: 1_050_000,
+        reasoningEffort: 'low-medium-high-xhigh'
+      },
+      {
+        id: 'openai/gpt-5.5',
+        contextWindow: 1_050_000,
+        reasoningEffort: 'low-medium-high-xhigh'
+      },
+      {
+        id: 'openai/gpt-5.3-codex',
+        contextWindow: 400_000,
+        reasoningEffort: 'low-medium-high-xhigh'
+      },
       // Other top-ranked vendors on OpenRouter
-      { id: 'google/gemini-3.1-pro-preview', contextWindow: 1_048_576 },
-      { id: 'google/gemini-3.5-flash', contextWindow: 1_048_576 },
-      { id: 'x-ai/grok-4.5', contextWindow: 500_000 },
-      { id: 'deepseek/deepseek-v4-pro', contextWindow: 1_048_576 },
-      { id: 'z-ai/glm-5.2', contextWindow: 1_048_576 },
-      { id: 'moonshotai/kimi-k3', contextWindow: 1_048_576 },
-      { id: 'qwen/qwen3.7-max', contextWindow: 1_000_000 }
+      {
+        id: 'google/gemini-3.1-pro-preview',
+        contextWindow: 1_048_576,
+        reasoningEffort: 'unsupported'
+      },
+      {
+        id: 'google/gemini-3.5-flash',
+        contextWindow: 1_048_576,
+        reasoningEffort: 'unsupported'
+      },
+      { id: 'x-ai/grok-4.5', contextWindow: 500_000, reasoningEffort: 'unsupported' },
+      {
+        id: 'deepseek/deepseek-v4-pro',
+        contextWindow: 1_048_576,
+        reasoningEffort: 'high-max'
+      },
+      {
+        id: 'z-ai/glm-5.2',
+        contextWindow: 1_048_576,
+        reasoningEffort: 'none-high-max'
+      },
+      {
+        id: 'moonshotai/kimi-k3',
+        contextWindow: 1_048_576,
+        reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'qwen/qwen3.7-max',
+        contextWindow: 1_000_000,
+        reasoningEffort: 'unsupported'
+      }
     ],
     // OpenRouter's catalog is curated (no live refresh), and vision support is an unpredictable subset
     // across vendors — so it is an explicit id list rather than a blanket rule or pattern. The
@@ -487,6 +597,19 @@ export const getOfficialVendor = (id: OfficialVendorId): OfficialVendor | undefi
 // Projects the structured bundled catalog into the string ids used by settings persistence and UI.
 export const getOfficialVendorModelIds = (id: OfficialVendorId): string[] =>
   VENDORS_BY_ID.get(id)?.models.map((model) => model.id) ?? []
+
+// Resolves the bundled, model-specific effort capability. Unknown/live-fetched model ids use the
+// vendor default; a vendor without an explicit declaration keeps the product's standard five-level
+// compatibility default. This is intentionally synchronous and never consults the network.
+export const resolveVendorModelReasoningEffort = (
+  id: OfficialVendorId,
+  modelId: string | undefined
+): ReasoningEffortProfile => {
+  const vendor = VENDORS_BY_ID.get(id)
+  const model = vendor?.models.find((candidate) => candidate.id === modelId)
+
+  return resolveReasoningEffortProfile(model?.reasoningEffort ?? vendor?.reasoningEffort)
+}
 
 // Resolves the base URL for a vendor, honoring the chosen region and falling back to the first region
 // when none/an unknown one is given. Returns undefined for an unknown vendor.

@@ -43,11 +43,8 @@ import {
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../shared/permission-profiles'
-import {
-  DEFAULT_REASONING_EFFORT,
-  type AgentFrameworkId,
-  type ReasoningEffort
-} from '../../shared/settings'
+import { type AgentFrameworkId } from '../../shared/settings'
+import type { ModelReasoningEffort, ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import {
   claudeCodeFramework,
   type AgentFramework,
@@ -183,9 +180,7 @@ type AcpRuntimeSkillsOptions = {
   ) => Promise<Array<{ name: string; path: string }>>
   // Lists only enabled, materialized app-owned Skills from the active isolated Codex home. The
   // Chat Completions compatibility selector receives name + description; paths remain local.
-  catalogForCodexHome?: (
-    codexHome: string | undefined
-  ) => Promise<ResponsesBridgeSkillCandidate[]>
+  catalogForCodexHome?: (codexHome: string | undefined) => Promise<ResponsesBridgeSkillCandidate[]>
 }
 
 type ReviewerSessionRequest = {
@@ -683,7 +678,7 @@ class AcpRuntime {
   private selectedModelContextWindow: number | undefined
   // Reasoning-effort level to apply per session via the ACP thought_level configOption; undefined
   // means "don't override" (the agent keeps its own default). Refreshed on each connect.
-  private pendingSessionEffort: ReasoningEffort | undefined
+  private pendingSessionEffort: ModelReasoningEffort | undefined
   private pendingSessionOptions: Record<string, unknown> | undefined
   private pendingSystemPromptAppends: string[] = []
   // The latest configOptions each session reported — seeded from session/new and refreshed after a
@@ -906,10 +901,10 @@ class AcpRuntime {
   // Applies the user's reasoning-effort preference to a freshly built/resumed session via the ACP
   // thought_level configOption. No-op when no explicit level is set (pendingSessionEffort undefined —
   // the agent then keeps its own default) or when the agent advertises no effort option. The desired
-  // level is resolved to the closest advertised one, so a level the model lacks still lands on its
-  // nearest rung. `configOptions` should be the agent's latest option set (e.g. returned by a model
-  // switch just before); falls back to the session's original response. Best-effort: a failure is
-  // logged, never fatal to the session.
+  // level is already resolved by the model profile and therefore only an exact advertised match is
+  // sent. `configOptions` should be the agent's latest option set (e.g. returned by a model switch
+  // just before); falls back to the session's original response. Best-effort: a failure is logged,
+  // never fatal to the session.
   private async applySessionEffort(
     session: ActiveSession,
     configOptions?: SessionConfigOption[] | null
@@ -939,10 +934,11 @@ class AcpRuntime {
   // simply advertise no effort option are skipped (a reconnect could not give their model one
   // either). On success pendingSessionEffort tracks the new level, so sessions created later in
   // this process inherit it; the persisted setting covers the next respawn.
-  async applyReasoningEffortChange(effort: ReasoningEffort): Promise<boolean> {
+  async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
     if (!this.framework.supportsLiveEffortChange) return false
 
-    this.pendingSessionEffort = effort === DEFAULT_REASONING_EFFORT ? undefined : effort
+    this.pendingSessionEffort = effort === 'default' ? undefined : effort
+    this.responsesBridgeLease?.setReasoningEffort?.(this.pendingSessionEffort)
     if (!this.connection) return true
 
     let allApplied = true
@@ -2284,7 +2280,9 @@ class AcpRuntime {
         sessionOptions: this.pendingSessionOptions
       })
       const selectorAbortController =
-        this.framework.id === 'codex' && forced.length === 0 && this.responsesBridgeLease?.selectSkills
+        this.framework.id === 'codex' &&
+        forced.length === 0 &&
+        this.responsesBridgeLease?.selectSkills
           ? new AbortController()
           : undefined
       if (selectorAbortController) {

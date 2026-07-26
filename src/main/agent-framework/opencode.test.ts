@@ -249,7 +249,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     })
   })
 
-  it("clamps the app's top level 'max' to opencode's 'high' in both layers", () => {
+  it("transports the model's resolved 'max' value unchanged in both layers", () => {
     const config = opencodeFramework.prepareModelConfig(
       { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
       { storageRoot: '/data', executablePath: '/bin/opencode', reasoningEffort: 'max' }
@@ -260,12 +260,11 @@ describe('opencodeFramework.prepareModelConfig', () => {
     )
     const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
 
-    // opencode's reasoningEffort follows the AI SDK levels, which top out at 'high'.
     expect(fileConfig.provider.anthropic.models).toEqual({
-      m: { options: { reasoningEffort: 'high' } }
+      m: { options: { reasoningEffort: 'max' } }
     })
     expect(content.provider.anthropic.models).toEqual({
-      m: { options: { reasoningEffort: 'high' } }
+      m: { options: { reasoningEffort: 'max' } }
     })
   })
 

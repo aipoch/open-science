@@ -12,6 +12,7 @@ import {
   resolveVendorApiKeyUrl,
   resolveVendorBaseUrl,
   resolveVendorModelsUrl,
+  resolveVendorModelReasoningEffort,
   resolveVendorOpenAiBaseUrl,
   vendorHasRegions
 } from './provider-registry'
@@ -24,6 +25,7 @@ describe('provider registry', () => {
 
       expect(hasBaseUrl).not.toBe(hasRegions) // exactly one is set
       expect(vendor.models.length).toBeGreaterThan(0)
+      expect(vendor.reasoningEffort).toBeDefined()
     }
   })
 
@@ -100,6 +102,64 @@ describe('provider registry', () => {
   it('exposes the first catalog entry as the default model', () => {
     expect(defaultVendorModel('openai')).toBe('gpt-5.6-sol')
     expect(defaultVendorModel('zhipu')).toBe('glm-5.2')
+  })
+
+  it('resolves model-specific static reasoning effort profiles without network discovery', () => {
+    expect(resolveVendorModelReasoningEffort('deepseek', 'deepseek-v4-pro')).toEqual({
+      supported: true,
+      slots: ['high', 'max', 'max', 'max', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('stepfun', 'step-3.7-flash')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'high', 'high']
+    })
+    expect(resolveVendorModelReasoningEffort('anthropic', 'claude-haiku-4-5-20251001')).toEqual({
+      supported: false
+    })
+    expect(resolveVendorModelReasoningEffort('openrouter', 'deepseek/deepseek-v4-pro')).toEqual({
+      supported: true,
+      slots: ['high', 'max', 'max', 'max', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('openrouter', 'z-ai/glm-5.2')).toEqual({
+      supported: true,
+      slots: ['none', 'high', 'max', 'max', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('openrouter', 'anthropic/claude-haiku-4.5')).toEqual({
+      supported: false
+    })
+    expect(resolveVendorModelReasoningEffort('openrouter', 'openai/gpt-5.6-terra')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'xhigh', 'ultra']
+    })
+    expect(resolveVendorModelReasoningEffort('openrouter', 'moonshotai/kimi-k3')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'xhigh', 'max']
+    })
+    expect(
+      resolveVendorModelReasoningEffort('openrouter', 'google/gemini-3.1-pro-preview')
+    ).toEqual({ supported: false })
+    expect(resolveVendorModelReasoningEffort('openrouter', 'x-ai/grok-4.5')).toEqual({
+      supported: false
+    })
+    expect(resolveVendorModelReasoningEffort('openrouter', 'qwen/qwen3.7-max')).toEqual({
+      supported: false
+    })
+    expect(resolveVendorModelReasoningEffort('deepseek', undefined)).toEqual({
+      supported: true,
+      slots: ['high', 'max', 'max', 'max', 'max']
+    })
+  })
+
+  it('ships only unsupported or two-to-five-choice static model profiles', () => {
+    for (const vendor of OFFICIAL_VENDORS) {
+      for (const model of vendor.models) {
+        const profile = resolveVendorModelReasoningEffort(vendor.id, model.id)
+        if (!profile.supported) continue
+
+        expect(new Set(profile.slots).size).toBeGreaterThanOrEqual(2)
+        expect(new Set(profile.slots).size).toBeLessThanOrEqual(5)
+      }
+    }
   })
 
   it('exposes a model-list URL only for vendors that provide one', () => {

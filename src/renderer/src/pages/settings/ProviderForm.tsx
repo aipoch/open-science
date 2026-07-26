@@ -15,6 +15,10 @@ import {
   getOfficialVendorModelIds,
   resolveVendorApiKeyUrl
 } from '../../../../shared/provider-registry'
+import {
+  CUSTOM_REASONING_EFFORT_PRESETS,
+  type ReasoningEffortPresetId
+} from '../../../../shared/reasoning-effort'
 import { getApiKeySecurityCopy } from './provider-key-security'
 import { ProviderKindIcon } from './provider-icons'
 import {
@@ -406,6 +410,57 @@ const ProviderForm = ({
               disabled={disabled}
               onCheckedChange={(supportsImageInput) => onChange({ supportsImageInput })}
             />
+          </div>
+
+          <div className="space-y-3 border-t border-border-200 pt-3">
+            <div className="flex items-center justify-between gap-4">
+              <label className="space-y-0.5" htmlFor="provider-reasoning-effort">
+                <span className="block text-xs font-medium">Reasoning effort</span>
+                <span className="block text-xs text-muted-foreground">
+                  Disable only when this model does not accept an effort parameter.
+                </span>
+              </label>
+              <Switch
+                id="provider-reasoning-effort"
+                aria-label="Supports reasoning effort"
+                checked={value.reasoningEffortPreset !== 'unsupported'}
+                disabled={disabled}
+                onCheckedChange={(supported) =>
+                  onChange({
+                    reasoningEffortPreset: supported ? 'standard-5' : 'unsupported'
+                  })
+                }
+              />
+            </div>
+
+            {value.reasoningEffortPreset !== 'unsupported' ? (
+              <Select
+                value={value.reasoningEffortPreset}
+                disabled={disabled}
+                onValueChange={(reasoningEffortPreset) =>
+                  onChange({
+                    reasoningEffortPreset: reasoningEffortPreset as ReasoningEffortPresetId
+                  })
+                }
+              >
+                <SelectTrigger aria-label="Reasoning effort levels" disabled={disabled}>
+                  <span>
+                    {
+                      CUSTOM_REASONING_EFFORT_PRESETS.find(
+                        (preset) => preset.id === value.reasoningEffortPreset
+                      )?.label
+                    }
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  {CUSTOM_REASONING_EFFORT_PRESETS.map((preset) => (
+                    <SelectItem key={preset.id} value={preset.id}>
+                      {preset.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
           </div>
 
           {keyField}

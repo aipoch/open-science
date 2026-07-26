@@ -308,7 +308,7 @@ describe('AcpRuntimeCoordinator', () => {
     expect(coordinator.getSnapshot().permissionGrants).toEqual({})
   })
 
-  it('keeps reconnecting settings on the active generation and fans out live effort', async () => {
+  it('keeps reconnecting settings and model-resolved effort on the active generation', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
       const fake = createFakeRuntime({
@@ -330,13 +330,13 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created).toHaveLength(2)
     expect(created[0].requestProviderReconnect).not.toHaveBeenCalled()
     expect(created[0].requestSkillsReload).not.toHaveBeenCalled()
-    expect(created[0].applyReasoningEffortChange).toHaveBeenCalledWith('high')
+    expect(created[0].applyReasoningEffortChange).not.toHaveBeenCalled()
     expect(created[1].requestProviderReconnect).toHaveBeenCalledOnce()
     expect(created[1].requestSkillsReload).toHaveBeenCalledOnce()
     expect(created[1].applyReasoningEffortChange).toHaveBeenCalledWith('high')
   })
 
-  it('keeps the active effort result when a retiring generation rejects', async () => {
+  it('surfaces an active generation effort failure without touching a retiring model', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
       const fake = createFakeRuntime({
@@ -351,9 +351,12 @@ describe('AcpRuntimeCoordinator', () => {
     await coordinator.createSession()
     await coordinator.requestAgentFrameworkSwitch()
     await coordinator.createSession()
-    created[0].applyReasoningEffortChange.mockRejectedValue(new Error('old effort failed'))
+    created[1].applyReasoningEffortChange.mockRejectedValue(new Error('active effort failed'))
 
-    await expect(coordinator.applyReasoningEffortChange('high')).resolves.toBe(true)
+    await expect(coordinator.applyReasoningEffortChange('high')).rejects.toThrow(
+      'active effort failed'
+    )
+    expect(created[0].applyReasoningEffortChange).not.toHaveBeenCalled()
     expect(created[1].applyReasoningEffortChange).toHaveBeenCalledWith('high')
   })
 

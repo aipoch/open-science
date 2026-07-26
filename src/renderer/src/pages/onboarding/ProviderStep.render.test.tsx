@@ -129,6 +129,30 @@ describe('ProviderStep', () => {
     expect(onAdvance).toHaveBeenCalledOnce()
   })
 
+  it('includes a custom model effort preset in the provider request', async () => {
+    readyClaudeEnvironment()
+    const saveAndActivateProvider = vi
+      .fn()
+      .mockResolvedValue({ providerId: 'p1', validation: { ok: true, category: 'ok' } })
+    useSettingsStore.setState({ saveAndActivateProvider })
+
+    await renderStep({
+      initialValue: createEmptyProviderFormValue({
+        type: 'custom',
+        name: 'Gateway',
+        baseUrl: 'https://gateway.example',
+        model: 'model-a',
+        key: 'sk-test',
+        reasoningEffortPreset: 'none-high'
+      })
+    })
+    await clickButton(/test & continue/i)
+
+    expect(saveAndActivateProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ reasoningEffortPreset: 'none-high' })
+    )
+  })
+
   it('returns to the previous step from the Back button', async () => {
     readyClaudeEnvironment()
     const onBack = vi.fn()

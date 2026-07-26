@@ -3,7 +3,8 @@ import type { SessionModeState } from '@agentclientprotocol/sdk'
 
 import type { PermissionProfileApplication } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { AgentFrameworkId, ChatApiEndpoint, ReasoningEffort } from '../../shared/settings'
+import type { AgentFrameworkId, ChatApiEndpoint } from '../../shared/settings'
+import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import type { ResolvedProvider } from '../settings/provider-env'
 import type {
   ResponsesBridgeConnection,
@@ -62,10 +63,9 @@ export type ModelConfigContext = {
   // Compact connector conventions for frameworks that need host.mcp guidance in their baseline
   // instructions. Detailed connector schemas live in on-demand `mcp-*` skills. Empty ⇒ omitted.
   instructions?: string
-  // The user's reasoning-effort preference ('default'/undefined ⇒ don't override; the framework
-  // injects nothing and the agent keeps its own default). Each framework maps the level onto its
-  // native config channel — Codex's model_reasoning_effort, opencode's model options.
-  reasoningEffort?: ReasoningEffort
+  // The active model's already-resolved API effort. Undefined means don't override. Frameworks only
+  // transport this value through their native channel; they do not reinterpret the user's intent.
+  reasoningEffort?: ModelReasoningEffort
 }
 
 // System-prompt guidance the runtime wants appended for a session (artifact routing, notebook, skill
@@ -160,9 +160,9 @@ export type ResolvedAgentBackend = {
   // Subscription backends must run the model selected in the UI. When true, a missing/rejected live
   // model option fails session creation instead of silently using the agent's account default.
   sessionModelRequired?: boolean
-  // Reasoning-effort level to apply per session via the ACP `thought_level` configOption, resolved
-  // to the closest level the agent advertises. Undefined ⇒ the agent keeps its own default.
-  sessionEffort?: ReasoningEffort
+  // Model-resolved reasoning effort to apply per session via ACP. The runtime uses exact matching;
+  // undefined leaves the agent default unchanged.
+  sessionEffort?: ModelReasoningEffort
   // Exact context-window limit for the selected upstream provider model. Framework adapters may
   // report a fallback or bridge transport model instead, so the runtime treats this as authoritative.
   contextWindow?: number
@@ -178,6 +178,9 @@ export type ResolvedAgentBackend = {
     ) => Promise<ResponsesBridgeSkillInput[]>
     registerReviewerSession: (promptCacheKey: string) => void
     unregisterReviewerSession: (promptCacheKey: string) => boolean
+    // Updates the concrete effort on this runtime's own bridged provider/model. Keeping it on the
+    // lease prevents an active-model value from leaking into bridges owned by retiring generations.
+    setReasoningEffort?: (effort?: ModelReasoningEffort) => void
     release: () => Promise<void>
   }
 }

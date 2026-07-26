@@ -9,7 +9,6 @@ import {
   type AgentFrameworkId,
   type AppIconPreview,
   type AppIconVariant,
-  type ReasoningEffort,
   type SetAppIconVariantRequest,
   type SettingsSnapshot,
   type CreateSkillRequest,
@@ -45,6 +44,7 @@ import {
   type UpsertProviderRequest,
   type ValidateProviderRequest
 } from '../../shared/settings'
+import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import { createDefaultSettingsService, SettingsService } from './service'
 import { createLogger } from '../logger'
 import { broadcastToRenderers } from '../renderer-broadcast'
@@ -65,7 +65,7 @@ export type SettingsIpcOptions = {
   // Called after the reasoning effort changes so the ACP runtime can live-apply it to open sessions.
   // Returns true when the level was applied over ACP (no reconnect needed); false means the active
   // framework only carries effort in its spawn config and onActiveProviderChanged must fire instead.
-  onReasoningEffortChanged?: (effort: ReasoningEffort) => Promise<boolean>
+  onReasoningEffortChanged?: (effort: ResolvedReasoningEffort) => Promise<boolean>
   // Called after a skill is toggled so the ACP runtime reloads skills on its next reconnect.
   onSkillsChanged?: () => void
   // Called after a connector/tool/credential change so bundled + custom skill docs re-sync.
@@ -217,11 +217,12 @@ const registerSettingsIpcHandlers = ({
 
       log.info('set reasoning effort requested', { effort: request.effort })
       const snapshot = await service.setReasoningEffort(request.effort)
+      const resolvedEffort = await service.resolveActiveReasoningEffort(request.effort)
 
       // Live-capable frameworks (Claude Code, Codex) apply the level to open sessions over ACP —
       // no respawn, the way a model switch feels. Others (opencode) bake effort into the spawn
       // config, so only the provider-switch reconnect can deliver it.
-      const appliedLive = (await onReasoningEffortChanged?.(request.effort)) ?? false
+      const appliedLive = (await onReasoningEffortChanged?.(resolvedEffort)) ?? false
 
       if (!appliedLive) {
         onActiveProviderChanged?.()

@@ -2,18 +2,11 @@ import { useState } from 'react'
 
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
-import type { ReasoningEffort } from '../../../../shared/settings'
-
-// Reasoning-effort choices shown in Settings > Model, left to right from lightest to strongest.
-// 'default' keeps the agent's own default (nothing is sent); the concrete levels form a relative
-// scale that each agent/model maps onto its closest supported rung.
-const REASONING_EFFORT_OPTIONS: { value: ReasoningEffort; label: string }[] = [
-  { value: 'default', label: 'Default' },
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'max', label: 'Max' }
-]
+import {
+  resolveReasoningEffortControl,
+  resolveReasoningEffortProfile
+} from '../../../../shared/reasoning-effort'
+import { resolveVendorModelReasoningEffort } from '../../../../shared/provider-registry'
 
 // Segmented effort selector: the highlight block slides to the picked level. Fixed-width segments
 // keep the thumb math exact. Mirrored on ToolPermissionControl's radiogroup pattern. The new level
@@ -22,19 +15,37 @@ const REASONING_EFFORT_OPTIONS: { value: ReasoningEffort; label: string }[] = [
 const ReasoningEffortSelect = (): React.JSX.Element => {
   const reasoningEffort = useSettingsStore((state) => state.reasoningEffort)
   const setReasoningEffort = useSettingsStore((state) => state.setReasoningEffort)
+  const activeProviderId = useSettingsStore((state) => state.activeProviderId)
+  const activeModel = useSettingsStore((state) => state.activeModel)
+  const providers = useSettingsStore((state) => state.providers)
+  const activeProvider = providers.find((provider) => provider.id === activeProviderId)
+  const profile =
+    activeProvider?.type === 'official' && activeProvider.vendorId
+      ? resolveVendorModelReasoningEffort(activeProvider.vendorId, activeModel)
+      : resolveReasoningEffortProfile(activeProvider?.reasoningEffortPreset)
+  const control = resolveReasoningEffortControl(reasoningEffort, profile)
+  const options = [
+    { value: undefined, label: 'Default', intent: 'default' as const },
+    ...control.options
+  ]
   // The slide is a click affordance: enable it only after the user interacts, so the thumb never
   // sweeps across on first paint when the persisted level loads.
   const [interactive, setInteractive] = useState(false)
   const selectedIndex = Math.max(
     0,
-    REASONING_EFFORT_OPTIONS.findIndex((option) => option.value === reasoningEffort)
+    options.findIndex((option) =>
+      reasoningEffort === 'default'
+        ? option.intent === 'default'
+        : option.value === control.selectedValue
+    )
   )
 
   return (
     <div
       role="radiogroup"
       aria-label="Reasoning effort"
-      className="relative grid w-fit grid-cols-5 rounded-lg bg-muted p-0.5"
+      className="relative grid w-fit rounded-lg bg-muted p-0.5"
+      style={{ gridTemplateColumns: `repeat(${options.length}, 4rem)` }}
     >
       <span
         aria-hidden="true"
@@ -44,19 +55,19 @@ const ReasoningEffortSelect = (): React.JSX.Element => {
         )}
         style={{ transform: `translateX(${selectedIndex * 100}%)` }}
       />
-      {REASONING_EFFORT_OPTIONS.map((option) => (
+      {options.map((option) => (
         <button
-          key={option.value}
+          key={option.intent}
           type="button"
           role="radio"
-          aria-checked={reasoningEffort === option.value}
+          aria-checked={options[selectedIndex] === option}
           onClick={() => {
             setInteractive(true)
-            void setReasoningEffort(option.value)
+            void setReasoningEffort(option.intent)
           }}
           className={cn(
             'relative z-10 flex h-7 w-16 items-center justify-center rounded-md text-xs font-medium transition-colors motion-reduce:transition-none',
-            reasoningEffort === option.value
+            options[selectedIndex] === option
               ? 'text-foreground'
               : 'text-muted-foreground hover:text-foreground'
           )}

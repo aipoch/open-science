@@ -1,4 +1,5 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
+import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 
 // The config option id + value to apply via session/set_config_option. `alreadyCurrent` flags the
 // case where the option's currentValue already equals the desired model — the caller should treat
@@ -84,25 +85,14 @@ export const matchSessionModelOption = (
   return { configId: option.id, value: match }
 }
 
-// Canonical reasoning-effort scale, weakest to strongest. Effort levels are a relative scale: each
-// model advertises its own subset (Claude models draw from low/medium/high/xhigh/max), so a desired
-// level maps onto the closest advertised rung.
-const EFFORT_SCALE = ['low', 'medium', 'high', 'xhigh', 'max'] as const
-
-const effortRank = (value: string): number =>
-  EFFORT_SCALE.indexOf(value as (typeof EFFORT_SCALE)[number])
-
 // Finds the session's reasoning-effort select option (the ACP `thought_level` category; Claude Code
-// advertises it as `effort`) and resolves the desired level to the closest value the agent actually
-// offers: exact match first, otherwise the advertised level nearest on the canonical scale (ties go
-// to the lower, cheaper level — e.g. 'max' on a model topping out at 'high' applies 'high'). Returns
-// undefined when there is no effort option or it advertises no recognizable level, so the agent
-// keeps its own default rather than erroring. The 'default' desired level is special: it matches the
-// agent's literal 'default' sentinel (Claude Code advertises one to mean "clear any forced level"),
-// so a live change can hand control back to the agent.
+// advertises it as `effort`) and transports the model-resolved value only when it is advertised
+// exactly. The model profile owns all relative-level mapping; this ACP boundary must never silently
+// reinterpret `max` as `high` (or any other different API value). The `default` sentinel is retained
+// solely to clear an existing live override when the agent explicitly advertises that operation.
 export const resolveSessionEffortOption = (
   configOptions: readonly SessionConfigOption[] | null | undefined,
-  desiredEffort: string | undefined
+  desiredEffort: ResolvedReasoningEffort | undefined
 ): SessionModelSelection | undefined => {
   const option = (configOptions ?? []).find(
     (candidate) =>
@@ -114,36 +104,7 @@ export const resolveSessionEffortOption = (
 
   const values = collectSelectValues(option.options)
 
-  // Clearing back to the agent default is only possible when the sentinel is explicitly advertised.
-  if (desiredEffort === 'default') {
-    return values.includes('default') ? { configId: option.id, value: 'default' } : undefined
-  }
+  if (!desiredEffort || !values.includes(desiredEffort)) return undefined
 
-  const desiredRank = desiredEffort ? effortRank(desiredEffort) : -1
-
-  if (desiredRank < 0) return undefined
-
-  // Only real levels are clamp targets — sentinels like 'default' (the agent's own default) are not.
-  const candidates = values
-    .map((value) => ({ value, rank: effortRank(value) }))
-    .filter((candidate) => candidate.rank >= 0)
-
-  if (candidates.length === 0) return undefined
-
-  const exact = candidates.find((candidate) => candidate.rank === desiredRank)
-
-  if (exact) return { configId: option.id, value: exact.value }
-
-  let nearest = candidates[0]
-
-  for (const candidate of candidates) {
-    const distance = Math.abs(candidate.rank - desiredRank)
-    const bestDistance = Math.abs(nearest.rank - desiredRank)
-
-    if (distance < bestDistance || (distance === bestDistance && candidate.rank < nearest.rank)) {
-      nearest = candidate
-    }
-  }
-
-  return { configId: option.id, value: nearest.value }
+  return { configId: option.id, value: desiredEffort }
 }

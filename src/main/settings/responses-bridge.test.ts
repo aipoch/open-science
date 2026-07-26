@@ -521,57 +521,32 @@ describe('Responses-compatible bridge conversion', () => {
     ).toMatchObject({ model: 'deepseek-v4-flash' })
   })
 
-  it('translates the reasoning effort into the Chat Completions parameter when explicitly chosen', () => {
+  it('uses the model-resolved effort override instead of Codex\u2019s request value', () => {
     expect(
       responsesToChatRequest(
         { model: 'model-a', input: 'hi', reasoning: { effort: 'high' } },
         undefined,
         undefined,
         [],
-        { forwardReasoningEffort: true }
+        { reasoningEffortOverride: 'max' }
       )
-    ).toMatchObject({ reasoning_effort: 'high' })
-    expect(
-      responsesToChatRequest(
-        { model: 'model-a', input: 'hi', reasoning: { effort: 'low' } },
-        undefined,
-        undefined,
-        [],
-        { forwardReasoningEffort: true }
-      )
-    ).toMatchObject({ reasoning_effort: 'low' })
+    ).toMatchObject({ reasoning_effort: 'max' })
   })
 
-  it('clamps the Codex-only xhigh effort to high for Chat Completions', () => {
-    expect(
-      responsesToChatRequest(
-        { model: 'model-a', input: 'hi', reasoning: { effort: 'xhigh' } },
-        undefined,
-        undefined,
-        [],
-        { forwardReasoningEffort: true }
-      )
-    ).toMatchObject({ reasoning_effort: 'high' })
-  })
-
-  it('omits the reasoning effort when there is nothing portable to send', () => {
-    // 'none' has no Chat Completions equivalent — the upstream default stands. No reasoning block
-    // means nothing is sent either.
-    expect(
-      responsesToChatRequest(
-        { model: 'model-a', input: 'hi', reasoning: { effort: 'none' } },
-        undefined,
-        undefined,
-        [],
-        { forwardReasoningEffort: true }
-      )
-    ).not.toHaveProperty('reasoning_effort')
-    expect(
-      responsesToChatRequest({ model: 'model-a', input: 'hi' }, undefined, undefined, [], {
-        forwardReasoningEffort: true
-      })
-    ).not.toHaveProperty('reasoning_effort')
-  })
+  it.each(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const)(
+    'transports the model-resolved %s effort without protocol-level clamping',
+    (effort) => {
+      expect(
+        responsesToChatRequest(
+          { model: 'model-a', input: 'hi', reasoning: { effort: 'high' } },
+          undefined,
+          undefined,
+          [],
+          { reasoningEffortOverride: effort }
+        )
+      ).toMatchObject({ reasoning_effort: effort })
+    }
+  )
 
   it('strips the reasoning effort unless the user explicitly chose a level', () => {
     // Codex emits its own default effort even when the app never configured one; forwarding that
@@ -695,7 +670,7 @@ describe('Responses-compatible bridge conversion', () => {
     }
   })
 
-  it('forwards the reasoning effort to the upstream gateway when explicitly chosen', async () => {
+  it('overrides Codex\u2019s effort with the model-resolved value at the upstream gateway', async () => {
     let upstreamRequest: Record<string, unknown> | undefined
     const upstreamFetch = vi.fn(
       async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
@@ -717,7 +692,7 @@ describe('Responses-compatible bridge conversion', () => {
       }
     )
     const bridge = new ResponsesBridge(
-      { baseUrl: 'https://vendor.example/v1', key: 'upstream-key', forwardReasoningEffort: true },
+      { baseUrl: 'https://vendor.example/v1', key: 'upstream-key', reasoningEffort: 'max' },
       upstreamFetch
     )
     const connection = await bridge.start()
@@ -738,9 +713,8 @@ describe('Responses-compatible bridge conversion', () => {
       })
       await response.text()
 
-      // The Codex-only 'xhigh' reaches the gateway as 'high', not dropped.
       expect(response.status).toBe(200)
-      expect(upstreamRequest).toMatchObject({ reasoning_effort: 'high' })
+      expect(upstreamRequest).toMatchObject({ reasoning_effort: 'max' })
     } finally {
       await bridge.close()
     }
@@ -767,8 +741,8 @@ describe('Responses-compatible bridge conversion', () => {
         )
       }
     )
-    // No forwardReasoningEffort: Codex's own default effort must not change what existing bridged
-    // users send upstream.
+    // No resolved override: Codex's own default effort must not change what existing bridged users
+    // send upstream.
     const bridge = new ResponsesBridge(
       { baseUrl: 'https://vendor.example/v1', key: 'upstream-key' },
       upstreamFetch
@@ -843,13 +817,14 @@ describe('Responses-compatible bridge conversion', () => {
       await post()
       expect(upstreamRequest).not.toHaveProperty('reasoning_effort')
 
-      // The user picks a level (Codex applies it live over ACP — the bridge never reconnects).
-      bridge.setForwardReasoningEffort(true)
+      // The model profile resolves a concrete level (Codex applies it live over ACP — the bridge
+      // never reconnects).
+      bridge.setReasoningEffort('max')
       await post()
-      expect(upstreamRequest).toMatchObject({ reasoning_effort: 'high' })
+      expect(upstreamRequest).toMatchObject({ reasoning_effort: 'max' })
 
       // Back to default: stripping restored on the same live bridge.
-      bridge.setForwardReasoningEffort(false)
+      bridge.setReasoningEffort(undefined)
       await post()
       expect(upstreamRequest).not.toHaveProperty('reasoning_effort')
     } finally {
@@ -1554,8 +1529,16 @@ describe('Responses-compatible bridge conversion', () => {
 
 describe('Responses bridge Skill selector', () => {
   const catalog = [
-    { name: 'mcp-pubmed', description: 'Search biomedical literature.', path: '/private/pubmed/SKILL.md' },
-    { name: 'literature-review', description: 'Plan a systematic review.', path: '/private/review/SKILL.md' },
+    {
+      name: 'mcp-pubmed',
+      description: 'Search biomedical literature.',
+      path: '/private/pubmed/SKILL.md'
+    },
+    {
+      name: 'literature-review',
+      description: 'Plan a systematic review.',
+      path: '/private/review/SKILL.md'
+    },
     { name: 'statistics', description: 'Analyze numerical data.', path: '/private/stats/SKILL.md' },
     { name: 'writing', description: 'Improve prose.', path: '/private/writing/SKILL.md' }
   ]
@@ -1689,7 +1672,9 @@ describe('Responses bridge Skill selector', () => {
 
     const request = JSON.parse(upstreamBody) as {
       messages: Array<{ content: string }>
-      tools: Array<{ function: { parameters: { properties: { skill_names: { items: { enum: string[] } } } } } }>
+      tools: Array<{
+        function: { parameters: { properties: { skill_names: { items: { enum: string[] } } } } }
+      }>
     }
     const names = request.tools[0].function.parameters.properties.skill_names.items.enum
     expect(names).toHaveLength(128)

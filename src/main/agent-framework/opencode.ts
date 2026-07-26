@@ -8,7 +8,7 @@ import {
 } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { preferredEndpoint } from '../../shared/settings'
-import type { ReasoningEffort } from '../../shared/settings'
+import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import { anthropicMessagesBase, openAiCompletionsBase } from '../settings/base-url'
 import { augmentedPathEnv } from '../settings/shell-path'
 import type { ResolvedProvider } from '../settings/provider-env'
@@ -144,18 +144,13 @@ const resolveOpencodeEndpoint = (
 // AI SDK provider; providers that don't support it ignore the option.
 const buildModelCapabilities = (
   provider: ResolvedProvider,
-  reasoningEffort?: ReasoningEffort
+  reasoningEffort?: ModelReasoningEffort
 ): Record<string, unknown> => ({
   ...(provider.supportsImageInput
     ? { attachment: true, modalities: { input: ['text', 'image'] } }
     : {}),
-  ...(reasoningEffort ? { options: { reasoningEffort: clampOpencodeEffort(reasoningEffort) } } : {})
+  ...(reasoningEffort ? { options: { reasoningEffort } } : {})
 })
-
-// opencode's reasoningEffort follows the AI SDK levels, which top out at 'high'; the app's top level
-// 'max' clamps down to it. 'default' is filtered upstream and never reaches here.
-const clampOpencodeEffort = (effort: ReasoningEffort): 'low' | 'medium' | 'high' =>
-  effort === 'low' || effort === 'medium' ? effort : 'high'
 
 // The app-authoritative config layer (model + provider block + permission policy) passed verbatim to
 // opencode via OPENCODE_CONFIG_CONTENT, which opencode deep-merges ABOVE both the app-owned global config
@@ -165,7 +160,7 @@ const clampOpencodeEffort = (effort: ReasoningEffort): 'low' | 'medium' | 'high'
 // real key can only ever go to the app's own endpoint. The key stays an env reference, never plaintext.
 const buildAppConfigContent = (
   provider: ResolvedProvider,
-  reasoningEffort?: ReasoningEffort
+  reasoningEffort?: ModelReasoningEffort
 ): Record<string, unknown> => {
   const { bareModel, providerId, npm, baseURL } = resolveOpencodeEndpoint(provider)
   const modelConfig = {
@@ -205,7 +200,7 @@ const buildOpencodeConfig = (
   provider: ResolvedProvider,
   baseConfig: Record<string, unknown> = {},
   instructionPaths: string[] = [],
-  reasoningEffort?: ReasoningEffort
+  reasoningEffort?: ModelReasoningEffort
 ): string => {
   const { bareModel, providerId, npm, baseURL } = resolveOpencodeEndpoint(provider)
 
