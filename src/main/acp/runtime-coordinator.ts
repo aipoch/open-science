@@ -142,8 +142,12 @@ class AcpRuntimeCoordinator {
     if (failure) {
       // A multi-runtime teardown can partially succeed. Release only the runtimes that are definitely
       // gone so their pending approvals cannot outlive them; failed runtimes retain ownership for retry.
+      // A rejection can still happen after a runtime cleared some/all sessions, so reconcile those
+      // actual disappearances too without releasing the failed runtime itself.
       results.forEach((result, index) => {
-        if (result.status === 'fulfilled') this.releaseRuntimeOwnership(runtimes[index])
+        const runtime = runtimes[index]
+        if (result.status === 'fulfilled') this.releaseRuntimeOwnership(runtime)
+        else this.releaseMissingRuntimeSessions(runtime, runtime.getSnapshot())
       })
       this.callbacks.onStateChanged?.(this.getSnapshot())
       throw failure.reason
@@ -209,9 +213,18 @@ class AcpRuntimeCoordinator {
 
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot> {
     const runtime = this.runtimeForSession(request.sessionId)
+    const ownedBeforeDelete = this.sessionRuntimes.get(request.sessionId) === runtime
     await runtime.deleteSession(request)
-    this.sessionRuntimes.delete(request.sessionId)
-    this.sessionConnectionStatuses.delete(request.sessionId)
+    const ownerAfterDelete = this.sessionRuntimes.get(request.sessionId)
+    // Attached deletes emit a runtime state change, whose reconciliation already notifies exactly once.
+    // Detached cleanup deliberately emits no state, so complete its session-scoped teardown here. A
+    // concurrent resume may have transferred the same app session to a new generation while the old
+    // agent delete was in flight; preserve that new owner and its connection status in full.
+    if (ownerAfterDelete === runtime || (!ownerAfterDelete && !ownedBeforeDelete)) {
+      this.sessionRuntimes.delete(request.sessionId)
+      this.sessionConnectionStatuses.delete(request.sessionId)
+      this.onSessionUnavailable?.(request.sessionId)
+    }
     return this.getSnapshot()
   }
 
@@ -419,6 +432,23 @@ class AcpRuntimeCoordinator {
   }
 
   private handleRuntimeState(runtime: AcpRuntime, snapshot: AcpStateSnapshot): void {
+    const attached = this.releaseMissingRuntimeSessions(runtime, snapshot)
+    for (const sessionId of attached) {
+      const owner = this.sessionRuntimes.get(sessionId)
+      // A late state emission from a retiring runtime must not steal back a session already adopted by
+      // the current generation.
+      if (!owner || !this.retiredRuntimes.has(runtime) || this.retiredRuntimes.has(owner)) {
+        this.sessionRuntimes.set(sessionId, runtime)
+        this.sessionConnectionStatuses.set(sessionId, snapshot.status)
+      }
+    }
+    this.callbacks.onStateChanged?.(this.getSnapshot())
+  }
+
+  private releaseMissingRuntimeSessions(
+    runtime: AcpRuntime,
+    snapshot: AcpStateSnapshot
+  ): Set<string> {
     const attached = new Set(snapshot.sessionIds)
     for (const [sessionId, owner] of this.sessionRuntimes) {
       if (owner !== runtime || attached.has(sessionId)) continue
@@ -431,16 +461,7 @@ class AcpRuntimeCoordinator {
       }
       this.onSessionUnavailable?.(sessionId)
     }
-    for (const sessionId of attached) {
-      const owner = this.sessionRuntimes.get(sessionId)
-      // A late state emission from a retiring runtime must not steal back a session already adopted by
-      // the current generation.
-      if (!owner || !this.retiredRuntimes.has(runtime) || this.retiredRuntimes.has(owner)) {
-        this.sessionRuntimes.set(sessionId, runtime)
-        this.sessionConnectionStatuses.set(sessionId, snapshot.status)
-      }
-    }
-    this.callbacks.onStateChanged?.(this.getSnapshot())
+    return attached
   }
 
   private handleRuntimeRetired(runtime: AcpRuntime): void {
@@ -508,8 +529,11 @@ class AcpRuntimeCoordinator {
     if (failure) {
       // Awaitable shutdown paths suppress each runtime's closed-state event. Account for partial
       // success here so only approvals belonging to runtimes that really stopped are invalidated.
+      // Rejected teardowns may nevertheless have cleared their session maps before the failing step.
       outcomes.forEach((outcome, index) => {
-        if (outcome.status === 'fulfilled') this.releaseRuntimeOwnership(runtimes[index])
+        const runtime = runtimes[index]
+        if (outcome.status === 'fulfilled') this.releaseRuntimeOwnership(runtime)
+        else this.releaseMissingRuntimeSessions(runtime, runtime.getSnapshot())
       })
       this.callbacks.onStateChanged?.(this.getSnapshot())
       throw failure.reason

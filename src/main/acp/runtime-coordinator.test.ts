@@ -51,6 +51,7 @@ const createFakeRuntime = (options: {
   emitEvent: (event: AcpRuntimeEvent) => void
   emitPermission: (request: AcpPermissionRequest) => void
   emitState: (overrides: Partial<AcpStateSnapshot>) => void
+  setStateSilently: (overrides: Partial<AcpStateSnapshot>) => void
 } => {
   let snapshot = emptySnapshot()
   let sessionIndex = 0
@@ -185,6 +186,9 @@ const createFakeRuntime = (options: {
     emitState: (overrides) => {
       snapshot = { ...snapshot, ...overrides }
       options.callbacks.onStateChanged?.(snapshot)
+    },
+    setStateSilently: (overrides) => {
+      snapshot = { ...snapshot, ...overrides }
     }
   }
 }
@@ -380,22 +384,33 @@ describe('AcpRuntimeCoordinator', () => {
 
   it('attempts every runtime disconnect and preserves the surviving snapshot primary', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
-    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      const fake = createFakeRuntime({
-        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
-        sessionIds: [`session-${created.length + 1}`],
-        callbacks
-      })
-      created.push(fake)
-      return fake.runtime
-    })
+    const onSessionUnavailable = vi.fn()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+          sessionIds: [`session-${created.length + 1}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      {},
+      '',
+      undefined,
+      undefined,
+      onSessionUnavailable
+    )
 
     await coordinator.createSession()
     await coordinator.requestAgentFrameworkSwitch()
     await coordinator.createSession()
     created[0].emitState({ cwd: '/surviving-old-runtime' })
     const activeDisconnect = createDeferred<AcpStateSnapshot>()
-    created[0].disconnect.mockRejectedValueOnce(new Error('old disconnect failed'))
+    created[0].disconnect.mockImplementationOnce(async () => {
+      created[0].setStateSilently({ sessionId: undefined, sessionIds: [] })
+      throw new Error('old disconnect failed')
+    })
     created[1].disconnect.mockReturnValueOnce(activeDisconnect.promise)
 
     let settled = false
@@ -415,6 +430,41 @@ describe('AcpRuntimeCoordinator', () => {
       cwd: '/surviving-old-runtime'
     })
     expect(created).toHaveLength(2)
+    expect(onSessionUnavailable).toHaveBeenCalledTimes(2)
+    expect(onSessionUnavailable).toHaveBeenCalledWith('session-1')
+    expect(onSessionUnavailable).toHaveBeenCalledWith('session-2')
+  })
+
+  it('preserves sessions still reported by a runtime whose teardown rejects', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const onSessionUnavailable = vi.fn()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+          sessionIds: [`session-${created.length + 1}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      {},
+      '',
+      undefined,
+      undefined,
+      onSessionUnavailable
+    )
+
+    await coordinator.createSession()
+    await coordinator.requestAgentFrameworkSwitch()
+    await coordinator.createSession()
+    created[0].disconnect.mockRejectedValueOnce(new Error('old disconnect failed early'))
+
+    await expect(coordinator.disconnect()).rejects.toThrow('old disconnect failed early')
+
+    expect(onSessionUnavailable).toHaveBeenCalledOnce()
+    expect(onSessionUnavailable).toHaveBeenCalledWith('session-2')
+    expect(onSessionUnavailable).not.toHaveBeenCalledWith('session-1')
   })
 
   it('invalidates only sessions owned by a runtime that closes unexpectedly', async () => {
@@ -476,6 +526,74 @@ describe('AcpRuntimeCoordinator', () => {
     expect(onSessionUnavailable).toHaveBeenCalledWith('session-1')
   })
 
+  it('invalidates a successfully deleted detached session without a runtime state event', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const onSessionUnavailable = vi.fn()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: [],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      {},
+      '',
+      undefined,
+      undefined,
+      onSessionUnavailable
+    )
+
+    await coordinator.deleteSession({ sessionId: 'detached-session' })
+
+    expect(created[0].deleteSession).toHaveBeenCalledWith({ sessionId: 'detached-session' })
+    expect(onSessionUnavailable).toHaveBeenCalledOnce()
+    expect(onSessionUnavailable).toHaveBeenCalledWith('detached-session')
+  })
+
+  it('preserves a session adopted by a new generation while the old delete is in flight', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const onSessionUnavailable = vi.fn()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+          sessionIds: created.length === 0 ? ['session-1'] : [],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      {},
+      '',
+      undefined,
+      undefined,
+      onSessionUnavailable
+    )
+
+    await coordinator.createSession()
+    await coordinator.requestAgentFrameworkSwitch()
+    const deleteDeferred = createDeferred<AcpStateSnapshot>()
+    created[0].deleteSession.mockReturnValueOnce(deleteDeferred.promise)
+
+    const deleting = coordinator.deleteSession({ sessionId: 'session-1' })
+    await vi.waitFor(() => expect(created[0].deleteSession).toHaveBeenCalledOnce())
+    await coordinator.resumeSession({ sessionId: 'session-1', cwd: '/workspace' })
+    deleteDeferred.resolve(emptySnapshot())
+
+    await expect(deleting).resolves.toMatchObject({ sessionIds: ['session-1'] })
+    await coordinator.sendPrompt({ sessionId: 'session-1', text: 'continue on new runtime' })
+
+    expect(vi.mocked(created[0].runtime.sendPrompt)).not.toHaveBeenCalled()
+    expect(vi.mocked(created[1].runtime.sendPrompt)).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      text: 'continue on new runtime'
+    })
+    expect(onSessionUnavailable).not.toHaveBeenCalled()
+  })
+
   it('attempts every runtime quit teardown and preserves the surviving snapshot primary', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const onDisconnected = vi.fn()
@@ -502,9 +620,10 @@ describe('AcpRuntimeCoordinator', () => {
     await coordinator.createSession()
     created[0].emitState({ cwd: '/surviving-old-runtime' })
     const activeShutdown = createDeferred<{ reaped: boolean }>()
-    vi.mocked(created[0].runtime.shutdownForQuit).mockRejectedValueOnce(
-      new Error('old shutdown failed')
-    )
+    vi.mocked(created[0].runtime.shutdownForQuit).mockImplementationOnce(async () => {
+      created[0].setStateSilently({ sessionId: undefined, sessionIds: [] })
+      throw new Error('old shutdown failed')
+    })
     vi.mocked(created[1].runtime.shutdownForQuit).mockReturnValueOnce(activeShutdown.promise)
 
     let settled = false
@@ -519,9 +638,9 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[1].runtime.shutdownForQuit).toHaveBeenCalledOnce()
     activeShutdown.resolve({ reaped: true })
     await expect(shuttingDown).rejects.toThrow('old shutdown failed')
-    expect(onSessionUnavailable).toHaveBeenCalledOnce()
+    expect(onSessionUnavailable).toHaveBeenCalledTimes(2)
+    expect(onSessionUnavailable).toHaveBeenCalledWith('session-1')
     expect(onSessionUnavailable).toHaveBeenCalledWith('session-2')
-    expect(onSessionUnavailable).not.toHaveBeenCalledWith('session-1')
     expect(onDisconnected).not.toHaveBeenCalled()
     expect(coordinator.getSnapshot()).toMatchObject({
       status: 'connected',
