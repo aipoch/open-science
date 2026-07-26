@@ -124,6 +124,18 @@ describe('isImportableSkillArchivePath', () => {
     await expect(inspect(Buffer.from('not a zip'))).resolves.toBe(false)
   })
 
+  it('matches importer EOCD lookup when a valid bundle has trailing bytes', async () => {
+    const bundle = buildZip([
+      {
+        path: 'trailing-data/SKILL.md',
+        content: Buffer.from('---\nname: Trailing Data\n---\nBody')
+      }
+    ])
+    const withTrailingData = Buffer.concat([bundle, Buffer.alloc(70 * 1024, 0x61)])
+
+    await expectMatchesPreview(withTrailingData, true)
+  })
+
   it('does not classify an ordinary ZIP by a nested filename or an ineligible deep manifest', async () => {
     const nestedFilename = buildZip([
       {
@@ -488,6 +500,32 @@ describe('isImportableSkillArchivePath', () => {
 
     await expect(inspectOuterArchive(reader())).resolves.toBe(true)
     await expect(inspectOuterArchive(reader(), 64 * 1024)).resolves.toBe(false)
+  })
+
+  it('stops the second deflated manifest inflate after the frontmatter closes', async () => {
+    const archive = buildZip([
+      {
+        path: 'large-body/SKILL.md',
+        content: Buffer.concat([
+          Buffer.from('---\nname: Large Body\n---\n'),
+          Buffer.alloc(96 * 1024, 97)
+        ])
+      }
+    ])
+    const reader = (): {
+      size: number
+      read: (position: number, length: number) => Promise<Buffer | undefined>
+    } => ({
+      size: archive.length,
+      read: async (position: number, length: number): Promise<Buffer | undefined> => {
+        if (position < 0 || length < 0 || position + length > archive.length) return undefined
+        return archive.subarray(position, position + length)
+      }
+    })
+
+    // Full entry validation consumes about 96 KiB. The frontmatter-only reread fits in the remaining
+    // budget, while re-inflating the whole manifest body a second time would exhaust it.
+    await expect(inspectOuterArchive(reader(), 128 * 1024)).resolves.toBe(true)
   })
 
   it('fails closed when cumulative stored-entry reads exhaust its work budget', async () => {

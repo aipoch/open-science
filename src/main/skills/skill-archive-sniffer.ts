@@ -10,7 +10,6 @@ const EOCD_SIGNATURE = 0x06054b50
 const CENTRAL_SIGNATURE = 0x02014b50
 const LOCAL_SIGNATURE = 0x04034b50
 const EOCD_MIN_SIZE = 22
-const MAX_ZIP_COMMENT_BYTES = 0xffff
 const CENTRAL_READ_CHUNK_BYTES = 64 * 1024
 const ENTRY_READ_CHUNK_BYTES = 64 * 1024
 const MAX_SNIFF_FRONTMATTER_BYTES = SKILL_IMPORT_LIMITS.maxFileBytes
@@ -128,14 +127,23 @@ const subrangeReader = (
   }
 }
 
-const findEocd = (tail: Buffer): number => {
-  for (let offset = tail.length - EOCD_MIN_SIZE; offset >= 0; offset -= 1) {
-    if (tail.readUInt32LE(offset) !== EOCD_SIGNATURE) continue
+// Match zip-extract's last-signature semantics without loading the whole bounded upload. Windows
+// overlap by the remainder of the fixed EOCD record so a signature split across reads is still found.
+const findEocd = async (reader: ArchiveReader): Promise<number | undefined> => {
+  let end = reader.size
+  while (end >= EOCD_MIN_SIZE) {
+    const start = Math.max(0, end - CENTRAL_READ_CHUNK_BYTES)
+    const chunk = await reader.read(start, end - start)
+    if (!chunk) return undefined
 
-    const commentLength = tail.readUInt16LE(offset + 20)
-    if (offset + EOCD_MIN_SIZE + commentLength === tail.length) return offset
+    for (let offset = chunk.length - EOCD_MIN_SIZE; offset >= 0; offset -= 1) {
+      if (chunk.readUInt32LE(offset) === EOCD_SIGNATURE) return start + offset
+    }
+
+    if (start === 0) break
+    end = start + EOCD_MIN_SIZE - 1
   }
-  return -1
+  return undefined
 }
 
 const isMetadataPath = (path: string): boolean =>
@@ -208,19 +216,17 @@ const scanArchive = async (
   reader: ArchiveReader,
   limits: ScanLimits
 ): Promise<ArchiveScan | undefined> => {
-  const tailSize = Math.min(reader.size, EOCD_MIN_SIZE + MAX_ZIP_COMMENT_BYTES)
-  const tail = await reader.read(reader.size - tailSize, tailSize)
-  if (!tail) return undefined
+  const eocd = await findEocd(reader)
+  if (eocd === undefined) return undefined
+  const eocdRecord = await reader.read(eocd, EOCD_MIN_SIZE)
+  if (!eocdRecord) return undefined
 
-  const eocd = findEocd(tail)
-  if (eocd < 0) return undefined
-
-  const diskNumber = tail.readUInt16LE(eocd + 4)
-  const centralDisk = tail.readUInt16LE(eocd + 6)
-  const entriesOnDisk = tail.readUInt16LE(eocd + 8)
-  const entryCount = tail.readUInt16LE(eocd + 10)
-  const centralSize = tail.readUInt32LE(eocd + 12)
-  const centralOffset = tail.readUInt32LE(eocd + 16)
+  const diskNumber = eocdRecord.readUInt16LE(4)
+  const centralDisk = eocdRecord.readUInt16LE(6)
+  const entriesOnDisk = eocdRecord.readUInt16LE(8)
+  const entryCount = eocdRecord.readUInt16LE(10)
+  const centralSize = eocdRecord.readUInt32LE(12)
+  const centralOffset = eocdRecord.readUInt32LE(16)
   const centralEnd = centralOffset + centralSize
 
   // Multi-disk and ZIP64 archives are unsupported by the real importer too.
@@ -475,7 +481,6 @@ const readDeflatedFrontmatter = async (
 ): Promise<Buffer | undefined> => {
   const scanner = createFrontmatterScanner()
   const chunks: Buffer[] = []
-  let frontmatterEnd: number | undefined
   let total = 0
 
   try {
@@ -483,23 +488,23 @@ const readDeflatedFrontmatter = async (
       if (!consumeInflateBudget(inflateBudget, chunk.length)) return undefined
       total += chunk.length
       if (total > MAX_SNIFF_FRONTMATTER_BYTES) return undefined
-      if (frontmatterEnd !== undefined) continue
 
       chunks.push(chunk)
       const result = scanner.push(chunk)
       if (result === 'invalid') return undefined
-      if (result !== 'continue') frontmatterEnd = result.end
+      // Entry validation already consumed the complete body. Stop this second, classification-only
+      // inflate as soon as the frontmatter closes so a large valid body is not charged twice against
+      // the shared automatic-sniff work budget.
+      if (result !== 'continue') return Buffer.concat(chunks, total).subarray(0, result.end)
     }
   } catch {
     return undefined
   }
 
-  if (frontmatterEnd === undefined) {
-    const result = scanner.finish()
-    if (result === 'continue' || result === 'invalid') return undefined
-    frontmatterEnd = result.end
-  }
-  return Buffer.concat(chunks).subarray(0, frontmatterEnd)
+  const result = scanner.finish()
+  return result !== 'continue' && result !== 'invalid'
+    ? Buffer.concat(chunks, total).subarray(0, result.end)
+    : undefined
 }
 
 const readManifestFrontmatter = async (
