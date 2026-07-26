@@ -119,6 +119,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     modelsListUrl: 'https://api.anthropic.com/v1/models',
     // Models with a 1M-context variant list both the standard id and the `[1m]` one.
     models: [
+      { id: 'claude-opus-5', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-8', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-8[1m]', contextWindow: 1_000_000 },
       { id: 'claude-sonnet-5', contextWindow: 1_000_000 },
