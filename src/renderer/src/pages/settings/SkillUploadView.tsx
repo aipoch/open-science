@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SKILL_IMPORT_LIMITS } from '../../../../shared/skill-import-limits'
-import { parseFrontmatter } from '../../../../shared/skill-frontmatter'
+import { parseSkillDocument } from '../../../../shared/skill-frontmatter'
 import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
 import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
@@ -89,22 +89,6 @@ const cleanMessage = (error: unknown): string => {
   return message.replace(/^Error invoking remote method '[^']*':\s*/, '').replace(/^Error:\s*/, '')
 }
 
-// Pulls name/description out of a .md frontmatter block with the same YAML semantics as main-process
-// bundle, GitHub, and installed-skill imports.
-const consumeFrontmatter = (
-  text: string
-): {
-  name?: string
-  description?: string
-  metadata: Record<string, string>
-  body: string
-} => {
-  const { fields, body } = parseFrontmatter(text)
-  const { name, description, ...metadata } = fields
-
-  return { name, description, metadata, body }
-}
-
 // Reads a File as base64 (for binary-safe bundle transport to the main process).
 const fileToBase64 = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -183,7 +167,7 @@ const SkillUploadView = ({
     }
 
     if (name.endsWith('.md') || name.endsWith('.markdown')) {
-      const parsed = consumeFrontmatter(await file.text())
+      const parsed = parseSkillDocument(await file.text())
       if (!parsed.name) {
         return { candidates: [], error: `${file.name}: needs a name in its YAML frontmatter.` }
       }

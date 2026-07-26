@@ -1,6 +1,30 @@
 import { describe, expect, it } from 'vitest'
 
-import { parseFrontmatter, splitFrontmatter } from './frontmatter'
+import { parseFrontmatter, parseSkillDocument, splitFrontmatter } from './frontmatter'
+
+describe('parseSkillDocument', () => {
+  it('separates identity fields from reusable metadata while preserving frontmatter presence', () => {
+    const raw = [
+      '---',
+      'Name: Demo',
+      'DESCRIPTION: Does a thing.',
+      'License: MIT',
+      'tags:',
+      '  - research',
+      '  - writing',
+      '---',
+      '# Body'
+    ].join('\n')
+
+    expect(parseSkillDocument(raw)).toEqual({
+      name: 'Demo',
+      description: 'Does a thing.',
+      metadata: { license: 'MIT', tags: 'research, writing' },
+      body: '# Body',
+      hasFrontmatter: true
+    })
+  })
+})
 
 describe('parseFrontmatter', () => {
   it('parses every scalar field into a lowercased map and strips the block', () => {

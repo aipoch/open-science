@@ -36,10 +36,27 @@ const parseFrontmatter = (
   return { fields, body, hasFrontmatter: true }
 }
 
+// Higher-level SKILL.md view used by import adapters and editors. Callers get authoritative identity
+// fields separately from reusable metadata without duplicating the reserved-key split.
+const parseSkillDocument = (
+  raw: string
+): {
+  name?: string
+  description?: string
+  metadata: Record<string, string>
+  body: string
+  hasFrontmatter: boolean
+} => {
+  const { fields, body, hasFrontmatter } = parseFrontmatter(raw)
+  const { name, description, ...metadata } = fields
+
+  return { name, description, metadata, body, hasFrontmatter }
+}
+
 const splitFrontmatter = (raw: string): { description: string; body: string } => {
   const { fields, body } = parseFrontmatter(raw)
 
   return { description: fields.description ?? '', body }
 }
 
-export { parseFrontmatter, splitFrontmatter }
+export { parseFrontmatter, parseSkillDocument, splitFrontmatter }

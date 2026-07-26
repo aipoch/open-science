@@ -2,7 +2,7 @@ import { FileUp, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { SkillReference } from '../../../../shared/settings'
-import { parseFrontmatter } from '../../../../shared/skill-frontmatter'
+import { parseSkillDocument } from '../../../../shared/skill-frontmatter'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -41,23 +41,6 @@ const toSlug = (name: string): string =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 64)
-
-// Pulls identity and extra metadata out of pasted/uploaded SKILL.md content using the same parser as
-// every import surface, while returning the stripped body for the editor.
-const consumeFrontmatter = (
-  text: string
-): {
-  name?: string
-  description?: string
-  metadata: Record<string, string>
-  body: string
-  hasFrontmatter: boolean
-} => {
-  const { fields, body, hasFrontmatter } = parseFrontmatter(text)
-  const { name, description, ...metadata } = fields
-
-  return { name, description, metadata, body, hasFrontmatter }
-}
 
 type SkillEditorProps = {
   initial: SkillDraft
@@ -103,7 +86,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     return null
   }, [isCreate, currentSlug, skills])
 
-  const importedContent = frontmatterImportMode ? consumeFrontmatter(body) : undefined
+  const importedContent = frontmatterImportMode ? parseSkillDocument(body) : undefined
   const persistedBody = importedContent?.hasFrontmatter ? importedContent.body : body
   const persistedMetadata = importedContent?.hasFrontmatter ? importedContent.metadata : metadata
   const metadataEntries = Object.entries(persistedMetadata ?? {})
@@ -113,7 +96,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   // In import mode the visible frontmatter is authoritative, so removing it clears derived metadata.
   const handleBodyChange = (value: string): void => {
     if (frontmatterImportMode) {
-      const parsed = consumeFrontmatter(value)
+      const parsed = parseSkillDocument(value)
       if (parsed.hasFrontmatter) {
         if (parsed.name !== undefined) setName(parsed.name)
         if (parsed.description !== undefined) setDescription(parsed.description)
@@ -129,7 +112,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   // Explicit paste/upload/drop imports opt into frontmatter semantics. The raw block remains visible
   // in the textarea so users can edit or remove it; it is stripped only from the persisted body.
   const importContent = (value: string): void => {
-    const parsed = consumeFrontmatter(value)
+    const parsed = parseSkillDocument(value)
     if (parsed.hasFrontmatter) {
       if (parsed.name && !name.trim()) setName(parsed.name)
       if (parsed.description && !description.trim()) setDescription(parsed.description)
@@ -147,7 +130,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     const replacesAll =
       body.length === 0 ||
       (event.currentTarget.selectionStart === 0 && event.currentTarget.selectionEnd === body.length)
-    if (!replacesAll || !consumeFrontmatter(pasted).hasFrontmatter) return
+    if (!replacesAll || !parseSkillDocument(pasted).hasFrontmatter) return
 
     event.preventDefault()
     importContent(pasted)

@@ -25,7 +25,7 @@ import {
   type FetchedSkillFile,
   type ScannedSkill
 } from './github-import'
-import { parseFrontmatter } from './frontmatter'
+import { parseSkillDocument } from './frontmatter'
 import type { BundledSkill } from './registry'
 import { readSkillFile } from './skill-files'
 import { extractZip, extractZipLenient } from './zip-extract'
@@ -161,8 +161,7 @@ const parsedSkillPreview = (
   files: string[],
   fallbackName: string
 ): ParsedSkillPreview => {
-  const { fields, body } = parseFrontmatter(raw)
-  const { name: frontmatterName, description = '', ...metadata } = fields
+  const { name: frontmatterName, description = '', metadata, body } = parseSkillDocument(raw)
 
   return {
     name: frontmatterName?.trim() || fallbackName,
@@ -637,8 +636,8 @@ class UserSkillRepository {
           const previewContentUnavailable =
             previewContentBytes + skillMd.content.length >
             SKILL_IMPORT_LIMITS.maxPreviewContentBytes
-          const { fields, body } = parseFrontmatter(skillMd.content.toString('utf8'))
-          const name = fields.name?.trim()
+          const parsed = parseSkillDocument(skillMd.content.toString('utf8'))
+          const name = parsed.name?.trim()
           if (!name) {
             skipped.push({ source: root.subPath || 'skill', reason: 'SKILL.md has no name' })
             continue
@@ -649,15 +648,12 @@ class UserSkillRepository {
           )
           const replaceableId = alreadyImported ? undefined : await this.replaceableImportedId(name)
 
-          const metadata = Object.fromEntries(
-            Object.entries(fields).filter(([key]) => key !== 'name' && key !== 'description')
-          )
           if (!previewContentUnavailable) previewContentBytes += skillMd.content.length
           previews.push({
             name,
-            description: previewContentUnavailable ? '' : (fields.description ?? ''),
-            metadata: previewContentUnavailable ? {} : metadata,
-            body: previewContentUnavailable ? '' : body,
+            description: previewContentUnavailable ? '' : (parsed.description ?? ''),
+            metadata: previewContentUnavailable ? {} : parsed.metadata,
+            body: previewContentUnavailable ? '' : parsed.body,
             previewError: previewContentUnavailable
               ? `SKILL.md preview content exceeds the ${mb(SKILL_IMPORT_LIMITS.maxPreviewContentBytes)} cumulative limit. You can still import it.`
               : undefined,
@@ -786,7 +782,7 @@ class UserSkillRepository {
     }
 
     // CRLF-aware name extraction (from #181) inside #170's operation-level critical section.
-    const name = parseFrontmatter(skillMd.content.toString('utf8')).fields.name?.trim()
+    const name = parseSkillDocument(skillMd.content.toString('utf8')).name?.trim()
     const base = toSlug(name ?? 'skill') || 'skill'
     const slug = await this.uniqueSlug('imported', base)
     await this.writeImported(slug, files, '', signature)
@@ -1437,9 +1433,9 @@ class UserSkillRepository {
       let description = ''
 
       try {
-        const { fields } = parseFrontmatter(await readFile(join(path, 'SKILL.md'), 'utf8'))
-        if (typeof fields.name === 'string' && fields.name) name = fields.name
-        if (typeof fields.description === 'string') description = fields.description
+        const parsed = parseSkillDocument(await readFile(join(path, 'SKILL.md'), 'utf8'))
+        if (parsed.name) name = parsed.name
+        if (parsed.description !== undefined) description = parsed.description
       } catch {
         continue
       }
