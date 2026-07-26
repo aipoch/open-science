@@ -299,9 +299,10 @@ export const PdfPreviewContent = ({
   // Ctrl/Cmd+wheel zooms the document instead of scrolling, matching the image preview gesture.
   // A trackpad/pinch emits many small wheel events per gesture, so accumulate deltaY and apply it
   // proportionally once per frame — one gesture yields a controlled zoom and few rerasterizations.
-  // Keyed to requestKey so a file switch cancels any queued frame before its stale flush could
-  // re-apply zoom on top of the new document's reset.
-  useEffect(() => {
+  // Keyed to requestKey and run as a layout effect so a file switch cancels any queued frame during
+  // commit — before the browser's rAF phase — so a stale flush cannot re-apply zoom on top of the
+  // new document's reset (a passive-effect cleanup would run after paint, too late to cancel it).
+  useLayoutEffect(() => {
     const element = scrollRef.current
     if (!element) return
 
