@@ -2929,6 +2929,24 @@ class AcpRuntime {
   }): Promise<ContentBlock[]> {
     const { sessionId, absolutePath, uri, name, mimeType, size } = descriptor
 
+    // ACP providers such as OpenCode reject ZIP uploads before the prompt reaches the agent
+    // (`file part media type application/zip functionality not supported`). Skill packages only need
+    // to expose their exact local URI: the agent passes it to the app-owned request_skill_import tool,
+    // which performs parsing, validation and user confirmation. Keep the reference as JSON text so it
+    // also remains usable when the user wants to inspect the archive instead of importing it.
+    if (this.isSkillPackageFile(name)) {
+      return [
+        {
+          type: 'text',
+          text: [
+            '<attached_local_file>',
+            JSON.stringify({ name, uri, mimeType, size }),
+            '</attached_local_file>'
+          ].join('\n')
+        }
+      ]
+    }
+
     // Images are embedded as base64 so vision-capable agents receive the actual pixels.
     // Large images are downscaled/re-encoded first so one file cannot overflow the request. Detection
     // falls back to the file extension so a `.png` with a missing/generic MIME (some drag/drop and paste
@@ -3016,6 +3034,12 @@ class AcpRuntime {
     if (mimeType === 'application/pdf') return true
 
     return name.toLowerCase().endsWith('.pdf')
+  }
+
+  private isSkillPackageFile(name: string): boolean {
+    const normalizedName = name.toLowerCase()
+
+    return normalizedName.endsWith('.zip') || normalizedName.endsWith('.skill')
   }
 
   // Turns a PDF into a text resource block, degrading to an explanatory note when extraction fails

@@ -1315,6 +1315,62 @@ describe('ACP runtime session management', () => {
     ).resolves.toBe('hello from upload')
   })
 
+  it('sends Skill packages as text references instead of unsupported ZIP file parts', async () => {
+    const root = await createTemporaryRoot()
+    const uploadRepository = new UploadRepository(root)
+    const stagedAttachments = await uploadRepository.stageFiles({
+      files: [
+        {
+          name: 'example-skill.zip',
+          mimeType: 'application/zip',
+          content: Buffer.from('zip-bytes').toString('base64')
+        },
+        {
+          name: 'example-package.skill',
+          mimeType: 'application/octet-stream',
+          content: Buffer.from('skill-bytes').toString('base64')
+        }
+      ]
+    })
+    const process = new FakeAgentProcess()
+    const receivedPrompts: ContentBlock[][] = []
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: ({ prompt }) => {
+        receivedPrompts.push(prompt)
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      uploads: { repository: uploadRepository }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'import this Skill',
+      attachments: stagedAttachments
+    })
+
+    expect(receivedPrompts).toHaveLength(1)
+    expect(receivedPrompts[0][1]).toMatchObject({
+      type: 'text',
+      text: expect.stringMatching(
+        /"uri":"file:\/\/\/.*\/uploads\/default-project\/remote-session-1\/example-skill\.zip"/
+      )
+    })
+    expect(receivedPrompts[0][2]).toMatchObject({
+      type: 'text',
+      text: expect.stringMatching(
+        /"uri":"file:\/\/\/.*\/uploads\/default-project\/remote-session-1\/example-package\.skill"/
+      )
+    })
+    expect(receivedPrompts[0]).not.toContainEqual(
+      expect.objectContaining({ type: 'resource_link' })
+    )
+  })
+
   it('inlines an image attachment as pixels when the browser sent no usable MIME type', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
