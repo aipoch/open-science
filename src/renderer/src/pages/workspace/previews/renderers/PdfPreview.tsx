@@ -73,10 +73,10 @@ const PdfZoomControls = ({
     </TooltipProvider>
   )
 }
-// Bound the backing-store resolution so an over-magnified small page cannot exhaust GPU memory.
-const MAX_RENDER_SCALE = 4
-// Keep the backing store within browser canvas limits so a tall/narrow page cannot render blank:
-// clamp each side and the total area (Chromium caps a dimension at 16384 and area near 2^28).
+// Keep the backing store within browser canvas limits so a tall/narrow or heavily zoomed page
+// cannot render blank or exhaust GPU memory: clamp each side and the total area (Chromium caps a
+// dimension at 16384 and area near 2^28). This is the only backing-resolution ceiling, so zoom
+// stays crisp at high DPI instead of being pre-capped below the physical pixels on screen.
 const MAX_CANVAS_DIMENSION = 8192
 const MAX_CANVAS_AREA = 16 * 1024 * 1024
 
@@ -177,12 +177,10 @@ const PdfPageCanvas = ({
 
       const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1)
       const baseViewport = page.getViewport({ scale: 1 })
-      // Rasterize at the physical pixels the page occupies on screen; never below intrinsic size.
+      // Rasterize at the physical pixels the page occupies on screen (never below intrinsic size)
+      // so zoom stays crisp at any DPI; the dimension/area clamp below is the only ceiling.
       const targetCssWidth = pageWidth > 0 ? pageWidth : baseViewport.width
-      const desiredScale = Math.max(
-        1,
-        Math.min(MAX_RENDER_SCALE, (targetCssWidth * devicePixelRatio) / baseViewport.width)
-      )
+      const desiredScale = Math.max(1, (targetCssWidth * devicePixelRatio) / baseViewport.width)
       // Hard cap so neither backing dimension nor total area exceeds browser canvas limits — must
       // win over the intrinsic floor, or a page taller than the limit at scale 1 renders blank.
       const limitScale = Math.min(

@@ -373,6 +373,49 @@ describe('PdfPreviewContent', () => {
     clientWidthSpy.mockRestore()
   })
 
+  it('rasterizes zoom at full high-DPI resolution, not clipped to a fixed 4x cap', async () => {
+    const clientWidthSpy = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockReturnValue(768)
+    vi.stubGlobal('devicePixelRatio', 2)
+    // A4-like page (595pt wide) at the 768px fit width, zoomed to 175% on a 2x display needs a
+    // backing width of 768 * 1.75 * 2 = 2688px to stay sharp. A fixed 4x cap would clip it to
+    // 595 * 4 = 2380px and the browser would upscale — the blur this removal fixes.
+    getPage.mockResolvedValue({
+      getViewport: vi.fn(({ scale }: { scale: number }) => ({
+        width: 595 * scale,
+        height: 842 * scale
+      })),
+      render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+      cleanup: vi.fn()
+    })
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/hidpi.pdf" name="hidpi.pdf" source="artifact" />
+      )
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBeGreaterThan(0))
+
+    // Zoom to 175% (100 -> 125 -> 150 -> 175 via three button steps).
+    for (let i = 0; i < 3; i += 1) {
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.click()
+        await Promise.resolve()
+      })
+    }
+    await vi.waitFor(() => expect(container.textContent).toContain('175%'))
+
+    const width = container.querySelector<HTMLCanvasElement>('canvas')?.width ?? 0
+    // Backing reaches the physical on-screen pixels (~2688), well past the old 2380 (4x) ceiling,
+    // and stays within the browser canvas limit.
+    expect(width).toBeGreaterThan(2380)
+    expect(width).toBeLessThanOrEqual(2688)
+    expect(width).toBeLessThanOrEqual(8192)
+
+    clientWidthSpy.mockRestore()
+  })
+
   it('treats a render canceled by scroll-out as teardown, not a page failure', async () => {
     let intersectionCallback: IntersectionObserverCallback | undefined
     vi.stubGlobal(
