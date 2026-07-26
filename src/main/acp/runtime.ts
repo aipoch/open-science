@@ -12,6 +12,7 @@ import type {
   SessionNotification
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { rmSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -137,6 +138,8 @@ export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
   onEvent?: (event: AcpRuntimeEvent) => void
   onPermissionRequest?: (request: AcpPermissionRequest) => void
+  onPromptStarted?: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
+  onPromptEnded?: (sessionId: string, turnToken: string) => void
   onRetired?: () => void
 }
 
@@ -731,6 +734,7 @@ class AcpRuntime {
   // unregistered on session delete (the artifact routing id is tracked in artifactSessionIds).
   private readonly notebookRoutingIds = new Map<string, string>()
   private readonly skillImportRoutingIds = new Map<string, string>()
+  private readonly skillImportTurnTokens = new Map<string, string>()
   private artifactSessionSequence = 0
   private artifactRunSequence = 0
   private notebookSessionSequence = 0
@@ -2008,6 +2012,7 @@ class AcpRuntime {
       this.artifactSessionIds.clear()
       this.notebookRoutingIds.clear()
       this.skillImportRoutingIds.clear()
+      this.skillImportTurnTokens.clear()
       this.mcpHttpHost?.clear()
       this.agentToAppSessionId.clear()
       this.currentSessionId = undefined
@@ -2179,11 +2184,16 @@ class AcpRuntime {
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
-  async sendPrompt(request: AcpPromptRequest): Promise<PromptResponse> {
-    return this.withOperationLease(() => withDataRootWrite(() => this.sendPromptTurn(request)))
+  async sendPrompt(request: AcpPromptRequest, promptAttemptId?: string): Promise<PromptResponse> {
+    return this.withOperationLease(() =>
+      withDataRootWrite(() => this.sendPromptTurn(request, promptAttemptId))
+    )
   }
 
-  private async sendPromptTurn(request: AcpPromptRequest): Promise<PromptResponse> {
+  private async sendPromptTurn(
+    request: AcpPromptRequest,
+    promptAttemptId?: string
+  ): Promise<PromptResponse> {
     let activeSession = this.sessions.get(request.sessionId)
 
     if (!activeSession) {
@@ -2204,6 +2214,13 @@ class AcpRuntime {
     try {
       if (this.skillsHooks && forced.length > 0) {
         const toForce = await this.skillsHooks.needForceLoad(forced)
+
+        // The Skill check yields before a force-load reconnect mutates runtime-wide state. A newer turn
+        // may have claimed this session meanwhile, so refuse the stale reconnect before it can tear down
+        // that turn.
+        if (this.promptInFlightSessionIds.has(request.sessionId)) {
+          throw new Error('An ACP prompt is already running for this session')
+        }
 
         if (toForce.length > 0) {
           // Capture routing before disconnect clears it, so resume lands on the same conversation.
@@ -2240,13 +2257,27 @@ class AcpRuntime {
       throw error
     }
 
+    // Another prompt can claim this session while the force-load check above is awaiting. Re-acquire
+    // the turn lock before publishing its token so a delayed attempt cannot overwrite a newer turn's
+    // lifecycle state.
+    if (this.promptInFlightSessionIds.has(request.sessionId)) {
+      throw new Error('An ACP prompt is already running for this session')
+    }
+
     this.currentSessionId = request.sessionId
     // Claim ownership of this session's shared turn state so a superseded turn's later finally can tell it
     // no longer owns the lock/artifact run (see the guarded cleanup in this turn's finally).
     const promptTurn = ++this.promptTurnSequence
+    const skillImportTurnToken = randomUUID()
     this.promptInFlightSessionIds.add(request.sessionId)
     this.currentPromptTurnBySession.set(request.sessionId, promptTurn)
+    this.skillImportTurnTokens.set(request.sessionId, skillImportTurnToken)
     this.cancelledPromptTurnsBySession.delete(request.sessionId)
+    try {
+      this.callbacks.onPromptStarted?.(request.sessionId, skillImportTurnToken, promptAttemptId)
+    } catch (error) {
+      safeLogError('prompt-start callback failed', errorLogFields(error))
+    }
     this.emitState()
     log.info('prompt start', {
       sessionId: request.sessionId,
@@ -2496,6 +2527,14 @@ class AcpRuntime {
         this.clearOpenCodePermissionToolContext(request.sessionId)
         this.currentPromptTurnBySession.delete(request.sessionId)
         this.promptInFlightSessionIds.delete(request.sessionId)
+        if (this.skillImportTurnTokens.get(request.sessionId) === skillImportTurnToken) {
+          this.skillImportTurnTokens.delete(request.sessionId)
+        }
+        try {
+          this.callbacks.onPromptEnded?.(request.sessionId, skillImportTurnToken)
+        } catch (error) {
+          safeLogError('prompt-end callback failed', errorLogFields(error))
+        }
       }
       // emitState invokes the renderer onStateChanged callback; guard it so a throw there cannot skip
       // the reconnect below. maybeApplyPendingProviderReconnect is what resolves an armed reconnect
@@ -2641,6 +2680,7 @@ class AcpRuntime {
     this.artifactSessionIds.delete(request.sessionId)
     this.notebookRoutingIds.delete(request.sessionId)
     this.skillImportRoutingIds.delete(request.sessionId)
+    this.skillImportTurnTokens.delete(request.sessionId)
     this.promptInFlightSessionIds.delete(request.sessionId)
 
     // Only announce a deletion and shift the current session when something was actually attached; a
@@ -2968,22 +3008,35 @@ class AcpRuntime {
     // ordinary ZIP remains inspectable without advertising request_skill_import.
     const attachmentTextReference = (
       tag: 'attached_skill_package' | 'attached_local_archive',
-      skillImportEligible: boolean
+      skillImportEligible: boolean,
+      turnToken?: string
     ): ContentBlock => ({
       type: 'text',
       text: [
         `<${tag}>`,
-        JSON.stringify({ name, uri, mimeType, size, skillImportEligible }),
+        JSON.stringify({
+          name,
+          uri,
+          mimeType,
+          size,
+          skillImportEligible,
+          ...(turnToken ? { skillImportTurnToken: turnToken } : {})
+        }),
         `</${tag}>`
       ].join('\n')
     })
     if (allowSkillImportReference && (await this.isSkillPackageFile(name, absolutePath))) {
-      return [attachmentTextReference('attached_skill_package', true)]
+      const turnToken = this.skillImportTurnTokens.get(sessionId)
+      if (turnToken) {
+        return [attachmentTextReference('attached_skill_package', true, turnToken)]
+      }
     }
 
+    const normalizedName = name.toLowerCase()
     const normalizedMimeType = mimeEssence(mimeType)
     if (
-      name.toLowerCase().endsWith('.zip') ||
+      normalizedName.endsWith('.zip') ||
+      normalizedName.endsWith('.skill') ||
       normalizedMimeType === 'application/zip' ||
       normalizedMimeType === 'application/x-zip-compressed'
     ) {
@@ -3082,8 +3135,7 @@ class AcpRuntime {
   private async isSkillPackageFile(name: string, filePath: string): Promise<boolean> {
     const normalizedName = name.toLowerCase()
 
-    if (normalizedName.endsWith('.skill')) return true
-    if (!normalizedName.endsWith('.zip')) return false
+    if (!normalizedName.endsWith('.skill') && !normalizedName.endsWith('.zip')) return false
 
     return isImportableSkillArchivePath(filePath)
   }

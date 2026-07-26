@@ -76,6 +76,18 @@ const buildZip = (inputs: { path: string; content: Buffer }[]): Buffer => {
   return Buffer.concat([localBytes, centralBytes, end])
 }
 
+const buildNamedSkillZip = (name: string): Buffer =>
+  buildZip([
+    {
+      path: 'SKILL.md',
+      content: Buffer.from(`---\nname: ${name}\n---\nFollow the workflow.`, 'utf8')
+    }
+  ])
+
+const createActiveCancellationGuard = (): { isCancelled: () => boolean } => ({
+  isCancelled: () => false
+})
+
 describe('ConversationSkillImporter', () => {
   it('imports a session-owned Skill attachment after the user confirms its preview', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
@@ -115,14 +127,18 @@ describe('ConversationSkillImporter', () => {
     })
     const importer = new ConversationSkillImporter({
       uploads,
+      createCancellationGuard: (sessionId, turnToken) =>
+        broker.createCancellationGuard(sessionId, turnToken),
       previewBundle: (bundle) => skills.previewZip(bundle),
       importBundle: (bundle, items) => skills.importFromZipBatch(bundle, items),
-      requestApproval: (request) => broker.request(request),
+      requestApproval: (request, cancellation) => broker.request(request, cancellation),
       onSkillsChanged
     })
+    broker.beginSessionTurn('session-1', 'turn-1')
 
     const result = await importer.request({
       sessionId: 'session-1',
+      turnToken: 'turn-1',
       attachmentUri: pathToFileURL(attachment.path).href
     })
 
@@ -152,6 +168,7 @@ describe('ConversationSkillImporter', () => {
     const requestApproval = vi.fn()
     const importer = new ConversationSkillImporter({
       uploads,
+      createCancellationGuard: createActiveCancellationGuard,
       previewBundle: (bundle) => skills.previewZip(bundle),
       importBundle: (bundle, items) => skills.importFromZipBatch(bundle, items),
       requestApproval
@@ -160,10 +177,117 @@ describe('ConversationSkillImporter', () => {
     await expect(
       importer.request({
         sessionId: 'session-1',
+        turnToken: 'turn-1',
         attachmentUri: pathToFileURL(attachment.path).href
       })
     ).rejects.toThrow('different session')
     expect(requestApproval).not.toHaveBeenCalled()
+  })
+
+  it('rejects an ordinary session ZIP before preview or approval', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+    roots.push(root)
+    const uploads = new UploadRepository(root)
+    const [staged] = await uploads.stageFiles({
+      files: [
+        {
+          name: 'ordinary-data.zip',
+          content: buildZip([
+            { path: 'README.txt', content: Buffer.from('ordinary archive', 'utf8') }
+          ]).toString('base64'),
+          mimeType: 'application/zip'
+        }
+      ]
+    })
+    const [attachment] = await uploads.finalizePendingSessionUploads('session-1', [staged])
+    const previewBundle = vi.fn()
+    const requestApproval = vi.fn()
+    const importer = new ConversationSkillImporter({
+      uploads,
+      createCancellationGuard: createActiveCancellationGuard,
+      previewBundle,
+      importBundle: vi.fn(),
+      requestApproval
+    })
+
+    await expect(
+      importer.request({
+        sessionId: 'session-1',
+        turnToken: 'turn-1',
+        attachmentUri: pathToFileURL(attachment.path).href
+      })
+    ).rejects.toThrow('not eligible for Skill import')
+    expect(previewBundle).not.toHaveBeenCalled()
+    expect(requestApproval).not.toHaveBeenCalled()
+  })
+
+  it('cancels imports stopped during preview and requests that arrive after the stop', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+    roots.push(root)
+    const uploads = new UploadRepository(root)
+    const skills = new UserSkillRepository(root)
+    const [staged] = await uploads.stageFiles({
+      files: [
+        {
+          name: 'slow-preview.skill',
+          content: buildNamedSkillZip('Slow Preview').toString('base64'),
+          mimeType: 'application/zip'
+        }
+      ]
+    })
+    const [attachment] = await uploads.finalizePendingSessionUploads('session-1', [staged])
+    let markPreviewStarted!: () => void
+    let releasePreview!: () => void
+    const previewStarted = new Promise<void>((resolve) => {
+      markPreviewStarted = resolve
+    })
+    const previewGate = new Promise<void>((resolve) => {
+      releasePreview = resolve
+    })
+    const broadcast = vi.fn()
+    const broker = new SkillImportApprovalBroker({
+      generateId: () => 'approval-late',
+      broadcast
+    })
+    const importBundle = vi.fn()
+    const previewBundle = vi.fn(async (bundle: Buffer) => {
+      const preview = await skills.previewZip(bundle)
+      markPreviewStarted()
+      await previewGate
+      return preview
+    })
+    const importer = new ConversationSkillImporter({
+      uploads,
+      createCancellationGuard: (sessionId, turnToken) =>
+        broker.createCancellationGuard(sessionId, turnToken),
+      previewBundle,
+      importBundle,
+      requestApproval: (request, cancellation) => broker.request(request, cancellation)
+    })
+
+    broker.beginSessionTurn('session-1', 'turn-1')
+    const importing = importer.request({
+      sessionId: 'session-1',
+      turnToken: 'turn-1',
+      attachmentUri: pathToFileURL(attachment.path).href
+    })
+    await previewStarted
+    broker.cancelSession('session-1')
+    releasePreview()
+
+    await expect(importing).resolves.toEqual({ status: 'cancelled', skills: [] })
+    expect(broadcast).not.toHaveBeenCalled()
+    expect(importBundle).not.toHaveBeenCalled()
+
+    broker.beginSessionTurn('session-1', 'turn-2')
+    await expect(
+      importer.request({
+        sessionId: 'session-1',
+        turnToken: 'turn-1',
+        attachmentUri: pathToFileURL(attachment.path).href
+      })
+    ).resolves.toEqual({ status: 'cancelled', skills: [] })
+    expect(previewBundle).toHaveBeenCalledOnce()
   })
 
   it('rejects two approved candidates that replace the same installed Skill', async () => {
@@ -174,7 +298,7 @@ describe('ConversationSkillImporter', () => {
       files: [
         {
           name: 'duplicate-targets.skill',
-          content: Buffer.from('bundle contents').toString('base64'),
+          content: buildNamedSkillZip('Duplicate Targets').toString('base64'),
           mimeType: 'application/zip'
         }
       ]
@@ -183,6 +307,7 @@ describe('ConversationSkillImporter', () => {
     const importBundle = vi.fn().mockResolvedValue([])
     const importer = new ConversationSkillImporter({
       uploads,
+      createCancellationGuard: createActiveCancellationGuard,
       previewBundle: vi.fn().mockResolvedValue({
         previews: [
           {
@@ -221,6 +346,7 @@ describe('ConversationSkillImporter', () => {
     await expect(
       importer.request({
         sessionId: 'session-1',
+        turnToken: 'turn-1',
         attachmentUri: pathToFileURL(attachment.path).href
       })
     ).rejects.toThrow('cannot replace the same installed Skill more than once')
@@ -235,7 +361,7 @@ describe('ConversationSkillImporter', () => {
       files: [
         {
           name: 'replacement.skill',
-          content: Buffer.from('bundle contents').toString('base64'),
+          content: buildNamedSkillZip('Replacement').toString('base64'),
           mimeType: 'application/zip'
         }
       ]
@@ -244,6 +370,7 @@ describe('ConversationSkillImporter', () => {
     const importBundle = vi.fn().mockResolvedValue([])
     const importer = new ConversationSkillImporter({
       uploads,
+      createCancellationGuard: createActiveCancellationGuard,
       previewBundle: vi.fn().mockResolvedValue({
         previews: [
           {
@@ -269,6 +396,7 @@ describe('ConversationSkillImporter', () => {
     await expect(
       importer.request({
         sessionId: 'session-1',
+        turnToken: 'turn-1',
         attachmentUri: pathToFileURL(attachment.path).href
       })
     ).rejects.toThrow('replacement target does not match the approved preview')
@@ -318,6 +446,31 @@ describe('SkillImportApprovalBroker lifecycle', () => {
     await expect(cancelled).resolves.toEqual({ id: 'approval-1', cancelled: true })
     await expect(retained).resolves.toEqual({ id: 'approval-2', items: [] })
     expect(onSettled).toHaveBeenCalledTimes(2)
+  })
+
+  it('binds guards to one active turn token across cancellation and later turns', () => {
+    const broker = new SkillImportApprovalBroker({
+      generateId: () => 'unused',
+      broadcast: vi.fn()
+    })
+    broker.beginSessionTurn('session-1', 'turn-1')
+    broker.beginSessionTurn('session-2', 'turn-a')
+    const first = broker.createCancellationGuard('session-1', 'turn-1')
+    const second = broker.createCancellationGuard('session-2', 'turn-a')
+
+    broker.cancelSession('session-1')
+    expect(first.isCancelled()).toBe(true)
+    expect(second.isCancelled()).toBe(false)
+
+    broker.cancelAll()
+    expect(second.isCancelled()).toBe(true)
+
+    broker.beginSessionTurn('session-1', 'turn-2')
+    expect(first.isCancelled()).toBe(true)
+    const next = broker.createCancellationGuard('session-1', 'turn-2')
+    expect(next.isCancelled()).toBe(false)
+    broker.endSessionTurn('session-1', 'turn-2')
+    expect(next.isCancelled()).toBe(true)
   })
 
   it('cancels every pending approval when all agent runtimes disconnect', async () => {

@@ -217,11 +217,18 @@ class NotebookLocalRpcServer {
   private async dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
     if (method === 'skillImport') {
       if (!this.skillImporter) throw new Error('Conversation Skill import is not configured.')
-      if (typeof params.sessionId !== 'string' || typeof params.attachmentUri !== 'string') {
-        throw new Error('Skill import RPC params must include sessionId and attachmentUri.')
+      if (
+        typeof params.sessionId !== 'string' ||
+        typeof params.turnToken !== 'string' ||
+        typeof params.attachmentUri !== 'string'
+      ) {
+        throw new Error(
+          'Skill import RPC params must include sessionId, turnToken and attachmentUri.'
+        )
       }
       const request: ConversationSkillImportRequest = {
         sessionId: params.sessionId,
+        turnToken: params.turnToken,
         attachmentUri: params.attachmentUri
       }
       return this.skillImporter.request(request)

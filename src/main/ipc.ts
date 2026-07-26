@@ -337,9 +337,12 @@ const registerIpcHandlers = async ({
   })
   const conversationSkillImporter = new ConversationSkillImporter({
     uploads: uploadRepository,
+    createCancellationGuard: (sessionId, turnToken) =>
+      skillImportApprovalBroker.createCancellationGuard(sessionId, turnToken),
     previewBundle: (bundle) => settingsService.previewSkillArchive(bundle),
     importBundle: (bundle, items) => settingsService.importSkillArchiveBatch(bundle, items),
-    requestApproval: (request) => skillImportApprovalBroker.request(request),
+    requestApproval: (request, cancellation) =>
+      skillImportApprovalBroker.request(request, cancellation),
     // If a prompt is active the coordinator defers the reconnect until its terminal event, making the
     // new Skill available on the next user turn without interrupting the importing tool call.
     onSkillsChanged: () => void runtimeRef.current?.requestSkillsReload()
@@ -492,6 +495,10 @@ const registerIpcHandlers = async ({
     notebookRpcServer,
     settingsService,
     taskNotifications,
+    onSessionTurnStarted: (sessionId, turnToken) =>
+      skillImportApprovalBroker.beginSessionTurn(sessionId, turnToken),
+    onSessionTurnEnded: (sessionId, turnToken) =>
+      skillImportApprovalBroker.endSessionTurn(sessionId, turnToken),
     onSessionCancelled: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
     onAllSessionsCancelled: () => skillImportApprovalBroker.cancelAll(),
     initializationBarrier: initialConnectorSkillsReady

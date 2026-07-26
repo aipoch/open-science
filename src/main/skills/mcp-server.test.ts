@@ -10,6 +10,7 @@ import {
 
 describe('Skill import MCP server', () => {
   it('exposes one high-level request tool without exposing filesystem writes', async () => {
+    const turnToken = '00000000-0000-4000-8000-000000000001'
     const requestImport = vi.fn().mockResolvedValue({
       status: 'imported',
       skills: [{ id: 'imported-demo', name: 'Demo', status: 'imported' }]
@@ -25,18 +26,24 @@ describe('Skill import MCP server', () => {
       expect.objectContaining({
         name: REQUEST_SKILL_IMPORT_TOOL_NAME,
         inputSchema: expect.objectContaining({
-          properties: expect.objectContaining({ attachment_uri: expect.any(Object) }),
-          required: ['attachment_uri']
+          properties: expect.objectContaining({
+            attachment_uri: expect.any(Object),
+            turn_token: expect.any(Object)
+          }),
+          required: ['attachment_uri', 'turn_token']
         })
       })
     ])
 
     const result = await client.callTool({
       name: REQUEST_SKILL_IMPORT_TOOL_NAME,
-      arguments: { attachment_uri: 'file:///managed/session/demo.skill' }
+      arguments: {
+        attachment_uri: 'file:///managed/session/demo.skill',
+        turn_token: turnToken
+      }
     })
 
-    expect(requestImport).toHaveBeenCalledWith('file:///managed/session/demo.skill')
+    expect(requestImport).toHaveBeenCalledWith('file:///managed/session/demo.skill', turnToken)
     expect(result).toMatchObject({
       content: [{ type: 'text', text: expect.stringContaining('imported-demo') }]
     })

@@ -25,6 +25,20 @@ type RuntimeFactory = (
   permissionGrantStore: ConversationPermissionGrantStore
 ) => AcpRuntime
 
+type AcpRuntimeCoordinatorTeardownCallbacks = {
+  onSessionTurnStarted?: (sessionId: string, turnToken: string) => void
+  onSessionTurnEnded?: (sessionId: string, turnToken: string) => void
+  onSessionCancellationRequested?: (sessionId: string) => void
+  onAllSessionsCancellationRequested?: () => void
+}
+
+type PendingPromptStart = {
+  id: string
+  runtime: AcpRuntime
+  sessionCancellationGeneration: number
+  globalCancellationGeneration: number
+}
+
 // Keeps each framework generation in its own AcpRuntime. Framework changes preserve active turns, then
 // retire their runtime so every later turn resumes through the newly selected framework.
 class AcpRuntimeCoordinator {
@@ -38,6 +52,10 @@ class AcpRuntimeCoordinator {
   private readonly permissionGrantStore = new ConversationPermissionGrantStore()
   private runtimeSequence = 0
   private initializationGeneration = 0
+  private globalCancellationGeneration = 0
+  private promptAttemptSequence = 0
+  private readonly sessionCancellationGenerations = new Map<string, number>()
+  private readonly pendingPromptStarts = new Map<string, PendingPromptStart[]>()
   private activeRuntime: AcpRuntime | undefined
   private lastRuntime: AcpRuntime | undefined
 
@@ -47,7 +65,8 @@ class AcpRuntimeCoordinator {
     private readonly defaultCwd = '',
     private readonly initializationBarrier?: Promise<unknown>,
     private readonly onDisconnected?: () => void,
-    private readonly onSessionUnavailable?: (sessionId: string) => void
+    private readonly onSessionUnavailable?: (sessionId: string) => void,
+    private readonly teardownCallbacks: AcpRuntimeCoordinatorTeardownCallbacks = {}
   ) {
     this.activeRuntime = this.addRuntime()
     this.lastRuntime = this.activeRuntime
@@ -131,6 +150,9 @@ class AcpRuntimeCoordinator {
   }
 
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
+    // User teardown intent invalidates held approvals synchronously. Runtime shutdown may take time or
+    // reject after partial cleanup, but a dialog that was already open must not remain actionable.
+    this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
     const runtimes = Array.from(this.runtimes)
     const results = await Promise.allSettled(
@@ -141,7 +163,7 @@ class AcpRuntimeCoordinator {
     )
     if (failure) {
       // A multi-runtime teardown can partially succeed. Release only the runtimes that are definitely
-      // gone so their pending approvals cannot outlive them; failed runtimes retain ownership for retry.
+      // gone; failed runtimes retain their session and permission-routing ownership for retry.
       // A rejection can still happen after a runtime cleared some/all sessions, so reconcile those
       // actual disappearances too without releasing the failed runtime itself.
       results.forEach((result, index) => {
@@ -158,6 +180,7 @@ class AcpRuntimeCoordinator {
   }
 
   shutdown(): void {
+    this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
     for (const runtime of this.runtimes) runtime.shutdown()
     this.clearRuntimeOwnership()
@@ -165,11 +188,13 @@ class AcpRuntimeCoordinator {
   }
 
   async shutdownForQuit(): Promise<{ reaped: boolean }> {
+    this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
     return this.shutdownAll((runtime) => runtime.shutdownForQuit())
   }
 
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
+    this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
     return this.shutdownAll((runtime) => runtime.shutdownForUpdateGate())
   }
@@ -203,15 +228,30 @@ class AcpRuntimeCoordinator {
   }
 
   sendPrompt(request: AcpPromptRequest): ReturnType<AcpRuntime['sendPrompt']> {
-    return this.runtimeForSession(request.sessionId).sendPrompt(request)
+    const runtime = this.runtimeForSession(request.sessionId)
+    const attempt: PendingPromptStart = {
+      id: `prompt-attempt-${++this.promptAttemptSequence}`,
+      runtime,
+      sessionCancellationGeneration:
+        this.sessionCancellationGenerations.get(request.sessionId) ?? 0,
+      globalCancellationGeneration: this.globalCancellationGeneration
+    }
+    const pending = this.pendingPromptStarts.get(request.sessionId) ?? []
+    pending.push(attempt)
+    this.pendingPromptStarts.set(request.sessionId, pending)
+    return runtime
+      .sendPrompt(request, attempt.id)
+      .finally(() => this.removePendingPromptStart(request.sessionId, attempt))
   }
 
   async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
+    this.invalidateSessionTurn(request.sessionId)
     await this.runtimeForSession(request.sessionId).cancelPrompt(request)
     return this.getSnapshot()
   }
 
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot> {
+    this.invalidateSessionTurn(request.sessionId)
     const runtime = this.runtimeForSession(request.sessionId)
     const ownedBeforeDelete = this.sessionRuntimes.get(request.sessionId) === runtime
     await runtime.deleteSession(request)
@@ -386,6 +426,44 @@ class AcpRuntimeCoordinator {
     this.initializationGeneration += 1
   }
 
+  private invalidateSessionTurn(sessionId: string): void {
+    this.sessionCancellationGenerations.set(
+      sessionId,
+      (this.sessionCancellationGenerations.get(sessionId) ?? 0) + 1
+    )
+    this.teardownCallbacks.onSessionCancellationRequested?.(sessionId)
+  }
+
+  private invalidateAllSessionTurns(): void {
+    this.globalCancellationGeneration += 1
+    this.teardownCallbacks.onAllSessionsCancellationRequested?.()
+  }
+
+  private takePendingPromptStart(
+    sessionId: string,
+    runtime: AcpRuntime,
+    attemptId: string | undefined
+  ): PendingPromptStart | undefined {
+    if (!attemptId) return undefined
+    const pending = this.pendingPromptStarts.get(sessionId)
+    if (!pending) return undefined
+    const index = pending.findIndex(
+      (attempt) => attempt.runtime === runtime && attempt.id === attemptId
+    )
+    if (index < 0) return undefined
+    const [attempt] = pending.splice(index, 1)
+    if (pending.length === 0) this.pendingPromptStarts.delete(sessionId)
+    return attempt
+  }
+
+  private removePendingPromptStart(sessionId: string, attempt: PendingPromptStart): void {
+    const pending = this.pendingPromptStarts.get(sessionId)
+    if (!pending) return
+    const index = pending.indexOf(attempt)
+    if (index >= 0) pending.splice(index, 1)
+    if (pending.length === 0) this.pendingPromptStarts.delete(sessionId)
+  }
+
   private getActiveRuntime(): AcpRuntime {
     if (!this.activeRuntime) this.activeRuntime = this.addRuntime()
     this.lastRuntime = this.activeRuntime
@@ -420,6 +498,22 @@ class AcpRuntimeCoordinator {
         onPermissionRequest: (request) => {
           this.permissionRuntimes.set(request.requestId, runtime)
           this.callbacks.onPermissionRequest?.(request)
+        },
+        onPromptStarted: (sessionId, turnToken, promptAttemptId) => {
+          const attempt = this.takePendingPromptStart(sessionId, runtime, promptAttemptId)
+          if (
+            attempt &&
+            attempt.globalCancellationGeneration === this.globalCancellationGeneration &&
+            attempt.sessionCancellationGeneration ===
+              (this.sessionCancellationGenerations.get(sessionId) ?? 0)
+          ) {
+            this.teardownCallbacks.onSessionTurnStarted?.(sessionId, turnToken)
+          }
+          this.callbacks.onPromptStarted?.(sessionId, turnToken)
+        },
+        onPromptEnded: (sessionId, turnToken) => {
+          this.teardownCallbacks.onSessionTurnEnded?.(sessionId, turnToken)
+          this.callbacks.onPromptEnded?.(sessionId, turnToken)
         },
         onRetired: () => this.handleRuntimeRetired(runtime)
       },
@@ -528,7 +622,7 @@ class AcpRuntimeCoordinator {
     )
     if (failure) {
       // Awaitable shutdown paths suppress each runtime's closed-state event. Account for partial
-      // success here so only approvals belonging to runtimes that really stopped are invalidated.
+      // success here so only runtimes that really stopped release their routing ownership.
       // Rejected teardowns may nevertheless have cleared their session maps before the failing step.
       outcomes.forEach((outcome, index) => {
         const runtime = runtimes[index]
@@ -551,6 +645,7 @@ class AcpRuntimeCoordinator {
     this.sessionRuntimes.clear()
     this.sessionConnectionStatuses.clear()
     this.permissionRuntimes.clear()
+    this.pendingPromptStarts.clear()
     this.activeRuntime = undefined
     this.lastRuntime = undefined
   }

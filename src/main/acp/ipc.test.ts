@@ -164,27 +164,26 @@ afterEach(() => {
 })
 
 describe('registerAcpIpcHandlers — Skill import cancellation lifecycle', () => {
-  it('invalidates a stopped prompt and a successfully deleted detached session', async () => {
+  it('invalidates a stopped prompt and deleted session before runtime teardown starts', async () => {
     const onSessionCancelled = vi.fn()
     registerWithFakes({ onSessionCancelled })
 
     await handlers.get('acp:cancel')?.({}, { sessionId: 'session-1' })
     await handlers.get('acp:delete-session')?.({}, { sessionId: 'session-2' })
 
-    expect(onSessionCancelled).toHaveBeenCalledTimes(2)
     expect(onSessionCancelled).toHaveBeenCalledWith('session-1')
     expect(onSessionCancelled).toHaveBeenCalledWith('session-2')
     expect(cancelPrompt).toHaveBeenCalledWith({ sessionId: 'session-1' })
     expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'session-2' })
-    expect(cancelPrompt.mock.invocationCallOrder[0]).toBeLessThan(
-      onSessionCancelled.mock.invocationCallOrder[0]
+    expect(onSessionCancelled.mock.invocationCallOrder[0]).toBeLessThan(
+      cancelPrompt.mock.invocationCallOrder[0]
     )
-    expect(deleteSession.mock.invocationCallOrder[0]).toBeLessThan(
-      onSessionCancelled.mock.invocationCallOrder[1]
+    expect(onSessionCancelled.mock.invocationCallOrder[1]).toBeLessThan(
+      deleteSession.mock.invocationCallOrder[0]
     )
   })
 
-  it('preserves pending imports when prompt or session teardown fails', async () => {
+  it('keeps pending imports invalidated when prompt or session teardown fails', async () => {
     const onSessionCancelled = vi.fn()
     registerWithFakes({ onSessionCancelled })
     cancelPrompt.mockRejectedValueOnce(new Error('cancel failed'))
@@ -197,10 +196,12 @@ describe('registerAcpIpcHandlers — Skill import cancellation lifecycle', () =>
       handlers.get('acp:delete-session')?.({}, { sessionId: 'session-2' })
     ).rejects.toThrow('delete failed')
 
-    expect(onSessionCancelled).not.toHaveBeenCalled()
+    expect(onSessionCancelled).toHaveBeenCalledTimes(2)
+    expect(onSessionCancelled).toHaveBeenNthCalledWith(1, 'session-1')
+    expect(onSessionCancelled).toHaveBeenNthCalledWith(2, 'session-2')
   })
 
-  it('invalidates every pending import after all agent runtimes disconnect', async () => {
+  it('invalidates every pending import before all agent runtimes disconnect', async () => {
     const onAllSessionsCancelled = vi.fn()
     registerWithFakes({ onAllSessionsCancelled })
 
@@ -208,12 +209,12 @@ describe('registerAcpIpcHandlers — Skill import cancellation lifecycle', () =>
 
     expect(onAllSessionsCancelled).toHaveBeenCalledOnce()
     expect(disconnect).toHaveBeenCalledOnce()
-    expect(disconnect.mock.invocationCallOrder[0]).toBeLessThan(
-      onAllSessionsCancelled.mock.invocationCallOrder[0]
+    expect(onAllSessionsCancelled.mock.invocationCallOrder[0]).toBeLessThan(
+      disconnect.mock.invocationCallOrder[0]
     )
   })
 
-  it('preserves pending imports when global disconnect fails', async () => {
+  it('keeps pending imports invalidated when global disconnect fails', async () => {
     const onAllSessionsCancelled = vi.fn()
     registerWithFakes({ onAllSessionsCancelled })
     disconnect.mockRejectedValueOnce(new Error('disconnect failed'))
@@ -222,7 +223,10 @@ describe('registerAcpIpcHandlers — Skill import cancellation lifecycle', () =>
       'disconnect failed'
     )
 
-    expect(onAllSessionsCancelled).not.toHaveBeenCalled()
+    expect(onAllSessionsCancelled).toHaveBeenCalledOnce()
+    expect(onAllSessionsCancelled.mock.invocationCallOrder[0]).toBeLessThan(
+      disconnect.mock.invocationCallOrder[0]
+    )
   })
 })
 

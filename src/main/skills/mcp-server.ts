@@ -15,11 +15,15 @@ const requestSkillImportToolSchema = {
   attachment_uri: z
     .string()
     .url()
-    .describe('Exact file URI of the attachment marked skillImportEligible in the user prompt.')
+    .describe('Exact file URI of the attachment marked skillImportEligible in the user prompt.'),
+  turn_token: z
+    .string()
+    .uuid()
+    .describe('Exact skillImportTurnToken from the same eligible attachment reference.')
 }
 const SKILL_IMPORT_SYSTEM_PROMPT_APPEND = [
   '<open_science_skill_import_instructions>',
-  'When the user explicitly asks to install or import an attachment wrapped in <attached_skill_package> and marked skillImportEligible, call request_skill_import with its exact URI.',
+  'When the user explicitly asks to install or import an attachment wrapped in <attached_skill_package> and marked skillImportEligible, call request_skill_import with its exact URI as attachment_uri and skillImportTurnToken as turn_token.',
   'The tool opens an application-owned preview and confirmation dialog. Never unpack or copy an attached Skill package into a Skill directory yourself.',
   'An <attached_local_archive> is an ordinary ZIP reference, not an eligible Skill package. Do not call request_skill_import for it.',
   'A newly imported Skill becomes available on the next user turn after the agent runtime reloads.',
@@ -36,7 +40,10 @@ type SkillImportMcpEnvironment = SkillImportRpcConnection & {
 }
 
 type SkillImportMcpHandler = {
-  requestImport: (attachmentUri: string) => Promise<ConversationSkillImportResult>
+  requestImport: (
+    attachmentUri: string,
+    turnToken: string
+  ) => Promise<ConversationSkillImportResult>
 }
 
 type SkillImportMcpServerConfigRequest = SkillImportMcpEnvironment & {
@@ -62,11 +69,11 @@ const createSkillImportMcpServer = (handler: SkillImportMcpHandler): ModelContex
       description: REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
       inputSchema: requestSkillImportToolSchema
     },
-    async ({ attachment_uri }) => ({
+    async ({ attachment_uri, turn_token }) => ({
       content: [
         {
           type: 'text',
-          text: JSON.stringify(await handler.requestImport(attachment_uri), null, 2)
+          text: JSON.stringify(await handler.requestImport(attachment_uri, turn_token), null, 2)
         }
       ]
     })
@@ -109,7 +116,8 @@ const createSkillImportMcpEnvironmentFromProcess = (
 
 const callSkillImportRpc = async (
   environment: SkillImportMcpEnvironment,
-  attachmentUri: string
+  attachmentUri: string,
+  turnToken: string
 ): Promise<ConversationSkillImportResult> => {
   const response = await fetch(environment.endpoint, {
     method: 'POST',
@@ -119,7 +127,7 @@ const callSkillImportRpc = async (
     },
     body: JSON.stringify({
       method: 'skillImport',
-      params: { sessionId: environment.sessionId, attachmentUri }
+      params: { sessionId: environment.sessionId, turnToken, attachmentUri }
     })
   })
   const payload = (await response.json()) as RpcResponse
@@ -134,7 +142,8 @@ const runSkillImportMcpServer = async (
   environment = createSkillImportMcpEnvironmentFromProcess()
 ): Promise<void> => {
   const server = createSkillImportMcpServer({
-    requestImport: (attachmentUri) => callSkillImportRpc(environment, attachmentUri)
+    requestImport: (attachmentUri, turnToken) =>
+      callSkillImportRpc(environment, attachmentUri, turnToken)
   })
   await server.connect(new StdioServerTransport())
 }

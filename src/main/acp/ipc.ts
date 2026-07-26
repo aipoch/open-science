@@ -54,6 +54,8 @@ type AcpIpcOptions = AcpIpcArtifacts & {
   // Observes prompt starts and terminal turn events for desktop notifications. Optional so tests
   // and headless setups can run without a notification surface.
   taskNotifications?: TaskNotificationService
+  onSessionTurnStarted?: (sessionId: string, turnToken: string) => void
+  onSessionTurnEnded?: (sessionId: string, turnToken: string) => void
   onSessionCancelled?: (sessionId: string) => void
   onAllSessionsCancelled?: () => void
 }
@@ -83,6 +85,8 @@ const createRuntime = ({
   settingsService,
   initializationBarrier,
   taskNotifications,
+  onSessionTurnStarted,
+  onSessionTurnEnded,
   onSessionCancelled,
   onAllSessionsCancelled
 }: AcpIpcOptions): AcpRuntimeCoordinator => {
@@ -154,8 +158,14 @@ const createRuntime = ({
     callbacks,
     defaultCwd,
     initializationBarrier,
-    onAllSessionsCancelled,
-    onSessionCancelled
+    undefined,
+    onSessionCancelled,
+    {
+      onSessionTurnStarted,
+      onSessionTurnEnded,
+      onSessionCancellationRequested: onSessionCancelled,
+      onAllSessionsCancellationRequested: onAllSessionsCancelled
+    }
   )
 }
 

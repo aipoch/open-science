@@ -32,6 +32,7 @@ describe('NotebookLocalRpcServer Skill import bridge', () => {
         method: 'skillImport',
         params: {
           sessionId: 'pre-session-alias',
+          turnToken: '00000000-0000-4000-8000-000000000001',
           attachmentUri: 'file:///managed/session/demo.skill'
         }
       })
@@ -46,6 +47,7 @@ describe('NotebookLocalRpcServer Skill import bridge', () => {
     })
     expect(request).toHaveBeenCalledWith({
       sessionId: 'session-1',
+      turnToken: '00000000-0000-4000-8000-000000000001',
       attachmentUri: 'file:///managed/session/demo.skill'
     })
   })

@@ -346,6 +346,32 @@ const createTemporaryRoot = async (): Promise<string> => {
   return temporaryRoot
 }
 
+const buildStoredSkillArchive = (skillName: string): Buffer => {
+  const path = Buffer.from('SKILL.md', 'utf8')
+  const content = Buffer.from(`---\nname: ${skillName}\n---\nFollow the workflow.`, 'utf8')
+  const local = Buffer.alloc(30 + path.length)
+  local.writeUInt32LE(0x04034b50, 0)
+  local.writeUInt32LE(content.length, 18)
+  local.writeUInt32LE(content.length, 22)
+  local.writeUInt16LE(path.length, 26)
+  path.copy(local, 30)
+
+  const central = Buffer.alloc(46 + path.length)
+  central.writeUInt32LE(0x02014b50, 0)
+  central.writeUInt32LE(content.length, 20)
+  central.writeUInt32LE(content.length, 24)
+  central.writeUInt16LE(path.length, 28)
+  path.copy(central, 46)
+
+  const end = Buffer.alloc(22)
+  end.writeUInt32LE(0x06054b50, 0)
+  end.writeUInt16LE(1, 8)
+  end.writeUInt16LE(1, 10)
+  end.writeUInt32LE(central.length, 12)
+  end.writeUInt32LE(local.length + content.length, 16)
+  return Buffer.concat([local, content, central, end])
+}
+
 const getEnvValue = (mcpServer: unknown, name: string): string => {
   if (
     typeof mcpServer !== 'object' ||
@@ -1318,6 +1344,7 @@ describe('ACP runtime session management', () => {
   it('keeps ordinary ZIPs on provider-safe references and marks only Skill packages eligible', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
+    const skillArchive = buildStoredSkillArchive('Example Package')
     const stagedAttachments = await uploadRepository.stageFiles({
       files: [
         {
@@ -1333,7 +1360,12 @@ describe('ACP runtime session management', () => {
         {
           name: 'example-package.skill',
           mimeType: 'application/octet-stream',
-          content: Buffer.from('skill-bytes').toString('base64')
+          content: skillArchive.toString('base64')
+        },
+        {
+          name: 'renamed-garbage.skill',
+          mimeType: 'application/octet-stream',
+          content: Buffer.from('not a Skill archive').toString('base64')
         }
       ]
     })
@@ -1374,7 +1406,13 @@ describe('ACP runtime session management', () => {
     expect(receivedPrompts[0][3]).toMatchObject({
       type: 'text',
       text: expect.stringMatching(
-        /<attached_skill_package>[\s\S]*example-package\.skill[\s\S]*"skillImportEligible":true/
+        /<attached_skill_package>[\s\S]*example-package\.skill[\s\S]*"skillImportEligible":true[\s\S]*"skillImportTurnToken":"[0-9a-f-]{36}"/
+      )
+    })
+    expect(receivedPrompts[0][4]).toMatchObject({
+      type: 'text',
+      text: expect.stringMatching(
+        /<attached_local_archive>[\s\S]*renamed-garbage\.skill[\s\S]*"skillImportEligible":false/
       )
     })
   })
@@ -2204,25 +2242,26 @@ describe('ACP runtime session management', () => {
       mimeType: 'application/octet-stream',
       uri: expect.stringContaining('data.bin')
     })
-    // Artifact-backed Skill package -> ordinary resource link, never the upload-only import wrapper.
+    // Artifact-backed Skill package -> provider-safe ordinary archive reference, never the
+    // current-session import wrapper.
     expect(receivedPrompts[0][4]).toMatchObject({
-      type: 'resource_link',
-      name: 'generated.skill',
-      title: 'generated.skill',
-      mimeType: 'application/octet-stream',
-      uri: expect.stringContaining('generated.skill')
+      type: 'text',
+      text: expect.stringMatching(
+        /<attached_local_archive>[\s\S]*generated\.skill[\s\S]*"skillImportEligible":false/
+      )
     })
   })
 
   it('advertises only current-session upload references to the Skill importer', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
+    const currentSkillArchive = buildStoredSkillArchive('Current Skill')
     const staged = await uploadRepository.stageFiles({
       files: [
         {
           name: 'current.skill',
           mimeType: 'application/octet-stream',
-          content: Buffer.from('current skill bytes').toString('base64')
+          content: currentSkillArchive.toString('base64')
         },
         {
           name: 'other.skill',
@@ -2288,13 +2327,15 @@ describe('ACP runtime session management', () => {
 
     expect(receivedPrompts[0][1]).toMatchObject({
       type: 'text',
-      text: expect.stringMatching(/<attached_skill_package>[\s\S]*current\.skill/)
+      text: expect.stringMatching(
+        /<attached_skill_package>[\s\S]*current\.skill[\s\S]*"skillImportTurnToken":"[0-9a-f-]{36}"/
+      )
     })
     expect(receivedPrompts[0][2]).toMatchObject({
-      type: 'resource_link',
-      name: 'other.skill',
-      title: 'other.skill',
-      uri: expect.stringContaining('other.skill')
+      type: 'text',
+      text: expect.stringMatching(
+        /<attached_local_archive>[\s\S]*other\.skill[\s\S]*"skillImportEligible":false/
+      )
     })
   })
 
@@ -7432,6 +7473,63 @@ describe('ACP runtime skill force-load + nudge', () => {
       })
     ),
     catalogForCodexHome: vi.fn(async () => options.catalog ?? [])
+  })
+
+  it('does not let a delayed pre-start attempt overwrite a newer active turn', async () => {
+    const process = new FakeAgentProcess()
+    const skillCheckEntered = createDeferred()
+    const releaseSkillCheck = createDeferred()
+    const newerPromptEntered = createDeferred()
+    const releaseNewerPrompt = createDeferred()
+    const onPromptStarted = vi.fn()
+    const onPromptEnded = vi.fn()
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: async ({ text }) => {
+        if (text === 'newer prompt') {
+          newerPromptEntered.resolve()
+          await releaseNewerPrompt.promise
+        }
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onPromptStarted, onPromptEnded },
+      skills: {
+        needForceLoad: async () => {
+          skillCheckEntered.resolve()
+          await releaseSkillCheck.promise
+          return ['research']
+        },
+        namesForIds: async (ids) => ids
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    const delayedPrompt = runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'delayed prompt',
+      forcedSkillIds: ['research']
+    })
+    await skillCheckEntered.promise
+    await runtime.cancelPrompt({ sessionId: session.sessionId })
+
+    const newerPrompt = runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'newer prompt'
+    })
+    await newerPromptEntered.promise
+    releaseSkillCheck.resolve()
+
+    await expect(delayedPrompt).rejects.toThrow(/already running/)
+    expect(onPromptStarted).toHaveBeenCalledOnce()
+    expect(process.killed).toBe(false)
+
+    releaseNewerPrompt.resolve()
+    await expect(newerPrompt).resolves.toMatchObject({ stopReason: 'end_turn' })
+    expect(onPromptEnded).toHaveBeenCalledOnce()
+    expect(onPromptEnded).toHaveBeenCalledWith(session.sessionId, onPromptStarted.mock.calls[0][1])
   })
 
   it('passes turn-forced skill ids to backend resolution per runtime instance', async () => {

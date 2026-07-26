@@ -181,7 +181,8 @@ class AgentMcpHttpHost {
     if (!skillImportEnvironment) return undefined
 
     return createSkillImportMcpServer({
-      requestImport: (attachmentUri) => callSkillImportRpc(skillImportEnvironment, attachmentUri)
+      requestImport: (attachmentUri, turnToken) =>
+        callSkillImportRpc(skillImportEnvironment, attachmentUri, turnToken)
     })
   }
 
