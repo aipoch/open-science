@@ -378,7 +378,7 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[1].applyReasoningEffortChange).toHaveBeenCalledWith('high')
   })
 
-  it('attempts every runtime disconnect before surfacing a partial failure', async () => {
+  it('attempts every runtime disconnect and preserves the surviving snapshot primary', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
       const fake = createFakeRuntime({
@@ -393,6 +393,7 @@ describe('AcpRuntimeCoordinator', () => {
     await coordinator.createSession()
     await coordinator.requestAgentFrameworkSwitch()
     await coordinator.createSession()
+    created[0].emitState({ cwd: '/surviving-old-runtime' })
     const activeDisconnect = createDeferred<AcpStateSnapshot>()
     created[0].disconnect.mockRejectedValueOnce(new Error('old disconnect failed'))
     created[1].disconnect.mockReturnValueOnce(activeDisconnect.promise)
@@ -409,6 +410,11 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[1].disconnect).toHaveBeenCalledOnce()
     activeDisconnect.resolve(emptySnapshot())
     await expect(disconnecting).rejects.toThrow('old disconnect failed')
+    expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'connected',
+      cwd: '/surviving-old-runtime'
+    })
+    expect(created).toHaveLength(2)
   })
 
   it('invalidates only sessions owned by a runtime that closes unexpectedly', async () => {
@@ -470,7 +476,7 @@ describe('AcpRuntimeCoordinator', () => {
     expect(onSessionUnavailable).toHaveBeenCalledWith('session-1')
   })
 
-  it('attempts every runtime quit teardown before surfacing a partial failure', async () => {
+  it('attempts every runtime quit teardown and preserves the surviving snapshot primary', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const onDisconnected = vi.fn()
     const onSessionUnavailable = vi.fn()
@@ -494,6 +500,7 @@ describe('AcpRuntimeCoordinator', () => {
     await coordinator.createSession()
     await coordinator.requestAgentFrameworkSwitch()
     await coordinator.createSession()
+    created[0].emitState({ cwd: '/surviving-old-runtime' })
     const activeShutdown = createDeferred<{ reaped: boolean }>()
     vi.mocked(created[0].runtime.shutdownForQuit).mockRejectedValueOnce(
       new Error('old shutdown failed')
@@ -516,6 +523,11 @@ describe('AcpRuntimeCoordinator', () => {
     expect(onSessionUnavailable).toHaveBeenCalledWith('session-2')
     expect(onSessionUnavailable).not.toHaveBeenCalledWith('session-1')
     expect(onDisconnected).not.toHaveBeenCalled()
+    expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'connected',
+      cwd: '/surviving-old-runtime'
+    })
+    expect(created).toHaveLength(2)
 
     vi.mocked(created[0].runtime.shutdownForQuit).mockResolvedValueOnce({ reaped: true })
     await expect(coordinator.shutdownForQuit()).resolves.toEqual({ reaped: true })

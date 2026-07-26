@@ -466,7 +466,13 @@ class AcpRuntimeCoordinator {
       if (owner === runtime) this.permissionRuntimes.delete(requestId)
     }
     if (this.activeRuntime === runtime) this.activeRuntime = undefined
-    if (this.lastRuntime === runtime) this.lastRuntime = this.activeRuntime
+    if (this.lastRuntime === runtime) {
+      // Partial teardown keeps rejected runtimes for retry. If the runtime that did stop was also the
+      // snapshot primary, retain one survivor as lastRuntime so the coordinator does not publish idle
+      // while a live generation still owns sessions or permissions. Do not make a retired survivor the
+      // active target for new work; getActiveRuntime may create the selected framework generation later.
+      this.lastRuntime = this.activeRuntime ?? Array.from(this.runtimes).at(-1)
+    }
   }
 
   private visibleSessionIds(runtime: AcpRuntime, snapshot: AcpStateSnapshot): string[] {
