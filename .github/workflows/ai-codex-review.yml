@@ -375,11 +375,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! command -v bwrap > /dev/null 2>&1; then
-            echo "GitHub-hosted subscription reviews require bubblewrap." >&2
-            exit 1
-          fi
-
           current_user="$(id -un)"
           sudo -n bash -c '
             set -euo pipefail
@@ -417,6 +412,8 @@ jobs:
             echo "Subscription credential is unavailable to the Codex parent process." >&2
             exit 1
           fi
+          # These probes verify the packaged Codex Linux sandbox can both enforce a deny rule and
+          # retain normal repository reads. A runner-global bwrap executable is not required.
           if codex sandbox --permission-profile ai_review -C "$GITHUB_WORKSPACE" -- \
             test -r "$CODEX_HOME/auth.json"; then
             echo "Subscription credential remains readable inside the Codex sandbox." >&2

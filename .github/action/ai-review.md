@@ -33,10 +33,11 @@ Use a dedicated Codex account because `auth.json` contains access and refresh to
 jobs copy it into a temporary `CODEX_HOME`, remove passwordless sudo, and use a strict read-only
 permission profile that denies model-generated commands access to the entire authentication
 directory. The checkout is marked untrusted so PR-provided Codex configuration is ignored, and
-repository instruction loading is disabled. The job verifies that bubblewrap is installed and that
-the credential deny rule is enforced before review; it fails closed if the sandbox or sudo boundary
-is ineffective. Manual dispatch remains a trust decision because OpenAI does not recommend
-ChatGPT-managed auth for public or open-source CI.
+repository instruction loading is disabled. Before review, positive and negative `codex sandbox`
+probes verify that the packaged Linux sandbox can read the checkout but cannot read the credential;
+the job fails closed if the sandbox or sudo boundary is ineffective. A runner-global `bwrap`
+executable is not required. Manual dispatch remains a trust decision because OpenAI does not
+recommend ChatGPT-managed auth for public or open-source CI.
 
 ### 1. Create file-backed credentials
 
