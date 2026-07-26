@@ -484,6 +484,12 @@ describe('Responses-compatible bridge conversion', () => {
       responsesToChatRequest({ input: 'hello', reasoning: { effort: 'turbo' } })
     ).toThrow(/reasoning effort/)
     expect(() =>
+      responsesToChatRequest({ input: 'hello', reasoning: { effort: 'max' } })
+    ).not.toThrow()
+    expect(() =>
+      responsesToChatRequest({ input: 'hello', reasoning: { effort: 'ultra' } })
+    ).not.toThrow()
+    expect(() =>
       responsesToChatRequest({ input: 'hello', reasoning: { summary: 'verbose' } })
     ).toThrow(/reasoning summary/)
     expect(() =>

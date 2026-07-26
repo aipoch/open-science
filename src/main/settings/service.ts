@@ -3,7 +3,7 @@ import { access, chmod, mkdir, readdir, realpath, writeFile } from 'node:fs/prom
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual, promisify } from 'node:util'
 
 import { z } from 'zod'
@@ -177,8 +177,7 @@ import {
 import {
   ResponsesBridge,
   type ResponsesBridgeConnection,
-  type ResponsesBridgeNamespacedTool,
-  type ResponsesBridgeTarget
+  type ResponsesBridgeNamespacedTool
 } from './responses-bridge'
 import { SettingsRepository } from './repository'
 import { sanitizeCustomMcpServer } from './repository'
@@ -233,10 +232,9 @@ export type AgentBackendResolutionContext = {
   forcedSkillIds?: string[]
 }
 
-type ResponsesBridgePoolEntry = {
+type ResponsesBridgeEntry = {
   bridge: ResponsesBridge
   connection: Promise<ResponsesBridgeConnection>
-  leaseCount: number
 }
 
 type LeasedResponsesBridgeConnection = ResponsesBridgeConnection & {
@@ -492,7 +490,10 @@ class SettingsService {
   private claudeSharedAuthStatusGeneration = 0
   private claudeSharedAuthStatusPromise:
     { generation: number; promise: Promise<boolean> } | undefined
-  private readonly responsesBridges = new Map<string, ResponsesBridgePoolEntry>()
+  // A bridge owns mutable per-runtime state (reasoning override, reviewer scopes, and reasoning
+  // replay). Track each backend generation separately so an overlapping reconnect cannot mutate the
+  // bridge still serving the retiring generation.
+  private readonly responsesBridges = new Map<string, ResponsesBridgeEntry>()
   private providerSequence = 0
   private readonly providerValidationGenerations = new Map<string, number>()
 
@@ -3476,27 +3477,17 @@ class SettingsService {
         namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS
       }
     }
-    const fingerprint = this.responsesBridgeFingerprint(target)
-    let entry = this.responsesBridges.get(fingerprint)
-    if (!entry) {
-      const bridge = new ResponsesBridge(target)
-      entry = { bridge, connection: bridge.start(), leaseCount: 0 }
-      this.responsesBridges.set(fingerprint, entry)
-    } else {
-      // Reasoning effort is a live global preference, not part of the bridge's pinned routing target.
-      entry.bridge.setReasoningEffort(reasoningEffort)
-    }
-    entry.leaseCount += 1
+    const bridgeId = randomUUID()
+    const bridge = new ResponsesBridge(target)
+    const entry = { bridge, connection: bridge.start() }
+    this.responsesBridges.set(bridgeId, entry)
 
     let connection: ResponsesBridgeConnection
     try {
       connection = await entry.connection
     } catch (error) {
-      entry.leaseCount = Math.max(0, entry.leaseCount - 1)
-      if (entry.leaseCount === 0 && this.responsesBridges.get(fingerprint) === entry) {
-        this.responsesBridges.delete(fingerprint)
-        await entry.bridge.close().catch(() => undefined)
-      }
+      if (this.responsesBridges.get(bridgeId) === entry) this.responsesBridges.delete(bridgeId)
+      await entry.bridge.close().catch(() => undefined)
       throw error
     }
 
@@ -3515,32 +3506,12 @@ class SettingsService {
         release: async () => {
           if (released) return
           released = true
-          leasedEntry.leaseCount = Math.max(0, leasedEntry.leaseCount - 1)
-          if (
-            leasedEntry.leaseCount > 0 ||
-            this.responsesBridges.get(fingerprint) !== leasedEntry
-          ) {
-            return
-          }
-          this.responsesBridges.delete(fingerprint)
+          if (this.responsesBridges.get(bridgeId) !== leasedEntry) return
+          this.responsesBridges.delete(bridgeId)
           await leasedEntry.bridge.close()
         }
       }
     }
-  }
-
-  private responsesBridgeFingerprint(target: ResponsesBridgeTarget): string {
-    // reasoningEffort is intentionally live mutable and therefore excluded from the pinned routing
-    // identity. Including it would split leases and prevent effort fan-out to existing bridges.
-    const pinnedTarget = {
-      baseUrl: target.baseUrl,
-      key: target.key,
-      vendorId: target.vendorId,
-      model: target.model,
-      namespacedTools: target.namespacedTools,
-      reviewerScope: target.reviewerScope
-    }
-    return createHash('sha256').update(JSON.stringify(pinnedTarget)).digest('hex')
   }
 
   // Locates the opencode binary: an explicitly stored path wins, else a best-effort PATH lookup.

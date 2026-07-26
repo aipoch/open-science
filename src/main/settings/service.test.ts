@@ -2289,7 +2289,7 @@ describe('SettingsService: preflight & spawn config', () => {
     ).resolves.toEqual([{ name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }])
     expect(selectSkills).toHaveBeenCalledWith('search PubMed', skillCatalog, undefined)
     bridges[0].registerReviewerSession('reviewer-one')
-    bridges[1].registerReviewerSession('reviewer-two')
+    bridges[2].registerReviewerSession('reviewer-two')
 
     const send = async (backend: typeof firstBackend, promptCacheKey: string): Promise<void> => {
       const response = await localFetch(`${backend.providerConfiguration?.baseUrl}/responses`, {
@@ -2333,7 +2333,7 @@ describe('SettingsService: preflight & spawn config', () => {
         responsesBridges: Map<string, unknown>
       }
     ).responsesBridges
-    expect(bridgePool.size).toBe(2)
+    expect(bridgePool.size).toBe(3)
     await firstBackend.responsesBridgeLease?.release()
     expect(bridgePool.size).toBe(2)
     await firstBackendPeer.responsesBridgeLease?.release()
@@ -3909,6 +3909,85 @@ describe('SettingsService: reasoning effort', () => {
     expect(content.provider['openai-compatible'].models['deepseek-v4-pro']).toEqual(
       expect.objectContaining({ options: { thinking: { type: 'disabled' } } })
     )
+  })
+
+  it('isolates live effort changes between overlapping bridge generations', async () => {
+    const localFetch = globalThis.fetch
+    const upstreamEfforts: unknown[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        upstreamEfforts.push(body.reasoning_effort)
+        return new Response(
+          [
+            'data: ' +
+              JSON.stringify({
+                id: 'chat-isolated-effort',
+                model: 'model-a',
+                choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+              }),
+            '',
+            'data: [DONE]',
+            ''
+          ].join('\n'),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      })
+    )
+    const service = createService()
+    const bridgeService = service as unknown as {
+      ensureResponsesBridge: (
+        provider: {
+          type: 'custom'
+          baseUrl: string
+          apiEndpoints: ['openai']
+          model: string
+          key: string
+        },
+        effort: 'low' | 'max'
+      ) => Promise<{
+        baseUrl: string
+        token: string
+        lease: {
+          setReasoningEffort: (effort: 'low' | 'high' | 'max') => void
+          release: () => Promise<void>
+        }
+      }>
+    }
+    const provider = {
+      type: 'custom' as const,
+      baseUrl: 'https://vendor.example/v1',
+      apiEndpoints: ['openai'] as ['openai'],
+      model: 'model-a',
+      key: 'key-a'
+    }
+    const first = await bridgeService.ensureResponsesBridge(provider, 'low')
+    const second = await bridgeService.ensureResponsesBridge(provider, 'max')
+    const post = async (connection: { baseUrl: string; token: string }): Promise<void> => {
+      const response = await localFetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'catalog', input: 'hi', stream: true })
+      })
+      await response.text()
+    }
+
+    try {
+      await post(first)
+      await post(second)
+      second.lease.setReasoningEffort('high')
+      await post(first)
+      await post(second)
+
+      expect(upstreamEfforts).toEqual(['low', 'max', 'low', 'high'])
+    } finally {
+      await first.lease.release()
+      await second.lease.release()
+    }
   })
 
   it('surfaces sessionEffort on the Claude backend too (the early-return path)', async () => {

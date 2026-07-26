@@ -104,7 +104,16 @@ class BridgeHttpError extends Error {
 
 const ALLOWED_INCLUDE_VALUES = new Set(['reasoning.encrypted_content'])
 const ALLOWED_REASONING_KEYS = new Set(['effort', 'summary'])
-const ALLOWED_REASONING_EFFORTS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh'])
+const ALLOWED_REASONING_EFFORTS = new Set([
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'ultra'
+])
 const ALLOWED_REASONING_SUMMARIES = new Set(['auto', 'concise', 'detailed'])
 const ALLOWED_IMAGE_DETAILS = new Set(['auto', 'low', 'high'])
 const UPSTREAM_IMAGE_TYPES = new Set(['image', 'image_url', 'input_image', 'output_image'])
