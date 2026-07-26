@@ -1,10 +1,18 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const spawnSync = vi.hoisted(() => vi.fn())
+
+vi.mock('node:child_process', () => ({ spawnSync }))
 
 // createUpdateStrategy constructs a concrete strategy per platform. Both strategies touch native
 // modules at construction (UpdateService reads app.getVersion(); ElectronUpdaterStrategy subscribes to
 // autoUpdater), so stub them enough to instantiate without a real Electron runtime.
 vi.mock('electron', () => ({
-  app: { getVersion: () => '0.0.0', isPackaged: false },
+  app: {
+    getPath: () => '/Applications/Open Science.app/Contents/MacOS/Open Science',
+    getVersion: () => '0.0.0',
+    isPackaged: false
+  },
   BrowserWindow: { getAllWindows: () => [] }
 }))
 vi.mock('electron-updater', () => ({
@@ -16,6 +24,15 @@ import { ElectronUpdaterStrategy } from './electron-updater-strategy'
 import { UpdateService } from './service'
 
 describe('createUpdateStrategy', () => {
+  beforeEach(() => {
+    spawnSync.mockReset()
+    spawnSync.mockReturnValue({
+      status: 0,
+      stdout: '',
+      stderr: 'Identifier=com.aipoch.open-science\nTeamIdentifier=87G9WFU9H3\n'
+    })
+  })
+
   it('uses ElectronUpdaterStrategy on win32', () => {
     expect(createUpdateStrategy('win32')).toBeInstanceOf(ElectronUpdaterStrategy)
   })
@@ -27,6 +44,54 @@ describe('createUpdateStrategy', () => {
   it('uses ElectronUpdaterStrategy on darwin for a packaged stable build', () => {
     expect(createUpdateStrategy('darwin', { isPackaged: true, version: '1.2.3' })).toBeInstanceOf(
       ElectronUpdaterStrategy
+    )
+  })
+
+  it('falls back to the installer on darwin for an ad-hoc-signed packaged stable build', () => {
+    spawnSync.mockReturnValueOnce({
+      status: 0,
+      stdout: '',
+      stderr: 'Identifier=com.aipoch.open-science\nSignature=adhoc\nTeamIdentifier=not set\n'
+    })
+
+    expect(createUpdateStrategy('darwin', { isPackaged: true, version: '1.2.3' })).toBeInstanceOf(
+      UpdateService
+    )
+  })
+
+  it('falls back to the installer on darwin for a stable build signed by another team', () => {
+    spawnSync.mockReturnValueOnce({
+      status: 0,
+      stdout: '',
+      stderr: 'Identifier=com.aipoch.open-science\nTeamIdentifier=OTHERTEAM1\n'
+    })
+
+    expect(createUpdateStrategy('darwin', { isPackaged: true, version: '1.2.3' })).toBeInstanceOf(
+      UpdateService
+    )
+  })
+
+  it('falls back to the installer on darwin for another app signed by the official team', () => {
+    spawnSync.mockReturnValueOnce({
+      status: 0,
+      stdout: '',
+      stderr: 'Identifier=com.aipoch.another-app\nTeamIdentifier=87G9WFU9H3\n'
+    })
+
+    expect(createUpdateStrategy('darwin', { isPackaged: true, version: '1.2.3' })).toBeInstanceOf(
+      UpdateService
+    )
+  })
+
+  it('falls back to the installer when the installed mac signature cannot be read', () => {
+    spawnSync.mockReturnValueOnce({
+      status: 1,
+      stdout: '',
+      stderr: 'code object is not signed at all'
+    })
+
+    expect(createUpdateStrategy('darwin', { isPackaged: true, version: '1.2.3' })).toBeInstanceOf(
+      UpdateService
     )
   })
 

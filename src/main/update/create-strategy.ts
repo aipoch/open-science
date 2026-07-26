@@ -1,3 +1,6 @@
+import { spawnSync } from 'node:child_process'
+import { dirname, resolve } from 'node:path'
+
 import { app } from 'electron'
 
 import { ElectronUpdaterStrategy } from './electron-updater-strategy'
@@ -11,13 +14,34 @@ export type CreateStrategyOptions = {
   version?: string
 }
 
+const OFFICIAL_MAC_BUNDLE_ID = 'com.aipoch.open-science'
+const OFFICIAL_MAC_TEAM_ID = '87G9WFU9H3'
+
+// Read the installed bundle's signing metadata without performing a trust evaluation. The latter can
+// depend on machine policy/keychain state, while Squirrel.Mac only needs the current and replacement
+// bundles to carry compatible designated requirements. Stable CI releases are signed by this bundle
+// ID + Team ID; local packages are ad-hoc signed and report no TeamIdentifier.
+const hasOfficialMacSignature = (): boolean => {
+  const bundlePath = resolve(dirname(app.getPath('exe')), '../..')
+  const result = spawnSync('/usr/bin/codesign', ['-d', '--verbose=4', bundlePath], {
+    encoding: 'utf8'
+  })
+  if (result.status !== 0) return false
+
+  const details = new Set(`${result.stdout ?? ''}\n${result.stderr ?? ''}`.split(/\r?\n/))
+  return (
+    details.has(`Identifier=${OFFICIAL_MAC_BUNDLE_ID}`) &&
+    details.has(`TeamIdentifier=${OFFICIAL_MAC_TEAM_ID}`)
+  )
+}
+
 // macOS in-place auto-update (electron-updater / Squirrel.Mac) only works on a packaged build that is
-// Developer ID signed. CI signs *stable* mac builds; nightly builds are ad-hoc and dev runs are
-// unsigned/unpackaged — both would hit electron-updater's "could not get code signature" error. Gate
-// on packaged + a non-prerelease version (nightly is `x.y.z-nightly.<sha>`) so only signed stable
-// builds get the in-place path; everything else falls back to the manifest installer flow.
+// signed with the same Developer ID as the replacement. CI signs stable mac builds; local packages
+// and nightlies are ad-hoc, so ShipIt rejects an official replacement at apply time. Check the actual
+// installed signature rather than inferring it from the version, and fail closed to the manual
+// installer flow whenever compatibility cannot be established.
 const macCanAutoUpdate = (isPackaged: boolean, version: string): boolean =>
-  isPackaged && !version.includes('-')
+  isPackaged && !version.includes('-') && hasOfficialMacSignature()
 
 // Picks the update strategy for the host platform. Windows/Linux always get true in-place auto-update
 // via electron-updater. macOS gets it too on signed stable builds (see macCanAutoUpdate); otherwise
