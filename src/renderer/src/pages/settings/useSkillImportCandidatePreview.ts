@@ -12,6 +12,7 @@ type SkillImportCandidatePreviewState = {
 
 type SkillImportCandidatePreviewController = {
   openPreview: (load: () => Promise<SkillImportPreviewContent>) => void
+  invalidatePreview: () => void
   previewProps: SkillImportCandidatePreviewState
 }
 
@@ -29,13 +30,21 @@ const useSkillImportCandidatePreview = (): SkillImportCandidatePreviewController
   const [content, setContent] = useState<SkillImportPreviewContent | null>(null)
   const generation = useRef(0)
 
-  const onOpenChange = useCallback((nextOpen: boolean): void => {
-    setOpen(nextOpen)
-    if (!nextOpen) {
-      generation.current += 1
-      setLoading(false)
-    }
+  const invalidatePreview = useCallback((): void => {
+    generation.current += 1
+    setOpen(false)
+    setLoading(false)
+    setError(null)
+    setContent(null)
   }, [])
+
+  const onOpenChange = useCallback(
+    (nextOpen: boolean): void => {
+      if (nextOpen) setOpen(true)
+      else invalidatePreview()
+    },
+    [invalidatePreview]
+  )
 
   const openPreview = useCallback((load: () => Promise<SkillImportPreviewContent>): void => {
     const request = generation.current + 1
@@ -58,7 +67,11 @@ const useSkillImportCandidatePreview = (): SkillImportCandidatePreviewController
       })
   }, [])
 
-  return { openPreview, previewProps: { open, onOpenChange, loading, error, content } }
+  return {
+    openPreview,
+    invalidatePreview,
+    previewProps: { open, onOpenChange, loading, error, content }
+  }
 }
 
 export { useSkillImportCandidatePreview }

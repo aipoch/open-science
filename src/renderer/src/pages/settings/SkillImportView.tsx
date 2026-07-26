@@ -30,6 +30,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
   const runPreview = async (): Promise<void> => {
     const value = input.trim()
     if (!value || busy) return
+    candidatePreview.invalidatePreview()
     setBusy(true)
     setMessage(null)
     try {
@@ -49,6 +50,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
 
   const importSelected = async (): Promise<void> => {
     if (busy || selected.size === 0) return
+    candidatePreview.invalidatePreview()
     setBusy(true)
     setMessage(null)
     let done = 0

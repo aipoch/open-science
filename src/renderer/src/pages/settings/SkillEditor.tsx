@@ -106,21 +106,22 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   const importedContent = frontmatterImportMode ? consumeFrontmatter(body) : undefined
   const persistedBody = importedContent?.hasFrontmatter ? importedContent.body : body
   const persistedMetadata = importedContent?.hasFrontmatter ? importedContent.metadata : metadata
+  const metadataEntries = Object.entries(persistedMetadata ?? {})
   const canSave = name.trim().length > 0 && persistedBody.trim().length > 0 && !slugError && !saving
 
-  // Plain textarea edits are always literal body content. If this editor loaded hidden metadata from
-  // an existing skill, the first body edit clears it so stale fields cannot survive unseen.
+  // Plain textarea edits are always literal body content and keep the separately displayed metadata.
+  // In import mode the visible frontmatter is authoritative, so removing it clears derived metadata.
   const handleBodyChange = (value: string): void => {
     if (frontmatterImportMode) {
       const parsed = consumeFrontmatter(value)
       if (parsed.hasFrontmatter) {
+        if (parsed.name !== undefined) setName(parsed.name)
+        if (parsed.description !== undefined) setDescription(parsed.description)
         setMetadata(parsed.metadata)
       } else {
         setMetadata(undefined)
         setFrontmatterImportMode(false)
       }
-    } else {
-      setMetadata(undefined)
     }
     setBody(value)
   }
@@ -343,6 +344,32 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                   Paste a full SKILL.md — if it has a <code className="font-mono">---</code>{' '}
                   metadata block at the top, the fields above auto-fill.
                 </p>
+                {!frontmatterImportMode && metadataEntries.length > 0 ? (
+                  <div
+                    aria-label="Skill metadata"
+                    className="mt-3 flex items-start justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-foreground">Saved metadata</p>
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        {metadataEntries.map(([key, value]) => (
+                          <span key={key} className="break-all">
+                            {key}: {value}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label="Clear skill metadata"
+                      onClick={() => setMetadata(undefined)}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                ) : null}
               </>
             ) : (
               <button

@@ -39,6 +39,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const scanGeneration = useRef(0)
   const candidatePreview = useSkillImportCandidatePreview()
+  const invalidateCandidatePreview = candidatePreview.invalidatePreview
 
   const frameworkSource =
     activeFrameworkId === 'codex'
@@ -66,6 +67,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
       options: { preserveMessage?: boolean } = {}
     ): Promise<void> => {
       if (useSettingsStore.getState().agentFrameworkId !== frameworkId) return
+      invalidateCandidatePreview()
       const generation = ++scanGeneration.current
       const isCurrent = (): boolean =>
         scanGeneration.current === generation &&
@@ -86,7 +88,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
         if (isCurrent()) setScanning(false)
       }
     },
-    [applyScan, listAgentHomeSkills]
+    [applyScan, invalidateCandidatePreview, listAgentHomeSkills]
   )
 
   // Discovery is local and bounded to one directory per visible source, so load eagerly. Including

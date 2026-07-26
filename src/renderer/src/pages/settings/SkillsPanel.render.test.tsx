@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentHomeSkillView } from '../../../../shared/settings'
+import type { AgentHomeSkillView, SkillImportPreviewContent } from '../../../../shared/settings'
 import { SkillsPanel } from './SkillsPanel'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { openRadixMenu } from './test-utils'
@@ -415,7 +415,7 @@ describe('SkillsPanel (sub-views)', () => {
     })
   })
 
-  it('clears stored metadata when edited content no longer has frontmatter', async () => {
+  it('preserves existing metadata through ordinary body edits and exposes a clear action', async () => {
     ;(window as unknown as { api: unknown }).api = {
       settings: {
         getSkillDetail: vi.fn().mockResolvedValue({
@@ -439,6 +439,13 @@ describe('SkillsPanel (sub-views)', () => {
     })
     setValue('Skill body', '# Plain replacement')
 
+    expect(document.body.querySelector('[aria-label="Skill metadata"]')?.textContent).toContain(
+      'Old author'
+    )
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Clear skill metadata"]')
+    ).not.toBeNull()
+
     const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Save'
     )
@@ -452,7 +459,74 @@ describe('SkillsPanel (sub-views)', () => {
       name: 'Mine',
       description: 'Custom',
       body: '# Plain replacement',
-      metadata: undefined,
+      metadata: { author: 'Old author', license: 'MIT' },
+      references: []
+    })
+  })
+
+  it('clears existing metadata only through the explicit clear action', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        getSkillDetail: vi.fn().mockResolvedValue({
+          id: 'personal-mine',
+          name: 'Mine',
+          description: 'Custom',
+          source: 'personal',
+          updatedAt: '2026-07-08T00:00:00.000Z',
+          enabled: true,
+          body: '# Body',
+          metadata: { author: 'Ada', license: 'MIT' },
+          references: []
+        })
+      }
+    }
+
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'edit', id: 'personal-mine' }} onNavigate={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    act(() =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Clear skill metadata"]')?.click()
+    )
+
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save'
+    )
+    await act(async () => {
+      save?.click()
+      await Promise.resolve()
+    })
+
+    expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: undefined })
+    )
+  })
+
+  it('syncs identity edits made in visible imported frontmatter', () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={vi.fn()} />)
+    })
+    pasteValue(
+      'Skill body',
+      ['---', 'name: Original', 'description: Before', 'author: Ada', '---', '# Body'].join('\n')
+    )
+    setValue(
+      'Skill body',
+      ['---', 'name: Revised', 'description: After', 'author: Ada', '---', '# Body'].join('\n')
+    )
+
+    const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Publish'
+    )
+    act(() => publish?.click())
+
+    expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
+      name: 'Revised',
+      description: 'After',
+      body: '# Body',
+      metadata: { author: 'Ada' },
+      slug: 'revised',
       references: []
     })
   })
@@ -632,6 +706,78 @@ describe('SkillsPanel (sub-views)', () => {
     expect(checkbox?.checked).toBe(true)
     act(() => checkbox?.click())
     expect(checkbox?.checked).toBe(false)
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('invalidates a pending GitHub candidate preview when a new scan replaces the list', async () => {
+    let finishOldPreview: (value: SkillImportPreviewContent) => void = () => undefined
+    const oldPreview = new Promise<SkillImportPreviewContent>((resolve) => {
+      finishOldPreview = resolve
+    })
+    useSettingsStore.setState({
+      scanRepoSkills: vi
+        .fn()
+        .mockResolvedValueOnce({
+          skills: [
+            {
+              name: 'Old',
+              path: 'old',
+              url: 'https://github.com/acme/old/tree/main/old',
+              alreadyImported: false
+            }
+          ]
+        })
+        .mockResolvedValueOnce({
+          skills: [
+            {
+              name: 'New',
+              path: 'new',
+              url: 'https://github.com/acme/new/tree/main/new',
+              alreadyImported: false
+            }
+          ]
+        }),
+      previewGitHubSkill: vi.fn().mockReturnValue(oldPreview)
+    })
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+    })
+    const scanButton = (): HTMLButtonElement | undefined =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Preview'
+      )
+
+    setValue('GitHub skill URL or repo', 'acme/old')
+    await act(async () => {
+      scanButton()?.click()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Preview Old"]')?.click()
+      await Promise.resolve()
+    })
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+
+    setValue('GitHub skill URL or repo', 'acme/new')
+    await act(async () => {
+      scanButton()?.click()
+      await Promise.resolve()
+    })
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+
+    await act(async () => {
+      finishOldPreview({
+        name: 'Old',
+        description: 'Stale preview',
+        sourceLabel: 'github.com/acme/old/old',
+        metadata: {},
+        body: '# Stale body',
+        files: ['SKILL.md']
+      })
+      await oldPreview
+      await Promise.resolve()
+    })
+    expect(document.body.textContent).not.toContain('Stale body')
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 
@@ -871,6 +1017,76 @@ describe('SkillsPanel (sub-views)', () => {
 
     act(() => checkbox?.click())
     expect(checkbox?.checked).toBe(false)
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('invalidates a pending installed preview when a rescan replaces the list', async () => {
+    let finishOldPreview: (value: SkillImportPreviewContent) => void = () => undefined
+    const oldPreview = new Promise<SkillImportPreviewContent>((resolve) => {
+      finishOldPreview = resolve
+    })
+    const listAgentHomeSkills = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          source: 'agents',
+          slug: 'old',
+          name: 'Old installed',
+          description: 'Old framework',
+          alreadyImported: false
+        }
+      ])
+      .mockResolvedValueOnce([
+        {
+          source: 'agents',
+          slug: 'new',
+          name: 'New installed',
+          description: 'New framework',
+          alreadyImported: false
+        }
+      ])
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      listAgentHomeSkills,
+      previewAgentHomeSkill: vi.fn().mockReturnValue(oldPreview)
+    })
+
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'import-agent-home' }} onNavigate={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Preview Old installed"]')
+        ?.click()
+      await Promise.resolve()
+    })
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+
+    const rescan = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Rescan'
+    )
+    await act(async () => {
+      rescan?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+
+    await act(async () => {
+      finishOldPreview({
+        name: 'Old installed',
+        description: 'Stale preview',
+        sourceLabel: '~/.agents/skills/old',
+        metadata: {},
+        body: '# Stale installed body',
+        files: ['SKILL.md']
+      })
+      await oldPreview
+      await Promise.resolve()
+    })
+    expect(document.body.textContent).not.toContain('Stale installed body')
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 
