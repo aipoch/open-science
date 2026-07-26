@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
@@ -30,8 +30,14 @@ const PdfPageCanvas = ({
   const [setNearViewportRef, isNearViewport] = useNearViewport<HTMLDivElement>()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const pageRef = useRef<Awaited<ReturnType<PdfDocument['getPage']>> | undefined>(undefined)
+  const renderTaskRef = useRef<
+    ReturnType<Awaited<ReturnType<PdfDocument['getPage']>>['render']> | undefined
+  >(undefined)
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [aspectRatio, setAspectRatio] = useState(3 / 4)
+  // Bumped when a fresh page proxy is acquired so rasterization re-runs against the new page.
+  const [pageEpoch, setPageEpoch] = useState(0)
   // The CSS width the canvas is stretched to; drives backing-store resolution so text stays sharp.
   const [renderWidth, setRenderWidth] = useState(0)
 
@@ -43,8 +49,9 @@ const PdfPageCanvas = ({
     [setNearViewportRef]
   )
 
-  // Track the on-screen width and only grow the target: shrinking reuses the crisp bitmap via CSS.
-  useEffect(() => {
+  // Measure synchronously before paint so the first rasterization already knows the target width
+  // and only grow it: shrinking reuses the crisp bitmap via CSS instead of re-rasterizing.
+  useLayoutEffect(() => {
     const element = containerRef.current
     if (!element) return
 
@@ -60,21 +67,23 @@ const PdfPageCanvas = ({
     return () => observer.disconnect()
   }, [])
 
+  // Acquire the page once while it is near the viewport and keep it alive; width changes then
+  // re-rasterize this same page rather than reloading it through the range transport.
   useEffect(() => {
     if (!isNearViewport) return
 
     let canceled = false
-    let page: Awaited<ReturnType<PdfDocument['getPage']>> | undefined
-    let renderTask: ReturnType<Awaited<ReturnType<PdfDocument['getPage']>>['render']> | undefined
-    const canvas = canvasRef.current
     let disposed = false
     // Clear canvas backing storage on exit; removing the DOM node alone may retain its bitmap.
     const dispose = (): void => {
       if (disposed) return
       disposed = true
       canceled = true
-      renderTask?.cancel()
-      page?.cleanup()
+      renderTaskRef.current?.cancel()
+      renderTaskRef.current = undefined
+      pageRef.current?.cleanup()
+      pageRef.current = undefined
+      const canvas = canvasRef.current
       if (canvas) {
         canvas.width = 0
         canvas.height = 0
@@ -84,37 +93,17 @@ const PdfPageCanvas = ({
 
     void document
       .getPage(pageNumber)
-      .then(async (loadedPage) => {
-        page = loadedPage
-        if (canceled || !canvas) {
-          loadedPage.cleanup()
-          page = undefined
+      .then((acquiredPage) => {
+        if (canceled) {
+          acquiredPage.cleanup()
           return
         }
-
-        const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1)
-        const baseViewport = loadedPage.getViewport({ scale: 1 })
-        // Rasterize at the physical pixels the page occupies on screen, capped to protect memory.
-        const targetCssWidth = renderWidth > 0 ? renderWidth : baseViewport.width
-        const scale = Math.min(
-          MAX_RENDER_SCALE,
-          Math.max(1, (targetCssWidth * devicePixelRatio) / baseViewport.width)
-        )
-        const viewport = loadedPage.getViewport({ scale })
-        const context = canvas.getContext('2d')
-        if (!context) throw new Error('Canvas 2D context unavailable.')
-
-        // Match the actual PDF page geometry so landscape and non-standard pages are not stretched.
-        setAspectRatio(viewport.width / viewport.height)
-        canvas.width = viewport.width
-        canvas.height = viewport.height
-        renderTask = loadedPage.render({ canvas, canvasContext: context, viewport })
-        await renderTask.promise
-        if (!canceled) setStatus('ready')
+        pageRef.current = acquiredPage
+        setPageEpoch((epoch) => epoch + 1)
       })
       .catch((error: unknown) => {
         if (!canceled) {
-          console.error(`Failed to render PDF page ${pageNumber}`, error)
+          console.error(`Failed to load PDF page ${pageNumber}`, error)
           setStatus('error')
         }
       })
@@ -123,7 +112,52 @@ const PdfPageCanvas = ({
       unregisterDisposer()
       dispose()
     }
-  }, [document, isNearViewport, pageNumber, registerDisposer, renderWidth])
+  }, [document, isNearViewport, pageNumber, registerDisposer])
+
+  // Rasterize the live page at the measured width; re-runs on width change without reacquiring it.
+  useEffect(() => {
+    const page = pageRef.current
+    const canvas = canvasRef.current
+    if (!page || !canvas) return
+
+    let canceled = false
+    const draw = async (): Promise<void> => {
+      const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1)
+      const baseViewport = page.getViewport({ scale: 1 })
+      // Rasterize at the physical pixels the page occupies on screen, capped to protect memory.
+      const targetCssWidth = renderWidth > 0 ? renderWidth : baseViewport.width
+      const scale = Math.min(
+        MAX_RENDER_SCALE,
+        Math.max(1, (targetCssWidth * devicePixelRatio) / baseViewport.width)
+      )
+      const viewport = page.getViewport({ scale })
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('Canvas 2D context unavailable.')
+
+      // Match the actual PDF page geometry so landscape and non-standard pages are not stretched.
+      setAspectRatio(viewport.width / viewport.height)
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+      const renderTask = page.render({ canvas, canvasContext: context, viewport })
+      renderTaskRef.current = renderTask
+      await renderTask.promise
+      renderTaskRef.current = undefined
+      if (!canceled) setStatus('ready')
+    }
+
+    void draw().catch((error: unknown) => {
+      if (!canceled) {
+        console.error(`Failed to render PDF page ${pageNumber}`, error)
+        setStatus('error')
+      }
+    })
+
+    return () => {
+      canceled = true
+      renderTaskRef.current?.cancel()
+      renderTaskRef.current = undefined
+    }
+  }, [pageEpoch, pageNumber, renderWidth])
 
   const displayedStatus = isNearViewport ? status : 'idle'
 
