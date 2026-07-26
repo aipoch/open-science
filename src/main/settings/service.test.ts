@@ -4732,6 +4732,35 @@ describe('SettingsService: importAgentHomeSkills realpath containment', () => {
     })
   })
 
+  it('rejects symlinks to an allowed skills root or a nested descendant', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-depth-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-shared-'))
+    const realSkill = await seedSkill(userAgentsDir, 'real-skill')
+    const nested = join(realSkill, 'references')
+    await mkdir(nested, { recursive: true })
+    await writeFile(join(nested, 'notes.md'), 'Nested content.')
+    await mkdir(join(userClaudeDir, 'skills'), { recursive: true })
+    await symlink(join(userAgentsDir, 'skills'), join(userClaudeDir, 'skills', 'root-alias'))
+    await symlink(nested, join(userClaudeDir, 'skills', 'nested-alias'))
+    const service = createService(undefined, { userClaudeDir, userAgentsDir })
+    await repository.setAgentFramework('claude-code')
+
+    const result = await service.importAgentHomeSkills({
+      skills: [
+        { source: 'claude', slug: 'root-alias' },
+        { source: 'claude', slug: 'nested-alias' }
+      ]
+    })
+
+    expect(result.results).toEqual([
+      expect.objectContaining({ error: expect.stringMatching(/top-level skill directory/) }),
+      expect.objectContaining({ error: expect.stringMatching(/top-level skill directory/) })
+    ])
+    expect(result.skills.map((skill) => skill.id)).not.toEqual(
+      expect.arrayContaining(['imported-root-alias', 'imported-nested-alias'])
+    )
+  })
+
   it('canonicalizes a framework symlink alias to the shared installed skill', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-benign-'))
     const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-shared-'))

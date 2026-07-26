@@ -1261,11 +1261,10 @@ class SettingsService {
           skill.slug,
           availableSources
         )
-        const canonicalSkill = await this.canonicalAgentHomeSkillRef(
-          sourcePath,
-          skill,
-          availableSources
-        )
+        const canonicalSkill = await this.canonicalAgentHomeSkillRef(sourcePath, availableSources)
+        if (!canonicalSkill) {
+          throw new Error(`Refusing to import installed skill outside a top-level skill directory.`)
+        }
         const outcome = await this.userSkills.importAgentHomeSkill(sourcePath, canonicalSkill, {
           allowSlugFallback: knownImported.has(`${canonicalSkill.source}:${canonicalSkill.slug}`)
         })
@@ -1314,6 +1313,11 @@ class SettingsService {
     if (!withinAllowedRoot) {
       throw new Error(`Refusing to import installed skill outside its source: ${slug}`)
     }
+    if (!(await this.canonicalAgentHomeSkillRef(candidate, availableSources))) {
+      throw new Error(
+        `Refusing to import installed skill outside a top-level skill directory: ${slug}`
+      )
+    }
 
     // Copy from the resolved directory so a safe root symlink is dereferenced once. Nested symlinks
     // remain visible to the repository copy filter and are still rejected.
@@ -1325,9 +1329,8 @@ class SettingsService {
   // the visible row and a stale/direct import request converge on one installed-skill identity.
   private async canonicalAgentHomeSkillRef(
     realSkillPath: string,
-    fallback: AgentHomeSkillRef,
     availableSources: { source: AgentHomeSkillSource; dir: string }[]
-  ): Promise<AgentHomeSkillRef> {
+  ): Promise<AgentHomeSkillRef | undefined> {
     for (const source of availableSources) {
       const realRoot = await realpath(source.dir).catch(() => resolve(source.dir))
       const child = relative(realRoot, realSkillPath)
@@ -1343,7 +1346,7 @@ class SettingsService {
       }
     }
 
-    return fallback
+    return undefined
   }
 
   // Projects a catalog skill into its renderer-safe view given the disabled set.
