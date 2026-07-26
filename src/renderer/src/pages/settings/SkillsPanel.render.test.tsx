@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SkillsPanel } from './SkillsPanel'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { openRadixMenu } from './test-utils'
 
 let container: HTMLDivElement
 let root: Root
@@ -74,6 +75,40 @@ beforeEach(() => {
           alreadyImported: false
         }
       ]
+    }),
+    listAgentHomeSkills: vi.fn().mockResolvedValue([
+      {
+        source: 'agents',
+        slug: 'shared',
+        name: 'Shared',
+        description: 'Shared agent skill',
+        alreadyImported: false
+      },
+      {
+        source: 'claude',
+        slug: 'claude-alpha',
+        name: 'Claude Alpha',
+        description: 'Claude-specific skill',
+        alreadyImported: false
+      },
+      {
+        source: 'agents',
+        slug: 'existing',
+        name: 'Existing',
+        description: 'Already copied',
+        alreadyImported: true
+      }
+    ]),
+    importAgentHomeSkills: vi.fn().mockResolvedValue({
+      results: [
+        {
+          source: 'agents',
+          slug: 'shared',
+          status: 'imported',
+          id: 'imported-shared'
+        }
+      ],
+      skills: []
     })
   })
   container = document.createElement('div')
@@ -177,6 +212,21 @@ describe('SkillsPanel (list view)', () => {
     act(() => remove?.click())
     expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith('personal-mine')
   })
+
+  it('always offers installed-skill import, including for other frameworks', () => {
+    useSettingsStore.setState({ agentFrameworkId: 'opencode' })
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const addSkill = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Add skill')
+    )
+    openRadixMenu(addSkill)
+
+    expect(document.body.textContent).toContain('Import installed skills')
+    expect(document.body.textContent).toContain('Scan global skill folders')
+  })
 })
 
 describe('SkillsPanel (sub-views)', () => {
@@ -264,6 +314,40 @@ describe('SkillsPanel (sub-views)', () => {
     expect(useSettingsStore.getState().importSkill).toHaveBeenCalledWith(
       'https://github.com/acme/skills/tree/main/pack/foo'
     )
+  })
+
+  it('preselects available installed skills and batch-imports the checked rows', async () => {
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'import-agent-home' }} onNavigate={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Import installed skills')
+    expect(document.body.textContent).toContain('~/.agents/skills')
+    expect(document.body.textContent).toContain('~/.claude/skills')
+    expect(document.body.textContent).toContain('Import selected (2)')
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Existing"]')?.disabled
+    ).toBe(true)
+
+    act(() => {
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Claude Alpha"]')?.click()
+    })
+    expect(document.body.textContent).toContain('Import selected (1)')
+
+    const importSelected = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.includes('Import selected'))
+    await act(async () => {
+      importSelected?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(useSettingsStore.getState().importAgentHomeSkills).toHaveBeenCalledWith([
+      { source: 'agents', slug: 'shared' }
+    ])
   })
 
   it('renders the upload view and returns to the create view on "Write from scratch instead"', () => {

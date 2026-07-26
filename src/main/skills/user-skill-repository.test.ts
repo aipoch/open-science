@@ -1306,17 +1306,33 @@ describe('UserSkillRepository: agent-home import', () => {
     expect(items[0].alreadyImported).toBe(true)
   })
 
-  it('skips entries that are not directories (loose files do not become skills)', async () => {
+  it('skips loose files and directories without a readable SKILL.md', async () => {
     const storage = await makeStorage()
     const repo = new UserSkillRepository(storage)
     const home = await mkdtemp(join(tmpdir(), 'os-list-agent-'))
     await mkdir(join(home, 'skills'), { recursive: true })
     await writeFile(join(home, 'skills', 'stray-file.txt'), 'not a skill')
+    await mkdir(join(home, 'skills', 'empty-directory'))
     await seedSkill(home, 'alpha')
 
     const items = await repo.listAgentHomeSkills(join(home, 'skills'))
     expect(items.map((i) => i.slug)).toEqual(['alpha'])
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'lists directory symlinks that resolve to a readable skill',
+    async () => {
+      const storage = await makeStorage()
+      const repo = new UserSkillRepository(storage)
+      const home = await mkdtemp(join(tmpdir(), 'os-list-agent-link-'))
+      const target = await seedSkill(home, 'real-skill')
+      await symlink(target, join(home, 'skills', 'linked-skill'))
+
+      const items = await repo.listAgentHomeSkills(join(home, 'skills'))
+
+      expect(items.map((item) => item.slug)).toEqual(['linked-skill', 'real-skill'])
+    }
+  )
 
   it('returns an empty list for a missing agent-home skills dir (no error)', async () => {
     const storage = await makeStorage()

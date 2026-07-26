@@ -143,6 +143,9 @@ import type {
   ImportSkillZipRequest,
   ImportSkillZipBatchRequest,
   ImportSkillZipBatchResult,
+  ImportAgentHomeSkillsRequest,
+  ImportAgentHomeSkillsResult,
+  AgentHomeSkillView,
   PreviewSkillZipRequest,
   SkillBundlePreviewResult,
   ScanRepoRequest,
@@ -284,7 +287,9 @@ interface OpenScienceAPI {
     previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreviewResult>
     scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult>
     listAgentHomeSkills(): Promise<AgentHomeSkillView[]>
-    importAgentHomeSkill(request: ImportAgentHomeSkillRequest): Promise<ImportSkillResult>
+    importAgentHomeSkills(
+      request: ImportAgentHomeSkillsRequest
+    ): Promise<ImportAgentHomeSkillsResult>
     listConnectors(): Promise<ConnectorsSnapshot>
     getConnectorDetail(id: string): Promise<ConnectorDetailView>
     setConnectorEnabled(request: SetConnectorEnabledRequest): Promise<ConnectorsSnapshot>

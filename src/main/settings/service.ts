@@ -22,11 +22,13 @@ import type {
   RemoveCustomServerRequest,
   SetCustomServerEnabledRequest,
   UpdateCustomServerRequest,
+  AgentHomeSkillSource,
   AgentHomeSkillView,
   CreateSkillRequest,
   DeleteSkillRequest,
   EnvironmentCheckResult,
-  ImportAgentHomeSkillRequest,
+  ImportAgentHomeSkillsRequest,
+  ImportAgentHomeSkillsResult,
   InstallClaudeRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
@@ -409,9 +411,12 @@ export type SettingsServiceOptions = {
   // The machine's own Claude config dir, used by the shared provider for auth/spawn and scanned as a
   // user skill source. Injectable so tests don't touch the real ~/.claude.
   userClaudeDir?: string
-  // The machine's own Codex config dir, scanned for the "From your agent home" skill source.
+  // The machine's own Codex config dir, scanned for installed skills while Codex is active.
   // Injectable for the same reason as userClaudeDir.
   userCodexDir?: string
+  // The framework-neutral Agents config dir. Codex and other compatible agents discover skills
+  // under ~/.agents/skills; it is scanned regardless of the active framework.
+  userAgentsDir?: string
   // Bundled-skill source, injectable so tests can point at a seeded temp dir instead of app resources.
   skillRegistry?: SkillRegistry
   // Writable personal/imported skill store, injectable so tests can use a temp storage root.
@@ -450,6 +455,7 @@ class SettingsService {
   private readonly codexDetectDeps: CodexDetectDeps
   private readonly userClaudeDir: string
   private readonly userCodexDir: string
+  private readonly userAgentsDir: string
   private readonly skillRegistry: SkillRegistry
   private readonly userSkills: UserSkillRepository
   private readonly executeClaudeProbe: ExecuteClaudeProbe
@@ -507,6 +513,7 @@ class SettingsService {
     }
     this.userClaudeDir = options.userClaudeDir ?? getUserClaudeConfigDir()
     this.userCodexDir = options.userCodexDir ?? join(homedir(), '.codex')
+    this.userAgentsDir = options.userAgentsDir ?? join(homedir(), '.agents')
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
     this.userSkills = options.userSkills ?? new UserSkillRepository(this.storageRoot)
     this.executeClaudeProbe = options.executeClaudeProbe ?? executeClaudeProbe
@@ -1122,84 +1129,144 @@ class SettingsService {
     return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
   }
 
-  // Lists the skills under the active agent's machine-level home. The "From your agent home" import
-  // source is framework-agnostic: it resolves to `~/.claude/skills/` when the active framework is
-  // `claude-code` and to `~/.codex/skills/` when it is `codex`. OpenCode reads skills per-project
-  // (no global convention) so the source is hidden for that framework. The Claude path is anchored
-  // on `userClaudeDir` and the Codex path on `userCodexDir` so tests can inject a temp dir.
+  // Lists user-installed skills from the framework-neutral ~/.agents/skills source plus the active
+  // framework's own source (~/.claude/skills or ~/.codex/skills). Node's homedir() supplies the
+  // Windows USERPROFILE equivalent, so no platform-specific path parsing reaches the renderer.
   async listAgentHomeSkills(): Promise<AgentHomeSkillView[]> {
     const settings = await this.repository.getSettings()
     const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
-    const homeSkillsDir = this.resolveAgentHomeSkillsDir(framework)
+    const sources = this.resolveAgentHomeSkillDirs(framework)
+    const groups = await Promise.all(
+      sources.map(async ({ source, dir }) => {
+        const skills = await this.userSkills.listAgentHomeSkills(dir)
+        const visible: AgentHomeSkillView[] = []
 
-    if (!homeSkillsDir) return []
+        for (const skill of skills) {
+          try {
+            await this.resolveAgentHomeSkillPath(source, skill.slug, sources)
+          } catch {
+            continue
+          }
 
-    return this.userSkills.listAgentHomeSkills(homeSkillsDir)
+          visible.push({
+            source,
+            slug: skill.slug,
+            name: skill.name,
+            description: skill.description,
+            alreadyImported: skill.alreadyImported
+          })
+        }
+
+        return visible
+      })
+    )
+
+    return groups.flat()
   }
 
-  // Resolves the per-framework global skills directory, or undefined when the active framework
-  // has no global skills convention. Kept private so callers go through `listAgentHomeSkills`.
-  private resolveAgentHomeSkillsDir(framework: AgentFrameworkId): string | undefined {
+  // The generic source is always available. A framework-specific source is additive, not a gate on
+  // the import feature, so Settings can keep the entry visible for OpenCode and future frameworks.
+  private resolveAgentHomeSkillDirs(
+    framework: AgentFrameworkId
+  ): { source: AgentHomeSkillSource; dir: string }[] {
+    const sources: { source: AgentHomeSkillSource; dir: string }[] = [
+      { source: 'agents', dir: join(this.userAgentsDir, 'skills') }
+    ]
+
     switch (framework) {
       case 'claude-code':
-        return join(this.userClaudeDir, 'skills')
+        sources.push({ source: 'claude', dir: join(this.userClaudeDir, 'skills') })
+        break
       case 'codex':
-        return join(this.userCodexDir, 'skills')
+        sources.push({ source: 'codex', dir: join(this.userCodexDir, 'skills') })
+        break
       case 'opencode':
-        return undefined
+        break
       default:
-        return undefined
+        break
     }
+
+    return sources
   }
 
-  // Imports a single agent-home skill by re-deriving its path against the active agent's home
-  // dir and copying the directory into the imported-skill store. Path authority stays in main: the
-  // renderer only supplies the slug returned by listAgentHomeSkills, and the service rejects any
-  // slug that escapes the resolved home (no .. traversal, no symlink-to-elsewhere).
-  // Returns the same shape importSkill returns so the renderer can apply the same post-import
-  // refresh (refresh skill list, mark skills-changed so the agent reloads).
-  async importAgentHomeSkill(request: ImportAgentHomeSkillRequest): Promise<ImportSkillResult> {
-    const sourcePath = await this.resolveAgentHomeSkillPath(request.slug)
-    const outcome = await this.userSkills.importAgentHomeSkill(sourcePath)
-
-    return { status: outcome.status, id: outcome.id, skills: await this.listSkills() }
-  }
-
-  // Resolves a renderer-supplied slug to an absolute path under the active agent's skills dir,
-  // refusing escapes. Centralises the containment check so the IPC and the import path agree on
-  // which directory is "the agent home" and a malicious slug cannot reach arbitrary host files.
-  // The home is resolved via realpath so a symlink that points outside the agent home (e.g. an
-  // attacker who writes `~/.claude/skills/innocent -> /etc` and tries to import `innocent`) is
-  // rejected even though `resolve(home, slug)` would pass the lexical containment check.
-  private async resolveAgentHomeSkillPath(slug: string): Promise<string> {
-    const settings = await this.repository.getSettings()
-    const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
-    const homeSkillsDir = this.resolveAgentHomeSkillsDir(framework)
-
-    if (!homeSkillsDir) {
+  // Imports a checked batch while isolating failures per item. The repository's existing directory
+  // copy and conflict logic remains authoritative; this method adds only source routing and batching.
+  async importAgentHomeSkills(
+    request: ImportAgentHomeSkillsRequest
+  ): Promise<ImportAgentHomeSkillsResult> {
+    if (!request || !Array.isArray(request.skills)) {
+      throw new Error('Installed skills must be an array.')
+    }
+    if (request.skills.length > SKILL_IMPORT_LIMITS.maxSkillsPerBundle) {
       throw new Error(
-        `The active agent framework (${framework}) has no global skills directory to import from.`
+        `Cannot import more than ${SKILL_IMPORT_LIMITS.maxSkillsPerBundle} installed skills at once.`
       )
     }
+
+    const settings = await this.repository.getSettings()
+    const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+    const availableSources = this.resolveAgentHomeSkillDirs(framework)
+    const results: ImportAgentHomeSkillsResult['results'] = []
+
+    for (const skill of request.skills) {
+      const ref = { source: skill.source, slug: skill.slug }
+
+      try {
+        const sourcePath = await this.resolveAgentHomeSkillPath(
+          skill.source,
+          skill.slug,
+          availableSources
+        )
+        const outcome = await this.userSkills.importAgentHomeSkill(sourcePath, skill.slug)
+
+        results.push({ ...ref, status: outcome.status, id: outcome.id })
+      } catch (error) {
+        results.push({
+          ...ref,
+          error: error instanceof Error ? error.message : 'Could not import the installed skill.'
+        })
+      }
+    }
+
+    return { results, skills: await this.listSkills() }
+  }
+
+  // Resolves a renderer-supplied source + slug to an absolute path under an available global source,
+  // refusing unavailable framework sources and path escapes. This keeps all path authority in main.
+  // Candidate and source roots are resolved via realpath. This permits the common layout where a
+  // framework-specific skill is a symlink into ~/.agents/skills, while rejecting targets outside
+  // every source available to the active framework.
+  private async resolveAgentHomeSkillPath(
+    source: AgentHomeSkillSource,
+    slug: string,
+    availableSources: { source: AgentHomeSkillSource; dir: string }[]
+  ): Promise<string> {
+    const homeSkillsDir = availableSources.find((candidate) => candidate.source === source)?.dir
+    if (!homeSkillsDir) {
+      throw new Error(`Installed skill source "${String(source)}" is not available.`)
+    }
     if (!SAFE_SLUG.test(slug)) {
-      throw new Error(`Refusing to import agent-home skill with unsafe slug: ${slug}`)
+      throw new Error(`Refusing to import installed skill with unsafe slug: ${slug}`)
     }
 
-    // Realpath both sides so a symlink under the home that points outside the configured skills
-    // directory is rejected (lexical `resolve` would only catch `..` traversal, not symlinks).
-    const homeRoot = await realpath(homeSkillsDir).catch(() => resolve(homeSkillsDir))
-    const lexicalCandidate = resolve(homeRoot, slug)
+    const lexicalCandidate = resolve(homeSkillsDir, slug)
     const candidate = await realpath(lexicalCandidate).catch(() => lexicalCandidate)
-    const homeWithSep = homeRoot.endsWith(sep) ? homeRoot : homeRoot + sep
+    const allowedRoots = await Promise.all(
+      availableSources.map(({ dir }) => realpath(dir).catch(() => resolve(dir)))
+    )
+    const withinAllowedRoot = allowedRoots.some((root) => {
+      const rootWithSep = root.endsWith(sep) ? root : root + sep
 
-    if (candidate !== homeRoot && !candidate.startsWith(homeWithSep)) {
-      throw new Error(`Refusing to import agent-home skill outside its home: ${slug}`)
+      return candidate === root || candidate.startsWith(rootWithSep)
+    })
+
+    if (!withinAllowedRoot) {
+      throw new Error(`Refusing to import installed skill outside its source: ${slug}`)
     }
 
-    // Preserve the lexical source path after using the resolved target only for containment. The
-    // repository's copy filter must still see and reject a Skill-root symlink instead of receiving
-    // its already-resolved target and losing that provenance.
-    return lexicalCandidate
+    // Copy from the resolved directory so a safe root symlink is dereferenced once. Nested symlinks
+    // remain visible to the repository copy filter and are still rejected.
+    return candidate
   }
 
   // Projects a catalog skill into its renderer-safe view given the disabled set.

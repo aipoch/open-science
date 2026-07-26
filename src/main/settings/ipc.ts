@@ -15,7 +15,7 @@ import {
   type CreateSkillRequest,
   type DeleteProviderRequest,
   type DeleteSkillRequest,
-  type ImportAgentHomeSkillRequest,
+  type ImportAgentHomeSkillsRequest,
   type ImportSkillRequest,
   type ImportSkillZipRequest,
   type ImportSkillZipBatchRequest,
@@ -473,13 +473,13 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:scan-repo-skills', (_event, request: ScanRepoRequest) =>
     service.scanRepoSkills(request)
   )
-  // Lists the user's machine-level Claude skills (~/.claude/skills/) for the "From your agent home"
-  // import source. Read-only — the renderer calls importAgentHomeSkill to actually copy one in.
+  // Lists the generic global skill source plus the active framework's source. Read-only — the
+  // renderer submits checked source-id/slug pairs through the batch import handler below.
   ipcMain.handle('settings:list-agent-home-skills', () => service.listAgentHomeSkills())
   ipcMain.handle(
-    'settings:import-agent-home-skill',
-    async (_event, request: ImportAgentHomeSkillRequest) => {
-      const result = await service.importAgentHomeSkill(request)
+    'settings:import-agent-home-skills',
+    async (_event, request: ImportAgentHomeSkillsRequest) => {
+      const result = await service.importAgentHomeSkills(request)
       onSkillsChanged?.()
 
       return result

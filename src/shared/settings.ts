@@ -854,31 +854,53 @@ export type ScanRepoRequest = {
   repo: string
 }
 
-// One skill the user's machine-level Claude config (typically ~/.claude/skills/<slug>/) contains.
-// Surfaced for the "From your agent home" import source so the renderer can list what's available
-// without reading the skill bodies; importing is a separate call (see service.importAgentHomeSkill).
+// A known user-level source that may contain installed skills. The shared Agents directory is
+// available for every framework; Claude and Codex directories are available only while that
+// framework is active.
+export type AgentHomeSkillSource = 'agents' | 'claude' | 'codex'
+
+// One skill found in a user-level source. Main returns renderer-safe metadata only: the source id and
+// slug are sufficient to request an import, while the absolute host path remains in the main process.
 export type AgentHomeSkillView = {
+  source: AgentHomeSkillSource
   // The directory name under the agent's skills/ dir. Used as the candidate slug and as the
   // identifier on disk; not a renderer-visible name (the SKILL.md frontmatter supplies that).
   slug: string
-  // Parsed from the skill's SKILL.md frontmatter; falls back to the slug when the file is missing
-  // or unparseable so the UI can still list a row for it.
+  // Parsed from SKILL.md frontmatter; falls back to the slug when the name is absent or unparseable.
   name: string
   description: string
-  // Absolute path to the source directory under the agent's home. The renderer never exposes this
-  // to the user; main uses it to copy on import.
-  path: string
-  // True when an imported-skill record with the same slug (or matching content signature) already
-  // exists, so the UI can mark it as already pulled in and skip the import button.
+  // True when an imported-skill record with the same slug already exists, so the UI can mark it as
+  // already pulled in and disable its checkbox.
   alreadyImported: boolean
 }
 
-// Request to import a single skill from the user's agent home into Open Science. `slug` is the
-// top-level directory name returned by listAgentHomeSkills; the main-process service re-derives
-// the absolute path against the active agent's home so a renderer-supplied path cannot reach
-// outside the configured skills directory.
-export type ImportAgentHomeSkillRequest = {
+export type AgentHomeSkillRef = {
+  source: AgentHomeSkillSource
   slug: string
+}
+
+// Batch import selected user-level skills. Main re-derives every absolute path from the trusted
+// source id + slug pair, so the renderer cannot use this interface to read arbitrary host paths.
+export type ImportAgentHomeSkillsRequest = {
+  skills: AgentHomeSkillRef[]
+}
+
+// One bad or concurrently removed source does not abort the rest of a checked batch.
+export type ImportAgentHomeSkillItemResult =
+  | (AgentHomeSkillRef & {
+      status: 'imported' | 'unchanged' | 'updated'
+      id: string
+      error?: undefined
+    })
+  | (AgentHomeSkillRef & {
+      status?: undefined
+      id?: undefined
+      error: string
+    })
+
+export type ImportAgentHomeSkillsResult = {
+  results: ImportAgentHomeSkillItemResult[]
+  skills: SkillView[]
 }
 
 // One skill directory found by a repo scan, with an importable URL and whether it's already imported.

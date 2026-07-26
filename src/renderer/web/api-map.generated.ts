@@ -112,7 +112,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.getPreflight': 'settings:get-preflight',
   'settings.getSettings': 'settings:get-settings',
   'settings.getSkillDetail': 'settings:get-skill-detail',
-  'settings.importAgentHomeSkill': 'settings:import-agent-home-skill',
+  'settings.importAgentHomeSkills': 'settings:import-agent-home-skills',
   'settings.importSkill': 'settings:import-skill',
   'settings.importSkillZip': 'settings:import-skill-zip',
   'settings.importSkillZipBatch': 'settings:import-skill-zip-batch',

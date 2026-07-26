@@ -64,6 +64,8 @@ type FakeSettingsService = Record<
   | 'updateSkill'
   | 'deleteSkill'
   | 'importSkillZipBatch'
+  | 'listAgentHomeSkills'
+  | 'importAgentHomeSkills'
   | 'setConnectorEnabled',
   ReturnType<typeof vi.fn>
 >
@@ -141,6 +143,8 @@ const createFakeService = (): FakeSettingsService => ({
   updateSkill: vi.fn().mockResolvedValue([]),
   deleteSkill: vi.fn().mockResolvedValue([]),
   importSkillZipBatch: vi.fn().mockResolvedValue({ results: [], skills: [] }),
+  listAgentHomeSkills: vi.fn().mockResolvedValue([]),
+  importAgentHomeSkills: vi.fn().mockResolvedValue({ results: [], skills: [] }),
   setConnectorEnabled: vi.fn().mockResolvedValue({ connectors: [] })
 })
 
@@ -567,6 +571,34 @@ describe('settings IPC handlers', () => {
     expect(service.importSkillZipBatch).toHaveBeenCalledWith(request)
     expect(forwarded).toBe(result)
     expect(onSkillsChanged).toHaveBeenCalledTimes(1)
+  })
+
+  it('routes one installed-skill batch and fires onSkillsChanged once', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onSkillsChanged = vi.fn()
+    const result = {
+      results: [
+        {
+          source: 'agents',
+          slug: 'shared',
+          status: 'imported',
+          id: 'imported-shared'
+        }
+      ],
+      skills: []
+    }
+    service.importAgentHomeSkills.mockResolvedValue(result)
+    registerSettingsIpcHandlers({ service: asService(service), onSkillsChanged })
+    const request = { skills: [{ source: 'agents', slug: 'shared' }] }
+
+    expect(await invoke('settings:list-agent-home-skills')).toEqual([])
+    const forwarded = await invoke('settings:import-agent-home-skills', request)
+
+    expect(service.listAgentHomeSkills).toHaveBeenCalledOnce()
+    expect(service.importAgentHomeSkills).toHaveBeenCalledWith(request)
+    expect(forwarded).toBe(result)
+    expect(onSkillsChanged).toHaveBeenCalledOnce()
   })
 
   it('registers the OpenCode / framework-switch channels', () => {

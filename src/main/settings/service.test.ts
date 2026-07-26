@@ -127,6 +127,7 @@ const createService = (
     ) => Promise<void>
     userClaudeDir?: string
     userCodexDir?: string
+    userAgentsDir?: string
   } = {}
 ): InstanceType<typeof SettingsService> =>
   new SettingsService({
@@ -136,6 +137,7 @@ const createService = (
     // path is now used by claude-isolated skill-scanning; claude-default is gone.
     userClaudeDir: options.userClaudeDir ?? join(storageRoot, 'no-user-claude'),
     userCodexDir: options.userCodexDir ?? join(storageRoot, 'no-user-codex'),
+    userAgentsDir: options.userAgentsDir ?? join(storageRoot, 'no-user-agents'),
     executeClaudeProbe: options.executeClaudeProbe,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     installManagedClaudeImpl: options.installManagedClaudeImpl as any,
@@ -3963,10 +3965,8 @@ describe('SettingsService: app icon variant', () => {
 })
 
 describe('SettingsService: listAgentHomeSkills framework routing', () => {
-  // The agent-home skill import is framework-agnostic: claude-code scans `~/.claude/skills/`,
-  // codex scans `~/.codex/skills/`, and opencode (which has no global skills convention) returns
-  // an empty list. The active framework is read from settings on every call so switching the
-  // agent framework takes effect without restarting the service.
+  // The shared ~/.agents/skills directory is always scanned. The active framework contributes one
+  // additional source: ~/.claude/skills for Claude Code or ~/.codex/skills for Codex.
 
   // Seeds a fake skill at <agentHome>/skills/<slug>/SKILL.md so the scanner picks it up.
   const seedSkill = async (agentHome: string, slug: string): Promise<void> => {
@@ -3978,60 +3978,56 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
     )
   }
 
-  it('scans the user Claude home when the active framework is claude-code', async () => {
+  it('scans shared and Claude homes when the active framework is claude-code', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
     const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-list-agent-shared-'))
     await seedSkill(userClaudeDir, 'alpha')
-    // A Codex skill in the Codex home must not be picked up while the active framework is Claude.
-    await seedSkill(userCodexDir, 'should-not-appear')
-    const service = createService(undefined, { userClaudeDir, userCodexDir })
+    await seedSkill(userCodexDir, 'codex-only')
+    await seedSkill(userAgentsDir, 'shared')
+    const service = createService(undefined, { userClaudeDir, userCodexDir, userAgentsDir })
     await repository.setAgentFramework('claude-code')
 
     const items = await service.listAgentHomeSkills()
 
-    expect(items.map((item) => item.slug)).toEqual(['alpha'])
-    expect(items[0].path).toBe(join(userClaudeDir, 'skills', 'alpha'))
+    expect(items.map(({ source, slug }) => ({ source, slug }))).toEqual([
+      { source: 'agents', slug: 'shared' },
+      { source: 'claude', slug: 'alpha' }
+    ])
+    expect(items.every((item) => !('path' in item))).toBe(true)
   })
 
-  it('scans the user Codex home when the active framework is codex', async () => {
+  it('scans shared and Codex homes when the active framework is codex', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
     const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-list-agent-shared-'))
     await seedSkill(userCodexDir, 'beta')
-    // A Claude skill in the Claude home must not be picked up while the active framework is Codex.
-    await seedSkill(userClaudeDir, 'should-not-appear')
-    const service = createService(undefined, { userClaudeDir, userCodexDir })
+    await seedSkill(userClaudeDir, 'claude-only')
+    await seedSkill(userAgentsDir, 'shared')
+    const service = createService(undefined, { userClaudeDir, userCodexDir, userAgentsDir })
     await repository.setAgentFramework('codex')
 
     const items = await service.listAgentHomeSkills()
 
-    expect(items.map((item) => item.slug)).toEqual(['beta'])
-    expect(items[0].path).toBe(join(userCodexDir, 'skills', 'beta'))
+    expect(items.map(({ source, slug }) => ({ source, slug }))).toEqual([
+      { source: 'agents', slug: 'shared' },
+      { source: 'codex', slug: 'beta' }
+    ])
   })
 
-  it('returns an empty list when the active framework is opencode (no global home)', async () => {
+  it('scans only the shared home for other frameworks', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
     const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
-    // Even with skills present, opencode's lack of a global skills convention must hide the source.
-    await seedSkill(userClaudeDir, 'hidden-1')
-    await seedSkill(userCodexDir, 'hidden-2')
-    const service = createService(undefined, { userClaudeDir, userCodexDir })
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-list-agent-shared-'))
+    await seedSkill(userClaudeDir, 'hidden-claude')
+    await seedSkill(userCodexDir, 'hidden-codex')
+    await seedSkill(userAgentsDir, 'visible-shared')
+    const service = createService(undefined, { userClaudeDir, userCodexDir, userAgentsDir })
     await repository.setAgentFramework('opencode')
 
-    expect(await service.listAgentHomeSkills()).toEqual([])
-  })
-
-  it('re-reads the active framework on every call (no cached home dir)', async () => {
-    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
-    const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
-    await seedSkill(userClaudeDir, 'claude-only')
-    await seedSkill(userCodexDir, 'codex-only')
-    const service = createService(undefined, { userClaudeDir, userCodexDir })
-
-    await repository.setAgentFramework('claude-code')
-    expect((await service.listAgentHomeSkills()).map((i) => i.slug)).toEqual(['claude-only'])
-
-    await repository.setAgentFramework('codex')
-    expect((await service.listAgentHomeSkills()).map((i) => i.slug)).toEqual(['codex-only'])
+    expect(
+      (await service.listAgentHomeSkills()).map(({ source, slug }) => ({ source, slug }))
+    ).toEqual([{ source: 'agents', slug: 'visible-shared' }])
   })
 })
 
@@ -4128,10 +4124,9 @@ describe('SettingsService: logoutIsolatedClaude error propagation', () => {
   })
 })
 
-describe('SettingsService: importAgentHomeSkill path containment', () => {
-  // P1 / Medium from the Codex + Claude reviews: path authority lives in main. The renderer
-  // supplies a slug; the service resolves it against the active agent's skills dir and refuses
-  // any slug that escapes the configured home directory.
+describe('SettingsService: importAgentHomeSkills', () => {
+  // Path authority lives in main. The renderer supplies a source id plus slug; the service resolves
+  // both against the currently available global sources and returns one result per selected skill.
 
   const seedSkill = async (agentHome: string, slug: string): Promise<string> => {
     const skillDir = join(agentHome, 'skills', slug)
@@ -4143,41 +4138,48 @@ describe('SettingsService: importAgentHomeSkill path containment', () => {
     return skillDir
   }
 
-  it('imports the skill that lives under the active agent home', async () => {
+  it('batch-imports selected shared and framework-specific skills', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-agent-ok-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-agent-shared-'))
     await seedSkill(userClaudeDir, 'alpha')
-    const service = createService(undefined, { userClaudeDir })
+    await seedSkill(userAgentsDir, 'shared')
+    const service = createService(undefined, { userClaudeDir, userAgentsDir })
     await repository.setAgentFramework('claude-code')
 
-    const result = await service.importAgentHomeSkill({ slug: 'alpha' })
+    const result = await service.importAgentHomeSkills({
+      skills: [
+        { source: 'agents', slug: 'shared' },
+        { source: 'claude', slug: 'alpha' }
+      ]
+    })
 
-    expect(result.status).toBe('imported')
-    expect(result.id).toBe('imported-alpha')
+    expect(result.results).toEqual([
+      { source: 'agents', slug: 'shared', status: 'imported', id: 'imported-shared' },
+      { source: 'claude', slug: 'alpha', status: 'imported', id: 'imported-alpha' }
+    ])
+    expect(result.skills.map((skill) => skill.id)).toEqual(
+      expect.arrayContaining(['imported-shared', 'imported-alpha'])
+    )
   })
 
-  it('rejects slugs that fail the SAFE_SLUG check before reaching the path resolver', async () => {
+  it('reports unsafe slugs and unavailable sources without aborting other selected skills', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-agent-escape-'))
-    const service = createService(undefined, { userClaudeDir })
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-agent-shared-'))
+    await seedSkill(userAgentsDir, 'safe')
+    const service = createService(undefined, { userClaudeDir, userAgentsDir })
     await repository.setAgentFramework('claude-code')
 
-    // Path-traversal payloads are caught by the SAFE_SLUG regex (no '/', '.', etc.), so the
-    // containment check downstream is defense-in-depth and is not exercised by valid slugs.
-    await expect(service.importAgentHomeSkill({ slug: '../../etc' })).rejects.toThrow(/unsafe slug/)
-    await expect(service.importAgentHomeSkill({ slug: '../sibling' })).rejects.toThrow(
-      /unsafe slug/
-    )
-    await expect(service.importAgentHomeSkill({ slug: 'has spaces' })).rejects.toThrow(
-      /unsafe slug/
-    )
-  })
+    const result = await service.importAgentHomeSkills({
+      skills: [
+        { source: 'agents', slug: 'safe' },
+        { source: 'claude', slug: '../../etc' },
+        { source: 'codex', slug: 'not-active' }
+      ]
+    })
 
-  it('rejects when the active framework has no global skills directory', async () => {
-    const service = createService()
-    await repository.setAgentFramework('opencode')
-
-    await expect(service.importAgentHomeSkill({ slug: 'alpha' })).rejects.toThrow(
-      /no global skills directory/
-    )
+    expect(result.results[0]).toMatchObject({ status: 'imported', id: 'imported-safe' })
+    expect(result.results[1]).toMatchObject({ error: expect.stringMatching(/unsafe slug/) })
+    expect(result.results[2]).toMatchObject({ error: expect.stringMatching(/not available/) })
   })
 })
 
@@ -4564,7 +4566,7 @@ describe('SettingsService: claude-isolated edit preserves expiresAt + keyRef', (
   })
 })
 
-describe('SettingsService: importAgentHomeSkill realpath containment', () => {
+describe('SettingsService: importAgentHomeSkills realpath containment', () => {
   // Round 6 of the AI review: a symlink that points outside the agent home is a containment
   // escape even when `resolve()` (lexical) is satisfied. The realpath fallback closes the gap.
   const seedSkill = async (agentHome: string, slug: string): Promise<string> => {
@@ -4577,6 +4579,10 @@ describe('SettingsService: importAgentHomeSkill realpath containment', () => {
   it('rejects a symlink inside the agent home that points outside it', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-'))
     const outside = await mkdtemp(join(tmpdir(), 'os-import-outside-'))
+    await writeFile(
+      join(outside, 'SKILL.md'),
+      '---\nname: outside\ndescription: Test\n---\nBody.\n'
+    )
     // Create a symlink at `<home>/skills/payload -> <outside>` so the basename is a valid slug
     // and `resolve(home, slug)` would land at the symlink target.
     const linkPath = join(userClaudeDir, 'skills', 'payload')
@@ -4585,23 +4591,43 @@ describe('SettingsService: importAgentHomeSkill realpath containment', () => {
     const service = createService(undefined, { userClaudeDir })
     await repository.setAgentFramework('claude-code')
 
-    await expect(service.importAgentHomeSkill({ slug: 'payload' })).rejects.toThrow(
-      /outside its home/
+    expect((await service.listAgentHomeSkills()).map((skill) => skill.slug)).not.toContain(
+      'payload'
     )
+
+    const result = await service.importAgentHomeSkills({
+      skills: [{ source: 'claude', slug: 'payload' }]
+    })
+
+    expect(result.results[0]).toMatchObject({
+      error: expect.stringMatching(/outside its source/)
+    })
   })
 
-  it('rejects a Skill-root symlink even when it stays within the agent home', async () => {
+  it('imports a framework skill symlink that resolves into another available global source', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-benign-'))
-    const target = await seedSkill(userClaudeDir, 'real-skill')
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-shared-'))
+    const target = await seedSkill(userAgentsDir, 'real-skill')
     const linkDir = join(userClaudeDir, 'skills', 'linked-skill')
     await mkdir(join(userClaudeDir, 'skills'), { recursive: true })
     await symlink(target, linkDir)
-    const service = createService(undefined, { userClaudeDir })
+    const service = createService(undefined, { userClaudeDir, userAgentsDir })
     await repository.setAgentFramework('claude-code')
 
-    await expect(service.importAgentHomeSkill({ slug: 'linked-skill' })).rejects.toThrow(
-      /symbolic link/
+    expect((await service.listAgentHomeSkills()).map((skill) => skill.slug)).toContain(
+      'linked-skill'
     )
+
+    const result = await service.importAgentHomeSkills({
+      skills: [{ source: 'claude', slug: 'linked-skill' }]
+    })
+
+    expect(result.results[0]).toEqual({
+      source: 'claude',
+      slug: 'linked-skill',
+      status: 'imported',
+      id: 'imported-linked-skill'
+    })
   })
 })
 

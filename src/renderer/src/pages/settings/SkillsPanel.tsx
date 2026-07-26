@@ -55,14 +55,6 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
   const setSkillEnabled = useSettingsStore((state) => state.setSkillEnabled)
   const createSkill = useSettingsStore((state) => state.createSkill)
   const deleteSkill = useSettingsStore((state) => state.deleteSkill)
-  // The "From your agent home" entry scans the active agent's global skills directory on disk.
-  // Claude resolves to `~/.claude/skills/` and Codex to `~/.codex/skills/`; opencode reads
-  // skills per-project (no global convention) so the entry is hidden for that framework.
-  const activeFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
-  const showAgentHomeImport = activeFrameworkId === 'claude-code' || activeFrameworkId === 'codex'
-  const agentHomeSubtitle =
-    activeFrameworkId === 'codex' ? '~/.codex/skills/' : '~/.claude/skills/'
-
   const [filter, setFilter] = useState<SourceFilter>('all')
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Partial<Record<SkillSource, boolean>>>({})
@@ -181,18 +173,16 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
                 <span className="text-xs text-muted-foreground">Add a skill from a repo</span>
               </span>
             </DropdownMenuItem>
-            {showAgentHomeImport ? (
-              <DropdownMenuItem
-                className="gap-2.5"
-                onSelect={() => onNavigate({ kind: 'import-agent-home' })}
-              >
-                <FolderInput className="size-4 shrink-0" aria-hidden="true" />
-                <span className="flex flex-col">
-                  <span>From your agent home</span>
-                  <span className="text-xs text-muted-foreground">{agentHomeSubtitle}</span>
-                </span>
-              </DropdownMenuItem>
-            ) : null}
+            <DropdownMenuItem
+              className="gap-2.5"
+              onSelect={() => onNavigate({ kind: 'import-agent-home' })}
+            >
+              <FolderInput className="size-4 shrink-0" aria-hidden="true" />
+              <span className="flex flex-col">
+                <span>Import installed skills</span>
+                <span className="text-xs text-muted-foreground">Scan global skill folders</span>
+              </span>
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

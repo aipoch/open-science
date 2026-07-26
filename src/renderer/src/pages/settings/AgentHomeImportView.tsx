@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import type { AgentHomeSkillView } from '../../../../shared/settings'
+import type {
+  AgentHomeSkillRef,
+  AgentHomeSkillSource,
+  AgentHomeSkillView
+} from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '@/stores/settings-store'
 
@@ -8,38 +12,50 @@ type AgentHomeImportViewProps = {
   onImported: () => void
 }
 
-// Imports skills from the user's machine-level agent home. The source directory is the active
-// agent's global skills folder: `~/.claude/skills/` for claude-code and `~/.codex/skills/` for
-// codex. Surfaced as a separate sub-view rather than a card on the main list because the source
-// is the user's own filesystem, not a public repo — the affordance needs a clear "this reads from
-// your machine" framing so the user can give informed consent. Mirrors SkillImportView's
-// structure (preview + import-selected) so the two paths feel familiar.
+const SOURCE_INFO: Record<AgentHomeSkillSource, { label: string; path: string }> = {
+  agents: { label: 'Shared', path: '~/.agents/skills' },
+  claude: { label: 'Claude Code', path: '~/.claude/skills' },
+  codex: { label: 'Codex', path: '~/.codex/skills' }
+}
+
+const skillKey = (skill: AgentHomeSkillRef): string => `${skill.source}:${skill.slug}`
+
+// Lists skills installed outside Open Science's isolated agent profile, then copies the checked
+// directories through the existing imported-skill pipeline. Main owns source routing and path
+// containment; this view handles only renderer-safe source ids, slugs, and display metadata.
 const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JSX.Element => {
   const listAgentHomeSkills = useSettingsStore((state) => state.listAgentHomeSkills)
-  const importAgentHomeSkill = useSettingsStore((state) => state.importAgentHomeSkill)
-  // The path mirror follows the active framework — main resolves it the same way. Reading from
-  // the store here keeps the description in lockstep with what is actually scanned when the user
-  // clicks "Rescan" / "Import".
+  const importAgentHomeSkills = useSettingsStore((state) => state.importAgentHomeSkills)
   const activeFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
-  const agentHomeRoot =
-    activeFrameworkId === 'codex' ? '~/.codex/skills/' : '~/.claude/skills/'
-  const [busy, setBusy] = useState(true)
+  const [scanning, setScanning] = useState(true)
+  const [importing, setImporting] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [skills, setSkills] = useState<AgentHomeSkillView[] | null>(null)
-  const [importing, setImporting] = useState<string | undefined>(undefined)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
 
-  // Auto-load on mount so the user sees what is available without an extra click. The list is
-  // small (one entry per top-level subdirectory of ~/.claude/skills/) and the read is local, so
-  // pulling it eagerly is cheap; deferring to a button would make the import source feel hidden.
-  // `busy` starts true so the first render already shows the spinner without an effect-time setBusy
-  // call. State updates only fire from the .then/.catch/.finally callbacks (response to the IPC),
-  // which the React lint rule allows.
+  const frameworkSource =
+    activeFrameworkId === 'codex'
+      ? SOURCE_INFO.codex
+      : activeFrameworkId === 'claude-code'
+        ? SOURCE_INFO.claude
+        : undefined
+
+  const applyScan = useCallback((items: AgentHomeSkillView[]): void => {
+    setSkills(items)
+    setSelected(
+      new Set(items.filter((skill) => !skill.alreadyImported).map((skill) => skillKey(skill)))
+    )
+  }, [])
+
+  // Discovery is local and bounded to one directory per visible source, so load eagerly. Including
+  // the framework id makes an already-open view follow a framework switch without retaining stale
+  // source rows.
   useEffect(() => {
     let cancelled = false
     listAgentHomeSkills()
       .then((items) => {
         if (cancelled) return
-        setSkills(items)
+        applyScan(items)
       })
       .catch((error) => {
         if (cancelled) return
@@ -47,56 +63,99 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
       })
       .finally(() => {
         if (cancelled) return
-        setBusy(false)
+        setScanning(false)
       })
 
     return () => {
       cancelled = true
     }
-  }, [listAgentHomeSkills])
+  }, [activeFrameworkId, applyScan, listAgentHomeSkills])
+
+  const selectable = useMemo(
+    () => skills?.filter((skill) => !skill.alreadyImported) ?? [],
+    [skills]
+  )
+  const allSelected = selectable.length > 0 && selected.size === selectable.length
 
   const rescan = async (): Promise<void> => {
-    setBusy(true)
+    setScanning(true)
     setMessage(null)
     try {
-      const items = await listAgentHomeSkills()
-      setSkills(items)
+      applyScan(await listAgentHomeSkills())
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Scan failed.')
     } finally {
-      setBusy(false)
+      setScanning(false)
     }
   }
 
-  const importOne = async (skill: AgentHomeSkillView): Promise<void> => {
-    setImporting(skill.slug)
+  const toggle = (skill: AgentHomeSkillRef): void =>
+    setSelected((previous) => {
+      const next = new Set(previous)
+      const key = skillKey(skill)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+
+  const toggleAll = (): void =>
+    setSelected(() =>
+      allSelected ? new Set() : new Set(selectable.map((skill) => skillKey(skill)))
+    )
+
+  const invertSelection = (): void =>
+    setSelected((previous) => {
+      const next = new Set<string>()
+      for (const skill of selectable) {
+        const key = skillKey(skill)
+        if (!previous.has(key)) next.add(key)
+      }
+      return next
+    })
+
+  const importSelected = async (): Promise<void> => {
+    if (importing || selected.size === 0 || !skills) return
+
+    const requested = skills
+      .filter((skill) => selected.has(skillKey(skill)) && !skill.alreadyImported)
+      .map(({ source, slug }) => ({ source, slug }))
+    if (requested.length === 0) return
+
+    setImporting(true)
     setMessage(null)
     try {
-      const result = await importAgentHomeSkill(skill.slug)
-      setMessage(
-        result.status === 'imported'
-          ? `Imported "${skill.name}".`
-          : result.status === 'updated'
-            ? `Updated "${skill.name}".`
-            : `Already imported "${skill.name}".`
-      )
-      // Re-pull the list so the row's "already imported" badge flips and the action button hides.
-      const refreshed = await listAgentHomeSkills()
-      setSkills(refreshed)
-      onImported()
+      const result = await importAgentHomeSkills(requested)
+      const failures = result.results.filter((item) => item.error !== undefined)
+      const importedCount = result.results.length - failures.length
+
+      if (failures.length === 0) {
+        setMessage(`Imported ${importedCount} skill${importedCount === 1 ? '' : 's'}.`)
+      } else {
+        setMessage(
+          `Imported ${importedCount}; ${failures.length} failed. ${failures[0]?.error ?? ''}`.trim()
+        )
+      }
+      if (importedCount > 0) onImported()
+      applyScan(await listAgentHomeSkills())
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not import the skill.')
+      setMessage(error instanceof Error ? error.message : 'Could not import the selected skills.')
     } finally {
-      setImporting(undefined)
+      setImporting(false)
     }
   }
 
   return (
     <div className="p-5">
-      <h2 className="text-base font-semibold text-foreground">From your agent home</h2>
+      <h2 className="text-base font-semibold text-foreground">Import installed skills</h2>
       <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
-        Skills under <code className="font-mono">{agentHomeRoot}</code> on this machine. Import
-        one to copy it into Open Science; the source file stays where it is.
+        Scan <code className="font-mono">{SOURCE_INFO.agents.path}</code>
+        {frameworkSource ? (
+          <>
+            {' and '}
+            <code className="font-mono">{frameworkSource.path}</code>
+          </>
+        ) : null}{' '}
+        on this computer. Check skills to copy into Open Science; the originals stay in place.
       </p>
 
       <div className="mt-4 flex items-center gap-2">
@@ -104,9 +163,9 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
           type="button"
           variant="outline"
           onClick={() => void rescan()}
-          disabled={busy}
+          disabled={scanning || importing}
         >
-          {busy ? 'Scanning…' : 'Rescan'}
+          {scanning ? 'Scanning…' : 'Rescan'}
         </Button>
         {skills ? (
           <span className="text-xs text-muted-foreground">
@@ -117,40 +176,70 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
       {message ? <p className="mt-2 text-xs text-muted-foreground">{message}</p> : null}
 
       {skills && skills.length > 0 ? (
-        <ul className="mt-5 flex flex-col divide-y divide-border">
-          {skills.map((skill) => (
-            <li key={skill.slug} className="flex items-center gap-3 py-2.5">
-              <div className="min-w-0 flex-1">
-                <span className="block truncate text-sm text-foreground">{skill.name}</span>
-                {skill.description ? (
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {skill.description}
+        <div className="mt-5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  aria-label="Select all installed skills"
+                  checked={allSelected}
+                  onChange={toggleAll}
+                  disabled={selectable.length === 0 || importing}
+                  className="size-4 shrink-0"
+                />
+                Select all
+              </label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={invertSelection}
+                disabled={selectable.length === 0 || importing}
+              >
+                Invert
+              </Button>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void importSelected()}
+              disabled={importing || selected.size === 0}
+            >
+              {importing ? 'Importing…' : `Import selected (${selected.size})`}
+            </Button>
+          </div>
+
+          <ul className="mt-2 flex flex-col divide-y divide-border">
+            {skills.map((skill) => {
+              const source = SOURCE_INFO[skill.source]
+              return (
+                <li key={skillKey(skill)} className="flex items-center gap-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${skill.name}`}
+                    checked={selected.has(skillKey(skill))}
+                    onChange={() => toggle(skill)}
+                    disabled={skill.alreadyImported || importing}
+                    className="size-4 shrink-0"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <span className="block truncate text-sm text-foreground">{skill.name}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {skill.description || skill.slug} · {source.path}
+                    </span>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                    {skill.alreadyImported ? 'Imported' : source.label}
                   </span>
-                ) : (
-                  <span className="block truncate text-xs text-muted-foreground">{skill.slug}</span>
-                )}
-              </div>
-              {skill.alreadyImported ? (
-                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                  Imported
-                </span>
-              ) : (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void importOne(skill)}
-                  disabled={importing !== undefined}
-                >
-                  {importing === skill.slug ? 'Importing…' : 'Import'}
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
-      ) : !busy && skills && skills.length === 0 ? (
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ) : !scanning && skills && skills.length === 0 ? (
         <p className="mt-5 text-xs text-muted-foreground">
-          No skills found under <code className="font-mono">{agentHomeRoot}</code>.
+          No installed skills found in the scanned global folders.
         </p>
       ) : null}
     </div>

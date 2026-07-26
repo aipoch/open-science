@@ -40,7 +40,9 @@ import type {
   SettingsSnapshot,
   AppIconVariant,
   SkillView,
+  AgentHomeSkillRef,
   AgentHomeSkillView,
+  ImportAgentHomeSkillsResult,
   CreateSkillRequest,
   UpdateSkillRequest,
   ImportSkillResult,
@@ -261,11 +263,10 @@ type SettingsStore = SettingsStoreData & {
   previewSkillZip: (dataBase64: string) => Promise<SkillBundlePreviewResult>
   // Scans a GitHub repo for importable skill directories (does not mutate state).
   scanRepoSkills: (repo: string) => Promise<ScanRepoResult>
-  // Lists the skills under the user's machine-level Claude config (~/.claude/skills/) for the
-  // "From your agent home" import source. Read-only; the import action lives below.
+  // Lists the shared global skills plus the active framework's installed skills.
   listAgentHomeSkills: () => Promise<AgentHomeSkillView[]>
-  // Copies one agent-home skill into the imported-skill store, refreshing the catalog on success.
-  importAgentHomeSkill: (slug: string) => Promise<ImportSkillResult>
+  // Copies checked installed skills into the imported-skill store in one batch.
+  importAgentHomeSkills: (skills: AgentHomeSkillRef[]) => Promise<ImportAgentHomeSkillsResult>
   // Loads the bundled-connector list (enabled/auto-allow + NCBI credential state) from main.
   loadConnectors: () => Promise<void>
   // Toggles one connector; optimistic, then reconciled with the authoritative snapshot from main.
@@ -1095,13 +1096,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   scanRepoSkills: async (repo) => window.api.settings.scanRepoSkills({ repo }),
 
-  // The agent-home import surface: list is read-only, import copies one skill into the imported
-  // store and refreshes the catalog so the row can disappear (already-imported badge) immediately.
+  // Installed-skill discovery is read-only. Batch import returns the refreshed catalog directly.
   listAgentHomeSkills: async () => window.api.settings.listAgentHomeSkills(),
-  importAgentHomeSkill: async (slug) => {
-    const result = await window.api.settings.importAgentHomeSkill({ slug })
-
-    set(applySnapshot(await window.api.settings.getSettings()))
+  importAgentHomeSkills: async (skills) => {
+    const result = await window.api.settings.importAgentHomeSkills({ skills })
+    set({ skills: result.skills })
 
     return result
   },

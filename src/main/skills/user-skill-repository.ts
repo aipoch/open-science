@@ -956,13 +956,9 @@ class UserSkillRepository {
   }
 
   // Lists the skill directories under a machine-level agent home (typically ~/.claude/skills/).
-  // Each subdirectory is treated as one candidate skill: its SKILL.md frontmatter supplies the
-  // displayed name/description, and the directory name acts as the slug. Hidden entries (the
-  // transaction dirs .import-/ .backup-) are ignored so the list never leaks staging state.
-  //
-  // Surface is intentionally narrow: a directory that has no SKILL.md is listed with a fallback
-  // name so the user can still try to import it; the actual import copies the whole subtree
-  // regardless of contents.
+  // A candidate must be a safe-slug directory with a readable SKILL.md; arbitrary sibling folders
+  // are not import choices. Frontmatter supplies the displayed name/description, while the directory
+  // name remains the stable slug. Hidden transaction directories are ignored.
   async listAgentHomeSkills(homeSkillsDir: string): Promise<
     {
       slug: string
@@ -976,8 +972,11 @@ class UserSkillRepository {
 
     try {
       entries = (await readdir(homeSkillsDir, { withFileTypes: true }))
-        .filter((entry) => entry.isDirectory() && SAFE_SLUG.test(entry.name))
+        .filter(
+          (entry) => (entry.isDirectory() || entry.isSymbolicLink()) && SAFE_SLUG.test(entry.name)
+        )
         .map((entry) => entry.name)
+        .sort()
     } catch (error) {
       // A missing agent home just means "nothing to import"; surface other errors so a corrupt
       // permissions state can't silently hide skills the user expects to see.
@@ -1007,7 +1006,7 @@ class UserSkillRepository {
         if (typeof fields.name === 'string' && fields.name) name = fields.name
         if (typeof fields.description === 'string') description = fields.description
       } catch {
-        // No SKILL.md / unreadable: keep the fallback name/description so the UI still lists it.
+        continue
       }
 
       out.push({
@@ -1027,9 +1026,12 @@ class UserSkillRepository {
   // the same shape Open Science would have produced from a fresh in-app edit. Suffix allocation
   // mirrors importFromZip: a taken slug gets `-2`, `-3`, ... appended so re-running the import never
   // clobbers an existing record.
-  async importAgentHomeSkill(sourcePath: string): Promise<ImportOutcome> {
-    if (!SAFE_SLUG.test(basename(sourcePath))) {
-      throw new Error(`Refusing to import agent-home skill with unsafe slug: ${sourcePath}`)
+  async importAgentHomeSkill(
+    sourcePath: string,
+    requestedSlug = basename(sourcePath)
+  ): Promise<ImportOutcome> {
+    if (!SAFE_SLUG.test(requestedSlug)) {
+      throw new Error(`Refusing to import agent-home skill with unsafe slug: ${requestedSlug}`)
     }
 
     // Stat the source up front so a missing path fails loudly instead of leaving a half-copied
@@ -1046,7 +1048,7 @@ class UserSkillRepository {
     return this.runExclusive(async () => {
       await this.doRecoverImportedTransactions()
 
-      const slug = await this.uniqueSlug('imported', basename(sourcePath))
+      const slug = await this.uniqueSlug('imported', requestedSlug)
       const destination = this.skillDir('imported', slug)
 
       try {

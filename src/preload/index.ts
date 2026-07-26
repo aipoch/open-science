@@ -152,7 +152,8 @@ import type {
   ImportSkillZipRequest,
   ImportSkillZipBatchRequest,
   ImportSkillZipBatchResult,
-  ImportAgentHomeSkillRequest,
+  ImportAgentHomeSkillsRequest,
+  ImportAgentHomeSkillsResult,
   AgentHomeSkillView,
   PreviewSkillZipRequest,
   SkillBundlePreviewResult,
@@ -316,7 +317,9 @@ type OpenScienceAPI = {
     previewSkillZip: (request: PreviewSkillZipRequest) => Promise<SkillBundlePreviewResult>
     scanRepoSkills: (request: ScanRepoRequest) => Promise<ScanRepoResult>
     listAgentHomeSkills: () => Promise<AgentHomeSkillView[]>
-    importAgentHomeSkill: (request: ImportAgentHomeSkillRequest) => Promise<ImportSkillResult>
+    importAgentHomeSkills: (
+      request: ImportAgentHomeSkillsRequest
+    ) => Promise<ImportAgentHomeSkillsResult>
     listConnectors: () => Promise<ConnectorsSnapshot>
     getConnectorDetail: (id: string) => Promise<ConnectorDetailView>
     setConnectorEnabled: (request: SetConnectorEnabledRequest) => Promise<ConnectorsSnapshot>
@@ -766,12 +769,14 @@ const api: OpenScienceAPI = {
       ) as Promise<SkillBundlePreviewResult>,
     scanRepoSkills: (request: ScanRepoRequest) =>
       ipcRenderer.invoke('settings:scan-repo-skills', request) as Promise<ScanRepoResult>,
-    // "From your agent home" import source: lists the skills under ~/.claude/skills/ for the
-    // renderer to display, and copies one into the imported-skill store on demand.
+    // Lists installed skills from the shared global source plus the active framework's source.
     listAgentHomeSkills: () =>
       ipcRenderer.invoke('settings:list-agent-home-skills') as Promise<AgentHomeSkillView[]>,
-    importAgentHomeSkill: (request: ImportAgentHomeSkillRequest) =>
-      ipcRenderer.invoke('settings:import-agent-home-skill', request) as Promise<ImportSkillResult>,
+    importAgentHomeSkills: (request: ImportAgentHomeSkillsRequest) =>
+      ipcRenderer.invoke(
+        'settings:import-agent-home-skills',
+        request
+      ) as Promise<ImportAgentHomeSkillsResult>,
     listConnectors: () =>
       ipcRenderer.invoke('settings:list-connectors') as Promise<ConnectorsSnapshot>,
     getConnectorDetail: (id: string) =>

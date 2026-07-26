@@ -356,7 +356,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
             : skillsView.kind === 'import'
               ? 'Import from GitHub'
               : skillsView.kind === 'import-agent-home'
-                ? 'From your agent home'
+                ? 'Import installed skills'
                 : (() => {
                     const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
                     return skillsView.kind === 'edit' ? `Edit ${name}`.trim() : name
