@@ -49,7 +49,7 @@ const publisherText = readFileSync(
   join(process.cwd(), '.github/workflows/ai-post-review.yml'),
   'utf8'
 )
-const reviewDocsText = readFileSync(join(process.cwd(), 'docs/ai-review.md'), 'utf8')
+const reviewDocsText = readFileSync(join(process.cwd(), '.github/action/ai-review.md'), 'utf8')
 const mainWorkflow = load(mainText) as Workflow
 const codexWorkflow = load(codexText) as Workflow
 const publisherWorkflow = load(publisherText) as Workflow

@@ -1,7 +1,7 @@
 name: AI PR Review
 
-# Authentication defaults to API keys. See docs/ai-review.md for the supported API-key and Codex
-# subscription configurations and their security boundaries.
+# Authentication defaults to API keys. See .github/action/ai-review.md for the supported API-key
+# and Codex subscription configurations and their security boundaries.
 # - Shared fallback API secrets: OPENAI_API_KEY and CODEX_BASE_URL
 # - Reviewer-specific secrets: CODEX_CORRECTNESS_API_KEY / CODEX_CORRECTNESS_BASE_URL and
 #   CODEX_ARCHITECTURE_API_KEY / CODEX_ARCHITECTURE_BASE_URL

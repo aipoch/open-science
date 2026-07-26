@@ -1,3 +1,5 @@
+<!-- Supplemental workflow maintainer notes; not part of the public documentation site. -->
+
 # AI review authentication
 
 The `AI PR Review` workflow supports API-key and Codex subscription authentication. API-key auth
