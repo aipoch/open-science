@@ -434,7 +434,15 @@ export const PdfPreviewContent = ({
 
   return (
     <div className="relative size-full overflow-hidden bg-bg-20">
-      <div ref={scrollRef} className="size-full overflow-auto p-4">
+      {/* The inner element is the real scroller (the outer div holds the fixed zoom overlay), so it
+          must be keyboard-focusable or PageUp/Down, Space, and arrows never reach the PDF. */}
+      <div
+        ref={scrollRef}
+        className="size-full overflow-auto p-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
+        tabIndex={0}
+        role="region"
+        aria-label={`${name} scrollable preview`}
+      >
         {/* Zero-height probe: reports the content-box width even when pages overflow horizontally. */}
         <div ref={measureRef} className="h-0 w-full" aria-hidden="true" />
         {!document ? (

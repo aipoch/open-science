@@ -223,6 +223,37 @@ describe('PdfPreviewContent', () => {
     clientWidthSpy.mockRestore()
   })
 
+  it('exposes the scroll container as a keyboard-focusable region', async () => {
+    const clientWidthSpy = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockReturnValue(400)
+    vi.stubGlobal('devicePixelRatio', 1)
+    getPage.mockResolvedValue({
+      getViewport: vi.fn(({ scale }: { scale: number }) => ({
+        width: 400 * scale,
+        height: 560 * scale
+      })),
+      render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+      cleanup: vi.fn()
+    })
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/a11y.pdf" name="a11y.pdf" source="artifact" />
+      )
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBe(400))
+
+    // The inner scroller (parent of the measurement probe) owns overflow, so it must be reachable
+    // by keyboard — the outer surface that gets focus is not the scrollable element.
+    const scroll = container.querySelector<HTMLElement>('[aria-hidden="true"]')?.parentElement
+    expect(scroll?.getAttribute('tabindex')).toBe('0')
+    expect(scroll?.getAttribute('role')).toBe('region')
+    expect(scroll?.getAttribute('aria-label')).toContain('a11y.pdf')
+
+    clientWidthSpy.mockRestore()
+  })
+
   it('keeps a zoomed page centered on a wide pane until it overflows the real viewport', async () => {
     // Pane is 1200px wide — well past the 768 reading-width cap. fitWidth caps at 768 but the
     // overflow decision must use the real 1200px viewport, not the cap.
