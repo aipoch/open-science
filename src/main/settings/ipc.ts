@@ -480,7 +480,9 @@ const registerSettingsIpcHandlers = ({
     'settings:import-agent-home-skills',
     async (_event, request: ImportAgentHomeSkillsRequest) => {
       const result = await service.importAgentHomeSkills(request)
-      onSkillsChanged?.()
+      if (result.results.some((item) => item.status === 'imported' || item.status === 'updated')) {
+        onSkillsChanged?.()
+      }
 
       return result
     }

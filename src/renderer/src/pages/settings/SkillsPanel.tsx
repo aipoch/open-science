@@ -56,9 +56,14 @@ const SOURCE_GROUPS: ReadonlyArray<{ source: SkillSource; label: string; subtitl
 type SkillsPanelProps = {
   view: SkillsView
   onNavigate: (view: SkillsView) => void
+  canImportInstalledSkills?: boolean
 }
 
-const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element => {
+const SkillsPanel = ({
+  view,
+  onNavigate,
+  canImportInstalledSkills = true
+}: SkillsPanelProps): React.JSX.Element => {
   const skills = useSettingsStore((state) => state.skills)
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const setSkillEnabled = useSettingsStore((state) => state.setSkillEnabled)
@@ -112,7 +117,13 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
     return <SkillImportView onImported={() => undefined} />
   }
   if (view.kind === 'import-agent-home') {
-    return <AgentHomeImportView key={agentFrameworkId} onImported={() => undefined} />
+    return canImportInstalledSkills ? (
+      <AgentHomeImportView key={agentFrameworkId} onImported={() => undefined} />
+    ) : (
+      <div className="p-5 text-sm text-muted-foreground">
+        Installed-skill import is available in the desktop app.
+      </div>
+    )
   }
   if (view.kind === 'upload') {
     return (
@@ -183,16 +194,18 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
                 <span className="text-xs text-muted-foreground">Add a skill from a repo</span>
               </span>
             </DropdownMenuItem>
-            <DropdownMenuItem
-              className="gap-2.5"
-              onSelect={() => onNavigate({ kind: 'import-agent-home' })}
-            >
-              <FolderInput className="size-4 shrink-0" aria-hidden="true" />
-              <span className="flex flex-col">
-                <span>Import installed skills</span>
-                <span className="text-xs text-muted-foreground">Scan global skill folders</span>
-              </span>
-            </DropdownMenuItem>
+            {canImportInstalledSkills ? (
+              <DropdownMenuItem
+                className="gap-2.5"
+                onSelect={() => onNavigate({ kind: 'import-agent-home' })}
+              >
+                <FolderInput className="size-4 shrink-0" aria-hidden="true" />
+                <span className="flex flex-col">
+                  <span>Import installed skills</span>
+                  <span className="text-xs text-muted-foreground">Scan global skill folders</span>
+                </span>
+              </DropdownMenuItem>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

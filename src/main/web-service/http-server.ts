@@ -16,15 +16,16 @@ import { TaskApiError, type HeadlessTaskApi } from './task-api'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 
-// Channels the web client reimplements in the browser (see src/renderer/web/bootstrap.ts) because
-// their main handlers require a real Electron WebContents: file:save-* open a native save dialog
-// parented to a window, and window:close resolves a BrowserWindow from the sender. The synthetic
-// RPC sender has neither, so a direct /rpc call would pop a desktop dialog or silently no-op. The
-// browser never routes these through /rpc, so reject them outright rather than expose that behavior.
-const WEB_CLIENT_OVERRIDDEN_CHANNELS = new Set([
+// Channels unavailable over web. The browser reimplements file saves and window close client-side
+// because their main handlers require a real Electron WebContents. Installed-skill discovery reads
+// desktop-user agent homes, so it must not be exposed by a headless daemon. Omit these channels from
+// bootstrap capability discovery and reject direct /rpc calls before they reach the IPC handlers.
+const WEB_UNAVAILABLE_RPC_CHANNELS = new Set([
   'file:save-blob',
   'file:save-managed',
-  'window:close'
+  'window:close',
+  'settings:list-agent-home-skills',
+  'settings:import-agent-home-skills'
 ])
 
 const MIME_TYPES: Record<string, string> = {
@@ -330,7 +331,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
 
       if (url.pathname === '/api/bootstrap' && request.method === 'GET') {
-        json(response, 200, { ...options.bootstrap, rpcChannels: options.rpc.channels() })
+        const rpcChannels = options.rpc
+          .channels()
+          .filter((channel) => !WEB_UNAVAILABLE_RPC_CHANNELS.has(channel))
+        json(response, 200, { ...options.bootstrap, rpcChannels })
         return
       }
 
@@ -360,7 +364,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
 
       if (url.pathname.startsWith('/rpc/') && request.method === 'POST') {
         const channel = decodeURIComponent(url.pathname.slice('/rpc/'.length))
-        if (WEB_CLIENT_OVERRIDDEN_CHANNELS.has(channel)) {
+        if (WEB_UNAVAILABLE_RPC_CHANNELS.has(channel)) {
           json(response, 403, { ok: false, error: `Channel not available over web: ${channel}` })
           return
         }

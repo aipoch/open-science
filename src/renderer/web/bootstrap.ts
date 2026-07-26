@@ -3,6 +3,7 @@ import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './api-map.generated'
 type BootstrapInfo = {
   platform: string
   versions: { electron: string; chrome: string; node: string }
+  rpcChannels: string[]
 }
 
 type Listener = (payload: unknown) => void
@@ -142,8 +143,10 @@ const installWebApi = async (): Promise<void> => {
     platform: bootstrap.platform,
     getRuntimeVersions: () => bootstrap.versions
   }
+  const availableRpcChannels = new Set(bootstrap.rpcChannels)
 
   for (const [path, channel] of Object.entries(WEB_INVOKE_CHANNELS)) {
+    if (!availableRpcChannels.has(channel)) continue
     assignPath(api, path, (...args: unknown[]) => invoke(channel, transformArgs(path, args)))
   }
   for (const [path, channel] of Object.entries(WEB_EVENT_CHANNELS)) {

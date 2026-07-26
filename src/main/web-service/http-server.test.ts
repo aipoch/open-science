@@ -30,7 +30,11 @@ describe('startWebHttpServer', () => {
     roots.push(staticRoot)
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html><title>Web test</title>')
     const rpc = {
-      channels: () => ['test:echo'],
+      channels: () => [
+        'test:echo',
+        'settings:list-agent-home-skills',
+        'settings:import-agent-home-skills'
+      ],
       invoke: vi.fn(async (_channel: string, _client: string, args: unknown[]) => args[0]),
       releaseClient: vi.fn(),
       dispose: vi.fn()
@@ -76,15 +80,20 @@ describe('startWebHttpServer', () => {
     })
     expect(await rpcResponse.json()).toEqual({ ok: true, result: { value: 1 } })
 
-    // Channels the browser reimplements client-side (native-dialog / window handlers) are rejected
-    // over /rpc without ever reaching the handler.
-    const blockedResponse = await fetch(`${base}/rpc/window%3Aclose`, {
-      method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
-      body: JSON.stringify({ args: [] })
-    })
-    expect(blockedResponse.status).toBe(403)
-    expect(await blockedResponse.json()).toMatchObject({ ok: false })
+    // Channels unavailable to web clients are rejected over /rpc without reaching the handler.
+    for (const channel of [
+      'window:close',
+      'settings:list-agent-home-skills',
+      'settings:import-agent-home-skills'
+    ]) {
+      const blockedResponse = await fetch(`${base}/rpc/${encodeURIComponent(channel)}`, {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ args: [] })
+      })
+      expect(blockedResponse.status).toBe(403)
+      expect(await blockedResponse.json()).toMatchObject({ ok: false })
+    }
     expect(rpc.invoke).toHaveBeenCalledTimes(1)
 
     const socket = new WebSocket(`ws://127.0.0.1:${server.port}/events?client=test-client`, {

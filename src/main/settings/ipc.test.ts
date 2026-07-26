@@ -601,6 +601,36 @@ describe('settings IPC handlers', () => {
     expect(onSkillsChanged).toHaveBeenCalledOnce()
   })
 
+  it('does not fire onSkillsChanged when an installed-skill batch makes no changes', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onSkillsChanged = vi.fn()
+    const result = {
+      results: [
+        {
+          source: 'agents',
+          slug: 'existing',
+          status: 'unchanged' as const,
+          id: 'imported-existing'
+        },
+        { source: 'claude', slug: 'missing', error: 'Skill not found.' }
+      ],
+      skills: []
+    }
+    service.importAgentHomeSkills.mockResolvedValue(result)
+    registerSettingsIpcHandlers({ service: asService(service), onSkillsChanged })
+
+    expect(
+      await invoke('settings:import-agent-home-skills', {
+        skills: [
+          { source: 'agents', slug: 'existing' },
+          { source: 'claude', slug: 'missing' }
+        ]
+      })
+    ).toBe(result)
+    expect(onSkillsChanged).not.toHaveBeenCalled()
+  })
+
   it('registers the OpenCode / framework-switch channels', () => {
     handlers.clear()
     registerSettingsIpcHandlers({ service: asService(createFakeService()) })

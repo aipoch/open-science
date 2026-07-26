@@ -228,6 +228,24 @@ describe('SkillsPanel (list view)', () => {
     expect(document.body.textContent).toContain('Import installed skills')
     expect(document.body.textContent).toContain('Scan global skill folders')
   })
+
+  it('hides installed-skill import when the desktop bridge is unavailable', () => {
+    act(() => {
+      root.render(
+        <SkillsPanel
+          view={{ kind: 'list' }}
+          onNavigate={vi.fn()}
+          canImportInstalledSkills={false}
+        />
+      )
+    })
+    const addSkill = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Add skill')
+    )
+    openRadixMenu(addSkill)
+
+    expect(document.body.textContent).not.toContain('Import installed skills')
+  })
 })
 
 describe('SkillsPanel (sub-views)', () => {

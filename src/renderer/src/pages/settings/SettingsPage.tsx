@@ -172,6 +172,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const consumePendingSkill = useSettingsStore((state) => state.consumePendingSkill)
   const pendingSettingsPanel = useSettingsStore((state) => state.pendingSettingsPanel)
   const consumePendingSettingsPanel = useSettingsStore((state) => state.consumePendingSettingsPanel)
+  const canImportInstalledSkills =
+    typeof window.api.settings.listAgentHomeSkills === 'function' &&
+    typeof window.api.settings.importAgentHomeSkills === 'function'
 
   // Settings navigation history (browser-like back/forward). Panel switches and drill-downs push a
   // new location; the active panel and open sub-views are derived from the current entry.
@@ -728,7 +731,11 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
             <div className="min-h-0 flex-1 overflow-y-auto">
               <div className="mx-auto min-h-full w-full max-w-[880px]">
                 {activePanel === 'skills' ? (
-                  <SkillsPanel view={skillsView} onNavigate={navigateSkills} />
+                  <SkillsPanel
+                    view={skillsView}
+                    onNavigate={navigateSkills}
+                    canImportInstalledSkills={canImportInstalledSkills}
+                  />
                 ) : activePanel === 'connectors' ? (
                   connectorsView.kind === 'detail' ? (
                     <ConnectorDetailView id={connectorsView.id} />
