@@ -403,6 +403,16 @@ export type UninstallResult = {
   activeBackendAffected: boolean
 }
 
+type AgentHomeSkillDir = { source: AgentHomeSkillSource; dir: string }
+
+type DiscoveredAgentHomeSkill = {
+  skill: AgentHomeSkillView
+  realPath: string
+  aliases: AgentHomeSkillRef[]
+  fallbackAliases: AgentHomeSkillRef[]
+  matchedFallbackSlugs: Set<string>
+}
+
 export type SettingsServiceOptions = {
   repository?: SettingsRepository
   storageRoot?: string
@@ -1137,6 +1147,16 @@ class SettingsService {
     const settings = await this.repository.getSettings()
     const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
     const sources = this.resolveAgentHomeSkillDirs(framework)
+
+    return (await this.discoverAgentHomeSkills(sources)).map((item) => item.skill)
+  }
+
+  // Resolves duplicate source rows by their real directory while retaining every source/slug alias.
+  // The aliases are internal import identities: the renderer sees one canonical row, but records
+  // created before canonicalization can still be matched without creating a duplicate.
+  private async discoverAgentHomeSkills(
+    sources: AgentHomeSkillDir[]
+  ): Promise<DiscoveredAgentHomeSkill[]> {
     // Sources are additive, so one unreadable directory must not hide healthy results. If no source
     // yields a usable skill, preserve a real scan error instead of presenting a false empty state.
     const scanResults = await Promise.allSettled(
@@ -1145,7 +1165,8 @@ class SettingsService {
         const visible: {
           skill: AgentHomeSkillView
           realPath: string
-          fallbackImported: boolean
+          alias: AgentHomeSkillRef
+          fallbackAlias?: AgentHomeSkillRef
         }[] = []
 
         for (const skill of skills) {
@@ -1153,7 +1174,8 @@ class SettingsService {
             const realPath = await this.resolveAgentHomeSkillPath(source, skill.slug, sources)
             visible.push({
               realPath,
-              fallbackImported: skill.fallbackImported,
+              alias: { source, slug: skill.slug },
+              fallbackAlias: skill.fallbackImported ? { source, slug: skill.slug } : undefined,
               skill: {
                 source,
                 slug: skill.slug,
@@ -1178,43 +1200,69 @@ class SettingsService {
       throw firstFailure.reason
     }
 
-    const unique = new Map<string, { skill: AgentHomeSkillView; fallbackImported: boolean }>()
+    const unique = new Map<string, DiscoveredAgentHomeSkill>()
     for (const item of groups.flat()) {
       const pathKey = process.platform === 'win32' ? item.realPath.toLowerCase() : item.realPath
       const existing = unique.get(pathKey)
       if (existing) {
-        existing.fallbackImported ||= item.fallbackImported
+        existing.aliases.push(item.alias)
+        if (item.fallbackAlias) existing.fallbackAliases.push(item.fallbackAlias)
         existing.skill.alreadyImported ||= item.skill.alreadyImported
       } else {
-        unique.set(pathKey, { skill: item.skill, fallbackImported: item.fallbackImported })
+        unique.set(pathKey, {
+          skill: item.skill,
+          realPath: item.realPath,
+          aliases: [item.alias],
+          fallbackAliases: item.fallbackAlias ? [item.fallbackAlias] : [],
+          matchedFallbackSlugs: new Set()
+        })
       }
     }
 
     const discovered = [...unique.values()]
-    const fallbackBySlug = new Map<string, typeof discovered>()
+    await Promise.all(
+      discovered.map(async (item) => {
+        if (item.skill.alreadyImported) return
+        try {
+          item.skill.alreadyImported = await this.userSkills.matchesImportedAgentHomeSkill(
+            item.realPath,
+            item.aliases
+          )
+        } catch {
+          // Preserve a readable row when the canonical tree fails validation. Import reports the
+          // same validation error per item instead of one malformed tree hiding healthy choices.
+        }
+      })
+    )
+    const fallbackBySlug = new Map<
+      string,
+      { item: DiscoveredAgentHomeSkill; alias: AgentHomeSkillRef }[]
+    >()
     for (const item of discovered) {
-      if (!item.fallbackImported || item.skill.alreadyImported) continue
-      const candidates = fallbackBySlug.get(item.skill.slug) ?? []
-      candidates.push(item)
-      fallbackBySlug.set(item.skill.slug, candidates)
+      if (item.skill.alreadyImported) continue
+      for (const alias of item.fallbackAliases) {
+        const candidates = fallbackBySlug.get(alias.slug) ?? []
+        candidates.push({ item, alias })
+        fallbackBySlug.set(alias.slug, candidates)
+      }
     }
     // An imported skill without an agent-home identity may be a legacy install, GitHub import, or ZIP
     // import. If its slug is ambiguous, let only one framework row claim the fallback and leave the
     // shared row importable; marking every same-slug row would recreate the collision this fixes.
-    for (const candidates of fallbackBySlug.values()) {
-      const preferred = candidates.find((item) => item.skill.source !== 'agents') ?? candidates[0]
-      preferred.skill.alreadyImported = true
+    for (const [fallbackSlug, candidates] of fallbackBySlug) {
+      const preferred =
+        candidates.find((candidate) => candidate.alias.source !== 'agents') ?? candidates[0]
+      preferred.item.skill.alreadyImported = true
+      preferred.item.matchedFallbackSlugs.add(fallbackSlug)
     }
 
-    return discovered.map((item) => item.skill)
+    return discovered
   }
 
   // The generic source is always available. A framework-specific source is additive, not a gate on
   // the import feature, so Settings can keep the entry visible for OpenCode and future frameworks.
-  private resolveAgentHomeSkillDirs(
-    framework: AgentFrameworkId
-  ): { source: AgentHomeSkillSource; dir: string }[] {
-    const sources: { source: AgentHomeSkillSource; dir: string }[] = [
+  private resolveAgentHomeSkillDirs(framework: AgentFrameworkId): AgentHomeSkillDir[] {
+    const sources: AgentHomeSkillDir[] = [
       { source: 'agents', dir: join(this.userAgentsDir, 'skills') }
     ]
 
@@ -1252,12 +1300,15 @@ class SettingsService {
     const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
     const availableSources = this.resolveAgentHomeSkillDirs(framework)
     // The picker normally just completed this scan. If an unrelated source becomes unreadable
-    // between listing and importing, keep per-item isolation and simply skip slug fallback matching.
-    const installedSkills = await this.listAgentHomeSkills().catch(() => [] as AgentHomeSkillView[])
-    const knownImported = new Set(
-      installedSkills
-        .filter((skill) => skill.alreadyImported)
-        .map((skill) => `${skill.source}:${skill.slug}`)
+    // between listing and importing, keep per-item isolation and simply skip compatibility aliases.
+    const discoveredSkills = await this.discoverAgentHomeSkills(availableSources).catch(
+      () => [] as DiscoveredAgentHomeSkill[]
+    )
+    const discoveredByPath = new Map(
+      discoveredSkills.map((item) => [
+        process.platform === 'win32' ? item.realPath.toLowerCase() : item.realPath,
+        item
+      ])
     )
     const results: ImportAgentHomeSkillsResult['results'] = []
 
@@ -1290,8 +1341,11 @@ class SettingsService {
         if (!canonicalSkill) {
           throw new Error(`Refusing to import installed skill outside a top-level skill directory.`)
         }
+        const pathKey = process.platform === 'win32' ? sourcePath.toLowerCase() : sourcePath
+        const discovered = discoveredByPath.get(pathKey)
         const outcome = await this.userSkills.importAgentHomeSkill(sourcePath, canonicalSkill, {
-          allowSlugFallback: knownImported.has(`${canonicalSkill.source}:${canonicalSkill.slug}`)
+          aliases: discovered?.aliases,
+          fallbackSlugs: discovered ? [...discovered.matchedFallbackSlugs] : undefined
         })
 
         results.push({ ...validatedRef, status: outcome.status, id: outcome.id })

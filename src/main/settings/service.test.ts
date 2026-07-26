@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join, normalize } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
@@ -4851,6 +4851,128 @@ describe('SettingsService: importAgentHomeSkills realpath containment', () => {
       status: 'unchanged',
       id: 'imported-real-skill'
     })
+  })
+
+  it('matches a legacy import recorded under a symlink alias after canonicalization', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-legacy-alias-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-legacy-shared-'))
+    const target = await seedSkill(userAgentsDir, 'real-skill')
+    await seedSkill(userAgentsDir, 'linked-skill')
+    await mkdir(join(userClaudeDir, 'skills'), { recursive: true })
+    await symlink(target, join(userClaudeDir, 'skills', 'linked-skill'))
+
+    const legacyDir = join(storageRoot, 'skills', 'imported', 'linked-skill')
+    await mkdir(legacyDir, { recursive: true })
+    await writeFile(
+      join(legacyDir, 'SKILL.md'),
+      '---\nname: linked-skill\ndescription: Legacy alias import\n---\nLegacy body.\n'
+    )
+
+    const service = createService(undefined, { userClaudeDir, userAgentsDir })
+    await repository.setAgentFramework('claude-code')
+
+    const installed = await service.listAgentHomeSkills()
+    expect(installed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'agents',
+          slug: 'real-skill',
+          alreadyImported: true
+        })
+      ])
+    )
+    expect(installed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'agents',
+          slug: 'linked-skill',
+          alreadyImported: false
+        })
+      ])
+    )
+
+    const result = await service.importAgentHomeSkills({
+      skills: [{ source: 'agents', slug: 'real-skill' }]
+    })
+
+    expect(result.results[0]).toEqual({
+      source: 'agents',
+      slug: 'real-skill',
+      status: 'unchanged',
+      id: 'imported-linked-skill'
+    })
+    expect(result.skills.map((skill) => skill.id)).not.toContain('imported-real-skill')
+  })
+
+  it('updates an existing alias identity through its canonical installed-skill row', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-source-alias-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-source-shared-'))
+    const target = await seedSkill(userAgentsDir, 'real-skill')
+    await mkdir(join(userClaudeDir, 'skills'), { recursive: true })
+    await symlink(target, join(userClaudeDir, 'skills', 'linked-skill'))
+
+    const importedDir = join(storageRoot, 'skills', 'imported', 'linked-skill')
+    await mkdir(importedDir, { recursive: true })
+    await writeFile(
+      join(importedDir, 'SKILL.md'),
+      '---\nname: linked-skill\ndescription: Old alias import\n---\nOld body.\n'
+    )
+    await writeFile(
+      join(importedDir, '.source.json'),
+      JSON.stringify({
+        signature: 'stale-signature',
+        agentHome: { source: 'claude', slug: 'linked-skill' }
+      })
+    )
+
+    const service = createService(undefined, { userClaudeDir, userAgentsDir })
+    await repository.setAgentFramework('claude-code')
+
+    const result = await service.importAgentHomeSkills({
+      skills: [{ source: 'agents', slug: 'real-skill' }]
+    })
+
+    expect(result.results[0]).toEqual({
+      source: 'agents',
+      slug: 'real-skill',
+      status: 'updated',
+      id: 'imported-linked-skill'
+    })
+    expect(result.skills.map((skill) => skill.id)).not.toContain('imported-real-skill')
+    await expect(
+      readFile(join(importedDir, '.source.json'), 'utf8').then(JSON.parse)
+    ).resolves.toMatchObject({ agentHome: { source: 'agents', slug: 'real-skill' } })
+  })
+
+  it('recognizes unchanged alias metadata after the source moves behind a symlink', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-moved-alias-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-symlink-moved-shared-'))
+    const original = await seedSkill(userClaudeDir, 'linked-skill')
+    const service = createService(undefined, { userClaudeDir, userAgentsDir })
+    await repository.setAgentFramework('claude-code')
+
+    expect(
+      (
+        await service.importAgentHomeSkills({
+          skills: [{ source: 'claude', slug: 'linked-skill' }]
+        })
+      ).results[0]
+    ).toMatchObject({ status: 'imported', id: 'imported-linked-skill' })
+
+    const canonical = join(userAgentsDir, 'skills', 'real-skill')
+    await mkdir(join(userAgentsDir, 'skills'), { recursive: true })
+    await rename(original, canonical)
+    await symlink(canonical, original)
+
+    expect(await service.listAgentHomeSkills()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'agents',
+          slug: 'real-skill',
+          alreadyImported: true
+        })
+      ])
+    )
   })
 })
 
