@@ -360,9 +360,15 @@ export const opencodeFramework: AgentFramework = {
         // empty dir so the user's `~/.opencode` cannot inject config/providers/permissions — the last
         // non-repo override surface left after OPENCODE_DISABLE_PROJECT_CONFIG closes project config. This
         // changes ONLY opencode's notion of home; the child's real HOME is untouched, so shell/git tools
-        // behave normally. Tradeoff: opencode also won't read `~/.claude/CLAUDE.md` or home-level skills —
-        // acceptable since the app owns the whole opencode config.
+        // behave normally. The explicit skill flags below enforce the skill boundary independently.
         OPENCODE_TEST_HOME: opencodeHomeDir(ctx.storageRoot),
+        // OpenCode discovers `skills/**/SKILL.md` under both `.agents` and `.claude`, walking from the
+        // session cwd to the worktree root AND scanning those directories under its notion of home.
+        // OPENCODE_DISABLE_PROJECT_CONFIG does not cover this separate discovery path. Disable external
+        // discovery at the source so only the skills the app materialized into the isolated XDG config
+        // are advertised. Keep the narrower Claude flag explicit as defense in depth for that source.
+        OPENCODE_DISABLE_EXTERNAL_SKILLS: 'true',
+        OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: 'true',
         // Refuse to load ANY project config: this stops the session cwd's opencode.json / opencode.jsonc
         // (walked up to the worktree root) and its .opencode/ directory from injecting config at all. A
         // repo therefore cannot flip permission["*"] to "allow", add an exact-id "allow" rule for an MCP

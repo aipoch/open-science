@@ -98,6 +98,19 @@ describe('opencodeFramework.prepareModelConfig', () => {
     expect(config.env?.OPENCODE_CONFIG_CONTENT).toBeTruthy()
   })
 
+  it('disables external skill discovery so host-global skills cannot enter the app catalog', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+
+    // OpenCode scans ~/.agents/skills and ~/.claude/skills independently from its XDG config.
+    // Keep both supported kill switches explicit so a host-global skill cannot be advertised in
+    // the app session even if OpenCode's internal/test-only home override changes or is ignored.
+    expect(config.env?.OPENCODE_DISABLE_EXTERNAL_SKILLS).toBe('true')
+    expect(config.env?.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS).toBe('true')
+  })
+
   it('disables project config loading so a repo cannot inject opencode.json / .opencode config', () => {
     const config = opencodeFramework.prepareModelConfig(
       { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
