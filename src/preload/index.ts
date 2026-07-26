@@ -344,6 +344,7 @@ type OpenScienceAPI = {
       listener: AcpListener<ConversationSkillImportApprovalRequest>
     ) => RemoveListener
     onSkillImportApprovalSettled: (listener: AcpListener<string>) => RemoveListener
+    replayPendingSkillImportApprovals: () => Promise<void>
     respondSkillImportApproval: (response: ConversationSkillImportApprovalResponse) => Promise<void>
     respondConnectorApproval: (request: RespondApprovalRequest) => Promise<void>
     onInstallLog: (listener: AcpListener<ClaudeInstallEvent>) => RemoveListener
@@ -833,6 +834,8 @@ const api: OpenScienceAPI = {
       onIpcMessage('skills:conversation-import-request', listener),
     onSkillImportApprovalSettled: (listener) =>
       onIpcMessage('skills:conversation-import-settled', listener),
+    replayPendingSkillImportApprovals: () =>
+      ipcRenderer.invoke('skills:conversation-import-replay-pending') as Promise<void>,
     respondSkillImportApproval: (response) =>
       ipcRenderer.invoke('skills:conversation-import-respond', response) as Promise<void>,
     respondConnectorApproval: (request: RespondApprovalRequest) =>

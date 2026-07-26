@@ -456,6 +456,9 @@ const registerIpcHandlers = async ({
       skillImportApprovalBroker.respond(response)
     }
   )
+  ipcMain.handle('skills:conversation-import-replay-pending', () => {
+    skillImportApprovalBroker.replayPending()
+  })
 
   const initialConnectorSkillsReady = waitForInitialConnectorRefresh(
     refreshConnectorSkillDocs(

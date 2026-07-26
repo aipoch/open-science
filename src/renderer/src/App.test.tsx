@@ -157,6 +157,8 @@ describe('App startup routing', () => {
     mocks.settings.isSettingsOpen = false
     mocks.settings.load.mockReset().mockResolvedValue(undefined)
     mocks.settings.checkEnvironment.mockReset().mockResolvedValue(undefined)
+    mocks.skillImport.enqueue.mockClear()
+    mocks.skillImport.dismiss.mockClear()
     mocks.navigation.view = 'home'
     mocks.startupView = 'home'
     mocks.sessionPersistenceReady = true
@@ -172,7 +174,8 @@ describe('App startup routing', () => {
       settings: {
         onConnectorApprovalRequest: vi.fn(() => vi.fn()),
         onSkillImportApprovalRequest: vi.fn(() => vi.fn()),
-        onSkillImportApprovalSettled: vi.fn(() => vi.fn())
+        onSkillImportApprovalSettled: vi.fn(() => vi.fn()),
+        replayPendingSkillImportApprovals: vi.fn().mockResolvedValue(undefined)
       },
       notifications: mocks.notifications,
       compute: {
@@ -235,6 +238,28 @@ describe('App startup routing', () => {
     expect(mocks.settings.load).toHaveBeenCalled()
     expect(mocks.settings.checkEnvironment).toHaveBeenCalled()
     expect(mocks.getInfo).toHaveBeenCalled()
+  })
+
+  it('recovers pending Skill import approvals after the renderer starts', async () => {
+    const pending = {
+      id: 'approval-recovered',
+      sessionId: 'session-1',
+      attachmentName: 'recovered.skill',
+      previews: [],
+      skipped: []
+    }
+    window.api.settings.onSkillImportApprovalRequest = vi.fn((listener) => {
+      window.api.settings.replayPendingSkillImportApprovals = vi.fn(async () => listener(pending))
+      return () => undefined
+    })
+
+    await render()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(window.api.settings.replayPendingSkillImportApprovals).toHaveBeenCalledOnce()
+    expect(mocks.skillImport.enqueue).toHaveBeenCalledWith(pending)
   })
 
   it('waits for persisted settings before checking the selected agent environment', async () => {

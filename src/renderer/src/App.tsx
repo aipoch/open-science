@@ -100,6 +100,12 @@ const App = (): React.JSX.Element | null => {
     () => window.api.settings.onSkillImportApprovalSettled(dismissSkillImport),
     [dismissSkillImport]
   )
+  // Main retains approval payloads while the agent tool call is parked. Ask it to replay after both
+  // listeners are attached so a recreated window can recover requests emitted while no renderer
+  // existed; duplicate delivery is harmless because the renderer queue is keyed by request id.
+  useEffect(() => {
+    void window.api.settings.replayPendingSkillImportApprovals()
+  }, [])
 
   // Clicking a desktop notification opens the conversation the finished/failed task belongs to.
   // Main holds the target until it is pulled here, so a click that recreates the window (listener

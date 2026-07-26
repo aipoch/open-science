@@ -312,6 +312,7 @@ interface OpenScienceAPI {
       listener: AcpListener<ConversationSkillImportApprovalRequest>
     ): RemoveListener
     onSkillImportApprovalSettled(listener: AcpListener<string>): RemoveListener
+    replayPendingSkillImportApprovals(): Promise<void>
     respondSkillImportApproval(response: ConversationSkillImportApprovalResponse): Promise<void>
     respondConnectorApproval(request: RespondApprovalRequest): Promise<void>
     onInstallLog(listener: AcpListener<ClaudeInstallEvent>): RemoveListener

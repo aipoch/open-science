@@ -31,6 +31,7 @@ class SkillImportApprovalBroker {
     string,
     {
       sessionId: string
+      request: ConversationSkillImportApprovalRequest
       resolve: (response: ConversationSkillImportApprovalResponse) => void
       timer: ReturnType<typeof setTimeout>
     }
@@ -47,12 +48,17 @@ class SkillImportApprovalBroker {
 
   request(info: SkillImportApprovalInfo): Promise<ConversationSkillImportApprovalResponse> {
     const id = this.options.generateId()
+    const request = { id, ...info }
 
     return new Promise((resolve) => {
       const timer = this.setTimer(() => this.settle({ id, cancelled: true }), this.timeoutMs)
-      this.pending.set(id, { sessionId: info.sessionId, resolve, timer })
-      this.options.broadcast({ id, ...info })
+      this.pending.set(id, { sessionId: info.sessionId, request, resolve, timer })
+      this.options.broadcast(request)
     })
+  }
+
+  replayPending(): void {
+    for (const pending of this.pending.values()) this.options.broadcast(pending.request)
   }
 
   respond(response: ConversationSkillImportApprovalResponse): void {
@@ -136,19 +142,19 @@ const validateSelections = (
     if (!candidate || selected.has(item.subPath)) {
       throw new Error('The Skill import selection does not match the approved preview.')
     }
-    if (item.replaceId !== undefined) {
-      if (item.replaceId !== candidate.replaceableId) {
-        throw new Error('The Skill replacement target does not match the approved preview.')
-      }
-      if (replacementTargets.has(item.replaceId)) {
+    if (item.replaceId !== candidate.replaceableId) {
+      throw new Error('The Skill replacement target does not match the approved preview.')
+    }
+    if (candidate.replaceableId !== undefined) {
+      if (replacementTargets.has(candidate.replaceableId)) {
         throw new Error('A Skill import cannot replace the same installed Skill more than once.')
       }
-      replacementTargets.add(item.replaceId)
+      replacementTargets.add(candidate.replaceableId)
     }
     selected.add(item.subPath)
     return {
       subPath: item.subPath,
-      ...(item.replaceId !== undefined ? { replaceId: item.replaceId } : {})
+      ...(candidate.replaceableId !== undefined ? { replaceId: candidate.replaceableId } : {})
     }
   })
 }

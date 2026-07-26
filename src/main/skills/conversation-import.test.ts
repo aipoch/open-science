@@ -226,6 +226,54 @@ describe('ConversationSkillImporter', () => {
     ).rejects.toThrow('cannot replace the same installed Skill more than once')
     expect(importBundle).not.toHaveBeenCalled()
   })
+
+  it('rejects an approval that drops the previewed replacement target', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+    roots.push(root)
+    const uploads = new UploadRepository(root)
+    const [staged] = await uploads.stageFiles({
+      files: [
+        {
+          name: 'replacement.skill',
+          content: Buffer.from('bundle contents').toString('base64'),
+          mimeType: 'application/zip'
+        }
+      ]
+    })
+    const [attachment] = await uploads.finalizePendingSessionUploads('session-1', [staged])
+    const importBundle = vi.fn().mockResolvedValue([])
+    const importer = new ConversationSkillImporter({
+      uploads,
+      previewBundle: vi.fn().mockResolvedValue({
+        previews: [
+          {
+            subPath: 'replacement',
+            name: 'Existing Skill',
+            description: '',
+            metadata: {},
+            body: '',
+            files: ['SKILL.md'],
+            alreadyImported: false,
+            replaceableId: 'imported-existing'
+          }
+        ],
+        skipped: []
+      }),
+      importBundle,
+      requestApproval: vi.fn().mockResolvedValue({
+        id: 'approval-replacement',
+        items: [{ subPath: 'replacement' }]
+      })
+    })
+
+    await expect(
+      importer.request({
+        sessionId: 'session-1',
+        attachmentUri: pathToFileURL(attachment.path).href
+      })
+    ).rejects.toThrow('replacement target does not match the approved preview')
+    expect(importBundle).not.toHaveBeenCalled()
+  })
 })
 
 describe('SkillImportApprovalBroker lifecycle', () => {
@@ -288,5 +336,26 @@ describe('SkillImportApprovalBroker lifecycle', () => {
     await expect(first).resolves.toEqual({ id: 'approval-1', cancelled: true })
     await expect(second).resolves.toEqual({ id: 'approval-2', cancelled: true })
     expect(onSettled).toHaveBeenCalledTimes(2)
+  })
+
+  it('retains pending approval payloads so a recreated renderer can recover them', async () => {
+    const broadcast = vi.fn()
+    const broker = new SkillImportApprovalBroker({
+      generateId: () => 'approval-recoverable',
+      broadcast
+    })
+    const info = approvalInfo('session-1')
+
+    const response = broker.request(info)
+    broadcast.mockClear()
+
+    broker.replayPending()
+    expect(broadcast).toHaveBeenCalledWith({ id: 'approval-recoverable', ...info })
+
+    broker.respond({ id: 'approval-recoverable', cancelled: true })
+    await response
+    broadcast.mockClear()
+    broker.replayPending()
+    expect(broadcast).not.toHaveBeenCalled()
   })
 })
