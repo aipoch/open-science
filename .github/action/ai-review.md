@@ -88,6 +88,8 @@ is discarded with that runner and is not written back to the GitHub secret. If a
 returning `401` or can no longer refresh, run `codex login` again on the trusted machine and repeat
 the `gh secret set CODEX_AUTH_JSON` command. Each reviewer gets an independent temporary credential
 copy, so correctness and architecture reviews can run in parallel without a repository-wide lock.
+Newer runs cancel an older run for the same pull request and reviewer scope to avoid duplicate
+feedback and review-round consumption.
 
 Never commit, log, upload as an artifact, or cache `auth.json`. For fully automatic refresh, use the
 official trusted private-runner or external secret-manager pattern instead.

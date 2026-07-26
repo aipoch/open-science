@@ -869,11 +869,11 @@ printf '%s\n' \\
     expect(mainWorkflow.concurrency).toEqual({
       group:
         "ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.reviewer || 'both' }}",
-      'cancel-in-progress': "${{ (vars.CODEX_REVIEW_AUTH_MODE || 'api-key') != 'subscription' }}"
+      'cancel-in-progress': true
     })
     expect(codexWorkflow.jobs.review.concurrency).toEqual({
       group: "${{ format('codex-{0}-review-{1}', inputs.scope, inputs.pull_request_number) }}",
-      'cancel-in-progress': "${{ inputs.auth_mode != 'subscription' }}"
+      'cancel-in-progress': true
     })
     expect(mainWorkflow.jobs.codex_correctness_review.needs).toEqual([
       'review_target',
