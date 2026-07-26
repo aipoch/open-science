@@ -1137,8 +1137,8 @@ class SettingsService {
     const settings = await this.repository.getSettings()
     const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
     const sources = this.resolveAgentHomeSkillDirs(framework)
-    // Sources are additive, so one unreadable directory must not hide healthy results. If every
-    // configured source fails, preserve a real scan error instead of presenting a false empty state.
+    // Sources are additive, so one unreadable directory must not hide healthy results. If no source
+    // yields a usable skill, preserve a real scan error instead of presenting a false empty state.
     const scanResults = await Promise.allSettled(
       sources.map(async ({ source, dir }) => {
         const skills = await this.userSkills.listAgentHomeSkills(dir, source)
@@ -1170,14 +1170,13 @@ class SettingsService {
         return visible
       })
     )
-    if (!scanResults.some((result) => result.status === 'fulfilled')) {
-      const firstFailure = scanResults.find((result) => result.status === 'rejected')
-      if (firstFailure?.status === 'rejected') throw firstFailure.reason
-      throw new Error('Could not scan installed skill sources.')
-    }
     const groups = scanResults.flatMap((result) =>
       result.status === 'fulfilled' ? [result.value] : []
     )
+    const firstFailure = scanResults.find((result) => result.status === 'rejected')
+    if (groups.every((group) => group.length === 0) && firstFailure?.status === 'rejected') {
+      throw firstFailure.reason
+    }
 
     const unique = new Map<string, { skill: AgentHomeSkillView; fallbackImported: boolean }>()
     for (const item of groups.flat()) {

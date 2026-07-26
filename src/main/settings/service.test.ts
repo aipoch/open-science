@@ -4012,6 +4012,16 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
     ])
   })
 
+  it('rejects when a missing shared source would mask an active-source failure', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-unreadable-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-list-agent-shared-missing-'))
+    await writeFile(join(userClaudeDir, 'skills'), 'not a directory')
+    const service = createService(undefined, { userClaudeDir, userAgentsDir })
+    await repository.setAgentFramework('claude-code')
+
+    await expect(service.listAgentHomeSkills()).rejects.toMatchObject({ code: 'ENOTDIR' })
+  })
+
   it('rejects the scan when every configured source fails', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-unreadable-'))
     const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-list-agent-shared-unreadable-'))
