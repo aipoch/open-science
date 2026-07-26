@@ -171,7 +171,7 @@ const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | 
   // Shell execute: prefer the structured command field (verbatim), then use the title only for
   // the known Bash provider. Other execute titles can be generic labels, not concrete commands.
   // MCP execute inputs are arbitrary tool arguments and must not be reinterpreted as local shell.
-  if (isExecute) {
+  if (isExecute && !isMcpPermissionRequest(request)) {
     const cmd = rawInput.command
     if (typeof cmd === 'string' && cmd.trim()) return { code: cmd, language: 'bash' }
     if (request.providerToolName === 'Bash' && request.title?.trim()) {

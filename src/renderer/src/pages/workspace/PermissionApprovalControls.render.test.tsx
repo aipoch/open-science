@@ -225,7 +225,7 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain('Artifact save</span>')
   })
 
-  it('keeps MCP execute payloads labeled as external service input', () => {
+  it('keeps every MCP execute argument in the external-service input preview', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls
         requests={[
@@ -236,7 +236,7 @@ describe('PermissionApprovalControls', () => {
             isMcp: true,
             mcpIdentity: 'runner/execute',
             toolKind: 'execute',
-            rawInput: { command: 'export-report --publish' }
+            rawInput: { command: 'export-report --publish', target: 'production' }
           }
         ]}
         onRespond={() => undefined}
@@ -245,6 +245,9 @@ describe('PermissionApprovalControls', () => {
 
     expect(html).toContain('External service input')
     expect(html).not.toContain('Run command')
+    expect(html).toContain('data-language="json"')
+    expect(html).toContain('export-report --publish')
+    expect(html).toContain('production')
   })
 
   it('keeps an MCP request external while showing its humanized action and paths', () => {
