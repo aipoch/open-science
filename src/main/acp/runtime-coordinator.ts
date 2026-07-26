@@ -45,7 +45,8 @@ class AcpRuntimeCoordinator {
     private readonly createRuntime: RuntimeFactory,
     private readonly callbacks: AcpRuntimeCallbacks = {},
     private readonly defaultCwd = '',
-    private readonly initializationBarrier?: Promise<unknown>
+    private readonly initializationBarrier?: Promise<unknown>,
+    private readonly onDisconnecting?: () => void
   ) {
     this.activeRuntime = this.addRuntime()
     this.lastRuntime = this.activeRuntime
@@ -130,6 +131,7 @@ class AcpRuntimeCoordinator {
 
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
     this.supersedeInitializationRequests()
+    this.onDisconnecting?.()
     const runtimes = Array.from(this.runtimes)
     const results = await Promise.allSettled(
       runtimes.map((runtime) => runtime.disconnect(emitClosedStatus))

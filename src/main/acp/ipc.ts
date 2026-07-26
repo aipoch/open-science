@@ -55,6 +55,7 @@ type AcpIpcOptions = AcpIpcArtifacts & {
   // and headless setups can run without a notification surface.
   taskNotifications?: TaskNotificationService
   onSessionCancelled?: (sessionId: string) => void
+  onAllSessionsCancelled?: () => void
 }
 
 // Sends one runtime payload to every currently open renderer window.
@@ -81,7 +82,8 @@ const createRuntime = ({
   notebookRpcServer,
   settingsService,
   initializationBarrier,
-  taskNotifications
+  taskNotifications,
+  onAllSessionsCancelled
 }: AcpIpcOptions): AcpRuntimeCoordinator => {
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
@@ -150,7 +152,8 @@ const createRuntime = ({
     },
     callbacks,
     defaultCwd,
-    initializationBarrier
+    initializationBarrier,
+    onAllSessionsCancelled
   )
 }
 

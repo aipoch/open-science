@@ -271,4 +271,22 @@ describe('SkillImportApprovalBroker lifecycle', () => {
     await expect(retained).resolves.toEqual({ id: 'approval-2', items: [] })
     expect(onSettled).toHaveBeenCalledTimes(2)
   })
+
+  it('cancels every pending approval when all agent runtimes disconnect', async () => {
+    const onSettled = vi.fn()
+    let sequence = 0
+    const broker = new SkillImportApprovalBroker({
+      generateId: () => `approval-${++sequence}`,
+      broadcast: vi.fn(),
+      onSettled
+    })
+    const first = broker.request(approvalInfo('session-1'))
+    const second = broker.request(approvalInfo('session-2'))
+
+    broker.cancelAll()
+
+    await expect(first).resolves.toEqual({ id: 'approval-1', cancelled: true })
+    await expect(second).resolves.toEqual({ id: 'approval-2', cancelled: true })
+    expect(onSettled).toHaveBeenCalledTimes(2)
+  })
 })

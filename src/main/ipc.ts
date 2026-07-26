@@ -490,6 +490,7 @@ const registerIpcHandlers = async ({
     settingsService,
     taskNotifications,
     onSessionCancelled: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
+    onAllSessionsCancelled: () => skillImportApprovalBroker.cancelAll(),
     initializationBarrier: initialConnectorSkillsReady
   })
   runtimeRef.current = runtime

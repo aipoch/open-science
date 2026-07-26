@@ -65,6 +65,10 @@ class SkillImportApprovalBroker {
     }
   }
 
+  cancelAll(): void {
+    for (const id of this.pending.keys()) this.settle({ id, cancelled: true })
+  }
+
   private settle(response: ConversationSkillImportApprovalResponse): void {
     const pending = this.pending.get(response.id)
     if (!pending) return

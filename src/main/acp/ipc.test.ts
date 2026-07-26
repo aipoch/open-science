@@ -38,6 +38,7 @@ const {
   cancelPrompt,
   createSession,
   deleteSession,
+  disconnect,
   resetSessionContext,
   resumeSession,
   sendPrompt,
@@ -48,6 +49,7 @@ const {
     .fn()
     .mockImplementation(async (request) => ({ sessionId: 's-new', cwd: request.cwd }))
   const deleteSession = vi.fn().mockResolvedValue({})
+  const disconnect = vi.fn().mockResolvedValue({})
   const resetSessionContext = vi
     .fn()
     .mockResolvedValue({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
@@ -58,6 +60,7 @@ const {
       createSession,
       cancelPrompt,
       deleteSession,
+      disconnect,
       resetSessionContext,
       resumeSession,
       sendPrompt,
@@ -78,6 +81,7 @@ const {
     cancelPrompt,
     createSession,
     deleteSession,
+    disconnect,
     resetSessionContext,
     resumeSession,
     sendPrompt,
@@ -114,6 +118,7 @@ const registerWithFakes = (overrides?: {
     untrackPrompt: ReturnType<typeof vi.fn>
   }
   onSessionCancelled?: (sessionId: string) => void
+  onAllSessionsCancelled?: () => void
 }): void => {
   const taskNotifications =
     overrides?.taskNotifications ??
@@ -134,6 +139,7 @@ const registerWithFakes = (overrides?: {
     } as never,
     taskNotifications: taskNotifications as never,
     onSessionCancelled: overrides?.onSessionCancelled,
+    onAllSessionsCancelled: overrides?.onAllSessionsCancelled,
     initializationBarrier: overrides?.initializationBarrier
   }
 
@@ -150,6 +156,7 @@ afterEach(() => {
   resetSessionContext.mockClear()
   cancelPrompt.mockClear()
   deleteSession.mockClear()
+  disconnect.mockClear()
   resumeSession.mockClear()
   sendPrompt.mockReset()
   sendPrompt.mockResolvedValue(undefined)
@@ -168,6 +175,19 @@ describe('registerAcpIpcHandlers — Skill import cancellation lifecycle', () =>
     expect(onSessionCancelled).toHaveBeenNthCalledWith(2, 'session-2')
     expect(cancelPrompt).toHaveBeenCalledWith({ sessionId: 'session-1' })
     expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'session-2' })
+  })
+
+  it('invalidates every pending import before all agent runtimes disconnect', async () => {
+    const onAllSessionsCancelled = vi.fn()
+    registerWithFakes({ onAllSessionsCancelled })
+
+    await handlers.get('acp:disconnect')?.({}, undefined)
+
+    expect(onAllSessionsCancelled).toHaveBeenCalledOnce()
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(onAllSessionsCancelled.mock.invocationCallOrder[0]).toBeLessThan(
+      disconnect.mock.invocationCallOrder[0]
+    )
   })
 })
 
