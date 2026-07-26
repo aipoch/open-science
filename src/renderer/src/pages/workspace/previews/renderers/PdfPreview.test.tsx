@@ -180,6 +180,52 @@ describe('PdfPreviewContent', () => {
     clientWidthSpy.mockRestore()
   })
 
+  it('zooms on Ctrl/Cmd+wheel and ignores a plain wheel scroll', async () => {
+    const clientWidthSpy = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockReturnValue(400)
+    vi.stubGlobal('devicePixelRatio', 1)
+    getPage.mockResolvedValue({
+      getViewport: vi.fn(({ scale }: { scale: number }) => ({
+        width: 400 * scale,
+        height: 560 * scale
+      })),
+      render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+      cleanup: vi.fn()
+    })
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/wheel.pdf" name="wheel.pdf" source="artifact" />
+      )
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBe(400))
+
+    // The scroll container owns the wheel listener; it is the parent of the measurement probe.
+    const scroll = container.querySelector<HTMLElement>('[aria-hidden="true"]')?.parentElement
+    expect(scroll).toBeTruthy()
+
+    // A plain wheel scroll must not zoom.
+    await act(async () => {
+      scroll?.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })
+      )
+      await Promise.resolve()
+    })
+    expect(container.textContent).toContain('100%')
+
+    // Ctrl+wheel up zooms in by one wheel step (100% -> 110%).
+    await act(async () => {
+      scroll?.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: -100, ctrlKey: true, bubbles: true, cancelable: true })
+      )
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => expect(container.textContent).toContain('110%'))
+
+    clientWidthSpy.mockRestore()
+  })
+
   it('re-rasterizes a widened page without reloading it through the range transport', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
