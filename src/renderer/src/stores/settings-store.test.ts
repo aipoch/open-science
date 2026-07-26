@@ -33,6 +33,7 @@ type SettingsApi = {
   setAgentFramework: ReturnType<typeof vi.fn>
   setReasoningEffort: ReturnType<typeof vi.fn>
   setNotificationsEnabled: ReturnType<typeof vi.fn>
+  setConversationSkillImportEnabled: ReturnType<typeof vi.fn>
   setClosePreference: ReturnType<typeof vi.fn>
   setAppIconVariant: ReturnType<typeof vi.fn>
   upsertProvider: ReturnType<typeof vi.fn>
@@ -90,6 +91,7 @@ const snapshot = (providers: SettingsSnapshot['providers']): SettingsSnapshot =>
   codexManaged: false,
   reasoningEffort: 'default',
   notificationsEnabled: true,
+  conversationSkillImportEnabled: true,
   appIconVariant: 'light'
 })
 
@@ -157,6 +159,11 @@ beforeEach(() => {
       .fn()
       .mockImplementation((request: { enabled: boolean }) =>
         Promise.resolve({ ...snapshot([]), notificationsEnabled: request.enabled })
+      ),
+    setConversationSkillImportEnabled: vi
+      .fn()
+      .mockImplementation((request: { enabled: boolean }) =>
+        Promise.resolve({ ...snapshot([]), conversationSkillImportEnabled: request.enabled })
       ),
     setClosePreference: vi
       .fn()
@@ -1484,6 +1491,39 @@ describe('settings store: setNotificationsEnabled', () => {
     await useSettingsStore.getState().load()
 
     expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+  })
+})
+
+describe('settings store: setConversationSkillImportEnabled', () => {
+  it('forwards the flag to main and caches the returned snapshot', async () => {
+    await useSettingsStore.getState().setConversationSkillImportEnabled(false)
+
+    expect(api.setConversationSkillImportEnabled).toHaveBeenCalledWith({ enabled: false })
+    expect(useSettingsStore.getState().conversationSkillImportEnabled).toBe(false)
+  })
+
+  it('reverts to the previous flag and logs when main rejects', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    api.setConversationSkillImportEnabled.mockRejectedValue(new Error('ipc down'))
+
+    await useSettingsStore.getState().setConversationSkillImportEnabled(false)
+
+    expect(useSettingsStore.getState().conversationSkillImportEnabled).toBe(true)
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to set conversation Skill import enabled',
+      expect.any(Error)
+    )
+  })
+
+  it('load() picks up a disabled preference from the settings snapshot', async () => {
+    api.getSettings.mockResolvedValue({
+      ...snapshot([]),
+      conversationSkillImportEnabled: false
+    })
+
+    await useSettingsStore.getState().load()
+
+    expect(useSettingsStore.getState().conversationSkillImportEnabled).toBe(false)
   })
 })
 

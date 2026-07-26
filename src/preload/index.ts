@@ -135,6 +135,7 @@ import type {
   SetActiveProviderRequest,
   SetPackageMirrorRequest,
   SetAgentFrameworkRequest,
+  SetConversationSkillImportEnabledRequest,
   SetNotificationsEnabledRequest,
   SetClosePreferenceRequest,
   SetAppIconVariantRequest,
@@ -290,6 +291,9 @@ type OpenScienceAPI = {
     setAgentFramework: (request: SetAgentFrameworkRequest) => Promise<SettingsSnapshot>
     setReasoningEffort: (request: SetReasoningEffortRequest) => Promise<SettingsSnapshot>
     setNotificationsEnabled: (request: SetNotificationsEnabledRequest) => Promise<SettingsSnapshot>
+    setConversationSkillImportEnabled: (
+      request: SetConversationSkillImportEnabledRequest
+    ) => Promise<SettingsSnapshot>
     setClosePreference: (request: SetClosePreferenceRequest) => Promise<SettingsSnapshot>
     setAppIconVariant: (request: SetAppIconVariantRequest) => Promise<SettingsSnapshot>
     listAppIcons: () => Promise<AppIconPreview[]>
@@ -712,6 +716,11 @@ const api: OpenScienceAPI = {
     setNotificationsEnabled: (request) =>
       ipcRenderer.invoke(
         'settings:set-notifications-enabled',
+        request
+      ) as Promise<SettingsSnapshot>,
+    setConversationSkillImportEnabled: (request) =>
+      ipcRenderer.invoke(
+        'settings:set-conversation-skill-import-enabled',
         request
       ) as Promise<SettingsSnapshot>,
     setClosePreference: (request) =>

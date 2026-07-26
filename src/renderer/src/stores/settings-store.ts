@@ -6,6 +6,7 @@ import {
   claudeSharedProviderIdentity,
   claudeIsolatedProviderIdentity,
   DEFAULT_APP_ICON_VARIANT,
+  DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
   isClaudeSubscriptionProvider,
@@ -147,6 +148,8 @@ type SettingsStoreData = {
   reasoningEffort: ReasoningEffort
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
   notificationsEnabled: boolean
+  // Whether conversations receive the app-owned Skill package import tool and instructions.
+  conversationSkillImportEnabled: boolean
   // Saved Windows titlebar-close behavior. Undefined means ask every time.
   closePreference: CloseActionPreference | undefined
   // Selected built-in app-icon look, applied to the window and dock/taskbar. Defaults to 'light'.
@@ -219,6 +222,7 @@ type SettingsStore = SettingsStoreData & {
   setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
   // Toggles desktop notifications for finished/failed agent tasks; applies immediately.
   setNotificationsEnabled: (enabled: boolean) => Promise<void>
+  setConversationSkillImportEnabled: (enabled: boolean) => Promise<void>
   setClosePreference: (preference: CloseActionPreference | undefined) => Promise<void>
   // Sets the app-icon look; main applies it live to the window and dock/taskbar.
   setAppIconVariant: (variant: AppIconVariant) => Promise<void>
@@ -364,6 +368,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   packageMirror: undefined,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
+  conversationSkillImportEnabled: DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   closePreference: undefined,
   appIconVariant: DEFAULT_APP_ICON_VARIANT
 })
@@ -381,6 +386,8 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   // Defensive: main always fills this, but an untyped snapshot (tests, older backends) must not
   // write undefined into the boolean preference.
   notificationsEnabled: snapshot.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
+  conversationSkillImportEnabled:
+    snapshot.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   closePreference: snapshot.closePreference,
   appIconVariant: snapshot.appIconVariant ?? DEFAULT_APP_ICON_VARIANT,
   agentFrameworkId: snapshot.agentFrameworkId,
@@ -967,6 +974,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     } catch (error) {
       set({ notificationsEnabled: previous })
       console.error('Failed to set notifications enabled', error)
+    }
+  },
+
+  setConversationSkillImportEnabled: async (enabled) => {
+    const previous = get().conversationSkillImportEnabled
+    set({ conversationSkillImportEnabled: enabled })
+
+    try {
+      set(applySnapshot(await window.api.settings.setConversationSkillImportEnabled({ enabled })))
+    } catch (error) {
+      set({ conversationSkillImportEnabled: previous })
+      console.error('Failed to set conversation Skill import enabled', error)
     }
   },
 

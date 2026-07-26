@@ -45,6 +45,7 @@ type PreloadApi = {
     installCodex: (request: unknown) => unknown
     setAgentFramework: (request: unknown) => unknown
     setNotificationsEnabled: (request: unknown) => unknown
+    setConversationSkillImportEnabled: (request: unknown) => unknown
     setClosePreference: (request: unknown) => unknown
     setAppIconVariant: (request: unknown) => unknown
     listAppIcons: () => unknown
@@ -186,6 +187,12 @@ const cases: ForwardingCase[] = [
     name: 'settings.setNotificationsEnabled → settings:set-notifications-enabled',
     invoke: (a) => a.settings.setNotificationsEnabled({ enabled: false }),
     channel: 'settings:set-notifications-enabled',
+    args: [{ enabled: false }]
+  },
+  {
+    name: 'settings.setConversationSkillImportEnabled → settings:set-conversation-skill-import-enabled',
+    invoke: (a) => a.settings.setConversationSkillImportEnabled({ enabled: false }),
+    channel: 'settings:set-conversation-skill-import-enabled',
     args: [{ enabled: false }]
   },
   {

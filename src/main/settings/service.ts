@@ -77,6 +77,7 @@ import {
   claudeSharedProviderIdentity,
   codexSubscriptionProviderIdentity,
   DEFAULT_APP_ICON_VARIANT,
+  DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
   isClaudeSubscriptionProvider,
@@ -705,6 +706,8 @@ class SettingsService {
       packageMirror: settings.packageMirror,
       reasoningEffort: settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
       notificationsEnabled: settings.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
+      conversationSkillImportEnabled:
+        settings.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
       closePreference: settings.closePreference,
       appIconVariant: settings.appIconVariant ?? DEFAULT_APP_ICON_VARIANT,
       agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
@@ -875,6 +878,21 @@ class SettingsService {
   // Sets the desktop-notification preference and returns the refreshed snapshot for the renderer.
   async setNotificationsEnabled(enabled: boolean): Promise<SettingsSnapshot> {
     await this.repository.setNotificationsEnabled(enabled)
+
+    return this.getSettingsView()
+  }
+
+  // Read fresh for every agent-session MCP build so disabling the feature removes the server and its
+  // prompt guidance after the settings-triggered reconnect without restarting the app.
+  async getConversationSkillImportEnabled(): Promise<boolean> {
+    return (
+      (await this.repository.getSettings()).conversationSkillImportEnabled ??
+      DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED
+    )
+  }
+
+  async setConversationSkillImportEnabled(enabled: boolean): Promise<SettingsSnapshot> {
+    await this.repository.setConversationSkillImportEnabled(enabled)
 
     return this.getSettingsView()
   }
@@ -3553,7 +3571,11 @@ class SettingsService {
     // A bridge may still serve a live Codex runtime from an earlier framework generation. Do not stop
     // or retarget it merely because the newly selected framework/provider does not need one.
     const responsesBridge = needsChatResponsesBridge
-      ? await this.ensureResponsesBridge(provider, sessionEffort)
+      ? await this.ensureResponsesBridge(
+          provider,
+          sessionEffort,
+          settings.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED
+        )
       : needsNativeResponsesCompatibility
         ? await this.ensureNativeResponsesCompatibility(provider)
         : undefined
@@ -3603,7 +3625,8 @@ class SettingsService {
 
   private async ensureResponsesBridge(
     provider: ResolvedProvider,
-    reasoningEffort: ModelReasoningEffort | undefined
+    reasoningEffort: ModelReasoningEffort | undefined,
+    conversationSkillImportEnabled: boolean
   ): Promise<LeasedResponsesBridgeConnection> {
     // Resolve to the OpenAI base the bridge appends `/chat/completions` to: an official vendor's exact
     // versioned base, or a custom gateway root normalized to `<root>/v1`.
@@ -3621,7 +3644,7 @@ class SettingsService {
         ...CODEX_BRIDGE_NOTEBOOK_TOOLS,
         ...CODEX_BRIDGE_ARTIFACT_TOOLS,
         ...CODEX_BRIDGE_ACTIVITY_TOOLS,
-        ...CODEX_BRIDGE_SKILL_IMPORT_TOOLS
+        ...(conversationSkillImportEnabled ? CODEX_BRIDGE_SKILL_IMPORT_TOOLS : [])
       ],
       reviewerScope: {
         namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS

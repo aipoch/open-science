@@ -156,6 +156,7 @@ const createRuntime = ({
         },
         skillImport: {
           mcpEntryPath,
+          isEnabled: () => settingsService.getConversationSkillImportEnabled(),
           getRpcConnection: () => notebookRpcServer.ensureStarted(),
           registerSessionAlias: (aliasSessionId, sessionId) =>
             notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),

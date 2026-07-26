@@ -41,6 +41,7 @@ type FakeSettingsService = Record<
   | 'setReasoningEffort'
   | 'resolveActiveReasoningEffort'
   | 'setNotificationsEnabled'
+  | 'setConversationSkillImportEnabled'
   | 'setClosePreference'
   | 'setAppIconVariant'
   | 'upsertProvider'
@@ -109,6 +110,9 @@ const createFakeService = (): FakeSettingsService => ({
   setNotificationsEnabled: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], notificationsEnabled: false }),
+  setConversationSkillImportEnabled: vi
+    .fn()
+    .mockResolvedValue({ claude: {}, providers: [], conversationSkillImportEnabled: false }),
   setClosePreference: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], closePreference: 'quit' }),
@@ -176,6 +180,7 @@ describe('settings IPC handlers', () => {
       'settings:upsert-provider',
       'settings:delete-provider',
       'settings:set-active-provider',
+      'settings:set-conversation-skill-import-enabled',
       'settings:validate-provider',
       'settings:cancel-codex-login',
       'settings:cancel-claude-login',
@@ -842,6 +847,39 @@ describe('settings IPC handlers', () => {
       'Invalid notifications-enabled flag'
     )
     expect(service.setNotificationsEnabled).not.toHaveBeenCalled()
+  })
+
+  it('persists the conversation Skill import preference and reloads runtime tooling', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const snapshot = { claude: {}, providers: [], conversationSkillImportEnabled: false }
+    service.setConversationSkillImportEnabled.mockResolvedValue(snapshot)
+    const onSkillsChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onSkillsChanged })
+
+    const result = await invoke('settings:set-conversation-skill-import-enabled', {
+      enabled: false
+    })
+
+    expect(service.setConversationSkillImportEnabled).toHaveBeenCalledWith(false)
+    expect(onSkillsChanged).toHaveBeenCalledOnce()
+    expect(result).toBe(snapshot)
+  })
+
+  it('rejects a non-boolean conversation Skill import flag without reloading', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onSkillsChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onSkillsChanged })
+
+    await expect(
+      invoke('settings:set-conversation-skill-import-enabled', { enabled: 'yes' })
+    ).rejects.toThrow('Invalid conversation-skill-import-enabled flag')
+    await expect(invoke('settings:set-conversation-skill-import-enabled', {})).rejects.toThrow(
+      'Invalid conversation-skill-import-enabled flag'
+    )
+    expect(service.setConversationSkillImportEnabled).not.toHaveBeenCalled()
+    expect(onSkillsChanged).not.toHaveBeenCalled()
   })
 
   it('persists valid close preferences and rejects unknown values', async () => {

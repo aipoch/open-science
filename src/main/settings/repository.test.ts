@@ -265,6 +265,34 @@ describe('settings repository', () => {
     expect(sanitizeSettings({}).notificationsEnabled).toBeUndefined()
   })
 
+  it('persists the conversation Skill import preference across a sanitized read and a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.setConversationSkillImportEnabled(false)
+
+    expect((await repository.getSettings()).conversationSkillImportEnabled).toBe(false)
+    expect((await new SettingsRepository(root).getSettings()).conversationSkillImportEnabled).toBe(
+      false
+    )
+  })
+
+  it.each([true, false])('keeps the %s conversation Skill import preference on load', (enabled) => {
+    expect(
+      sanitizeSettings({ conversationSkillImportEnabled: enabled }).conversationSkillImportEnabled
+    ).toBe(enabled)
+  })
+
+  it('drops a non-boolean conversation Skill import preference on load', () => {
+    expect(
+      sanitizeSettings({ conversationSkillImportEnabled: 'yes' }).conversationSkillImportEnabled
+    ).toBeUndefined()
+    expect(
+      sanitizeSettings({ conversationSkillImportEnabled: 1 }).conversationSkillImportEnabled
+    ).toBeUndefined()
+    expect(sanitizeSettings({}).conversationSkillImportEnabled).toBeUndefined()
+  })
+
   it('persists, sanitizes, and clears the close action preference', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)

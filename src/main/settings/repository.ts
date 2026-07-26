@@ -530,6 +530,13 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     settings.notificationsEnabled = notificationsEnabled
   }
 
+  // Conversation Skill import preference; only a real boolean survives.
+  const conversationSkillImportEnabled = asBoolean(value.conversationSkillImportEnabled)
+
+  if (conversationSkillImportEnabled !== undefined) {
+    settings.conversationSkillImportEnabled = conversationSkillImportEnabled
+  }
+
   const closePreference = asString(value.closePreference)
 
   if (closePreference === 'minimize' || closePreference === 'quit') {
@@ -912,6 +919,11 @@ class SettingsRepository {
   // immediately, without a restart.
   async setNotificationsEnabled(enabled: boolean): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, notificationsEnabled: enabled }))
+  }
+
+  // Persists whether subsequent conversations receive the Skill import MCP and its instructions.
+  async setConversationSkillImportEnabled(enabled: boolean): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, conversationSkillImportEnabled: enabled }))
   }
 
   // Persists the Windows titlebar-close behavior; undefined restores the confirmation dialog.

@@ -38,6 +38,7 @@ import {
   type SetNcbiCredentialsRequest,
   type SetPackageMirrorRequest,
   type SetClosePreferenceRequest,
+  type SetConversationSkillImportEnabledRequest,
   type SetNotificationsEnabledRequest,
   type SetReasoningEffortRequest,
   type SetSkillEnabledRequest,
@@ -243,6 +244,23 @@ const registerSettingsIpcHandlers = ({
 
       log.info('set notifications enabled requested', { enabled: request.enabled })
       return service.setNotificationsEnabled(request.enabled)
+    }
+  )
+  ipcMain.handle(
+    'settings:set-conversation-skill-import-enabled',
+    async (_event, request: SetConversationSkillImportEnabledRequest) => {
+      if (typeof request?.enabled !== 'boolean') {
+        throw new Error(
+          `Invalid conversation-skill-import-enabled flag: ${String(request?.enabled)}`
+        )
+      }
+
+      log.info('set conversation Skill import enabled requested', { enabled: request.enabled })
+      const snapshot = await service.setConversationSkillImportEnabled(request.enabled)
+      // Reuse the existing deferred reconnect: an active turn finishes with its current tool set;
+      // the next session/resume gets a matching MCP list and system prompt.
+      onSkillsChanged?.()
+      return snapshot
     }
   )
   ipcMain.handle(

@@ -2280,6 +2280,31 @@ describe('SettingsService: preflight & spawn config', () => {
       'utf8'
     )
     expect(pubmedSkill).toContain('host.mcp')
+
+    await backend.responsesBridgeLease?.release()
+    await repository.setConversationSkillImportEnabled(false)
+    upstreamRequest = undefined
+    const disabledBackend = await service.resolveActiveAgentBackend()
+    const disabledBridgeResponse = await localFetch(
+      `${disabledBackend.providerConfiguration?.baseUrl}/responses`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: disabledBackend.providerConfiguration?.headers.authorization ?? '',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'gpt-5.5', input: 'Inspect this package', stream: true })
+      }
+    )
+    await disabledBridgeResponse.text()
+    const capturedDisabledRequest = upstreamRequest as unknown as
+      Record<string, unknown> | undefined
+    const disabledToolNames = (
+      (capturedDisabledRequest?.tools as Array<{ function?: { name?: string } }> | undefined) ?? []
+    ).map((tool) => tool.function?.name)
+    expect(disabledToolNames).toContain('mcp__open_science_notebook__notebook_execute')
+    expect(disabledToolNames).not.toContain('mcp__open_science_skills__request_skill_import')
+    await disabledBackend.responsesBridgeLease?.release()
   })
 
   it('keeps bridged Codex backends pinned to the provider target they were created for', async () => {
@@ -4362,6 +4387,25 @@ describe('SettingsService: notifications preference', () => {
 
     expect(snapshot.notificationsEnabled).toBe(false)
     expect((await repository.getSettings()).notificationsEnabled).toBe(false)
+  })
+})
+
+describe('SettingsService: conversation Skill import preference', () => {
+  it('defaults to enabled when no preference is stored', async () => {
+    const service = createService()
+
+    expect((await service.getSettingsView()).conversationSkillImportEnabled).toBe(true)
+    expect(await service.getConversationSkillImportEnabled()).toBe(true)
+  })
+
+  it('projects and persists the disabled preference', async () => {
+    const service = createService()
+
+    const snapshot = await service.setConversationSkillImportEnabled(false)
+
+    expect(snapshot.conversationSkillImportEnabled).toBe(false)
+    expect(await service.getConversationSkillImportEnabled()).toBe(false)
+    expect((await repository.getSettings()).conversationSkillImportEnabled).toBe(false)
   })
 })
 

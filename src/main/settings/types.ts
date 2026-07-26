@@ -123,6 +123,8 @@ export type StoredSettings = {
   reasoningEffort?: ReasoningEffort
   // Desktop-notification preference for finished/failed agent tasks. Absent means enabled.
   notificationsEnabled?: boolean
+  // Conversation-driven Skill package import. Absent means enabled.
+  conversationSkillImportEnabled?: boolean
   // Windows titlebar-close behavior. Absent means ask every time.
   closePreference?: CloseActionPreference
   // Selected built-in app-icon look. Absent means the default ('light').

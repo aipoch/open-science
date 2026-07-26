@@ -251,6 +251,9 @@ type AcpRuntimeNotebookOptions = {
 type AcpRuntimeSkillImportOptions = {
   mcpEntryPath: string
   mcpCommand?: string
+  // Read when building each agent session so a settings-triggered reconnect can add/remove the MCP
+  // without constructing a new application service or keeping stale prompt guidance.
+  isEnabled?: () => Promise<boolean>
   getRpcConnection: () => Promise<SkillImportRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
   authorizeReferencedUploads?: (sessionId: string, paths: string[]) => Promise<() => void>
@@ -741,6 +744,8 @@ class AcpRuntime {
   private readonly notebookRoutingIds = new Map<string, string>()
   private readonly skillImportRoutingIds = new Map<string, string>()
   private readonly skillImportTurnTokens = new Map<string, string>()
+  // Refreshed before every session build. Defaults on for callers/tests that predate the preference.
+  private skillImportEnabled = true
   private artifactSessionSequence = 0
   private artifactRunSequence = 0
   private notebookSessionSequence = 0
@@ -2914,6 +2919,8 @@ class AcpRuntime {
     sessionId: string,
     references: ArtifactReference[]
   ): Promise<(() => void) | undefined> {
+    if (!this.skillImportEnabled) return undefined
+
     const authorize = this.skillImportOptions?.authorizeReferencedUploads
     if (!authorize) return undefined
 
@@ -3059,7 +3066,11 @@ class AcpRuntime {
         `</${tag}>`
       ].join('\n')
     })
-    if (allowSkillImportReference && (await this.isSkillPackageFile(name, absolutePath))) {
+    if (
+      this.skillImportEnabled &&
+      allowSkillImportReference &&
+      (await this.isSkillPackageFile(name, absolutePath))
+    ) {
       const turnToken = this.skillImportTurnTokens.get(sessionId)
       if (turnToken) {
         try {
@@ -3381,7 +3392,7 @@ class AcpRuntime {
   }
 
   private rememberSkillImportSession(sessionId: string, routingSessionId: string): void {
-    if (!this.skillImportOptions || !routingSessionId) return
+    if (!this.skillImportOptions || !this.skillImportEnabled || !routingSessionId) return
 
     this.skillImportRoutingIds.set(sessionId, routingSessionId)
 
@@ -3460,6 +3471,9 @@ class AcpRuntime {
     routingSessionId: string
   ): Promise<SkillImportMcpEnvironment | undefined> {
     if (!this.skillImportOptions || !routingSessionId) return undefined
+
+    this.skillImportEnabled = (await this.skillImportOptions.isEnabled?.()) ?? true
+    if (!this.skillImportEnabled) return undefined
 
     const connection = await this.skillImportOptions.getRpcConnection()
     return { ...connection, sessionId: routingSessionId }
@@ -3638,7 +3652,9 @@ class AcpRuntime {
   }
 
   private skillImportToolingAvailable(): boolean {
-    return this.mcpTransportAvailable() && Boolean(this.skillImportOptions)
+    return (
+      this.skillImportEnabled && this.mcpTransportAvailable() && Boolean(this.skillImportOptions)
+    )
   }
 
   // The artifact write tool is only wired when full native MCP is enabled (off for the bridge), so its

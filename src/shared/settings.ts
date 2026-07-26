@@ -275,6 +275,10 @@ export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'default'
 // is unfocused, so the default surprises no one staring at the window.
 export const DEFAULT_NOTIFICATIONS_ENABLED = true
 
+// Conversation-driven Skill package import is opt-out. When disabled, the runtime omits both the
+// app-owned import MCP server and its prompt/attachment guidance from subsequent conversations.
+export const DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED = true
+
 const REASONING_EFFORTS: readonly ReasoningEffort[] = [
   'default',
   'low',
@@ -358,6 +362,8 @@ export type SettingsSnapshot = {
   reasoningEffort: ReasoningEffort
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
   notificationsEnabled: boolean
+  // Whether conversations may detect attached Skill packages and request an app-owned import flow.
+  conversationSkillImportEnabled: boolean
   // Saved Windows titlebar-close behavior. Undefined means ask every time.
   closePreference?: CloseActionPreference
   // The selected built-in app-icon look, applied to the window icon and macOS Dock. Defaults to 'light'.
@@ -376,6 +382,10 @@ export type SetReasoningEffortRequest = {
 }
 
 export type SetNotificationsEnabledRequest = {
+  enabled: boolean
+}
+
+export type SetConversationSkillImportEnabledRequest = {
   enabled: boolean
 }
 

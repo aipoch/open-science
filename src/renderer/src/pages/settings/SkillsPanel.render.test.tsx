@@ -44,6 +44,7 @@ beforeEach(() => {
     skills: seedSkills,
     loadSkills: vi.fn().mockResolvedValue(undefined),
     setSkillEnabled: vi.fn().mockResolvedValue(undefined),
+    setConversationSkillImportEnabled: vi.fn().mockResolvedValue(undefined),
     createSkill: vi.fn().mockResolvedValue(undefined),
     updateSkill: vi.fn().mockResolvedValue(undefined),
     deleteSkill: vi.fn().mockResolvedValue(undefined),
@@ -176,16 +177,17 @@ describe('SkillsPanel (list view)', () => {
     expect(document.body.textContent).toContain('Personal')
     expect(document.body.textContent).toContain('Alpha')
     expect(document.body.textContent).toContain('Mine')
-    expect(document.body.querySelectorAll('[role="switch"]')).toHaveLength(3)
-    expect(document.body.querySelectorAll('[data-slot="switch"]')).toHaveLength(3)
-    const switches = document.body.querySelectorAll<HTMLElement>('[data-slot="switch"]')
-    expect(switches[0]?.getAttribute('data-state')).toBe('checked')
-    expect(switches[0]?.className).toContain('data-[state=checked]:bg-primary')
-    expect(switches[0]?.className).toContain('ml-1')
-    expect(switches[0]?.className).toContain('mr-3')
-    expect(switches[1]?.getAttribute('data-state')).toBe('unchecked')
+    expect(document.body.querySelectorAll('[role="switch"]')).toHaveLength(4)
+    expect(document.body.querySelectorAll('[data-slot="switch"]')).toHaveLength(4)
+    const alphaSwitch = document.body.querySelector<HTMLElement>('[aria-label="Toggle Alpha"]')
+    const betaSwitch = document.body.querySelector<HTMLElement>('[aria-label="Toggle Beta"]')
+    expect(alphaSwitch?.getAttribute('data-state')).toBe('checked')
+    expect(alphaSwitch?.className).toContain('data-[state=checked]:bg-primary')
+    expect(alphaSwitch?.className).toContain('ml-1')
+    expect(alphaSwitch?.className).toContain('mr-3')
+    expect(betaSwitch?.getAttribute('data-state')).toBe('unchecked')
     expect(
-      switches[0]?.querySelector<HTMLElement>('[data-slot="switch-thumb"]')?.className
+      alphaSwitch?.querySelector<HTMLElement>('[data-slot="switch-thumb"]')?.className
     ).toContain('data-[state=checked]:translate-x')
     expect(document.body.querySelectorAll('[data-slot="settings-list-row"]')).toHaveLength(3)
     expect(document.body.textContent).toContain('Add skill')
@@ -195,7 +197,25 @@ describe('SkillsPanel (list view)', () => {
     expect(addSkill?.getAttribute('data-slot')).toBe('button')
     expect(addSkill?.getAttribute('data-variant')).toBe('outline')
     expect(addSkill?.className).toContain('bg-card')
-    expect(switches[0]?.className).toContain('motion-reduce:transition-none')
+    expect(alphaSwitch?.className).toContain('motion-reduce:transition-none')
+  })
+
+  it('shows the default-on conversation import preference and lets the user disable it', () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    expect(document.body.textContent).toContain('Conversation imports')
+    expect(document.body.textContent).toContain('remove the import tool and its instructions')
+    const toggle = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Toggle conversation Skill imports"]'
+    )
+    expect(toggle?.getAttribute('data-state')).toBe('checked')
+
+    act(() => toggle?.click())
+    expect(useSettingsStore.getState().setConversationSkillImportEnabled).toHaveBeenCalledWith(
+      false
+    )
   })
 
   it('toggles a skill and navigates to its detail on row click', () => {
@@ -204,7 +224,9 @@ describe('SkillsPanel (list view)', () => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
     })
 
-    act(() => document.body.querySelector<HTMLButtonElement>('[role="switch"]')?.click())
+    act(() =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Toggle Alpha"]')?.click()
+    )
     expect(useSettingsStore.getState().setSkillEnabled).toHaveBeenCalledWith('a', false)
 
     const alphaRow = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
