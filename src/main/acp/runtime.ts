@@ -108,8 +108,7 @@ import {
   type SkillImportMcpEnvironment,
   type SkillImportRpcConnection
 } from '../skills/mcp-server'
-import { isImportableSkillArchive } from '../skills/user-skill-repository'
-import { SKILL_IMPORT_LIMITS } from '../skills/import-limits'
+import { isImportableSkillArchivePath } from '../skills/skill-archive-sniffer'
 import { getNotebookDataRoot, getNotebookSessionRoot } from '../notebook/repository'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
@@ -2898,7 +2897,10 @@ class AcpRuntime {
     sessionId: string,
     reference: ArtifactReference
   ): Promise<ContentBlock[]> {
-    const filePath = await this.resolveReferencedArtifactPath(reference)
+    const { filePath, allowSkillImportReference } = await this.resolveReferencedArtifactPath(
+      sessionId,
+      reference
+    )
     const { size } = await stat(filePath)
 
     return this.buildFileContentBlock({
@@ -2910,19 +2912,39 @@ class AcpRuntime {
       size,
       // The import tool currently owns only session uploads. Artifact-store paths remain ordinary
       // references so the prompt never advertises a URI that main will reject at the trust boundary.
-      allowSkillImportReference: reference.source === 'upload'
+      allowSkillImportReference
     })
   }
 
   // Resolves a referenced file through the managed-path validator for its owning repository.
-  private async resolveReferencedArtifactPath(reference: ArtifactReference): Promise<string> {
+  private async resolveReferencedArtifactPath(
+    sessionId: string,
+    reference: ArtifactReference
+  ): Promise<{ filePath: string; allowSkillImportReference: boolean }> {
     if (reference.source === 'upload') {
       if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
-      return this.uploadRepository.resolveManagedUploadPath({ path: reference.path })
+      try {
+        return {
+          filePath: await this.uploadRepository.resolveSessionUploadPath(sessionId, {
+            path: reference.path
+          }),
+          allowSkillImportReference: true
+        }
+      } catch {
+        // Cross-session uploads remain readable generic references, but the session-scoped importer
+        // must never be advertised for a path its ownership boundary will reject.
+        return {
+          filePath: await this.uploadRepository.resolveManagedUploadPath({ path: reference.path }),
+          allowSkillImportReference: false
+        }
+      }
     }
 
     if (!this.artifactRepository) throw new Error('Artifact storage is not configured.')
-    return this.artifactRepository.resolveManagedFilePath({ path: reference.path })
+    return {
+      filePath: await this.artifactRepository.resolveManagedFilePath({ path: reference.path }),
+      allowSkillImportReference: false
+    }
   }
 
   // Builds the richest ACP content block that is safe for a resolved file, shared by uploads and
@@ -2944,7 +2966,7 @@ class AcpRuntime {
     // to expose their exact local URI: the agent passes it to the app-owned request_skill_import tool,
     // which performs parsing, validation and user confirmation. Keep the reference as JSON text so it
     // also remains usable when the user wants to inspect the archive instead of importing it.
-    if (allowSkillImportReference && (await this.isSkillPackageFile(name, absolutePath, size))) {
+    if (allowSkillImportReference && (await this.isSkillPackageFile(name, absolutePath))) {
       return [
         {
           type: 'text',
@@ -3046,13 +3068,13 @@ class AcpRuntime {
     return name.toLowerCase().endsWith('.pdf')
   }
 
-  private async isSkillPackageFile(name: string, filePath: string, size: number): Promise<boolean> {
+  private async isSkillPackageFile(name: string, filePath: string): Promise<boolean> {
     const normalizedName = name.toLowerCase()
 
     if (normalizedName.endsWith('.skill')) return true
-    if (!normalizedName.endsWith('.zip') || size > SKILL_IMPORT_LIMITS.maxBundleBytes) return false
+    if (!normalizedName.endsWith('.zip')) return false
 
-    return isImportableSkillArchive(await readFile(filePath))
+    return isImportableSkillArchivePath(filePath)
   }
 
   // Turns a PDF into a text resource block, degrading to an explanatory note when extraction fails

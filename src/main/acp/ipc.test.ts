@@ -164,22 +164,19 @@ afterEach(() => {
 })
 
 describe('registerAcpIpcHandlers — Skill import cancellation lifecycle', () => {
-  it('invalidates pending imports only after a prompt is stopped or its session is deleted', async () => {
+  it('invalidates a stopped prompt after success and leaves session deletion to the coordinator', async () => {
     const onSessionCancelled = vi.fn()
     registerWithFakes({ onSessionCancelled })
 
     await handlers.get('acp:cancel')?.({}, { sessionId: 'session-1' })
     await handlers.get('acp:delete-session')?.({}, { sessionId: 'session-2' })
 
-    expect(onSessionCancelled).toHaveBeenNthCalledWith(1, 'session-1')
-    expect(onSessionCancelled).toHaveBeenNthCalledWith(2, 'session-2')
+    expect(onSessionCancelled).toHaveBeenCalledOnce()
+    expect(onSessionCancelled).toHaveBeenCalledWith('session-1')
     expect(cancelPrompt).toHaveBeenCalledWith({ sessionId: 'session-1' })
     expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'session-2' })
     expect(cancelPrompt.mock.invocationCallOrder[0]).toBeLessThan(
       onSessionCancelled.mock.invocationCallOrder[0]
-    )
-    expect(deleteSession.mock.invocationCallOrder[0]).toBeLessThan(
-      onSessionCancelled.mock.invocationCallOrder[1]
     )
   })
 

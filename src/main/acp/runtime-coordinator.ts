@@ -139,8 +139,15 @@ class AcpRuntimeCoordinator {
     const failure = results.find(
       (result): result is PromiseRejectedResult => result.status === 'rejected'
     )
-    // Keep ownership when any teardown fails so a later disconnect/shutdown can retry the runtime.
-    if (failure) throw failure.reason
+    if (failure) {
+      // A multi-runtime teardown can partially succeed. Release only the runtimes that are definitely
+      // gone so their pending approvals cannot outlive them; failed runtimes retain ownership for retry.
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled') this.releaseRuntimeOwnership(runtimes[index])
+      })
+      this.callbacks.onStateChanged?.(this.getSnapshot())
+      throw failure.reason
+    }
     this.clearRuntimeOwnership()
     this.onDisconnected?.()
     return this.getSnapshot()
@@ -437,6 +444,11 @@ class AcpRuntimeCoordinator {
   }
 
   private handleRuntimeRetired(runtime: AcpRuntime): void {
+    this.releaseRuntimeOwnership(runtime)
+    this.callbacks.onStateChanged?.(this.getSnapshot())
+  }
+
+  private releaseRuntimeOwnership(runtime: AcpRuntime): void {
     const retiredStatus = runtime.getSnapshot().status
     this.runtimes.delete(runtime)
     this.retiredRuntimes.delete(runtime)
@@ -455,7 +467,6 @@ class AcpRuntimeCoordinator {
     }
     if (this.activeRuntime === runtime) this.activeRuntime = undefined
     if (this.lastRuntime === runtime) this.lastRuntime = this.activeRuntime
-    this.callbacks.onStateChanged?.(this.getSnapshot())
   }
 
   private visibleSessionIds(runtime: AcpRuntime, snapshot: AcpStateSnapshot): string[] {
@@ -488,8 +499,15 @@ class AcpRuntimeCoordinator {
     const failure = outcomes.find(
       (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected'
     )
-    // Preserve failed runtime ownership so a bounded caller can retry or use the synchronous guard.
-    if (failure) throw failure.reason
+    if (failure) {
+      // Awaitable shutdown paths suppress each runtime's closed-state event. Account for partial
+      // success here so only approvals belonging to runtimes that really stopped are invalidated.
+      outcomes.forEach((outcome, index) => {
+        if (outcome.status === 'fulfilled') this.releaseRuntimeOwnership(runtimes[index])
+      })
+      this.callbacks.onStateChanged?.(this.getSnapshot())
+      throw failure.reason
+    }
     this.clearRuntimeOwnership()
     this.onDisconnected?.()
     return {

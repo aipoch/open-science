@@ -223,9 +223,9 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator =
     return snapshot
   })
   ipcMain.handle('acp:delete-session', async (_event, request: AcpDeleteSessionRequest) => {
-    const snapshot = await runtime.deleteSession(request)
-    options.onSessionCancelled?.(request.sessionId)
-    return snapshot
+    // The coordinator owns session disappearance notifications for delete, connection loss, and
+    // retirement. Keeping that signal in one layer prevents a successful delete from firing twice.
+    return runtime.deleteSession(request)
   })
   ipcMain.handle('acp:respond-permission', (_event, response: AcpPermissionResponse) =>
     runtime.respondToPermission(response)

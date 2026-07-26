@@ -41,6 +41,7 @@ const createFakeRuntime = (options: {
   createSession: ReturnType<typeof vi.fn>
   resetSessionContext: ReturnType<typeof vi.fn>
   resumeSession: ReturnType<typeof vi.fn>
+  deleteSession: ReturnType<typeof vi.fn>
   disconnect: ReturnType<typeof vi.fn>
   requestRetirement: ReturnType<typeof vi.fn>
   requestProviderReconnect: ReturnType<typeof vi.fn>
@@ -78,6 +79,15 @@ const createFakeRuntime = (options: {
     frameworkId: options.frameworkId,
     contextReset: true
   }))
+  const deleteSession = vi.fn(async ({ sessionId }: { sessionId: string }) => {
+    snapshot = {
+      ...snapshot,
+      sessionId: snapshot.sessionId === sessionId ? undefined : snapshot.sessionId,
+      sessionIds: snapshot.sessionIds.filter((candidate) => candidate !== sessionId)
+    }
+    options.callbacks.onStateChanged?.(snapshot)
+    return snapshot
+  })
   const disconnect = vi.fn(async () => snapshot)
   const requestRetirement = vi.fn(async () => undefined)
   const requestProviderReconnect = vi.fn(async () => undefined)
@@ -118,6 +128,7 @@ const createFakeRuntime = (options: {
     createSession,
     resumeSession,
     resetSessionContext,
+    deleteSession,
     revokePermissionGrant: vi.fn(
       ({ sessionId, categoryKey }: { sessionId: string; categoryKey: string }) => {
         options.permissionGrantStore?.revoke(sessionId, categoryKey)
@@ -154,6 +165,7 @@ const createFakeRuntime = (options: {
     createSession,
     resetSessionContext,
     resumeSession,
+    deleteSession,
     disconnect,
     requestRetirement,
     requestProviderReconnect,
@@ -430,17 +442,54 @@ describe('AcpRuntimeCoordinator', () => {
     expect(onSessionUnavailable).not.toHaveBeenCalledWith('session-2')
   })
 
+  it('invalidates a successfully deleted session exactly once', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const onSessionUnavailable = vi.fn()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      {},
+      '',
+      undefined,
+      undefined,
+      onSessionUnavailable
+    )
+
+    await coordinator.createSession()
+    await coordinator.deleteSession({ sessionId: 'session-1' })
+
+    expect(created[0].deleteSession).toHaveBeenCalledWith({ sessionId: 'session-1' })
+    expect(onSessionUnavailable).toHaveBeenCalledOnce()
+    expect(onSessionUnavailable).toHaveBeenCalledWith('session-1')
+  })
+
   it('attempts every runtime quit teardown before surfacing a partial failure', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
-    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      const fake = createFakeRuntime({
-        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
-        sessionIds: [`session-${created.length + 1}`],
-        callbacks
-      })
-      created.push(fake)
-      return fake.runtime
-    })
+    const onDisconnected = vi.fn()
+    const onSessionUnavailable = vi.fn()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+          sessionIds: [`session-${created.length + 1}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      {},
+      '',
+      undefined,
+      onDisconnected,
+      onSessionUnavailable
+    )
 
     await coordinator.createSession()
     await coordinator.requestAgentFrameworkSwitch()
@@ -463,6 +512,15 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[1].runtime.shutdownForQuit).toHaveBeenCalledOnce()
     activeShutdown.resolve({ reaped: true })
     await expect(shuttingDown).rejects.toThrow('old shutdown failed')
+    expect(onSessionUnavailable).toHaveBeenCalledOnce()
+    expect(onSessionUnavailable).toHaveBeenCalledWith('session-2')
+    expect(onSessionUnavailable).not.toHaveBeenCalledWith('session-1')
+    expect(onDisconnected).not.toHaveBeenCalled()
+
+    vi.mocked(created[0].runtime.shutdownForQuit).mockResolvedValueOnce({ reaped: true })
+    await expect(coordinator.shutdownForQuit()).resolves.toEqual({ reaped: true })
+    expect(created[0].runtime.shutdownForQuit).toHaveBeenCalledTimes(2)
+    expect(onDisconnected).toHaveBeenCalledOnce()
   })
 
   it('runs new sessions immediately and moves the old session after its active turn', async () => {

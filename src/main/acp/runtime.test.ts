@@ -2205,6 +2205,90 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('advertises only current-session upload references to the Skill importer', async () => {
+    const root = await createTemporaryRoot()
+    const uploadRepository = new UploadRepository(root)
+    const staged = await uploadRepository.stageFiles({
+      files: [
+        {
+          name: 'current.skill',
+          mimeType: 'application/octet-stream',
+          content: Buffer.from('current skill bytes').toString('base64')
+        },
+        {
+          name: 'other.skill',
+          mimeType: 'application/octet-stream',
+          content: Buffer.from('other skill bytes').toString('base64')
+        }
+      ]
+    })
+    const [currentSessionUpload] = await uploadRepository.finalizePendingSessionUploads(
+      'remote-session-1',
+      [staged[0]]
+    )
+    const [otherSessionUpload] = await uploadRepository.finalizePendingSessionUploads(
+      'remote-session-2',
+      [staged[1]]
+    )
+
+    const process = new FakeAgentProcess()
+    const receivedPrompts: ContentBlock[][] = []
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: ({ prompt }) => {
+        receivedPrompts.push(prompt)
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      uploads: { repository: uploadRepository }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await expect(
+      uploadRepository.resolveSessionUploadPath(session.sessionId, {
+        path: currentSessionUpload.path
+      })
+    ).resolves.toMatch(/remote-session-1\/current\.skill$/)
+    await expect(
+      uploadRepository.resolveSessionUploadPath(session.sessionId, {
+        path: otherSessionUpload.path
+      })
+    ).rejects.toThrow(/different session/)
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'compare these packages',
+      referencedArtifacts: [
+        {
+          id: 'current',
+          name: currentSessionUpload.originalName,
+          path: currentSessionUpload.path,
+          source: 'upload',
+          mimeType: currentSessionUpload.mimeType
+        },
+        {
+          id: 'other',
+          name: otherSessionUpload.originalName,
+          path: otherSessionUpload.path,
+          source: 'upload',
+          mimeType: otherSessionUpload.mimeType
+        }
+      ]
+    })
+
+    expect(receivedPrompts[0][1]).toMatchObject({
+      type: 'text',
+      text: expect.stringMatching(/<attached_local_file>[\s\S]*current\.skill/)
+    })
+    expect(receivedPrompts[0][2]).toMatchObject({
+      type: 'resource_link',
+      name: 'other.skill',
+      title: 'other.skill',
+      uri: expect.stringContaining('other.skill')
+    })
+  })
+
   it('resolves a bare-filename artifact write against the final-session notebook dir despite the alias', async () => {
     // Regression for the alias/final-id mismatch: the notebook MCP env is built at session creation
     // under a pre-start alias, but kernels write under the FINAL ACP session id. The per-turn handoff
