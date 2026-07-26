@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { access, chmod, mkdir, readdir, realpath, writeFile } from 'node:fs/promises'
+import { access, readdir, realpath } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -161,6 +161,7 @@ import {
   type ManagedCodexInstallOutcome
 } from './managed-codex'
 import { runEnvironmentCheck } from './environment-check'
+import { writeAgentConfigFiles } from './agent-config-files'
 import {
   DEFAULT_REGISTRIES,
   installManagedClaude,
@@ -3545,7 +3546,7 @@ class SettingsService {
         // materialized as on-demand `mcp-*` skills above, avoiding a full catalog in every request.
         instructions: connectorInstructions
       })
-      await this.writeAgentConfigFiles(modelConfig.configFiles)
+      await writeAgentConfigFiles(modelConfig.configFiles)
 
       // Protocol-driven frameworks apply an explicit model through the ACP session configOption. A Codex
       // subscription with no explicit selection leaves this undefined so Codex uses the account default.
@@ -3687,17 +3688,6 @@ class SettingsService {
 
     const output = await this.codexDetectDeps.getCodexVersion(nativePath).catch(() => undefined)
     return output ? parseCodexVersion(output) : undefined
-  }
-
-  // Writes a framework's generated config files (e.g. opencode.json) to disk ahead of spawn.
-  private async writeAgentConfigFiles(
-    files: { path: string; content: string; mode?: number }[] | undefined
-  ): Promise<void> {
-    for (const file of files ?? []) {
-      await mkdir(dirname(file.path), { recursive: true })
-      await writeFile(file.path, file.content, { encoding: 'utf8', mode: file.mode })
-      if (file.mode !== undefined) await chmod(file.path, file.mode)
-    }
   }
 
   // The chat APIs a provider speaks: official providers come from the registry, custom gateways from

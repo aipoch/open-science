@@ -22,6 +22,9 @@ export type AgentConfigFile = {
   path: string
   content: string
   mode?: number
+  // The path is derived from the content. Publish it atomically and reuse an existing byte-identical
+  // file so concurrent framework starts can safely share it.
+  contentAddressed?: boolean
 }
 
 // Authentication is sent over ACP after initialize. Keeping it out of the child environment avoids

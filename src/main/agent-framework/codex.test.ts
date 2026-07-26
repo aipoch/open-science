@@ -50,7 +50,8 @@ describe('codexFramework', () => {
     const modelCatalogFile = config.configFiles?.[1]
     expect(modelCatalogFile).toMatchObject({
       path: expect.stringMatching(/[/\\]codex[/\\]model-catalog-[a-f0-9]{64}\.json$/),
-      mode: 0o600
+      mode: 0o600,
+      contentAddressed: true
     })
 
     const serialized = config.env?.CODEX_CONFIG ?? ''

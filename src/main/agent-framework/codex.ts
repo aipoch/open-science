@@ -432,7 +432,8 @@ export const createCodexFramework = ({
               {
                 path: modelCatalogPath,
                 content: modelCatalogContent,
-                mode: 0o600
+                mode: 0o600,
+                contentAddressed: true
               }
             ]
           : [])
