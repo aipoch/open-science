@@ -136,6 +136,41 @@ describe('isImportableSkillArchivePath', () => {
     await expectMatchesPreview(withTrailingData, true)
   })
 
+  it('keeps earlier valid entries when a later central record is malformed', async () => {
+    const manifestPath = 'central-tail/SKILL.md'
+    const archive = buildZip([
+      {
+        path: manifestPath,
+        content: Buffer.from('---\nname: Central Tail\n---\nBody')
+      },
+      { path: 'central-tail/README.md', content: Buffer.from('Ignored trailing entry') }
+    ])
+    const eocdOffset = archive.length - 22
+    const centralOffset = archive.readUInt32LE(eocdOffset + 16)
+    const secondCentralOffset = centralOffset + 46 + Buffer.byteLength(manifestPath)
+    archive.writeUInt32LE(0xdeadbeef, secondCentralOffset)
+
+    await expectMatchesPreview(archive, true)
+  })
+
+  it('classifies the current entry before an overlong central extra field stops the walk', async () => {
+    const manifestPath = 'central-extra/SKILL.md'
+    const rejectedPath = 'central-extra/bad.bin'
+    const archive = buildZip([
+      {
+        path: manifestPath,
+        content: Buffer.from('---\nname: Central Extra\n---\nBody')
+      },
+      { path: rejectedPath, content: Buffer.from('unsupported'), method: 99 }
+    ])
+    const eocdOffset = archive.length - 22
+    const centralOffset = archive.readUInt32LE(eocdOffset + 16)
+    const secondCentralOffset = centralOffset + 46 + Buffer.byteLength(manifestPath)
+    archive.writeUInt16LE(0xffff, secondCentralOffset + 30)
+
+    await expectMatchesPreview(archive, false)
+  })
+
   it('does not classify an ordinary ZIP by a nested filename or an ineligible deep manifest', async () => {
     const nestedFilename = buildZip([
       {

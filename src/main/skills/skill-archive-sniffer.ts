@@ -167,6 +167,7 @@ const centralCursor = (
   end: number
 ): {
   read: (length: number) => Promise<Buffer | undefined>
+  remaining: () => number
   skip: (length: number) => boolean
 } => {
   let position = start
@@ -201,6 +202,7 @@ const centralCursor = (
       }
       return output
     },
+    remaining: () => Math.max(0, end - position),
     skip: (length) => {
       if (!Number.isSafeInteger(length) || length < 0 || position + length > end) return false
       position += length
@@ -244,11 +246,17 @@ const scanArchive = async (
 
   const accepted: CentralEntry[] = []
   const skippedPaths: string[] = []
-  const cursor = centralCursor(reader, centralOffset, centralEnd)
+  // The real extractors walk from centralOffset against the complete buffer and do not use the EOCD
+  // central-size field as their cursor boundary. Keep the same boundary here for classification parity.
+  const cursor = centralCursor(reader, centralOffset, reader.size)
 
   for (let index = 0; index < entryCount; index += 1) {
+    if (cursor.remaining() < 46) break
     const header = await cursor.read(46)
-    if (!header || header.readUInt32LE(0) !== CENTRAL_SIGNATURE) return undefined
+    // Match extractZip/extractZipLenient: a malformed trailing central record ends the walk but does
+    // not discard entries that were already decoded successfully.
+    if (!header) return undefined
+    if (header.readUInt32LE(0) !== CENTRAL_SIGNATURE) break
 
     const method = header.readUInt16LE(10)
     const compressedSize = header.readUInt32LE(20)
@@ -259,17 +267,26 @@ const scanArchive = async (
     const localOffset = header.readUInt32LE(42)
     if (startDisk !== 0) return undefined
 
-    const nameBytes = await cursor.read(nameLength)
+    // Buffer#toString clamps an overlong name range, so the importer still handles the current entry
+    // before its now-out-of-range pointer stops the next iteration. Reproduce that behavior without
+    // reading outside the bounded file.
+    const readableNameLength = Math.min(nameLength, cursor.remaining())
+    const nameBytes = await cursor.read(readableNameLength)
     if (!nameBytes) return undefined
     const name = nameBytes.toString('utf8')
-    if (!cursor.skip(extraLength + commentLength)) return undefined
+    const canContinue =
+      readableNameLength === nameLength && cursor.skip(extraLength + commentLength)
 
     // Match zip-extract's silent skips for directories, metadata, unsafe paths, and unsupported
     // methods. The outer lenient walk records real unsafe/method failures so a containing loose root
     // is rejected rather than classified from an incomplete bundle.
-    if (name.endsWith('/') || isMetadataPath(name)) continue
+    if (name.endsWith('/') || isMetadataPath(name)) {
+      if (!canContinue) break
+      continue
+    }
     if (isUnsafeArchivePath(name) || (method !== 0 && method !== 8)) {
       if (!limits.strictCaps) skippedPaths.push(name)
+      if (!canContinue) break
       continue
     }
 
@@ -277,10 +294,12 @@ const scanArchive = async (
     if (depth > limits.maxDepth) {
       if (limits.strictCaps) return undefined
       skippedPaths.push(name)
+      if (!canContinue) break
       continue
     }
 
     accepted.push({ name, method, compressedSize, localOffset })
+    if (!canContinue) break
   }
 
   return { accepted, skippedPaths, actualSizes: new Map(), dataRanges: new Map() }
