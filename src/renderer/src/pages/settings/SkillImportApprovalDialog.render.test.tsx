@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { SkillBundlePreview } from '../../../../shared/settings'
 import { SkillImportApprovalDialog } from './SkillImportApprovalDialog'
 import { createInitialSkillImportState, useSkillImportStore } from '@/stores/skill-import-store'
 
@@ -31,6 +32,16 @@ const button = (text: string): HTMLButtonElement | undefined =>
   Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
     (candidate) => candidate.textContent?.trim() === text
   )
+
+const importCandidate = (subPath: string, name: string): SkillBundlePreview => ({
+  subPath,
+  name,
+  description: '',
+  metadata: {},
+  body: '',
+  files: ['SKILL.md'],
+  alreadyImported: false
+})
 
 describe('SkillImportApprovalDialog', () => {
   it('preselects one candidate and returns the confirmed import target', () => {
@@ -70,26 +81,87 @@ describe('SkillImportApprovalDialog', () => {
   })
 
   it('requires an explicit choice when a package contains multiple candidates', () => {
-    const first = {
-      subPath: 'first',
-      name: 'First Skill',
-      description: '',
-      metadata: {},
-      body: '',
-      files: ['SKILL.md'],
-      alreadyImported: false
-    }
     useSkillImportStore.getState().enqueue({
       id: 'approval-2',
       sessionId: 'session-1',
       attachmentName: 'many.zip',
-      previews: [first, { ...first, subPath: 'second', name: 'Second Skill' }],
+      previews: [
+        importCandidate('first', 'First Skill'),
+        importCandidate('second', 'Second Skill')
+      ],
       skipped: []
     })
 
     act(() => root.render(<SkillImportApprovalDialog />))
 
     expect(button('Import selected')?.disabled).toBe(true)
+  })
+
+  it('selects and clears every candidate with Select all', () => {
+    useSkillImportStore.getState().enqueue({
+      id: 'approval-select-all',
+      sessionId: 'session-1',
+      attachmentName: 'many.zip',
+      previews: [
+        importCandidate('first', 'First Skill'),
+        importCandidate('second', 'Second Skill')
+      ],
+      skipped: []
+    })
+
+    act(() => root.render(<SkillImportApprovalDialog />))
+
+    const selectAll = document.body.querySelector<HTMLInputElement>('[aria-label="Select all"]')
+    expect(selectAll?.checked).toBe(false)
+
+    act(() => selectAll?.click())
+    expect(selectAll?.checked).toBe(true)
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select First Skill"]')?.checked
+    ).toBe(true)
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Second Skill"]')?.checked
+    ).toBe(true)
+    expect(button('Import 2 Skills')?.disabled).toBe(false)
+
+    act(() => selectAll?.click())
+    expect(selectAll?.checked).toBe(false)
+    expect(button('Import selected')?.disabled).toBe(true)
+  })
+
+  it('inverts the current candidate selection', () => {
+    useSkillImportStore.getState().enqueue({
+      id: 'approval-invert',
+      sessionId: 'session-1',
+      attachmentName: 'many.zip',
+      previews: [
+        importCandidate('first', 'First Skill'),
+        importCandidate('second', 'Second Skill')
+      ],
+      skipped: []
+    })
+
+    act(() => root.render(<SkillImportApprovalDialog />))
+
+    const firstCheckbox = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Select First Skill"]'
+    )
+    const secondCheckbox = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Select Second Skill"]'
+    )
+    act(() => firstCheckbox?.click())
+    expect(firstCheckbox?.checked).toBe(true)
+    expect(secondCheckbox?.checked).toBe(false)
+
+    act(() => button('Invert')?.click())
+    expect(firstCheckbox?.checked).toBe(false)
+    expect(secondCheckbox?.checked).toBe(true)
+
+    act(() => button('Import 1 Skill')?.click())
+    expect(respond).toHaveBeenCalledWith({
+      id: 'approval-invert',
+      items: [{ subPath: 'second' }]
+    })
   })
 
   it('cancels without importing anything', () => {

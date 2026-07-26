@@ -35,6 +35,19 @@ const SkillImportApprovalRequestDialog = ({
       return next
     })
   }
+  const allSelected = request.previews.length > 0 && selected.size === request.previews.length
+  const toggleAll = (): void =>
+    setSelected(() =>
+      allSelected ? new Set() : new Set(request.previews.map((candidate) => candidate.subPath))
+    )
+  const invertSelection = (): void =>
+    setSelected((current) => {
+      const next = new Set<string>()
+      for (const candidate of request.previews) {
+        if (!current.has(candidate.subPath)) next.add(candidate.subPath)
+      }
+      return next
+    })
   const confirm = (): void => {
     const items: ConversationSkillImportSelection[] = request.previews
       .filter((candidate) => selected.has(candidate.subPath))
@@ -77,7 +90,26 @@ const SkillImportApprovalRequestDialog = ({
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
-              <ul className="flex flex-col divide-y divide-border">
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-semibold text-foreground">
+                  Found {request.previews.length} skill{request.previews.length === 1 ? '' : 's'}
+                </h3>
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all"
+                    checked={allSelected}
+                    onChange={toggleAll}
+                    className="size-4 shrink-0"
+                  />
+                  Select all
+                </label>
+                <Button type="button" variant="ghost" size="sm" onClick={invertSelection}>
+                  Invert
+                </Button>
+              </div>
+
+              <ul className="mt-2 flex flex-col divide-y divide-border">
                 {request.previews.map((candidate) => (
                   <li key={candidate.subPath} className="flex items-center gap-3 py-2.5">
                     <input
