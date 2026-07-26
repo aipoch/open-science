@@ -146,7 +146,11 @@ import {
   type InstallManagedOpencodeOptions
 } from './managed-opencode'
 import { opencodeConfigDir } from '../agent-framework/opencode'
-import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
+import {
+  codexStorageDir,
+  codexSubscriptionStorageDir,
+  normalizeResponsesBaseUrl
+} from '../agent-framework/codex'
 import { ClaudeCodeSkillMaterializer, OS_SKILL_PREFIX } from '../skills/materializer'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import { detectNpmAvailable, runInstallWithFallback, type InstallTarget } from './claude-install'
@@ -186,6 +190,7 @@ import {
   type ResponsesBridgeConnection,
   type ResponsesBridgeNamespacedTool
 } from './responses-bridge'
+import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
 import { SettingsRepository } from './repository'
 import { sanitizeCustomMcpServer } from './repository'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
@@ -251,11 +256,25 @@ type ResponsesBridgeEntry = {
   connection: Promise<ResponsesBridgeConnection>
 }
 
+type NativeResponsesCompatibilityEntry = {
+  proxy: NativeResponsesCompatibilityProxy
+  connection: Promise<ResponsesBridgeConnection>
+}
+
 type LeasedResponsesBridgeConnection = ResponsesBridgeConnection & {
   lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
 }
 
 const execFileAsync = promisify(execFile)
+
+const isOfficialOpenAiResponsesBase = (value: string | undefined): boolean => {
+  if (!value) return false
+  try {
+    return new URL(value).hostname.toLowerCase() === 'api.openai.com'
+  } catch {
+    return false
+  }
+}
 
 // Hard ceiling for a Claude credential probe so a stuck process can never hang the wizard.
 const CLAUDE_PROBE_TIMEOUT_MS = 20_000
@@ -522,6 +541,10 @@ class SettingsService {
   // replay). Track each backend generation separately so an overlapping reconnect cannot mutate the
   // bridge still serving the retiring generation.
   private readonly responsesBridges = new Map<string, ResponsesBridgeEntry>()
+  private readonly nativeResponsesCompatibilityProxies = new Map<
+    string,
+    NativeResponsesCompatibilityEntry
+  >()
   private providerSequence = 0
   private readonly providerValidationGenerations = new Map<string, number>()
 
@@ -3521,19 +3544,27 @@ class SettingsService {
           : codexStorageDir(this.storageRoot)
         : opencodeConfigDir(this.storageRoot)
     await this.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
-    // The Chat Completions bridge only exists to let Codex (a Responses-only client) drive an
-    // OpenAI Chat provider. A provider that also speaks native Responses is driven directly, so
-    // starting the bridge for it would be dead weight — and worse, Codex would post to the bridge's
-    // local URL with the provider key instead of the bridge token. Bridge openai-only providers.
-    const needsResponsesBridge =
+    // Chat-only providers require protocol translation. Non-OpenAI native Responses providers keep
+    // their protocol, but use a narrow compatibility proxy because Codex emits namespace tools while
+    // several compatible APIs accept only flat function names. Official OpenAI and subscriptions
+    // already implement Codex's native wire contract and remain direct.
+    const needsChatResponsesBridge =
       framework.id === 'codex' &&
       (provider.apiEndpoints?.includes('openai') ?? false) &&
       !(provider.apiEndpoints?.includes('responses') ?? false)
+    const needsNativeResponsesCompatibility =
+      framework.id === 'codex' &&
+      (provider.apiEndpoints?.includes('responses') ?? false) &&
+      !isCodexSubscriptionProvider(provider.type) &&
+      provider.vendorId !== 'openai' &&
+      !isOfficialOpenAiResponsesBase(provider.openaiBaseUrl ?? provider.baseUrl)
     // A bridge may still serve a live Codex runtime from an earlier framework generation. Do not stop
     // or retarget it merely because the newly selected framework/provider does not need one.
-    const responsesBridge = needsResponsesBridge
+    const responsesBridge = needsChatResponsesBridge
       ? await this.ensureResponsesBridge(provider, sessionEffort)
-      : undefined
+      : needsNativeResponsesCompatibility
+        ? await this.ensureNativeResponsesCompatibility(provider)
+        : undefined
     try {
       const modelConfig = framework.prepareModelConfig(provider, {
         storageRoot: this.storageRoot,
@@ -3636,6 +3667,52 @@ class SettingsService {
           if (this.responsesBridges.get(bridgeId) !== leasedEntry) return
           this.responsesBridges.delete(bridgeId)
           await leasedEntry.bridge.close()
+        }
+      }
+    }
+  }
+
+  private async ensureNativeResponsesCompatibility(
+    provider: ResolvedProvider
+  ): Promise<LeasedResponsesBridgeConnection> {
+    const targetBaseUrl = normalizeResponsesBaseUrl(provider.openaiBaseUrl ?? provider.baseUrl)
+    if (!targetBaseUrl) throw new Error('The native Responses provider has no base URL.')
+
+    const proxyId = randomUUID()
+    const proxy = new NativeResponsesCompatibilityProxy({
+      baseUrl: targetBaseUrl,
+      key: provider.key,
+      model: provider.model
+    })
+    const entry = { proxy, connection: proxy.start() }
+    this.nativeResponsesCompatibilityProxies.set(proxyId, entry)
+
+    let connection: ResponsesBridgeConnection
+    try {
+      connection = await entry.connection
+    } catch (error) {
+      if (this.nativeResponsesCompatibilityProxies.get(proxyId) === entry) {
+        this.nativeResponsesCompatibilityProxies.delete(proxyId)
+      }
+      await entry.proxy.close().catch(() => undefined)
+      throw error
+    }
+
+    let released = false
+    const leasedEntry = entry
+    return {
+      ...connection,
+      lease: {
+        selectSkills: (text, catalog, signal) =>
+          leasedEntry.proxy.selectSkills(text, catalog, signal),
+        registerReviewerSession: () => undefined,
+        unregisterReviewerSession: () => false,
+        release: async () => {
+          if (released) return
+          released = true
+          if (this.nativeResponsesCompatibilityProxies.get(proxyId) !== leasedEntry) return
+          this.nativeResponsesCompatibilityProxies.delete(proxyId)
+          await leasedEntry.proxy.close()
         }
       }
     }

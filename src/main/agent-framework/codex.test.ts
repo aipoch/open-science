@@ -298,6 +298,56 @@ describe('codexFramework', () => {
     expect(modelCatalog.models[0].base_instructions).not.toContain('apply_patch')
   })
 
+  it('preserves native model metadata through the Responses compatibility proxy', () => {
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.minimaxi.com/v1',
+        model: 'MiniMax-M3',
+        contextWindow: 1_000_000,
+        key: 'mm-secret'
+      },
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        responsesBridge: {
+          baseUrl: 'http://127.0.0.1:43123/v1',
+          token: 'local-token',
+          kind: 'responses-compatibility'
+        }
+      }
+    )
+
+    const codexConfig = JSON.parse(config.env?.CODEX_CONFIG ?? '')
+    expect(codexConfig).toMatchObject({
+      model: 'MiniMax-M3',
+      model_provider: 'open-science',
+      model_providers: {
+        'open-science': {
+          base_url: 'http://127.0.0.1:43123/v1',
+          wire_api: 'responses'
+        }
+      },
+      model_catalog_json: expect.stringMatching(/model-catalog-[a-f0-9]{64}\.json$/)
+    })
+    expect(codexConfig.model_providers['open-science']).not.toHaveProperty('requires_openai_auth')
+    expect(config.authentication).toBeUndefined()
+    expect(config.sessionModel).toBeUndefined()
+    expect(config.providerConfiguration).toEqual({
+      providerId: 'custom-gateway',
+      apiType: 'openai',
+      baseUrl: 'http://127.0.0.1:43123/v1',
+      headers: { authorization: 'Bearer local-token' }
+    })
+    expect(config.env?.CODEX_CONFIG).not.toContain('mm-secret')
+    const modelCatalogFile = config.configFiles?.find(
+      (file) => file.path === codexConfig.model_catalog_json
+    )
+    expect(JSON.parse(modelCatalogFile?.content ?? '').models[0].slug).toBe('MiniMax-M3')
+  })
+
   it('keeps concurrent native model metadata in distinct immutable catalogs', () => {
     const framework = createCodexFramework()
     const prepare = (model: string): ReturnType<typeof framework.prepareModelConfig> =>

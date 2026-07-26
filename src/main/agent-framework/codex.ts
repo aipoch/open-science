@@ -367,18 +367,24 @@ export const createCodexFramework = ({
     }
 
     const bridge = ctx.responsesBridge
-    const useBridge =
-      bridge !== undefined && !(provider.apiEndpoints?.includes('responses') ?? false)
-    const codexModel = useBridge ? CODEX_BRIDGE_MODEL : provider.model
-    // Native Responses is driven directly. A dual-endpoint vendor keeps its Anthropic route in
+    const useChatBridge =
+      bridge !== undefined &&
+      bridge.kind !== 'responses-compatibility' &&
+      !(provider.apiEndpoints?.includes('responses') ?? false)
+    const useNativeCompatibility =
+      bridge?.kind === 'responses-compatibility' &&
+      (provider.apiEndpoints?.includes('responses') ?? false)
+    const useLocalResponsesEndpoint = useChatBridge || useNativeCompatibility
+    const codexModel = useChatBridge ? CODEX_BRIDGE_MODEL : provider.model
+    // A dual-endpoint vendor keeps its Anthropic route in
     // `baseUrl` and its OpenAI/Responses `/v1` root in `openaiBaseUrl`, so post to the latter; a
-    // Responses-only provider (e.g. OpenAI) carries its base in `baseUrl`. When bridging, the local
-    // bridge URL wins.
-    const responsesBaseUrl = useBridge
+    // Responses-only provider (e.g. OpenAI) carries its base in `baseUrl`. The Chat bridge and the
+    // protocol-preserving native compatibility endpoint both expose a local Responses URL.
+    const responsesBaseUrl = useLocalResponsesEndpoint
       ? bridge.baseUrl
       : (provider.openaiBaseUrl ?? provider.baseUrl)
     const authentication: AgentAuthentication | undefined =
-      provider.key && !useBridge
+      provider.key && !useLocalResponsesEndpoint
         ? {
             methodId: 'api-key',
             _meta: { 'api-key': { apiKey: provider.key } }
@@ -386,7 +392,7 @@ export const createCodexFramework = ({
         : undefined
 
     const codexHome = codexStorageDir(ctx.storageRoot)
-    const modelCatalog = useBridge
+    const modelCatalog = useChatBridge
       ? undefined
       : buildCodexNativeModelCatalog({
           ...provider,
@@ -411,7 +417,7 @@ export const createCodexFramework = ({
         model: codexModel,
         contextWindow: provider.contextWindow,
         baseUrl: responsesBaseUrl,
-        key: useBridge ? undefined : provider.key,
+        key: useLocalResponsesEndpoint ? undefined : provider.key,
         reasoningEffort: ctx.reasoningEffort
       }),
       ...(modelCatalogPath ? { model_catalog_json: modelCatalogPath } : {})
@@ -441,7 +447,7 @@ export const createCodexFramework = ({
           : [])
       ],
       ...(authentication ? { authentication } : {}),
-      ...(useBridge
+      ...(useLocalResponsesEndpoint
         ? {
             providerConfiguration: {
               providerId: 'custom-gateway',
@@ -451,7 +457,7 @@ export const createCodexFramework = ({
             } satisfies AgentProviderConfiguration
           }
         : {}),
-      ...(useBridge ? { sessionModel: CODEX_BRIDGE_MODEL } : {})
+      ...(useChatBridge ? { sessionModel: CODEX_BRIDGE_MODEL } : {})
     }
   },
 

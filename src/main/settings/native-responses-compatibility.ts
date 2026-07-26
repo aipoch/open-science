@@ -1,0 +1,504 @@
+import { randomBytes } from 'node:crypto'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+
+import { createLogger } from '../logger'
+import type {
+  ResponsesBridgeConnection,
+  ResponsesBridgeSkillCandidate,
+  ResponsesBridgeSkillInput
+} from './responses-bridge'
+
+// Responses payloads are intentionally open-ended across providers. Keep the compatibility boundary
+// permissive, then validate the fields this module rewrites before touching them.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type JsonObject = Record<string, any>
+
+type NativeResponsesCompatibilityTarget = {
+  baseUrl: string
+  key?: string
+  model?: string
+}
+
+type NativeResponsesCompatibilityOptions = {
+  skillSelectorTimeoutMs?: number
+}
+
+export type NativeResponsesToolIdentity = {
+  namespace: string
+  name: string
+}
+
+export type NativeResponsesToolAliases = Map<string, NativeResponsesToolIdentity>
+
+type NativeFetch = typeof fetch
+
+const MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024
+const MAX_SKILL_SELECTOR_CANDIDATES = 128
+const MAX_SKILL_SELECTOR_NAME_BYTES = 128
+const MAX_SKILL_SELECTOR_DESCRIPTION_BYTES = 2 * 1024
+const MAX_SKILL_SELECTOR_CATALOG_BYTES = 256 * 1024
+const log = createLogger('native-responses-compatibility')
+
+const isObject = (value: unknown): value is JsonObject =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const namespaceAlias = (namespace: string, name: string): string => `${namespace}__${name}`
+
+const combinedDescription = (namespaceDescription: unknown, toolDescription: unknown): string =>
+  [namespaceDescription, toolDescription]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => value.trim())
+    .join('\n\n')
+
+const flattenHistoryItem = (item: unknown): unknown => {
+  if (!isObject(item)) return item
+  if (
+    (item.type !== 'function_call' && item.type !== 'custom_tool_call') ||
+    typeof item.namespace !== 'string' ||
+    typeof item.name !== 'string'
+  ) {
+    return item
+  }
+
+  const { namespace, ...withoutNamespace } = item
+  return { ...withoutNamespace, name: namespaceAlias(namespace, item.name) }
+}
+
+const flattenToolChoice = (toolChoice: unknown): unknown => {
+  if (
+    !isObject(toolChoice) ||
+    typeof toolChoice.namespace !== 'string' ||
+    typeof toolChoice.name !== 'string'
+  ) {
+    return toolChoice
+  }
+
+  const { namespace, ...withoutNamespace } = toolChoice
+  return { ...withoutNamespace, name: namespaceAlias(namespace, toolChoice.name) }
+}
+
+export const flattenNativeResponsesRequest = (
+  body: JsonObject
+): { request: JsonObject; aliases: NativeResponsesToolAliases } => {
+  if (body.tools !== undefined && !Array.isArray(body.tools)) {
+    throw new Error('native Responses tools must be an array')
+  }
+
+  const tools = (body.tools ?? []) as unknown[]
+  const aliases: NativeResponsesToolAliases = new Map()
+  const occupiedNames = new Set(
+    tools.flatMap((tool) =>
+      isObject(tool) && tool.type !== 'namespace' && typeof tool.name === 'string'
+        ? [tool.name]
+        : []
+    )
+  )
+  const flattenedTools = tools.flatMap((tool) => {
+    if (!isObject(tool) || tool.type !== 'namespace') return [tool]
+    if (typeof tool.name !== 'string' || !Array.isArray(tool.tools)) {
+      throw new Error('native Responses namespace tools require a name and child tools')
+    }
+
+    return tool.tools.map((child) => {
+      if (!isObject(child) || child.type !== 'function' || typeof child.name !== 'string') {
+        throw new Error('native Responses namespace children must be function tools')
+      }
+      const alias = namespaceAlias(tool.name, child.name)
+      if (occupiedNames.has(alias) || aliases.has(alias)) {
+        throw new Error(`duplicate native Responses tool alias: ${alias}`)
+      }
+      occupiedNames.add(alias)
+      aliases.set(alias, { namespace: tool.name, name: child.name })
+      const description = combinedDescription(tool.description, child.description)
+      return {
+        ...child,
+        name: alias,
+        ...(description ? { description } : {})
+      }
+    })
+  })
+
+  return {
+    request: {
+      ...body,
+      ...(body.tools === undefined ? {} : { tools: flattenedTools }),
+      ...(body.tool_choice === undefined
+        ? {}
+        : { tool_choice: flattenToolChoice(body.tool_choice) }),
+      ...(Array.isArray(body.input) ? { input: body.input.map(flattenHistoryItem) } : {})
+    },
+    aliases
+  }
+}
+
+export const restoreNativeResponsesPayload = (
+  value: unknown,
+  aliases: NativeResponsesToolAliases
+): unknown => {
+  if (Array.isArray(value)) return value.map((item) => restoreNativeResponsesPayload(item, aliases))
+  if (!isObject(value)) return value
+
+  const restored = Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      key,
+      restoreNativeResponsesPayload(child, aliases)
+    ])
+  ) as JsonObject
+  if (
+    (restored.type === 'function_call' || restored.type === 'custom_tool_call') &&
+    restored.namespace === undefined &&
+    typeof restored.name === 'string'
+  ) {
+    const identity = aliases.get(restored.name)
+    if (identity) {
+      restored.name = identity.name
+      restored.namespace = identity.namespace
+    }
+  }
+  return restored
+}
+
+const responsesUrl = (baseUrl: string): string =>
+  `${baseUrl
+    .trim()
+    .replace(/\/+$/, '')
+    .replace(/\/responses$/i, '')}/responses`
+
+const json = (response: ServerResponse, status: number, body: unknown): void => {
+  response.writeHead(status, { 'content-type': 'application/json' })
+  response.end(JSON.stringify(body))
+}
+
+const readBody = async (request: IncomingMessage): Promise<JsonObject> => {
+  const chunks: Buffer[] = []
+  let total = 0
+  for await (const chunk of request) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    total += bytes.length
+    if (total > MAX_REQUEST_BODY_BYTES) throw new Error('native Responses request is too large')
+    chunks.push(bytes)
+  }
+  const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+  if (!isObject(parsed)) throw new Error('native Responses request must be a JSON object')
+  return parsed
+}
+
+const HOP_BY_HOP_HEADERS = new Set([
+  'connection',
+  'content-length',
+  'host',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade'
+])
+
+const upstreamHeaders = (
+  request: IncomingMessage,
+  key: string | undefined
+): Record<string, string> => {
+  const headers: Record<string, string> = {}
+  for (const [name, value] of Object.entries(request.headers)) {
+    if (HOP_BY_HOP_HEADERS.has(name) || name === 'authorization' || value === undefined) continue
+    headers[name] = Array.isArray(value) ? value.join(', ') : value
+  }
+  headers['content-type'] = 'application/json'
+  if (key) headers.authorization = `Bearer ${key}`
+  return headers
+}
+
+const copyResponseHeaders = (upstream: Response): Record<string, string> => {
+  const headers: Record<string, string> = {}
+  upstream.headers.forEach((value, name) => {
+    // Fetch decodes compressed bodies. Forwarding the original encoding after rewriting would make
+    // Codex try to decompress already-decoded bytes.
+    if (!HOP_BY_HOP_HEADERS.has(name) && name !== 'content-encoding') headers[name] = value
+  })
+  return headers
+}
+
+const rewriteSseLine = (line: string, aliases: NativeResponsesToolAliases): string => {
+  if (!line.startsWith('data:')) return line
+  const data = line.slice('data:'.length).trimStart()
+  if (!data || data === '[DONE]') return line
+  try {
+    return `data: ${JSON.stringify(restoreNativeResponsesPayload(JSON.parse(data), aliases))}`
+  } catch {
+    return line
+  }
+}
+
+const streamResponse = async (
+  upstream: Response,
+  response: ServerResponse,
+  aliases: NativeResponsesToolAliases
+): Promise<void> => {
+  if (!upstream.body) throw new Error('native Responses upstream returned no body')
+  response.writeHead(upstream.status, copyResponseHeaders(upstream))
+  const decoder = new TextDecoder()
+  let buffered = ''
+  for await (const chunk of upstream.body) {
+    buffered += decoder.decode(chunk, { stream: true })
+    const lines = buffered.split('\n')
+    buffered = lines.pop() ?? ''
+    for (const line of lines) response.write(`${rewriteSseLine(line, aliases)}\n`)
+  }
+  buffered += decoder.decode()
+  if (buffered) response.write(rewriteSseLine(buffered, aliases))
+  response.end()
+}
+
+const boundedSkillCatalog = (
+  catalog: ResponsesBridgeSkillCandidate[]
+): ResponsesBridgeSkillCandidate[] => {
+  const bounded: ResponsesBridgeSkillCandidate[] = []
+  let totalBytes = 2
+  for (const candidate of catalog) {
+    if (bounded.length === MAX_SKILL_SELECTOR_CANDIDATES) break
+    if (
+      !candidate.name ||
+      Buffer.byteLength(candidate.name, 'utf8') > MAX_SKILL_SELECTOR_NAME_BYTES ||
+      Buffer.byteLength(candidate.description, 'utf8') > MAX_SKILL_SELECTOR_DESCRIPTION_BYTES
+    ) {
+      continue
+    }
+    const candidateBytes = Buffer.byteLength(
+      JSON.stringify({ name: candidate.name, description: candidate.description }),
+      'utf8'
+    )
+    if (totalBytes + candidateBytes > MAX_SKILL_SELECTOR_CATALOG_BYTES) break
+    totalBytes += candidateBytes
+    bounded.push(candidate)
+  }
+  return bounded
+}
+
+export class NativeResponsesCompatibilityProxy {
+  private server: Server | undefined
+  private connection: ResponsesBridgeConnection | undefined
+
+  constructor(
+    private readonly target: NativeResponsesCompatibilityTarget,
+    private readonly fetchImpl: NativeFetch = fetch,
+    private readonly options: NativeResponsesCompatibilityOptions = {}
+  ) {}
+
+  async selectSkills(
+    text: string,
+    catalog: ResponsesBridgeSkillCandidate[],
+    signal?: AbortSignal
+  ): Promise<ResponsesBridgeSkillInput[]> {
+    if (!text.trim() || catalog.length === 0 || signal?.aborted || !this.target.model) return []
+    const selectorCatalog = boundedSkillCatalog(catalog)
+    if (selectorCatalog.length === 0) return []
+
+    const timeout = new AbortController()
+    let timedOut = false
+    const abortFromCaller = (): void => timeout.abort(signal?.reason)
+    signal?.addEventListener('abort', abortFromCaller, { once: true })
+    const timer = setTimeout(() => {
+      timedOut = true
+      timeout.abort()
+    }, this.options.skillSelectorTimeoutMs ?? 15_000)
+    timer.unref?.()
+    try {
+      const response = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(this.target.key ? { authorization: `Bearer ${this.target.key}` } : {})
+        },
+        body: JSON.stringify({
+          model: this.target.model,
+          stream: false,
+          instructions:
+            'Select only the Skills needed to execute the current user request. Do not perform the task. Call select_skills exactly once using only catalog names. Return an empty list when no Skill applies.\n\nSkill catalog:\n' +
+            JSON.stringify(selectorCatalog.map(({ name, description }) => ({ name, description }))),
+          input: text,
+          tools: [
+            {
+              type: 'function',
+              name: 'select_skills',
+              description: 'Select zero to three applicable Skills from the provided catalog.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  skill_names: {
+                    type: 'array',
+                    maxItems: 3,
+                    items: { type: 'string', enum: selectorCatalog.map(({ name }) => name) }
+                  }
+                },
+                required: ['skill_names'],
+                additionalProperties: false
+              }
+            }
+          ],
+          tool_choice: { type: 'function', name: 'select_skills' },
+          parallel_tool_calls: false
+        }),
+        signal: timeout.signal
+      })
+      if (!response.ok) {
+        log.warn('native Responses Skill selection failed', {
+          model: this.target.model,
+          reason: 'upstream-http',
+          status: response.status
+        })
+        return []
+      }
+      const payload = (await response.json()) as JsonObject
+      const output = Array.isArray(payload.output) ? payload.output : []
+      const call = output.find(
+        (item: unknown) =>
+          isObject(item) && item.type === 'function_call' && item.name === 'select_skills'
+      )
+      if (!isObject(call) || typeof call.arguments !== 'string') return []
+      const argumentsValue = JSON.parse(call.arguments) as unknown
+      if (!isObject(argumentsValue) || !Array.isArray(argumentsValue.skill_names)) return []
+
+      const byName = new Map(
+        selectorCatalog.map((candidate) => [candidate.name, candidate] as const)
+      )
+      const selected: ResponsesBridgeSkillInput[] = []
+      const seen = new Set<string>()
+      for (const name of argumentsValue.skill_names) {
+        if (typeof name !== 'string' || seen.has(name)) continue
+        const candidate = byName.get(name)
+        if (!candidate) continue
+        seen.add(name)
+        selected.push({ name: candidate.name, path: candidate.path })
+        if (selected.length === 3) break
+      }
+      log.info('native Responses Skill selection completed', {
+        model: this.target.model,
+        catalogCount: catalog.length,
+        selectedNames: selected.map(({ name }) => name)
+      })
+      return selected
+    } catch {
+      log.warn('native Responses Skill selection failed', {
+        model: this.target.model,
+        reason: timedOut ? 'timeout' : signal?.aborted ? 'cancelled' : 'invalid-response'
+      })
+      return []
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abortFromCaller)
+    }
+  }
+
+  async start(): Promise<ResponsesBridgeConnection> {
+    if (this.connection) return this.connection
+    const token = randomBytes(24).toString('hex')
+    const server = createServer((request, response) => {
+      void this.handle(request, response).catch((error: unknown) => {
+        if (response.destroyed || response.writableEnded) return
+        if (!response.headersSent) {
+          json(response, 400, {
+            error: {
+              type: 'invalid_request_error',
+              message: error instanceof Error ? error.message : String(error)
+            }
+          })
+        } else {
+          response.destroy()
+        }
+      })
+    })
+    this.server = server
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(0, '127.0.0.1', resolve)
+      })
+      server.unref()
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        throw new Error('native Responses compatibility proxy did not bind a port')
+      }
+      this.connection = {
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        token,
+        kind: 'responses-compatibility'
+      }
+      return this.connection
+    } catch (error) {
+      await this.close().catch(() => undefined)
+      throw error
+    }
+  }
+
+  async close(): Promise<void> {
+    const server = this.server
+    this.server = undefined
+    this.connection = undefined
+    if (!server) return
+    const closing = new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    )
+    server.closeAllConnections()
+    await closing
+  }
+
+  private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (request.method !== 'POST' || request.url !== '/v1/responses') {
+      json(response, 404, { error: { message: 'Unknown native Responses compatibility route' } })
+      return
+    }
+    if (request.headers.authorization !== `Bearer ${this.connection?.token}`) {
+      json(response, 401, { error: { message: 'Invalid native Responses compatibility token' } })
+      return
+    }
+
+    const abortController = new AbortController()
+    const abortUpstream = (): void => abortController.abort()
+    const abortOnRequestClose = (): void => {
+      if (request.aborted || !request.complete) abortUpstream()
+    }
+    const abortOnResponseClose = (): void => {
+      if (!response.writableEnded) abortUpstream()
+    }
+    request.once('aborted', abortUpstream)
+    request.once('close', abortOnRequestClose)
+    response.once('close', abortOnResponseClose)
+
+    try {
+      const body = await readBody(request)
+      const { request: upstreamRequest, aliases } = flattenNativeResponsesRequest(body)
+      log.info('native Responses compatibility request', {
+        model: body.model,
+        namespaceToolCount: aliases.size,
+        stream: body.stream === true
+      })
+      const upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
+        method: 'POST',
+        headers: upstreamHeaders(request, this.target.key),
+        body: JSON.stringify(upstreamRequest),
+        signal: abortController.signal
+      })
+      const contentType = upstream.headers.get('content-type') ?? ''
+      if (contentType.includes('text/event-stream')) {
+        await streamResponse(upstream, response, aliases)
+        return
+      }
+      if (contentType.includes('application/json')) {
+        const payload = restoreNativeResponsesPayload(await upstream.json(), aliases)
+        response.writeHead(upstream.status, copyResponseHeaders(upstream))
+        response.end(JSON.stringify(payload))
+        return
+      }
+      response.writeHead(upstream.status, copyResponseHeaders(upstream))
+      response.end(Buffer.from(await upstream.arrayBuffer()))
+    } finally {
+      request.off('aborted', abortUpstream)
+      request.off('close', abortOnRequestClose)
+      response.off('close', abortOnResponseClose)
+    }
+  }
+}
+
+export type { NativeResponsesCompatibilityOptions, NativeResponsesCompatibilityTarget }

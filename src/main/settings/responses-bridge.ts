@@ -49,6 +49,9 @@ export type ResponsesBridgeNamespacedTool = {
 export type ResponsesBridgeConnection = {
   baseUrl: string
   token: string
+  // Absent is the legacy Chat Completions bridge. Native Responses compatibility stays on the
+  // Responses wire protocol and opts in explicitly so framework config can preserve its model.
+  kind?: 'responses-compatibility'
 }
 
 export type ResponsesBridgeSkillCandidate = {

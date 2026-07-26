@@ -18,6 +18,7 @@ import type {
 import type { ClaudeSharedAuthControllerPort } from './claude-shared-auth'
 import type { UserSkillRepository } from '../skills/user-skill-repository'
 import type { ResponsesBridge } from './responses-bridge'
+import type { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -2479,10 +2480,9 @@ describe('SettingsService: preflight & spawn config', () => {
     closeSpy.mockRestore()
   })
 
-  it('drives a native-Responses official vendor directly, without starting the bridge', async () => {
-    // MiniMax advertises anthropic + openai + responses. Codex must drive native Responses on the
-    // vendor's own OpenAI /v1 base with the vendor key — NOT spin up the Chat Completions bridge and
-    // post to its local URL (which would authenticate with the vendor key instead of the bridge token).
+  it('routes a native-Responses vendor through the protocol-preserving compatibility proxy', async () => {
+    // MiniMax advertises anthropic + openai + responses. It must stay on native Responses while the
+    // local proxy flattens Codex namespace tools and restores their namespace on returned calls.
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
@@ -2513,10 +2513,14 @@ describe('SettingsService: preflight & spawn config', () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
     const backend = await service.resolveActiveAgentBackend()
 
-    // No bridge: no local provider-configuration, no bridge session model.
-    expect(backend.providerConfiguration).toBeUndefined()
+    expect(backend.providerConfiguration).toEqual({
+      providerId: 'custom-gateway',
+      apiType: 'openai',
+      baseUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/v1$/),
+      headers: { authorization: expect.stringMatching(/^Bearer [a-f0-9]+$/) }
+    })
+    // This is not the Chat Completions bridge: preserve the provider model and native catalog.
     expect(backend.sessionModel).toBe('MiniMax-M3')
-    // Codex posts native Responses to the vendor's own /v1 base with the vendor key.
     const codexConfig = JSON.parse(backend.env.CODEX_CONFIG ?? '{}')
     expect(codexConfig.model_catalog_json).toMatch(
       new RegExp(
@@ -2524,10 +2528,10 @@ describe('SettingsService: preflight & spawn config', () => {
       )
     )
     expect(codexConfig.model_providers['open-science']).toMatchObject({
-      base_url: 'https://api.minimax.io/v1',
-      wire_api: 'responses',
-      requires_openai_auth: true
+      base_url: backend.providerConfiguration?.baseUrl,
+      wire_api: 'responses'
     })
+    expect(codexConfig.model_providers['open-science']).not.toHaveProperty('requires_openai_auth')
     const modelCatalog = JSON.parse(await readFile(codexConfig.model_catalog_json, 'utf8'))
     expect(modelCatalog.models).toEqual([
       expect.objectContaining({
@@ -2542,12 +2546,37 @@ describe('SettingsService: preflight & spawn config', () => {
         ]
       })
     ])
-    expect(backend.authentication).toEqual({
-      methodId: 'api-key',
-      _meta: { 'api-key': { apiKey: 'mm-secret' } }
-    })
-    expect(backend.env.CODEX_CONFIG).not.toContain('127.0.0.1')
+    expect(backend.authentication).toBeUndefined()
     expect(backend.env.CODEX_CONFIG).not.toContain('mm-secret')
+
+    const proxies = Array.from(
+      (
+        service as unknown as {
+          nativeResponsesCompatibilityProxies: Map<
+            string,
+            { proxy: NativeResponsesCompatibilityProxy }
+          >
+        }
+      ).nativeResponsesCompatibilityProxies.values(),
+      (entry) => entry.proxy
+    )
+    expect(proxies).toHaveLength(1)
+    const skillCatalog = [
+      { name: 'mcp-pubmed', description: 'Search PubMed.', path: '/skills/pubmed/SKILL.md' }
+    ]
+    const selectSkills = vi
+      .spyOn(proxies[0], 'selectSkills')
+      .mockResolvedValue([{ name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }])
+    await expect(
+      backend.responsesBridgeLease?.selectSkills('用 PubMed 搜索肿瘤免疫文章', skillCatalog)
+    ).resolves.toEqual([{ name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }])
+    expect(selectSkills).toHaveBeenCalledWith('用 PubMed 搜索肿瘤免疫文章', skillCatalog, undefined)
+
+    await backend.responsesBridgeLease?.release()
+    expect(
+      (service as unknown as { nativeResponsesCompatibilityProxies: Map<string, unknown> })
+        .nativeResponsesCompatibilityProxies.size
+    ).toBe(0)
   })
 
   it('builds spawn env from the active provider with the decrypted key', async () => {

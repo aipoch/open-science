@@ -1,16 +1,17 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 
 import * as acp from '@agentclientprotocol/sdk'
 import { expect, it, vi } from 'vitest'
 
-import { CODEX_BRIDGE_MODEL } from '../agent-framework/codex'
+import { CODEX_BRIDGE_MODEL, createCodexFramework } from '../agent-framework/codex'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
 import { ReviewerMcpServer, type SubmitFindingsHandler } from '../reviewer/mcp-server'
 import { ResponsesBridge } from './responses-bridge'
+import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
 
 const adapterPath = process.env.CODEX_ACP_PATH
 const nativeCodexPath = process.env.CODEX_NATIVE_PATH
@@ -22,6 +23,11 @@ const chatSse = (chunks: unknown[]): Response =>
     { headers: { 'content-type': 'text/event-stream' } }
   )
 
+const responsesSse = (events: unknown[]): Response =>
+  new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''), {
+    headers: { 'content-type': 'text/event-stream' }
+  })
+
 const terminate = async (child: ChildProcessWithoutNullStreams): Promise<void> => {
   if (child.exitCode !== null) return
   child.kill('SIGTERM')
@@ -31,6 +37,184 @@ const terminate = async (child: ChildProcessWithoutNullStreams): Promise<void> =
   ])
   if (child.exitCode === null) child.kill('SIGKILL')
 }
+
+it.runIf(runLiveContract)(
+  'restores a flat native Responses call before the real Codex MCP router dispatches it',
+  async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), 'open-science-codex-native-responses-'))
+    const workspace = join(tempRoot, 'workspace')
+    const mcpEntry = join(tempRoot, 'echo-mcp.mjs')
+    await mkdir(workspace)
+    await writeFile(
+      mcpEntry,
+      [
+        "import { createInterface } from 'node:readline'",
+        "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n')",
+        "createInterface({ input: process.stdin }).on('line', (line) => {",
+        '  const message = JSON.parse(line)',
+        "  if (message.method === 'initialize') {",
+        "    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'probe-server', version: '1.0.0' } } })",
+        "  } else if (message.method === 'tools/list') {",
+        "    send({ jsonrpc: '2.0', id: message.id, result: { tools: [{ name: 'echo', description: 'Echo a value.', inputSchema: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false } }] } })",
+        "  } else if (message.method === 'tools/call') {",
+        "    send({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: 'echo:' + message.params.arguments.value }] } })",
+        '  }',
+        '})'
+      ].join('\n'),
+      'utf8'
+    )
+
+    const upstreamRequests: Record<string, unknown>[] = []
+    const upstreamFetch = async (
+      _url: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1]
+    ): Promise<Response> => {
+      const request = JSON.parse(String(init?.body)) as Record<string, unknown>
+      upstreamRequests.push(request)
+      if (upstreamRequests.length === 1) {
+        return responsesSse([
+          { type: 'response.created', response: { id: 'native-call' } },
+          {
+            type: 'response.output_item.done',
+            item: {
+              type: 'function_call',
+              call_id: 'call-native-echo',
+              name: 'mcp__probe_server__echo',
+              arguments: '{"value":"native"}'
+            }
+          },
+          {
+            type: 'response.completed',
+            response: {
+              id: 'native-call',
+              usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 }
+            }
+          }
+        ])
+      }
+      return responsesSse([
+        { type: 'response.created', response: { id: 'native-complete' } },
+        {
+          type: 'response.output_item.done',
+          item: {
+            type: 'message',
+            id: 'message-native-complete',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'NATIVE_RESPONSES_OK' }]
+          }
+        },
+        {
+          type: 'response.completed',
+          response: {
+            id: 'native-complete',
+            usage: { input_tokens: 15, output_tokens: 3, total_tokens: 18 }
+          }
+        }
+      ])
+    }
+
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://vendor.invalid/v1', model: 'probe-native-model' },
+      upstreamFetch
+    )
+    const connection = await proxy.start()
+    const framework = createCodexFramework()
+    const modelConfig = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://vendor.invalid/v1',
+        model: 'probe-native-model',
+        contextWindow: 128_000
+      },
+      {
+        storageRoot: tempRoot,
+        executablePath: adapterPath!,
+        responsesBridge: connection
+      }
+    )
+    for (const file of modelConfig.configFiles ?? []) {
+      await mkdir(dirname(file.path), { recursive: true })
+      await writeFile(file.path, file.content, 'utf8')
+    }
+
+    const child = spawn(adapterPath!, [], {
+      cwd: workspace,
+      env: {
+        ...process.env,
+        ...modelConfig.env,
+        CODEX_PATH: nativeCodexPath!
+      },
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    const stderr: string[] = []
+    child.stderr.on('data', (chunk) => stderr.push(chunk.toString('utf8')))
+
+    try {
+      const stream = acp.ndJsonStream(
+        Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+        Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
+      )
+      const result = await acp
+        .client({ name: 'open-science-native-responses-contract' })
+        .onRequest(acp.methods.client.session.requestPermission, (ctx) => ({
+          outcome: {
+            outcome: 'selected',
+            optionId:
+              ctx.params.options.find((option) => option.kind === 'allow_once')?.optionId ??
+              ctx.params.options[0].optionId
+          }
+        }))
+        .onRequest(acp.methods.client.fs.readTextFile, () => ({ content: '' }))
+        .onRequest(acp.methods.client.fs.writeTextFile, () => ({}))
+        .connectWith(stream, async (ctx) => {
+          await ctx.request(acp.methods.agent.initialize, {
+            protocolVersion: acp.PROTOCOL_VERSION,
+            clientInfo: { name: 'open-science-native-responses-contract', version: '1.0.0' },
+            clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } }
+          })
+          await ctx.request(acp.methods.agent.providers.set, modelConfig.providerConfiguration!)
+
+          return ctx
+            .buildSession({
+              cwd: workspace,
+              mcpServers: [
+                { name: 'probe-server', command: process.execPath, args: [mcpEntry], env: [] }
+              ]
+            })
+            .withSession(async (session) => {
+              session.prompt('Call echo once, then report success.')
+              const updates: acp.SessionNotification[] = []
+              for (;;) {
+                const update = await session.nextUpdate()
+                if (update.kind === 'stop') return updates
+                updates.push(update.notification)
+              }
+            })
+        })
+
+      const upstreamTools = (upstreamRequests[0]?.tools ?? []) as Array<Record<string, unknown>>
+      expect(upstreamTools).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: 'function', name: 'mcp__probe_server__echo' })
+        ])
+      )
+      expect(upstreamTools).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ type: 'namespace' })])
+      )
+      expect(JSON.stringify(upstreamRequests[1]?.input)).toContain('echo:native')
+      expect(JSON.stringify(upstreamRequests[1]?.input)).not.toContain('unsupported call')
+      expect(JSON.stringify(result)).toContain('mcp.probe-server.echo')
+    } catch (error) {
+      throw new Error(`${String(error)}\n${stderr.join('')}`)
+    } finally {
+      await terminate(child)
+      await proxy.close()
+      await rm(tempRoot, { recursive: true, force: true })
+    }
+  },
+  30_000
+)
 
 it.runIf(runLiveContract)(
   'dispatches a bridged namespaced function through the real Codex MCP router',
