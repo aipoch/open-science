@@ -231,7 +231,6 @@ const buildCodexNativeModelCatalog = (provider: {
         // search, or parallel calls. Advertise only the function-shaped shell tool until the provider
         // registry can express and verify those capabilities explicitly.
         apply_patch_tool_type: null,
-        web_search_tool_type: null,
         truncation_policy: { mode: 'tokens', limit: 10_000 },
         supports_parallel_tool_calls: false,
         supports_image_detail_original: false,

@@ -123,10 +123,12 @@ describe('codexFramework', () => {
     expect(JSON.parse(modelCatalogFile?.content ?? '').models[0]).toMatchObject({
       slug: 'gpt-5.4',
       apply_patch_tool_type: null,
-      web_search_tool_type: null,
       supports_parallel_tool_calls: false,
       supports_search_tool: false
     })
+    expect(JSON.parse(modelCatalogFile?.content ?? '').models[0]).not.toHaveProperty(
+      'web_search_tool_type'
+    )
   })
 
   it('uses conservative local metadata when a custom gateway reuses a bundled model slug', () => {
@@ -155,10 +157,10 @@ describe('codexFramework', () => {
     expect(modelMetadata).toMatchObject({
       slug: 'gpt-5.4',
       apply_patch_tool_type: null,
-      web_search_tool_type: null,
       supports_parallel_tool_calls: false,
       supports_search_tool: false
     })
+    expect(modelMetadata).not.toHaveProperty('web_search_tool_type')
   })
 
   it('routes Chat Completions providers through the main-process Responses bridge', () => {
@@ -278,7 +280,6 @@ describe('codexFramework', () => {
             { effort: 'high', description: 'High reasoning effort' }
           ],
           apply_patch_tool_type: null,
-          web_search_tool_type: null,
           supports_parallel_tool_calls: false,
           supports_image_detail_original: false,
           context_window: 1_000_000,
@@ -289,6 +290,7 @@ describe('codexFramework', () => {
         }
       ]
     })
+    expect(modelCatalog.models[0]).not.toHaveProperty('web_search_tool_type')
     expect(modelCatalogFile?.content).not.toContain('used_fallback_model_metadata')
     expect(modelCatalog.models[0].base_instructions).not.toContain('update_plan')
     expect(modelCatalog.models[0].base_instructions).not.toContain('apply_patch')
