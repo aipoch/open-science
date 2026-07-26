@@ -189,6 +189,9 @@ export type AcpPermissionRequest = {
   // Set by the permission broker after framework-aware classification so the renderer never has to
   // infer MCP origin from provider-specific titles or tool kinds.
   isMcp?: boolean
+  // Broker-resolved MCP server/tool identity (`server/tool`), projected only for display. This
+  // keeps presentation stable across provider-specific titles without exposing the protocol name.
+  mcpIdentity?: string
   toolKind?: ToolKind
   toolLocations?: ToolCallLocation[]
   rawInput?: unknown

@@ -258,6 +258,7 @@ describe('ACP permission broker', () => {
     )
 
     expect(emitted[0]).toMatchObject({ isMcp: true })
+    expect(emitted[0]).not.toHaveProperty('mcpIdentity')
     expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual(['once'])
   })
 
@@ -805,7 +806,10 @@ describe('ACP permission broker', () => {
     })
 
     const firstResponse = broker.requestPermission(leafRequest, context)
-    expect(emitted[0]).toMatchObject({ isMcp: true })
+    expect(emitted[0]).toMatchObject({
+      isMcp: true,
+      mcpIdentity: 'open-science-notebook/notebook_execute'
+    })
     broker.respond({ requestId: emitted[0].requestId, optionId: getSessionOptionId(emitted[0]) })
     await firstResponse
 

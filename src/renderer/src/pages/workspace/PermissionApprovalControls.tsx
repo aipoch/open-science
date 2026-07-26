@@ -136,7 +136,7 @@ type PermissionCode = { code: string; language?: string }
 // providerToolName (notebook_execute); only the namespaced field carries the server segment the
 // identity check needs, so we return whichever field matches (or undefined for non-notebook tools).
 const resolveNotebookToolName = (request: AcpPermissionRequest): string | undefined =>
-  resolveNotebookRunToolName(request.providerToolName, request.title)
+  isMcpPermissionRequest(request) ? resolveNotebookRunToolName(request.mcpIdentity) : undefined
 
 // Derives displayable code and language from the tool's raw input.
 const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | undefined => {
@@ -537,11 +537,19 @@ const PermissionApprovalControls = ({
   const allowOptionId = getAllowOptionId(request.options, effectiveScope)
   const denyOptionId = getDenyOptionId(request.options)
   const scopeLabel = effectiveScope === 'once' ? 'once' : 'for this conversation'
+  const notebookRuntimeLabel: Partial<Record<NotebookRuntime, string>> = {
+    python: 'Python',
+    r: 'R',
+    js: 'JavaScript REPL',
+    bash: 'notebook shell'
+  }
   const scopeDescription = !allowOptionId
     ? 'No approval scope is available for this request.'
     : effectiveScope === 'once'
       ? 'Approval applies to this call only.'
-      : 'Approval applies until this conversation ends.'
+      : presentation.notebookRuntime
+        ? `Approval covers later ${notebookRuntimeLabel[presentation.notebookRuntime]} calls in this conversation.`
+        : 'Approval applies until this conversation ends.'
   const hasScopePicker = availableScopes.size > 1
   const isSubmitting = submittingRequestId === request.requestId
   const respondOnce = (optionId?: string): void => {

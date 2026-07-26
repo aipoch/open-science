@@ -432,6 +432,10 @@ class AcpPermissionBroker {
     const mcpServerNames = policyContext?.mcpServerNames ?? []
     const categoryKey = resolveCategoryKey(params, mcpServerNames)
     const isMcp = isMcpPermission(params, mcpServerNames)
+    const mcpIdentity = isMcp
+      ? (resolveMcpToolIdentity(params.toolCall.title, mcpServerNames) ??
+        resolveMcpToolIdentity(extractProviderToolName(params.toolCall), mcpServerNames))
+      : undefined
     const projectedProviderOptions = projectPermissionOptions(params, policyContext, isMcp)
     const providerPermissionOptions = projectedProviderOptions.filter(
       (option) =>
@@ -465,6 +469,7 @@ class AcpPermissionBroker {
       status: params.toolCall.status ?? undefined,
       providerToolName: extractProviderToolName(params.toolCall),
       isMcp,
+      ...(mcpIdentity ? { mcpIdentity } : {}),
       toolKind: params.toolCall.kind ?? undefined,
       toolLocations: params.toolCall.locations ?? undefined,
       rawInput: params.toolCall.rawInput,

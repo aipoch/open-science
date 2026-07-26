@@ -136,15 +136,9 @@ const notebookControlPresentation = (tool: string): PermissionPresentation => {
 const providerToolName = (request: AcpPermissionRequest): string | undefined =>
   request.providerToolName?.trim() || undefined
 
-const hasMcpProtocolPrefix = (name: string | undefined): boolean =>
-  /^mcp(?:__|\.)/iu.test(name ?? '')
-
-// Broker-projected isMcp is authoritative when present, but raw protocol names are also enough for
-// the renderer to avoid exposing or misclassifying a request when a provider omitted that flag.
-const isMcpPermissionRequest = (request: AcpPermissionRequest): boolean =>
-  request.isMcp ||
-  hasMcpProtocolPrefix(request.title) ||
-  hasMcpProtocolPrefix(request.providerToolName)
+// MCP origin is broker-classified. Do not infer it from provider titles here: dotted and sanitized
+// spellings are ambiguous without the configured-server context available to the broker.
+const isMcpPermissionRequest = (request: AcpPermissionRequest): boolean => request.isMcp === true
 
 const ARTIFACT_SERVER_SEGMENT = 'open-science-artifacts'
 const ARTIFACT_WRITE_TOOL = 'write_artifact_file'
@@ -153,7 +147,7 @@ const isArtifactWriteToolName = (toolName: string | undefined): boolean => {
   const name = toolName?.trim().toLowerCase() ?? ''
   if (!name) return false
 
-  const segments = name.split(/__|\./u)
+  const segments = name.split(/__|\.|\//u)
   if (segments.length >= 2) {
     const tool = segments[segments.length - 1]
     const server = segments[segments.length - 2].replace(/_/gu, '-')
@@ -167,24 +161,18 @@ const isArtifactWriteToolName = (toolName: string | undefined): boolean => {
 }
 
 const isArtifactWriteRequest = (request: AcpPermissionRequest): boolean =>
-  isArtifactWriteToolName(request.title) || isArtifactWriteToolName(request.providerToolName)
+  isMcpPermissionRequest(request) &&
+  (isArtifactWriteToolName(request.mcpIdentity) ||
+    isArtifactWriteToolName(request.title) ||
+    isArtifactWriteToolName(request.providerToolName))
 
-// Keeps an otherwise-opaque MCP request distinguishable without surfacing its protocol spelling.
-// Provider names win when a bridge supplies only a boilerplate title.
-const isGenericMcpTitle = (title: string): boolean =>
-  /^(?:run )?(?:mcp )?(?:tool|tool request|tool call)$/iu.test(title)
+// The broker resolves a stable `server/tool` identity before the request reaches the renderer.
+// Keep it in the impact tip so a human-readable provider title cannot obscure the granted tool.
+const humanizeMcpIdentity = (identity: string | undefined): string | undefined => {
+  if (!identity) return undefined
 
-const isOpaqueToolCallId = (name: string): boolean => /^tool(?:u|call)?_[a-z0-9]+$/iu.test(name)
-
-const humanizeMcpAction = (request: AcpPermissionRequest): string | undefined => {
-  const title = request.title.trim()
-  const name = !title || isGenericMcpTitle(title) ? providerToolName(request) : title
-  if (!name || isOpaqueToolCallId(name)) return undefined
-
-  const usesDottedNamespace = /^mcp\./iu.test(name)
-  const normalized = name.replace(/^mcp(?:__|\.)/iu, '')
-  const segments = normalized
-    .split(usesDottedNamespace ? '.' : '__')
+  const segments = identity
+    .split('/')
     .filter(Boolean)
     .map((segment) =>
       segment
@@ -204,23 +192,22 @@ const isNetworkTool = (request: AcpPermissionRequest): boolean => {
 }
 
 const describePermissionRequest = (request: AcpPermissionRequest): PermissionPresentation => {
-  const notebookToolName = resolveNotebookRunToolName(request.providerToolName, request.title)
+  const isMcp = isMcpPermissionRequest(request)
+  const notebookToolName = isMcp ? resolveNotebookRunToolName(request.mcpIdentity) : undefined
   if (notebookToolName) {
     const input = getRequestInput(request)
     const language = resolveNotebookLanguage(notebookToolName, input, getCode(input))
     return { ...notebookExecutionPresentation(toNotebookRuntime(language)), hideToolIdentity: true }
   }
 
-  const controlTool = [request.providerToolName, request.title]
-    .map(matchNotebookControlTool)
-    .find((tool): tool is string => tool !== undefined)
+  const controlTool = isMcp ? matchNotebookControlTool(request.mcpIdentity) : undefined
   if (controlTool) return { ...notebookControlPresentation(controlTool), hideToolIdentity: true }
 
   if (isArtifactWriteRequest(request)) {
     return {
-      actionTitle: 'Write artifact file?',
-      categoryLabel: 'Artifact storage',
-      description: 'Saves a file to this conversation’s artifact storage.'
+      actionTitle: 'Save as artifact?',
+      categoryLabel: 'Artifact save',
+      description: 'Saves a file as an artifact for this conversation.'
     }
   }
 
@@ -231,7 +218,7 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
       actionTitle: 'Use external service?',
       categoryLabel: 'External service',
       description: 'Uses an MCP service configured for this conversation.',
-      actionDetail: humanizeMcpAction(request)
+      actionDetail: humanizeMcpIdentity(request.mcpIdentity)
     }
   }
 

@@ -22,7 +22,8 @@ const NOTEBOOK_SERVER_SEGMENT = 'open-science-notebook'
 
 // Returns the matched kernel-run suffix when a tool name is one of the notebook server's run tools,
 // else undefined. Frameworks namespace tools as mcp__<server>__<tool> (Claude Code / responses
-// bridge) or <server>.<tool> (others), so only `__` and `.` are treated as segment delimiters —
+// bridge), <server>.<tool> (others), or the broker-projected <server>/<tool> identity, so only
+// `__`, `.`, and `/` are treated as segment delimiters —
 // single underscores occur inside both the tool suffix (notebook_execute) and the sanitized server
 // name (open_science_notebook) and must not split. The segment immediately before the suffix must
 // equal the notebook server exactly, so a lookalike (open-science-notebook-staging) or an unrelated
@@ -37,7 +38,7 @@ const matchNotebookTool = (
   // Multi-char / dot delimited forms: mcp__<server>__<tool> (Claude Code, responses bridge),
   // <server>.<tool> and mcp.<server>.<tool> (dotted). The segment before the suffix must equal the
   // server exactly after normalizing `_`→`-`, so a lookalike server is rejected.
-  const segments = name.split(/__|\./u)
+  const segments = name.split(/__|\.|\//u)
   if (segments.length >= 2) {
     const suffix = segments[segments.length - 1]
     if (suffixes.some((known) => known === suffix)) {

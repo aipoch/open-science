@@ -17,6 +17,7 @@ describe('isNotebookExecuteToolName', () => {
     expect(isNotebookExecuteToolName('open-science-notebook.notebook_execute')).toBe(true)
     // The exact broker-produced namespaced title.
     expect(isNotebookExecuteToolName('mcp.open-science-notebook.notebook_execute')).toBe(true)
+    expect(isNotebookExecuteToolName('open-science-notebook/notebook_execute')).toBe(true)
   })
 
   it('does not match the bare leaf name alone (no server segment to verify)', () => {

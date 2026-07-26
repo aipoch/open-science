@@ -26,6 +26,7 @@ describe('describePermissionRequest', () => {
           title: `mcp__open-science-notebook__${tool}`,
           providerToolName: `mcp__open-science-notebook__${tool}`,
           isMcp: true,
+          mcpIdentity: `open-science-notebook/${tool}`,
           rawInput
         })
       )
@@ -40,7 +41,8 @@ describe('describePermissionRequest', () => {
         request({
           title: 'mcp__open-science-notebook__notebook_restart',
           providerToolName: 'mcp__open-science-notebook__notebook_restart',
-          isMcp: true
+          isMcp: true,
+          mcpIdentity: 'open-science-notebook/notebook_restart'
         })
       )
     ).toMatchObject({
@@ -57,7 +59,8 @@ describe('describePermissionRequest', () => {
       describePermissionRequest(
         request({
           title: 'mcp__open-science-notebook__list_notebook_runtimes',
-          isMcp: true
+          isMcp: true,
+          mcpIdentity: 'open-science-notebook/list_notebook_runtimes'
         })
       )
     ).toMatchObject({
@@ -80,27 +83,29 @@ describe('describePermissionRequest', () => {
       describePermissionRequest(
         request({
           title: 'mcp__research-service__search_papers',
-          isMcp: true
+          isMcp: true,
+          mcpIdentity: 'research-service/search_papers'
         })
       ).actionDetail
     ).toBe('Research Service / Search Papers')
   })
 
-  it('classifies the managed artifact writer as internal artifact storage', () => {
+  it('classifies the managed artifact writer as an artifact save', () => {
     expect(
       describePermissionRequest(
         request({
           title: 'mcp__open-science-artifacts__write_artifact_file',
-          isMcp: true
+          isMcp: true,
+          mcpIdentity: 'open-science-artifacts/write_artifact_file'
         })
       )
     ).toMatchObject({
-      actionTitle: 'Write artifact file?',
-      categoryLabel: 'Artifact storage'
+      actionTitle: 'Save as artifact?',
+      categoryLabel: 'Artifact save'
     })
   })
 
-  it('classifies a raw MCP protocol name even when the provider omits isMcp', () => {
+  it('does not infer MCP origin from a raw protocol name in the renderer', () => {
     expect(
       describePermissionRequest(
         request({
@@ -110,28 +115,55 @@ describe('describePermissionRequest', () => {
         })
       )
     ).toMatchObject({
-      actionTitle: 'Use external service?',
-      categoryLabel: 'External service',
-      actionDetail: 'Runner / Execute'
+      actionTitle: 'Run command?',
+      categoryLabel: 'Command execution'
     })
   })
 
-  it('uses the provider identity when an MCP title is generic', () => {
+  it('uses the broker-projected MCP identity when an MCP title is generic', () => {
     expect(
       describePermissionRequest(
         request({
           title: 'Run MCP tool',
           providerToolName: 'mcp__reviewer__review_document',
-          isMcp: true
+          isMcp: true,
+          mcpIdentity: 'reviewer/review_document'
         })
       ).actionDetail
     ).toBe('Reviewer / Review Document')
   })
 
-  it('does not split dots in a human-readable MCP title', () => {
+  it('keeps the stable MCP identity when a provider title is human-readable', () => {
     expect(
-      describePermissionRequest(request({ title: 'Write report.md', isMcp: true })).actionDetail
-    ).toBe('Write report.md')
+      describePermissionRequest(
+        request({
+          title: 'Write report.md',
+          isMcp: true,
+          mcpIdentity: 'research-service/write_report'
+        })
+      ).actionDetail
+    ).toBe('Research Service / Write Report')
+  })
+
+  it('does not give a sanitized notebook-looking non-MCP name notebook privileges', () => {
+    expect(
+      describePermissionRequest(
+        request({ title: 'open_science_notebook_notebook_restart', isMcp: false })
+      ).categoryLabel
+    ).toBe('Tool access')
+  })
+
+  it('uses a trusted canonical identity for Codex notebook execution', () => {
+    expect(
+      describePermissionRequest(
+        request({
+          title: 'execute',
+          isMcp: true,
+          mcpIdentity: 'open-science-notebook/notebook_execute',
+          rawInput: { language: 'r', code: 'x <- 1' }
+        })
+      )
+    ).toMatchObject({ actionTitle: 'Run R code?', categoryLabel: 'R execution' })
   })
 
   it('keeps unrecognized MCP requests in the external-service category', () => {
