@@ -28,6 +28,7 @@ import {
 import { parseSkillDocument } from './frontmatter'
 import type { BundledSkill } from './registry'
 import { readSkillFile } from './skill-files'
+import { isSkillManifestPath } from './skill-bundle-paths'
 import { extractZip, extractZipLenient } from './zip-extract'
 
 const log = createLogger('skills')
@@ -183,9 +184,8 @@ type SkillRoot = { subPath: string; files: FetchedSkillFile[] }
 const findSkillRoots = (entries: { path: string; content: Buffer }[]): SkillRoot[] => {
   const candidates = new Set<string>()
   for (const entry of entries) {
+    if (!isSkillManifestPath(entry.path)) continue
     const segments = entry.path.split('/')
-    if (segments[segments.length - 1].toLowerCase() !== 'skill.md') continue
-    if (segments.length > 3) continue
     candidates.add(segments.slice(0, -1).join('/'))
   }
 

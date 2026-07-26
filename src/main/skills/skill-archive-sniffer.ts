@@ -2,6 +2,7 @@ import { open, type FileHandle } from 'node:fs/promises'
 import { inflateRaw } from 'node:zlib'
 
 import { parseSkillDocument } from './frontmatter'
+import { isSkillManifestPath } from './skill-bundle-paths'
 
 const EOCD_SIGNATURE = 0x06054b50
 const CENTRAL_SIGNATURE = 0x02014b50
@@ -188,11 +189,7 @@ const isImportableSkillArchivePath = async (filePath: string): Promise<boolean> 
     for (const entry of entries) {
       if (!isSafeArchivePath(entry.name) || entry.name.endsWith('/')) continue
 
-      const normalizedName = entry.name.toLowerCase()
-      // A nested `.skill` file is itself an explicit package signal. The later importer still performs
-      // full bounded extraction and preview before the user can approve anything.
-      if (normalizedName.endsWith('.skill')) return true
-      if (normalizedName.split('/').pop() !== 'skill.md') continue
+      if (!isSkillManifestPath(entry.name)) continue
 
       candidateCount += 1
       totalCompressedBytes += entry.compressedSize

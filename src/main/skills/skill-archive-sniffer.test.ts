@@ -108,15 +108,22 @@ describe('isImportableSkillArchivePath', () => {
     await expect(inspect(oversized)).resolves.toBe(false)
   })
 
-  it('recognizes an explicitly named nested .skill package from the central directory', async () => {
-    const archive = buildZip([
+  it('does not classify an ordinary ZIP by a nested filename or an ineligible deep manifest', async () => {
+    const nestedFilename = buildZip([
       {
         path: 'bundles/paper-finder.skill',
         content: Buffer.from('nested archive bytes'),
         method: 0
       }
     ])
+    const deepManifest = buildZip([
+      {
+        path: 'a/b/c/SKILL.md',
+        content: Buffer.from('---\nname: Too Deep\ndescription: hidden\n---\nBody')
+      }
+    ])
 
-    await expect(inspect(archive)).resolves.toBe(true)
+    await expect(inspect(nestedFilename)).resolves.toBe(false)
+    await expect(inspect(deepManifest)).resolves.toBe(false)
   })
 })
