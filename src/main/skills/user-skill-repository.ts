@@ -345,6 +345,28 @@ const discoverSkillRoots = (zip: Buffer): SkillDiscovery => {
   return { roots: roots.sort((a, b) => a.subPath.localeCompare(b.subPath)), skipped }
 }
 
+// Pure, read-only classification for conversation attachments. A `.zip` is only advertised to the
+// Skill import tool when the same bounded archive discovery used by preview finds at least one
+// SKILL.md with a valid non-empty name. Invalid/ordinary archives fail closed and keep their generic
+// attachment representation; `.skill` files carry an explicit format signal and do not need this
+// content sniff.
+const isImportableSkillArchive = (zip: Buffer): boolean => {
+  try {
+    return discoverSkillRoots(zip).roots.some((root) => {
+      const skillMd = root.files.find((file) => file.relativePath.toLowerCase() === 'skill.md')
+      if (!skillMd) return false
+
+      try {
+        return Boolean(parseSkillDocument(skillMd.content.toString('utf8')).name?.trim())
+      } catch {
+        return false
+      }
+    })
+  } catch {
+    return false
+  }
+}
+
 // Reads and writes user-authored (personal) and imported skills under `<storageRoot>/skills/`.
 class UserSkillRepository {
   constructor(private readonly storageRoot: string) {}
@@ -1586,4 +1608,4 @@ class UserSkillRepository {
   }
 }
 
-export { UserSkillRepository, parseUserSkillId, toSlug, frontmatterBlock }
+export { UserSkillRepository, frontmatterBlock, isImportableSkillArchive, parseUserSkillId, toSlug }

@@ -83,6 +83,7 @@ const createRuntime = ({
   settingsService,
   initializationBarrier,
   taskNotifications,
+  onSessionCancelled,
   onAllSessionsCancelled
 }: AcpIpcOptions): AcpRuntimeCoordinator => {
   const configRoot = resolveConfigRoot()
@@ -153,7 +154,8 @@ const createRuntime = ({
     callbacks,
     defaultCwd,
     initializationBarrier,
-    onAllSessionsCancelled
+    onAllSessionsCancelled,
+    onSessionCancelled
   )
 }
 
@@ -215,13 +217,15 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator =
 
     return runtime.getSnapshot()
   })
-  ipcMain.handle('acp:cancel', (_event, request: AcpCancelPromptRequest) => {
+  ipcMain.handle('acp:cancel', async (_event, request: AcpCancelPromptRequest) => {
+    const snapshot = await runtime.cancelPrompt(request)
     options.onSessionCancelled?.(request.sessionId)
-    return runtime.cancelPrompt(request)
+    return snapshot
   })
-  ipcMain.handle('acp:delete-session', (_event, request: AcpDeleteSessionRequest) => {
+  ipcMain.handle('acp:delete-session', async (_event, request: AcpDeleteSessionRequest) => {
+    const snapshot = await runtime.deleteSession(request)
     options.onSessionCancelled?.(request.sessionId)
-    return runtime.deleteSession(request)
+    return snapshot
   })
   ipcMain.handle('acp:respond-permission', (_event, response: AcpPermissionResponse) =>
     runtime.respondToPermission(response)

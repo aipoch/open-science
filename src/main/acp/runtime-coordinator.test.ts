@@ -222,6 +222,7 @@ describe('AcpRuntimeCoordinator', () => {
   it('does not connect after shutdown supersedes initialization', async () => {
     const initialization = createDeferred()
     const created: ReturnType<typeof createFakeRuntime>[] = []
+    const onDisconnected = vi.fn()
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) => {
         const fake = createFakeRuntime({
@@ -234,7 +235,8 @@ describe('AcpRuntimeCoordinator', () => {
       },
       {},
       '',
-      initialization.promise
+      initialization.promise,
+      onDisconnected
     )
 
     const connecting = coordinator.connect()
@@ -243,6 +245,10 @@ describe('AcpRuntimeCoordinator', () => {
 
     await expect(connecting).rejects.toThrow(/superseded/i)
     expect(created[0].connect).not.toHaveBeenCalled()
+    expect(vi.mocked(created[0].runtime.shutdown)).toHaveBeenCalledOnce()
+    expect(vi.mocked(created[0].runtime.shutdown).mock.invocationCallOrder[0]).toBeLessThan(
+      onDisconnected.mock.invocationCallOrder[0]
+    )
   })
 
   it('shares one conversation permission store across runtime generations', async () => {
@@ -391,6 +397,37 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[1].disconnect).toHaveBeenCalledOnce()
     activeDisconnect.resolve(emptySnapshot())
     await expect(disconnecting).rejects.toThrow('old disconnect failed')
+  })
+
+  it('invalidates only sessions owned by a runtime that closes unexpectedly', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const onSessionUnavailable = vi.fn()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+          sessionIds: [`session-${created.length + 1}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      {},
+      '',
+      undefined,
+      undefined,
+      onSessionUnavailable
+    )
+
+    await coordinator.createSession()
+    await coordinator.requestAgentFrameworkSwitch()
+    await coordinator.createSession()
+
+    created[0].emitState({ status: 'closed', sessionId: undefined, sessionIds: [] })
+
+    expect(onSessionUnavailable).toHaveBeenCalledOnce()
+    expect(onSessionUnavailable).toHaveBeenCalledWith('session-1')
+    expect(onSessionUnavailable).not.toHaveBeenCalledWith('session-2')
   })
 
   it('attempts every runtime quit teardown before surfacing a partial failure', async () => {
@@ -703,18 +740,26 @@ describe('AcpRuntimeCoordinator', () => {
 
   it('removes a runtime from aggregation after its retirement completes', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
-    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      const fake = createFakeRuntime({
-        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
-        sessionIds: [`session-${created.length + 1}`],
-        callbacks
-      })
-      fake.requestRetirement.mockImplementation(async () => {
-        callbacks.onRetired?.()
-      })
-      created.push(fake)
-      return fake.runtime
-    })
+    const onSessionUnavailable = vi.fn()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+          sessionIds: [`session-${created.length + 1}`],
+          callbacks
+        })
+        fake.requestRetirement.mockImplementation(async () => {
+          callbacks.onRetired?.()
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      {},
+      '',
+      undefined,
+      undefined,
+      onSessionUnavailable
+    )
 
     await coordinator.createSession()
     created[0].emitEvent({
@@ -729,6 +774,8 @@ describe('AcpRuntimeCoordinator', () => {
 
     expect(coordinator.getSnapshot().events).toEqual([])
     expect(coordinator.getSnapshot().sessionIds).toEqual([])
+    expect(onSessionUnavailable).toHaveBeenCalledOnce()
+    expect(onSessionUnavailable).toHaveBeenCalledWith('session-1')
   })
 
   it('projects connection status from each session owning runtime', async () => {

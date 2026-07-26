@@ -1315,13 +1315,13 @@ describe('ACP runtime session management', () => {
     ).resolves.toBe('hello from upload')
   })
 
-  it('sends Skill packages as text references instead of unsupported ZIP file parts', async () => {
+  it('keeps ordinary ZIP uploads as resources while sending explicit Skill packages as text', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
     const stagedAttachments = await uploadRepository.stageFiles({
       files: [
         {
-          name: 'example-skill.zip',
+          name: 'ordinary-data.zip',
           mimeType: 'application/zip',
           content: Buffer.from('zip-bytes').toString('base64')
         },
@@ -1355,9 +1355,11 @@ describe('ACP runtime session management', () => {
 
     expect(receivedPrompts).toHaveLength(1)
     expect(receivedPrompts[0][1]).toMatchObject({
-      type: 'text',
-      text: expect.stringMatching(
-        /"uri":"file:\/\/\/.*\/uploads\/default-project\/remote-session-1\/example-skill\.zip"/
+      type: 'resource_link',
+      name: 'ordinary-data.zip',
+      mimeType: 'application/zip',
+      uri: expect.stringMatching(
+        /file:\/\/\/.*\/uploads\/default-project\/remote-session-1\/ordinary-data\.zip/
       )
     })
     expect(receivedPrompts[0][2]).toMatchObject({
@@ -1366,9 +1368,6 @@ describe('ACP runtime session management', () => {
         /"uri":"file:\/\/\/.*\/uploads\/default-project\/remote-session-1\/example-package\.skill"/
       )
     })
-    expect(receivedPrompts[0]).not.toContainEqual(
-      expect.objectContaining({ type: 'resource_link' })
-    )
   })
 
   it('inlines an image attachment as pixels when the browser sent no usable MIME type', async () => {
@@ -2098,6 +2097,21 @@ describe('ACP runtime session management', () => {
       }
     })
 
+    // An artifact-backed Skill package is not owned by the upload-only import tool, so the prompt
+    // must retain it as an ordinary resource instead of advertising an unusable import URI.
+    const skillArtifact = await artifactRepository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'remote-session-1',
+      runId: 'run-1',
+      filename: 'generated.skill',
+      mimeType: 'application/octet-stream',
+      source: {
+        kind: 'inline',
+        content: Buffer.from('skill-archive-bytes').toString('base64'),
+        encoding: 'base64'
+      }
+    })
+
     const process = new FakeAgentProcess()
     const receivedPrompts: ContentBlock[][] = []
     startFakeAgent(process, ['remote-session-1'], {
@@ -2144,6 +2158,13 @@ describe('ACP runtime session management', () => {
           path: binaryArtifact.path,
           source: 'artifact',
           mimeType: binaryArtifact.mimeType
+        },
+        {
+          id: 'a3',
+          name: skillArtifact.name,
+          path: skillArtifact.path,
+          source: 'artifact',
+          mimeType: skillArtifact.mimeType
         }
       ]
     })
@@ -2173,6 +2194,14 @@ describe('ACP runtime session management', () => {
       title: 'data.bin',
       mimeType: 'application/octet-stream',
       uri: expect.stringContaining('data.bin')
+    })
+    // Artifact-backed Skill package -> ordinary resource link, never the upload-only import wrapper.
+    expect(receivedPrompts[0][4]).toMatchObject({
+      type: 'resource_link',
+      name: 'generated.skill',
+      title: 'generated.skill',
+      mimeType: 'application/octet-stream',
+      uri: expect.stringContaining('generated.skill')
     })
   })
 

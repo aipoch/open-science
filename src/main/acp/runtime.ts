@@ -108,6 +108,8 @@ import {
   type SkillImportMcpEnvironment,
   type SkillImportRpcConnection
 } from '../skills/mcp-server'
+import { isImportableSkillArchive } from '../skills/user-skill-repository'
+import { SKILL_IMPORT_LIMITS } from '../skills/import-limits'
 import { getNotebookDataRoot, getNotebookSessionRoot } from '../notebook/repository'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
@@ -2886,7 +2888,8 @@ class AcpRuntime {
       uri: pathToFileURL(filePath).href,
       name: attachment.originalName || attachment.name,
       mimeType: attachment.mimeType,
-      size
+      size,
+      allowSkillImportReference: true
     })
   }
 
@@ -2904,7 +2907,10 @@ class AcpRuntime {
       uri: pathToFileURL(filePath).href,
       name: reference.name,
       mimeType: reference.mimeType,
-      size
+      size,
+      // The import tool currently owns only session uploads. Artifact-store paths remain ordinary
+      // references so the prompt never advertises a URI that main will reject at the trust boundary.
+      allowSkillImportReference: reference.source === 'upload'
     })
   }
 
@@ -2928,15 +2934,17 @@ class AcpRuntime {
     name: string
     mimeType?: string
     size: number
+    allowSkillImportReference: boolean
   }): Promise<ContentBlock[]> {
-    const { sessionId, absolutePath, uri, name, mimeType, size } = descriptor
+    const { sessionId, absolutePath, uri, name, mimeType, size, allowSkillImportReference } =
+      descriptor
 
     // ACP providers such as OpenCode reject ZIP uploads before the prompt reaches the agent
     // (`file part media type application/zip functionality not supported`). Skill packages only need
     // to expose their exact local URI: the agent passes it to the app-owned request_skill_import tool,
     // which performs parsing, validation and user confirmation. Keep the reference as JSON text so it
     // also remains usable when the user wants to inspect the archive instead of importing it.
-    if (this.isSkillPackageFile(name)) {
+    if (allowSkillImportReference && (await this.isSkillPackageFile(name, absolutePath, size))) {
       return [
         {
           type: 'text',
@@ -3038,10 +3046,13 @@ class AcpRuntime {
     return name.toLowerCase().endsWith('.pdf')
   }
 
-  private isSkillPackageFile(name: string): boolean {
+  private async isSkillPackageFile(name: string, filePath: string, size: number): Promise<boolean> {
     const normalizedName = name.toLowerCase()
 
-    return normalizedName.endsWith('.zip') || normalizedName.endsWith('.skill')
+    if (normalizedName.endsWith('.skill')) return true
+    if (!normalizedName.endsWith('.zip') || size > SKILL_IMPORT_LIMITS.maxBundleBytes) return false
+
+    return isImportableSkillArchive(await readFile(filePath))
   }
 
   // Turns a PDF into a text resource block, degrading to an explanatory note when extraction fails

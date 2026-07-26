@@ -46,7 +46,8 @@ class AcpRuntimeCoordinator {
     private readonly callbacks: AcpRuntimeCallbacks = {},
     private readonly defaultCwd = '',
     private readonly initializationBarrier?: Promise<unknown>,
-    private readonly onDisconnecting?: () => void
+    private readonly onDisconnected?: () => void,
+    private readonly onSessionUnavailable?: (sessionId: string) => void
   ) {
     this.activeRuntime = this.addRuntime()
     this.lastRuntime = this.activeRuntime
@@ -131,7 +132,6 @@ class AcpRuntimeCoordinator {
 
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
     this.supersedeInitializationRequests()
-    this.onDisconnecting?.()
     const runtimes = Array.from(this.runtimes)
     const results = await Promise.allSettled(
       runtimes.map((runtime) => runtime.disconnect(emitClosedStatus))
@@ -142,6 +142,7 @@ class AcpRuntimeCoordinator {
     // Keep ownership when any teardown fails so a later disconnect/shutdown can retry the runtime.
     if (failure) throw failure.reason
     this.clearRuntimeOwnership()
+    this.onDisconnected?.()
     return this.getSnapshot()
   }
 
@@ -149,6 +150,7 @@ class AcpRuntimeCoordinator {
     this.supersedeInitializationRequests()
     for (const runtime of this.runtimes) runtime.shutdown()
     this.clearRuntimeOwnership()
+    this.onDisconnected?.()
   }
 
   async shutdownForQuit(): Promise<{ reaped: boolean }> {
@@ -420,6 +422,7 @@ class AcpRuntimeCoordinator {
       } else {
         this.sessionConnectionStatuses.delete(sessionId)
       }
+      this.onSessionUnavailable?.(sessionId)
     }
     for (const sessionId of attached) {
       const owner = this.sessionRuntimes.get(sessionId)
@@ -445,6 +448,7 @@ class AcpRuntimeCoordinator {
       } else {
         this.sessionConnectionStatuses.delete(sessionId)
       }
+      this.onSessionUnavailable?.(sessionId)
     }
     for (const [requestId, owner] of this.permissionRuntimes) {
       if (owner === runtime) this.permissionRuntimes.delete(requestId)
@@ -487,6 +491,7 @@ class AcpRuntimeCoordinator {
     // Preserve failed runtime ownership so a bounded caller can retry or use the synchronous guard.
     if (failure) throw failure.reason
     this.clearRuntimeOwnership()
+    this.onDisconnected?.()
     return {
       reaped: outcomes.every((outcome) => outcome.status === 'fulfilled' && outcome.value.reaped)
     }

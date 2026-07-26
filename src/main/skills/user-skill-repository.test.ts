@@ -20,6 +20,7 @@ import { load as loadYaml } from 'js-yaml'
 
 import {
   UserSkillRepository,
+  isImportableSkillArchive,
   parseUserSkillId,
   toSlug,
   frontmatterBlock
@@ -395,6 +396,24 @@ describe('UserSkillRepository', () => {
     await expect(repo.importFromZip(zip)).rejects.toThrow(/SKILL\.md/)
     // Preview no longer throws: it returns nothing importable so the UI can say "no skills found".
     expect(await repo.previewZip(zip)).toEqual({ previews: [], skipped: [] })
+  })
+
+  it('classifies only ZIP archives containing a named importable Skill', () => {
+    const skill = buildZip([
+      {
+        path: 'paper-finder/SKILL.md',
+        content: Buffer.from('---\nname: Paper Finder\ndescription: Finds papers.\n---\nRun it.')
+      }
+    ])
+    const ordinary = buildZip([{ path: 'README.md', content: Buffer.from('dataset archive') }])
+    const unnamed = buildZip([
+      { path: 'SKILL.md', content: Buffer.from('---\ndescription: Missing name.\n---\nBody') }
+    ])
+
+    expect(isImportableSkillArchive(skill)).toBe(true)
+    expect(isImportableSkillArchive(ordinary)).toBe(false)
+    expect(isImportableSkillArchive(unnamed)).toBe(false)
+    expect(isImportableSkillArchive(Buffer.from('not a zip'))).toBe(false)
   })
 
   it('discovers one root for a root-level SKILL.md (subPath "")', async () => {
