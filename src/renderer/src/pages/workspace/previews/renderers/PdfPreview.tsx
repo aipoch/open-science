@@ -278,6 +278,9 @@ export const PdfPreviewContent = ({
   // The width one page fills at 100%: the content box, capped to a comfortable reading width. Owned
   // here so one ResizeObserver serves the whole document instead of one per page.
   const [fitWidth, setFitWidth] = useState(0)
+  // The real (uncapped) content-box width, used only to decide when a zoomed page actually
+  // overflows the viewport — distinct from the capped fitWidth that sizes a 100% page.
+  const [viewportWidth, setViewportWidth] = useState(0)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const measureRef = useRef<HTMLDivElement | null>(null)
   const pageDisposersRef = useRef(new Set<() => void>())
@@ -323,8 +326,11 @@ export const PdfPreviewContent = ({
     if (!element) return
 
     const measure = (): void => {
-      const width = Math.min(element.clientWidth, FIT_PAGE_WIDTH)
-      if (width > 0) setFitWidth((current) => (width === current ? current : width))
+      const raw = element.clientWidth
+      if (raw <= 0) return
+      const width = Math.min(raw, FIT_PAGE_WIDTH)
+      setFitWidth((current) => (width === current ? current : width))
+      setViewportWidth((current) => (raw === current ? current : raw))
     }
     measure()
 
@@ -427,12 +433,14 @@ export const PdfPreviewContent = ({
           </div>
         ) : null}
         {document ? (
-          // Center pages while they fit, but left-align once a zoomed page overflows: a centered
-          // overflow puts the left margin before scrollLeft=0, making it unreachable.
+          // Center pages while they fit the real viewport, but left-align once a zoomed page
+          // overflows it: a centered overflow puts the left margin before scrollLeft=0, making it
+          // unreachable. Compared against the uncapped viewport width, not the reading-width cap,
+          // so a page still fitting a wide/full-screen pane stays centered.
           <div
             className={cn(
               'flex min-w-full flex-col gap-3',
-              pageWidth > 0 && pageWidth > fitWidth ? 'items-start' : 'items-center'
+              viewportWidth > 0 && pageWidth > viewportWidth ? 'items-start' : 'items-center'
             )}
           >
             {Array.from({ length: pageCount }, (_, index) => (

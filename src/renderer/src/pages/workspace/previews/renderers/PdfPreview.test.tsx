@@ -223,6 +223,61 @@ describe('PdfPreviewContent', () => {
     clientWidthSpy.mockRestore()
   })
 
+  it('keeps a zoomed page centered on a wide pane until it overflows the real viewport', async () => {
+    // Pane is 1200px wide — well past the 768 reading-width cap. fitWidth caps at 768 but the
+    // overflow decision must use the real 1200px viewport, not the cap.
+    const clientWidthSpy = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockReturnValue(1200)
+    vi.stubGlobal('devicePixelRatio', 1)
+    getPage.mockResolvedValue({
+      getViewport: vi.fn(({ scale }: { scale: number }) => ({
+        width: 595 * scale,
+        height: 842 * scale
+      })),
+      render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+      cleanup: vi.fn()
+    })
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/wide.pdf" name="wide.pdf" source="artifact" />
+      )
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBeGreaterThan(0))
+
+    const columnClass = (): string =>
+      container.querySelector('[data-page-number]')?.parentElement?.className ?? ''
+
+    // 125% (page 768*1.25 = 960px) still fits the 1200px pane → stays centered (regression check).
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.click()
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => expect(container.textContent).toContain('125%'))
+    expect(columnClass()).toContain('items-center')
+    expect(columnClass()).not.toContain('items-start')
+
+    // 150% (960 -> 1152px) still fits → still centered.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.click()
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => expect(container.textContent).toContain('150%'))
+    expect(columnClass()).toContain('items-center')
+
+    // 175% (768*1.75 = 1344px) overflows the 1200px pane → now left-aligns.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.click()
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => expect(container.textContent).toContain('175%'))
+    expect(columnClass()).toContain('items-start')
+    expect(columnClass()).not.toContain('items-center')
+
+    clientWidthSpy.mockRestore()
+  })
+
   it('zooms proportionally on Ctrl/Cmd+wheel, coalesced per frame, and ignores plain scroll', async () => {
     const clientWidthSpy = vi
       .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
