@@ -612,6 +612,48 @@ describe('PdfPreviewContent', () => {
     clientWidthSpy.mockRestore()
   })
 
+  it('caps the backing scale at the deepest zoom to bound per-page memory', async () => {
+    const clientWidthSpy = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockReturnValue(768)
+    vi.stubGlobal('devicePixelRatio', 2)
+    // A4-like page (595x842) at 768px fit, 300% zoom, 2x DPI: the physical target scale is
+    // 768*3*2/595 = 7.74, and even the area clamp alone would allow ~5.79 (595*5.79 = 3443px).
+    // The MAX_RENDER_SCALE=5 ceiling caps it to 595*5 = 2975px so a page cannot take the full
+    // canvas-area budget.
+    getPage.mockResolvedValue({
+      getViewport: vi.fn(({ scale }: { scale: number }) => ({
+        width: 595 * scale,
+        height: 842 * scale
+      })),
+      render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+      cleanup: vi.fn()
+    })
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/deep.pdf" name="deep.pdf" source="artifact" />
+      )
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBeGreaterThan(0))
+
+    // Zoom to the 300% max (eight 25% button steps).
+    for (let i = 0; i < 8; i += 1) {
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.click()
+        await Promise.resolve()
+      })
+    }
+    await vi.waitFor(() => expect(container.textContent).toContain('300%'))
+
+    const width = container.querySelector<HTMLCanvasElement>('canvas')?.width ?? 0
+    // Scale is capped at 5 → 595*5 = 2975, below the ~3443 the area clamp alone would permit.
+    expect(width).toBe(2975)
+    expect(width).toBeLessThan(3443)
+
+    clientWidthSpy.mockRestore()
+  })
+
   it('treats a render canceled by scroll-out as teardown, not a page failure', async () => {
     let intersectionCallback: IntersectionObserverCallback | undefined
     vi.stubGlobal(

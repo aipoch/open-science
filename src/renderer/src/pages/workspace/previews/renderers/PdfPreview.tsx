@@ -76,11 +76,14 @@ const PdfZoomControls = ({
   )
 }
 // Keep the backing store within browser canvas limits so a tall/narrow or heavily zoomed page
-// cannot render blank or exhaust GPU memory: clamp each side and the total area (Chromium caps a
-// dimension at 16384 and area near 2^28). This is the only backing-resolution ceiling, so zoom
-// stays crisp at high DPI instead of being pre-capped below the physical pixels on screen.
+// cannot render blank: clamp each side and the total area (Chromium caps a dimension at 16384 and
+// area near 2^28).
 const MAX_CANVAS_DIMENSION = 8192
 const MAX_CANVAS_AREA = 16 * 1024 * 1024
+// Per-page backing-scale ceiling. Set above the ~4.5 that a full-width page needs at 175% zoom on
+// a 2x display, so normal zoom stays crisp, while capping the deepest zoom so a few near-viewport
+// pages cannot each allocate the full canvas-area budget and spike renderer memory.
+const MAX_RENDER_SCALE = 5
 
 // PDF.js rejects an in-flight render with this when cancel() is called; it is an expected teardown,
 // not a page failure, so scroll-out, preview switches, and resize rerenders must not surface it.
@@ -180,9 +183,13 @@ const PdfPageCanvas = ({
       const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1)
       const baseViewport = page.getViewport({ scale: 1 })
       // Rasterize at the physical pixels the page occupies on screen (never below intrinsic size)
-      // so zoom stays crisp at any DPI; the dimension/area clamp below is the only ceiling.
+      // so zoom stays crisp at any DPI, capped by MAX_RENDER_SCALE so the deepest zoom cannot
+      // allocate the full canvas budget per page.
       const targetCssWidth = pageWidth > 0 ? pageWidth : baseViewport.width
-      const desiredScale = Math.max(1, (targetCssWidth * devicePixelRatio) / baseViewport.width)
+      const desiredScale = Math.max(
+        1,
+        Math.min(MAX_RENDER_SCALE, (targetCssWidth * devicePixelRatio) / baseViewport.width)
+      )
       // Hard cap so neither backing dimension nor total area exceeds browser canvas limits — must
       // win over the intrinsic floor, or a page taller than the limit at scale 1 renders blank.
       const limitScale = Math.min(
