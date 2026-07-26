@@ -214,6 +214,8 @@ describe('SettingsPage layout', () => {
     // management; the agent framework moved to the Agent sub-panel.
     expect(document.body.textContent).toContain('Active model')
     expect(document.body.textContent).toContain('Reasoning effort')
+    expect(document.body.textContent).toContain('preserve relative strength when models change')
+    expect(document.body.textContent).toContain('may approximate unsupported levels')
     expect(document.body.textContent).toContain('Providers')
     expect(document.body.textContent).not.toContain('Agent framework')
     expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)

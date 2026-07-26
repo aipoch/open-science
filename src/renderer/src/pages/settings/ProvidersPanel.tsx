@@ -286,7 +286,7 @@ const ProvidersPanel = ({
       <SettingsSection
         title="Reasoning effort"
         aria-label="Reasoning effort"
-        description="Higher levels think longer, lower levels respond faster. Applies to subsequent requests."
+        description="Higher levels think longer, while lower levels respond faster. Choices follow the selected model and preserve relative strength when models change; some agent frameworks may approximate unsupported levels. Applies to subsequent requests."
         separated={visibleProviders.length > 0}
       >
         <div className="max-w-md">

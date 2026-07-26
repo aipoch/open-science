@@ -417,7 +417,9 @@ const ProviderForm = ({
               <label className="space-y-0.5" htmlFor="provider-reasoning-effort">
                 <span className="block text-xs font-medium">Reasoning effort</span>
                 <span className="block text-xs text-muted-foreground">
-                  Disable only when this model does not accept an effort parameter.
+                  Choose the exact effort levels accepted by this model. Open Science maps five
+                  relative strengths onto them. Disable when the model does not accept an effort
+                  parameter.
                 </span>
               </label>
               <Switch
