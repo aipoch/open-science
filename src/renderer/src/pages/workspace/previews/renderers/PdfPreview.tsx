@@ -23,7 +23,9 @@ const FIT_PAGE_WIDTH = 768
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 3
 const ZOOM_BUTTON_STEP = 0.25
-const ZOOM_WHEEL_STEP = 0.1
+// Wheel zoom is proportional to accumulated deltaY so one trackpad/pinch gesture (many small
+// events) maps to a controlled amount rather than a full step per event. ~100px notch ≈ 0.25.
+const ZOOM_WHEEL_SENSITIVITY = 0.0025
 
 const clampZoom = (zoom: number): number => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom))
 
@@ -285,19 +287,32 @@ export const PdfPreviewContent = ({
   }, [])
 
   // Ctrl/Cmd+wheel zooms the document instead of scrolling, matching the image preview gesture.
+  // A trackpad/pinch emits many small wheel events per gesture, so accumulate deltaY and apply it
+  // proportionally once per frame — one gesture yields a controlled zoom and few rerasterizations.
   useEffect(() => {
     const element = scrollRef.current
     if (!element) return
 
+    let pendingDelta = 0
+    let frame: number | undefined
+    const flush = (): void => {
+      frame = undefined
+      const delta = pendingDelta
+      pendingDelta = 0
+      if (delta !== 0) setZoom((current) => clampZoom(current - delta * ZOOM_WHEEL_SENSITIVITY))
+    }
     const handleWheel = (event: WheelEvent): void => {
       if (!event.ctrlKey && !event.metaKey) return
       event.preventDefault()
-      const direction = event.deltaY < 0 ? 1 : -1
-      setZoom((current) => clampZoom(current + direction * ZOOM_WHEEL_STEP))
+      pendingDelta += event.deltaY
+      frame ??= requestAnimationFrame(flush)
     }
 
     element.addEventListener('wheel', handleWheel, { passive: false })
-    return () => element.removeEventListener('wheel', handleWheel)
+    return () => {
+      element.removeEventListener('wheel', handleWheel)
+      if (frame !== undefined) cancelAnimationFrame(frame)
+    }
   }, [])
 
   // Measure the content-box width before paint (zero-height probe, unaffected by page overflow) so

@@ -223,11 +223,17 @@ describe('PdfPreviewContent', () => {
     clientWidthSpy.mockRestore()
   })
 
-  it('zooms on Ctrl/Cmd+wheel and ignores a plain wheel scroll', async () => {
+  it('zooms proportionally on Ctrl/Cmd+wheel, coalesced per frame, and ignores plain scroll', async () => {
     const clientWidthSpy = vi
       .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
       .mockReturnValue(400)
     vi.stubGlobal('devicePixelRatio', 1)
+    // Flush the wheel handler's requestAnimationFrame coalescing synchronously.
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
+      cb(0)
+      return 1
+    })
+    vi.stubGlobal('cancelAnimationFrame', () => undefined)
     getPage.mockResolvedValue({
       getViewport: vi.fn(({ scale }: { scale: number }) => ({
         width: 400 * scale,
@@ -257,14 +263,15 @@ describe('PdfPreviewContent', () => {
     })
     expect(container.textContent).toContain('100%')
 
-    // Ctrl+wheel up zooms in by one wheel step (100% -> 110%).
+    // Ctrl+wheel scales proportionally: deltaY -100 * 0.0025 = +0.25 (100% -> 125%), not a full
+    // step per event. Two small events in one frame coalesce into a single controlled change.
     await act(async () => {
       scroll?.dispatchEvent(
         new WheelEvent('wheel', { deltaY: -100, ctrlKey: true, bubbles: true, cancelable: true })
       )
       await Promise.resolve()
     })
-    await vi.waitFor(() => expect(container.textContent).toContain('110%'))
+    await vi.waitFor(() => expect(container.textContent).toContain('125%'))
 
     clientWidthSpy.mockRestore()
   })
