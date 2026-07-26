@@ -4162,6 +4162,43 @@ describe('SettingsService: importAgentHomeSkills', () => {
     )
   })
 
+  it('tracks imported state independently for same-slug skills from different sources', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-agent-duplicate-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-agent-shared-'))
+    await seedSkill(userClaudeDir, 'duplicate')
+    await seedSkill(userAgentsDir, 'duplicate')
+    const service = createService(undefined, { userClaudeDir, userAgentsDir })
+    await repository.setAgentFramework('claude-code')
+
+    const first = await service.importAgentHomeSkills({
+      skills: [{ source: 'agents', slug: 'duplicate' }]
+    })
+
+    expect(first.results[0]).toMatchObject({
+      source: 'agents',
+      slug: 'duplicate',
+      status: 'imported',
+      id: 'imported-duplicate'
+    })
+    expect(await service.listAgentHomeSkills()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: 'agents', slug: 'duplicate', alreadyImported: true }),
+        expect.objectContaining({ source: 'claude', slug: 'duplicate', alreadyImported: false })
+      ])
+    )
+
+    const second = await service.importAgentHomeSkills({
+      skills: [{ source: 'claude', slug: 'duplicate' }]
+    })
+
+    expect(second.results[0]).toMatchObject({
+      source: 'claude',
+      slug: 'duplicate',
+      status: 'imported',
+      id: 'imported-duplicate-2'
+    })
+  })
+
   it('reports unsafe slugs and unavailable sources without aborting other selected skills', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-agent-escape-'))
     const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-agent-shared-'))

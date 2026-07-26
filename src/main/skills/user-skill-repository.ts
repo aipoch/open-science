@@ -5,6 +5,8 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { dump as dumpYaml } from 'js-yaml'
 
 import type {
+  AgentHomeSkillRef,
+  AgentHomeSkillSource,
   SkillBundlePreview,
   SkillBundlePreviewResult,
   SkillReference,
@@ -110,6 +112,17 @@ export type ImportOutcome = { status: 'imported' | 'unchanged' | 'updated'; id: 
 
 // Records the origin + content signature of an imported skill so re-imports can be deduplicated.
 const SOURCE_MANIFEST = '.source.json'
+
+type ImportedSourceManifest = {
+  url?: string
+  signature?: string
+  agentHome?: AgentHomeSkillRef
+}
+
+const agentHomeKey = (skill: AgentHomeSkillRef): string => `${skill.source}:${skill.slug}`
+
+const isAgentHomeSkillSource = (value: unknown): value is AgentHomeSkillSource =>
+  value === 'agents' || value === 'claude' || value === 'codex'
 
 // Content signature over every file (sorted by path) used to detect upstream changes on re-import.
 const signatureOf = (files: FetchedSkillFile[]): string => {
@@ -768,16 +781,46 @@ class UserSkillRepository {
     return { urls, slugs }
   }
 
-  private async readSource(slug: string): Promise<{ url?: string; signature?: string } | null> {
+  private async readSource(slug: string): Promise<ImportedSourceManifest | null> {
     try {
       const raw = await readFile(join(this.skillDir('imported', slug), SOURCE_MANIFEST), 'utf8')
       const parsed = JSON.parse(raw) as unknown
-      return typeof parsed === 'object' && parsed !== null
-        ? (parsed as Record<string, string>)
-        : null
+      if (typeof parsed !== 'object' || parsed === null) return null
+
+      const record = parsed as Record<string, unknown>
+      const manifest: ImportedSourceManifest = {}
+      if (typeof record.url === 'string') manifest.url = record.url
+      if (typeof record.signature === 'string') manifest.signature = record.signature
+
+      if (typeof record.agentHome === 'object' && record.agentHome !== null) {
+        const agentHome = record.agentHome as Record<string, unknown>
+        if (isAgentHomeSkillSource(agentHome.source) && typeof agentHome.slug === 'string') {
+          manifest.agentHome = { source: agentHome.source, slug: agentHome.slug }
+        }
+      }
+
+      return manifest
     } catch {
       return null
     }
+  }
+
+  private async importedAgentHomeKeys(): Promise<Set<string>> {
+    const keys = new Set<string>()
+    for (const slug of await this.listSlugs('imported')) {
+      const source = await this.readSource(slug)
+      if (source?.agentHome) keys.add(agentHomeKey(source.agentHome))
+    }
+    return keys
+  }
+
+  private async findImportedSlugByAgentHome(skill: AgentHomeSkillRef): Promise<string | undefined> {
+    const key = agentHomeKey(skill)
+    for (const slug of await this.listSlugs('imported')) {
+      const source = await this.readSource(slug)
+      if (source?.agentHome && agentHomeKey(source.agentHome) === key) return slug
+    }
+    return undefined
   }
 
   // Writes an imported skill's files (replacing any prior copy) plus its source manifest.
@@ -959,7 +1002,10 @@ class UserSkillRepository {
   // A candidate must be a safe-slug directory with a readable SKILL.md; arbitrary sibling folders
   // are not import choices. Frontmatter supplies the displayed name/description, while the directory
   // name remains the stable slug. Hidden transaction directories are ignored.
-  async listAgentHomeSkills(homeSkillsDir: string): Promise<
+  async listAgentHomeSkills(
+    homeSkillsDir: string,
+    source: AgentHomeSkillSource
+  ): Promise<
     {
       slug: string
       name: string
@@ -985,9 +1031,9 @@ class UserSkillRepository {
       throw error
     }
 
-    // Cross-check the existing imported-skill slugs once (rather than per row) so the "already
-    // imported" badge stays in sync with the same ids the Settings list renders.
-    const importedSlugs = new Set(await this.listSlugs('imported'))
+    // Cross-check existing source identities once (rather than per row) so the "already imported"
+    // badge distinguishes same-slug skills discovered in different global sources.
+    const importedSkills = await this.importedAgentHomeKeys()
 
     const out: {
       slug: string
@@ -1014,7 +1060,7 @@ class UserSkillRepository {
         name,
         description,
         path,
-        alreadyImported: importedSlugs.has(slug)
+        alreadyImported: importedSkills.has(agentHomeKey({ source, slug }))
       })
     }
 
@@ -1024,12 +1070,10 @@ class UserSkillRepository {
   // Imports a single agent-home skill by copying its source subtree under the imported-skill store.
   // The copy preserves the directory layout (SKILL.md + references/) so the skill is byte-for-byte
   // the same shape Open Science would have produced from a fresh in-app edit. Suffix allocation
-  // mirrors importFromZip: a taken slug gets `-2`, `-3`, ... appended so re-running the import never
-  // clobbers an existing record.
-  async importAgentHomeSkill(
-    sourcePath: string,
-    requestedSlug = basename(sourcePath)
-  ): Promise<ImportOutcome> {
+  // mirrors importFromZip: the same source identity is unchanged, while a same-name skill from a
+  // different source gets `-2`, `-3`, ... appended and never clobbers an existing record.
+  async importAgentHomeSkill(sourcePath: string, skill: AgentHomeSkillRef): Promise<ImportOutcome> {
+    const requestedSlug = skill.slug
     if (!SAFE_SLUG.test(requestedSlug)) {
       throw new Error(`Refusing to import agent-home skill with unsafe slug: ${requestedSlug}`)
     }
@@ -1048,6 +1092,9 @@ class UserSkillRepository {
     return this.runExclusive(async () => {
       await this.doRecoverImportedTransactions()
 
+      const existingSlug = await this.findImportedSlugByAgentHome(skill)
+      if (existingSlug) return { status: 'unchanged', id: `imported-${existingSlug}` }
+
       const slug = await this.uniqueSlug('imported', requestedSlug)
       const destination = this.skillDir('imported', slug)
 
@@ -1057,12 +1104,20 @@ class UserSkillRepository {
           force: false,
           errorOnExist: true,
           filter: async (entry) => {
+            if (resolve(entry) === resolve(sourcePath, SOURCE_MANIFEST)) {
+              throw new Error(`Skill import may not include the reserved file ${SOURCE_MANIFEST}.`)
+            }
             if ((await lstat(entry)).isSymbolicLink()) {
               throw new Error(`Refusing to import an agent-home Skill containing a symbolic link.`)
             }
             return true
           }
         })
+        await writeFile(
+          join(destination, SOURCE_MANIFEST),
+          JSON.stringify({ agentHome: skill }, null, 2),
+          { flag: 'wx' }
+        )
       } catch (error) {
         await rm(destination, { recursive: true, force: true }).catch(() => undefined)
         throw error

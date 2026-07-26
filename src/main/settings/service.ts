@@ -1138,7 +1138,7 @@ class SettingsService {
     const sources = this.resolveAgentHomeSkillDirs(framework)
     const groups = await Promise.all(
       sources.map(async ({ source, dir }) => {
-        const skills = await this.userSkills.listAgentHomeSkills(dir)
+        const skills = await this.userSkills.listAgentHomeSkills(dir, source)
         const visible: AgentHomeSkillView[] = []
 
         for (const skill of skills) {
@@ -1217,7 +1217,7 @@ class SettingsService {
           skill.slug,
           availableSources
         )
-        const outcome = await this.userSkills.importAgentHomeSkill(sourcePath, skill.slug)
+        const outcome = await this.userSkills.importAgentHomeSkill(sourcePath, skill)
 
         results.push({ ...ref, status: outcome.status, id: outcome.id })
       } catch (error) {

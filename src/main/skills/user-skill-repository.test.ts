@@ -1285,24 +1285,27 @@ describe('UserSkillRepository: agent-home import', () => {
     await seedSkill(home, 'alpha')
     await seedSkill(home, 'beta')
 
-    const items = await repo.listAgentHomeSkills(join(home, 'skills'))
+    const items = await repo.listAgentHomeSkills(join(home, 'skills'), 'agents')
 
     expect(items.map((i) => i.slug).sort()).toEqual(['alpha', 'beta'])
     expect(items.every((i) => i.alreadyImported === false)).toBe(true)
     expect(items[0].path).toBe(join(home, 'skills', items[0].slug))
   })
 
-  it('marks a skill as alreadyImported when an imported record with the same slug exists', async () => {
+  it('marks a skill as alreadyImported when the same source identity exists', async () => {
     // The renderer uses alreadyImported to flip the row to a "Imported" badge and hide the action
-    // button. The match is by slug (top-level dir name), not by content signature.
+    // button. The match is by source plus slug, not by content signature.
     const storage = await makeStorage()
     const repo = new UserSkillRepository(storage)
     const home = await mkdtemp(join(tmpdir(), 'os-list-agent-'))
     await seedSkill(home, 'alpha')
 
-    await repo.importAgentHomeSkill(join(home, 'skills', 'alpha'))
+    await repo.importAgentHomeSkill(join(home, 'skills', 'alpha'), {
+      source: 'agents',
+      slug: 'alpha'
+    })
 
-    const items = await repo.listAgentHomeSkills(join(home, 'skills'))
+    const items = await repo.listAgentHomeSkills(join(home, 'skills'), 'agents')
     expect(items[0].alreadyImported).toBe(true)
   })
 
@@ -1315,7 +1318,7 @@ describe('UserSkillRepository: agent-home import', () => {
     await mkdir(join(home, 'skills', 'empty-directory'))
     await seedSkill(home, 'alpha')
 
-    const items = await repo.listAgentHomeSkills(join(home, 'skills'))
+    const items = await repo.listAgentHomeSkills(join(home, 'skills'), 'agents')
     expect(items.map((i) => i.slug)).toEqual(['alpha'])
   })
 
@@ -1328,7 +1331,7 @@ describe('UserSkillRepository: agent-home import', () => {
       const target = await seedSkill(home, 'real-skill')
       await symlink(target, join(home, 'skills', 'linked-skill'))
 
-      const items = await repo.listAgentHomeSkills(join(home, 'skills'))
+      const items = await repo.listAgentHomeSkills(join(home, 'skills'), 'agents')
 
       expect(items.map((item) => item.slug)).toEqual(['linked-skill', 'real-skill'])
     }
@@ -1339,7 +1342,7 @@ describe('UserSkillRepository: agent-home import', () => {
     const repo = new UserSkillRepository(storage)
     const home = await mkdtemp(join(tmpdir(), 'os-list-agent-'))
 
-    const items = await repo.listAgentHomeSkills(join(home, 'skills'))
+    const items = await repo.listAgentHomeSkills(join(home, 'skills'), 'agents')
     expect(items).toEqual([])
   })
 
@@ -1349,7 +1352,10 @@ describe('UserSkillRepository: agent-home import', () => {
     const home = await mkdtemp(join(tmpdir(), 'os-import-agent-'))
     await seedSkill(home, 'alpha')
 
-    const outcome = await repo.importAgentHomeSkill(join(home, 'skills', 'alpha'))
+    const outcome = await repo.importAgentHomeSkill(join(home, 'skills', 'alpha'), {
+      source: 'agents',
+      slug: 'alpha'
+    })
 
     expect(outcome).toEqual({ status: 'imported', id: 'imported-alpha' })
     const skills = await repo.list()
@@ -1362,9 +1368,12 @@ describe('UserSkillRepository: agent-home import', () => {
     const home = await mkdtemp(join(tmpdir(), 'os-import-agent-'))
     // No seedSkill — the path resolves to a non-existent directory.
 
-    await expect(repo.importAgentHomeSkill(join(home, 'skills', 'missing'))).rejects.toThrow(
-      /not available/
-    )
+    await expect(
+      repo.importAgentHomeSkill(join(home, 'skills', 'missing'), {
+        source: 'agents',
+        slug: 'missing'
+      })
+    ).rejects.toThrow(/not available/)
     // No record should have been created on the failure path.
     expect(await repo.list()).toEqual([])
   })
@@ -1376,25 +1385,36 @@ describe('UserSkillRepository: agent-home import', () => {
     // Create a directory whose name fails the SAFE_SLUG regex.
     await mkdir(join(home, 'skills', 'has spaces'), { recursive: true })
 
-    await expect(repo.importAgentHomeSkill(join(home, 'skills', 'has spaces'))).rejects.toThrow(
-      /unsafe slug/
-    )
+    await expect(
+      repo.importAgentHomeSkill(join(home, 'skills', 'has spaces'), {
+        source: 'agents',
+        slug: 'has spaces'
+      })
+    ).rejects.toThrow(/unsafe slug/)
   })
 
-  it('appends a unique-suffix when the same slug is imported twice (no clobber)', async () => {
-    // The uniqueSlug mirror logic in importFromZip carries over to the agent-home import: a taken
-    // slug gets `-2`, `-3`, ... appended so re-running the import never overwrites an existing
-    // record. This is the "conflict" path the AI review called out.
+  it('deduplicates the same installed skill identity while suffixing a cross-source collision', async () => {
     const storage = await makeStorage()
     const repo = new UserSkillRepository(storage)
     const home = await mkdtemp(join(tmpdir(), 'os-import-agent-'))
     await seedSkill(home, 'alpha')
 
-    const first = await repo.importAgentHomeSkill(join(home, 'skills', 'alpha'))
-    const second = await repo.importAgentHomeSkill(join(home, 'skills', 'alpha'))
+    const first = await repo.importAgentHomeSkill(join(home, 'skills', 'alpha'), {
+      source: 'agents',
+      slug: 'alpha'
+    })
+    const repeated = await repo.importAgentHomeSkill(join(home, 'skills', 'alpha'), {
+      source: 'agents',
+      slug: 'alpha'
+    })
+    const secondSource = await repo.importAgentHomeSkill(join(home, 'skills', 'alpha'), {
+      source: 'claude',
+      slug: 'alpha'
+    })
 
     expect(first.id).toBe('imported-alpha')
-    expect(second.id).toBe('imported-alpha-2')
+    expect(repeated).toEqual({ status: 'unchanged', id: 'imported-alpha' })
+    expect(secondSource.id).toBe('imported-alpha-2')
     const skills = await repo.list()
     expect(skills.find((s) => s.id === 'imported-alpha')).toBeDefined()
     expect(skills.find((s) => s.id === 'imported-alpha-2')).toBeDefined()
@@ -1408,7 +1428,9 @@ describe('UserSkillRepository: agent-home import', () => {
     const link = join(home, 'skills', 'linked-skill')
     await symlink(target, link)
 
-    await expect(repo.importAgentHomeSkill(link)).rejects.toThrow(/symbolic link/)
+    await expect(
+      repo.importAgentHomeSkill(link, { source: 'agents', slug: 'linked-skill' })
+    ).rejects.toThrow(/symbolic link/)
     expect(await repo.list()).toEqual([])
   })
 
@@ -1424,7 +1446,9 @@ describe('UserSkillRepository: agent-home import', () => {
       await mkdir(join(source, 'references'), { recursive: true })
       await symlink(outside, join(source, 'references', 'outside.md'))
 
-      await expect(repo.importAgentHomeSkill(source)).rejects.toThrow(/symbolic link/)
+      await expect(
+        repo.importAgentHomeSkill(source, { source: 'agents', slug: 'alpha' })
+      ).rejects.toThrow(/symbolic link/)
       expect(await repo.list()).toEqual([])
     }
   )
