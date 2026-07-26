@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
 import {
   describePermissionRequest,
+  isArtifactWriteRequest,
   isMcpPermissionRequest,
   type NotebookRuntime
 } from './permission-request-presentation'
@@ -193,6 +194,7 @@ const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | 
 // A friendly action title for the code card header, matching the transcript's activity phrasing.
 const getPermissionActionTitle = (request: AcpPermissionRequest, fallback: string): string => {
   if (resolveNotebookToolName(request)) return 'Run notebook cell'
+  if (isArtifactWriteRequest(request)) return 'Artifact file input'
   if (isMcpPermissionRequest(request)) return 'External service input'
   if (request.toolKind === 'execute' || request.providerToolName === 'Bash') return 'Run command'
   return fallback
@@ -313,7 +315,13 @@ const useNotebookEnvironment = (
   return environment.name
 }
 
-const PermissionImpactTip = ({ description }: { description: string }): React.JSX.Element => (
+const PermissionImpactTip = ({
+  description,
+  detail
+}: {
+  description: string
+  detail?: string
+}): React.JSX.Element => (
   <TooltipProvider delayDuration={200}>
     <Tooltip>
       <TooltipTrigger asChild>
@@ -326,7 +334,12 @@ const PermissionImpactTip = ({ description }: { description: string }): React.JS
           <Info className="size-3.5" aria-hidden="true" />
         </button>
       </TooltipTrigger>
-      <TooltipContent className="max-w-none whitespace-nowrap">{description}</TooltipContent>
+      <TooltipContent className="max-w-none whitespace-nowrap">
+        <div className="space-y-1">
+          {detail ? <p>{detail}</p> : null}
+          <p className={detail ? 'text-muted-foreground' : undefined}>{description}</p>
+        </div>
+      </TooltipContent>
     </Tooltip>
   </TooltipProvider>
 )
@@ -564,8 +577,7 @@ const PermissionApprovalControls = ({
   const isMcp = isMcpPermissionRequest(request)
   const isShell = !isMcp && (request.toolKind === 'execute' || request.providerToolName === 'Bash')
 
-  // MCP action context stays visible alongside any code, arguments, or locations without exposing
-  // the provider's raw protocol spelling. Files, commands, and other native tools retain their target.
+  // Identity details are retained in the impact tip rather than consuming a line above the preview.
   const headerName = request.providerToolName ?? request.title
   const titleDetail = ((): string | undefined => {
     if (presentation.hideToolIdentity) return undefined
@@ -588,7 +600,7 @@ const PermissionApprovalControls = ({
           <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>
             {presentation.actionTitle}
           </span>
-          <PermissionImpactTip description={presentation.description} />
+          <PermissionImpactTip description={presentation.description} detail={titleDetail} />
         </div>
         <PermissionHeaderBadges
           lookup={notebookLookup}
@@ -597,11 +609,6 @@ const PermissionApprovalControls = ({
           scopeDescription={scopeDescription}
         />
       </div>
-
-      {/* Full request title (the target being authorized) when the header alone doesn't show it. */}
-      {titleDetail ? (
-        <div className="break-all text-xs text-muted-foreground">{titleDetail}</div>
-      ) : null}
 
       {/* Affected file targets — the canonical location field, shown so read/edit/delete
           prompts always reveal the path being authorized. Wraps to keep full values readable. */}

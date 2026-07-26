@@ -148,7 +148,7 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain(secondRequestTitle)
   })
 
-  it('labels non-notebook MCP approvals as an external service instead of command execution', () => {
+  it('labels the managed artifact writer as artifact storage instead of command execution', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls
         requests={[
@@ -164,7 +164,8 @@ describe('PermissionApprovalControls', () => {
       />
     )
 
-    expect(html).toContain('External service</span>')
+    expect(html).toContain('Artifact storage</span>')
+    expect(html).toContain('Write artifact file?')
     expect(html).not.toContain('Command execution</span>')
   })
 
@@ -185,9 +186,9 @@ describe('PermissionApprovalControls', () => {
       />
     )
 
-    expect(html).toContain('Use external service?')
-    expect(html).not.toContain('Run command?')
-    expect(html).toContain('Open Science Artifacts / Write Artifact File')
+    expect(html).toContain('Write artifact file?')
+    expect(html).toContain('Artifact storage</span>')
+    expect(html).not.toContain('Use external service?')
     expect(html).not.toContain('write_artifact_file')
     expect(html).not.toContain('mcp.open-science-artifacts')
   })
@@ -209,8 +210,8 @@ describe('PermissionApprovalControls', () => {
       />
     )
 
-    expect(html).toContain('Use external service?')
-    expect(html).toContain('Open Science Artifacts / Write Artifact File')
+    expect(html).toContain('Write artifact file?')
+    expect(html).toContain('Artifact storage</span>')
     expect(html).not.toContain(rawTitle)
     expect(html).not.toContain('Run command?')
   })
@@ -253,12 +254,12 @@ describe('PermissionApprovalControls', () => {
       />
     )
 
-    expect(html).toContain('External service</span>')
-    expect(html).toContain('Open Science Artifacts / Write Artifact File')
+    expect(html).toContain('Artifact storage</span>')
+    expect(html).not.toContain('Open Science Artifacts / Write Artifact File')
     expect(html).toContain('report.md')
   })
 
-  it('shows the title for a non-Bash execute request with no command preview', () => {
+  it('keeps a non-Bash execute title in the impact tip when no command preview exists', () => {
     // A non-Bash execute request whose command lives only in the title: extractPermissionCode
     // has no Bash fallback here, so the title is the only place the command can appear — the
     // generic "Run command?" header must not leave the prompt opaque.
@@ -274,7 +275,8 @@ describe('PermissionApprovalControls', () => {
       <PermissionApprovalControls requests={[executeTitleOnly]} onRespond={() => undefined} />
     )
     expect(html).toContain('Run command?')
-    expect(html).toContain('python scripts/run_pipeline.py --full')
+    expect(html).toContain('data-testid="permission-impact-info"')
+    expect(html).not.toContain('python scripts/run_pipeline.py --full')
   })
 
   it('serializes prompts by rendering only the first pending request', () => {
@@ -285,7 +287,7 @@ describe('PermissionApprovalControls', () => {
       />
     )
 
-    expect(html).toContain(longRequestTitle)
+    expect(html).not.toContain(longRequestTitle)
     expect(html).not.toContain(secondRequestTitle)
   })
 
@@ -490,7 +492,7 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('External service</span>')
   })
 
-  it('shows the request title as a detail line when the header hides the target', () => {
+  it('keeps the request title in the impact tip when the header hides the target', () => {
     // Provider "Write" with a target-bearing title and no rawInput: title must remain visible.
     const write: AcpPermissionRequest = {
       requestId: 'wr-1',
@@ -504,10 +506,11 @@ describe('PermissionApprovalControls', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[write]} onRespond={() => undefined} />
     )
-    expect(html).toContain('Write report.md')
+    expect(html).toContain('data-testid="permission-impact-info"')
+    expect(html).not.toContain('Write report.md')
   })
 
-  it('shows a stable built-in provider name when the title is generic', () => {
+  it('keeps a stable built-in provider name in the impact tip when the title is generic', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls
         requests={[
@@ -523,7 +526,8 @@ describe('PermissionApprovalControls', () => {
     )
 
     expect(html).toContain('Network access</span>')
-    expect(html).toContain('WebFetch')
+    expect(html).toContain('data-testid="permission-impact-info"')
+    expect(html).not.toContain('WebFetch')
   })
 
   it('keeps notebook control details in an impact tooltip without exposing its identifier', () => {

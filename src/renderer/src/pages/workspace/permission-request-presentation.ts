@@ -146,6 +146,29 @@ const isMcpPermissionRequest = (request: AcpPermissionRequest): boolean =>
   hasMcpProtocolPrefix(request.title) ||
   hasMcpProtocolPrefix(request.providerToolName)
 
+const ARTIFACT_SERVER_SEGMENT = 'open-science-artifacts'
+const ARTIFACT_WRITE_TOOL = 'write_artifact_file'
+
+const isArtifactWriteToolName = (toolName: string | undefined): boolean => {
+  const name = toolName?.trim().toLowerCase() ?? ''
+  if (!name) return false
+
+  const segments = name.split(/__|\./u)
+  if (segments.length >= 2) {
+    const tool = segments[segments.length - 1]
+    const server = segments[segments.length - 2].replace(/_/gu, '-')
+    if (server === ARTIFACT_SERVER_SEGMENT && tool === ARTIFACT_WRITE_TOOL) return true
+  }
+
+  return (
+    name === `${ARTIFACT_SERVER_SEGMENT}_${ARTIFACT_WRITE_TOOL}` ||
+    name === `open_science_artifacts_${ARTIFACT_WRITE_TOOL}`
+  )
+}
+
+const isArtifactWriteRequest = (request: AcpPermissionRequest): boolean =>
+  isArtifactWriteToolName(request.title) || isArtifactWriteToolName(request.providerToolName)
+
 // Keeps an otherwise-opaque MCP request distinguishable without surfacing its protocol spelling.
 // Provider names win when a bridge supplies only a boilerplate title.
 const isGenericMcpTitle = (title: string): boolean =>
@@ -192,6 +215,14 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
     .map(matchNotebookControlTool)
     .find((tool): tool is string => tool !== undefined)
   if (controlTool) return { ...notebookControlPresentation(controlTool), hideToolIdentity: true }
+
+  if (isArtifactWriteRequest(request)) {
+    return {
+      actionTitle: 'Write artifact file?',
+      categoryLabel: 'Artifact storage',
+      description: 'Saves a file to this conversation’s artifact storage.'
+    }
+  }
 
   // MCP metadata describes the provider's tool, not a trusted local capability. Only the
   // explicitly modeled notebook tools above receive a more specific native classification.
@@ -257,5 +288,5 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
   }
 }
 
-export { describePermissionRequest, isMcpPermissionRequest }
+export { describePermissionRequest, isArtifactWriteRequest, isMcpPermissionRequest }
 export type { NotebookRuntime, PermissionPresentation }

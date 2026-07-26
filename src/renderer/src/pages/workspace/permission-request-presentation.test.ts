@@ -79,18 +79,32 @@ describe('describePermissionRequest', () => {
     expect(
       describePermissionRequest(
         request({
-          title: 'mcp__open-science-artifacts__write_artifact_file',
+          title: 'mcp__research-service__search_papers',
           isMcp: true
         })
       ).actionDetail
-    ).toBe('Open Science Artifacts / Write Artifact File')
+    ).toBe('Research Service / Search Papers')
+  })
+
+  it('classifies the managed artifact writer as internal artifact storage', () => {
+    expect(
+      describePermissionRequest(
+        request({
+          title: 'mcp__open-science-artifacts__write_artifact_file',
+          isMcp: true
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'Write artifact file?',
+      categoryLabel: 'Artifact storage'
+    })
   })
 
   it('classifies a raw MCP protocol name even when the provider omits isMcp', () => {
     expect(
       describePermissionRequest(
         request({
-          title: 'mcp__open-science-artifacts__write_artifact_file',
+          title: 'mcp__runner__execute',
           isMcp: false,
           toolKind: 'execute'
         })
@@ -98,7 +112,7 @@ describe('describePermissionRequest', () => {
     ).toMatchObject({
       actionTitle: 'Use external service?',
       categoryLabel: 'External service',
-      actionDetail: 'Open Science Artifacts / Write Artifact File'
+      actionDetail: 'Runner / Execute'
     })
   })
 
@@ -107,11 +121,11 @@ describe('describePermissionRequest', () => {
       describePermissionRequest(
         request({
           title: 'Run MCP tool',
-          providerToolName: 'mcp__open-science-artifacts__write_artifact_file',
+          providerToolName: 'mcp__reviewer__review_document',
           isMcp: true
         })
       ).actionDetail
-    ).toBe('Open Science Artifacts / Write Artifact File')
+    ).toBe('Reviewer / Review Document')
   })
 
   it('does not split dots in a human-readable MCP title', () => {
