@@ -59,6 +59,9 @@ export type ModelConfigContext = {
   storageRoot: string
   // Absolute path to the detected framework executable (claude / opencode).
   executablePath: string
+  // Detected version of the native CLI behind an adapter. Codex uses this to trust bundled model
+  // metadata only when the model/version pair is explicitly known.
+  nativeVersion?: string
   responsesBridge?: ResponsesBridgeConnection
   // Compact connector conventions for frameworks that need host.mcp guidance in their baseline
   // instructions. Detailed connector schemas live in on-demand `mcp-*` skills. Empty ⇒ omitted.

@@ -9,6 +9,7 @@ import {
   createCodexFramework,
   normalizeResponsesBaseUrl
 } from './codex'
+import { CODEX_VERSION } from '../settings/managed-codex'
 
 const fakeChild = {} as ChildProcessWithoutNullStreams
 
@@ -23,7 +24,11 @@ describe('codexFramework', () => {
         model: 'gpt-coding',
         key: 'sk-plaintext-secret'
       },
-      { storageRoot: '/data', executablePath: '/runtime/codex-acp' }
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        nativeVersion: CODEX_VERSION
+      }
     )
 
     expect(config.env).toMatchObject({
@@ -64,17 +69,22 @@ describe('codexFramework', () => {
     })
   })
 
-  it('keeps Codex bundled model metadata when a native Responses provider selects a known model', () => {
+  it('keeps Codex bundled model metadata for a trusted official OpenAI model', () => {
     const framework = createCodexFramework()
     const config = framework.prepareModelConfig(
       {
-        type: 'custom',
+        type: 'official',
+        vendorId: 'openai',
         apiEndpoints: ['responses'],
         baseUrl: 'https://gateway.example/v1',
         model: 'gpt-5.4',
         key: 'sk-plaintext-secret'
       },
-      { storageRoot: '/data', executablePath: '/runtime/codex-acp' }
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        nativeVersion: CODEX_VERSION
+      }
     )
 
     expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).not.toHaveProperty('model_catalog_json')
@@ -85,6 +95,68 @@ describe('codexFramework', () => {
         mode: 0o600
       }
     ])
+  })
+
+  it('uses conservative local metadata for an unrecognized native Codex version', () => {
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      {
+        type: 'official',
+        vendorId: 'openai',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-5.4',
+        key: 'sk-plaintext-secret'
+      },
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        nativeVersion: '0.144.2'
+      }
+    )
+
+    const codexConfig = JSON.parse(config.env?.CODEX_CONFIG ?? '')
+    const modelCatalogFile = config.configFiles?.find(
+      (file) => file.path === codexConfig.model_catalog_json
+    )
+
+    expect(JSON.parse(modelCatalogFile?.content ?? '').models[0]).toMatchObject({
+      slug: 'gpt-5.4',
+      apply_patch_tool_type: null,
+      supports_parallel_tool_calls: false,
+      supports_search_tool: false
+    })
+  })
+
+  it('uses conservative local metadata when a custom gateway reuses a bundled model slug', () => {
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://gateway.example/v1',
+        model: 'gpt-5.4',
+        key: 'sk-plaintext-secret'
+      },
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        nativeVersion: CODEX_VERSION
+      }
+    )
+
+    const codexConfig = JSON.parse(config.env?.CODEX_CONFIG ?? '')
+    const modelCatalogFile = config.configFiles?.find(
+      (file) => file.path === codexConfig.model_catalog_json
+    )
+    const modelMetadata = JSON.parse(modelCatalogFile?.content ?? '').models[0]
+
+    expect(modelMetadata).toMatchObject({
+      slug: 'gpt-5.4',
+      apply_patch_tool_type: null,
+      supports_parallel_tool_calls: false,
+      supports_search_tool: false
+    })
   })
 
   it('routes Chat Completions providers through the main-process Responses bridge', () => {

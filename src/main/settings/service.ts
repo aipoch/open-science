@@ -3530,6 +3530,9 @@ class SettingsService {
       const modelConfig = framework.prepareModelConfig(provider, {
         storageRoot: this.storageRoot,
         executablePath,
+        ...(framework.id === 'codex' && settings.codex?.nativeVersion
+          ? { nativeVersion: settings.codex.nativeVersion }
+          : {}),
         responsesBridge,
         reasoningEffort: sessionEffort,
         reasoningEfforts: supportedReasoningEfforts,

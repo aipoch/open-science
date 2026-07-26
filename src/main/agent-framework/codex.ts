@@ -14,6 +14,7 @@ import {
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { augmentedPathEnv } from '../settings/shell-path'
 import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import type { OfficialVendorId } from '../../shared/provider-registry'
 import type {
   AgentFramework,
   AgentAuthentication,
@@ -53,7 +54,6 @@ const CODEX_BUNDLED_MODEL_IDS_BY_VERSION = {
     'codex-auto-review'
   ]
 } satisfies Record<typeof CODEX_VERSION, readonly string[]>
-const CODEX_BUNDLED_MODEL_IDS = new Set(CODEX_BUNDLED_MODEL_IDS_BY_VERSION[CODEX_VERSION])
 const CODEX_MODE_IDS = {
   ask: 'read-only',
   auto: 'agent',
@@ -172,13 +172,26 @@ const buildCodexConfig = (provider: {
 
 const buildCodexNativeModelCatalog = (provider: {
   model?: string
+  vendorId?: OfficialVendorId
+  nativeVersion?: string
   contextWindow?: number
   supportsImageInput?: boolean
   reasoningEffort?: ModelReasoningEffort
   reasoningEfforts?: readonly ModelReasoningEffort[]
 }): Record<string, unknown> | undefined => {
   const model = provider.model?.trim()
-  if (!model || CODEX_BUNDLED_MODEL_IDS.has(model)) return undefined
+  // Bundled capabilities are trustworthy only for an exact model/version pair from an official
+  // OpenAI provider. Every other Responses backend gets the conservative app-owned catalog below.
+  const bundledModelIds =
+    provider.nativeVersion &&
+    Object.hasOwn(CODEX_BUNDLED_MODEL_IDS_BY_VERSION, provider.nativeVersion)
+      ? CODEX_BUNDLED_MODEL_IDS_BY_VERSION[
+          provider.nativeVersion as keyof typeof CODEX_BUNDLED_MODEL_IDS_BY_VERSION
+        ]
+      : undefined
+  const hasTrustedBundledMetadata =
+    provider.vendorId === 'openai' && bundledModelIds?.includes(model ?? '') === true
+  if (!model || hasTrustedBundledMetadata) return undefined
 
   const contextWindow =
     provider.contextWindow && provider.contextWindow > 0 ? provider.contextWindow : 272_000
@@ -374,6 +387,7 @@ export const createCodexFramework = ({
       ? undefined
       : buildCodexNativeModelCatalog({
           ...provider,
+          nativeVersion: ctx.nativeVersion,
           reasoningEffort: ctx.reasoningEffort,
           reasoningEfforts: ctx.reasoningEfforts
         })
