@@ -4045,6 +4045,17 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
     await expect(service.listAgentHomeSkills()).rejects.toMatchObject({ code: 'ENOTDIR' })
   })
 
+  it('surfaces a source failure when the remaining installed-skill sources are empty', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-empty-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-list-agent-shared-unreadable-'))
+    await mkdir(join(userClaudeDir, 'skills'))
+    await writeFile(join(userAgentsDir, 'skills'), 'not a directory')
+    const service = createService(undefined, { userClaudeDir, userAgentsDir })
+    await repository.setAgentFramework('claude-code')
+
+    await expect(service.listAgentHomeSkills()).rejects.toMatchObject({ code: 'ENOTDIR' })
+  })
+
   it('rejects the scan when every configured source fails', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-unreadable-'))
     const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-list-agent-shared-unreadable-'))
@@ -4122,7 +4133,7 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
     ])
   })
 
-  it('scans only the shared home for other frameworks', async () => {
+  it('scans shared and Claude homes when the active framework is OpenCode', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
     const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
     const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-list-agent-shared-'))
@@ -4134,7 +4145,10 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
 
     expect(
       (await service.listAgentHomeSkills()).map(({ source, slug }) => ({ source, slug }))
-    ).toEqual([{ source: 'agents', slug: 'visible-shared' }])
+    ).toEqual([
+      { source: 'agents', slug: 'visible-shared' },
+      { source: 'claude', slug: 'hidden-claude' }
+    ])
   })
 })
 

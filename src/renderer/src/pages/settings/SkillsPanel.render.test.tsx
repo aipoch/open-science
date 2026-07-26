@@ -423,6 +423,23 @@ describe('SkillsPanel (sub-views)', () => {
     ])
   })
 
+  it('advertises shared and Claude installed-skill sources for OpenCode', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      listAgentHomeSkills: vi.fn().mockResolvedValue([])
+    })
+
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'import-agent-home' }} onNavigate={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('~/.agents/skills')
+    expect(document.body.textContent).toContain('~/.claude/skills')
+    expect(document.body.textContent).not.toContain('~/.codex/skills')
+  })
+
   it('invalidates installed-skill rows while a framework-switch rescan is pending', async () => {
     let finishCodexScan: (skills: []) => void = () => undefined
     const pendingCodexScan = new Promise<[]>((resolve) => {
