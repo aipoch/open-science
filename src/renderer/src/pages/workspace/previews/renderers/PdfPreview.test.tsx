@@ -193,6 +193,40 @@ describe('PdfPreviewContent', () => {
     clientWidthSpy.mockRestore()
   })
 
+  it('clamps the backing store to browser canvas limits for a tall, narrow page', async () => {
+    const clientWidthSpy = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockReturnValue(700)
+    vi.stubGlobal('devicePixelRatio', 2)
+    // A 200x12000 page in a 700px frame at 2x would want scale 4 → a 48000px-tall canvas,
+    // far past Chromium's limits. The clamp must keep both dimensions within bounds.
+    getPage.mockResolvedValue({
+      getViewport: vi.fn(({ scale }: { scale: number }) => ({
+        width: 200 * scale,
+        height: 12000 * scale
+      })),
+      render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+      cleanup: vi.fn()
+    })
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/tall.pdf" name="tall.pdf" source="artifact" />
+      )
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('canvas')?.height).toBeGreaterThan(0))
+    })
+
+    const canvas = container.querySelector<HTMLCanvasElement>('canvas')
+    expect(canvas?.height).toBeLessThanOrEqual(8192)
+    expect(canvas?.width).toBeLessThanOrEqual(8192)
+    // Sanity: without the clamp this page would have been ~48000px tall.
+    expect(canvas?.height).toBeLessThan(12000)
+
+    clientWidthSpy.mockRestore()
+  })
+
   it('treats a render canceled by scroll-out as teardown, not a page failure', async () => {
     let intersectionCallback: IntersectionObserverCallback | undefined
     vi.stubGlobal(

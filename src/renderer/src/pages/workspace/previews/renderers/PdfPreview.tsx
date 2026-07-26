@@ -18,6 +18,10 @@ type DocumentState =
 const FIT_PAGE_WIDTH = 768
 // Bound the backing-store resolution so an over-magnified small page cannot exhaust GPU memory.
 const MAX_RENDER_SCALE = 4
+// Keep the backing store within browser canvas limits so a tall/narrow page cannot render blank:
+// clamp each side and the total area (Chromium caps a dimension at 16384 and area near 2^28).
+const MAX_CANVAS_DIMENSION = 8192
+const MAX_CANVAS_AREA = 16 * 1024 * 1024
 
 // PDF.js rejects an in-flight render with this when cancel() is called; it is an expected teardown,
 // not a page failure, so scroll-out, preview switches, and resize rerenders must not surface it.
@@ -95,10 +99,11 @@ const PdfPageCanvas = ({
   }, [document, isNearViewport, pageNumber, registerDisposer])
 
   // Rasterize the live page at the target width; re-runs on width change without reacquiring it.
+  // Tied to isNearViewport so a scroll-out flips this effect's canceled flag and stops a rerender.
   useEffect(() => {
     const page = pageRef.current
     const canvas = canvasRef.current
-    if (!page || !canvas) return
+    if (!isNearViewport || !page || !canvas) return
 
     let canceled = false
     const draw = async (): Promise<void> => {
@@ -109,16 +114,26 @@ const PdfPageCanvas = ({
         previous.cancel()
         await previous.promise.catch(() => undefined)
       }
-      if (canceled) return
+      // The await above yields, during which the page can scroll out and dispose() can clear it;
+      // bail before touching a disposed page or detached canvas.
+      if (canceled || pageRef.current !== page) return
 
       const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1)
       const baseViewport = page.getViewport({ scale: 1 })
-      // Rasterize at the physical pixels the page occupies on screen, capped to protect memory.
+      // Rasterize at the physical pixels the page occupies on screen; never below intrinsic size.
       const targetCssWidth = pageWidth > 0 ? pageWidth : baseViewport.width
-      const scale = Math.min(
-        MAX_RENDER_SCALE,
-        Math.max(1, (targetCssWidth * devicePixelRatio) / baseViewport.width)
+      const desiredScale = Math.max(
+        1,
+        Math.min(MAX_RENDER_SCALE, (targetCssWidth * devicePixelRatio) / baseViewport.width)
       )
+      // Hard cap so neither backing dimension nor total area exceeds browser canvas limits — must
+      // win over the intrinsic floor, or a page taller than the limit at scale 1 renders blank.
+      const limitScale = Math.min(
+        MAX_CANVAS_DIMENSION / baseViewport.width,
+        MAX_CANVAS_DIMENSION / baseViewport.height,
+        Math.sqrt(MAX_CANVAS_AREA / (baseViewport.width * baseViewport.height))
+      )
+      const scale = Math.min(desiredScale, limitScale)
       const viewport = page.getViewport({ scale })
       const context = canvas.getContext('2d')
       if (!context) throw new Error('Canvas 2D context unavailable.')
@@ -145,7 +160,7 @@ const PdfPageCanvas = ({
       canceled = true
       renderTaskRef.current?.cancel()
     }
-  }, [pageEpoch, pageNumber, pageWidth])
+  }, [isNearViewport, pageEpoch, pageNumber, pageWidth])
 
   const displayedStatus = isNearViewport ? status : 'idle'
 
