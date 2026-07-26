@@ -165,6 +165,67 @@ describe('ConversationSkillImporter', () => {
     ).rejects.toThrow('different session')
     expect(requestApproval).not.toHaveBeenCalled()
   })
+
+  it('rejects two approved candidates that replace the same installed Skill', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+    roots.push(root)
+    const uploads = new UploadRepository(root)
+    const [staged] = await uploads.stageFiles({
+      files: [
+        {
+          name: 'duplicate-targets.skill',
+          content: Buffer.from('bundle contents').toString('base64'),
+          mimeType: 'application/zip'
+        }
+      ]
+    })
+    const [attachment] = await uploads.finalizePendingSessionUploads('session-1', [staged])
+    const importBundle = vi.fn().mockResolvedValue([])
+    const importer = new ConversationSkillImporter({
+      uploads,
+      previewBundle: vi.fn().mockResolvedValue({
+        previews: [
+          {
+            subPath: 'first',
+            name: 'Shared Skill',
+            description: '',
+            metadata: {},
+            body: '',
+            files: ['SKILL.md'],
+            alreadyImported: false,
+            replaceableId: 'imported-shared'
+          },
+          {
+            subPath: 'second',
+            name: 'Shared Skill',
+            description: '',
+            metadata: {},
+            body: '',
+            files: ['SKILL.md'],
+            alreadyImported: false,
+            replaceableId: 'imported-shared'
+          }
+        ],
+        skipped: []
+      }),
+      importBundle,
+      requestApproval: vi.fn().mockResolvedValue({
+        id: 'approval-duplicate-targets',
+        items: [
+          { subPath: 'first', replaceId: 'imported-shared' },
+          { subPath: 'second', replaceId: 'imported-shared' }
+        ]
+      })
+    })
+
+    await expect(
+      importer.request({
+        sessionId: 'session-1',
+        attachmentUri: pathToFileURL(attachment.path).href
+      })
+    ).rejects.toThrow('cannot replace the same installed Skill more than once')
+    expect(importBundle).not.toHaveBeenCalled()
+  })
 })
 
 describe('SkillImportApprovalBroker lifecycle', () => {

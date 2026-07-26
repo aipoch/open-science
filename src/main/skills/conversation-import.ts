@@ -125,19 +125,26 @@ const validateSelections = (
 ): ConversationSkillImportSelection[] => {
   const candidates = new Map(preview.previews.map((candidate) => [candidate.subPath, candidate]))
   const selected = new Set<string>()
+  const replacementTargets = new Set<string>()
 
   return items.map((item) => {
     const candidate = candidates.get(item.subPath)
     if (!candidate || selected.has(item.subPath)) {
       throw new Error('The Skill import selection does not match the approved preview.')
     }
-    if (item.replaceId !== undefined && item.replaceId !== candidate.replaceableId) {
-      throw new Error('The Skill replacement target does not match the approved preview.')
+    if (item.replaceId !== undefined) {
+      if (item.replaceId !== candidate.replaceableId) {
+        throw new Error('The Skill replacement target does not match the approved preview.')
+      }
+      if (replacementTargets.has(item.replaceId)) {
+        throw new Error('A Skill import cannot replace the same installed Skill more than once.')
+      }
+      replacementTargets.add(item.replaceId)
     }
     selected.add(item.subPath)
     return {
       subPath: item.subPath,
-      ...(item.replaceId ? { replaceId: item.replaceId } : {})
+      ...(item.replaceId !== undefined ? { replaceId: item.replaceId } : {})
     }
   })
 }
