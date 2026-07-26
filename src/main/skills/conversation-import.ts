@@ -146,7 +146,7 @@ class SkillImportApprovalBroker {
 }
 
 type ConversationSkillImporterOptions = {
-  uploads: Pick<UploadRepository, 'resolveSessionUploadPath'>
+  uploads: Pick<UploadRepository, 'resolveManagedUploadPath' | 'resolveSessionUploadPath'>
   createCancellationGuard: (
     sessionId: string,
     turnToken: string,
@@ -224,7 +224,26 @@ const validateSelections = (
 // Owns the complete conversation import transaction behind one agent-facing request: attachment
 // ownership, bounded preview, user confirmation, selection validation, import, and reload signal.
 class ConversationSkillImporter {
+  private readonly referencedUploadGrants = new Map<string, { paths: ReadonlySet<string> }>()
+
   constructor(private readonly options: ConversationSkillImporterOptions) {}
+
+  // Grants one active turn access to uploads the user explicitly selected through `@`. Returning an
+  // identity-scoped disposer prevents a stale turn from revoking a newer turn's grant for the same
+  // conversation during context-reset recovery.
+  async authorizeReferencedUploads(sessionId: string, paths: string[]): Promise<() => void> {
+    const managedPaths = await Promise.all(
+      paths.map((path) => this.options.uploads.resolveManagedUploadPath({ path }))
+    )
+    const grant = { paths: new Set(managedPaths) }
+    this.referencedUploadGrants.set(sessionId, grant)
+
+    return () => {
+      if (this.referencedUploadGrants.get(sessionId) === grant) {
+        this.referencedUploadGrants.delete(sessionId)
+      }
+    }
+  }
 
   async request(request: ConversationSkillImportRequest): Promise<ConversationSkillImportResult> {
     const cancellation = this.options.createCancellationGuard(
@@ -234,9 +253,12 @@ class ConversationSkillImporter {
     )
     if (cancellation.isCancelled()) return { status: 'cancelled', skills: [] }
     const requestedPath = attachmentPathFromUri(request.attachmentUri)
-    const filePath = await this.options.uploads.resolveSessionUploadPath(request.sessionId, {
-      path: requestedPath
-    })
+    const managedPath = await this.options.uploads.resolveManagedUploadPath({ path: requestedPath })
+    const filePath = this.referencedUploadGrants.get(request.sessionId)?.paths.has(managedPath)
+      ? managedPath
+      : await this.options.uploads.resolveSessionUploadPath(request.sessionId, {
+          path: requestedPath
+        })
     const attachmentName = basename(filePath)
     if (!['.zip', '.skill'].includes(extname(attachmentName).toLowerCase())) {
       throw new Error('Skill import only accepts an attached .zip or .skill bundle.')

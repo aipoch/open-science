@@ -134,6 +134,7 @@ const registerWithFakes = (overrides?: {
     runRegistry: {} as never,
     uploadRepository: {} as never,
     notebookRpcServer: {} as never,
+    authorizeSkillImportReferencedUploads: vi.fn(async () => () => undefined),
     settingsService: {
       captureActiveAgentBackendSelection: vi.fn().mockResolvedValue({}),
       resolveAgentBackend: vi.fn().mockResolvedValue({})

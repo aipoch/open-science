@@ -253,6 +253,7 @@ type AcpRuntimeSkillImportOptions = {
   mcpCommand?: string
   getRpcConnection: () => Promise<SkillImportRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
+  authorizeReferencedUploads?: (sessionId: string, paths: string[]) => Promise<() => void>
 }
 
 type AcpRuntimeActivityGroupOptions = {
@@ -2293,6 +2294,7 @@ class AcpRuntime {
     let skillActivityInputs: Array<{ name: string; path: string }> = []
     let skillActivitiesStarted = false
     let skillActivitiesFinalized = false
+    let revokeReferencedUploadGrant: (() => void) | undefined
 
     try {
       // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
@@ -2381,6 +2383,10 @@ class AcpRuntime {
       const promptText = [request.historyPreamble, promptPrefix, nudgedText]
         .filter((segment): segment is string => Boolean(segment))
         .join('\n\n')
+      revokeReferencedUploadGrant = await this.authorizeReferencedSkillUploads(
+        request.sessionId,
+        request.referencedArtifacts ?? []
+      )
       const promptContent = this.attachCodexSkillInputs(
         await this.createPromptContent(request.sessionId, {
           ...request,
@@ -2493,6 +2499,7 @@ class AcpRuntime {
       })
       throw error
     } finally {
+      revokeReferencedUploadGrant?.()
       // A turn that fails or is aborted never reaches the stop branch; still surface any files it
       // wrote so they are attached to a message instead of being orphaned in the pending directory.
       if (!artifactEmitted) {
@@ -2900,6 +2907,27 @@ class AcpRuntime {
     return contentBlocks
   }
 
+  // Converts the user's explicit `@` selections into a turn-scoped capability for Skill import.
+  // Generic managed-path validation happens before the grant; the importer retains the stricter
+  // session-owner check for every path that was not selected in this turn.
+  private async authorizeReferencedSkillUploads(
+    sessionId: string,
+    references: ArtifactReference[]
+  ): Promise<(() => void) | undefined> {
+    const authorize = this.skillImportOptions?.authorizeReferencedUploads
+    if (!authorize) return undefined
+
+    const paths = references
+      .filter((reference) => {
+        if (reference.source !== 'upload') return false
+        const normalizedName = reference.name.toLowerCase()
+        return normalizedName.endsWith('.skill') || normalizedName.endsWith('.zip')
+      })
+      .map((reference) => reference.path)
+
+    return paths.length > 0 ? authorize(sessionId, paths) : undefined
+  }
+
   private imageOverflowResourceLink(
     block: ContentBlock,
     name: string,
@@ -2977,11 +3005,12 @@ class AcpRuntime {
           allowSkillImportReference: true
         }
       } catch {
-        // Cross-session uploads remain readable generic references, but the session-scoped importer
-        // must never be advertised for a path its ownership boundary will reject.
+        // An explicit `@` reference grants this exact managed upload path for the active turn. The
+        // importer still requires the matching turn token and URI allowlist entry, and rejects every
+        // unreferenced cross-session path through its normal ownership check.
         return {
           filePath: await this.uploadRepository.resolveManagedUploadPath({ path: reference.path }),
-          allowSkillImportReference: false
+          allowSkillImportReference: true
         }
       }
     }

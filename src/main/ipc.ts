@@ -493,6 +493,8 @@ const registerIpcHandlers = async ({
     runRegistry: artifactRunRegistry,
     uploadRepository,
     notebookRpcServer,
+    authorizeSkillImportReferencedUploads: (sessionId, paths) =>
+      conversationSkillImporter.authorizeReferencedUploads(sessionId, paths),
     settingsService,
     taskNotifications,
     onSessionTurnStarted: (sessionId, turnToken) =>

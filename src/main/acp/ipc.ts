@@ -48,6 +48,7 @@ type AcpIpcOptions = AcpIpcArtifacts & {
   mcpEntryPath: string
   uploadRepository: UploadRepository
   notebookRpcServer: NotebookLocalRpcServer
+  authorizeSkillImportReferencedUploads: (sessionId: string, paths: string[]) => Promise<() => void>
   // Drives the agent spawn env from the active provider so switching takes effect on reconnect.
   settingsService: SettingsService
   initializationBarrier?: Promise<unknown>
@@ -88,6 +89,7 @@ const createRuntime = ({
   runRegistry,
   uploadRepository,
   notebookRpcServer,
+  authorizeSkillImportReferencedUploads,
   settingsService,
   initializationBarrier,
   taskNotifications,
@@ -156,7 +158,8 @@ const createRuntime = ({
           mcpEntryPath,
           getRpcConnection: () => notebookRpcServer.ensureStarted(),
           registerSessionAlias: (aliasSessionId, sessionId) =>
-            notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId)
+            notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
+          authorizeReferencedUploads: authorizeSkillImportReferencedUploads
         },
         activityGroups: { mcpEntryPath },
         callbacks: runtimeCallbacks,

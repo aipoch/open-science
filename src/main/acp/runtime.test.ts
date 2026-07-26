@@ -8,7 +8,7 @@ import type {
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
@@ -30,6 +30,7 @@ import {
 import type { UploadedAttachment } from '../../shared/uploads'
 import { UploadRepository } from '../uploads/repository'
 import { MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES } from '../uploads/attachment-media'
+import { ConversationSkillImporter, SkillImportApprovalBroker } from '../skills/conversation-import'
 import {
   beginMigration,
   clearMigrationPending,
@@ -2345,6 +2346,140 @@ describe('ACP runtime session management', () => {
         /<attached_local_archive>[\s\S]*other\.skill[\s\S]*"skillImportEligible":false/
       )
     })
+  })
+
+  it('allows a cross-session Skill upload only while the user explicitly references it', async () => {
+    const root = await realpath(await createTemporaryRoot())
+    const uploads = new UploadRepository(root)
+    const [staged] = await uploads.stageFiles({
+      files: [
+        {
+          name: 'paper-finder.skill',
+          mimeType: 'application/zip',
+          content: buildStoredSkillArchive('Paper Finder').toString('base64')
+        }
+      ]
+    })
+    const [attachment] = await uploads.finalizePendingSessionUploads('owning-session', [staged])
+    const approvalBroker = new SkillImportApprovalBroker({
+      generateId: () => 'approval-1',
+      broadcast: vi.fn()
+    })
+    const importer = new ConversationSkillImporter({
+      uploads,
+      createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
+        approvalBroker.createCancellationGuard(sessionId, turnToken, attachmentUri),
+      previewBundle: async () => ({
+        previews: [
+          {
+            subPath: 'paper-finder',
+            name: 'Paper Finder',
+            description: 'Finds papers.',
+            metadata: {},
+            body: 'Follow the workflow.',
+            files: ['SKILL.md'],
+            alreadyImported: false
+          }
+        ],
+        skipped: []
+      }),
+      importBundle: async (_bundle, items) =>
+        items.map((item) => ({
+          subPath: item.subPath,
+          outcome: { status: 'imported' as const, id: 'imported-paper-finder' }
+        })),
+      requestApproval: async (request) => ({
+        id: 'approval-1',
+        items: [{ subPath: request.previews[0].subPath }]
+      })
+    })
+    let importResult: Awaited<ReturnType<ConversationSkillImporter['request']>> | undefined
+    let activeTurnToken: string | undefined
+    let advertisedAttachmentUri: string | undefined
+    let promptError: unknown
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['current-session'], {
+      onPrompt: async ({ prompt }) => {
+        try {
+          if (!activeTurnToken) throw new Error('Expected an active Skill import turn token.')
+          const reference = prompt.find(
+            (block) => block.type === 'text' && block.text.includes('<attached_skill_package>')
+          )
+          if (reference?.type !== 'text') {
+            throw new Error('Expected an import-eligible Skill package reference.')
+          }
+          advertisedAttachmentUri = (JSON.parse(reference.text.split('\n')[1]) as { uri: string })
+            .uri
+          importResult = await importer.request({
+            sessionId: 'current-session',
+            turnToken: activeTurnToken,
+            attachmentUri: advertisedAttachmentUri
+          })
+        } catch (error) {
+          promptError = error
+        }
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      uploads: { repository: uploads },
+      skillImport: {
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'secret-token'
+        }),
+        authorizeReferencedUploads: (sessionId, paths) =>
+          importer.authorizeReferencedUploads(sessionId, paths)
+      },
+      callbacks: {
+        onPromptStarted: (sessionId, turnToken) => {
+          activeTurnToken = turnToken
+          approvalBroker.beginSessionTurn(sessionId, turnToken)
+        },
+        onPromptEnded: (sessionId, turnToken) =>
+          approvalBroker.endSessionTurn(sessionId, turnToken),
+        onSkillImportAttachmentEligible: (sessionId, turnToken, attachmentUri) =>
+          approvalBroker.allowSessionTurnAttachment(sessionId, turnToken, attachmentUri)
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'import @Paper Finder',
+      referencedArtifacts: [
+        {
+          id: 'upload-1',
+          name: attachment.originalName,
+          path: attachment.path,
+          source: 'upload',
+          mimeType: attachment.mimeType
+        }
+      ]
+    })
+
+    expect(promptError).toBeUndefined()
+    expect(importResult).toEqual({
+      status: 'imported',
+      skills: [{ id: 'imported-paper-finder', name: 'Paper Finder', status: 'imported' }]
+    })
+    if (!advertisedAttachmentUri) throw new Error('Expected an advertised Skill attachment URI.')
+    approvalBroker.beginSessionTurn(session.sessionId, 'retry-turn')
+    approvalBroker.allowSessionTurnAttachment(
+      session.sessionId,
+      'retry-turn',
+      advertisedAttachmentUri
+    )
+    await expect(
+      importer.request({
+        sessionId: session.sessionId,
+        turnToken: 'retry-turn',
+        attachmentUri: advertisedAttachmentUri
+      })
+    ).rejects.toThrow('different session')
   })
 
   it('resolves a bare-filename artifact write against the final-session notebook dir despite the alias', async () => {
