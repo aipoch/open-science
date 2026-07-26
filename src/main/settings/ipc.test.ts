@@ -64,7 +64,9 @@ type FakeSettingsService = Record<
   | 'updateSkill'
   | 'deleteSkill'
   | 'importSkillZipBatch'
+  | 'previewGitHubSkill'
   | 'listAgentHomeSkills'
+  | 'previewAgentHomeSkill'
   | 'importAgentHomeSkills'
   | 'setConnectorEnabled',
   ReturnType<typeof vi.fn>
@@ -143,7 +145,9 @@ const createFakeService = (): FakeSettingsService => ({
   updateSkill: vi.fn().mockResolvedValue([]),
   deleteSkill: vi.fn().mockResolvedValue([]),
   importSkillZipBatch: vi.fn().mockResolvedValue({ results: [], skills: [] }),
+  previewGitHubSkill: vi.fn().mockResolvedValue({ name: 'GitHub preview' }),
   listAgentHomeSkills: vi.fn().mockResolvedValue([]),
+  previewAgentHomeSkill: vi.fn().mockResolvedValue({ name: 'Installed preview' }),
   importAgentHomeSkills: vi.fn().mockResolvedValue({ results: [], skills: [] }),
   setConnectorEnabled: vi.fn().mockResolvedValue({ connectors: [] })
 })
@@ -628,6 +632,22 @@ describe('settings IPC handlers', () => {
         ]
       })
     ).toBe(result)
+    expect(onSkillsChanged).not.toHaveBeenCalled()
+  })
+
+  it('routes read-only candidate previews without firing the skills-changed callback', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onSkillsChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onSkillsChanged })
+    const github = { url: 'https://github.com/acme/skills/tree/main/foo' }
+    const installed = { source: 'agents', slug: 'foo' }
+
+    await invoke('settings:preview-github-skill', github)
+    await invoke('settings:preview-agent-home-skill', installed)
+
+    expect(service.previewGitHubSkill).toHaveBeenCalledWith(github)
+    expect(service.previewAgentHomeSkill).toHaveBeenCalledWith(installed)
     expect(onSkillsChanged).not.toHaveBeenCalled()
   })
 

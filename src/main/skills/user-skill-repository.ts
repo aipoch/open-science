@@ -17,6 +17,7 @@ import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import { createLogger } from '../logger'
 import {
   fetchSkillFiles,
+  fetchSkillPreview,
   parseGitHubSkillUrl,
   parseGitHubRepo,
   scanRepoForSkills,
@@ -140,6 +141,35 @@ const signatureOf = (files: FetchedSkillFile[]): string => {
     hash.update('\0')
   }
   return hash.digest('hex')
+}
+
+type ParsedSkillPreview = {
+  name: string
+  description: string
+  metadata: Record<string, string>
+  body: string
+  files: string[]
+}
+
+type AgentHomeTreeEntry =
+  | { kind: 'directory'; relativePath: string; mode: number }
+  | { kind: 'file'; path: string; relativePath: string; mode: number; size: number }
+
+const parsedSkillPreview = (
+  raw: string,
+  files: string[],
+  fallbackName: string
+): ParsedSkillPreview => {
+  const { fields, body } = parseFrontmatter(raw)
+  const { name: frontmatterName, description = '', ...metadata } = fields
+
+  return {
+    name: frontmatterName?.trim() || fallbackName,
+    description,
+    metadata,
+    body,
+    files: [...files].sort()
+  }
 }
 
 // One skill root inside an archive: the directory prefix holding a SKILL.md, plus that skill's files
@@ -559,6 +589,21 @@ class UserSkillRepository {
     })
   }
 
+  // Lazily reads one scanned GitHub candidate for the read-only renderer preview. Unlike import,
+  // this downloads only SKILL.md while retaining the bounded directory walk for the file list.
+  async previewGitHubSkill(url: string, fetchImpl?: FetchLike): Promise<ParsedSkillPreview> {
+    const location = parseGitHubSkillUrl(url)
+    if (!location) throw new Error('Not a recognizable GitHub URL.')
+
+    const fetcher = fetchImpl ?? (globalThis.fetch as unknown as FetchLike | undefined)
+    if (!fetcher) throw new Error('No fetch implementation available.')
+
+    const { skillMd, files } = await fetchSkillPreview(location, fetcher)
+    const fallbackName = location.path.split('/').filter(Boolean).pop() ?? location.repo
+
+    return parsedSkillPreview(skillMd.toString('utf8'), files, fallbackName)
+  }
+
   // Finds an already-imported skill whose recorded source URL matches, for dedup. Only real slugs are
   // scanned, so a hidden transaction dir can never be returned as a (bogus) slug.
   private async findImportedSlugByUrl(url: string): Promise<string | undefined> {
@@ -587,7 +632,7 @@ class UserSkillRepository {
       for (const root of roots) {
         try {
           const skillMd = root.files.find((file) => file.relativePath.toLowerCase() === 'skill.md')!
-          const { fields } = parseFrontmatter(skillMd.content.toString('utf8'))
+          const { fields, body } = parseFrontmatter(skillMd.content.toString('utf8'))
           const name = fields.name?.trim()
           if (!name) {
             skipped.push({ source: root.subPath || 'skill', reason: 'SKILL.md has no name' })
@@ -599,9 +644,14 @@ class UserSkillRepository {
           )
           const replaceableId = alreadyImported ? undefined : await this.replaceableImportedId(name)
 
+          const metadata = Object.fromEntries(
+            Object.entries(fields).filter(([key]) => key !== 'name' && key !== 'description')
+          )
           previews.push({
             name,
             description: fields.description ?? '',
+            metadata,
+            body,
             files: root.files.map((file) => file.relativePath).sort(),
             alreadyImported,
             replaceableId,
@@ -980,25 +1030,21 @@ class UserSkillRepository {
     return undefined
   }
 
-  // Hashes one installed-skill tree without following symlinks. Paths use archive-style `/`
-  // separators so the same tree has the same identity on Windows and POSIX; directory entries and
-  // portable permission bits are included because cp preserves empty directories and executable
-  // scripts. Applying the shared per-skill caps also bounds local scan reads.
-  private async signatureOfAgentHomeSkill(
+  // One structural inspection path serves installed-skill scan signatures, import validation, and
+  // candidate previews. It never follows symlinks, emits archive-style relative paths on every OS,
+  // and enforces the shared depth/count/size caps before any caller reads file contents.
+  private async inspectAgentHomeSkill(
     root: string,
     options: { skipSourceManifest?: boolean } = {}
-  ): Promise<string> {
-    const entries: (
-      | { kind: 'directory'; relativePath: string; mode: number }
-      | { kind: 'file'; path: string; relativePath: string; mode: number }
-    )[] = []
+  ): Promise<AgentHomeTreeEntry[]> {
+    const entries: AgentHomeTreeEntry[] = []
     let declaredTotal = 0
     let fileCount = 0
 
     const visit = async (dir: string, prefix: string, depth: number): Promise<void> => {
       const dirStat = await lstat(dir)
       if (dirStat.isSymbolicLink()) {
-        throw new Error('Refusing to import an agent-home Skill containing a symbolic link.')
+        throw new Error('Refusing to read an agent-home Skill containing a symbolic link.')
       }
       if (!dirStat.isDirectory()) throw new Error('Agent-home Skill source must be a directory.')
       if (depth > SKILL_IMPORT_LIMITS.maxDepth) {
@@ -1014,7 +1060,7 @@ class UserSkillRepository {
         const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
         const entryStat = await lstat(path)
         if (entryStat.isSymbolicLink()) {
-          throw new Error('Refusing to import an agent-home Skill containing a symbolic link.')
+          throw new Error('Refusing to read an agent-home Skill containing a symbolic link.')
         }
         if (entryStat.isDirectory()) {
           await visit(path, relativePath, depth + 1)
@@ -1040,11 +1086,29 @@ class UserSkillRepository {
           throw new Error(`Agent-home Skill exceeds ${mb(SKILL_IMPORT_LIMITS.maxTotalBytes)}.`)
         }
         fileCount += 1
-        entries.push({ kind: 'file', path, relativePath, mode: entryStat.mode & 0o777 })
+        entries.push({
+          kind: 'file',
+          path,
+          relativePath,
+          mode: entryStat.mode & 0o777,
+          size: entryStat.size
+        })
       }
     }
 
     await visit(root, '', 0)
+    return entries
+  }
+
+  // Hashes one installed-skill tree without following symlinks. Paths use archive-style `/`
+  // separators so the same tree has the same identity on Windows and POSIX; directory entries and
+  // portable permission bits are included because cp preserves empty directories and executable
+  // scripts. Applying the shared per-skill caps also bounds local scan reads.
+  private async signatureOfAgentHomeSkill(
+    root: string,
+    options: { skipSourceManifest?: boolean } = {}
+  ): Promise<string> {
+    const entries = await this.inspectAgentHomeSkill(root, options)
 
     const hash = createHash('sha256')
     let actualTotal = 0
@@ -1379,6 +1443,30 @@ class UserSkillRepository {
     }
 
     return out
+  }
+
+  // Reads a selected installed skill for preview without copying it. The same structural limits and
+  // symlink policy as import apply before SKILL.md is returned, while only renderer-safe relative file
+  // names and parsed content leave this repository interface.
+  async previewAgentHomeSkill(root: string): Promise<ParsedSkillPreview> {
+    const entries = await this.inspectAgentHomeSkill(root)
+    const files = entries.filter(
+      (entry): entry is Extract<AgentHomeTreeEntry, { kind: 'file' }> => entry.kind === 'file'
+    )
+    const skillMd = files.find((file) => file.relativePath === 'SKILL.md')
+    if (!skillMd) throw new Error('Agent-home Skill must contain a SKILL.md.')
+    const raw = await readFile(skillMd.path, 'utf8')
+    if (Buffer.byteLength(raw) > SKILL_IMPORT_LIMITS.maxFileBytes) {
+      throw new Error(
+        `Agent-home Skill contains a file over ${mb(SKILL_IMPORT_LIMITS.maxFileBytes)}.`
+      )
+    }
+
+    return parsedSkillPreview(
+      raw,
+      files.map((file) => file.relativePath),
+      basename(root)
+    )
   }
 
   // Imports a single agent-home skill by copying its source subtree under the imported-skill store.

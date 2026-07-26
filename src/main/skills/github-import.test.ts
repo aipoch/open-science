@@ -4,6 +4,7 @@ import { SKILL_IMPORT_LIMITS } from './import-limits'
 import {
   parseGitHubSkillUrl,
   parseGitHubRepo,
+  fetchSkillPreview,
   fetchSkillFiles,
   scanRepoForSkills,
   type FetchLike
@@ -82,6 +83,91 @@ const fakeFetch = (files: Record<string, string>): FetchLike => {
     }
   }
 }
+
+describe('fetchSkillPreview', () => {
+  it('lists candidate files while downloading only SKILL.md', async () => {
+    const downloads: string[] = []
+    const fetcher: FetchLike = async (url) => {
+      if (url.includes('/contents/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              type: 'file',
+              name: 'SKILL.md',
+              path: 'pack/foo/SKILL.md',
+              download_url: 'https://raw/SKILL.md'
+            },
+            {
+              type: 'file',
+              name: 'guide.md',
+              path: 'pack/foo/references/guide.md',
+              download_url: 'https://raw/guide.md'
+            }
+          ],
+          arrayBuffer: async () => new ArrayBuffer(0)
+        }
+      }
+
+      downloads.push(url)
+      const bytes = new TextEncoder().encode('# Preview body')
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        arrayBuffer: async () =>
+          bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+      }
+    }
+
+    await expect(
+      fetchSkillPreview({ owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' }, fetcher)
+    ).resolves.toEqual({
+      skillMd: Buffer.from('# Preview body'),
+      files: ['SKILL.md', 'references/guide.md']
+    })
+    expect(downloads).toEqual(['https://raw/SKILL.md'])
+  })
+
+  it('rejects an oversized SKILL.md before buffering its body', async () => {
+    let bodyRead = false
+    const fetcher: FetchLike = async (url) => {
+      if (url.includes('/contents/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              type: 'file',
+              name: 'SKILL.md',
+              path: 'pack/foo/SKILL.md',
+              download_url: 'https://raw/SKILL.md'
+            }
+          ],
+          arrayBuffer: async () => new ArrayBuffer(0)
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        headers: {
+          get: (name) => (name.toLowerCase() === 'content-length' ? String(OVER_FILE) : null)
+        },
+        arrayBuffer: async () => {
+          bodyRead = true
+          return new ArrayBuffer(0)
+        }
+      }
+    }
+
+    await expect(
+      fetchSkillPreview({ owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' }, fetcher)
+    ).rejects.toThrow(/per-file limit/)
+    expect(bodyRead).toBe(false)
+  })
+})
 
 describe('fetchSkillFiles', () => {
   it('downloads files relative to the skill directory', async () => {

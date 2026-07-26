@@ -133,6 +133,8 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.logoutIsolatedCodex': 'settings:logout-isolated-codex',
   'settings.logoutSharedClaude': 'settings:logout-shared-claude',
   'settings.markOnboardingComplete': 'settings:mark-onboarding-complete',
+  'settings.previewAgentHomeSkill': 'settings:preview-agent-home-skill',
+  'settings.previewGitHubSkill': 'settings:preview-github-skill',
   'settings.previewSkillZip': 'settings:preview-skill-zip',
   'settings.refreshProviderModels': 'settings:refresh-provider-models',
   'settings.removeCustomServer': 'settings:remove-custom-server',

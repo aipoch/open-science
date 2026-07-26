@@ -8,6 +8,8 @@ import type {
 } from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '@/stores/settings-store'
+import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
+import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
 type AgentHomeImportViewProps = {
   onImported: () => void
@@ -27,6 +29,7 @@ const skillKey = (skill: AgentHomeSkillRef): string => `${skill.source}:${skill.
 const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JSX.Element => {
   const listAgentHomeSkills = useSettingsStore((state) => state.listAgentHomeSkills)
   const importAgentHomeSkills = useSettingsStore((state) => state.importAgentHomeSkills)
+  const previewAgentHomeSkill = useSettingsStore((state) => state.previewAgentHomeSkill)
   const activeFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const [scanning, setScanning] = useState(true)
   const [importing, setImporting] = useState(false)
@@ -35,6 +38,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
   const [skillsFrameworkId, setSkillsFrameworkId] = useState<AgentFrameworkId | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const scanGeneration = useRef(0)
+  const candidatePreview = useSkillImportCandidatePreview()
 
   const frameworkSource =
     activeFrameworkId === 'codex'
@@ -255,15 +259,26 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
                     disabled={isScanning || skill.alreadyImported || importing}
                     className="size-4 shrink-0"
                   />
-                  <div className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-foreground">{skill.name}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {skill.description || skill.slug} · {source.path}
+                  <button
+                    type="button"
+                    aria-label={`Preview ${skill.name}`}
+                    onClick={() =>
+                      candidatePreview.openPreview(() =>
+                        previewAgentHomeSkill({ source: skill.source, slug: skill.slug })
+                      )
+                    }
+                    className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <span className="min-w-0 flex-1 px-1 py-1">
+                      <span className="block truncate text-sm text-foreground">{skill.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {skill.description || skill.slug} · {source.path}
+                      </span>
                     </span>
-                  </div>
-                  <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                    {skill.alreadyImported ? 'Imported' : source.label}
-                  </span>
+                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                      {skill.alreadyImported ? 'Imported' : source.label}
+                    </span>
+                  </button>
                 </li>
               )
             })}
@@ -274,6 +289,8 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
           No installed skills found in the scanned global folders.
         </p>
       ) : null}
+
+      <SkillImportCandidatePreview {...candidatePreview.previewProps} />
     </div>
   )
 }

@@ -56,9 +56,12 @@ import type {
   ImportSkillZipRequest,
   ImportSkillZipBatchRequest,
   ImportSkillZipBatchResult,
+  PreviewAgentHomeSkillRequest,
+  PreviewGitHubSkillRequest,
   PreviewSkillZipRequest,
   ReasoningEffort,
   SkillBundlePreviewResult,
+  SkillImportPreviewContent,
   ScanRepoRequest,
   ScanRepoResult,
   UpdateSkillRequest,
@@ -182,6 +185,7 @@ import { renderConnectorInstructions } from '../connectors/skill-doc'
 import { syncConnectorSkillDocs } from '../connectors/provision'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { SAFE_SLUG, UserSkillRepository } from '../skills/user-skill-repository'
+import { parseGitHubSkillUrl } from '../skills/github-import'
 import { netFetch, netFetchStandard } from '../skills/net-fetch'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
 import { readSkillFile } from '../skills/skill-files'
@@ -1135,6 +1139,20 @@ class SettingsService {
     )
   }
 
+  // Lazily loads one selected GitHub candidate. The repository's bounded helper downloads only its
+  // SKILL.md; the display label is reconstructed from the public URL and contains no host paths.
+  async previewGitHubSkill(request: PreviewGitHubSkillRequest): Promise<SkillImportPreviewContent> {
+    const location = parseGitHubSkillUrl(request.url)
+    if (!location) throw new Error('Not a recognizable GitHub URL.')
+    const preview = await this.userSkills.previewGitHubSkill(request.url, netFetch)
+    const suffix = location.path ? `/${location.path}` : ''
+
+    return {
+      ...preview,
+      sourceLabel: `github.com/${location.owner}/${location.repo}${suffix}`
+    }
+  }
+
   // Scans a GitHub repo for importable skill directories (marking already-imported ones).
   async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
     return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
@@ -1275,6 +1293,50 @@ class SettingsService {
     }
 
     return discovered
+  }
+
+  // Lazily loads one selected installed candidate through the same trusted source routing, realpath
+  // containment, and canonical top-level identity used by import. Only a tilde display label leaves
+  // main; the resolved absolute path stays private to this process.
+  async previewAgentHomeSkill(
+    request: PreviewAgentHomeSkillRequest
+  ): Promise<SkillImportPreviewContent> {
+    const settings = await this.repository.getSettings()
+    const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+    const availableSources = this.resolveAgentHomeSkillDirs(framework)
+    const requestedSourcePath = join(
+      availableSources.find((candidate) => candidate.source === request.source)?.dir ?? '',
+      request.slug
+    )
+    const sourcePath = await this.resolveAgentHomeSkillPath(
+      request.source,
+      request.slug,
+      availableSources
+    )
+    const canonical = await this.canonicalAgentHomeSkillRef(sourcePath, availableSources)
+    if (!canonical) {
+      throw new Error('Refusing to preview installed skill outside a top-level skill directory.')
+    }
+    const sourceRoot =
+      canonical.source === 'agents'
+        ? '~/.agents/skills'
+        : canonical.source === 'claude'
+          ? '~/.claude/skills'
+          : '~/.codex/skills'
+    const sourceLabel = `${sourceRoot}/${canonical.slug}`
+
+    try {
+      const preview = await this.userSkills.previewAgentHomeSkill(sourcePath)
+      return { ...preview, sourceLabel }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not preview the installed skill.'
+      const redacted = [sourcePath, requestedSourcePath].reduce(
+        (value, hostPath) => (hostPath ? value.split(hostPath).join(sourceLabel) : value),
+        message
+      )
+      throw new Error(redacted)
+    }
   }
 
   // The generic source is always available. A framework-specific source is additive, not a gate on

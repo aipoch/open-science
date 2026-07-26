@@ -19,6 +19,8 @@ import {
   type ImportSkillRequest,
   type ImportSkillZipRequest,
   type ImportSkillZipBatchRequest,
+  type PreviewAgentHomeSkillRequest,
+  type PreviewGitHubSkillRequest,
   type PreviewSkillZipRequest,
   type ScanRepoRequest,
   type InstallClaudeRequest,
@@ -470,12 +472,19 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:preview-skill-zip', (_event, request: PreviewSkillZipRequest) =>
     service.previewSkillZip(request)
   )
+  ipcMain.handle('settings:preview-github-skill', (_event, request: PreviewGitHubSkillRequest) =>
+    service.previewGitHubSkill(request)
+  )
   ipcMain.handle('settings:scan-repo-skills', (_event, request: ScanRepoRequest) =>
     service.scanRepoSkills(request)
   )
   // Lists the generic global skill source plus the active framework's source. Read-only — the
   // renderer submits checked source-id/slug pairs through the batch import handler below.
   ipcMain.handle('settings:list-agent-home-skills', () => service.listAgentHomeSkills())
+  ipcMain.handle(
+    'settings:preview-agent-home-skill',
+    (_event, request: PreviewAgentHomeSkillRequest) => service.previewAgentHomeSkill(request)
+  )
   ipcMain.handle(
     'settings:import-agent-home-skills',
     async (_event, request: ImportAgentHomeSkillsRequest) => {
