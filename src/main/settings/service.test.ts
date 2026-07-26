@@ -4227,6 +4227,39 @@ describe('SettingsService: importAgentHomeSkills', () => {
     })
   })
 
+  it('does not re-offer a same-slug skill already imported from another flow', async () => {
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-agent-existing-'))
+    await seedSkill(userAgentsDir, 'existing')
+    const importedDir = join(storageRoot, 'skills', 'imported', 'existing')
+    await mkdir(importedDir, { recursive: true })
+    await writeFile(
+      join(importedDir, 'SKILL.md'),
+      '---\nname: existing\ndescription: GitHub import\n---\nBody.\n'
+    )
+    await writeFile(
+      join(importedDir, '.source.json'),
+      JSON.stringify({
+        url: 'https://github.com/example/skills/tree/main/existing',
+        signature: 'sig'
+      })
+    )
+    const service = createService(undefined, { userAgentsDir })
+
+    expect(await service.listAgentHomeSkills()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: 'agents', slug: 'existing', alreadyImported: true })
+      ])
+    )
+
+    const result = await service.importAgentHomeSkills({
+      skills: [{ source: 'agents', slug: 'existing' }]
+    })
+    expect(result.results[0]).toMatchObject({
+      status: 'unchanged',
+      id: 'imported-existing'
+    })
+  })
+
   it('keeps one same-slug source importable when a legacy import is ambiguous', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-import-agent-legacy-claude-'))
     const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-agent-legacy-shared-'))

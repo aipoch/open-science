@@ -1143,7 +1143,7 @@ class SettingsService {
         const visible: {
           skill: AgentHomeSkillView
           realPath: string
-          legacyImported: boolean
+          fallbackImported: boolean
         }[] = []
 
         for (const skill of skills) {
@@ -1151,7 +1151,7 @@ class SettingsService {
             const realPath = await this.resolveAgentHomeSkillPath(source, skill.slug, sources)
             visible.push({
               realPath,
-              legacyImported: skill.legacyImported,
+              fallbackImported: skill.fallbackImported,
               skill: {
                 source,
                 slug: skill.slug,
@@ -1169,30 +1169,30 @@ class SettingsService {
       })
     )
 
-    const unique = new Map<string, { skill: AgentHomeSkillView; legacyImported: boolean }>()
+    const unique = new Map<string, { skill: AgentHomeSkillView; fallbackImported: boolean }>()
     for (const item of groups.flat()) {
       const pathKey = process.platform === 'win32' ? item.realPath.toLowerCase() : item.realPath
       const existing = unique.get(pathKey)
       if (existing) {
-        existing.legacyImported ||= item.legacyImported
+        existing.fallbackImported ||= item.fallbackImported
         existing.skill.alreadyImported ||= item.skill.alreadyImported
       } else {
-        unique.set(pathKey, { skill: item.skill, legacyImported: item.legacyImported })
+        unique.set(pathKey, { skill: item.skill, fallbackImported: item.fallbackImported })
       }
     }
 
     const discovered = [...unique.values()]
-    const legacyBySlug = new Map<string, typeof discovered>()
+    const fallbackBySlug = new Map<string, typeof discovered>()
     for (const item of discovered) {
-      if (!item.legacyImported || item.skill.alreadyImported) continue
-      const candidates = legacyBySlug.get(item.skill.slug) ?? []
+      if (!item.fallbackImported || item.skill.alreadyImported) continue
+      const candidates = fallbackBySlug.get(item.skill.slug) ?? []
       candidates.push(item)
-      legacyBySlug.set(item.skill.slug, candidates)
+      fallbackBySlug.set(item.skill.slug, candidates)
     }
-    // Before source manifests existed, this feature scanned only the active framework directory.
-    // If a legacy slug is now ambiguous, assign it to that framework row and leave the shared row
-    // importable; marking every same-slug row would recreate the collision this identity fixes.
-    for (const candidates of legacyBySlug.values()) {
+    // An imported skill without an agent-home identity may be a legacy install, GitHub import, or ZIP
+    // import. If its slug is ambiguous, let only one framework row claim the fallback and leave the
+    // shared row importable; marking every same-slug row would recreate the collision this fixes.
+    for (const candidates of fallbackBySlug.values()) {
       const preferred = candidates.find((item) => item.skill.source !== 'agents') ?? candidates[0]
       preferred.skill.alreadyImported = true
     }
@@ -1243,7 +1243,7 @@ class SettingsService {
     const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
     const availableSources = this.resolveAgentHomeSkillDirs(framework)
     // The picker normally just completed this scan. If an unrelated source becomes unreadable
-    // between listing and importing, keep per-item import isolation and simply skip legacy matching.
+    // between listing and importing, keep per-item isolation and simply skip slug fallback matching.
     const installedSkills = await this.listAgentHomeSkills().catch(() => [] as AgentHomeSkillView[])
     const knownImported = new Set(
       installedSkills
@@ -1267,7 +1267,7 @@ class SettingsService {
           availableSources
         )
         const outcome = await this.userSkills.importAgentHomeSkill(sourcePath, canonicalSkill, {
-          allowLegacySlugMatch: knownImported.has(`${canonicalSkill.source}:${canonicalSkill.slug}`)
+          allowSlugFallback: knownImported.has(`${canonicalSkill.source}:${canonicalSkill.slug}`)
         })
 
         results.push({ ...ref, status: outcome.status, id: outcome.id })

@@ -818,26 +818,26 @@ class UserSkillRepository {
     return keys
   }
 
-  private async legacyAgentHomeSlugs(): Promise<Set<string>> {
+  private async fallbackImportedSlugs(): Promise<Set<string>> {
     const slugs = new Set<string>()
     for (const slug of await this.listSlugs('imported')) {
-      if ((await this.readSource(slug)) === null) slugs.add(slug)
+      if (!(await this.readSource(slug))?.agentHome) slugs.add(slug)
     }
     return slugs
   }
 
   private async findImportedSlugByAgentHome(
     skill: AgentHomeSkillRef,
-    allowLegacySlugMatch: boolean
+    allowSlugFallback: boolean
   ): Promise<string | undefined> {
     const key = agentHomeKey(skill)
-    let legacySlug: string | undefined
+    let fallbackSlug: string | undefined
     for (const slug of await this.listSlugs('imported')) {
       const source = await this.readSource(slug)
       if (source?.agentHome && agentHomeKey(source.agentHome) === key) return slug
-      if (allowLegacySlugMatch && source === null && slug === skill.slug) legacySlug = slug
+      if (allowSlugFallback && !source?.agentHome && slug === skill.slug) fallbackSlug = slug
     }
-    return legacySlug
+    return fallbackSlug
   }
 
   // Writes an imported skill's files (replacing any prior copy) plus its source manifest.
@@ -1029,7 +1029,7 @@ class UserSkillRepository {
       description: string
       path: string
       alreadyImported: boolean
-      legacyImported: boolean
+      fallbackImported: boolean
     }[]
   > {
     let entries: string[] = []
@@ -1051,9 +1051,9 @@ class UserSkillRepository {
 
     // Cross-check existing source identities once (rather than per row) so the "already imported"
     // badge distinguishes same-slug skills discovered in different global sources.
-    const [importedSkills, legacySlugs] = await Promise.all([
+    const [importedSkills, fallbackSlugs] = await Promise.all([
       this.importedAgentHomeKeys(),
-      this.legacyAgentHomeSlugs()
+      this.fallbackImportedSlugs()
     ])
 
     const out: {
@@ -1062,7 +1062,7 @@ class UserSkillRepository {
       description: string
       path: string
       alreadyImported: boolean
-      legacyImported: boolean
+      fallbackImported: boolean
     }[] = []
     for (const slug of entries) {
       const path = join(homeSkillsDir, slug)
@@ -1083,7 +1083,7 @@ class UserSkillRepository {
         description,
         path,
         alreadyImported: importedSkills.has(agentHomeKey({ source, slug })),
-        legacyImported: legacySlugs.has(slug)
+        fallbackImported: fallbackSlugs.has(slug)
       })
     }
 
@@ -1098,7 +1098,7 @@ class UserSkillRepository {
   async importAgentHomeSkill(
     sourcePath: string,
     skill: AgentHomeSkillRef,
-    options: { allowLegacySlugMatch?: boolean } = {}
+    options: { allowSlugFallback?: boolean } = {}
   ): Promise<ImportOutcome> {
     const requestedSlug = skill.slug
     if (!SAFE_SLUG.test(requestedSlug)) {
@@ -1121,7 +1121,7 @@ class UserSkillRepository {
 
       const existingSlug = await this.findImportedSlugByAgentHome(
         skill,
-        options.allowLegacySlugMatch === true
+        options.allowSlugFallback === true
       )
       if (existingSlug) return { status: 'unchanged', id: `imported-${existingSlug}` }
 
