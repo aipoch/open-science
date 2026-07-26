@@ -634,16 +634,9 @@ class UserSkillRepository {
       for (const root of roots) {
         try {
           const skillMd = root.files.find((file) => file.relativePath.toLowerCase() === 'skill.md')!
-          if (
+          const previewContentUnavailable =
             previewContentBytes + skillMd.content.length >
             SKILL_IMPORT_LIMITS.maxPreviewContentBytes
-          ) {
-            skipped.push({
-              source: root.subPath || 'skill',
-              reason: `SKILL.md preview content exceeds the ${mb(SKILL_IMPORT_LIMITS.maxPreviewContentBytes)} cumulative limit`
-            })
-            continue
-          }
           const { fields, body } = parseFrontmatter(skillMd.content.toString('utf8'))
           const name = fields.name?.trim()
           if (!name) {
@@ -659,12 +652,15 @@ class UserSkillRepository {
           const metadata = Object.fromEntries(
             Object.entries(fields).filter(([key]) => key !== 'name' && key !== 'description')
           )
-          previewContentBytes += skillMd.content.length
+          if (!previewContentUnavailable) previewContentBytes += skillMd.content.length
           previews.push({
             name,
             description: fields.description ?? '',
             metadata,
-            body,
+            body: previewContentUnavailable ? '' : body,
+            previewError: previewContentUnavailable
+              ? `SKILL.md preview content exceeds the ${mb(SKILL_IMPORT_LIMITS.maxPreviewContentBytes)} cumulative limit. You can still import it.`
+              : undefined,
             files: root.files.map((file) => file.relativePath).sort(),
             alreadyImported,
             replaceableId,

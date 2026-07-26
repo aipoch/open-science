@@ -58,6 +58,7 @@ type Candidate =
       description: string
       metadata: Record<string, string>
       body: string
+      previewError?: string
       files: string[]
       alreadyImported: boolean
       replaceableId?: string
@@ -169,6 +170,7 @@ const SkillUploadView = ({
             description: preview.description,
             metadata: preview.metadata,
             body: preview.body,
+            previewError: preview.previewError,
             files: preview.files,
             alreadyImported: preview.alreadyImported,
             replaceableId: preview.replaceableId
@@ -410,7 +412,7 @@ const SkillUploadView = ({
                     aria-label={`Preview ${candidate.name}`}
                     onClick={() =>
                       candidatePreview.openPreview(async () => {
-                        if (candidate.kind === 'markdown' && candidate.previewError) {
+                        if (candidate.previewError) {
                           throw new Error(candidate.previewError)
                         }
                         return {

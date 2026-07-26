@@ -43,7 +43,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
   const frameworkSource =
     activeFrameworkId === 'codex'
       ? SOURCE_INFO.codex
-      : activeFrameworkId === 'claude-code' || activeFrameworkId === 'opencode'
+      : activeFrameworkId === 'claude-code'
         ? SOURCE_INFO.claude
         : undefined
 

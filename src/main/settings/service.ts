@@ -1353,7 +1353,6 @@ class SettingsService {
 
     switch (framework) {
       case 'claude-code':
-      case 'opencode':
         sources.push({ source: 'claude', dir: join(this.userClaudeDir, 'skills') })
         break
       case 'codex':

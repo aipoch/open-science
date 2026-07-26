@@ -849,6 +849,7 @@ export type SkillBundlePreview = {
   description: string
   metadata: Record<string, string>
   body: string
+  previewError?: string
   files: string[]
   alreadyImported: boolean
   replaceableId?: string

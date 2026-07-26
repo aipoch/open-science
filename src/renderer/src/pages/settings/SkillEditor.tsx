@@ -46,11 +46,17 @@ const toSlug = (name: string): string =>
 // every import surface, while returning the stripped body for the editor.
 const consumeFrontmatter = (
   text: string
-): { name?: string; description?: string; metadata: Record<string, string>; body: string } => {
-  const { fields, body } = parseFrontmatter(text)
+): {
+  name?: string
+  description?: string
+  metadata: Record<string, string>
+  body: string
+  hasFrontmatter: boolean
+} => {
+  const { fields, body, hasFrontmatter } = parseFrontmatter(text)
   const { name, description, ...metadata } = fields
 
-  return { name, description, metadata, body }
+  return { name, description, metadata, body, hasFrontmatter }
 }
 
 type SkillEditorProps = {
@@ -100,7 +106,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
 
   const handleBodyChange = (value: string): void => {
     const parsed = consumeFrontmatter(value)
-    if (parsed.name || parsed.description) {
+    if (parsed.hasFrontmatter) {
       if (parsed.name && !name.trim()) setName(parsed.name)
       if (parsed.description && !description.trim()) setDescription(parsed.description)
       setMetadata(parsed.metadata)

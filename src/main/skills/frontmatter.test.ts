@@ -14,7 +14,7 @@ describe('parseFrontmatter', () => {
       '',
       '# Demo'
     ].join('\n')
-    const { fields, body } = parseFrontmatter(raw)
+    const { fields, body, hasFrontmatter } = parseFrontmatter(raw)
     expect(fields).toMatchObject({
       name: 'demo',
       description: 'Does a thing.',
@@ -22,12 +22,14 @@ describe('parseFrontmatter', () => {
       author: 'AIPOCH'
     })
     expect(body.startsWith('# Demo')).toBe(true)
+    expect(hasFrontmatter).toBe(true)
   })
 
   it('returns empty fields and full text when no frontmatter is present', () => {
-    const { fields, body } = parseFrontmatter('# Just a body')
+    const { fields, body, hasFrontmatter } = parseFrontmatter('# Just a body')
     expect(fields).toEqual({})
     expect(body).toBe('# Just a body')
+    expect(hasFrontmatter).toBe(false)
   })
 
   it('joins a folded block scalar (>) into a single spaced line', () => {

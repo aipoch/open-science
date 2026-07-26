@@ -534,7 +534,7 @@ describe('UserSkillRepository', () => {
     expect((await repo.previewZip(zip)).previews[0].alreadyImported).toBe(true)
   })
 
-  it('bounds the cumulative SKILL.md content returned by a bundle preview', async () => {
+  it('bounds cumulative preview content without making later bundle skills unimportable', async () => {
     const repo = new UserSkillRepository(await makeStorage())
     const largeBody = Buffer.alloc(3 * 1024 * 1024, 0x61)
     const skillMd = (name: string): Buffer =>
@@ -549,9 +549,22 @@ describe('UserSkillRepository', () => {
 
     const { previews, skipped } = await repo.previewZip(zip)
 
-    expect(previews.map((preview) => preview.name)).toEqual(['Alpha'])
-    expect(skipped).toEqual([
-      { source: 'beta', reason: expect.stringMatching(/preview content.*limit/i) }
+    expect(previews.map((preview) => preview.name)).toEqual(['Alpha', 'Beta'])
+    expect(previews[0]).toMatchObject({ previewError: undefined })
+    expect(previews[1]).toMatchObject({
+      body: '',
+      previewError: expect.stringMatching(/preview content.*limit/i)
+    })
+    expect(skipped).toEqual([])
+
+    await expect(
+      repo.importFromZipBatch(
+        zip,
+        previews.map((preview) => ({ subPath: preview.subPath }))
+      )
+    ).resolves.toMatchObject([
+      { subPath: 'alpha', outcome: { status: 'imported' } },
+      { subPath: 'beta', outcome: { status: 'imported' } }
     ])
   })
 

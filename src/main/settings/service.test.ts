@@ -4139,7 +4139,7 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
     ])
   })
 
-  it('scans shared and Claude homes when the active framework is OpenCode', async () => {
+  it('scans only the shared home when the active framework is OpenCode', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
     const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))
     const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-list-agent-shared-'))
@@ -4151,10 +4151,7 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
 
     expect(
       (await service.listAgentHomeSkills()).map(({ source, slug }) => ({ source, slug }))
-    ).toEqual([
-      { source: 'agents', slug: 'visible-shared' },
-      { source: 'claude', slug: 'hidden-claude' }
-    ])
+    ).toEqual([{ source: 'agents', slug: 'visible-shared' }])
   })
 })
 

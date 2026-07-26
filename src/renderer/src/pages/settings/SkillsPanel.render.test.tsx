@@ -363,6 +363,48 @@ describe('SkillsPanel (sub-views)', () => {
     })
   })
 
+  it('consumes metadata-only frontmatter without replacing the existing identity', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        getSkillDetail: vi.fn().mockResolvedValue({
+          id: 'personal-mine',
+          name: 'Mine',
+          description: 'Custom',
+          source: 'personal',
+          updatedAt: '2026-07-08T00:00:00.000Z',
+          enabled: true,
+          body: '# Old body',
+          metadata: { author: 'Old author' },
+          references: []
+        })
+      }
+    }
+
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'edit', id: 'personal-mine' }} onNavigate={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    setValue('Skill body', ['---', 'author: Ada', 'license: MIT', '---', '# New body'].join('\n'))
+
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save'
+    )
+    await act(async () => {
+      save?.click()
+      await Promise.resolve()
+    })
+
+    expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
+      id: 'personal-mine',
+      name: 'Mine',
+      description: 'Custom',
+      body: '# New body',
+      metadata: { author: 'Ada', license: 'MIT' },
+      references: []
+    })
+  })
+
   it('creates a skill from the create view and returns to the list', () => {
     const onNavigate = vi.fn()
     act(() => {
@@ -551,7 +593,7 @@ describe('SkillsPanel (sub-views)', () => {
     ])
   })
 
-  it('advertises shared and Claude installed-skill sources for OpenCode', async () => {
+  it('advertises only the shared installed-skill source for OpenCode', async () => {
     useSettingsStore.setState({
       agentFrameworkId: 'opencode',
       listAgentHomeSkills: vi.fn().mockResolvedValue([])
@@ -564,7 +606,7 @@ describe('SkillsPanel (sub-views)', () => {
     })
 
     expect(document.body.textContent).toContain('~/.agents/skills')
-    expect(document.body.textContent).toContain('~/.claude/skills')
+    expect(document.body.textContent).not.toContain('~/.claude/skills')
     expect(document.body.textContent).not.toContain('~/.codex/skills')
   })
 

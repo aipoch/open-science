@@ -79,7 +79,8 @@ beforeEach(() => {
           name: 'Two',
           description: 'Second bundled skill',
           metadata: {},
-          body: '# Second bundle body',
+          body: '',
+          previewError: 'SKILL.md preview content exceeds the 4 MB cumulative limit.',
           files: ['SKILL.md'],
           alreadyImported: false
         }
@@ -184,6 +185,37 @@ describe('SkillUploadView (batch upload)', () => {
     act(() => checkbox?.click())
     expect(checkbox?.checked).toBe(true)
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('keeps a bundle candidate importable when its preview body exceeds the cumulative cap', async () => {
+    act(() => {
+      root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
+    })
+    await dropFiles([
+      new File([new Uint8Array([1, 2, 3])], 'pack.zip', { type: 'application/zip' })
+    ])
+
+    const checkbox = document.body.querySelector<HTMLInputElement>('[aria-label="Select Two"]')
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Preview Two"]')?.click()
+      await Promise.resolve()
+    })
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
+    expect(dialog?.querySelector('[role="alert"]')?.textContent).toMatch(
+      /preview content exceeds the 4 MB cumulative limit/i
+    )
+    expect(checkbox?.checked).toBe(false)
+
+    act(() => dialog?.querySelector<HTMLButtonElement>('[aria-label="Close preview"]')?.click())
+    act(() => checkbox?.click())
+    clickButton('Import selected')
+    await flush()
+
+    expect(useSettingsStore.getState().importSkillZipBatch).toHaveBeenCalledWith(
+      expect.any(String),
+      [{ subPath: 'skills/two', replaceId: undefined }]
+    )
   })
 
   it('rejects an oversized markdown file on file.size, before reading its contents', async () => {

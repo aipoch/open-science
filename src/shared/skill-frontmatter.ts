@@ -2,12 +2,14 @@ import { load as loadYaml, FAILSAFE_SCHEMA } from 'js-yaml'
 
 // SKILL.md frontmatter reader shared by main and renderer. Values remain strings so metadata can
 // round-trip through previews and the repository without YAML bool/number/Date coercion.
-const parseFrontmatter = (raw: string): { fields: Record<string, string>; body: string } => {
+const parseFrontmatter = (
+  raw: string
+): { fields: Record<string, string>; body: string; hasFrontmatter: boolean } => {
   const normalized = raw.replace(/\r\n?/g, '\n')
   const match = /^---\n([\s\S]*?)\n---\n?/.exec(normalized)
 
   if (!match) {
-    return { fields: {}, body: raw }
+    return { fields: {}, body: raw, hasFrontmatter: false }
   }
 
   const body = normalized.slice(match[0].length).replace(/^\n+/, '')
@@ -16,7 +18,7 @@ const parseFrontmatter = (raw: string): { fields: Record<string, string>; body: 
   try {
     parsed = loadYaml(match[1], { schema: FAILSAFE_SCHEMA })
   } catch {
-    return { fields: {}, body }
+    return { fields: {}, body, hasFrontmatter: true }
   }
 
   const fields: Record<string, string> = {}
@@ -31,7 +33,7 @@ const parseFrontmatter = (raw: string): { fields: Record<string, string>; body: 
     }
   }
 
-  return { fields, body }
+  return { fields, body, hasFrontmatter: true }
 }
 
 const splitFrontmatter = (raw: string): { description: string; body: string } => {
