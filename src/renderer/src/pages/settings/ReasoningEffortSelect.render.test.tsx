@@ -82,6 +82,35 @@ describe('ReasoningEffortSelect', () => {
     ).toEqual(['Default', 'Low', 'Medium', 'High'])
   })
 
+  it('shows the documented thinking switch for MiniMax-M3', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'minimax',
+      activeModel: 'MiniMax-M3',
+      providers: [
+        {
+          id: 'minimax',
+          type: 'official',
+          name: 'MiniMax',
+          vendorId: 'minimax',
+          models: ['MiniMax-M3'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(<ReasoningEffortSelect />)
+    })
+
+    expect(
+      Array.from(container.querySelectorAll('[role="radio"]')).map((element) =>
+        element.textContent?.trim()
+      )
+    ).toEqual(['Default', 'None', 'High'])
+  })
+
   it('stores the highest five-slot intent when the model top choice covers multiple slots', async () => {
     const setReasoningEffort = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({

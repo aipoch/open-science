@@ -309,8 +309,10 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       }
     ],
     models: [
-      { id: 'MiniMax-M3', contextWindow: 1_000_000 },
-      { id: 'MiniMax-M3[1m]', contextWindow: 1_000_000 },
+      // MiniMax documents M3 reasoning as a binary thinking switch: none disables thinking and high
+      // enables Adaptive Thinking. Older M2 models remain conservative until documented otherwise.
+      { id: 'MiniMax-M3', contextWindow: 1_000_000, reasoningEffort: 'none-high' },
+      { id: 'MiniMax-M3[1m]', contextWindow: 1_000_000, reasoningEffort: 'none-high' },
       { id: 'MiniMax-M2.7', contextWindow: 204_800 },
       { id: 'MiniMax-M2.5', contextWindow: 204_800 }
     ]

@@ -104,28 +104,6 @@ const normalizeResponsesBaseUrl = (value: string | undefined): string | undefine
   return normalized
 }
 
-// Codex config has a smaller transport vocabulary than several provider APIs. Encode every resolved
-// model value into a valid Codex rung so direct Responses sessions still receive an explicit relative
-// effort. Chat-bridged requests additionally carry the exact model value as an upstream override, so
-// this transport encoding never replaces none/max/ultra at the real Chat Completions endpoint.
-const CODEX_REASONING_EFFORT: Readonly<
-  Record<ModelReasoningEffort, 'low' | 'medium' | 'high' | 'xhigh'>
-> = {
-  none: 'low',
-  minimal: 'low',
-  low: 'low',
-  medium: 'medium',
-  high: 'high',
-  xhigh: 'xhigh',
-  max: 'xhigh',
-  ultra: 'xhigh'
-}
-
-const codexReasoningEffortFor = (
-  effort: ModelReasoningEffort | undefined
-): 'low' | 'medium' | 'high' | 'xhigh' | undefined =>
-  effort === undefined ? undefined : CODEX_REASONING_EFFORT[effort]
-
 // Just the model + reasoning-effort fields a Codex config can carry, with no provider plumbing.
 // The bridge path layers the open-science custom provider on top of this; the codex-isolated path
 // uses it on its own so codex-acp can drive the ChatGPT subscription with the user's selected
@@ -134,10 +112,9 @@ const buildCodexModelOptions = (input: {
   model?: string
   reasoningEffort?: ModelReasoningEffort
 }): Record<string, unknown> => {
-  const codexEffort = codexReasoningEffortFor(input.reasoningEffort)
   return {
     ...(input.model ? { model: input.model } : {}),
-    ...(codexEffort ? { model_reasoning_effort: codexEffort } : {})
+    ...(input.reasoningEffort ? { model_reasoning_effort: input.reasoningEffort } : {})
   }
 }
 

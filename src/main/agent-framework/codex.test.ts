@@ -122,12 +122,14 @@ describe('codexFramework', () => {
       {
         storageRoot: '/data',
         executablePath: '/runtime/codex-acp',
+        reasoningEffort: 'none',
         responsesBridge: { baseUrl: 'http://127.0.0.1:43123/v1', token: 'local-token' }
       }
     )
 
     expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
       model: 'MiniMax-M3',
+      model_reasoning_effort: 'none',
       model_context_window: 1_000_000,
       model_auto_compact_token_limit: 950_000,
       model_providers: {
@@ -433,15 +435,15 @@ describe('codexFramework', () => {
 
 describe('buildCodexConfig reasoning effort', () => {
   it.each([
-    ['none', 'low'],
-    ['minimal', 'low'],
+    ['none', 'none'],
+    ['minimal', 'minimal'],
     ['low', 'low'],
     ['medium', 'medium'],
     ['high', 'high'],
     ['xhigh', 'xhigh'],
-    ['max', 'xhigh'],
-    ['ultra', 'xhigh']
-  ] as const)('maps the %s level to model_reasoning_effort %s', (effort, expected) => {
+    ['max', 'max'],
+    ['ultra', 'ultra']
+  ] as const)('preserves the %s level as model_reasoning_effort %s', (effort, expected) => {
     expect(buildCodexConfig({ reasoningEffort: effort }).model_reasoning_effort).toBe(expected)
   })
 
@@ -464,6 +466,6 @@ describe('buildCodexConfig reasoning effort', () => {
       { storageRoot: '/data', executablePath: '/runtime/codex-acp', reasoningEffort: 'max' }
     )
 
-    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '').model_reasoning_effort).toBe('xhigh')
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '').model_reasoning_effort).toBe('max')
   })
 })

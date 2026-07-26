@@ -116,6 +116,13 @@ describe('provider registry', () => {
     expect(resolveVendorModelReasoningEffort('anthropic', 'claude-haiku-4-5-20251001')).toEqual({
       supported: false
     })
+    expect(resolveVendorModelReasoningEffort('minimax', 'MiniMax-M3')).toEqual({
+      supported: true,
+      slots: ['none', 'high', 'high', 'high', 'high']
+    })
+    expect(resolveVendorModelReasoningEffort('minimax', 'MiniMax-M2.7')).toEqual({
+      supported: false
+    })
     expect(resolveVendorModelReasoningEffort('openrouter', 'deepseek/deepseek-v4-pro')).toEqual({
       supported: true,
       slots: ['high', 'max', 'max', 'max', 'max']
