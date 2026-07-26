@@ -276,6 +276,7 @@ describe('provider registry', () => {
 
     it('returns true for Volcengine Ark Seed 2.x general models but not the coding model', () => {
       expect(isVendorModelMultimodal('volcengine', 'doubao-seed-2-1-pro-260628')).toBe(true)
+      expect(isVendorModelMultimodal('volcengine', 'doubao-seed-2-1-turbo-260628')).toBe(true)
       expect(isVendorModelMultimodal('volcengine', 'doubao-seed-2-0-pro-260215')).toBe(true)
       expect(isVendorModelMultimodal('volcengine', 'doubao-seed-2-0-lite-260215')).toBe(true)
       expect(isVendorModelMultimodal('volcengine', 'doubao-seed-2-0-mini-260215')).toBe(true)

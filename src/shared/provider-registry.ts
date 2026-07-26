@@ -392,6 +392,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     apiKeyUrl: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apikey',
     models: [
       { id: 'doubao-seed-2-1-pro-260628', contextWindow: 256_000 },
+      { id: 'doubao-seed-2-1-turbo-260628', contextWindow: 256_000 },
       { id: 'doubao-seed-2-0-pro-260215', contextWindow: 256_000 },
       { id: 'doubao-seed-2-0-lite-260215', contextWindow: 256_000 },
       { id: 'doubao-seed-2-0-mini-260215', contextWindow: 256_000 },
@@ -401,6 +402,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     multimodal: {
       multimodalModels: [
         'doubao-seed-2-1-pro-260628',
+        'doubao-seed-2-1-turbo-260628',
         'doubao-seed-2-0-pro-260215',
         'doubao-seed-2-0-lite-260215',
         'doubao-seed-2-0-mini-260215'
