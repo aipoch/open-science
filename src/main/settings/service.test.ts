@@ -2117,6 +2117,7 @@ describe('SettingsService: preflight & spawn config', () => {
       lastValidatedAt: Date.now()
     })
     await service.setActiveProvider(provider.id, 'deepseek-v4-flash')
+    await repository.setReasoningEffort('low')
 
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
     const backend = await service.resolveActiveAgentBackend()
@@ -2124,6 +2125,7 @@ describe('SettingsService: preflight & spawn config', () => {
     // Chat Completions provider ⇒ bridge ⇒ Codex runs the classic-tool-mode catalog model so it
     // advertises the shell_command function tool the bridge can forward (CODEX_BRIDGE_MODEL).
     expect(backend.sessionModel).toBe('gpt-5.4')
+    expect(backend.sessionEffort).toBe('none')
     expect(backend.contextWindow).toBe(1_000_000)
     expect(backend.providerConfiguration).toEqual({
       providerId: 'custom-gateway',
@@ -2171,6 +2173,8 @@ describe('SettingsService: preflight & spawn config', () => {
       ])
     })
     const upstreamMessages = JSON.stringify(upstreamRequest?.messages)
+    expect(upstreamRequest).toMatchObject({ thinking: { type: 'disabled' } })
+    expect(upstreamRequest).not.toHaveProperty('reasoning_effort')
     expect(upstreamMessages).not.toContain('<open_science_connector_instructions>')
     expect(upstreamMessages).not.toContain('host.mcp("pubmed", "search_articles"')
 
@@ -3768,7 +3772,7 @@ describe('SettingsService: reasoning effort', () => {
     expect((await repository.getSettings()).reasoningEffort).toBe('max')
   })
 
-  it("maps a five-level intent onto DeepSeek's two supported levels", async () => {
+  it("maps a five-level intent onto DeepSeek's three supported levels", async () => {
     const service = createService()
     const provider = (
       await service.upsertProvider({
@@ -3780,7 +3784,7 @@ describe('SettingsService: reasoning effort', () => {
     ).providers[0]
     await service.setActiveProvider(provider.id, 'deepseek-v4-pro')
 
-    expect(await service.resolveActiveReasoningEffort('low')).toBe('high')
+    expect(await service.resolveActiveReasoningEffort('low')).toBe('none')
     expect(await service.resolveActiveReasoningEffort('max')).toBe('max')
   })
 
@@ -3898,11 +3902,12 @@ describe('SettingsService: reasoning effort', () => {
 
     const backend = await service.resolveActiveAgentBackend()
 
-    expect(backend.sessionEffort).toBe('high')
-    // The level also reaches the framework's own config channel (opencode model options).
+    expect(backend.sessionEffort).toBe('none')
+    // The official vendor identity survives provider resolution, so OpenCode receives DeepSeek's
+    // native thinking switch instead of an invalid reasoningEffort: none literal.
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
     expect(content.provider['openai-compatible'].models['deepseek-v4-pro']).toEqual(
-      expect.objectContaining({ options: { reasoningEffort: 'high' } })
+      expect.objectContaining({ options: { thinking: { type: 'disabled' } } })
     )
   })
 

@@ -105,9 +105,13 @@ describe('provider registry', () => {
   })
 
   it('resolves model-specific static reasoning effort profiles without network discovery', () => {
+    expect(resolveVendorModelReasoningEffort('openai', 'gpt-5.5')).toEqual({
+      supported: true,
+      slots: ['none', 'low', 'medium', 'high', 'xhigh']
+    })
     expect(resolveVendorModelReasoningEffort('deepseek', 'deepseek-v4-pro')).toEqual({
       supported: true,
-      slots: ['high', 'max', 'max', 'max', 'max']
+      slots: ['none', 'high', 'max', 'max', 'max']
     })
     expect(resolveVendorModelReasoningEffort('stepfun', 'step-3.7-flash')).toEqual({
       supported: true,
@@ -125,18 +129,26 @@ describe('provider registry', () => {
     })
     expect(resolveVendorModelReasoningEffort('openrouter', 'deepseek/deepseek-v4-pro')).toEqual({
       supported: true,
-      slots: ['high', 'max', 'max', 'max', 'max']
+      slots: ['none', 'high', 'xhigh', 'xhigh', 'xhigh']
     })
     expect(resolveVendorModelReasoningEffort('openrouter', 'z-ai/glm-5.2')).toEqual({
       supported: true,
-      slots: ['none', 'high', 'max', 'max', 'max']
+      slots: ['none', 'high', 'xhigh', 'xhigh', 'xhigh']
     })
     expect(resolveVendorModelReasoningEffort('openrouter', 'anthropic/claude-haiku-4.5')).toEqual({
       supported: false
     })
     expect(resolveVendorModelReasoningEffort('openrouter', 'openai/gpt-5.6-terra')).toEqual({
       supported: true,
-      slots: ['low', 'medium', 'high', 'xhigh', 'ultra']
+      slots: ['none', 'low', 'medium', 'high', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('openrouter', 'openai/gpt-5.5-pro')).toEqual({
+      supported: true,
+      slots: ['medium', 'high', 'xhigh', 'xhigh', 'xhigh']
+    })
+    expect(resolveVendorModelReasoningEffort('openrouter', 'openai/gpt-5.5')).toEqual({
+      supported: true,
+      slots: ['none', 'low', 'medium', 'high', 'xhigh']
     })
     expect(resolveVendorModelReasoningEffort('openrouter', 'moonshotai/kimi-k3')).toEqual({
       supported: true,
@@ -149,11 +161,12 @@ describe('provider registry', () => {
       supported: false
     })
     expect(resolveVendorModelReasoningEffort('openrouter', 'qwen/qwen3.7-max')).toEqual({
-      supported: false
+      supported: true,
+      slots: ['none', 'high', 'high', 'high', 'high']
     })
     expect(resolveVendorModelReasoningEffort('deepseek', undefined)).toEqual({
       supported: true,
-      slots: ['high', 'max', 'max', 'max', 'max']
+      slots: ['none', 'high', 'max', 'max', 'max']
     })
   })
 

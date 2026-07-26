@@ -123,7 +123,12 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         reasoningEffort: 'low-medium-high-xhigh-ultra'
       },
       { id: 'gpt-5.6-luna', contextWindow: 1_050_000, reasoningEffort: 'standard-5' },
-      { id: 'gpt-5.5', contextWindow: 1_050_000 },
+      // GPT-5.5 documents none as its latency-first, no-reasoning mode.
+      {
+        id: 'gpt-5.5',
+        contextWindow: 1_050_000,
+        reasoningEffort: 'none-low-medium-high-xhigh'
+      },
       { id: 'gpt-5.4', contextWindow: 1_050_000 },
       { id: 'gpt-5.4-mini', contextWindow: 400_000 }
     ],
@@ -156,7 +161,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'deepseek',
     label: 'DeepSeek',
-    reasoningEffort: 'high-max',
+    // DeepSeek V4 supports an explicit thinking-off switch plus high/max reasoning effort.
+    reasoningEffort: 'none-high-max',
     // DeepSeek exposes both routes: Anthropic /v1/messages under `/anthropic`, and the OpenAI-compatible
     // route under `/v1`. The same model ids work on both, so it's safe to prefer OpenAI where the
     // framework supports it (e.g. OpenCode). openaiBaseUrl is the exact version-carrying base clients
@@ -480,50 +486,52 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         reasoningEffort: 'unsupported'
       },
       // OpenAI
+      // These profiles are baked from OpenRouter's public model reasoning metadata. Where a model
+      // exposes six values, keep the product's five-option ceiling and span off through its top rung.
       {
         id: 'openai/gpt-5.6-terra-pro',
         contextWindow: 1_050_000,
-        reasoningEffort: 'low-medium-high-xhigh-ultra'
+        reasoningEffort: 'none-low-medium-high-max'
       },
       {
         id: 'openai/gpt-5.6-terra',
         contextWindow: 1_050_000,
-        reasoningEffort: 'low-medium-high-xhigh-ultra'
+        reasoningEffort: 'none-low-medium-high-max'
       },
       {
         id: 'openai/gpt-5.6-sol-pro',
         contextWindow: 1_050_000,
-        reasoningEffort: 'low-medium-high-xhigh-ultra'
+        reasoningEffort: 'none-low-medium-high-max'
       },
       {
         id: 'openai/gpt-5.6-sol',
         contextWindow: 1_050_000,
-        reasoningEffort: 'low-medium-high-xhigh-ultra'
+        reasoningEffort: 'none-low-medium-high-max'
       },
       {
         id: 'openai/gpt-5.6-luna-pro',
         contextWindow: 1_050_000,
-        reasoningEffort: 'standard-5'
+        reasoningEffort: 'none-low-medium-high-max'
       },
       {
         id: 'openai/gpt-5.6-luna',
         contextWindow: 1_050_000,
-        reasoningEffort: 'standard-5'
+        reasoningEffort: 'none-low-medium-high-max'
       },
       {
         id: 'openai/gpt-5.5-pro',
         contextWindow: 1_050_000,
-        reasoningEffort: 'low-medium-high-xhigh'
+        reasoningEffort: 'medium-high-xhigh'
       },
       {
         id: 'openai/gpt-5.5',
         contextWindow: 1_050_000,
-        reasoningEffort: 'low-medium-high-xhigh'
+        reasoningEffort: 'none-low-medium-high-xhigh'
       },
       {
         id: 'openai/gpt-5.3-codex',
         contextWindow: 400_000,
-        reasoningEffort: 'low-medium-high-xhigh'
+        reasoningEffort: 'none-low-medium-high-xhigh'
       },
       // Other top-ranked vendors on OpenRouter
       {
@@ -540,12 +548,12 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       {
         id: 'deepseek/deepseek-v4-pro',
         contextWindow: 1_048_576,
-        reasoningEffort: 'high-max'
+        reasoningEffort: 'none-high-xhigh'
       },
       {
         id: 'z-ai/glm-5.2',
         contextWindow: 1_048_576,
-        reasoningEffort: 'none-high-max'
+        reasoningEffort: 'none-high-xhigh'
       },
       {
         id: 'moonshotai/kimi-k3',
@@ -555,7 +563,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       {
         id: 'qwen/qwen3.7-max',
         contextWindow: 1_000_000,
-        reasoningEffort: 'unsupported'
+        reasoningEffort: 'none-high'
       }
     ],
     // OpenRouter's catalog is curated (no live refresh), and vision support is an unpredictable subset

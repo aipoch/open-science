@@ -548,6 +548,51 @@ describe('Responses-compatible bridge conversion', () => {
     }
   )
 
+  it('uses provider-native Chat controls when none is not a reasoning_effort literal', () => {
+    expect(
+      responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'deepseek-v4-pro', undefined, [], {
+        reasoningEffortOverride: 'none',
+        vendorId: 'deepseek'
+      })
+    ).toMatchObject({ thinking: { type: 'disabled' } })
+    expect(
+      responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'deepseek-v4-pro', undefined, [], {
+        reasoningEffortOverride: 'none',
+        vendorId: 'deepseek'
+      })
+    ).not.toHaveProperty('reasoning_effort')
+
+    expect(
+      responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'mimo-v2.5-pro', undefined, [], {
+        reasoningEffortOverride: 'high',
+        vendorId: 'xiaomimimo'
+      })
+    ).toMatchObject({ thinking: { type: 'enabled' } })
+
+    expect(
+      responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'qwen/qwen3.7-max', undefined, [], {
+        reasoningEffortOverride: 'none',
+        vendorId: 'openrouter'
+      })
+    ).toMatchObject({ reasoning: { enabled: false } })
+  })
+
+  it('uses OpenRouter reasoning objects and keeps GLM none as a literal effort', () => {
+    expect(
+      responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'openai/gpt-5.5', undefined, [], {
+        reasoningEffortOverride: 'xhigh',
+        vendorId: 'openrouter'
+      })
+    ).toMatchObject({ reasoning: { effort: 'xhigh' } })
+
+    expect(
+      responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'glm-5.2', undefined, [], {
+        reasoningEffortOverride: 'none',
+        vendorId: 'zhipu'
+      })
+    ).toMatchObject({ reasoning_effort: 'none' })
+  })
+
   it('strips the reasoning effort unless the user explicitly chose a level', () => {
     // Codex emits its own default effort even when the app never configured one; forwarding that
     // would change what existing bridged users send to gateways that may reject unknown params.

@@ -325,7 +325,7 @@ describe('ReasoningEffortSelect', () => {
       Array.from(container.querySelectorAll('[role="radio"]')).map((element) =>
         element.textContent?.trim()
       )
-    ).toEqual(['Default', 'High', 'Max'])
+    ).toEqual(['Default', 'None', 'High', 'XHigh'])
   })
 
   it('shows only Default when a custom model explicitly disables effort', async () => {

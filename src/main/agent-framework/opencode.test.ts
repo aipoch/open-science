@@ -250,14 +250,14 @@ describe('opencodeFramework.prepareModelConfig', () => {
   })
 
   it.each([
-    ['none', 'low'],
-    ['minimal', 'low'],
+    ['none', 'none'],
+    ['minimal', 'minimal'],
     ['low', 'low'],
     ['medium', 'medium'],
     ['high', 'high'],
-    ['xhigh', 'high'],
-    ['max', 'high'],
-    ['ultra', 'high']
+    ['xhigh', 'xhigh'],
+    ['max', 'max'],
+    ['ultra', 'max']
   ] as const)('encodes model effort %s as OpenCode transport level %s', (effort, expected) => {
     const config = opencodeFramework.prepareModelConfig(
       { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
@@ -276,6 +276,46 @@ describe('opencodeFramework.prepareModelConfig', () => {
       m: { options: { reasoningEffort: expected } }
     })
   })
+
+  it.each([
+    ['minimax', 'MiniMax-M3', 'none', { thinking: { type: 'disabled' } }],
+    ['minimax', 'MiniMax-M3', 'high', { thinking: { type: 'adaptive' } }],
+    ['xiaomimimo', 'mimo-v2.5-pro', 'none', { thinking: { type: 'disabled' } }],
+    ['xiaomimimo', 'mimo-v2.5-pro', 'high', { thinking: { type: 'enabled' } }],
+    ['deepseek', 'deepseek-v4-pro', 'none', { thinking: { type: 'disabled' } }],
+    [
+      'deepseek',
+      'deepseek-v4-pro',
+      'max',
+      { reasoningEffort: 'max', thinking: { type: 'enabled' } }
+    ],
+    ['openrouter', 'qwen/qwen3.7-max', 'none', { reasoning: { enabled: false } }],
+    ['openrouter', 'openai/gpt-5.5', 'high', { reasoning: { effort: 'high' } }]
+  ] as const)(
+    'encodes %s model %s effort %s with its provider-native options',
+    (vendorId, model, reasoningEffort, expected) => {
+      const config = opencodeFramework.prepareModelConfig(
+        {
+          type: 'custom',
+          vendorId,
+          baseUrl: 'https://gw.example/anthropic',
+          openaiBaseUrl: 'https://gw.example/v1',
+          apiEndpoints: ['anthropic', 'openai'],
+          model,
+          key: 'k'
+        },
+        { storageRoot: '/data', executablePath: '/bin/opencode', reasoningEffort }
+      )
+
+      const fileConfig = JSON.parse(
+        config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
+      )
+      const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+
+      expect(fileConfig.provider['openai-compatible'].models[model].options).toEqual(expected)
+      expect(content.provider['openai-compatible'].models[model].options).toEqual(expected)
+    }
+  )
 
   it('leaves the model block empty when no reasoning effort is set', () => {
     const config = opencodeFramework.prepareModelConfig(

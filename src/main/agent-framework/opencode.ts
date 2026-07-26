@@ -12,6 +12,7 @@ import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import { anthropicMessagesBase, openAiCompletionsBase } from '../settings/base-url'
 import { augmentedPathEnv } from '../settings/shell-path'
 import type { ResolvedProvider } from '../settings/provider-env'
+import { resolveChatReasoningTransport } from '../settings/reasoning-transport'
 import type {
   AgentFramework,
   AgentModelConfig,
@@ -135,28 +136,34 @@ const resolveOpencodeEndpoint = (
   return { bareModel, providerId, npm, baseURL }
 }
 
-// OpenCode/AI SDK exposes a three-rung transport vocabulary. The model profile remains authoritative
-// for UI and persistence; this complete encoder prevents provider-native literals from producing an
-// invalid OpenCode config. Unlike the Codex Chat bridge, OpenCode has no independent upstream override.
-const OPENCODE_REASONING_EFFORT: Readonly<Record<ModelReasoningEffort, 'low' | 'medium' | 'high'>> =
-  {
-    none: 'low',
-    minimal: 'low',
-    low: 'low',
-    medium: 'medium',
-    high: 'high',
-    xhigh: 'high',
-    max: 'high',
-    ultra: 'high'
+// Current OpenCode accepts the provider-neutral ladder through `reasoningEffort` up to `max`.
+// `ultra` is a Codex-specific top rung, so it is the only value that needs an agent-level clamp.
+// Provider-specific wire shapes (thinking switches and OpenRouter's reasoning object) are resolved
+// separately and passed through model options by the openai-compatible AI SDK.
+const opencodeReasoningOptions = (
+  provider: ResolvedProvider,
+  effort: ModelReasoningEffort
+): Record<string, unknown> => {
+  const normalizedEffort = effort === 'ultra' ? 'max' : effort
+  const transport = resolveChatReasoningTransport(
+    provider.vendorId,
+    provider.model,
+    normalizedEffort
+  )
+
+  return {
+    ...(transport.reasoningEffort ? { reasoningEffort: transport.reasoningEffort } : {}),
+    ...(transport.thinking ? { thinking: transport.thinking } : {}),
+    ...(transport.reasoning ? { reasoning: transport.reasoning } : {})
   }
+}
 
 // The opencode per-model capability block. opencode strips image parts before calling the provider for
 // any model whose config does not declare vision — custom and freshly-registered models default to
 // text-only — so a base64 image sent over ACP silently never reaches the provider. A multimodal model
 // must therefore advertise both the attachment capability and an image input modality. Empty (text-only)
-// otherwise, so a non-vision model is never told it can accept images. A reasoning-effort preference is
-// declared via the model's `options.reasoningEffort`, opencode's per-model knob passed through to the
-// AI SDK provider; providers that don't support it ignore the option.
+// otherwise, so a non-vision model is never told it can accept images. Reasoning preferences are
+// declared in the model's `options` block, which OpenCode passes through to the AI SDK provider.
 const buildModelCapabilities = (
   provider: ResolvedProvider,
   reasoningEffort?: ModelReasoningEffort
@@ -164,9 +171,7 @@ const buildModelCapabilities = (
   ...(provider.supportsImageInput
     ? { attachment: true, modalities: { input: ['text', 'image'] } }
     : {}),
-  ...(reasoningEffort
-    ? { options: { reasoningEffort: OPENCODE_REASONING_EFFORT[reasoningEffort] } }
-    : {})
+  ...(reasoningEffort ? { options: opencodeReasoningOptions(provider, reasoningEffort) } : {})
 })
 
 // The app-authoritative config layer (model + provider block + permission policy) passed verbatim to

@@ -3464,6 +3464,7 @@ class SettingsService {
     const target = {
       baseUrl: targetBaseUrl,
       key: provider.key,
+      vendorId: provider.vendorId,
       model: provider.model,
       reasoningEffort,
       namespacedTools: [
@@ -3534,6 +3535,7 @@ class SettingsService {
     const pinnedTarget = {
       baseUrl: target.baseUrl,
       key: target.key,
+      vendorId: target.vendorId,
       model: target.model,
       namespacedTools: target.namespacedTools,
       reviewerScope: target.reviewerScope
@@ -3769,6 +3771,7 @@ class SettingsService {
 
       return {
         type: 'custom',
+        vendorId: provider.vendorId,
         baseUrl: resolveVendorBaseUrl(provider.vendorId, provider.region),
         openaiBaseUrl: resolveVendorOpenAiBaseUrl(provider.vendorId, provider.region),
         model,
@@ -3804,6 +3807,7 @@ class SettingsService {
     if (draft.type === 'official' && isOfficialVendorId(draft.vendorId)) {
       return {
         type: 'custom',
+        vendorId: draft.vendorId,
         baseUrl: resolveVendorBaseUrl(draft.vendorId, draft.region),
         openaiBaseUrl: resolveVendorOpenAiBaseUrl(draft.vendorId, draft.region),
         model: draft.model ?? defaultVendorModel(draft.vendorId),

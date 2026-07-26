@@ -43,6 +43,22 @@ describe('resolveReasoningEffortControl', () => {
     expect(control.selectedValue).toBe('max')
   })
 
+  it('includes a true off option for a five-level model that supports none', () => {
+    const control = resolveReasoningEffortControl(
+      'low',
+      reasoningEffortProfile('none-low-medium-high-xhigh')
+    )
+
+    expect(control.options.map((option) => option.value)).toEqual([
+      'none',
+      'low',
+      'medium',
+      'high',
+      'xhigh'
+    ])
+    expect(control.selectedValue).toBe('none')
+  })
+
   it('shows two options when the model only distinguishes high and max', () => {
     const control = resolveReasoningEffortControl('high', reasoningEffortProfile('high-max'))
 

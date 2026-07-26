@@ -12,9 +12,13 @@ export type ReasoningEffortPresetId =
   | 'low-medium-high-xhigh'
   | 'low-medium-high-xhigh-ultra'
   | 'low-medium-high-max'
+  | 'none-low-medium-high-xhigh'
+  | 'none-low-medium-high-max'
   | 'low-medium-high'
+  | 'medium-high-xhigh'
   | 'minimal-low-medium-high'
   | 'none-high-max'
+  | 'none-high-xhigh'
   | 'low-high-max'
   | 'none-high'
   | 'low-high'
@@ -30,9 +34,13 @@ export const CUSTOM_REASONING_EFFORT_PRESETS: ReadonlyArray<{
   { id: 'low-medium-high-xhigh-ultra', label: 'Low / Medium / High / XHigh / Ultra' },
   { id: 'low-medium-high-max', label: 'Low / Medium / High / Max' },
   { id: 'low-medium-high-xhigh', label: 'Low / Medium / High / XHigh' },
+  { id: 'none-low-medium-high-xhigh', label: 'None / Low / Medium / High / XHigh' },
+  { id: 'none-low-medium-high-max', label: 'None / Low / Medium / High / Max' },
   { id: 'minimal-low-medium-high', label: 'Minimal / Low / Medium / High' },
   { id: 'low-medium-high', label: 'Low / Medium / High' },
+  { id: 'medium-high-xhigh', label: 'Medium / High / XHigh' },
   { id: 'none-high-max', label: 'None / High / Max' },
+  { id: 'none-high-xhigh', label: 'None / High / XHigh' },
   { id: 'low-high-max', label: 'Low / High / Max' },
   { id: 'high-max', label: 'High / Max' },
   { id: 'none-high', label: 'None / High' },
@@ -88,9 +96,21 @@ const PROFILES: Record<ReasoningEffortPresetId, ReasoningEffortProfile> = {
     supported: true,
     slots: ['low', 'medium', 'high', 'max', 'max']
   },
+  'none-low-medium-high-xhigh': {
+    supported: true,
+    slots: ['none', 'low', 'medium', 'high', 'xhigh']
+  },
+  'none-low-medium-high-max': {
+    supported: true,
+    slots: ['none', 'low', 'medium', 'high', 'max']
+  },
   'low-medium-high': {
     supported: true,
     slots: ['low', 'medium', 'high', 'high', 'high']
+  },
+  'medium-high-xhigh': {
+    supported: true,
+    slots: ['medium', 'high', 'xhigh', 'xhigh', 'xhigh']
   },
   'minimal-low-medium-high': {
     supported: true,
@@ -99,6 +119,10 @@ const PROFILES: Record<ReasoningEffortPresetId, ReasoningEffortProfile> = {
   'none-high-max': {
     supported: true,
     slots: ['none', 'high', 'max', 'max', 'max']
+  },
+  'none-high-xhigh': {
+    supported: true,
+    slots: ['none', 'high', 'xhigh', 'xhigh', 'xhigh']
   },
   'low-high-max': {
     supported: true,

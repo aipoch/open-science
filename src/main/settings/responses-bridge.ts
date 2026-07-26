@@ -3,6 +3,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 
 import { createLogger } from '../logger'
 import { appendChatCompletions } from './base-url'
+import { resolveChatReasoningTransport } from './reasoning-transport'
+import type { OfficialVendorId } from '../../shared/provider-registry'
 import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 
 // The bridge deliberately keeps protocol payloads open-ended; validation rejects unsupported shapes
@@ -19,6 +21,7 @@ const log = createLogger('acp-bridge')
 export type ResponsesBridgeTarget = {
   baseUrl: string
   key?: string
+  vendorId?: OfficialVendorId
   // Codex uses a catalog model for its local metadata; bridge providers may need a different
   // upstream model id (for example, DeepSeek's model name).
   model?: string
@@ -556,7 +559,10 @@ export const responsesToChatRequest = (
   upstreamModel?: string,
   reasoningByCallId?: Map<string, string>,
   namespacedTools: readonly ResponsesBridgeNamespacedTool[] = [],
-  options?: { reasoningEffortOverride?: ModelReasoningEffort }
+  options?: {
+    reasoningEffortOverride?: ModelReasoningEffort
+    vendorId?: OfficialVendorId
+  }
 ): JsonObject => {
   for (const field of UNSUPPORTED_FIELDS) {
     if (body[field] !== undefined && body[field] !== null) {
@@ -631,6 +637,9 @@ export const responsesToChatRequest = (
   // Codex runs a catalog transport model and may omit, default, or clamp values that the real model
   // supports. Undefined intentionally strips Codex's own effort from the Chat request.
   const chatReasoningEffort = options?.reasoningEffortOverride
+  const reasoningTransport = chatReasoningEffort
+    ? resolveChatReasoningTransport(options?.vendorId, upstreamModel, chatReasoningEffort)
+    : undefined
 
   return {
     model: upstreamModel ?? body.model,
@@ -645,7 +654,11 @@ export const responsesToChatRequest = (
     ...(body.max_output_tokens === undefined || body.max_output_tokens === null
       ? {}
       : { max_tokens: body.max_output_tokens }),
-    ...(chatReasoningEffort ? { reasoning_effort: chatReasoningEffort } : {}),
+    ...(reasoningTransport?.reasoningEffort
+      ? { reasoning_effort: reasoningTransport.reasoningEffort }
+      : {}),
+    ...(reasoningTransport?.thinking ? { thinking: reasoningTransport.thinking } : {}),
+    ...(reasoningTransport?.reasoning ? { reasoning: reasoningTransport.reasoning } : {}),
     stream,
     // Responses stream options are not Chat Completions options. Request final usage explicitly and
     // do not forward fields such as include_obfuscation that a Chat-compatible gateway may reject.
@@ -1171,6 +1184,7 @@ export class ResponsesBridge {
     const changed =
       this.target.baseUrl !== target.baseUrl ||
       this.target.model !== target.model ||
+      this.target.vendorId !== target.vendorId ||
       this.target.key !== target.key
     this.target = target
     if (changed) this.reasoningByCallId.clear()
@@ -1292,7 +1306,10 @@ export class ResponsesBridge {
         this.target.model,
         this.reasoningByCallId,
         namespacedTools,
-        { reasoningEffortOverride: this.target.reasoningEffort }
+        {
+          reasoningEffortOverride: this.target.reasoningEffort,
+          vendorId: this.target.vendorId
+        }
       )
 
       // Reveals which real model actually serves the turn (Codex only ever sees the internal catalog
