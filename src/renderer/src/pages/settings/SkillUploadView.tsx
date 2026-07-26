@@ -70,6 +70,7 @@ type Candidate =
       description: string
       metadata: Record<string, string>
       body: string
+      previewError?: string
     }
 
 // One skill a bundle contained but that couldn't be imported (too large, no SKILL.md, no name, ...),
@@ -193,7 +194,11 @@ const SkillUploadView = ({
             name: parsed.name,
             description: parsed.description ?? '',
             metadata: parsed.metadata,
-            body: parsed.body
+            body: parsed.body,
+            previewError:
+              file.size > SKILL_IMPORT_LIMITS.maxPreviewContentBytes
+                ? `${file.name}: preview exceeds the ${mb(SKILL_IMPORT_LIMITS.maxPreviewContentBytes)} limit. You can still import it.`
+                : undefined
           }
         ]
       }
@@ -404,8 +409,11 @@ const SkillUploadView = ({
                     type="button"
                     aria-label={`Preview ${candidate.name}`}
                     onClick={() =>
-                      candidatePreview.openPreview(() =>
-                        Promise.resolve({
+                      candidatePreview.openPreview(async () => {
+                        if (candidate.kind === 'markdown' && candidate.previewError) {
+                          throw new Error(candidate.previewError)
+                        }
+                        return {
                           name: candidate.name,
                           description: candidate.description,
                           sourceLabel: secondary,
@@ -413,8 +421,8 @@ const SkillUploadView = ({
                           body: candidate.body,
                           files:
                             candidate.kind === 'bundle' ? candidate.files : [candidate.fileName]
-                        })
-                      )
+                        }
+                      })
                     }
                     className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring"
                   >

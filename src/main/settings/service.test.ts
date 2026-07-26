@@ -3280,7 +3280,7 @@ describe('SettingsService: skills', () => {
     const url = 'https://github.com/o/r/tree/main/skills/demo'
 
     await expect(service.previewGitHubSkill({ url })).resolves.toMatchObject({
-      sourceLabel: 'github.com/o/r/skills/demo',
+      sourceLabel: 'github.com/o/r@main/skills/demo',
       body: '# Demo'
     })
     expect(previewGitHubSkill).toHaveBeenCalledWith(url, netFetch)

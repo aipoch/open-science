@@ -28,6 +28,17 @@ const DetailRow = ({ label, value }: { label: string; value: string }): React.JS
   </div>
 )
 
+const metadataLabel = (key: string): string =>
+  key.replace(/[-_]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+
+const DEDICATED_METADATA_KEYS = new Set([
+  'author',
+  'license',
+  'third-party',
+  'third_party',
+  'thirdparty'
+])
+
 // Read-only detail view for one bundled skill: header (name + badge + updated + description), the
 // rendered SKILL.md under "Files", and frontmatter metadata under "Details". The breadcrumb and back
 // control live in the settings header, not here.
@@ -54,6 +65,9 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
   const source = skill?.source ?? detail?.source
   const sourceLabel =
     source === 'imported' ? 'Imported' : source === 'personal' ? 'Personal' : 'Featured'
+  const genericMetadata = Object.entries(detail?.metadata ?? {}).filter(
+    ([key]) => !DEDICATED_METADATA_KEYS.has(key.toLowerCase())
+  )
 
   return (
     <div className="p-5">
@@ -87,7 +101,8 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
       </section>
 
       {/* Details: frontmatter metadata (author, license, third-party notices, ...). */}
-      {detail && (detail.author || detail.license || detail.thirdParty) ? (
+      {detail &&
+      (detail.author || detail.license || detail.thirdParty || genericMetadata.length > 0) ? (
         <section className="mt-6 border-t border-border pt-4">
           <h2 className="mb-1 text-sm font-semibold text-foreground">Details</h2>
           {detail.author ? <DetailRow label="Author" value={detail.author} /> : null}
@@ -98,6 +113,9 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
               value={detail.thirdParty}
             />
           ) : null}
+          {genericMetadata.map(([key, value]) => (
+            <DetailRow key={key} label={metadataLabel(key)} value={value} />
+          ))}
         </section>
       ) : null}
     </div>

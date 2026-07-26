@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SkillUploadView } from './SkillUploadView'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { SKILL_IMPORT_LIMITS } from '../../../../shared/skill-import-limits'
 
 let container: HTMLDivElement
 let root: Root
@@ -335,5 +336,42 @@ describe('SkillUploadView (batch upload)', () => {
 
     act(() => dialog?.querySelector<HTMLButtonElement>('[aria-label="Close preview"]')?.click())
     expect(checkbox?.checked).toBe(false)
+  })
+
+  it('blocks an oversized bare Markdown preview while keeping the candidate importable', async () => {
+    act(() => {
+      root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
+    })
+    const md = new File(
+      ['---\nname: Large\ndescription: Importable but not previewable\n---\n# Large body'],
+      'large.md',
+      { type: 'text/markdown' }
+    )
+    Object.defineProperty(md, 'size', {
+      value: SKILL_IMPORT_LIMITS.maxPreviewContentBytes + 1
+    })
+    await dropFiles([md])
+
+    const checkbox = document.body.querySelector<HTMLInputElement>('[aria-label="Select Large"]')
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Preview Large"]')?.click()
+      await Promise.resolve()
+    })
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
+    expect(dialog?.querySelector('[role="alert"]')?.textContent).toMatch(
+      /preview exceeds the 4 MB limit/i
+    )
+    expect(dialog?.textContent).not.toContain('Large body')
+    expect(checkbox?.checked).toBe(false)
+
+    act(() => dialog?.querySelector<HTMLButtonElement>('[aria-label="Close preview"]')?.click())
+    act(() => checkbox?.click())
+    clickButton('Import selected')
+    await flush()
+
+    expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Large', body: '# Large body' })
+    )
   })
 })

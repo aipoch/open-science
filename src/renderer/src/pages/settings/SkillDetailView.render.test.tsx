@@ -82,6 +82,38 @@ describe('SkillDetailView', () => {
     expect(document.body.textContent).toContain('Weights — Example (CC-BY-4.0)')
   })
 
+  it('renders generic persisted metadata without duplicating dedicated detail rows', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        getSkillDetail: vi.fn().mockResolvedValue({
+          ...detail,
+          metadata: {
+            author: 'Duplicate author',
+            license: 'Duplicate license',
+            'third-party': 'Duplicate third-party notice',
+            category: 'Biology',
+            custom_key: 'Custom value'
+          }
+        })
+      }
+    }
+
+    await act(async () => {
+      root.render(<SkillDetailView skillId="a" />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Category')
+    expect(document.body.textContent).toContain('Biology')
+    expect(document.body.textContent).toContain('Custom Key')
+    expect(document.body.textContent).toContain('Custom value')
+    expect(document.body.textContent).not.toContain('Duplicate author')
+    expect(document.body.textContent).not.toContain('Duplicate license')
+    expect(document.body.textContent).not.toContain('Duplicate third-party notice')
+  })
+
   it('labels the badge by the skill source, not always "Featured"', async () => {
     for (const [source, label] of [
       ['featured', 'Featured'],

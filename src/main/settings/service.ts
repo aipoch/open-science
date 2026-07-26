@@ -1150,10 +1150,11 @@ class SettingsService {
     if (!location) throw new Error('Not a recognizable GitHub URL.')
     const preview = await this.userSkills.previewGitHubSkill(request.url, netFetch)
     const suffix = location.path ? `/${location.path}` : ''
+    const revision = location.ref ? `@${location.ref}` : ''
 
     return {
       ...preview,
-      sourceLabel: `github.com/${location.owner}/${location.repo}${suffix}`
+      sourceLabel: `github.com/${location.owner}/${location.repo}${revision}${suffix}`
     }
   }
 
