@@ -140,6 +140,11 @@ export type AcpRuntimeCallbacks = {
   onPermissionRequest?: (request: AcpPermissionRequest) => void
   onPromptStarted?: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
   onPromptEnded?: (sessionId: string, turnToken: string) => void
+  onSkillImportAttachmentEligible?: (
+    sessionId: string,
+    turnToken: string,
+    attachmentUri: string
+  ) => void
   onRetired?: () => void
 }
 
@@ -3028,6 +3033,11 @@ class AcpRuntime {
     if (allowSkillImportReference && (await this.isSkillPackageFile(name, absolutePath))) {
       const turnToken = this.skillImportTurnTokens.get(sessionId)
       if (turnToken) {
+        try {
+          this.callbacks.onSkillImportAttachmentEligible?.(sessionId, turnToken, uri)
+        } catch (error) {
+          safeLogError('skill import attachment callback failed', errorLogFields(error))
+        }
         return [attachmentTextReference('attached_skill_package', true, turnToken)]
       }
     }

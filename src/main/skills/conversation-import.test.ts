@@ -127,14 +127,15 @@ describe('ConversationSkillImporter', () => {
     })
     const importer = new ConversationSkillImporter({
       uploads,
-      createCancellationGuard: (sessionId, turnToken) =>
-        broker.createCancellationGuard(sessionId, turnToken),
+      createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
+        broker.createCancellationGuard(sessionId, turnToken, attachmentUri),
       previewBundle: (bundle) => skills.previewZip(bundle),
       importBundle: (bundle, items) => skills.importFromZipBatch(bundle, items),
       requestApproval: (request, cancellation) => broker.request(request, cancellation),
       onSkillsChanged
     })
     broker.beginSessionTurn('session-1', 'turn-1')
+    broker.allowSessionTurnAttachment('session-1', 'turn-1', pathToFileURL(attachment.path).href)
 
     const result = await importer.request({
       sessionId: 'session-1',
@@ -221,6 +222,48 @@ describe('ConversationSkillImporter', () => {
     expect(requestApproval).not.toHaveBeenCalled()
   })
 
+  it('rejects a session-owned Skill archive that was not eligible in the active turn', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+    roots.push(root)
+    const uploads = new UploadRepository(root)
+    const [staged] = await uploads.stageFiles({
+      files: [
+        {
+          name: 'older-turn.skill',
+          content: buildNamedSkillZip('Older Turn').toString('base64'),
+          mimeType: 'application/zip'
+        }
+      ]
+    })
+    const [attachment] = await uploads.finalizePendingSessionUploads('session-1', [staged])
+    const previewBundle = vi.fn()
+    const requestApproval = vi.fn()
+    const broker = new SkillImportApprovalBroker({
+      generateId: () => 'unused',
+      broadcast: vi.fn()
+    })
+    const importer = new ConversationSkillImporter({
+      uploads,
+      createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
+        broker.createCancellationGuard(sessionId, turnToken, attachmentUri),
+      previewBundle,
+      importBundle: vi.fn(),
+      requestApproval
+    })
+    broker.beginSessionTurn('session-1', 'turn-2')
+    broker.allowSessionTurnAttachment('session-1', 'turn-2', 'file:///current-turn.skill')
+
+    await expect(
+      importer.request({
+        sessionId: 'session-1',
+        turnToken: 'turn-2',
+        attachmentUri: pathToFileURL(attachment.path).href
+      })
+    ).resolves.toEqual({ status: 'cancelled', skills: [] })
+    expect(previewBundle).not.toHaveBeenCalled()
+    expect(requestApproval).not.toHaveBeenCalled()
+  })
+
   it('cancels imports stopped during preview and requests that arrive after the stop', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)
@@ -258,14 +301,15 @@ describe('ConversationSkillImporter', () => {
     })
     const importer = new ConversationSkillImporter({
       uploads,
-      createCancellationGuard: (sessionId, turnToken) =>
-        broker.createCancellationGuard(sessionId, turnToken),
+      createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
+        broker.createCancellationGuard(sessionId, turnToken, attachmentUri),
       previewBundle,
       importBundle,
       requestApproval: (request, cancellation) => broker.request(request, cancellation)
     })
 
     broker.beginSessionTurn('session-1', 'turn-1')
+    broker.allowSessionTurnAttachment('session-1', 'turn-1', pathToFileURL(attachment.path).href)
     const importing = importer.request({
       sessionId: 'session-1',
       turnToken: 'turn-1',
@@ -280,6 +324,7 @@ describe('ConversationSkillImporter', () => {
     expect(importBundle).not.toHaveBeenCalled()
 
     broker.beginSessionTurn('session-1', 'turn-2')
+    broker.allowSessionTurnAttachment('session-1', 'turn-2', pathToFileURL(attachment.path).href)
     await expect(
       importer.request({
         sessionId: 'session-1',
@@ -455,8 +500,13 @@ describe('SkillImportApprovalBroker lifecycle', () => {
     })
     broker.beginSessionTurn('session-1', 'turn-1')
     broker.beginSessionTurn('session-2', 'turn-a')
-    const first = broker.createCancellationGuard('session-1', 'turn-1')
-    const second = broker.createCancellationGuard('session-2', 'turn-a')
+    broker.allowSessionTurnAttachment('session-1', 'turn-1', 'file:///current.skill')
+    broker.allowSessionTurnAttachment('session-2', 'turn-a', 'file:///second.skill')
+    const first = broker.createCancellationGuard('session-1', 'turn-1', 'file:///current.skill')
+    const unlisted = broker.createCancellationGuard('session-1', 'turn-1', 'file:///older.skill')
+    const second = broker.createCancellationGuard('session-2', 'turn-a', 'file:///second.skill')
+    expect(first.isCancelled()).toBe(false)
+    expect(unlisted.isCancelled()).toBe(true)
 
     broker.cancelSession('session-1')
     expect(first.isCancelled()).toBe(true)
@@ -466,8 +516,9 @@ describe('SkillImportApprovalBroker lifecycle', () => {
     expect(second.isCancelled()).toBe(true)
 
     broker.beginSessionTurn('session-1', 'turn-2')
+    broker.allowSessionTurnAttachment('session-1', 'turn-2', 'file:///next.skill')
     expect(first.isCancelled()).toBe(true)
-    const next = broker.createCancellationGuard('session-1', 'turn-2')
+    const next = broker.createCancellationGuard('session-1', 'turn-2', 'file:///next.skill')
     expect(next.isCancelled()).toBe(false)
     broker.endSessionTurn('session-1', 'turn-2')
     expect(next.isCancelled()).toBe(true)

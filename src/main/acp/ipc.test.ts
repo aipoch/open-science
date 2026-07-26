@@ -117,8 +117,9 @@ const registerWithFakes = (overrides?: {
     trackPrompt: ReturnType<typeof vi.fn>
     untrackPrompt: ReturnType<typeof vi.fn>
   }
-  onSessionCancelled?: (sessionId: string) => void
-  onAllSessionsCancelled?: () => void
+  onSessionCancellationRequested?: (sessionId: string) => void
+  onSessionUnavailable?: (sessionId: string) => void
+  onAllSessionsCancellationRequested?: () => void
 }): void => {
   const taskNotifications =
     overrides?.taskNotifications ??
@@ -138,8 +139,9 @@ const registerWithFakes = (overrides?: {
       resolveAgentBackend: vi.fn().mockResolvedValue({})
     } as never,
     taskNotifications: taskNotifications as never,
-    onSessionCancelled: overrides?.onSessionCancelled,
-    onAllSessionsCancelled: overrides?.onAllSessionsCancelled,
+    onSessionCancellationRequested: overrides?.onSessionCancellationRequested,
+    onSessionUnavailable: overrides?.onSessionUnavailable,
+    onAllSessionsCancellationRequested: overrides?.onAllSessionsCancellationRequested,
     initializationBarrier: overrides?.initializationBarrier
   }
 
@@ -165,27 +167,35 @@ afterEach(() => {
 
 describe('registerAcpIpcHandlers — Skill import cancellation lifecycle', () => {
   it('invalidates a stopped prompt and deleted session before runtime teardown starts', async () => {
-    const onSessionCancelled = vi.fn()
-    registerWithFakes({ onSessionCancelled })
+    const onSessionCancellationRequested = vi.fn()
+    const onSessionUnavailable = vi.fn()
+    registerWithFakes({ onSessionCancellationRequested, onSessionUnavailable })
 
     await handlers.get('acp:cancel')?.({}, { sessionId: 'session-1' })
     await handlers.get('acp:delete-session')?.({}, { sessionId: 'session-2' })
 
-    expect(onSessionCancelled).toHaveBeenCalledWith('session-1')
-    expect(onSessionCancelled).toHaveBeenCalledWith('session-2')
+    expect(onSessionCancellationRequested).toHaveBeenCalledTimes(2)
+    expect(onSessionCancellationRequested).toHaveBeenNthCalledWith(1, 'session-1')
+    expect(onSessionCancellationRequested).toHaveBeenNthCalledWith(2, 'session-2')
+    expect(onSessionUnavailable).toHaveBeenCalledOnce()
+    expect(onSessionUnavailable).toHaveBeenCalledWith('session-2')
     expect(cancelPrompt).toHaveBeenCalledWith({ sessionId: 'session-1' })
     expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'session-2' })
-    expect(onSessionCancelled.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(onSessionCancellationRequested.mock.invocationCallOrder[0]).toBeLessThan(
       cancelPrompt.mock.invocationCallOrder[0]
     )
-    expect(onSessionCancelled.mock.invocationCallOrder[1]).toBeLessThan(
+    expect(onSessionCancellationRequested.mock.invocationCallOrder[1]).toBeLessThan(
       deleteSession.mock.invocationCallOrder[0]
+    )
+    expect(deleteSession.mock.invocationCallOrder[0]).toBeLessThan(
+      onSessionUnavailable.mock.invocationCallOrder[0]
     )
   })
 
   it('keeps pending imports invalidated when prompt or session teardown fails', async () => {
-    const onSessionCancelled = vi.fn()
-    registerWithFakes({ onSessionCancelled })
+    const onSessionCancellationRequested = vi.fn()
+    const onSessionUnavailable = vi.fn()
+    registerWithFakes({ onSessionCancellationRequested, onSessionUnavailable })
     cancelPrompt.mockRejectedValueOnce(new Error('cancel failed'))
     deleteSession.mockRejectedValueOnce(new Error('delete failed'))
 
@@ -196,35 +206,36 @@ describe('registerAcpIpcHandlers — Skill import cancellation lifecycle', () =>
       handlers.get('acp:delete-session')?.({}, { sessionId: 'session-2' })
     ).rejects.toThrow('delete failed')
 
-    expect(onSessionCancelled).toHaveBeenCalledTimes(2)
-    expect(onSessionCancelled).toHaveBeenNthCalledWith(1, 'session-1')
-    expect(onSessionCancelled).toHaveBeenNthCalledWith(2, 'session-2')
+    expect(onSessionCancellationRequested).toHaveBeenCalledTimes(2)
+    expect(onSessionCancellationRequested).toHaveBeenNthCalledWith(1, 'session-1')
+    expect(onSessionCancellationRequested).toHaveBeenNthCalledWith(2, 'session-2')
+    expect(onSessionUnavailable).not.toHaveBeenCalled()
   })
 
   it('invalidates every pending import before all agent runtimes disconnect', async () => {
-    const onAllSessionsCancelled = vi.fn()
-    registerWithFakes({ onAllSessionsCancelled })
+    const onAllSessionsCancellationRequested = vi.fn()
+    registerWithFakes({ onAllSessionsCancellationRequested })
 
     await handlers.get('acp:disconnect')?.({}, undefined)
 
-    expect(onAllSessionsCancelled).toHaveBeenCalledOnce()
+    expect(onAllSessionsCancellationRequested).toHaveBeenCalledOnce()
     expect(disconnect).toHaveBeenCalledOnce()
-    expect(onAllSessionsCancelled.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(onAllSessionsCancellationRequested.mock.invocationCallOrder[0]).toBeLessThan(
       disconnect.mock.invocationCallOrder[0]
     )
   })
 
   it('keeps pending imports invalidated when global disconnect fails', async () => {
-    const onAllSessionsCancelled = vi.fn()
-    registerWithFakes({ onAllSessionsCancelled })
+    const onAllSessionsCancellationRequested = vi.fn()
+    registerWithFakes({ onAllSessionsCancellationRequested })
     disconnect.mockRejectedValueOnce(new Error('disconnect failed'))
 
     await expect(handlers.get('acp:disconnect')?.({}, undefined)).rejects.toThrow(
       'disconnect failed'
     )
 
-    expect(onAllSessionsCancelled).toHaveBeenCalledOnce()
-    expect(onAllSessionsCancelled.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(onAllSessionsCancellationRequested).toHaveBeenCalledOnce()
+    expect(onAllSessionsCancellationRequested.mock.invocationCallOrder[0]).toBeLessThan(
       disconnect.mock.invocationCallOrder[0]
     )
   })

@@ -44,7 +44,10 @@ class SkillImportApprovalBroker {
   private readonly timeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
-  private readonly activeSessionTurnTokens = new Map<string, string>()
+  private readonly activeSessionTurns = new Map<
+    string,
+    { turnToken: string; eligibleAttachmentUris: Set<string> }
+  >()
 
   constructor(private readonly options: SkillImportApprovalBrokerOptions) {
     this.timeoutMs = options.timeoutMs ?? 5 * 60_000
@@ -53,24 +56,39 @@ class SkillImportApprovalBroker {
   }
 
   beginSessionTurn(sessionId: string, turnToken: string): void {
-    this.activeSessionTurnTokens.set(sessionId, turnToken)
+    this.activeSessionTurns.set(sessionId, {
+      turnToken,
+      eligibleAttachmentUris: new Set()
+    })
     // A new turn cannot inherit an unanswered dialog from an older turn of the same session.
     for (const [id, pending] of this.pending) {
       if (pending.sessionId === sessionId) this.settle({ id, cancelled: true })
     }
   }
 
+  allowSessionTurnAttachment(sessionId: string, turnToken: string, attachmentUri: string): void {
+    const turn = this.activeSessionTurns.get(sessionId)
+    if (turn?.turnToken === turnToken) turn.eligibleAttachmentUris.add(attachmentUri)
+  }
+
   endSessionTurn(sessionId: string, turnToken: string): void {
-    if (this.activeSessionTurnTokens.get(sessionId) !== turnToken) return
-    this.activeSessionTurnTokens.delete(sessionId)
+    if (this.activeSessionTurns.get(sessionId)?.turnToken !== turnToken) return
+    this.activeSessionTurns.delete(sessionId)
     for (const [id, pending] of this.pending) {
       if (pending.sessionId === sessionId) this.settle({ id, cancelled: true })
     }
   }
 
-  createCancellationGuard(sessionId: string, turnToken: string): SkillImportCancellationGuard {
+  createCancellationGuard(
+    sessionId: string,
+    turnToken: string,
+    attachmentUri: string
+  ): SkillImportCancellationGuard {
     return {
-      isCancelled: () => this.activeSessionTurnTokens.get(sessionId) !== turnToken
+      isCancelled: () => {
+        const turn = this.activeSessionTurns.get(sessionId)
+        return turn?.turnToken !== turnToken || !turn.eligibleAttachmentUris.has(attachmentUri)
+      }
     }
   }
 
@@ -101,14 +119,14 @@ class SkillImportApprovalBroker {
   }
 
   cancelSession(sessionId: string): void {
-    this.activeSessionTurnTokens.delete(sessionId)
+    this.activeSessionTurns.delete(sessionId)
     for (const [id, pending] of this.pending) {
       if (pending.sessionId === sessionId) this.settle({ id, cancelled: true })
     }
   }
 
   cancelAll(): void {
-    this.activeSessionTurnTokens.clear()
+    this.activeSessionTurns.clear()
     for (const id of this.pending.keys()) this.settle({ id, cancelled: true })
   }
 
@@ -129,7 +147,11 @@ class SkillImportApprovalBroker {
 
 type ConversationSkillImporterOptions = {
   uploads: Pick<UploadRepository, 'resolveSessionUploadPath'>
-  createCancellationGuard: (sessionId: string, turnToken: string) => SkillImportCancellationGuard
+  createCancellationGuard: (
+    sessionId: string,
+    turnToken: string,
+    attachmentUri: string
+  ) => SkillImportCancellationGuard
   previewBundle: (bundle: Buffer) => Promise<SkillBundlePreviewResult>
   importBundle: (
     bundle: Buffer,
@@ -205,7 +227,11 @@ class ConversationSkillImporter {
   constructor(private readonly options: ConversationSkillImporterOptions) {}
 
   async request(request: ConversationSkillImportRequest): Promise<ConversationSkillImportResult> {
-    const cancellation = this.options.createCancellationGuard(request.sessionId, request.turnToken)
+    const cancellation = this.options.createCancellationGuard(
+      request.sessionId,
+      request.turnToken,
+      request.attachmentUri
+    )
     if (cancellation.isCancelled()) return { status: 'cancelled', skills: [] }
     const requestedPath = attachmentPathFromUri(request.attachmentUri)
     const filePath = await this.options.uploads.resolveSessionUploadPath(request.sessionId, {

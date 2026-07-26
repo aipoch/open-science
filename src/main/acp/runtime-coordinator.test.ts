@@ -35,6 +35,7 @@ const createFakeRuntime = (options: {
   callbacks: AcpRuntimeCallbacks
   permissionGrantStore?: ConversationPermissionGrantStore
   beforePromptStart?: () => Promise<void>
+  eligibleAttachmentUri?: string
   prompt?: (sessionId: string) => Promise<unknown>
 }): {
   runtime: AcpRuntime
@@ -112,6 +113,13 @@ const createFakeRuntime = (options: {
         promptInFlightSessionIds: [...snapshot.promptInFlightSessionIds, sessionId]
       }
       options.callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId)
+      if (options.eligibleAttachmentUri) {
+        options.callbacks.onSkillImportAttachmentEligible?.(
+          sessionId,
+          turnToken,
+          options.eligibleAttachmentUri
+        )
+      }
       options.callbacks.onStateChanged?.(snapshot)
 
       try {
@@ -312,16 +320,21 @@ describe('AcpRuntimeCoordinator', () => {
   it('forwards a real runtime prompt start to the session turn lifecycle', async () => {
     const onSessionTurnStarted = vi.fn()
     const onSessionTurnEnded = vi.fn()
+    const onSkillImportAttachmentEligible = vi.fn()
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) =>
-        createFakeRuntime({ frameworkId: 'claude-code', sessionIds: ['session-1'], callbacks })
-          .runtime,
+        createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks,
+          eligibleAttachmentUri: 'file:///current.skill'
+        }).runtime,
       {},
       '',
       undefined,
       undefined,
       undefined,
-      { onSessionTurnStarted, onSessionTurnEnded }
+      { onSessionTurnStarted, onSessionTurnEnded, onSkillImportAttachmentEligible }
     )
 
     const session = await coordinator.createSession({ cwd: '/workspace' })
@@ -331,6 +344,11 @@ describe('AcpRuntimeCoordinator', () => {
     expect(onSessionTurnStarted).toHaveBeenCalledWith('session-1', 'turn-1')
     expect(onSessionTurnEnded).toHaveBeenCalledOnce()
     expect(onSessionTurnEnded).toHaveBeenCalledWith('session-1', 'turn-1')
+    expect(onSkillImportAttachmentEligible).toHaveBeenCalledWith(
+      'session-1',
+      'turn-1',
+      'file:///current.skill'
+    )
   })
 
   it('does not reactivate a prompt attempt cancelled before its runtime turn starts', async () => {

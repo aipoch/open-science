@@ -1371,6 +1371,7 @@ describe('ACP runtime session management', () => {
     })
     const process = new FakeAgentProcess()
     const receivedPrompts: ContentBlock[][] = []
+    const onSkillImportAttachmentEligible = vi.fn()
     startFakeAgent(process, ['remote-session-1'], {
       onPrompt: ({ prompt }) => {
         receivedPrompts.push(prompt)
@@ -1380,7 +1381,8 @@ describe('ACP runtime session management', () => {
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
-      uploads: { repository: uploadRepository }
+      uploads: { repository: uploadRepository },
+      callbacks: { onSkillImportAttachmentEligible }
     })
 
     const session = await runtime.createSession({ cwd: '/workspace' })
@@ -1415,6 +1417,12 @@ describe('ACP runtime session management', () => {
         /<attached_local_archive>[\s\S]*renamed-garbage\.skill[\s\S]*"skillImportEligible":false/
       )
     })
+    expect(onSkillImportAttachmentEligible).toHaveBeenCalledOnce()
+    expect(onSkillImportAttachmentEligible).toHaveBeenCalledWith(
+      session.sessionId,
+      expect.stringMatching(/^[0-9a-f-]{36}$/),
+      expect.stringMatching(/example-package\.skill$/)
+    )
   })
 
   it('inlines an image attachment as pixels when the browser sent no usable MIME type', async () => {

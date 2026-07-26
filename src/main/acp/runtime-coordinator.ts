@@ -28,6 +28,11 @@ type RuntimeFactory = (
 type AcpRuntimeCoordinatorTeardownCallbacks = {
   onSessionTurnStarted?: (sessionId: string, turnToken: string) => void
   onSessionTurnEnded?: (sessionId: string, turnToken: string) => void
+  onSkillImportAttachmentEligible?: (
+    sessionId: string,
+    turnToken: string,
+    attachmentUri: string
+  ) => void
   onSessionCancellationRequested?: (sessionId: string) => void
   onAllSessionsCancellationRequested?: () => void
 }
@@ -514,6 +519,14 @@ class AcpRuntimeCoordinator {
         onPromptEnded: (sessionId, turnToken) => {
           this.teardownCallbacks.onSessionTurnEnded?.(sessionId, turnToken)
           this.callbacks.onPromptEnded?.(sessionId, turnToken)
+        },
+        onSkillImportAttachmentEligible: (sessionId, turnToken, attachmentUri) => {
+          this.teardownCallbacks.onSkillImportAttachmentEligible?.(
+            sessionId,
+            turnToken,
+            attachmentUri
+          )
+          this.callbacks.onSkillImportAttachmentEligible?.(sessionId, turnToken, attachmentUri)
         },
         onRetired: () => this.handleRuntimeRetired(runtime)
       },

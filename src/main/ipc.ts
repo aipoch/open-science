@@ -337,8 +337,8 @@ const registerIpcHandlers = async ({
   })
   const conversationSkillImporter = new ConversationSkillImporter({
     uploads: uploadRepository,
-    createCancellationGuard: (sessionId, turnToken) =>
-      skillImportApprovalBroker.createCancellationGuard(sessionId, turnToken),
+    createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
+      skillImportApprovalBroker.createCancellationGuard(sessionId, turnToken, attachmentUri),
     previewBundle: (bundle) => settingsService.previewSkillArchive(bundle),
     importBundle: (bundle, items) => settingsService.importSkillArchiveBatch(bundle, items),
     requestApproval: (request, cancellation) =>
@@ -499,8 +499,12 @@ const registerIpcHandlers = async ({
       skillImportApprovalBroker.beginSessionTurn(sessionId, turnToken),
     onSessionTurnEnded: (sessionId, turnToken) =>
       skillImportApprovalBroker.endSessionTurn(sessionId, turnToken),
-    onSessionCancelled: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
-    onAllSessionsCancelled: () => skillImportApprovalBroker.cancelAll(),
+    onSkillImportAttachmentEligible: (sessionId, turnToken, attachmentUri) =>
+      skillImportApprovalBroker.allowSessionTurnAttachment(sessionId, turnToken, attachmentUri),
+    onSessionCancellationRequested: (sessionId) =>
+      skillImportApprovalBroker.cancelSession(sessionId),
+    onSessionUnavailable: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
+    onAllSessionsCancellationRequested: () => skillImportApprovalBroker.cancelAll(),
     initializationBarrier: initialConnectorSkillsReady
   })
   runtimeRef.current = runtime
