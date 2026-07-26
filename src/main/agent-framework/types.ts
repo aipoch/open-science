@@ -66,6 +66,10 @@ export type ModelConfigContext = {
   // The active model's already-resolved API effort. Undefined means don't override. Frameworks encode
   // this into their valid transport vocabulary without changing the persisted user intent.
   reasoningEffort?: ModelReasoningEffort
+  // Distinct model-native effort values advertised by the active model profile. Frameworks that
+  // register custom model metadata use this to keep their capability catalog consistent with the
+  // selected effort above.
+  reasoningEfforts?: readonly ModelReasoningEffort[]
 }
 
 // System-prompt guidance the runtime wants appended for a session (artifact routing, notebook, skill

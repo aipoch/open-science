@@ -3443,15 +3443,19 @@ class SettingsService {
     // make the effort belong to one model while the request is sent to another.
     const effectiveModel = this.resolveActiveModel(activeProvider, settings.activeModel)
     const effortIntent = settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT
+    const reasoningEffortProfile = resolveProviderReasoningEffortProfile(
+      activeProvider,
+      effectiveModel
+    )
     const resolvedEffort =
       effortIntent === DEFAULT_REASONING_EFFORT
         ? DEFAULT_REASONING_EFFORT
-        : resolveReasoningEffortValue(
-            effortIntent,
-            resolveProviderReasoningEffortProfile(activeProvider, effectiveModel)
-          )
+        : resolveReasoningEffortValue(effortIntent, reasoningEffortProfile)
     const sessionEffort: ModelReasoningEffort | undefined =
       resolvedEffort === 'default' ? undefined : resolvedEffort
+    const supportedReasoningEfforts = reasoningEffortProfile.supported
+      ? [...new Set(reasoningEffortProfile.slots)]
+      : undefined
 
     if (
       !isProviderUsableByFramework(
@@ -3528,6 +3532,7 @@ class SettingsService {
         executablePath,
         responsesBridge,
         reasoningEffort: sessionEffort,
+        reasoningEfforts: supportedReasoningEfforts,
         // Keep only connector calling conventions in OpenCode's baseline. Detailed tools are already
         // materialized as on-demand `mcp-*` skills above, avoiding a full catalog in every request.
         instructions: connectorInstructions

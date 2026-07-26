@@ -150,6 +150,7 @@ describe('codexFramework', () => {
         storageRoot: '/data',
         executablePath: '/runtime/codex-acp',
         reasoningEffort: 'none',
+        reasoningEfforts: ['none', 'high'],
         responsesBridge: { baseUrl: 'http://127.0.0.1:43123/v1', token: 'local-token' }
       }
     )
@@ -185,7 +186,8 @@ describe('codexFramework', () => {
       mode: 0o600
     })
     expect(codexConfig.model_catalog_json).toBe(modelCatalogFile?.path)
-    expect(JSON.parse(modelCatalogFile?.content ?? '')).toMatchObject({
+    const modelCatalog = JSON.parse(modelCatalogFile?.content ?? '')
+    expect(modelCatalog).toMatchObject({
       models: [
         {
           slug: 'MiniMax-M3',
@@ -193,7 +195,14 @@ describe('codexFramework', () => {
           shell_type: 'shell_command',
           visibility: 'none',
           supported_in_api: true,
-          base_instructions: expect.stringContaining('You are a coding agent'),
+          base_instructions: expect.stringContaining(
+            'inside Open Science through the Agent Client Protocol'
+          ),
+          default_reasoning_level: 'none',
+          supported_reasoning_levels: [
+            { effort: 'none', description: 'None reasoning effort' },
+            { effort: 'high', description: 'High reasoning effort' }
+          ],
           apply_patch_tool_type: null,
           supports_parallel_tool_calls: false,
           supports_image_detail_original: false,
@@ -206,6 +215,8 @@ describe('codexFramework', () => {
       ]
     })
     expect(modelCatalogFile?.content).not.toContain('used_fallback_model_metadata')
+    expect(modelCatalog.models[0].base_instructions).not.toContain('update_plan')
+    expect(modelCatalog.models[0].base_instructions).not.toContain('apply_patch')
   })
 
   it('keeps concurrent native model metadata in distinct immutable catalogs', () => {

@@ -174,12 +174,19 @@ const buildCodexNativeModelCatalog = (provider: {
   model?: string
   contextWindow?: number
   supportsImageInput?: boolean
+  reasoningEffort?: ModelReasoningEffort
+  reasoningEfforts?: readonly ModelReasoningEffort[]
 }): Record<string, unknown> | undefined => {
   const model = provider.model?.trim()
   if (!model || CODEX_BUNDLED_MODEL_IDS.has(model)) return undefined
 
   const contextWindow =
     provider.contextWindow && provider.contextWindow > 0 ? provider.contextWindow : 272_000
+  const supportedReasoningEfforts = [...new Set(provider.reasoningEfforts ?? [])]
+  const defaultReasoningEffort =
+    provider.reasoningEffort && supportedReasoningEfforts.includes(provider.reasoningEffort)
+      ? provider.reasoningEffort
+      : null
 
   return {
     models: [
@@ -187,8 +194,11 @@ const buildCodexNativeModelCatalog = (provider: {
         slug: model,
         display_name: model,
         description: null,
-        default_reasoning_level: null,
-        supported_reasoning_levels: [],
+        default_reasoning_level: defaultReasoningEffort,
+        supported_reasoning_levels: supportedReasoningEfforts.map((effort) => ({
+          effort,
+          description: `${effort === 'xhigh' ? 'Extra high' : effort.charAt(0).toUpperCase() + effort.slice(1)} reasoning effort`
+        })),
         shell_type: 'shell_command',
         visibility: 'none',
         supported_in_api: true,
@@ -204,6 +214,9 @@ const buildCodexNativeModelCatalog = (provider: {
         default_reasoning_summary: 'none',
         support_verbosity: false,
         default_verbosity: null,
+        // Native Responses support does not imply support for OpenAI custom/freeform tools, hosted
+        // search, or parallel calls. Advertise only the function-shaped shell tool until the provider
+        // registry can express and verify those capabilities explicitly.
         apply_patch_tool_type: null,
         web_search_tool_type: 'text',
         truncation_policy: { mode: 'tokens', limit: 10_000 },
@@ -357,7 +370,13 @@ export const createCodexFramework = ({
         : undefined
 
     const codexHome = codexStorageDir(ctx.storageRoot)
-    const modelCatalog = useBridge ? undefined : buildCodexNativeModelCatalog(provider)
+    const modelCatalog = useBridge
+      ? undefined
+      : buildCodexNativeModelCatalog({
+          ...provider,
+          reasoningEffort: ctx.reasoningEffort,
+          reasoningEfforts: ctx.reasoningEfforts
+        })
     const modelCatalogContent = modelCatalog
       ? `${JSON.stringify(modelCatalog, null, 2)}\n`
       : undefined

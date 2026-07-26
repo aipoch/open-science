@@ -2449,7 +2449,12 @@ describe('SettingsService: preflight & spawn config', () => {
         slug: 'MiniMax-M3',
         context_window: 1_000_000,
         max_context_window: 1_000_000,
-        supported_in_api: true
+        supported_in_api: true,
+        default_reasoning_level: null,
+        supported_reasoning_levels: [
+          { effort: 'none', description: 'None reasoning effort' },
+          { effort: 'high', description: 'High reasoning effort' }
+        ]
       })
     ])
     expect(backend.authentication).toEqual({
