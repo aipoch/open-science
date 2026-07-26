@@ -105,6 +105,17 @@ describe('describePermissionRequest', () => {
     })
   })
 
+  it('does not classify an artifact-looking provider title without the broker identity', () => {
+    expect(
+      describePermissionRequest(
+        request({
+          title: 'mcp__open-science-artifacts__write_artifact_file',
+          isMcp: true
+        })
+      ).categoryLabel
+    ).toBe('External service')
+  })
+
   it('does not infer MCP origin from a raw protocol name in the renderer', () => {
     expect(
       describePermissionRequest(

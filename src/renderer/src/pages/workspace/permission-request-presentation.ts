@@ -162,9 +162,7 @@ const isArtifactWriteToolName = (toolName: string | undefined): boolean => {
 
 const isArtifactWriteRequest = (request: AcpPermissionRequest): boolean =>
   isMcpPermissionRequest(request) &&
-  (isArtifactWriteToolName(request.mcpIdentity) ||
-    isArtifactWriteToolName(request.title) ||
-    isArtifactWriteToolName(request.providerToolName))
+  isArtifactWriteToolName(request.mcpIdentity)
 
 // The broker resolves a stable `server/tool` identity before the request reaches the renderer.
 // Keep it in the impact tip so a human-readable provider title cannot obscure the granted tool.

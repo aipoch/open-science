@@ -255,6 +255,7 @@ describe('PermissionApprovalControls', () => {
             ...permissionRequest,
             title: 'mcp__open-science-artifacts__write_artifact_file',
             isMcp: true,
+            mcpIdentity: 'open-science-artifacts/write_artifact_file',
             toolKind: 'edit',
             toolLocations: [{ path: 'report.md' }],
             rawInput: { value: 'updated' }
