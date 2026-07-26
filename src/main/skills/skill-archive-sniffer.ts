@@ -1,6 +1,6 @@
 import { open, type FileHandle } from 'node:fs/promises'
 import { Readable } from 'node:stream'
-import { createInflateRaw, inflateRaw } from 'node:zlib'
+import { createInflateRaw } from 'node:zlib'
 
 import { parseSkillDocument } from './frontmatter'
 import { SKILL_IMPORT_LIMITS } from './import-limits'
@@ -25,19 +25,27 @@ type CentralEntry = {
   name: string
   method: number
   compressedSize: number
-  uncompressedSize: number
   localOffset: number
 }
 
 type ArchiveScan = {
   accepted: CentralEntry[]
   skippedPaths: string[]
+  actualSizes: Map<CentralEntry, number>
+  dataRanges: Map<CentralEntry, { offset: number; compressedSize: number }>
 }
 
 type ManifestRootInspection = {
   ownerRoots: string[]
   candidateRoots: string[]
   named: boolean[]
+}
+
+type InflateBudget = {
+  maxBytes: number
+  readBytes: number
+  inflatedBytes: number
+  exhausted: boolean
 }
 
 type ScanLimits = {
@@ -142,10 +150,6 @@ const isUnsafeArchivePath = (path: string): boolean =>
 
 const isNestedArchive = (path: string): boolean => /\.(zip|skill)$/i.test(path)
 
-const extractedEntrySize = (
-  entry: Pick<CentralEntry, 'method' | 'compressedSize' | 'uncompressedSize'>
-): number => (entry.method === 0 ? entry.compressedSize : entry.uncompressedSize)
-
 // Sequential, fixed-size buffering keeps a ZIP with thousands of directory/metadata records from
 // turning into two random-access reads per record. It also avoids allocating the full central
 // directory, whose raw record count is not capped by the importer (only accepted files are capped).
@@ -197,9 +201,9 @@ const centralCursor = (
   }
 }
 
-// Streams central-directory records instead of reading the whole ZIP or inflating unrelated files.
-// Size/count decisions mirror extractZipLenient (outer) and extractZip (one nested archive) using the
-// central metadata; candidate entry bytes are checked against their local header when actually read.
+// Streams central-directory records instead of reading the whole ZIP. This pass keeps structural path
+// decisions in central order; local-header readability, actual inflate sizes, and file/total caps are
+// applied by validateArchiveEntries so untrusted central size/count claims cannot change eligibility.
 const scanArchive = async (
   reader: ArchiveReader,
   limits: ScanLimits
@@ -234,7 +238,6 @@ const scanArchive = async (
 
   const accepted: CentralEntry[] = []
   const skippedPaths: string[] = []
-  let totalBytes = 0
   const cursor = centralCursor(reader, centralOffset, centralEnd)
 
   for (let index = 0; index < entryCount; index += 1) {
@@ -243,7 +246,6 @@ const scanArchive = async (
 
     const method = header.readUInt16LE(10)
     const compressedSize = header.readUInt32LE(20)
-    const uncompressedSize = header.readUInt32LE(24)
     const nameLength = header.readUInt16LE(28)
     const extraLength = header.readUInt16LE(30)
     const commentLength = header.readUInt16LE(32)
@@ -266,69 +268,42 @@ const scanArchive = async (
     }
 
     const depth = name.split('/').length - 1
-    const outputSize = method === 0 ? compressedSize : uncompressedSize
-    const violatesCaps =
-      depth > limits.maxDepth ||
-      accepted.length >= limits.maxFiles ||
-      outputSize > limits.maxFileBytes ||
-      totalBytes + outputSize > limits.maxTotalBytes
-    if (violatesCaps) {
+    if (depth > limits.maxDepth) {
       if (limits.strictCaps) return undefined
       skippedPaths.push(name)
       continue
     }
 
-    accepted.push({ name, method, compressedSize, uncompressedSize, localOffset })
-    totalBytes += outputSize
+    accepted.push({ name, method, compressedSize, localOffset })
   }
 
-  return { accepted, skippedPaths }
+  return { accepted, skippedPaths, actualSizes: new Map(), dataRanges: new Map() }
 }
 
-const entryDataOffset = async (
+type LocalEntryData =
+  | { kind: 'valid'; offset: number; availableSize: number; complete: boolean }
+  | { kind: 'wrong-signature' }
+  | { kind: 'unreadable' }
+
+const locateEntryData = async (
   reader: ArchiveReader,
   entry: CentralEntry
-): Promise<number | undefined> => {
+): Promise<LocalEntryData> => {
   const header = await reader.read(entry.localOffset, 30)
-  if (
-    !header ||
-    header.readUInt32LE(0) !== LOCAL_SIGNATURE ||
-    header.readUInt16LE(8) !== entry.method
-  ) {
-    return undefined
-  }
+  if (!header) return { kind: 'unreadable' }
+  if (header.readUInt32LE(0) !== LOCAL_SIGNATURE) return { kind: 'wrong-signature' }
 
   const offset = entry.localOffset + 30 + header.readUInt16LE(26) + header.readUInt16LE(28)
-  return offset + entry.compressedSize <= reader.size ? offset : undefined
-}
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > reader.size) {
+    return { kind: 'unreadable' }
+  }
 
-const inflateBounded = (compressed: Buffer, maxOutputLength: number): Promise<Buffer> =>
-  new Promise((resolve, reject) => {
-    inflateRaw(compressed, { maxOutputLength }, (error, result) => {
-      if (error) reject(error)
-      else resolve(result)
-    })
-  })
-
-const readEntry = async (
-  reader: ArchiveReader,
-  entry: CentralEntry,
-  maxOutputLength: number
-): Promise<Buffer | undefined> => {
-  if (entry.uncompressedSize > maxOutputLength) return undefined
-
-  const offset = await entryDataOffset(reader, entry)
-  if (offset === undefined) return undefined
-  const compressed = await reader.read(offset, entry.compressedSize)
-  if (!compressed) return undefined
-
-  try {
-    if (entry.method === 0) {
-      return compressed.length <= maxOutputLength ? compressed : undefined
-    }
-    return await inflateBounded(compressed, maxOutputLength)
-  } catch {
-    return undefined
+  const availableSize = Math.min(entry.compressedSize, reader.size - offset)
+  return {
+    kind: 'valid',
+    offset,
+    availableSize,
+    complete: availableSize === entry.compressedSize
   }
 }
 
@@ -384,25 +359,90 @@ const createFrontmatterScanner = (): {
   }
 }
 
+const consumeReadBudget = (budget: InflateBudget, bytes: number): boolean => {
+  budget.readBytes += bytes
+  if (budget.readBytes <= budget.maxBytes) return true
+
+  budget.exhausted = true
+  return false
+}
+
+const consumeInflateBudget = (budget: InflateBudget, bytes: number): boolean => {
+  budget.inflatedBytes += bytes
+  if (budget.inflatedBytes <= budget.maxBytes) return true
+
+  budget.exhausted = true
+  return false
+}
+
 const compressedEntryChunks = async function* (
   reader: ArchiveReader,
   offset: number,
-  size: number
+  size: number,
+  budget: InflateBudget
 ): AsyncGenerator<Buffer> {
   let consumed = 0
   while (consumed < size) {
     const length = Math.min(ENTRY_READ_CHUNK_BYTES, size - consumed)
     const chunk = await reader.read(offset + consumed, length)
     if (!chunk) throw new Error('Unreadable ZIP entry.')
+    if (!consumeReadBudget(budget, chunk.length)) {
+      throw new Error('ZIP entry read budget exhausted.')
+    }
     yield chunk
     consumed += length
+  }
+}
+
+const inflatedEntryChunks = async function* (
+  reader: ArchiveReader,
+  offset: number,
+  compressedSize: number,
+  budget: InflateBudget
+): AsyncGenerator<Buffer> {
+  const source = Readable.from(compressedEntryChunks(reader, offset, compressedSize, budget))
+  const output = source.pipe(createInflateRaw())
+  // pipe() does not forward source errors. A file truncated between stat/scan/read must reject this
+  // candidate through the consumed transform instead of becoming an unhandled main-process error.
+  source.on('error', (error: Error) => output.destroy(error))
+
+  try {
+    for await (const value of output) {
+      yield Buffer.isBuffer(value) ? value : Buffer.from(value as Uint8Array)
+    }
+  } finally {
+    output.destroy()
+    source.destroy()
+  }
+}
+
+const readInflatedEntry = async (
+  reader: ArchiveReader,
+  offset: number,
+  compressedSize: number,
+  maxOutputBytes: number,
+  inflateBudget: InflateBudget
+): Promise<Buffer | undefined> => {
+  const chunks: Buffer[] = []
+  let total = 0
+  try {
+    for await (const chunk of inflatedEntryChunks(reader, offset, compressedSize, inflateBudget)) {
+      if (!consumeInflateBudget(inflateBudget, chunk.length)) return undefined
+      total += chunk.length
+      if (total > maxOutputBytes) return undefined
+      chunks.push(chunk)
+    }
+    return Buffer.concat(chunks, total)
+  } catch {
+    return undefined
   }
 }
 
 const readStoredFrontmatter = async (
   reader: ArchiveReader,
   offset: number,
-  size: number
+  size: number,
+  budget: InflateBudget
 ): Promise<Buffer | undefined> => {
   if (size > MAX_SNIFF_FRONTMATTER_BYTES) return undefined
 
@@ -410,7 +450,7 @@ const readStoredFrontmatter = async (
   const chunks: Buffer[] = []
   let total = 0
   try {
-    for await (const chunk of compressedEntryChunks(reader, offset, size)) {
+    for await (const chunk of compressedEntryChunks(reader, offset, size, budget)) {
       chunks.push(chunk)
       total += chunk.length
       const result = scanner.push(chunk)
@@ -431,23 +471,16 @@ const readDeflatedFrontmatter = async (
   reader: ArchiveReader,
   offset: number,
   compressedSize: number,
-  uncompressedSize: number
+  inflateBudget: InflateBudget
 ): Promise<Buffer | undefined> => {
-  if (uncompressedSize > MAX_SNIFF_FRONTMATTER_BYTES) return undefined
-
   const scanner = createFrontmatterScanner()
   const chunks: Buffer[] = []
   let frontmatterEnd: number | undefined
   let total = 0
-  const source = Readable.from(compressedEntryChunks(reader, offset, compressedSize))
-  const output = source.pipe(createInflateRaw())
-  // pipe() does not forward source errors. A file truncated between stat/scan/read must reject this
-  // candidate through the consumed transform instead of becoming an unhandled main-process error.
-  source.on('error', (error: Error) => output.destroy(error))
 
   try {
-    for await (const value of output) {
-      const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value as Uint8Array)
+    for await (const chunk of inflatedEntryChunks(reader, offset, compressedSize, inflateBudget)) {
+      if (!consumeInflateBudget(inflateBudget, chunk.length)) return undefined
       total += chunk.length
       if (total > MAX_SNIFF_FRONTMATTER_BYTES) return undefined
       if (frontmatterEnd !== undefined) continue
@@ -459,9 +492,6 @@ const readDeflatedFrontmatter = async (
     }
   } catch {
     return undefined
-  } finally {
-    output.destroy()
-    source.destroy()
   }
 
   if (frontmatterEnd === undefined) {
@@ -474,18 +504,22 @@ const readDeflatedFrontmatter = async (
 
 const readManifestFrontmatter = async (
   reader: ArchiveReader,
-  entry: CentralEntry
+  entry: CentralEntry,
+  range: { offset: number; compressedSize: number },
+  inflateBudget: InflateBudget
 ): Promise<Buffer | undefined> => {
-  const offset = await entryDataOffset(reader, entry)
-  if (offset === undefined) return undefined
-
   return entry.method === 0
-    ? readStoredFrontmatter(reader, offset, entry.compressedSize)
-    : readDeflatedFrontmatter(reader, offset, entry.compressedSize, entry.uncompressedSize)
+    ? readStoredFrontmatter(reader, range.offset, range.compressedSize, inflateBudget)
+    : readDeflatedFrontmatter(reader, range.offset, range.compressedSize, inflateBudget)
 }
 
-const manifestHasName = async (reader: ArchiveReader, entry: CentralEntry): Promise<boolean> => {
-  const frontmatter = await readManifestFrontmatter(reader, entry)
+const manifestHasName = async (
+  reader: ArchiveReader,
+  entry: CentralEntry,
+  range: { offset: number; compressedSize: number },
+  inflateBudget: InflateBudget
+): Promise<boolean> => {
+  const frontmatter = await readManifestFrontmatter(reader, entry, range, inflateBudget)
   if (!frontmatter) return false
 
   try {
@@ -493,6 +527,120 @@ const manifestHasName = async (reader: ArchiveReader, entry: CentralEntry): Prom
   } catch {
     return false
   }
+}
+
+const validatedEntrySizeAtOffset = async (
+  reader: ArchiveReader,
+  entry: CentralEntry,
+  offset: number,
+  compressedSize: number,
+  maxFileBytes: number,
+  inflateBudget: InflateBudget
+): Promise<number | undefined> => {
+  if (entry.method === 0) {
+    if (compressedSize > maxFileBytes) return undefined
+
+    let total = 0
+    try {
+      for await (const chunk of compressedEntryChunks(
+        reader,
+        offset,
+        compressedSize,
+        inflateBudget
+      )) {
+        total += chunk.length
+      }
+      return total
+    } catch {
+      return undefined
+    }
+  }
+
+  let total = 0
+  try {
+    for await (const chunk of inflatedEntryChunks(reader, offset, compressedSize, inflateBudget)) {
+      if (!consumeInflateBudget(inflateBudget, chunk.length)) return undefined
+      total += chunk.length
+      if (total > maxFileBytes) return undefined
+    }
+    return total
+  } catch {
+    return undefined
+  }
+}
+
+const validateArchiveEntries = async (
+  reader: ArchiveReader,
+  scan: ArchiveScan,
+  limits: ScanLimits,
+  inflateBudget: InflateBudget
+): Promise<ArchiveScan | undefined> => {
+  const accepted: CentralEntry[] = []
+  const skippedPaths = [...scan.skippedPaths]
+  const actualSizes = new Map<CentralEntry, number>()
+  const dataRanges = new Map<CentralEntry, { offset: number; compressedSize: number }>()
+  let total = 0
+
+  for (const entry of scan.accepted) {
+    if (accepted.length >= limits.maxFiles) {
+      if (limits.strictCaps) return undefined
+      skippedPaths.push(entry.name)
+      continue
+    }
+
+    const location = await locateEntryData(reader, entry)
+    if (location.kind === 'wrong-signature') {
+      // Strict extractZip silently skips an in-bounds local header with the wrong signature; the
+      // lenient outer extractor records it so any owning loose root is rejected as incomplete.
+      if (!limits.strictCaps) skippedPaths.push(entry.name)
+      continue
+    }
+    if (location.kind === 'unreadable' || (!location.complete && !limits.strictCaps)) {
+      if (limits.strictCaps) return undefined
+      skippedPaths.push(entry.name)
+      continue
+    }
+
+    const size = await validatedEntrySizeAtOffset(
+      reader,
+      entry,
+      location.offset,
+      location.availableSize,
+      limits.maxFileBytes,
+      inflateBudget
+    )
+    // Unlike importer preview, sniffing happens automatically. Bound total inflate work across both
+    // accepted and rejected entries so many individually-skipped bombs cannot multiply the CPU budget.
+    if (inflateBudget.exhausted) return undefined
+    if (size === undefined || total + size > limits.maxTotalBytes) {
+      if (limits.strictCaps) return undefined
+      skippedPaths.push(entry.name)
+      continue
+    }
+
+    total += size
+    accepted.push(entry)
+    actualSizes.set(entry, size)
+    dataRanges.set(entry, {
+      offset: location.offset,
+      compressedSize: location.availableSize
+    })
+  }
+
+  return { accepted, skippedPaths, actualSizes, dataRanges }
+}
+
+const looseRootIsWithinCaps = (entries: CentralEntry[], scan: ArchiveScan): boolean => {
+  if (entries.length > SKILL_IMPORT_LIMITS.maxFiles) return false
+
+  let total = 0
+  for (const entry of entries) {
+    const size = scan.actualSizes.get(entry)
+    if (size === undefined || size > SKILL_IMPORT_LIMITS.maxFileBytes) return false
+    total += size
+    if (total > SKILL_IMPORT_LIMITS.maxTotalBytes) return false
+  }
+  return true
 }
 
 const owningRoot = (
@@ -515,7 +663,8 @@ const inspectManifestRoots = async (
   reader: ArchiveReader,
   scan: ArchiveScan,
   requireCompleteLooseRoot: boolean,
-  maxCandidates: number
+  maxCandidates: number,
+  inflateBudget: InflateBudget
 ): Promise<ManifestRootInspection> => {
   const manifestEntries = scan.accepted.filter(
     (entry) => !isNestedArchive(entry.name) && skillManifestRootPath(entry.name) !== undefined
@@ -529,7 +678,7 @@ const inspectManifestRoots = async (
   }
 
   const rejectedRoots = new Set<string>()
-  const rootCounts = new Map<string, { files: number; bytes: number }>()
+  const entriesByRoot = new Map<string, CentralEntry[]>()
   if (requireCompleteLooseRoot) {
     for (const path of scan.skippedPaths) {
       const root = owningRoot(path, rootSet, true)
@@ -538,18 +687,10 @@ const inspectManifestRoots = async (
     for (const entry of scan.accepted) {
       const root = owningRoot(entry.name, rootSet, false)
       if (root === undefined) continue
-      const stats = rootCounts.get(root) ?? { files: 0, bytes: 0 }
-      const size = extractedEntrySize(entry)
-      stats.files += 1
-      stats.bytes += size
-      rootCounts.set(root, stats)
-      if (
-        stats.files > SKILL_IMPORT_LIMITS.maxFiles ||
-        size > SKILL_IMPORT_LIMITS.maxFileBytes ||
-        stats.bytes > SKILL_IMPORT_LIMITS.maxTotalBytes
-      ) {
-        rejectedRoots.add(root)
-      }
+      const rootEntries = entriesByRoot.get(root) ?? []
+      rootEntries.push(entry)
+      entriesByRoot.set(root, rootEntries)
+      if (rootEntries.length > SKILL_IMPORT_LIMITS.maxFiles) rejectedRoots.add(root)
     }
   }
 
@@ -557,13 +698,21 @@ const inspectManifestRoots = async (
   const named: boolean[] = []
 
   for (const root of ownerRoots) {
+    if (inflateBudget.exhausted) break
     if (rejectedRoots.has(root) || candidateRoots.length >= maxCandidates) continue
+    if (requireCompleteLooseRoot && !looseRootIsWithinCaps(entriesByRoot.get(root) ?? [], scan)) {
+      continue
+    }
     candidateRoots.push(root)
 
     // Full preview uses the first case-insensitive SKILL.md at the selected root, so duplicate-cased
     // entries cannot let the sniffer pick a different manifest than the importer.
     const manifest = manifestByRoot.get(root)
-    named.push(manifest ? await manifestHasName(reader, manifest) : false)
+    const range = manifest ? scan.dataRanges.get(manifest) : undefined
+    named.push(
+      manifest && range ? await manifestHasName(reader, manifest, range, inflateBudget) : false
+    )
+    if (inflateBudget.exhausted) break
   }
 
   return { ownerRoots, candidateRoots, named }
@@ -571,39 +720,60 @@ const inspectManifestRoots = async (
 
 const nestedArchiveReader = async (
   parent: ArchiveReader,
-  entry: CentralEntry
+  entry: CentralEntry,
+  range: { offset: number; compressedSize: number },
+  inflateBudget: InflateBudget
 ): Promise<ArchiveReader | undefined> => {
-  const offset = await entryDataOffset(parent, entry)
-  if (offset === undefined) return undefined
-
   if (entry.method === 0) {
-    if (entry.compressedSize > SKILL_IMPORT_LIMITS.maxSkillArchiveBytes) return undefined
-    return subrangeReader(parent, offset, entry.compressedSize)
+    if (range.compressedSize > SKILL_IMPORT_LIMITS.maxSkillArchiveBytes) return undefined
+    return subrangeReader(parent, range.offset, range.compressedSize)
   }
 
-  const bytes = await readEntry(parent, entry, SKILL_IMPORT_LIMITS.maxSkillArchiveBytes)
+  const bytes = await readInflatedEntry(
+    parent,
+    range.offset,
+    range.compressedSize,
+    SKILL_IMPORT_LIMITS.maxSkillArchiveBytes,
+    inflateBudget
+  )
   return bytes ? bufferReader(bytes) : undefined
 }
 
 const inspectNestedArchive = async (
   parent: ArchiveReader,
   entry: CentralEntry,
-  maxCandidates: number
+  range: { offset: number; compressedSize: number },
+  maxCandidates: number,
+  inflateBudget: InflateBudget
 ): Promise<boolean[]> => {
-  const nested = await nestedArchiveReader(parent, entry)
+  const nested = await nestedArchiveReader(parent, entry, range, inflateBudget)
   if (!nested) return []
 
   const scan = await scanArchive(nested, INNER_SCAN_LIMITS)
   if (!scan) return []
-  return (await inspectManifestRoots(nested, scan, false, maxCandidates)).named
+  const validated = await validateArchiveEntries(nested, scan, INNER_SCAN_LIMITS, inflateBudget)
+  if (!validated) return []
+  return (await inspectManifestRoots(nested, validated, false, maxCandidates, inflateBudget)).named
 }
 
-const inspectOuterArchive = async (reader: ArchiveReader): Promise<boolean> => {
-  const scan = await scanArchive(reader, OUTER_SCAN_LIMITS)
+const inspectOuterArchive = async (
+  reader: ArchiveReader,
+  maxAttemptedInflateBytes: number = OUTER_SCAN_LIMITS.maxTotalBytes
+): Promise<boolean> => {
+  const inflateBudget: InflateBudget = {
+    maxBytes: maxAttemptedInflateBytes,
+    readBytes: 0,
+    inflatedBytes: 0,
+    exhausted: false
+  }
+  const parsed = await scanArchive(reader, OUTER_SCAN_LIMITS)
+  if (!parsed) return false
+  const scan = await validateArchiveEntries(reader, parsed, OUTER_SCAN_LIMITS, inflateBudget)
   if (!scan) return false
 
   const candidateLimit = SKILL_IMPORT_LIMITS.maxSkillsPerBundle
-  const loose = await inspectManifestRoots(reader, scan, true, candidateLimit)
+  const loose = await inspectManifestRoots(reader, scan, true, candidateLimit, inflateBudget)
+  if (inflateBudget.exhausted) return false
   if (loose.named.some(Boolean)) return true
 
   let remainingCandidates = Math.max(0, candidateLimit - loose.candidateRoots.length)
@@ -616,7 +786,16 @@ const inspectOuterArchive = async (reader: ArchiveReader): Promise<boolean> => {
   )
 
   for (const archive of standaloneArchives) {
-    const nestedCandidates = await inspectNestedArchive(reader, archive, remainingCandidates)
+    const range = scan.dataRanges.get(archive)
+    if (!range) continue
+    const nestedCandidates = await inspectNestedArchive(
+      reader,
+      archive,
+      range,
+      remainingCandidates,
+      inflateBudget
+    )
+    if (inflateBudget.exhausted) return false
     if (nestedCandidates.some(Boolean)) return true
     remainingCandidates -= nestedCandidates.length
     if (remainingCandidates <= 0) break
@@ -625,10 +804,10 @@ const inspectOuterArchive = async (reader: ArchiveReader): Promise<boolean> => {
   return false
 }
 
-// Classifies a ZIP without loading the whole upload or inflating unrelated assets. Central records
-// are streamed; only selected manifests are inflated, plus one importer-supported level of nested
-// archive (asynchronously and under the same 64 MB cap as full discovery). Any ambiguity fails closed
-// to the ordinary resource path; the real importer still performs full preview/validation on approval.
+// Classifies a ZIP without loading the whole upload. Central records and entry validation are streamed;
+// validated bodies are discarded, while only selected frontmatter and one importer-supported nested
+// archive are retained under the same caps as full discovery. Any ambiguity fails closed to the ordinary
+// resource path; the real importer still performs full preview/validation on approval.
 const isImportableSkillArchivePath = async (filePath: string): Promise<boolean> => {
   let handle: FileHandle | undefined
   try {

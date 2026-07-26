@@ -172,6 +172,78 @@ describe('isImportableSkillArchivePath', () => {
     await expectMatchesPreview(deflatedOuter, true)
   })
 
+  it('rejects a nested archive when strict extraction cannot inflate a sibling', async () => {
+    const manifestPath = 'SKILL.md'
+    const siblingPath = 'resource.bin'
+    const manifest = Buffer.from('---\nname: Broken Nested Skill\n---\nBody')
+    const sibling = Buffer.from('resource')
+    const inner = buildZip([
+      { path: manifestPath, content: manifest, method: 0 },
+      { path: siblingPath, content: sibling }
+    ])
+    const siblingLocalOffset = 30 + Buffer.byteLength(manifestPath) + manifest.length
+    const siblingDataOffset = siblingLocalOffset + 30 + Buffer.byteLength(siblingPath)
+    inner.fill(0xff, siblingDataOffset, siblingDataOffset + deflateRawSync(sibling).length)
+
+    await expectMatchesPreview(
+      buildZip([{ path: 'nested/broken.zip', content: inner, method: 0 }]),
+      false
+    )
+    await expectMatchesPreview(buildZip([{ path: 'nested/broken.zip', content: inner }]), false)
+  })
+
+  it('rejects a nested archive with an out-of-range sibling local header', async () => {
+    const manifestPath = 'SKILL.md'
+    const siblingPath = 'resource.bin'
+    const manifest = Buffer.from('---\nname: Out-of-range Nested Skill\n---\nBody')
+    const sibling = Buffer.from('resource')
+    const inner = buildZip([
+      { path: manifestPath, content: manifest, method: 0 },
+      { path: siblingPath, content: sibling, method: 0 }
+    ])
+    const centralOffset =
+      30 +
+      Buffer.byteLength(manifestPath) +
+      manifest.length +
+      30 +
+      Buffer.byteLength(siblingPath) +
+      sibling.length
+    const siblingCentralOffset = centralOffset + 46 + Buffer.byteLength(manifestPath)
+    inner.writeUInt32LE(inner.length + 1, siblingCentralOffset + 42)
+
+    await expectMatchesPreview(
+      buildZip([{ path: 'nested/out-of-range.zip', content: inner, method: 0 }]),
+      false
+    )
+  })
+
+  it('uses actual inflate size instead of an inner central-directory claim', async () => {
+    const manifestPath = 'SKILL.md'
+    const manifest = Buffer.from('---\nname: Inner Actual Size\n---\nBody')
+    const compressedSize = deflateRawSync(manifest).length
+    const inner = buildZip([{ path: manifestPath, content: manifest }])
+    const centralOffset = 30 + Buffer.byteLength(manifestPath) + compressedSize
+    inner.writeUInt32LE(51 * 1024 * 1024, centralOffset + 24)
+
+    await expectMatchesPreview(
+      buildZip([{ path: 'nested/actual-size.zip', content: inner, method: 0 }]),
+      true
+    )
+  })
+
+  it('matches importer clamping for an incomplete stored manifest entry', async () => {
+    const manifestPath = 'SKILL.md'
+    const manifest = Buffer.from('---\nname: Clamped Stored Manifest\n---\nBody')
+    const inner = buildZip([{ path: manifestPath, content: manifest, method: 0 }])
+    const centralOffset = 30 + Buffer.byteLength(manifestPath) + manifest.length
+    inner.writeUInt32LE(inner.length, centralOffset + 20)
+
+    await expectMatchesPreview(
+      buildZip([{ path: 'nested/clamped.zip', content: inner, method: 0 }]),
+      true
+    )
+  })
+
   it('streams raw central records that the importer does not count as files', async () => {
     const directories = Array.from({ length: 5_000 }, (_, index): ZipInput => ({
       path: `metadata-${index}/`,
@@ -217,6 +289,35 @@ describe('isImportableSkillArchivePath', () => {
       })
     ).resolves.toBe(false)
     expect(dataReads).toBe(2)
+  })
+
+  it('fails closed when a stored sibling becomes unreadable during streaming', async () => {
+    const manifestPath = 'racy-stored/SKILL.md'
+    const siblingPath = 'racy-stored/resource.bin'
+    const manifest = Buffer.from('---\nname: Racy Stored Skill\n---\nBody')
+    const sibling = incompressibleBytes(256 * 1024)
+    const archive = buildZip([
+      { path: manifestPath, content: manifest, method: 0 },
+      { path: siblingPath, content: sibling, method: 0 }
+    ])
+    const siblingLocalOffset = 30 + Buffer.byteLength(manifestPath) + manifest.length
+    const siblingDataOffset = siblingLocalOffset + 30 + Buffer.byteLength(siblingPath)
+    let siblingReads = 0
+
+    await expect(
+      inspectOuterArchive({
+        size: archive.length,
+        read: async (position, length) => {
+          if (position === siblingDataOffset || position === siblingDataOffset + 64 * 1024) {
+            siblingReads += 1
+            if (siblingReads === 2) throw new Error('file truncated during stored read')
+          }
+          if (position < 0 || length < 0 || position + length > archive.length) return undefined
+          return archive.subarray(position, position + length)
+        }
+      })
+    ).resolves.toBe(false)
+    expect(siblingReads).toBe(2)
   })
 
   it('accepts importer-supported candidate counts and manifest sizes', async () => {
@@ -287,5 +388,221 @@ describe('isImportableSkillArchivePath', () => {
       buildZip([...rejectedLooseRoots, { path: 'zz-valid.zip', content: nestedSkill, method: 0 }]),
       true
     )
+  })
+
+  it('rejects a loose root when a sibling has a malformed local header', async () => {
+    const manifestPath = 'broken/SKILL.md'
+    const manifest = Buffer.from('---\nname: Broken Resource Skill\n---\nBody')
+    const archive = buildZip([
+      { path: manifestPath, content: manifest, method: 0 },
+      { path: 'broken/resource.txt', content: Buffer.from('resource'), method: 0 }
+    ])
+    const siblingLocalOffset = 30 + Buffer.byteLength(manifestPath) + manifest.length
+    archive.writeUInt32LE(0, siblingLocalOffset)
+
+    await expectMatchesPreview(archive, false)
+  })
+
+  it('rejects a loose root when a sibling cannot be inflated', async () => {
+    const manifestPath = 'broken/SKILL.md'
+    const siblingPath = 'broken/resource.txt'
+    const manifest = Buffer.from('---\nname: Broken Deflate Skill\n---\nBody')
+    const sibling = Buffer.from('resource')
+    const archive = buildZip([
+      { path: manifestPath, content: manifest, method: 0 },
+      { path: siblingPath, content: sibling }
+    ])
+    const siblingLocalOffset = 30 + Buffer.byteLength(manifestPath) + manifest.length
+    const siblingDataOffset = siblingLocalOffset + 30 + Buffer.byteLength(siblingPath)
+    archive.fill(0xff, siblingDataOffset, siblingDataOffset + deflateRawSync(sibling).length)
+
+    await expectMatchesPreview(archive, false)
+  })
+
+  it('uses the actual inflated sibling size for loose-root caps', async () => {
+    const manifestPath = 'actual-size/SKILL.md'
+    const siblingPath = 'actual-size/resource.txt'
+    const manifest = Buffer.from('---\nname: Actual Size Skill\n---\nBody')
+    const sibling = Buffer.from('small resource')
+    const archive = buildZip([
+      { path: manifestPath, content: manifest, method: 0 },
+      { path: siblingPath, content: sibling }
+    ])
+    const siblingCompressedSize = deflateRawSync(sibling).length
+    const centralOffset =
+      30 +
+      Buffer.byteLength(manifestPath) +
+      manifest.length +
+      30 +
+      Buffer.byteLength(siblingPath) +
+      siblingCompressedSize
+    const siblingCentralOffset = centralOffset + 46 + Buffer.byteLength(manifestPath)
+    archive.writeUInt32LE(65 * 1024 * 1024, siblingCentralOffset + 24)
+
+    await expectMatchesPreview(archive, true)
+  })
+
+  it('does not count malformed local entries against the outer file cap', async () => {
+    const malformed = Array.from({ length: 4_096 }, (_, index): ZipInput => ({
+      path: `malformed-${index.toString().padStart(4, '0')}.txt`,
+      content: Buffer.alloc(0),
+      method: 0
+    }))
+    const manifestPath = 'after-malformed/SKILL.md'
+    const archive = buildZip([
+      ...malformed,
+      {
+        path: manifestPath,
+        content: Buffer.from('---\nname: After Malformed Entries\n---\nBody'),
+        method: 0
+      }
+    ])
+    let localOffset = 0
+    for (const input of malformed) {
+      archive.writeUInt32LE(0, localOffset)
+      localOffset += 30 + Buffer.byteLength(input.path)
+    }
+
+    await expectMatchesPreview(archive, true)
+  })
+
+  it('fails closed when cumulative attempted inflate output exhausts its work budget', async () => {
+    const archive = buildZip([
+      { path: 'first.bin', content: Buffer.alloc(48 * 1024, 97) },
+      { path: 'second.bin', content: Buffer.alloc(48 * 1024, 98) },
+      {
+        path: 'after-work/SKILL.md',
+        content: Buffer.from('---\nname: After Inflate Work\n---\nBody')
+      }
+    ])
+    const reader = (): {
+      size: number
+      read: (position: number, length: number) => Promise<Buffer | undefined>
+    } => ({
+      size: archive.length,
+      read: async (position: number, length: number): Promise<Buffer | undefined> => {
+        if (position < 0 || length < 0 || position + length > archive.length) return undefined
+        return archive.subarray(position, position + length)
+      }
+    })
+
+    await expect(inspectOuterArchive(reader())).resolves.toBe(true)
+    await expect(inspectOuterArchive(reader(), 64 * 1024)).resolves.toBe(false)
+  })
+
+  it('fails closed when cumulative stored-entry reads exhaust its work budget', async () => {
+    const archive = buildZip([
+      { path: 'first.bin', content: Buffer.alloc(48 * 1024, 97), method: 0 },
+      { path: 'second.bin', content: Buffer.alloc(48 * 1024, 98), method: 0 },
+      {
+        path: 'after-reads/SKILL.md',
+        content: Buffer.from('---\nname: After Stored Reads\n---\nBody'),
+        method: 0
+      }
+    ])
+    const reader = (): {
+      size: number
+      read: (position: number, length: number) => Promise<Buffer | undefined>
+    } => ({
+      size: archive.length,
+      read: async (position: number, length: number): Promise<Buffer | undefined> => {
+        if (position < 0 || length < 0 || position + length > archive.length) return undefined
+        return archive.subarray(position, position + length)
+      }
+    })
+
+    await expect(inspectOuterArchive(reader())).resolves.toBe(true)
+    await expect(inspectOuterArchive(reader(), 64 * 1024)).resolves.toBe(false)
+  })
+
+  it('rejects an early named root when later manifest work exhausts the budget', async () => {
+    const archive = buildZip([
+      {
+        path: 'a/SKILL.md',
+        content: Buffer.from('---\nname: Early Named Root\n---\nBody'),
+        method: 0
+      },
+      {
+        path: 'b/SKILL.md',
+        content: Buffer.concat([
+          Buffer.from('---\ndescription: no name\n---\n'),
+          Buffer.alloc(48 * 1024, 97)
+        ])
+      }
+    ])
+    const reader = (): {
+      size: number
+      read: (position: number, length: number) => Promise<Buffer | undefined>
+    } => ({
+      size: archive.length,
+      read: async (position: number, length: number): Promise<Buffer | undefined> => {
+        if (position < 0 || length < 0 || position + length > archive.length) return undefined
+        return archive.subarray(position, position + length)
+      }
+    })
+
+    await expect(inspectOuterArchive(reader())).resolves.toBe(true)
+    await expect(inspectOuterArchive(reader(), 64 * 1024)).resolves.toBe(false)
+  })
+
+  it('rejects an early named nested root when later manifest work exhausts the budget', async () => {
+    const inner = buildZip([
+      {
+        path: 'a/SKILL.md',
+        content: Buffer.from('---\nname: Early Nested Root\n---\nBody'),
+        method: 0
+      },
+      {
+        path: 'b/SKILL.md',
+        content: Buffer.concat([
+          Buffer.from('---\ndescription: no name\n---\n'),
+          Buffer.alloc(48 * 1024, 97)
+        ])
+      }
+    ])
+    const archive = buildZip([{ path: 'nested.zip', content: inner, method: 0 }])
+    const reader = (): {
+      size: number
+      read: (position: number, length: number) => Promise<Buffer | undefined>
+    } => ({
+      size: archive.length,
+      read: async (position: number, length: number): Promise<Buffer | undefined> => {
+        if (position < 0 || length < 0 || position + length > archive.length) return undefined
+        return archive.subarray(position, position + length)
+      }
+    })
+
+    await expect(inspectOuterArchive(reader())).resolves.toBe(true)
+    await expect(inspectOuterArchive(reader(), 64 * 1024)).resolves.toBe(false)
+  })
+
+  it('shares attempted inflate work across standalone nested archives', async () => {
+    const first = buildZip([{ path: 'first.bin', content: Buffer.alloc(48 * 1024, 97) }])
+    const second = buildZip([{ path: 'second.bin', content: Buffer.alloc(48 * 1024, 98) }])
+    const valid = buildZip([
+      {
+        path: 'SKILL.md',
+        content: Buffer.from('---\nname: After Nested Work\n---\nBody'),
+        method: 0
+      }
+    ])
+    const archive = buildZip([
+      { path: 'first.zip', content: first, method: 0 },
+      { path: 'second.zip', content: second, method: 0 },
+      { path: 'valid.zip', content: valid, method: 0 }
+    ])
+    const reader = (): {
+      size: number
+      read: (position: number, length: number) => Promise<Buffer | undefined>
+    } => ({
+      size: archive.length,
+      read: async (position: number, length: number): Promise<Buffer | undefined> => {
+        if (position < 0 || length < 0 || position + length > archive.length) return undefined
+        return archive.subarray(position, position + length)
+      }
+    })
+
+    await expect(inspectOuterArchive(reader())).resolves.toBe(true)
+    await expect(inspectOuterArchive(reader(), 64 * 1024)).resolves.toBe(false)
   })
 })
