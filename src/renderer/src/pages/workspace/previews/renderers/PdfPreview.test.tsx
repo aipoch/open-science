@@ -226,6 +226,47 @@ describe('PdfPreviewContent', () => {
     clientWidthSpy.mockRestore()
   })
 
+  it('resets zoom to fit when the previewed file changes in place (dialog path)', async () => {
+    const clientWidthSpy = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockReturnValue(400)
+    vi.stubGlobal('devicePixelRatio', 1)
+    getPage.mockResolvedValue({
+      getViewport: vi.fn(({ scale }: { scale: number }) => ({
+        width: 400 * scale,
+        height: 560 * scale
+      })),
+      render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+      cleanup: vi.fn()
+    })
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/first.pdf" name="first.pdf" source="artifact" />
+      )
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBe(400))
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.click()
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => expect(container.textContent).toContain('125%'))
+
+    // The Files-tab dialog swaps the file in place (same component instance, no remount / key).
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/second.pdf" name="second.pdf" source="artifact" />
+      )
+    })
+
+    // The new file must open fit-to-width, not inherit the previous document's zoom.
+    await vi.waitFor(() => expect(container.textContent).toContain('100%'))
+    expect(container.textContent).not.toContain('125%')
+
+    clientWidthSpy.mockRestore()
+  })
+
   it('re-rasterizes a widened page without reloading it through the range transport', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(

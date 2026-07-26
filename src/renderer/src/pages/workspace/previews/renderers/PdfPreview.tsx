@@ -266,8 +266,14 @@ export const PdfPreviewContent = ({
 }): React.JSX.Element => {
   const requestKey = createPreviewResourceKey({ source, path, mimeType, size, mtimeMs })
   const [documentState, setDocumentState] = useState<DocumentState | null>(null)
-  // A file switch remounts this component (keyed by contentKey upstream), so zoom resets to fit.
   const [zoom, setZoom] = useState(1)
+  // The PreviewPanel path remounts on a file switch, but the Files-tab dialog updates item in place
+  // with no contentKey, so reset zoom to fit whenever the previewed file changes (adjust-on-render).
+  const [zoomedKey, setZoomedKey] = useState(requestKey)
+  if (zoomedKey !== requestKey) {
+    setZoomedKey(requestKey)
+    setZoom(1)
+  }
   // The width one page fills at 100%: the content box, capped to a comfortable reading width. Owned
   // here so one ResizeObserver serves the whole document instead of one per page.
   const [fitWidth, setFitWidth] = useState(0)
