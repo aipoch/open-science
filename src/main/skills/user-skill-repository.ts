@@ -818,52 +818,110 @@ class UserSkillRepository {
     return signatures
   }
 
-  private async fallbackImportedSlugs(): Promise<Set<string>> {
-    const slugs = new Set<string>()
+  private async fallbackImportedSignatures(
+    candidateSlugs: ReadonlySet<string>
+  ): Promise<Map<string, string>> {
+    const signatures = new Map<string, string>()
     for (const slug of await this.listSlugs('imported')) {
-      if (!(await this.readSource(slug))?.agentHome) slugs.add(slug)
+      if (!candidateSlugs.has(slug)) continue
+      if ((await this.readSource(slug))?.agentHome) continue
+      try {
+        signatures.set(
+          slug,
+          await this.signatureOfAgentHomeSkill(this.skillDir('imported', slug), {
+            skipSourceManifest: true
+          })
+        )
+      } catch {
+        // A malformed imported tree cannot safely stand in for an installed skill. Leave it as an
+        // independent record so a healthy same-slug installed skill remains importable.
+      }
     }
-    return slugs
+    return signatures
   }
 
-  // Rechecks source identities against a caller-resolved directory. Settings uses this only after
-  // realpath containment succeeds, allowing a safe root symlink alias to share the canonical tree's
-  // signature without weakening the repository's nested-symlink rejection.
-  async matchesImportedAgentHomeSkill(
-    sourcePath: string,
-    aliases: readonly AgentHomeSkillRef[]
-  ): Promise<boolean> {
-    const imported = await this.importedAgentHomeSignatures()
-    const expected = aliases
-      .map((alias) => imported.get(agentHomeKey(alias)))
-      .filter((signature): signature is string => typeof signature === 'string')
-    if (expected.length === 0) return false
+  // Matches source identities and legacy records against a caller-resolved directory. Settings uses
+  // this only after realpath containment succeeds, allowing safe root aliases to share one canonical
+  // signature without weakening nested-symlink rejection. Metadata-less records match by both slug
+  // and content, so an unrelated GitHub/ZIP import cannot suppress a local installed skill.
+  async matchImportedAgentHomeSkills(
+    candidates: readonly { sourcePath: string; aliases: readonly AgentHomeSkillRef[] }[]
+  ): Promise<{ identityImported: boolean; fallbackAliases: AgentHomeSkillRef[] }[]> {
+    const candidateSlugs = new Set(
+      candidates.flatMap((candidate) => candidate.aliases.map((alias) => alias.slug))
+    )
+    const [imported, fallbackSignatures] = await Promise.all([
+      this.importedAgentHomeSignatures(),
+      this.fallbackImportedSignatures(candidateSlugs)
+    ])
 
-    return expected.includes(await this.signatureOfAgentHomeSkill(sourcePath))
+    return Promise.all(
+      candidates.map(async ({ sourcePath, aliases }) => {
+        const identitySignatures = aliases
+          .map((alias) => imported.get(agentHomeKey(alias)))
+          .filter((signature): signature is string => typeof signature === 'string')
+        const fallbackAliases = aliases.filter((alias) => fallbackSignatures.has(alias.slug))
+        if (identitySignatures.length === 0 && fallbackAliases.length === 0) {
+          return { identityImported: false, fallbackAliases: [] }
+        }
+
+        try {
+          const signature = await this.signatureOfAgentHomeSkill(sourcePath)
+          return {
+            identityImported: identitySignatures.includes(signature),
+            fallbackAliases: fallbackAliases.filter(
+              (alias) => fallbackSignatures.get(alias.slug) === signature
+            )
+          }
+        } catch {
+          return { identityImported: false, fallbackAliases: [] }
+        }
+      })
+    )
   }
 
   private async findImportedSlugByAgentHome(
     skill: AgentHomeSkillRef,
-    aliases: readonly AgentHomeSkillRef[],
-    fallbackSlugs: ReadonlySet<string>
-  ): Promise<{ slug: string; kind: 'identity' | 'fallback' } | undefined> {
+    aliases: readonly AgentHomeSkillRef[]
+  ): Promise<string | undefined> {
     const acceptedKeys = new Set([skill, ...aliases].map(agentHomeKey))
-    let fallbackSlug: string | undefined
     for (const slug of await this.listSlugs('imported')) {
       const source = await this.readSource(slug)
       if (source?.agentHome && acceptedKeys.has(agentHomeKey(source.agentHome))) {
-        return { slug, kind: 'identity' }
+        return slug
       }
-      if (!source?.agentHome && fallbackSlugs.has(slug)) fallbackSlug = slug
     }
-    return fallbackSlug ? { slug: fallbackSlug, kind: 'fallback' } : undefined
+    return undefined
+  }
+
+  private async findFallbackImportedSlug(
+    fallbackSlugs: ReadonlySet<string>,
+    sourceSignature: string
+  ): Promise<string | undefined> {
+    for (const slug of await this.listSlugs('imported')) {
+      if (!fallbackSlugs.has(slug)) continue
+      if ((await this.readSource(slug))?.agentHome) continue
+      try {
+        const importedSignature = await this.signatureOfAgentHomeSkill(
+          this.skillDir('imported', slug),
+          { skipSourceManifest: true }
+        )
+        if (importedSignature === sourceSignature) return slug
+      } catch {
+        // A malformed metadata-less record is not a safe fallback match.
+      }
+    }
+    return undefined
   }
 
   // Hashes one installed-skill tree without following symlinks. Paths use archive-style `/`
   // separators so the same tree has the same identity on Windows and POSIX; directory entries and
   // portable permission bits are included because cp preserves empty directories and executable
   // scripts. Applying the shared per-skill caps also bounds local scan reads.
-  private async signatureOfAgentHomeSkill(root: string): Promise<string> {
+  private async signatureOfAgentHomeSkill(
+    root: string,
+    options: { skipSourceManifest?: boolean } = {}
+  ): Promise<string> {
     const entries: (
       | { kind: 'directory'; relativePath: string; mode: number }
       | { kind: 'file'; path: string; relativePath: string; mode: number }
@@ -900,6 +958,7 @@ class UserSkillRepository {
           throw new Error(`Agent-home Skill contains an unsupported filesystem entry.`)
         }
         if (relativePath === SOURCE_MANIFEST) {
+          if (options.skipSourceManifest) continue
           throw new Error(`Skill import may not include the reserved file ${SOURCE_MANIFEST}.`)
         }
         if (fileCount >= SKILL_IMPORT_LIMITS.maxFiles) {
@@ -1188,7 +1247,6 @@ class UserSkillRepository {
       description: string
       path: string
       alreadyImported: boolean
-      fallbackImported: boolean
     }[]
   > {
     let entries: string[] = []
@@ -1210,10 +1268,7 @@ class UserSkillRepository {
 
     // Cross-check existing source identities once (rather than per row) so the "already imported"
     // badge distinguishes same-slug skills discovered in different global sources.
-    const [importedSkills, fallbackSlugs] = await Promise.all([
-      this.importedAgentHomeSignatures(),
-      this.fallbackImportedSlugs()
-    ])
+    const importedSkills = await this.importedAgentHomeSignatures()
 
     const out: {
       slug: string
@@ -1221,7 +1276,6 @@ class UserSkillRepository {
       description: string
       path: string
       alreadyImported: boolean
-      fallbackImported: boolean
     }[] = []
     for (const slug of entries) {
       const path = join(homeSkillsDir, slug)
@@ -1253,8 +1307,7 @@ class UserSkillRepository {
         name,
         description,
         path,
-        alreadyImported,
-        fallbackImported: fallbackSlugs.has(slug)
+        alreadyImported
       })
     }
 
@@ -1293,30 +1346,35 @@ class UserSkillRepository {
     return this.runExclusive(async () => {
       await this.doRecoverImportedTransactions()
 
-      const existingMatch = await this.findImportedSlugByAgentHome(
-        skill,
-        options.aliases ?? [],
-        new Set(options.fallbackSlugs ?? [])
-      )
-      const existingSlug = existingMatch?.slug
-      const existing = existingSlug ? await this.readSource(existingSlug) : null
-      if (existingSlug && existingMatch.kind === 'fallback') {
-        // A controlled legacy/GitHub/ZIP slug fallback prevents a duplicate, but cannot safely claim
-        // that unrelated record as this installed source or replace its contents.
-        return { status: 'unchanged', id: `imported-${existingSlug}` }
-      }
-
+      const existingSlug = await this.findImportedSlugByAgentHome(skill, options.aliases ?? [])
       const slug = existingSlug ?? (await this.uniqueSlug('imported', requestedSlug))
       const staged = await this.stageAgentHomeSkill(slug, sourcePath, skill)
-      if (existingSlug && existing?.signature === staged.signature) {
-        await rm(staged.staging, { recursive: true, force: true })
-        return { status: 'unchanged', id: `imported-${existingSlug}` }
-      }
+      try {
+        if (!existingSlug) {
+          const fallbackSlug = await this.findFallbackImportedSlug(
+            new Set(options.fallbackSlugs ?? []),
+            staged.signature
+          )
+          if (fallbackSlug) {
+            await rm(staged.staging, { recursive: true, force: true })
+            return { status: 'unchanged', id: `imported-${fallbackSlug}` }
+          }
+        }
 
-      await this.swapImportedStaging(slug, staged.staging, staged.generation)
-      return {
-        status: existingSlug ? 'updated' : 'imported',
-        id: `imported-${slug}`
+        const existing = existingSlug ? await this.readSource(existingSlug) : null
+        if (existingSlug && existing?.signature === staged.signature) {
+          await rm(staged.staging, { recursive: true, force: true })
+          return { status: 'unchanged', id: `imported-${existingSlug}` }
+        }
+
+        await this.swapImportedStaging(slug, staged.staging, staged.generation)
+        return {
+          status: existingSlug ? 'updated' : 'imported',
+          id: `imported-${slug}`
+        }
+      } catch (error) {
+        await rm(staged.staging, { recursive: true, force: true }).catch(() => undefined)
+        throw error
       }
     })
   }

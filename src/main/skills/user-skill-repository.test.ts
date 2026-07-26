@@ -1421,6 +1421,27 @@ describe('UserSkillRepository: agent-home import', () => {
     expect(skills.find((s) => s.id === 'imported-alpha-2')).toBeDefined()
   })
 
+  it('revalidates legacy fallback content during import', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const home = await mkdtemp(join(tmpdir(), 'os-import-agent-stale-fallback-'))
+    const source = await seedSkill(home, 'alpha')
+    const importedDir = join(storage, 'skills', 'imported', 'alpha')
+    await mkdir(importedDir, { recursive: true })
+    await writeFile(
+      join(importedDir, 'SKILL.md'),
+      '---\nname: alpha\ndescription: Different import\n---\nDifferent body.\n'
+    )
+
+    const outcome = await repo.importAgentHomeSkill(
+      source,
+      { source: 'agents', slug: 'alpha' },
+      { fallbackSlugs: ['alpha'] }
+    )
+
+    expect(outcome).toEqual({ status: 'imported', id: 'imported-alpha-2' })
+  })
+
   it('refreshes an installed skill when the same source identity changes', async () => {
     const storage = await makeStorage()
     const repo = new UserSkillRepository(storage)

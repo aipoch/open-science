@@ -4263,7 +4263,7 @@ describe('SettingsService: importAgentHomeSkills', () => {
     })
   })
 
-  it('does not re-offer a same-slug skill already imported from another flow', async () => {
+  it('keeps a different same-slug GitHub import separate from an installed skill', async () => {
     const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-agent-existing-'))
     await seedSkill(userAgentsDir, 'existing')
     const importedDir = join(storageRoot, 'skills', 'imported', 'existing')
@@ -4283,7 +4283,7 @@ describe('SettingsService: importAgentHomeSkills', () => {
 
     expect(await service.listAgentHomeSkills()).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ source: 'agents', slug: 'existing', alreadyImported: true })
+        expect.objectContaining({ source: 'agents', slug: 'existing', alreadyImported: false })
       ])
     )
 
@@ -4291,8 +4291,44 @@ describe('SettingsService: importAgentHomeSkills', () => {
       skills: [{ source: 'agents', slug: 'existing' }]
     })
     expect(result.results[0]).toMatchObject({
+      status: 'imported',
+      id: 'imported-existing-2'
+    })
+    expect(result.skills.map((skill) => skill.id)).toEqual(
+      expect.arrayContaining(['imported-existing', 'imported-existing-2'])
+    )
+  })
+
+  it('recognizes an identical same-slug GitHub import by content', async () => {
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-agent-identical-'))
+    await seedSkill(userAgentsDir, 'identical')
+    const importedDir = join(storageRoot, 'skills', 'imported', 'identical')
+    await mkdir(importedDir, { recursive: true })
+    await writeFile(
+      join(importedDir, 'SKILL.md'),
+      '---\nname: identical\ndescription: Test\n---\nBody.\n'
+    )
+    await writeFile(
+      join(importedDir, '.source.json'),
+      JSON.stringify({
+        url: 'https://github.com/example/skills/tree/main/identical',
+        signature: 'github-signature'
+      })
+    )
+    const service = createService(undefined, { userAgentsDir })
+
+    expect(await service.listAgentHomeSkills()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: 'agents', slug: 'identical', alreadyImported: true })
+      ])
+    )
+
+    const result = await service.importAgentHomeSkills({
+      skills: [{ source: 'agents', slug: 'identical' }]
+    })
+    expect(result.results[0]).toMatchObject({
       status: 'unchanged',
-      id: 'imported-existing'
+      id: 'imported-identical'
     })
   })
 
@@ -4305,7 +4341,7 @@ describe('SettingsService: importAgentHomeSkills', () => {
     await mkdir(legacyDir, { recursive: true })
     await writeFile(
       join(legacyDir, 'SKILL.md'),
-      '---\nname: duplicate\ndescription: Legacy\n---\nLegacy body.\n'
+      '---\nname: duplicate\ndescription: Test\n---\nBody.\n'
     )
     const service = createService(undefined, { userClaudeDir, userAgentsDir })
     await repository.setAgentFramework('claude-code')
@@ -4865,7 +4901,7 @@ describe('SettingsService: importAgentHomeSkills realpath containment', () => {
     await mkdir(legacyDir, { recursive: true })
     await writeFile(
       join(legacyDir, 'SKILL.md'),
-      '---\nname: linked-skill\ndescription: Legacy alias import\n---\nLegacy body.\n'
+      '---\nname: real-skill\ndescription: Test\n---\nBody.\n'
     )
 
     const service = createService(undefined, { userClaudeDir, userAgentsDir })

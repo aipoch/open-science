@@ -1166,7 +1166,6 @@ class SettingsService {
           skill: AgentHomeSkillView
           realPath: string
           alias: AgentHomeSkillRef
-          fallbackAlias?: AgentHomeSkillRef
         }[] = []
 
         for (const skill of skills) {
@@ -1175,7 +1174,6 @@ class SettingsService {
             visible.push({
               realPath,
               alias: { source, slug: skill.slug },
-              fallbackAlias: skill.fallbackImported ? { source, slug: skill.slug } : undefined,
               skill: {
                 source,
                 slug: skill.slug,
@@ -1206,34 +1204,35 @@ class SettingsService {
       const existing = unique.get(pathKey)
       if (existing) {
         existing.aliases.push(item.alias)
-        if (item.fallbackAlias) existing.fallbackAliases.push(item.fallbackAlias)
         existing.skill.alreadyImported ||= item.skill.alreadyImported
       } else {
         unique.set(pathKey, {
           skill: item.skill,
           realPath: item.realPath,
           aliases: [item.alias],
-          fallbackAliases: item.fallbackAlias ? [item.fallbackAlias] : [],
+          fallbackAliases: [],
           matchedFallbackSlugs: new Set()
         })
       }
     }
 
     const discovered = [...unique.values()]
-    await Promise.all(
-      discovered.map(async (item) => {
-        if (item.skill.alreadyImported) return
-        try {
-          item.skill.alreadyImported = await this.userSkills.matchesImportedAgentHomeSkill(
-            item.realPath,
-            item.aliases
-          )
-        } catch {
-          // Preserve a readable row when the canonical tree fails validation. Import reports the
-          // same validation error per item instead of one malformed tree hiding healthy choices.
+    const unmatched = discovered.filter((item) => !item.skill.alreadyImported)
+    try {
+      const matches = await this.userSkills.matchImportedAgentHomeSkills(
+        unmatched.map((item) => ({ sourcePath: item.realPath, aliases: item.aliases }))
+      )
+      for (const [index, match] of matches.entries()) {
+        const item = unmatched[index]
+        if (item) {
+          item.skill.alreadyImported = match.identityImported
+          item.fallbackAliases.push(...match.fallbackAliases)
         }
-      })
-    )
+      }
+    } catch {
+      // Preserve readable rows when compatibility matching fails. Import reports validation errors
+      // per item instead of one malformed legacy tree hiding healthy installed choices.
+    }
     const fallbackBySlug = new Map<
       string,
       { item: DiscoveredAgentHomeSkill; alias: AgentHomeSkillRef }[]
