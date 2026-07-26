@@ -6,7 +6,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
       # Batch low-risk dev/tooling bumps into one PR to cut review noise.
       dev-dependencies:
@@ -17,4 +17,4 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
