@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { AgentHomeSkillView } from '../../../../shared/settings'
 import { SkillsPanel } from './SkillsPanel'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { openRadixMenu } from './test-utils'
@@ -348,6 +349,161 @@ describe('SkillsPanel (sub-views)', () => {
     expect(useSettingsStore.getState().importAgentHomeSkills).toHaveBeenCalledWith([
       { source: 'agents', slug: 'shared' }
     ])
+  })
+
+  it('invalidates installed-skill rows while a framework-switch rescan is pending', async () => {
+    let finishCodexScan: (skills: []) => void = () => undefined
+    const pendingCodexScan = new Promise<[]>((resolve) => {
+      finishCodexScan = resolve
+    })
+    const listAgentHomeSkills = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          source: 'claude',
+          slug: 'claude-alpha',
+          name: 'Claude Alpha',
+          description: 'Claude-specific skill',
+          alreadyImported: false
+        }
+      ])
+      .mockReturnValueOnce(pendingCodexScan)
+    useSettingsStore.setState({ agentFrameworkId: 'claude-code', listAgentHomeSkills })
+
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'import-agent-home' }} onNavigate={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(document.body.textContent).toContain('Claude Alpha')
+
+    await act(async () => {
+      useSettingsStore.setState({ agentFrameworkId: 'codex' })
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).not.toContain('Claude Alpha')
+    expect(document.body.textContent).toContain('Scanning…')
+    const importSelected = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.includes('Import selected'))
+    expect(importSelected === undefined || importSelected.disabled).toBe(true)
+
+    await act(async () => {
+      finishCodexScan([])
+      await pendingCodexScan
+    })
+  })
+
+  it('does not restore cached rows when switching back before the new scan finishes', async () => {
+    const pendingScan = new Promise<AgentHomeSkillView[]>(() => undefined)
+    const listAgentHomeSkills = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          source: 'claude',
+          slug: 'claude-alpha',
+          name: 'Claude Alpha',
+          description: 'Claude-specific skill',
+          alreadyImported: false
+        }
+      ])
+      .mockReturnValue(pendingScan)
+    useSettingsStore.setState({ agentFrameworkId: 'claude-code', listAgentHomeSkills })
+
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'import-agent-home' }} onNavigate={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(document.body.textContent).toContain('Claude Alpha')
+
+    await act(async () => {
+      useSettingsStore.setState({ agentFrameworkId: 'codex' })
+      await Promise.resolve()
+    })
+    expect(listAgentHomeSkills).toHaveBeenCalledTimes(2)
+
+    act(() => useSettingsStore.setState({ agentFrameworkId: 'claude-code' }))
+
+    expect(document.body.textContent).not.toContain('Claude Alpha')
+    expect(document.body.textContent).toContain('Scanning…')
+  })
+
+  it('ignores an older manual rescan that finishes after a framework switch', async () => {
+    const finishScans: Array<(skills: AgentHomeSkillView[]) => void> = []
+    const listAgentHomeSkills = vi.fn(
+      () =>
+        new Promise<AgentHomeSkillView[]>((resolve) => {
+          finishScans.push(resolve)
+        })
+    )
+    useSettingsStore.setState({ agentFrameworkId: 'claude-code', listAgentHomeSkills })
+
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'import-agent-home' }} onNavigate={vi.fn()} />)
+      await Promise.resolve()
+    })
+    expect(listAgentHomeSkills).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      finishScans[0]([
+        {
+          source: 'claude',
+          slug: 'claude-alpha',
+          name: 'Claude Alpha',
+          description: 'Claude-specific skill',
+          alreadyImported: false
+        }
+      ])
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const rescan = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Rescan'
+    )
+    expect(rescan).toBeDefined()
+    act(() => rescan?.click())
+    expect(listAgentHomeSkills).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      useSettingsStore.setState({ agentFrameworkId: 'codex' })
+      await Promise.resolve()
+    })
+    expect(listAgentHomeSkills).toHaveBeenCalledTimes(3)
+    await act(async () => {
+      finishScans[2]([
+        {
+          source: 'codex',
+          slug: 'codex-beta',
+          name: 'Codex Beta',
+          description: 'Codex-specific skill',
+          alreadyImported: false
+        }
+      ])
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(document.body.textContent).toContain('Codex Beta')
+
+    await act(async () => {
+      finishScans[1]([
+        {
+          source: 'claude',
+          slug: 'stale-claude',
+          name: 'Stale Claude',
+          description: 'Late result',
+          alreadyImported: false
+        }
+      ])
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Codex Beta')
+    expect(document.body.textContent).not.toContain('Stale Claude')
+    expect(document.body.textContent).not.toContain('Scanning…')
   })
 
   it('renders the upload view and returns to the create view on "Write from scratch instead"', () => {

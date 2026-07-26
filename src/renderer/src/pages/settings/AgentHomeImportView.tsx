@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type {
+  AgentFrameworkId,
   AgentHomeSkillRef,
   AgentHomeSkillSource,
   AgentHomeSkillView
@@ -31,7 +32,9 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
   const [importing, setImporting] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [skills, setSkills] = useState<AgentHomeSkillView[] | null>(null)
+  const [skillsFrameworkId, setSkillsFrameworkId] = useState<AgentFrameworkId | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const scanGeneration = useRef(0)
 
   const frameworkSource =
     activeFrameworkId === 'codex'
@@ -40,53 +43,76 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
         ? SOURCE_INFO.claude
         : undefined
 
-  const applyScan = useCallback((items: AgentHomeSkillView[]): void => {
-    setSkills(items)
-    setSelected(
-      new Set(items.filter((skill) => !skill.alreadyImported).map((skill) => skillKey(skill)))
-    )
-  }, [])
+  const applyScan = useCallback(
+    (items: AgentHomeSkillView[], frameworkId: AgentFrameworkId): void => {
+      setSkills(items)
+      setSkillsFrameworkId(frameworkId)
+      setSelected(
+        new Set(items.filter((skill) => !skill.alreadyImported).map((skill) => skillKey(skill)))
+      )
+    },
+    []
+  )
+
+  // Every scan entry point shares one generation. A framework switch or newer manual/post-import
+  // refresh invalidates older requests, so late results can never restore rows from a stale source.
+  const runScan = useCallback(
+    async (
+      frameworkId: AgentFrameworkId,
+      options: { preserveMessage?: boolean } = {}
+    ): Promise<void> => {
+      if (useSettingsStore.getState().agentFrameworkId !== frameworkId) return
+      const generation = ++scanGeneration.current
+      const isCurrent = (): boolean =>
+        scanGeneration.current === generation &&
+        useSettingsStore.getState().agentFrameworkId === frameworkId
+
+      try {
+        const items = await listAgentHomeSkills()
+        if (!isCurrent()) return
+        if (!options.preserveMessage) setMessage(null)
+        applyScan(items, frameworkId)
+      } catch (error) {
+        if (!isCurrent()) return
+        setSkills(null)
+        setSkillsFrameworkId(frameworkId)
+        setSelected(new Set())
+        setMessage(error instanceof Error ? error.message : 'Scan failed.')
+      } finally {
+        if (isCurrent()) setScanning(false)
+      }
+    },
+    [applyScan, listAgentHomeSkills]
+  )
 
   // Discovery is local and bounded to one directory per visible source, so load eagerly. Including
   // the framework id makes an already-open view follow a framework switch without retaining stale
   // source rows.
   useEffect(() => {
     let cancelled = false
-    listAgentHomeSkills()
-      .then((items) => {
-        if (cancelled) return
-        applyScan(items)
-      })
-      .catch((error) => {
-        if (cancelled) return
-        setMessage(error instanceof Error ? error.message : 'Scan failed.')
-      })
-      .finally(() => {
-        if (cancelled) return
-        setScanning(false)
-      })
+    void Promise.resolve().then(() => {
+      if (!cancelled) void runScan(activeFrameworkId)
+    })
 
     return () => {
       cancelled = true
+      scanGeneration.current += 1
     }
-  }, [activeFrameworkId, applyScan, listAgentHomeSkills])
+  }, [activeFrameworkId, runScan])
+
+  const currentSkills = skillsFrameworkId === activeFrameworkId ? skills : null
+  const isScanning = scanning || skillsFrameworkId !== activeFrameworkId
 
   const selectable = useMemo(
-    () => skills?.filter((skill) => !skill.alreadyImported) ?? [],
-    [skills]
+    () => currentSkills?.filter((skill) => !skill.alreadyImported) ?? [],
+    [currentSkills]
   )
   const allSelected = selectable.length > 0 && selected.size === selectable.length
 
   const rescan = async (): Promise<void> => {
     setScanning(true)
     setMessage(null)
-    try {
-      applyScan(await listAgentHomeSkills())
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Scan failed.')
-    } finally {
-      setScanning(false)
-    }
+    await runScan(activeFrameworkId)
   }
 
   const toggle = (skill: AgentHomeSkillRef): void =>
@@ -114,9 +140,10 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
     })
 
   const importSelected = async (): Promise<void> => {
-    if (importing || selected.size === 0 || !skills) return
+    if (isScanning || importing || selected.size === 0 || !currentSkills) return
+    const frameworkId = activeFrameworkId
 
-    const requested = skills
+    const requested = currentSkills
       .filter((skill) => selected.has(skillKey(skill)) && !skill.alreadyImported)
       .map(({ source, slug }) => ({ source, slug }))
     if (requested.length === 0) return
@@ -127,6 +154,8 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
       const result = await importAgentHomeSkills(requested)
       const failures = result.results.filter((item) => item.error !== undefined)
       const importedCount = result.results.length - failures.length
+      if (importedCount > 0) onImported()
+      if (useSettingsStore.getState().agentFrameworkId !== frameworkId) return
 
       if (failures.length === 0) {
         setMessage(`Imported ${importedCount} skill${importedCount === 1 ? '' : 's'}.`)
@@ -135,10 +164,11 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
           `Imported ${importedCount}; ${failures.length} failed. ${failures[0]?.error ?? ''}`.trim()
         )
       }
-      if (importedCount > 0) onImported()
-      applyScan(await listAgentHomeSkills())
+      await runScan(frameworkId, { preserveMessage: true })
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not import the selected skills.')
+      if (useSettingsStore.getState().agentFrameworkId === frameworkId) {
+        setMessage(error instanceof Error ? error.message : 'Could not import the selected skills.')
+      }
     } finally {
       setImporting(false)
     }
@@ -163,19 +193,21 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
           type="button"
           variant="outline"
           onClick={() => void rescan()}
-          disabled={scanning || importing}
+          disabled={isScanning || importing}
         >
-          {scanning ? 'Scanning…' : 'Rescan'}
+          {isScanning ? 'Scanning…' : 'Rescan'}
         </Button>
-        {skills ? (
+        {currentSkills ? (
           <span className="text-xs text-muted-foreground">
-            {skills.length} skill{skills.length === 1 ? '' : 's'} found
+            {currentSkills.length} skill{currentSkills.length === 1 ? '' : 's'} found
           </span>
         ) : null}
       </div>
-      {message ? <p className="mt-2 text-xs text-muted-foreground">{message}</p> : null}
+      {skillsFrameworkId === activeFrameworkId && message ? (
+        <p className="mt-2 text-xs text-muted-foreground">{message}</p>
+      ) : null}
 
-      {skills && skills.length > 0 ? (
+      {currentSkills && currentSkills.length > 0 ? (
         <div className="mt-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -185,7 +217,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
                   aria-label="Select all installed skills"
                   checked={allSelected}
                   onChange={toggleAll}
-                  disabled={selectable.length === 0 || importing}
+                  disabled={isScanning || selectable.length === 0 || importing}
                   className="size-4 shrink-0"
                 />
                 Select all
@@ -195,7 +227,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
                 variant="ghost"
                 size="sm"
                 onClick={invertSelection}
-                disabled={selectable.length === 0 || importing}
+                disabled={isScanning || selectable.length === 0 || importing}
               >
                 Invert
               </Button>
@@ -204,14 +236,14 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
               type="button"
               variant="outline"
               onClick={() => void importSelected()}
-              disabled={importing || selected.size === 0}
+              disabled={isScanning || importing || selected.size === 0}
             >
               {importing ? 'Importing…' : `Import selected (${selected.size})`}
             </Button>
           </div>
 
           <ul className="mt-2 flex flex-col divide-y divide-border">
-            {skills.map((skill) => {
+            {currentSkills.map((skill) => {
               const source = SOURCE_INFO[skill.source]
               return (
                 <li key={skillKey(skill)} className="flex items-center gap-3 py-2.5">
@@ -220,7 +252,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
                     aria-label={`Select ${skill.name}`}
                     checked={selected.has(skillKey(skill))}
                     onChange={() => toggle(skill)}
-                    disabled={skill.alreadyImported || importing}
+                    disabled={isScanning || skill.alreadyImported || importing}
                     className="size-4 shrink-0"
                   />
                   <div className="min-w-0 flex-1">
@@ -237,7 +269,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
             })}
           </ul>
         </div>
-      ) : !scanning && skills && skills.length === 0 ? (
+      ) : !isScanning && currentSkills && currentSkills.length === 0 ? (
         <p className="mt-5 text-xs text-muted-foreground">
           No installed skills found in the scanned global folders.
         </p>

@@ -1,4 +1,13 @@
-import { ChevronDown, Download, FileUp, FolderInput, Pencil, Plus, Search, Trash2 } from 'lucide-react'
+import {
+  ChevronDown,
+  Download,
+  FileUp,
+  FolderInput,
+  Pencil,
+  Plus,
+  Search,
+  Trash2
+} from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { SkillSource } from '../../../../shared/settings'
@@ -55,6 +64,7 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
   const setSkillEnabled = useSettingsStore((state) => state.setSkillEnabled)
   const createSkill = useSettingsStore((state) => state.createSkill)
   const deleteSkill = useSettingsStore((state) => state.deleteSkill)
+  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const [filter, setFilter] = useState<SourceFilter>('all')
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Partial<Record<SkillSource, boolean>>>({})
@@ -102,7 +112,7 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
     return <SkillImportView onImported={() => undefined} />
   }
   if (view.kind === 'import-agent-home') {
-    return <AgentHomeImportView onImported={() => undefined} />
+    return <AgentHomeImportView key={agentFrameworkId} onImported={() => undefined} />
   }
   if (view.kind === 'upload') {
     return (

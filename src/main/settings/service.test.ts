@@ -3997,6 +3997,21 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
     expect(items.every((item) => !('path' in item))).toBe(true)
   })
 
+  it('keeps framework-specific results when the shared source cannot be scanned', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-readable-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-list-agent-shared-unreadable-'))
+    await seedSkill(userClaudeDir, 'alpha')
+    await writeFile(join(userAgentsDir, 'skills'), 'not a directory')
+    const service = createService(undefined, { userClaudeDir, userAgentsDir })
+    await repository.setAgentFramework('claude-code')
+
+    const items = await service.listAgentHomeSkills()
+
+    expect(items.map(({ source, slug }) => ({ source, slug }))).toEqual([
+      { source: 'claude', slug: 'alpha' }
+    ])
+  })
+
   it('scans shared and Codex homes when the active framework is codex', async () => {
     const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-agent-claude-'))
     const userCodexDir = await mkdtemp(join(tmpdir(), 'os-list-agent-codex-'))

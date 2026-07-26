@@ -1139,7 +1139,14 @@ class SettingsService {
     const sources = this.resolveAgentHomeSkillDirs(framework)
     const groups = await Promise.all(
       sources.map(async ({ source, dir }) => {
-        const skills = await this.userSkills.listAgentHomeSkills(dir, source)
+        let skills: Awaited<ReturnType<UserSkillRepository['listAgentHomeSkills']>>
+        try {
+          skills = await this.userSkills.listAgentHomeSkills(dir, source)
+        } catch {
+          // Global sources are additive. A corrupt or unreadable shared/framework directory must not
+          // hide valid skills from the other independently configured source.
+          return []
+        }
         const visible: {
           skill: AgentHomeSkillView
           realPath: string
