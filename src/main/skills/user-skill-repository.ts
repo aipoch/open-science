@@ -794,7 +794,11 @@ class UserSkillRepository {
 
       if (typeof record.agentHome === 'object' && record.agentHome !== null) {
         const agentHome = record.agentHome as Record<string, unknown>
-        if (isAgentHomeSkillSource(agentHome.source) && typeof agentHome.slug === 'string') {
+        if (
+          isAgentHomeSkillSource(agentHome.source) &&
+          typeof agentHome.slug === 'string' &&
+          SAFE_SLUG.test(agentHome.slug)
+        ) {
           manifest.agentHome = { source: agentHome.source, slug: agentHome.slug }
         }
       }
@@ -814,13 +818,26 @@ class UserSkillRepository {
     return keys
   }
 
-  private async findImportedSlugByAgentHome(skill: AgentHomeSkillRef): Promise<string | undefined> {
+  private async legacyAgentHomeSlugs(): Promise<Set<string>> {
+    const slugs = new Set<string>()
+    for (const slug of await this.listSlugs('imported')) {
+      if ((await this.readSource(slug)) === null) slugs.add(slug)
+    }
+    return slugs
+  }
+
+  private async findImportedSlugByAgentHome(
+    skill: AgentHomeSkillRef,
+    allowLegacySlugMatch: boolean
+  ): Promise<string | undefined> {
     const key = agentHomeKey(skill)
+    let legacySlug: string | undefined
     for (const slug of await this.listSlugs('imported')) {
       const source = await this.readSource(slug)
       if (source?.agentHome && agentHomeKey(source.agentHome) === key) return slug
+      if (allowLegacySlugMatch && source === null && slug === skill.slug) legacySlug = slug
     }
-    return undefined
+    return legacySlug
   }
 
   // Writes an imported skill's files (replacing any prior copy) plus its source manifest.
@@ -1012,6 +1029,7 @@ class UserSkillRepository {
       description: string
       path: string
       alreadyImported: boolean
+      legacyImported: boolean
     }[]
   > {
     let entries: string[] = []
@@ -1033,7 +1051,10 @@ class UserSkillRepository {
 
     // Cross-check existing source identities once (rather than per row) so the "already imported"
     // badge distinguishes same-slug skills discovered in different global sources.
-    const importedSkills = await this.importedAgentHomeKeys()
+    const [importedSkills, legacySlugs] = await Promise.all([
+      this.importedAgentHomeKeys(),
+      this.legacyAgentHomeSlugs()
+    ])
 
     const out: {
       slug: string
@@ -1041,6 +1062,7 @@ class UserSkillRepository {
       description: string
       path: string
       alreadyImported: boolean
+      legacyImported: boolean
     }[] = []
     for (const slug of entries) {
       const path = join(homeSkillsDir, slug)
@@ -1060,7 +1082,8 @@ class UserSkillRepository {
         name,
         description,
         path,
-        alreadyImported: importedSkills.has(agentHomeKey({ source, slug }))
+        alreadyImported: importedSkills.has(agentHomeKey({ source, slug })),
+        legacyImported: legacySlugs.has(slug)
       })
     }
 
@@ -1072,7 +1095,11 @@ class UserSkillRepository {
   // the same shape Open Science would have produced from a fresh in-app edit. Suffix allocation
   // mirrors importFromZip: the same source identity is unchanged, while a same-name skill from a
   // different source gets `-2`, `-3`, ... appended and never clobbers an existing record.
-  async importAgentHomeSkill(sourcePath: string, skill: AgentHomeSkillRef): Promise<ImportOutcome> {
+  async importAgentHomeSkill(
+    sourcePath: string,
+    skill: AgentHomeSkillRef,
+    options: { allowLegacySlugMatch?: boolean } = {}
+  ): Promise<ImportOutcome> {
     const requestedSlug = skill.slug
     if (!SAFE_SLUG.test(requestedSlug)) {
       throw new Error(`Refusing to import agent-home skill with unsafe slug: ${requestedSlug}`)
@@ -1092,7 +1119,10 @@ class UserSkillRepository {
     return this.runExclusive(async () => {
       await this.doRecoverImportedTransactions()
 
-      const existingSlug = await this.findImportedSlugByAgentHome(skill)
+      const existingSlug = await this.findImportedSlugByAgentHome(
+        skill,
+        options.allowLegacySlugMatch === true
+      )
       if (existingSlug) return { status: 'unchanged', id: `imported-${existingSlug}` }
 
       const slug = await this.uniqueSlug('imported', requestedSlug)

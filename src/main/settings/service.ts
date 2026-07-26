@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { access, chmod, mkdir, readdir, realpath, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { isDeepStrictEqual, promisify } from 'node:util'
 
@@ -22,6 +22,7 @@ import type {
   RemoveCustomServerRequest,
   SetCustomServerEnabledRequest,
   UpdateCustomServerRequest,
+  AgentHomeSkillRef,
   AgentHomeSkillSource,
   AgentHomeSkillView,
   CreateSkillRequest,
@@ -1139,29 +1140,64 @@ class SettingsService {
     const groups = await Promise.all(
       sources.map(async ({ source, dir }) => {
         const skills = await this.userSkills.listAgentHomeSkills(dir, source)
-        const visible: AgentHomeSkillView[] = []
+        const visible: {
+          skill: AgentHomeSkillView
+          realPath: string
+          legacyImported: boolean
+        }[] = []
 
         for (const skill of skills) {
           try {
-            await this.resolveAgentHomeSkillPath(source, skill.slug, sources)
+            const realPath = await this.resolveAgentHomeSkillPath(source, skill.slug, sources)
+            visible.push({
+              realPath,
+              legacyImported: skill.legacyImported,
+              skill: {
+                source,
+                slug: skill.slug,
+                name: skill.name,
+                description: skill.description,
+                alreadyImported: skill.alreadyImported
+              }
+            })
           } catch {
             continue
           }
-
-          visible.push({
-            source,
-            slug: skill.slug,
-            name: skill.name,
-            description: skill.description,
-            alreadyImported: skill.alreadyImported
-          })
         }
 
         return visible
       })
     )
 
-    return groups.flat()
+    const unique = new Map<string, { skill: AgentHomeSkillView; legacyImported: boolean }>()
+    for (const item of groups.flat()) {
+      const pathKey = process.platform === 'win32' ? item.realPath.toLowerCase() : item.realPath
+      const existing = unique.get(pathKey)
+      if (existing) {
+        existing.legacyImported ||= item.legacyImported
+        existing.skill.alreadyImported ||= item.skill.alreadyImported
+      } else {
+        unique.set(pathKey, { skill: item.skill, legacyImported: item.legacyImported })
+      }
+    }
+
+    const discovered = [...unique.values()]
+    const legacyBySlug = new Map<string, typeof discovered>()
+    for (const item of discovered) {
+      if (!item.legacyImported || item.skill.alreadyImported) continue
+      const candidates = legacyBySlug.get(item.skill.slug) ?? []
+      candidates.push(item)
+      legacyBySlug.set(item.skill.slug, candidates)
+    }
+    // Before source manifests existed, this feature scanned only the active framework directory.
+    // If a legacy slug is now ambiguous, assign it to that framework row and leave the shared row
+    // importable; marking every same-slug row would recreate the collision this identity fixes.
+    for (const candidates of legacyBySlug.values()) {
+      const preferred = candidates.find((item) => item.skill.source !== 'agents') ?? candidates[0]
+      preferred.skill.alreadyImported = true
+    }
+
+    return discovered.map((item) => item.skill)
   }
 
   // The generic source is always available. A framework-specific source is additive, not a gate on
@@ -1206,6 +1242,14 @@ class SettingsService {
     const settings = await this.repository.getSettings()
     const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
     const availableSources = this.resolveAgentHomeSkillDirs(framework)
+    // The picker normally just completed this scan. If an unrelated source becomes unreadable
+    // between listing and importing, keep per-item import isolation and simply skip legacy matching.
+    const installedSkills = await this.listAgentHomeSkills().catch(() => [] as AgentHomeSkillView[])
+    const knownImported = new Set(
+      installedSkills
+        .filter((skill) => skill.alreadyImported)
+        .map((skill) => `${skill.source}:${skill.slug}`)
+    )
     const results: ImportAgentHomeSkillsResult['results'] = []
 
     for (const skill of request.skills) {
@@ -1217,7 +1261,14 @@ class SettingsService {
           skill.slug,
           availableSources
         )
-        const outcome = await this.userSkills.importAgentHomeSkill(sourcePath, skill)
+        const canonicalSkill = await this.canonicalAgentHomeSkillRef(
+          sourcePath,
+          skill,
+          availableSources
+        )
+        const outcome = await this.userSkills.importAgentHomeSkill(sourcePath, canonicalSkill, {
+          allowLegacySlugMatch: knownImported.has(`${canonicalSkill.source}:${canonicalSkill.slug}`)
+        })
 
         results.push({ ...ref, status: outcome.status, id: outcome.id })
       } catch (error) {
@@ -1267,6 +1318,32 @@ class SettingsService {
     // Copy from the resolved directory so a safe root symlink is dereferenced once. Nested symlinks
     // remain visible to the repository copy filter and are still rejected.
     return candidate
+  }
+
+  // A framework directory may alias a shared skill with a root symlink. Prefer the first direct
+  // source root that owns the resolved directory (the shared Agents root is ordered first), so both
+  // the visible row and a stale/direct import request converge on one installed-skill identity.
+  private async canonicalAgentHomeSkillRef(
+    realSkillPath: string,
+    fallback: AgentHomeSkillRef,
+    availableSources: { source: AgentHomeSkillSource; dir: string }[]
+  ): Promise<AgentHomeSkillRef> {
+    for (const source of availableSources) {
+      const realRoot = await realpath(source.dir).catch(() => resolve(source.dir))
+      const child = relative(realRoot, realSkillPath)
+      if (
+        child &&
+        !isAbsolute(child) &&
+        child !== '..' &&
+        !child.startsWith(`..${sep}`) &&
+        !child.includes(sep) &&
+        SAFE_SLUG.test(child)
+      ) {
+        return { source: source.source, slug: child }
+      }
+    }
+
+    return fallback
   }
 
   // Projects a catalog skill into its renderer-safe view given the disabled set.
