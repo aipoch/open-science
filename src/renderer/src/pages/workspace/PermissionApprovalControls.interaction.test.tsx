@@ -488,6 +488,8 @@ describe('PermissionApprovalControls interactions', () => {
       toolCallId: 'tool-env',
       title: 'mcp__open-science-notebook__notebook_execute',
       providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      isMcp: true,
+      mcpIdentity: 'open-science-notebook/notebook_execute',
       rawInput: { kernelKind: 'python', code: 'print(1)' },
       options: [{ optionId: 'opt-once', name: 'Allow once', kind: 'allow_once' }]
     }
@@ -543,6 +545,8 @@ describe('PermissionApprovalControls interactions', () => {
       toolCallId: 'tool-r-env',
       title: 'mcp__open-science-notebook__notebook_execute',
       providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      isMcp: true,
+      mcpIdentity: 'open-science-notebook/notebook_execute',
       rawInput: { kernelKind: 'r', code: 'x <- 1' },
       options: [{ optionId: 'opt-once', name: 'Allow once', kind: 'allow_once' }]
     }
@@ -603,6 +607,8 @@ describe('PermissionApprovalControls interactions', () => {
       toolCallId: 'tool-transition-python',
       title: 'mcp__open-science-notebook__notebook_execute',
       providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      isMcp: true,
+      mcpIdentity: 'open-science-notebook/notebook_execute',
       rawInput: { kernelKind: 'python', code: 'x = 1' },
       options: [{ optionId: 'opt-once', name: 'Allow once', kind: 'allow_once' }]
     }
