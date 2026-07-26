@@ -106,6 +106,7 @@ jobs:
                 echo "Repository secret CODEX_BASE_URL is required for API-key auth." >&2
                 exit 1
               fi
+              permission_profile=':read-only'
               ;;
             subscription)
               if [[ "$REVIEW_EVENT" != "workflow_dispatch" ]]; then
@@ -131,12 +132,33 @@ jobs:
                 exit 1
               fi
               chmod 600 "$auth_file"
+              permission_profile='ai_review'
               ;;
             *)
               echo "Authentication mode must be api-key or subscription." >&2
               exit 1
               ;;
           esac
+
+          codex_home_key="$(jq -Rn --arg path "$codex_home" '$path')"
+          workspace_key="$(jq -Rn --arg path "$GITHUB_WORKSPACE" '$path')"
+          {
+            printf 'default_permissions = "%s"\n' "$permission_profile"
+            echo 'project_doc_max_bytes = 0'
+            echo
+            printf '[projects.%s]\n' "$workspace_key"
+            echo 'trust_level = "untrusted"'
+            if [[ "$CODEX_AUTH_MODE" == "subscription" ]]; then
+              echo
+              echo '[permissions.ai_review]'
+              echo 'description = "Read-only PR review with credential isolation."'
+              echo 'extends = ":read-only"'
+              echo
+              echo '[permissions.ai_review.filesystem]'
+              printf '%s = "deny"\n' "$codex_home_key"
+            fi
+          } > "$codex_home/config.toml"
+          chmod 600 "$codex_home/config.toml"
           {
             echo "auth_mode=$CODEX_AUTH_MODE"
             echo "codex_home=$codex_home"
@@ -341,7 +363,62 @@ jobs:
           openai-api-key: ${{ inputs.auth_mode == 'api-key' && secrets.OPENAI_API_KEY || '' }}
           responses-api-endpoint: ${{ steps.responses_endpoint.outputs.url }}
           codex-home: ${{ steps.codex_auth.outputs.codex_home }}
+          codex-version: 0.144.6
           allow-users: ${{ inputs.is_fork && inputs.fork_mode == 'automatic' && '*' || '' }}
+
+      # The action drops sudo when it receives an API key. Subscription auth is install-only, so
+      # apply the same boundary explicitly before reviewing untrusted repository content.
+      - name: Harden subscription review runtime
+        if: ${{ inputs.auth_mode == 'subscription' }}
+        env:
+          CODEX_HOME: ${{ steps.codex_auth.outputs.codex_home }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_user="$(id -un)"
+          sudo -n bash -c '
+            set -euo pipefail
+            user="$1"
+            if id -nG "$user" | tr " " "\n" | grep -qx sudo; then
+              if command -v deluser > /dev/null 2>&1; then
+                deluser "$user" sudo
+              else
+                gpasswd -d "$user" sudo
+              fi
+            fi
+
+            temporary_file="$(mktemp)"
+            trap '\''rm -f "$temporary_file"'\'' EXIT
+            for sudoers_file in /etc/sudoers /etc/sudoers.d/*; do
+              [[ -f "$sudoers_file" ]] || continue
+              awk -v username="$user" '\''
+                {
+                  candidate = $0
+                  sub(/^[[:space:]]*/, "", candidate)
+                  split(candidate, fields, /[[:space:]]+/)
+                  if (fields[1] != username) print
+                }
+              '\'' "$sudoers_file" > "$temporary_file"
+              cat "$temporary_file" > "$sudoers_file"
+            done
+          ' bash "$current_user"
+          sudo -K || true
+
+          if sudo -n true 2> /dev/null; then
+            echo "Subscription review user still has passwordless sudo." >&2
+            exit 1
+          fi
+          if [[ ! -r "$CODEX_HOME/auth.json" ]]; then
+            echo "Subscription credential is unavailable to the Codex parent process." >&2
+            exit 1
+          fi
+          if codex sandbox --permission-profile ai_review -C "$GITHUB_WORKSPACE" -- \
+            test -r "$CODEX_HOME/auth.json"; then
+            echo "Subscription credential remains readable inside the Codex sandbox." >&2
+            exit 1
+          fi
+          codex sandbox --permission-profile ai_review -C "$GITHUB_WORKSPACE" -- \
+            test -r "$GITHUB_WORKSPACE/package.json"
 
       - name: Run Codex review
         id: run_codex
@@ -350,6 +427,7 @@ jobs:
           CODEX_HOME: ${{ steps.codex_auth.outputs.codex_home }}
           CODEX_INSTRUCTIONS_FILE: ${{ steps.review_inputs.outputs.instructions_file }}
           CODEX_MODEL: ${{ inputs.model }}
+          CODEX_PERMISSION_PROFILE: ${{ inputs.auth_mode == 'subscription' && 'ai_review' || ':read-only' }}
           CODEX_PROMPT_FILE: ${{ steps.review_inputs.outputs.prompt_file }}
           CODEX_SCHEMA_FILE: ${{ steps.review_inputs.outputs.schema_file }}
           CODEX_INTERNAL_ORIGINATOR_OVERRIDE: codex_github_action
@@ -367,6 +445,7 @@ jobs:
 
           set +e
           codex exec \
+            --strict-config \
             --skip-git-repo-check \
             --cd "$GITHUB_WORKSPACE" \
             --output-last-message "$final_message_file" \
@@ -377,7 +456,8 @@ jobs:
             --ignore-rules \
             --json \
             --config "developer_instructions=${developer_instructions}" \
-            --config 'default_permissions=":read-only"' \
+            --config project_doc_max_bytes=0 \
+            --config "default_permissions=\"${CODEX_PERMISSION_PROFILE}\"" \
             < "$CODEX_PROMPT_FILE" \
             > "$execution_file"
           codex_status=$?

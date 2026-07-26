@@ -8,7 +8,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 import { load } from 'js-yaml'
@@ -171,6 +171,7 @@ type AuthOptions = {
 function runAuth(options: AuthOptions = {}): {
   authFile: string
   codexHome: string
+  configFile: string
   mode: number | undefined
   outputs: Record<string, string>
   status: number | null
@@ -179,6 +180,7 @@ function runAuth(options: AuthOptions = {}): {
   const root = fixtureRoot('dual-codex-auth-')
   const codexHome = join(root, 'codex-home')
   const authFile = join(codexHome, 'auth.json')
+  const configFile = join(codexHome, 'config.toml')
   const output = join(root, 'github-output')
   const result = spawnSync(
     'bash',
@@ -193,6 +195,7 @@ function runAuth(options: AuthOptions = {}): {
         CODEX_BASE_URL: options.baseUrl ?? 'https://api.openai.com',
         GITHUB_OUTPUT: output,
         GITHUB_REPOSITORY: 'aipoch/open-science',
+        GITHUB_WORKSPACE: root,
         IS_FORK: String(options.isFork ?? false),
         OPENAI_API_KEY: options.openAiApiKey ?? 'sk-test',
         REVIEW_EVENT: options.event ?? 'workflow_dispatch',
@@ -203,6 +206,7 @@ function runAuth(options: AuthOptions = {}): {
   return {
     authFile,
     codexHome,
+    configFile,
     mode:
       result.status === 0 && options.authMode === 'subscription'
         ? statSync(authFile).mode
@@ -533,7 +537,8 @@ describe('dual Codex workflow contract', () => {
       effort: "${{ vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_REVIEW_EFFORT || 'high' }}"
     })
     expect(correctness.secrets).toEqual({
-      CODEX_AUTH_JSON: '${{ secrets.CODEX_AUTH_JSON }}',
+      CODEX_AUTH_JSON:
+        "${{ needs.review_target.outputs.auth_mode == 'subscription' && secrets.CODEX_AUTH_JSON || '' }}",
       OPENAI_API_KEY: '${{ secrets.CODEX_CORRECTNESS_API_KEY || secrets.OPENAI_API_KEY }}',
       CODEX_BASE_URL: '${{ secrets.CODEX_CORRECTNESS_BASE_URL || secrets.CODEX_BASE_URL }}'
     })
@@ -544,7 +549,8 @@ describe('dual Codex workflow contract', () => {
       effort: "${{ vars.CODEX_ARCHITECTURE_EFFORT || vars.CODEX_REVIEW_EFFORT || 'high' }}"
     })
     expect(architecture.secrets).toEqual({
-      CODEX_AUTH_JSON: '${{ secrets.CODEX_AUTH_JSON }}',
+      CODEX_AUTH_JSON:
+        "${{ needs.review_target.outputs.auth_mode == 'subscription' && secrets.CODEX_AUTH_JSON || '' }}",
       OPENAI_API_KEY: '${{ secrets.CODEX_ARCHITECTURE_API_KEY || secrets.OPENAI_API_KEY }}',
       CODEX_BASE_URL: '${{ secrets.CODEX_ARCHITECTURE_BASE_URL || secrets.CODEX_BASE_URL }}'
     })
@@ -564,6 +570,22 @@ describe('dual Codex workflow contract', () => {
     })
     expect(readFileSync(result.authFile, 'utf8')).toBe(seed)
     expect(result.mode! & 0o777).toBe(0o600)
+    const config = readFileSync(result.configFile, 'utf8')
+    expect(config).toContain('default_permissions = "ai_review"')
+    expect(config).toContain('project_doc_max_bytes = 0')
+    expect(config).toContain(`[projects.${JSON.stringify(dirname(result.codexHome))}]`)
+    expect(config).toContain('trust_level = "untrusted"')
+    expect(config).toContain('extends = ":read-only"')
+    expect(config).toContain(`${JSON.stringify(result.codexHome)} = "deny"`)
+  })
+
+  it('ignores untrusted checkout configuration in API-key mode too', () => {
+    const result = runAuth({ authMode: 'api-key' })
+    expect(result.status, result.stderr).toBe(0)
+    const config = readFileSync(result.configFile, 'utf8')
+    expect(config).toContain('default_permissions = ":read-only"')
+    expect(config).toContain('project_doc_max_bytes = 0')
+    expect(config).toContain('trust_level = "untrusted"')
   })
 
   it('rejects a subscription secret that is not managed ChatGPT auth', () => {
@@ -599,6 +621,7 @@ describe('dual Codex workflow contract', () => {
     const prepareRuntime = getStep(codexWorkflow, 'review', 'Prepare Codex review runtime')
     expect(prepareRuntime.with).toMatchObject({
       'codex-home': '${{ steps.codex_auth.outputs.codex_home }}',
+      'codex-version': '0.144.6',
       'openai-api-key': "${{ inputs.auth_mode == 'api-key' && secrets.OPENAI_API_KEY || '' }}",
       'responses-api-endpoint': '${{ steps.responses_endpoint.outputs.url }}'
     })
@@ -616,6 +639,18 @@ describe('dual Codex workflow contract', () => {
     expect(sandbox.if).toBe("${{ inputs.auth_mode == 'subscription' }}")
     expect(sandbox.run).toContain('kernel.unprivileged_userns_clone')
     expect(sandbox.run).toContain('kernel.apparmor_restrict_unprivileged_userns')
+  })
+
+  it('drops sudo and verifies the subscription credential is denied to sandboxed commands', () => {
+    const hardening = getStep(codexWorkflow, 'review', 'Harden subscription review runtime')
+    expect(hardening.if).toBe("${{ inputs.auth_mode == 'subscription' }}")
+    expect(hardening.run).toContain('/etc/sudoers.d/*')
+    expect(hardening.run).toContain('sudo -n true')
+    expect(hardening.run).toContain('codex sandbox --permission-profile ai_review')
+    expect(hardening.run).toContain('test -r "$CODEX_HOME/auth.json"')
+    expect(hardening.run).toContain('test -r "$GITHUB_WORKSPACE/package.json"')
+    const syntax = spawnSync('bash', ['-n'], { encoding: 'utf8', input: hardening.run })
+    expect(syntax.status, syntax.stderr).toBe(0)
   })
 
   it('gives each Codex reviewer a distinct, non-overlapping focus', () => {
@@ -637,7 +672,9 @@ describe('dual Codex workflow contract', () => {
     for (const command of ['install dependencies', 'lint', 'tests', 'typecheck', 'build']) {
       expect(inputs).toContain(command)
     }
-    expect(run).toContain('--config \'default_permissions=":read-only"\'')
+    expect(run).toContain('--strict-config')
+    expect(run).toContain('--config project_doc_max_bytes=0')
+    expect(run).toContain('--config "default_permissions=\\"${CODEX_PERMISSION_PROFILE}\\""')
     expect(run).toContain('--ephemeral')
     expect(run).toContain('--ignore-rules')
     expect(run).toContain('--output-schema "$CODEX_SCHEMA_FILE"')
@@ -695,6 +732,7 @@ printf '%s\n' \\
         CODEX_HOME: join(root, 'codex-home'),
         CODEX_INSTRUCTIONS_FILE: instructions,
         CODEX_MODEL: 'codex-auto-review',
+        CODEX_PERMISSION_PROFILE: ':read-only',
         CODEX_PROMPT_FILE: prompt,
         CODEX_SCHEMA_FILE: schema,
         GITHUB_OUTPUT: output,
@@ -709,6 +747,7 @@ printf '%s\n' \\
     )
     const args = JSON.parse(readFileSync(argsFile, 'utf8')) as string[]
     expect(args).toContain('--json')
+    expect(args).toContain('--strict-config')
     expect(args).toContain('default_permissions=":read-only"')
     expect(readFileSync(stdinFile, 'utf8')).toBe('Review this pull request.\n')
     expect(readFileSync(output, 'utf8')).toContain('"verdict":"mergeable"')

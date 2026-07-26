@@ -283,7 +283,7 @@ jobs:
       model: ${{ vars.CODEX_CORRECTNESS_MODEL || vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}
       effort: ${{ vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_REVIEW_EFFORT || 'high' }}
     secrets:
-      CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+      CODEX_AUTH_JSON: ${{ needs.review_target.outputs.auth_mode == 'subscription' && secrets.CODEX_AUTH_JSON || '' }}
       OPENAI_API_KEY: ${{ secrets.CODEX_CORRECTNESS_API_KEY || secrets.OPENAI_API_KEY }}
       CODEX_BASE_URL: ${{ secrets.CODEX_CORRECTNESS_BASE_URL || secrets.CODEX_BASE_URL }}
 
@@ -310,7 +310,7 @@ jobs:
       model: ${{ vars.CODEX_ARCHITECTURE_MODEL || vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}
       effort: ${{ vars.CODEX_ARCHITECTURE_EFFORT || vars.CODEX_REVIEW_EFFORT || 'high' }}
     secrets:
-      CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+      CODEX_AUTH_JSON: ${{ needs.review_target.outputs.auth_mode == 'subscription' && secrets.CODEX_AUTH_JSON || '' }}
       OPENAI_API_KEY: ${{ secrets.CODEX_ARCHITECTURE_API_KEY || secrets.OPENAI_API_KEY }}
       CODEX_BASE_URL: ${{ secrets.CODEX_ARCHITECTURE_BASE_URL || secrets.CODEX_BASE_URL }}
 

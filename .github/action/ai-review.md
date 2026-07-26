@@ -29,9 +29,13 @@ model, effort, reviewer-selection, fork, and round-limit variables continue to a
 > same-repository pull request. They are never exposed to automatic or fork review jobs, which
 > continue using the configured API-key credentials.
 
-Use a dedicated Codex account because `auth.json` contains access and refresh tokens. A malicious
-same-repository change could still attempt prompt injection during review; the manual dispatch is a
-trust decision, not a credential-isolation boundary.
+Use a dedicated Codex account because `auth.json` contains access and refresh tokens. Subscription
+jobs copy it into a temporary `CODEX_HOME`, remove passwordless sudo, and use a strict read-only
+permission profile that denies model-generated commands access to the entire authentication
+directory. The checkout is marked untrusted so PR-provided Codex configuration is ignored, and
+repository instruction loading is disabled. The job fails before review if either the sudo or
+filesystem boundary is ineffective. Manual dispatch remains a trust decision because OpenAI does
+not recommend ChatGPT-managed auth for public or open-source CI.
 
 ### 1. Create file-backed credentials
 
@@ -90,6 +94,11 @@ the `gh secret set CODEX_AUTH_JSON` command. Each reviewer gets an independent t
 copy, so correctness and architecture reviews can run in parallel without a repository-wide lock.
 Newer runs cancel an older run for the same pull request and reviewer scope to avoid duplicate
 feedback and review-round consumption.
+
+When `both` is selected, correctness and architecture start in parallel, so one workflow run has a
+natural maximum of two Codex review jobs. There is no repository-wide concurrency lock or
+cross-workflow maximum-N semaphore; GitHub Actions concurrency groups provide mutual exclusion, not
+a configurable shared capacity. Account or organization runner limits may still queue jobs.
 
 Never commit, log, upload as an artifact, or cache `auth.json`. For fully automatic refresh, use the
 official trusted private-runner or external secret-manager pattern instead.
