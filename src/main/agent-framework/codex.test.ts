@@ -433,23 +433,23 @@ describe('codexFramework', () => {
 
 describe('buildCodexConfig reasoning effort', () => {
   it.each([
-    ['minimal', 'minimal'],
+    ['none', 'low'],
+    ['minimal', 'low'],
     ['low', 'low'],
     ['medium', 'medium'],
     ['high', 'high'],
-    ['xhigh', 'xhigh']
+    ['xhigh', 'xhigh'],
+    ['max', 'xhigh'],
+    ['ultra', 'xhigh']
   ] as const)('maps the %s level to model_reasoning_effort %s', (effort, expected) => {
     expect(buildCodexConfig({ reasoningEffort: effort }).model_reasoning_effort).toBe(expected)
   })
 
-  it.each([undefined, 'none', 'max', 'ultra'] as const)(
-    'does not clamp the unrepresentable %s value into a different Codex effort',
-    (effort) => {
-      expect(buildCodexConfig({ reasoningEffort: effort })).not.toHaveProperty(
-        'model_reasoning_effort'
-      )
-    }
-  )
+  it('omits model_reasoning_effort when no model value is resolved', () => {
+    expect(buildCodexConfig({ reasoningEffort: undefined })).not.toHaveProperty(
+      'model_reasoning_effort'
+    )
+  })
 
   it('threads the ctx level into the serialized CODEX_CONFIG env', () => {
     const framework = createCodexFramework()
@@ -464,6 +464,6 @@ describe('buildCodexConfig reasoning effort', () => {
       { storageRoot: '/data', executablePath: '/runtime/codex-acp', reasoningEffort: 'max' }
     )
 
-    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).not.toHaveProperty('model_reasoning_effort')
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '').model_reasoning_effort).toBe('xhigh')
   })
 })

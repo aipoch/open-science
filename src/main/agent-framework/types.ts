@@ -63,8 +63,8 @@ export type ModelConfigContext = {
   // Compact connector conventions for frameworks that need host.mcp guidance in their baseline
   // instructions. Detailed connector schemas live in on-demand `mcp-*` skills. Empty ⇒ omitted.
   instructions?: string
-  // The active model's already-resolved API effort. Undefined means don't override. Frameworks only
-  // transport this value through their native channel; they do not reinterpret the user's intent.
+  // The active model's already-resolved API effort. Undefined means don't override. Frameworks encode
+  // this into their valid transport vocabulary without changing the persisted user intent.
   reasoningEffort?: ModelReasoningEffort
 }
 

@@ -104,19 +104,27 @@ const normalizeResponsesBaseUrl = (value: string | undefined): string | undefine
   return normalized
 }
 
-// Codex config has its own finite vocabulary. Pass exact values it can express and omit every other
-// model API value instead of silently translating it. Chat-bridged requests carry an independent
-// upstream override, so a model-resolved max/ultra/none is not lost there.
+// Codex config has a smaller transport vocabulary than several provider APIs. Encode every resolved
+// model value into a valid Codex rung so direct Responses sessions still receive an explicit relative
+// effort. Chat-bridged requests additionally carry the exact model value as an upstream override, so
+// this transport encoding never replaces none/max/ultra at the real Chat Completions endpoint.
+const CODEX_REASONING_EFFORT: Readonly<
+  Record<ModelReasoningEffort, 'low' | 'medium' | 'high' | 'xhigh'>
+> = {
+  none: 'low',
+  minimal: 'low',
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+  xhigh: 'xhigh',
+  max: 'xhigh',
+  ultra: 'xhigh'
+}
+
 const codexReasoningEffortFor = (
   effort: ModelReasoningEffort | undefined
-): ModelReasoningEffort | undefined =>
-  effort === 'minimal' ||
-  effort === 'low' ||
-  effort === 'medium' ||
-  effort === 'high' ||
-  effort === 'xhigh'
-    ? effort
-    : undefined
+): 'low' | 'medium' | 'high' | 'xhigh' | undefined =>
+  effort === undefined ? undefined : CODEX_REASONING_EFFORT[effort]
 
 // Just the model + reasoning-effort fields a Codex config can carry, with no provider plumbing.
 // The bridge path layers the open-science custom provider on top of this; the codex-isolated path

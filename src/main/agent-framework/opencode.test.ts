@@ -249,10 +249,19 @@ describe('opencodeFramework.prepareModelConfig', () => {
     })
   })
 
-  it("transports the model's resolved 'max' value unchanged in both layers", () => {
+  it.each([
+    ['none', 'low'],
+    ['minimal', 'low'],
+    ['low', 'low'],
+    ['medium', 'medium'],
+    ['high', 'high'],
+    ['xhigh', 'high'],
+    ['max', 'high'],
+    ['ultra', 'high']
+  ] as const)('encodes model effort %s as OpenCode transport level %s', (effort, expected) => {
     const config = opencodeFramework.prepareModelConfig(
       { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
-      { storageRoot: '/data', executablePath: '/bin/opencode', reasoningEffort: 'max' }
+      { storageRoot: '/data', executablePath: '/bin/opencode', reasoningEffort: effort }
     )
 
     const fileConfig = JSON.parse(
@@ -261,10 +270,10 @@ describe('opencodeFramework.prepareModelConfig', () => {
     const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
 
     expect(fileConfig.provider.anthropic.models).toEqual({
-      m: { options: { reasoningEffort: 'max' } }
+      m: { options: { reasoningEffort: expected } }
     })
     expect(content.provider.anthropic.models).toEqual({
-      m: { options: { reasoningEffort: 'max' } }
+      m: { options: { reasoningEffort: expected } }
     })
   })
 

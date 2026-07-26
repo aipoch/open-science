@@ -135,6 +135,21 @@ const resolveOpencodeEndpoint = (
   return { bareModel, providerId, npm, baseURL }
 }
 
+// OpenCode/AI SDK exposes a three-rung transport vocabulary. The model profile remains authoritative
+// for UI and persistence; this complete encoder prevents provider-native literals from producing an
+// invalid OpenCode config. Unlike the Codex Chat bridge, OpenCode has no independent upstream override.
+const OPENCODE_REASONING_EFFORT: Readonly<Record<ModelReasoningEffort, 'low' | 'medium' | 'high'>> =
+  {
+    none: 'low',
+    minimal: 'low',
+    low: 'low',
+    medium: 'medium',
+    high: 'high',
+    xhigh: 'high',
+    max: 'high',
+    ultra: 'high'
+  }
+
 // The opencode per-model capability block. opencode strips image parts before calling the provider for
 // any model whose config does not declare vision — custom and freshly-registered models default to
 // text-only — so a base64 image sent over ACP silently never reaches the provider. A multimodal model
@@ -149,7 +164,9 @@ const buildModelCapabilities = (
   ...(provider.supportsImageInput
     ? { attachment: true, modalities: { input: ['text', 'image'] } }
     : {}),
-  ...(reasoningEffort ? { options: { reasoningEffort } } : {})
+  ...(reasoningEffort
+    ? { options: { reasoningEffort: OPENCODE_REASONING_EFFORT[reasoningEffort] } }
+    : {})
 })
 
 // The app-authoritative config layer (model + provider block + permission policy) passed verbatim to
