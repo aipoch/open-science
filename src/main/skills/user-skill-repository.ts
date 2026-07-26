@@ -119,6 +119,12 @@ type ImportedSourceManifest = {
   agentHome?: AgentHomeSkillRef
 }
 
+type ImportedAgentHomeIdentitySnapshot = {
+  importedSlug: string
+  agentHome: AgentHomeSkillRef
+  signature: string
+}
+
 const agentHomeKey = (skill: AgentHomeSkillRef): string => `${skill.source}:${skill.slug}`
 
 const isAgentHomeSkillSource = (value: unknown): value is AgentHomeSkillSource =>
@@ -809,11 +815,18 @@ class UserSkillRepository {
     }
   }
 
-  private async importedAgentHomeSignatures(): Promise<Map<string, string | undefined>> {
-    const signatures = new Map<string, string | undefined>()
+  private async importedAgentHomeSignatures(): Promise<
+    Map<string, { importedSlug: string; signature?: string }>
+  > {
+    const signatures = new Map<string, { importedSlug: string; signature?: string }>()
     for (const slug of await this.listSlugs('imported')) {
       const source = await this.readSource(slug)
-      if (source?.agentHome) signatures.set(agentHomeKey(source.agentHome), source.signature)
+      if (source?.agentHome) {
+        signatures.set(agentHomeKey(source.agentHome), {
+          importedSlug: slug,
+          signature: source.signature
+        })
+      }
     }
     return signatures
   }
@@ -845,8 +858,20 @@ class UserSkillRepository {
   // signature without weakening nested-symlink rejection. Metadata-less records match by both slug
   // and content, so an unrelated GitHub/ZIP import cannot suppress a local installed skill.
   async matchImportedAgentHomeSkills(
-    candidates: readonly { sourcePath: string; aliases: readonly AgentHomeSkillRef[] }[]
-  ): Promise<{ identityImported: boolean; fallbackAliases: AgentHomeSkillRef[] }[]> {
+    candidates: readonly {
+      sourcePath: string
+      canonical: AgentHomeSkillRef
+      aliases: readonly AgentHomeSkillRef[]
+    }[]
+  ): Promise<
+    {
+      identityImported: boolean
+      identityMigrationNeeded: boolean
+      matchedIdentitySignature?: string
+      matchedImportedIdentity?: ImportedAgentHomeIdentitySnapshot
+      fallbackAliases: AgentHomeSkillRef[]
+    }[]
+  > {
     const candidateSlugs = new Set(
       candidates.flatMap((candidate) => candidate.aliases.map((alias) => alias.slug))
     )
@@ -856,25 +881,66 @@ class UserSkillRepository {
     ])
 
     return Promise.all(
-      candidates.map(async ({ sourcePath, aliases }) => {
-        const identitySignatures = aliases
-          .map((alias) => imported.get(agentHomeKey(alias)))
-          .filter((signature): signature is string => typeof signature === 'string')
+      candidates.map(async ({ sourcePath, canonical, aliases }) => {
+        const identityRecords = aliases.flatMap((alias) => {
+          const record = imported.get(agentHomeKey(alias))
+          return typeof record?.signature === 'string' ? [{ alias, ...record }] : []
+        })
         const fallbackAliases = aliases.filter((alias) => fallbackSignatures.has(alias.slug))
-        if (identitySignatures.length === 0 && fallbackAliases.length === 0) {
-          return { identityImported: false, fallbackAliases: [] }
+        if (identityRecords.length === 0 && fallbackAliases.length === 0) {
+          return {
+            identityImported: false,
+            identityMigrationNeeded: false,
+            matchedIdentitySignature: undefined,
+            matchedImportedIdentity: undefined,
+            fallbackAliases: []
+          }
         }
 
         try {
           const signature = await this.signatureOfAgentHomeSkill(sourcePath)
+          const matchingIdentities: (typeof identityRecords)[number][] = []
+          for (const record of identityRecords) {
+            if (record.signature !== signature) continue
+            try {
+              const importedSignature = await this.signatureOfAgentHomeSkill(
+                this.skillDir('imported', record.importedSlug),
+                { skipSourceManifest: true }
+              )
+              if (importedSignature === signature) matchingIdentities.push(record)
+            } catch {
+              // A missing or malformed imported tree cannot be migrated automatically. Leave the
+              // discovered row selectable so a deliberate import can repair it.
+            }
+          }
+          const canonicalKey = agentHomeKey(canonical)
+          const canonicalMatched = matchingIdentities.some(
+            ({ alias }) => agentHomeKey(alias) === canonicalKey
+          )
+          const migrationMatch = canonicalMatched ? undefined : matchingIdentities[0]
           return {
-            identityImported: identitySignatures.includes(signature),
+            identityImported: matchingIdentities.length > 0,
+            identityMigrationNeeded: migrationMatch !== undefined,
+            matchedIdentitySignature: matchingIdentities.length > 0 ? signature : undefined,
+            matchedImportedIdentity: migrationMatch
+              ? {
+                  importedSlug: migrationMatch.importedSlug,
+                  agentHome: migrationMatch.alias,
+                  signature
+                }
+              : undefined,
             fallbackAliases: fallbackAliases.filter(
               (alias) => fallbackSignatures.get(alias.slug) === signature
             )
           }
         } catch {
-          return { identityImported: false, fallbackAliases: [] }
+          return {
+            identityImported: false,
+            identityMigrationNeeded: false,
+            matchedIdentitySignature: undefined,
+            matchedImportedIdentity: undefined,
+            fallbackAliases: []
+          }
         }
       })
     )
@@ -1294,7 +1360,8 @@ class UserSkillRepository {
       let alreadyImported = false
       if (importedSkills.has(key)) {
         try {
-          alreadyImported = importedSkills.get(key) === (await this.signatureOfAgentHomeSkill(path))
+          alreadyImported =
+            importedSkills.get(key)?.signature === (await this.signatureOfAgentHomeSkill(path))
         } catch {
           // Keep a readable row selectable. Import performs the same validation and reports a
           // per-item error, rather than one malformed installed tree hiding the rest of the scan.
@@ -1325,6 +1392,8 @@ class UserSkillRepository {
     options: {
       aliases?: readonly AgentHomeSkillRef[]
       fallbackSlugs?: readonly string[]
+      expectedSignature?: string
+      expectedImportedIdentity?: ImportedAgentHomeIdentitySnapshot
     } = {}
   ): Promise<ImportOutcome> {
     const requestedSlug = skill.slug
@@ -1350,6 +1419,31 @@ class UserSkillRepository {
       const slug = existingSlug ?? (await this.uniqueSlug('imported', requestedSlug))
       const staged = await this.stageAgentHomeSkill(slug, sourcePath, skill)
       try {
+        if (options.expectedImportedIdentity) {
+          const expected = options.expectedImportedIdentity
+          const current = await this.readSource(expected.importedSlug)
+          let currentTreeSignature: string | undefined
+          try {
+            currentTreeSignature = await this.signatureOfAgentHomeSkill(
+              this.skillDir('imported', expected.importedSlug),
+              { skipSourceManifest: true }
+            )
+          } catch {
+            // Report every missing or malformed expected record as the same stale-scan condition.
+          }
+          if (
+            existingSlug !== expected.importedSlug ||
+            !current?.agentHome ||
+            agentHomeKey(current.agentHome) !== agentHomeKey(expected.agentHome) ||
+            current.signature !== expected.signature ||
+            currentTreeSignature !== expected.signature
+          ) {
+            throw new Error('Imported skill changed during canonical identity migration.')
+          }
+        }
+        if (options.expectedSignature && staged.signature !== options.expectedSignature) {
+          throw new Error('Installed skill changed during canonical identity migration.')
+        }
         if (!existingSlug) {
           const fallbackSlug = await this.findFallbackImportedSlug(
             new Set(options.fallbackSlugs ?? []),
@@ -1362,7 +1456,9 @@ class UserSkillRepository {
         }
 
         const existing = existingSlug ? await this.readSource(existingSlug) : null
-        if (existingSlug && existing?.signature === staged.signature) {
+        const identityUnchanged =
+          existing?.agentHome && agentHomeKey(existing.agentHome) === agentHomeKey(skill)
+        if (existingSlug && identityUnchanged && existing.signature === staged.signature) {
           await rm(staged.staging, { recursive: true, force: true })
           return { status: 'unchanged', id: `imported-${existingSlug}` }
         }

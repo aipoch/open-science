@@ -1442,6 +1442,99 @@ describe('UserSkillRepository: agent-home import', () => {
     expect(outcome).toEqual({ status: 'imported', id: 'imported-alpha-2' })
   })
 
+  it('does not update skill content during a stale canonical identity migration', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const home = await mkdtemp(join(tmpdir(), 'os-import-agent-stale-migration-'))
+    const source = await seedSkill(home, 'alpha')
+    await repo.importAgentHomeSkill(source, { source: 'claude', slug: 'linked-skill' })
+    const importedDir = join(storage, 'skills', 'imported', 'linked-skill')
+    const originalManifest = JSON.parse(
+      await readFile(join(importedDir, '.source.json'), 'utf8')
+    ) as { signature: string }
+
+    await writeFile(
+      join(source, 'SKILL.md'),
+      '---\nname: alpha\ndescription: Changed during scan\n---\nChanged body.\n'
+    )
+
+    await expect(
+      repo.importAgentHomeSkill(
+        source,
+        { source: 'agents', slug: 'alpha' },
+        {
+          aliases: [{ source: 'claude', slug: 'linked-skill' }],
+          expectedSignature: originalManifest.signature
+        }
+      )
+    ).rejects.toThrow(/changed during canonical identity migration/)
+    expect(await readFile(join(importedDir, 'SKILL.md'), 'utf8')).toContain('Body of alpha.')
+  })
+
+  it('does not recreate an imported alias deleted after canonical identity matching', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const home = await mkdtemp(join(tmpdir(), 'os-import-agent-deleted-migration-'))
+    const source = await seedSkill(home, 'alpha')
+    await repo.importAgentHomeSkill(source, { source: 'claude', slug: 'linked-skill' })
+
+    const [match] = await repo.matchImportedAgentHomeSkills([
+      {
+        sourcePath: source,
+        canonical: { source: 'agents', slug: 'alpha' },
+        aliases: [{ source: 'claude', slug: 'linked-skill' }]
+      }
+    ])
+    await repo.delete('imported-linked-skill')
+
+    await expect(
+      repo.importAgentHomeSkill(
+        source,
+        { source: 'agents', slug: 'alpha' },
+        {
+          aliases: [{ source: 'claude', slug: 'linked-skill' }],
+          expectedSignature: match.matchedIdentitySignature,
+          expectedImportedIdentity: match.matchedImportedIdentity
+        }
+      )
+    ).rejects.toThrow(/changed during canonical identity migration/)
+    expect(await repo.list()).toEqual([])
+  })
+
+  it('does not overwrite an imported alias changed after canonical identity matching', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const home = await mkdtemp(join(tmpdir(), 'os-import-agent-changed-migration-'))
+    const source = await seedSkill(home, 'alpha')
+    await repo.importAgentHomeSkill(source, { source: 'claude', slug: 'linked-skill' })
+
+    const [match] = await repo.matchImportedAgentHomeSkills([
+      {
+        sourcePath: source,
+        canonical: { source: 'agents', slug: 'alpha' },
+        aliases: [{ source: 'claude', slug: 'linked-skill' }]
+      }
+    ])
+    const importedDir = join(storage, 'skills', 'imported', 'linked-skill')
+    await writeFile(
+      join(importedDir, 'SKILL.md'),
+      '---\nname: linked-skill\ndescription: Concurrent edit\n---\nKeep this body.\n'
+    )
+
+    await expect(
+      repo.importAgentHomeSkill(
+        source,
+        { source: 'agents', slug: 'alpha' },
+        {
+          aliases: [{ source: 'claude', slug: 'linked-skill' }],
+          expectedSignature: match.matchedIdentitySignature,
+          expectedImportedIdentity: match.matchedImportedIdentity
+        }
+      )
+    ).rejects.toThrow(/changed during canonical identity migration/)
+    expect(await readFile(join(importedDir, 'SKILL.md'), 'utf8')).toContain('Keep this body.')
+  })
+
   it('refreshes an installed skill when the same source identity changes', async () => {
     const storage = await makeStorage()
     const repo = new UserSkillRepository(storage)

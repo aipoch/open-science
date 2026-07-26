@@ -1217,16 +1217,36 @@ class SettingsService {
     }
 
     const discovered = [...unique.values()]
-    const unmatched = discovered.filter((item) => !item.skill.alreadyImported)
     try {
       const matches = await this.userSkills.matchImportedAgentHomeSkills(
-        unmatched.map((item) => ({ sourcePath: item.realPath, aliases: item.aliases }))
+        discovered.map((item) => ({
+          sourcePath: item.realPath,
+          canonical: { source: item.skill.source, slug: item.skill.slug },
+          aliases: item.aliases
+        }))
       )
       for (const [index, match] of matches.entries()) {
-        const item = unmatched[index]
+        const item = discovered[index]
         if (item) {
           item.skill.alreadyImported = match.identityImported
           item.fallbackAliases.push(...match.fallbackAliases)
+          if (match.identityMigrationNeeded) {
+            try {
+              await this.userSkills.importAgentHomeSkill(
+                item.realPath,
+                { source: item.skill.source, slug: item.skill.slug },
+                {
+                  aliases: item.aliases,
+                  expectedSignature: match.matchedIdentitySignature,
+                  expectedImportedIdentity: match.matchedImportedIdentity
+                }
+              )
+            } catch {
+              // Keep the row actionable when automatic metadata migration fails. A manual import
+              // retries the same atomic staging path and reports any persistent error per item.
+              item.skill.alreadyImported = false
+            }
+          }
         }
       }
     } catch {
@@ -1245,14 +1265,13 @@ class SettingsService {
         fallbackBySlug.set(alias.slug, candidates)
       }
     }
-    // An imported skill without an agent-home identity may be a legacy install, GitHub import, or ZIP
-    // import. If its slug is ambiguous, let only one framework row claim the fallback and leave the
-    // shared row importable; marking every same-slug row would recreate the collision this fixes.
+    // Content matching has already excluded unrelated same-slug imports. Every remaining candidate
+    // represents the same legacy bytes, so all source rows claim the fallback and stay idempotent.
     for (const [fallbackSlug, candidates] of fallbackBySlug) {
-      const preferred =
-        candidates.find((candidate) => candidate.alias.source !== 'agents') ?? candidates[0]
-      preferred.item.skill.alreadyImported = true
-      preferred.item.matchedFallbackSlugs.add(fallbackSlug)
+      for (const candidate of candidates) {
+        candidate.item.skill.alreadyImported = true
+        candidate.item.matchedFallbackSlugs.add(fallbackSlug)
+      }
     }
 
     return discovered
