@@ -117,7 +117,7 @@ export type FetchedSkillPreview = { skillMd: Buffer; files: string[] }
 
 // Lists one selected skill directory and downloads only its root SKILL.md. Repo scans intentionally
 // return metadata only; opening a candidate calls this helper lazily. Directory depth, file count,
-// request count, and the downloaded body all use the same caps as full GitHub import.
+// and request count share the import caps, while the rendered body uses the smaller IPC preview cap.
 const fetchSkillPreview = async (
   location: GitHubSkillLocation,
   fetchImpl: FetchLike
@@ -166,14 +166,16 @@ const fetchSkillPreview = async (
       const raw = await request(entry.download_url, { headers: { 'User-Agent': 'open-science' } })
       if (!raw.ok) throw new Error(`Failed to download ${entry.path} (${raw.status})`)
 
-      const tooLarge = (): never => {
+      const previewTooLarge = (): never => {
         throw new Error(
-          `File ${entry.path} exceeds the ${SKILL_IMPORT_LIMITS.maxFileBytes}-byte per-file limit.`
+          `GitHub Skill preview exceeds the ${SKILL_IMPORT_LIMITS.maxPreviewContentBytes / (1024 * 1024)} MB limit.`
         )
       }
       const declared = Number(raw.headers?.get('content-length') ?? '')
-      if (Number.isFinite(declared) && declared > SKILL_IMPORT_LIMITS.maxFileBytes) tooLarge()
-      skillMd = await readBounded(raw, SKILL_IMPORT_LIMITS.maxFileBytes, tooLarge)
+      if (Number.isFinite(declared) && declared > SKILL_IMPORT_LIMITS.maxPreviewContentBytes) {
+        previewTooLarge()
+      }
+      skillMd = await readBounded(raw, SKILL_IMPORT_LIMITS.maxPreviewContentBytes, previewTooLarge)
     }
   }
 

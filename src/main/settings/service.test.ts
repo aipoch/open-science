@@ -4361,7 +4361,7 @@ describe('SettingsService: importAgentHomeSkills', () => {
     await mkdir(legacyDir, { recursive: true })
     await writeFile(
       join(legacyDir, 'SKILL.md'),
-      '---\nname: legacy\ndescription: Earlier import\n---\nBody.\n'
+      '---\nname: legacy\ndescription: Test\n---\nBody.\n'
     )
     const service = createService(undefined, { userAgentsDir })
     vi.spyOn(service, 'listAgentHomeSkills').mockRejectedValueOnce(
@@ -4377,6 +4377,32 @@ describe('SettingsService: importAgentHomeSkills', () => {
       slug: 'legacy',
       status: 'unchanged',
       id: 'imported-legacy'
+    })
+  })
+
+  it('does not deduplicate different same-slug content when the installed-source scan fails', async () => {
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-import-agent-scan-failure-'))
+    await seedSkill(userAgentsDir, 'legacy')
+    const legacyDir = join(storageRoot, 'skills', 'imported', 'legacy')
+    await mkdir(legacyDir, { recursive: true })
+    await writeFile(
+      join(legacyDir, 'SKILL.md'),
+      '---\nname: legacy\ndescription: Earlier import\n---\nDifferent body.\n'
+    )
+    const service = createService(undefined, { userAgentsDir })
+    vi.spyOn(service, 'listAgentHomeSkills').mockRejectedValueOnce(
+      new Error('An unrelated installed source became unreadable.')
+    )
+
+    const result = await service.importAgentHomeSkills({
+      skills: [{ source: 'agents', slug: 'legacy' }]
+    })
+
+    expect(result.results[0]).toEqual({
+      source: 'agents',
+      slug: 'legacy',
+      status: 'imported',
+      id: 'imported-legacy-2'
     })
   })
 

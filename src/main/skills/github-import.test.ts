@@ -130,7 +130,41 @@ describe('fetchSkillPreview', () => {
     expect(downloads).toEqual(['https://raw/SKILL.md'])
   })
 
-  it('rejects an oversized SKILL.md before buffering its body', async () => {
+  it('bounds GitHub preview content without preventing import', async () => {
+    const bytes = new Uint8Array(SKILL_IMPORT_LIMITS.maxPreviewContentBytes + 1)
+    const fetcher: FetchLike = async (url) => {
+      if (url.includes('/contents/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              type: 'file',
+              name: 'SKILL.md',
+              path: 'pack/foo/SKILL.md',
+              download_url: 'https://raw/SKILL.md'
+            }
+          ],
+          arrayBuffer: async () => new ArrayBuffer(0)
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        headers: { get: () => String(bytes.byteLength) },
+        arrayBuffer: async () => bytes.buffer
+      }
+    }
+    const location = { owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' }
+
+    await expect(fetchSkillPreview(location, fetcher)).rejects.toThrow(
+      /preview exceeds the 4 MB limit/i
+    )
+    await expect(fetchSkillFiles(location, fetcher)).resolves.toHaveLength(1)
+  })
+
+  it('rejects a declared oversized preview before buffering its body', async () => {
     let bodyRead = false
     const fetcher: FetchLike = async (url) => {
       if (url.includes('/contents/')) {
@@ -164,7 +198,7 @@ describe('fetchSkillPreview', () => {
 
     await expect(
       fetchSkillPreview({ owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' }, fetcher)
-    ).rejects.toThrow(/per-file limit/)
+    ).rejects.toThrow(/preview exceeds the 4 MB limit/i)
     expect(bodyRead).toBe(false)
   })
 })

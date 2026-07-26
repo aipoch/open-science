@@ -1343,8 +1343,8 @@ class UserSkillRepository {
     const metadata = Object.fromEntries(
       Object.entries(input.metadata ?? {}).filter(
         ([key, value]) =>
-          key !== 'name' &&
-          key !== 'description' &&
+          key.toLowerCase() !== 'name' &&
+          key.toLowerCase() !== 'description' &&
           /^[A-Za-z0-9_-]+$/.test(key) &&
           typeof value === 'string'
       )
@@ -1483,12 +1483,14 @@ class UserSkillRepository {
     )
     const skillMd = files.find((file) => file.relativePath === 'SKILL.md')
     if (!skillMd) throw new Error('Agent-home Skill must contain a SKILL.md.')
-    const raw = await readFile(skillMd.path, 'utf8')
-    if (Buffer.byteLength(raw) > SKILL_IMPORT_LIMITS.maxFileBytes) {
+    const previewTooLarge = (): never => {
       throw new Error(
-        `Agent-home Skill contains a file over ${mb(SKILL_IMPORT_LIMITS.maxFileBytes)}.`
+        `Agent-home Skill preview exceeds the ${mb(SKILL_IMPORT_LIMITS.maxPreviewContentBytes)} limit.`
       )
     }
+    if (skillMd.size > SKILL_IMPORT_LIMITS.maxPreviewContentBytes) previewTooLarge()
+    const raw = await readFile(skillMd.path, 'utf8')
+    if (Buffer.byteLength(raw) > SKILL_IMPORT_LIMITS.maxPreviewContentBytes) previewTooLarge()
 
     return parsedSkillPreview(
       raw,

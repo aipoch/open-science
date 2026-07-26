@@ -1306,7 +1306,9 @@ describe('UserSkillRepository', () => {
         author: 'Ada',
         license: 'MIT',
         name: 'Untrusted override',
-        description: 'Untrusted override'
+        description: 'Untrusted override',
+        Name: 'Case-insensitive override',
+        DESCRIPTION: 'Case-insensitive override'
       },
       body: 'hello'
     })
@@ -1385,6 +1387,27 @@ describe('UserSkillRepository: agent-home import', () => {
       files: ['SKILL.md', 'references/guide.md']
     })
     expect(await repo.list()).toEqual([])
+  })
+
+  it('bounds installed preview content without preventing import', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const home = await mkdtemp(join(tmpdir(), 'os-preview-agent-content-large-'))
+    const source = await seedSkill(home, 'alpha')
+    await writeFile(
+      join(source, 'SKILL.md'),
+      `---\nname: alpha\ndescription: Large preview\n---\n${'x'.repeat(SKILL_IMPORT_LIMITS.maxPreviewContentBytes)}`
+    )
+
+    const previewError = await repo.previewAgentHomeSkill(source).then(
+      () => null,
+      (error: unknown) => error
+    )
+    expect(previewError).toBeInstanceOf(Error)
+    expect((previewError as Error).message).toMatch(/preview exceeds the 4 MB limit/i)
+    await expect(
+      repo.importAgentHomeSkill(source, { source: 'agents', slug: 'alpha' })
+    ).resolves.toMatchObject({ status: 'imported', id: 'imported-alpha' })
   })
 
   it('rejects an installed preview whose declared file sizes exceed the skill cap', async () => {
