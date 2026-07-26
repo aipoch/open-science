@@ -67,6 +67,57 @@ describe('SkillImportCandidatePreview', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
+  it('keeps an in-memory preview visually stable while opening and closing', async () => {
+    const content = {
+      name: 'Local skill',
+      description: '',
+      sourceLabel: 'local.md',
+      metadata: {},
+      body: '# Local body',
+      files: ['local.md']
+    }
+    const Harness = (): React.JSX.Element => {
+      const preview = useSkillImportCandidatePreview()
+      return (
+        <>
+          <button type="button" onClick={() => preview.openPreview(() => content)}>
+            Open local
+          </button>
+          <output data-testid="preview-state">
+            {JSON.stringify({
+              open: preview.previewProps.open,
+              loading: preview.previewProps.loading,
+              body: preview.previewProps.content?.body ?? null
+            })}
+          </output>
+          <SkillImportCandidatePreview {...preview.previewProps} />
+        </>
+      )
+    }
+    act(() => root.render(<Harness />))
+
+    act(() => {
+      Array.from(document.body.querySelectorAll('button'))
+        .find((button) => button.textContent === 'Open local')
+        ?.click()
+    })
+
+    expect(document.body.querySelector('[data-testid="preview-state"]')?.textContent).toBe(
+      JSON.stringify({ open: true, loading: false, body: '# Local body' })
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    act(() => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Close preview"]')?.click()
+    })
+
+    expect(document.body.querySelector('[data-testid="preview-state"]')?.textContent).toBe(
+      JSON.stringify({ open: false, loading: false, body: '# Local body' })
+    )
+  })
+
   it('isolates a failed candidate so the next candidate can still preview', async () => {
     const goodContent = {
       name: 'Good',

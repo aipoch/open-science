@@ -395,7 +395,7 @@ const SkillUploadView = ({
                     type="button"
                     aria-label={`Preview ${candidate.name}`}
                     onClick={() =>
-                      candidatePreview.openPreview(async () => {
+                      candidatePreview.openPreview(() => {
                         if (candidate.previewError) {
                           throw new Error(candidate.previewError)
                         }
