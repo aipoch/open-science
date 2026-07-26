@@ -24,7 +24,8 @@ model, effort, reviewer-selection, fork, and round-limit variables continue to a
 > OpenAI recommends API keys for CI/CD and says not to use ChatGPT-managed `auth.json` automation
 > for public or open-source repositories. This workflow offers a narrower opt-in for a dedicated
 > account: subscription credentials are accepted only for a manually dispatched review of a
-> same-repository pull request. They are never exposed to automatic or fork review jobs.
+> same-repository pull request. They are never exposed to automatic or fork review jobs, which
+> continue using the configured API-key credentials.
 
 Use a dedicated Codex account because `auth.json` contains access and refresh tokens. A malicious
 same-repository change could still attempt prompt injection during review; the manual dispatch is a
@@ -75,7 +76,8 @@ still apply, so select a model available to the dedicated Codex account.
 
 Open **Actions → AI PR Review → Run workflow**, enter the same-repository pull request number, and
 choose `correctness`, `architecture`, or `both`. Automatic `pull_request_target` events and fork
-pull requests do not start subscription-authenticated jobs.
+pull requests fall back to API-key auth and continue following `FORK_REVIEW_MODE`; keep the API-key
+secrets configured if those review paths should remain active.
 
 ### Credential refresh limitation
 

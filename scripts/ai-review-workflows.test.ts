@@ -438,10 +438,10 @@ describe('dual Codex workflow contract', () => {
     expect(runTarget({ isFork: true, forkMode: 'automatic' }).outputs.review_allowed).toBe('true')
   })
 
-  it('limits subscription auth to manually dispatched same-repository reviews', () => {
+  it('uses subscription only for manual same-repository reviews and otherwise falls back to API auth', () => {
     expect(runTarget({ authMode: 'subscription' }).outputs).toMatchObject({
-      auth_mode: 'subscription',
-      review_allowed: 'false'
+      auth_mode: 'api-key',
+      review_allowed: 'true'
     })
     expect(
       runTarget({
@@ -456,7 +456,7 @@ describe('dual Codex workflow contract', () => {
       forkMode: 'automatic'
     })
     expect(fork.status, fork.stderr).toBe(0)
-    expect(fork.outputs.review_allowed).toBe('false')
+    expect(fork.outputs).toMatchObject({ auth_mode: 'api-key', review_allowed: 'true' })
   })
 
   it('rejects an invalid automatic review mode', () => {

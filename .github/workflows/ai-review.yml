@@ -7,8 +7,8 @@ name: AI PR Review
 #   CODEX_ARCHITECTURE_API_KEY / CODEX_ARCHITECTURE_BASE_URL
 #   (base URLs may omit the trailing slash or include the full /v1/responses endpoint)
 # - Subscription bootstrap secret: CODEX_AUTH_JSON
-# Set CODEX_REVIEW_AUTH_MODE to api-key (default) or subscription. Subscription mode uses a
-# GitHub-hosted runner and is limited to manually dispatched reviews of same-repository PRs.
+# Set CODEX_REVIEW_AUTH_MODE to api-key (default) or subscription. Subscription auth is used only
+# for manually dispatched same-repository PRs; automatic and fork reviews fall back to API keys.
 # Set ENABLE_CODEX_REVIEW=false to disable all automated reviewers. Set CODEX_REVIEW_MODE to both,
 # correctness, architecture, or disabled for automatic pull request events (default: correctness).
 # CODEX_REVIEW_MODEL and CODEX_REVIEW_EFFORT provide shared defaults. Override either reviewer with
@@ -140,9 +140,10 @@ jobs:
             [[ "$REVIEW_EVENT" != "workflow_dispatch" && "$FORK_REVIEW_MODE" == "automatic" ]]; then
             review_allowed=true
           fi
-          if [[ "$CODEX_REVIEW_AUTH_MODE" == "subscription" ]] &&
+          effective_auth_mode="$CODEX_REVIEW_AUTH_MODE"
+          if [[ "$effective_auth_mode" == "subscription" ]] &&
             [[ "$REVIEW_EVENT" != "workflow_dispatch" || "$is_fork" == "true" ]]; then
-            review_allowed=false
+            effective_auth_mode=api-key
           fi
 
           selected_mode="$CODEX_REVIEW_MODE"
@@ -181,7 +182,7 @@ jobs:
             echo "review_allowed=$review_allowed"
             echo "correctness_enabled=$correctness_enabled"
             echo "architecture_enabled=$architecture_enabled"
-            echo "auth_mode=$CODEX_REVIEW_AUTH_MODE"
+            echo "auth_mode=$effective_auth_mode"
           } >> "$GITHUB_OUTPUT"
 
   codex_review_gate:
