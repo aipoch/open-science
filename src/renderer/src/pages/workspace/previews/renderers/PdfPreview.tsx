@@ -292,6 +292,8 @@ export const PdfPreviewContent = ({
   // Ctrl/Cmd+wheel zooms the document instead of scrolling, matching the image preview gesture.
   // A trackpad/pinch emits many small wheel events per gesture, so accumulate deltaY and apply it
   // proportionally once per frame — one gesture yields a controlled zoom and few rerasterizations.
+  // Keyed to requestKey so a file switch cancels any queued frame before its stale flush could
+  // re-apply zoom on top of the new document's reset.
   useEffect(() => {
     const element = scrollRef.current
     if (!element) return
@@ -316,7 +318,7 @@ export const PdfPreviewContent = ({
       element.removeEventListener('wheel', handleWheel)
       if (frame !== undefined) cancelAnimationFrame(frame)
     }
-  }, [])
+  }, [requestKey])
 
   // Measure the content-box width before paint (zero-height probe, unaffected by page overflow) so
   // pages rasterize once at the right width on open. Tracks the current width so pages stay

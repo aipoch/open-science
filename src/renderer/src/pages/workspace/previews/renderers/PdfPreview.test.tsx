@@ -278,17 +278,27 @@ describe('PdfPreviewContent', () => {
     clientWidthSpy.mockRestore()
   })
 
-  it('zooms proportionally on Ctrl/Cmd+wheel, coalesced per frame, and ignores plain scroll', async () => {
+  it('coalesces same-frame Ctrl/Cmd+wheel into one proportional zoom and ignores plain scroll', async () => {
     const clientWidthSpy = vi
       .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
       .mockReturnValue(400)
     vi.stubGlobal('devicePixelRatio', 1)
-    // Flush the wheel handler's requestAnimationFrame coalescing synchronously.
+    // Controllable rAF: capture the scheduled callback so same-frame events can be coalesced and
+    // flushed once on demand, rather than running synchronously per event.
+    let scheduled: { id: number; cb: FrameRequestCallback } | null = null
+    let nextRafId = 1
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
-      cb(0)
-      return 1
+      scheduled = { id: nextRafId, cb }
+      return nextRafId++
     })
-    vi.stubGlobal('cancelAnimationFrame', () => undefined)
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+      if (scheduled?.id === id) scheduled = null
+    })
+    const flushFrame = (): void => {
+      const pending = scheduled
+      scheduled = null
+      pending?.cb(0)
+    }
     getPage.mockResolvedValue({
       getViewport: vi.fn(({ scale }: { scale: number }) => ({
         width: 400 * scale,
@@ -309,24 +319,105 @@ describe('PdfPreviewContent', () => {
     const scroll = container.querySelector<HTMLElement>('[aria-hidden="true"]')?.parentElement
     expect(scroll).toBeTruthy()
 
-    // A plain wheel scroll must not zoom.
+    // A plain wheel scroll schedules nothing and must not zoom.
     await act(async () => {
       scroll?.dispatchEvent(
         new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })
       )
       await Promise.resolve()
     })
+    expect(scheduled).toBeNull()
     expect(container.textContent).toContain('100%')
 
-    // Ctrl+wheel scales proportionally: deltaY -100 * 0.0025 = +0.25 (100% -> 125%), not a full
-    // step per event. Two small events in one frame coalesce into a single controlled change.
+    // Two Ctrl+wheel events in the same frame coalesce: only one frame is scheduled and their
+    // deltas sum (-200 * 0.0025 = +0.5), so a single flush yields 150%, not two separate steps.
+    await act(async () => {
+      scroll?.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: -100, ctrlKey: true, bubbles: true, cancelable: true })
+      )
+      scroll?.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: -100, ctrlKey: true, bubbles: true, cancelable: true })
+      )
+      flushFrame()
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => expect(container.textContent).toContain('150%'))
+
+    // The Cmd (metaKey) branch also zooms: deltaY +100 * 0.0025 = -0.25 (150% -> 125%).
+    await act(async () => {
+      scroll?.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: 100, metaKey: true, bubbles: true, cancelable: true })
+      )
+      flushFrame()
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => expect(container.textContent).toContain('125%'))
+
+    clientWidthSpy.mockRestore()
+  })
+
+  it('drops a queued wheel zoom when the file switches before the frame flushes', async () => {
+    const clientWidthSpy = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockReturnValue(400)
+    vi.stubGlobal('devicePixelRatio', 1)
+    // Faithful rAF/cancel: a canceled frame cannot be flushed, mirroring the browser.
+    let scheduled: { id: number; cb: FrameRequestCallback } | null = null
+    let nextRafId = 1
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
+      scheduled = { id: nextRafId, cb }
+      return nextRafId++
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+      if (scheduled?.id === id) scheduled = null
+    })
+    const flushFrame = (): void => {
+      const pending = scheduled
+      scheduled = null
+      pending?.cb(0)
+    }
+    getPage.mockResolvedValue({
+      getViewport: vi.fn(({ scale }: { scale: number }) => ({
+        width: 400 * scale,
+        height: 560 * scale
+      })),
+      render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+      cleanup: vi.fn()
+    })
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/first.pdf" name="first.pdf" source="artifact" />
+      )
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBe(400))
+
+    const scroll = container.querySelector<HTMLElement>('[aria-hidden="true"]')?.parentElement
+    // Queue a Ctrl+wheel zoom but do NOT flush the frame yet.
     await act(async () => {
       scroll?.dispatchEvent(
         new WheelEvent('wheel', { deltaY: -100, ctrlKey: true, bubbles: true, cancelable: true })
       )
       await Promise.resolve()
     })
-    await vi.waitFor(() => expect(container.textContent).toContain('125%'))
+    expect(scheduled).not.toBeNull()
+    expect(container.textContent).toContain('100%')
+
+    // Switch files in place before the frame runs: the wheel effect restarts on requestKey and
+    // cancels the queued frame, so the stale delta cannot re-apply on top of the reset.
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/second.pdf" name="second.pdf" source="artifact" />
+      )
+    })
+    await act(async () => {
+      flushFrame()
+      await Promise.resolve()
+    })
+
+    // The new document stays at fit (100%); the queued 25% was dropped, not re-applied.
+    expect(container.textContent).toContain('100%')
+    expect(container.textContent).not.toContain('125%')
 
     clientWidthSpy.mockRestore()
   })
