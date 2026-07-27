@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   PROVIDER_KINDS,
   createEmptyProviderFormValue,
+  defaultCustomApiEndpoint,
   defaultProviderKindKey,
   getProviderFormErrors,
   hasProviderFormErrors,
@@ -15,6 +16,18 @@ describe('defaultProviderKindKey', () => {
     expect(defaultProviderKindKey('claude-code')).toBe('official:anthropic')
     expect(defaultProviderKindKey('codex')).toBe('official:openai')
     expect(defaultProviderKindKey('opencode')).toBe('official:deepseek')
+  })
+})
+
+describe('defaultCustomApiEndpoint', () => {
+  it('uses each framework capability set to choose its preferred custom API format', () => {
+    expect(defaultCustomApiEndpoint(['anthropic'])).toBe('anthropic')
+    expect(defaultCustomApiEndpoint(['anthropic', 'openai'])).toBe('openai')
+    expect(defaultCustomApiEndpoint(['responses'])).toBe('responses')
+  })
+
+  it('falls back to the legacy Messages API while framework capabilities are unavailable', () => {
+    expect(defaultCustomApiEndpoint([])).toBe('anthropic')
   })
 })
 
@@ -150,10 +163,18 @@ describe('provider-kind helpers', () => {
   it('clears vendor-only fields when picking custom', () => {
     expect(providerKindPatch('custom')).toEqual({
       type: 'custom',
+      apiEndpoint: 'anthropic',
       vendorId: undefined,
       region: undefined,
       model: '',
       contextWindow: ''
+    })
+  })
+
+  it('seeds a custom provider with the active framework API format', () => {
+    expect(providerKindPatch('custom', 'openai')).toMatchObject({
+      type: 'custom',
+      apiEndpoint: 'openai'
     })
   })
 

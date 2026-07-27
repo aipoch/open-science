@@ -19,7 +19,7 @@ import type { ProviderView, UpsertProviderRequest } from '../../../../shared/set
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { useSettingsStore } from '@/stores/settings-store'
+import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import type { SettingsPanelId } from './settings-navigation'
 import { useComputeStore } from '@/stores/compute-store'
 import { AgentPanel } from './AgentPanel'
@@ -40,6 +40,7 @@ import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ProviderForm } from './ProviderForm'
 import {
   createEmptyProviderFormValue,
+  defaultCustomApiEndpoint,
   defaultProviderKindKey,
   getProviderFormErrors,
   hasProviderFormErrors,
@@ -161,6 +162,8 @@ const INITIAL_LOCATION: NavLocation = {
 const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element => {
   const providers = useSettingsStore((state) => state.providers)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
+  const customApiEndpoint = defaultCustomApiEndpoint(frameworkEndpoints)
   const opencode = useSettingsStore((state) => state.opencode)
   const isDetectingOpencode = useSettingsStore((state) => state.isDetectingOpencode)
   const detectOpencode = useSettingsStore((state) => state.detectOpencode)
@@ -828,6 +831,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                       showClaudeIsolated={
                         agentFrameworkId === 'claude-code' && editingProvider === undefined
                       }
+                      defaultCustomApiEndpoint={customApiEndpoint}
                     />
                     {statusMessage ? (
                       <p

@@ -102,6 +102,51 @@ const submitClaudeFallbackToken = async (token: string): Promise<void> => {
 }
 
 describe('ProviderStep', () => {
+  it('defaults an untouched custom gateway to the active framework API format', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportedApiTypes: ['anthropic', 'openai'],
+          supportsSkills: true
+        }
+      ]
+    })
+
+    await renderStep()
+
+    expect(container.querySelector('[aria-label="API format"]')?.textContent).toContain(
+      '/v1/chat/completions'
+    )
+  })
+
+  it('preserves a manually chosen API format when revisiting an otherwise blank draft', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportedApiTypes: ['anthropic', 'openai'],
+          supportsSkills: true
+        }
+      ]
+    })
+
+    await renderStep({
+      initialValue: {
+        ...createEmptyProviderFormValue({ apiEndpoint: 'anthropic' }),
+        providerSelectionTouched: true
+      }
+    })
+
+    expect(container.querySelector('[aria-label="API format"]')?.textContent).toContain(
+      '/v1/messages'
+    )
+  })
+
   it('defers required-field errors until the first submit attempt', async () => {
     readyClaudeEnvironment()
 
@@ -325,6 +370,27 @@ describe('ProviderStep', () => {
     expect(container.querySelector('[aria-label="API key"]')).toBeNull()
   })
 
+  it('defaults a Codex custom gateway to the Responses API', async () => {
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      agentFrameworks: [
+        {
+          id: 'codex',
+          displayName: 'Codex',
+          supportedApiTypes: ['responses'],
+          supportsSkills: true
+        }
+      ]
+    })
+
+    await renderStep()
+    await selectOption('Provider type', 'Custom Gateway')
+
+    expect(container.querySelector('[aria-label="API format"]')?.textContent).toContain(
+      '/v1/responses'
+    )
+  })
+
   it('keeps an existing provider draft when Codex is selected', async () => {
     useSettingsStore.setState(codexReadyState())
     const initialValue = {
@@ -341,6 +407,9 @@ describe('ProviderStep', () => {
       'https://gateway.example'
     )
     expect(container.querySelector<HTMLInputElement>('[aria-label="Model"]')?.value).toBe('gpt-5')
+    expect(container.querySelector('[aria-label="API format"]')?.textContent).toContain(
+      '/v1/messages'
+    )
   })
 
   // Switches the auth picker to the isolated "Sign in with Open Science" mode — the only path that

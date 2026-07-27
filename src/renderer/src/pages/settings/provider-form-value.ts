@@ -1,6 +1,7 @@
 import {
   claudeIsolatedProviderIdentity,
   codexSubscriptionProviderIdentity,
+  preferredEndpoint,
   type AgentFrameworkId,
   type ChatApiEndpoint,
   type ProviderType
@@ -28,6 +29,9 @@ export type ProviderFormValue = {
   // 'anthropic'. A custom provider serves exactly one endpoint (official providers take theirs from
   // the registry); it is stored as the single-entry apiEndpoints array.
   apiEndpoint: ChatApiEndpoint
+  // Form-only state: protects an explicit provider-kind/API-format choice when onboarding remounts.
+  // It is intentionally omitted from the persisted provider request.
+  providerSelectionTouched: boolean
   supportsImageInput: boolean
   // Optional at rest for backwards compatibility; the form always materializes the five-level default.
   reasoningEffortPreset: ReasoningEffortPresetSetting
@@ -51,12 +55,20 @@ export const createEmptyProviderFormValue = (
   model: '',
   contextWindow: '',
   apiEndpoint: 'anthropic',
+  providerSelectionTouched: false,
   supportsImageInput: false,
   reasoningEffortPreset: 'standard-5',
   reasoningEffortTransport: 'reasoning-effort',
   key: '',
   ...overrides
 })
+
+// Chooses the framework's preferred wire protocol for a new custom gateway. This mirrors runtime
+// endpoint selection: Responses wins when available, then Chat Completions, then Messages. The
+// legacy Messages default remains the safe fallback while framework capabilities are still loading.
+export const defaultCustomApiEndpoint = (
+  frameworkEndpoints: readonly ChatApiEndpoint[]
+): ChatApiEndpoint => preferredEndpoint(frameworkEndpoints, frameworkEndpoints) ?? 'anthropic'
 
 // The provider kind pre-selected when the Add provider form opens, matched to the active agent
 // framework's most common official vendor: Claude Code → Anthropic, Codex → OpenAI,
@@ -179,8 +191,12 @@ export const PROVIDER_KINDS: ProviderKind[] = [
 ]
 
 // The patch applied to the form value when a provider-kind is picked. Switching to an official vendor
-// seeds its default region + model; switching away clears vendor-only fields.
-export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
+// seeds its default region + model; switching to custom clears vendor-only fields and applies the
+// active framework's preferred endpoint.
+export const providerKindPatch = (
+  key: string,
+  customApiEndpoint: ChatApiEndpoint = 'anthropic'
+): Partial<ProviderFormValue> => {
   if (key === 'codex-subscription') {
     const identity = codexSubscriptionProviderIdentity()
     return {
@@ -226,7 +242,14 @@ export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
     }
   }
 
-  return { type: 'custom', vendorId: undefined, region: undefined, model: '', contextWindow: '' }
+  return {
+    type: 'custom',
+    apiEndpoint: customApiEndpoint,
+    vendorId: undefined,
+    region: undefined,
+    model: '',
+    contextWindow: ''
+  }
 }
 
 // Maps the current form value back to its provider-kind key (the dropdown's selected value).

@@ -57,6 +57,8 @@ type ProviderFormProps = {
   // showCodexSubscriptions: claude-isolated is only meaningful while Claude Code is the active
   // framework, so the wizard/settings page toggles this rather than showing it unconditionally.
   showClaudeIsolated?: boolean
+  // Preferred protocol for a newly selected Custom Gateway, derived from the active framework.
+  defaultCustomApiEndpoint?: ProviderFormValue['apiEndpoint']
 }
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
@@ -123,7 +125,8 @@ const ProviderForm = ({
   disabled = false,
   encryptionAvailable = true,
   showCodexSubscriptions = false,
-  showClaudeIsolated = false
+  showClaudeIsolated = false,
+  defaultCustomApiEndpoint = 'anthropic'
 }: ProviderFormProps): React.JSX.Element => {
   const isCustom = value.type === 'custom'
   const isOfficial = value.type === 'official'
@@ -189,7 +192,15 @@ const ProviderForm = ({
           <span className={fieldLabelClassName}>Provider type</span>
           {selectedKind ? <FieldHelp content={selectedKind.description} /> : null}
         </div>
-        <Select value={selectedKey} onValueChange={(key) => onChange(providerKindPatch(key))}>
+        <Select
+          value={selectedKey}
+          onValueChange={(key) =>
+            onChange({
+              ...providerKindPatch(key, defaultCustomApiEndpoint),
+              providerSelectionTouched: true
+            })
+          }
+        >
           <SelectTrigger aria-label="Provider type">
             <span className="flex items-center gap-2">
               <ProviderKindIcon kindKey={selectedKey} />
@@ -255,7 +266,10 @@ const ProviderForm = ({
               value={value.type}
               disabled={disabled}
               onValueChange={(type) =>
-                onChange({ type: type as 'codex-shared' | 'codex-isolated' })
+                onChange({
+                  type: type as 'codex-shared' | 'codex-isolated',
+                  providerSelectionTouched: true
+                })
               }
             >
               <SelectTrigger aria-label="Codex authentication" disabled={disabled}>
@@ -286,7 +300,10 @@ const ProviderForm = ({
                 value={value.type}
                 disabled={disabled}
                 onValueChange={(type) =>
-                  onChange({ type: type as 'claude-shared' | 'claude-isolated' })
+                  onChange({
+                    type: type as 'claude-shared' | 'claude-isolated',
+                    providerSelectionTouched: true
+                  })
                 }
               >
                 <SelectTrigger aria-label="Claude authentication" disabled={disabled}>
@@ -382,7 +399,10 @@ const ProviderForm = ({
               value={value.apiEndpoint}
               disabled={disabled}
               onValueChange={(apiEndpoint) =>
-                onChange({ apiEndpoint: apiEndpoint as ProviderFormValue['apiEndpoint'] })
+                onChange({
+                  apiEndpoint: apiEndpoint as ProviderFormValue['apiEndpoint'],
+                  providerSelectionTouched: true
+                })
               }
             >
               <SelectTrigger aria-label="API format" disabled={disabled}>

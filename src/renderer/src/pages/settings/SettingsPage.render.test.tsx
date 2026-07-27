@@ -7,6 +7,12 @@ import { SettingsPage } from './SettingsPage'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = (): boolean => false
+  Element.prototype.setPointerCapture = (): void => undefined
+  Element.prototype.releasePointerCapture = (): void => undefined
+}
+
 let container: HTMLDivElement
 let root: Root
 
@@ -611,6 +617,39 @@ describe('SettingsPage layout', () => {
       document.body.appendChild(container)
       root = createRoot(container)
     }
+  })
+
+  it('defaults a custom gateway to the active framework API format', async () => {
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportedApiTypes: ['anthropic', 'openai'],
+          supportsSkills: true
+        }
+      ],
+      opencode: { resolvedPath: '/x/opencode' }
+    })
+
+    const addProvider = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Add provider')
+    act(() => addProvider?.click())
+
+    openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Provider type"]'))
+    const customGateway = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="option"]')
+    ).find((option) => option.textContent?.includes('Custom Gateway'))
+    clickRadixMenuItem(customGateway)
+
+    expect(document.body.querySelector('[aria-label="API format"]')?.textContent).toContain(
+      '/v1/chat/completions'
+    )
   })
 
   it('switches to the General panel and shows the diagnostic log file', async () => {
