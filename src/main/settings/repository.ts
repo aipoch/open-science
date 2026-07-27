@@ -403,9 +403,15 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
         // `codex-shared` is legacy setup input only. Runtime always uses the app-owned
         // subscription home, so sanitized/newly persisted state has one isolated form.
         type: 'codex-isolated' as const,
+        // Releases before codexAuthMode normalized both setup choices to the subscription id, so
+        // that shape is ambiguous. Prefer imported to keep the refresh path available; the older
+        // dedicated isolated id remains an unambiguous isolated migration.
         codexAuthMode:
           selectedCodexProvider.codexAuthMode ??
-          (selectedCodexProvider.type === 'codex-shared' ? 'imported' : 'isolated'),
+          (selectedCodexProvider.type === 'codex-shared' ||
+          selectedCodexProvider.id === CODEX_SUBSCRIPTION_PROVIDER_ID
+            ? 'imported'
+            : 'isolated'),
         name: codexSubscriptionProviderIdentity().name
       }
     : undefined

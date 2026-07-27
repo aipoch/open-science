@@ -179,6 +179,29 @@ describe('settings repository', () => {
     expect(settings.activeProviderId).toBe('builtin-codex-subscription')
   })
 
+  it('migrates an ambiguous normalized Codex subscription as imported', () => {
+    const settings = sanitizeSettings({
+      activeProviderId: 'builtin-codex-subscription',
+      providers: [
+        {
+          id: 'builtin-codex-subscription',
+          type: 'codex-isolated',
+          name: 'Codex subscription'
+        }
+      ]
+    })
+
+    expect(settings.providers).toEqual([
+      expect.objectContaining({
+        id: 'builtin-codex-subscription',
+        type: 'codex-isolated',
+        codexAuthMode: 'imported',
+        name: 'Codex subscription'
+      })
+    ])
+    expect(settings.activeProviderId).toBe('builtin-codex-subscription')
+  })
+
   it('returns empty settings when nothing is stored yet', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 
