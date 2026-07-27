@@ -112,8 +112,10 @@ const WorkspaceToolCodeBlock = ({
                   {line.map((token, tokenIndex) => (
                     <span
                       key={tokenIndex}
+                      className="dark:[color:var(--shiki-dark)]!"
                       // Dual-theme Shiki output puts the color (and a --shiki-dark var) in htmlStyle,
-                      // not token.color, so apply htmlStyle and fall back to color for single themes.
+                      // not token.color. Apply htmlStyle, then let the app's dark class switch to the
+                      // paired token color; !important is required to beat Shiki's inline light color.
                       style={{
                         color: token.color,
                         ...(token.htmlStyle as React.CSSProperties | undefined),
