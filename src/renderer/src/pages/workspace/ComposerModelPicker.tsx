@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, ChevronDown } from 'lucide-react'
+import { AlertTriangle, Brain, Check, ChevronDown, ChevronRight, Cpu } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -8,6 +8,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
@@ -21,6 +24,11 @@ import {
 } from '@/stores/settings-store'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
 import { isModelBridgeSupported } from '../../../../shared/provider-registry'
+import {
+  resolveProviderEffectiveModel,
+  resolveProviderReasoningEffortProfile
+} from '../../../../shared/provider-reasoning-effort'
+import { resolveReasoningEffortControl } from '../../../../shared/reasoning-effort'
 import { incompatibilityReason } from './composer-model-picker-utils'
 
 const triggerClassName =
@@ -28,6 +36,37 @@ const triggerClassName =
 
 // Label for an option: the model name, or the provider name when the option carries no concrete model.
 const optionLabel = (option: ProviderModelOption): string => option.model || option.providerName
+
+// One radio row shape shared by both submenus: menuitemradio semantics, bold + trailing Check when
+// picked, optional leading icon and trailing hint. The three call sites (default effort, effort
+// rung, model) stay behavior-identical by construction.
+const MenuRadioItem = ({
+  checked,
+  onSelect,
+  leading,
+  hint,
+  children
+}: {
+  checked: boolean
+  onSelect: () => void
+  leading?: React.ReactNode
+  hint?: string
+  children: React.ReactNode
+}): React.JSX.Element => (
+  <DropdownMenuItem
+    role="menuitemradio"
+    aria-checked={checked}
+    onSelect={onSelect}
+    className={cn('gap-2', checked && 'font-medium')}
+  >
+    {leading}
+    <span className="min-w-0 flex-1 truncate">{children}</span>
+    {hint ? <span className="text-[11px] text-text-300">{hint}</span> : null}
+    {checked ? (
+      <Check className="size-4 shrink-0 text-primary" strokeWidth={2} aria-hidden="true" />
+    ) : null}
+  </DropdownMenuItem>
+)
 
 // Model/provider switcher shown in the composer toolbar. Reads the settings store directly (the store
 // is global) so the presentational ConversationPanel needn't thread provider state through. With no
@@ -45,10 +84,35 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
+  const reasoningEffort = useSettingsStore((state) => state.reasoningEffort)
+  const setReasoningEffort = useSettingsStore((state) => state.setReasoningEffort)
 
   const frameworkName =
     agentFrameworks.find((framework) => framework.id === agentFrameworkId)?.displayName ??
     'this framework'
+
+  // Reasoning-effort state resolves through the same chain as the Settings page control: the
+  // effective model for the active provider, that model's static effort profile, then the control
+  // options the stored intent maps onto.
+  const activeProvider = providers.find((candidate) => candidate.id === activeProviderId)
+  const effectiveModel = resolveProviderEffectiveModel(activeProvider, activeModel)
+  const effortProfile = resolveProviderReasoningEffortProfile(activeProvider, effectiveModel)
+  const effortControl = resolveReasoningEffortControl(reasoningEffort, effortProfile)
+  const selectedEffortLabel = effortControl.options.find(
+    (option) => option.value === effortControl.selectedValue
+  )?.label
+
+  // The effort row only makes sense when the active provider's model can take an effort at all;
+  // without an active provider there is nothing the selection would apply to, so the row hides.
+  const showEffortRow =
+    activeProvider !== undefined && effortProfile.supported && effortControl.options.length > 0
+
+  // The trigger advertises a non-default effort as a suffix, derived from showEffortRow so the two
+  // visibility rules can never drift apart. 'default' means "whatever the provider does" — the
+  // common case — and stays quiet.
+  const effortSuffixLabel =
+    showEffortRow && reasoningEffort !== 'default' ? selectedEffortLabel : undefined
+  const defaultEffortChecked = reasoningEffort === 'default'
 
   // A provider is selectable only when it can actually drive the current framework (endpoint + type).
   const isCompatible = (provider: (typeof providers)[number], model: string): boolean =>
@@ -97,6 +161,14 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
     (option) => option.providerId === activeProviderId && option.model === activeKeyModel
   )
 
+  // The Model row's capsule summarizes the current pick: model + provider, the provider alone when
+  // the option carries no concrete model, or a bare "Select" prompt when nothing is active.
+  const modelCapsuleLabel = current
+    ? current.model
+      ? `${current.model} · ${current.providerName}`
+      : current.providerName
+    : 'Select'
+
   // Group options by provider so official vendors show their catalog under one heading.
   const groups = providers
     .map((provider) => ({
@@ -125,8 +197,8 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                 {current ? (
                   <>
                     <span className="font-medium text-text-100">{optionLabel(current)}</span>
-                    {current.model ? (
-                      <span className="ml-1.5 text-text-300">· {current.providerName}</span>
+                    {effortSuffixLabel ? (
+                      <span className="ml-1.5 text-text-300">· {effortSuffixLabel}</span>
                     ) : null}
                   </>
                 ) : (
@@ -143,106 +215,181 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
           <ChevronDown className="size-3.5 shrink-0" aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="max-h-[320px] min-w-[15rem] overflow-y-auto">
-        {groups.map((group) => {
-          const compatible = group.options.some((option) =>
-            isCompatible(group.provider, option.model)
-          )
-          const endpointCompatible = isProviderUsableByFramework(
-            {
-              apiEndpoints: group.provider.apiEndpoints,
-              type: group.provider.type
-            },
-            { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
-          )
-          const reason = compatible
-            ? undefined
-            : endpointCompatible && agentFrameworkId === 'codex'
-              ? `No model from ${group.provider.name} is supported over the Codex Chat Completions bridge.`
-              : incompatibilityReason(
-                  {
-                    apiEndpoints: group.provider.apiEndpoints,
-                    type: group.provider.type,
-                    name: group.provider.name
-                  },
-                  frameworkName,
-                  frameworkEndpoints
-                )
-
-          return (
-            <DropdownMenuGroup key={group.provider.id}>
-              <DropdownMenuLabel>{group.provider.name}</DropdownMenuLabel>
-              {compatible ? (
-                group.options.map((option) => {
-                  const isActive =
-                    option.providerId === activeProviderId && option.model === activeKeyModel
-                  const optionCompatible = isCompatible(group.provider, option.model)
-
-                  if (!optionCompatible) {
-                    // Endpoint is fine but this model is statically marked unsupported over the Codex
-                    // bridge. Grey it with a warning icon; the full reason is on hover (title) and read
-                    // by assistive tech (aria-label), so it isn't a long inline string.
-                    const optionReason = `${optionLabel(option)} is not supported over the Codex Chat Completions bridge.`
-                    return (
-                      <DropdownMenuItem
-                        key={`${option.providerId}:${option.model}`}
-                        aria-disabled
-                        aria-label={optionReason}
-                        title={optionReason}
-                        onSelect={(event) => event.preventDefault()}
-                        className="gap-2 text-text-300"
-                      >
-                        <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
-                        <span className="min-w-0 flex-1 truncate">{optionLabel(option)}</span>
-                        <span className="text-xs">unsupported</span>
-                      </DropdownMenuItem>
-                    )
+      {/* Two-level menu: the first level is two summary rows (effort, model) whose actual choices
+          live in their submenus. This keeps the long provider catalog out of the top level, which
+          now reads as a compact overview instead of a scrolling list. */}
+      <DropdownMenuContent side="top" align="end" sideOffset={8} className="w-72 p-1">
+        {showEffortRow ? (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
+              <Brain className="size-4 shrink-0 text-text-200" strokeWidth={2} aria-hidden="true" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-medium leading-5">Reasoning effort</span>
+                <span className="block text-[11px] leading-4 text-text-300">
+                  How long the model thinks before answering
+                </span>
+              </span>
+              <span className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-bg-200 px-2 py-0.5 text-[11px] font-medium leading-4 text-text-100">
+                {defaultEffortChecked ? 'Default' : selectedEffortLabel}
+                <ChevronRight
+                  className="size-3 shrink-0 opacity-60"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-56 p-1">
+              <MenuRadioItem
+                checked={defaultEffortChecked}
+                onSelect={() => void setReasoningEffort('default')}
+                hint="provider default"
+              >
+                Default
+              </MenuRadioItem>
+              {effortControl.options.map((option) => (
+                // Checked by concrete value, not intent: several intents can project onto one
+                // value, and the profile owns which one is selected.
+                <MenuRadioItem
+                  key={option.value}
+                  checked={
+                    reasoningEffort !== 'default' && option.value === effortControl.selectedValue
                   }
-
-                  return (
-                    <DropdownMenuItem
-                      key={`${option.providerId}:${option.model}`}
-                      role="menuitemradio"
-                      aria-checked={isActive}
-                      onSelect={() => void setActiveProvider(option.providerId, option.model)}
-                      className={cn('gap-2', isActive && 'font-medium')}
-                    >
-                      <ProviderKindIcon
-                        kindKey={providerKindKey(option.providerType, option.vendorId)}
-                        className="size-4 shrink-0"
-                      />
-                      <span className="min-w-0 flex-1 truncate">{optionLabel(option)}</span>
-                      {isActive ? (
-                        <Check
-                          className="size-4 shrink-0 text-primary"
-                          strokeWidth={2}
-                          aria-hidden="true"
-                        />
-                      ) : null}
-                    </DropdownMenuItem>
-                  )
-                })
-              ) : (
-                // An incompatible provider gets one greyed, non-actionable row: a short "Unavailable"
-                // label + warning icon, with the full reason on hover (title) and exposed to assistive
-                // tech (aria-label) — so the dropdown stays compact instead of wrapping a long
-                // sentence. It stays keyboard-reachable via roving focus (a `disabled` item is skipped,
-                // and a label is not focusable), aria-disabled marks it unselectable, and onSelect is
-                // prevented so it never switches the model.
-                <DropdownMenuItem
-                  aria-disabled
-                  aria-label={reason}
-                  title={reason}
-                  onSelect={(event) => event.preventDefault()}
-                  className="gap-2 text-text-300"
+                  onSelect={() => void setReasoningEffort(option.intent)}
                 >
-                  <AlertTriangle className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-                  <span className="min-w-0 flex-1 truncate">Unavailable for {frameworkName}</span>
-                </DropdownMenuItem>
-              )}
-            </DropdownMenuGroup>
-          )
-        })}
+                  {option.label}
+                </MenuRadioItem>
+              ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        ) : null}
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
+            {current ? (
+              <ProviderKindIcon
+                kindKey={providerKindKey(current.providerType, current.vendorId)}
+                className="size-4 shrink-0 text-text-200"
+              />
+            ) : (
+              <Cpu className="size-4 shrink-0 text-text-200" strokeWidth={2} aria-hidden="true" />
+            )}
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-medium leading-5">Model</span>
+              <span className="block text-[11px] leading-4 text-text-300">
+                Provider and model for this chat
+              </span>
+            </span>
+            <span className="flex max-w-[10rem] shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-bg-200 px-2 py-0.5 text-[11px] font-medium leading-4 text-text-100">
+              <span className="min-w-0 truncate">{modelCapsuleLabel}</span>
+              <ChevronRight
+                className="size-3 shrink-0 opacity-60"
+                strokeWidth={2}
+                aria-hidden="true"
+              />
+            </span>
+          </DropdownMenuSubTrigger>
+          {/* The full grouped catalog (compatibility rows included) lives one level down so the
+              first level stays a summary; behavior per item is unchanged from the flat menu. */}
+          <DropdownMenuSubContent className="max-h-[320px] min-w-[15rem] overflow-y-auto p-1">
+            {groups.map((group) => {
+              const compatible = group.options.some((option) =>
+                isCompatible(group.provider, option.model)
+              )
+              const endpointCompatible = isProviderUsableByFramework(
+                {
+                  apiEndpoints: group.provider.apiEndpoints,
+                  type: group.provider.type
+                },
+                { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
+              )
+              const reason = compatible
+                ? undefined
+                : endpointCompatible && agentFrameworkId === 'codex'
+                  ? `No model from ${group.provider.name} is supported over the Codex Chat Completions bridge.`
+                  : incompatibilityReason(
+                      {
+                        apiEndpoints: group.provider.apiEndpoints,
+                        type: group.provider.type,
+                        name: group.provider.name
+                      },
+                      frameworkName,
+                      frameworkEndpoints
+                    )
+
+              return (
+                <DropdownMenuGroup key={group.provider.id}>
+                  <DropdownMenuLabel>{group.provider.name}</DropdownMenuLabel>
+                  {compatible ? (
+                    group.options.map((option) => {
+                      const isActive =
+                        option.providerId === activeProviderId && option.model === activeKeyModel
+                      const optionCompatible = isCompatible(group.provider, option.model)
+
+                      if (!optionCompatible) {
+                        // Endpoint is fine but this model is statically marked unsupported over the Codex
+                        // bridge. Grey it with a warning icon; the full reason is on hover (title) and read
+                        // by assistive tech (aria-label), so it isn't a long inline string.
+                        const optionReason = `${optionLabel(option)} is not supported over the Codex Chat Completions bridge.`
+                        return (
+                          <DropdownMenuItem
+                            key={`${option.providerId}:${option.model}`}
+                            aria-disabled
+                            aria-label={optionReason}
+                            title={optionReason}
+                            onSelect={(event) => event.preventDefault()}
+                            className="gap-2 text-text-300"
+                          >
+                            <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
+                            <span className="min-w-0 flex-1 truncate">{optionLabel(option)}</span>
+                            <span className="text-xs">unsupported</span>
+                          </DropdownMenuItem>
+                        )
+                      }
+
+                      return (
+                        <MenuRadioItem
+                          key={`${option.providerId}:${option.model}`}
+                          checked={isActive}
+                          onSelect={() => void setActiveProvider(option.providerId, option.model)}
+                          leading={
+                            <ProviderKindIcon
+                              kindKey={providerKindKey(option.providerType, option.vendorId)}
+                              className="size-4 shrink-0"
+                            />
+                          }
+                        >
+                          {optionLabel(option)}
+                        </MenuRadioItem>
+                      )
+                    })
+                  ) : (
+                    // An incompatible provider gets one greyed, non-actionable row: a short "Unavailable"
+                    // label + warning icon, with the full reason on hover (title) and exposed to assistive
+                    // tech (aria-label) — so the dropdown stays compact instead of wrapping a long
+                    // sentence. It stays keyboard-reachable via roving focus (a `disabled` item is skipped,
+                    // and a label is not focusable), aria-disabled marks it unselectable, and onSelect is
+                    // prevented so it never switches the model.
+                    <DropdownMenuItem
+                      aria-disabled
+                      aria-label={reason}
+                      title={reason}
+                      onSelect={(event) => event.preventDefault()}
+                      className="gap-2 text-text-300"
+                    >
+                      <AlertTriangle
+                        className="size-4 shrink-0"
+                        strokeWidth={2}
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        Unavailable for {frameworkName}
+                      </span>
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuGroup>
+              )
+            })}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
         {hasUsable ? null : (
           <>
             <DropdownMenuSeparator />
