@@ -238,6 +238,40 @@ const IMPORTED_ROUTE_SELECTION_END = '# Open Science: end imported Codex route s
 const IMPORTED_ROUTE_PROVIDER_BEGIN = '# Open Science: begin imported Codex provider'
 const IMPORTED_ROUTE_PROVIDER_END = '# Open Science: end imported Codex provider'
 const IMPORTED_ROUTE_PRESERVED_LINE = '# Open Science: preserved Codex config '
+const CODEX_FILE_CREDENTIAL_STORE = 'cli_auth_credentials_store = "file"'
+
+const isCodexCredentialStoreAssignment = (line: string): boolean =>
+  /^\s*(?:cli_auth_credentials_store|"cli_auth_credentials_store"|'cli_auth_credentials_store')\s*=/.test(
+    line
+  )
+
+// CODEX_HOME isolates file-backed auth.json, but the default/auto store can still select the
+// process-wide OS keyring. Pin subscription profiles to file storage so status, login, and logout
+// cannot observe or mutate the user's global Codex CLI credential.
+const serializeCodexFileCredentialStore = (existingConfigToml: string): string => {
+  const lines = existingConfigToml.split(/\r?\n/)
+  const result: string[] = []
+  let inTopLevel = true
+
+  for (const line of lines) {
+    if (/^\s*\[/.test(line)) inTopLevel = false
+    if (inTopLevel && isCodexCredentialStoreAssignment(line)) continue
+    result.push(line)
+  }
+
+  while (result.at(-1) === '') result.pop()
+  const firstOwnedMarkerIndex = result.findIndex(
+    (line) => line === IMPORTED_ROUTE_SELECTION_BEGIN || line === IMPORTED_ROUTE_PROVIDER_BEGIN
+  )
+  const firstTableIndex = result.findIndex((line) => /^\s*\[/.test(line))
+  const insertionCandidates = [firstOwnedMarkerIndex, firstTableIndex].filter((index) => index >= 0)
+  const insertionIndex =
+    insertionCandidates.length > 0 ? Math.min(...insertionCandidates) : result.length
+  result.splice(insertionIndex, 0, CODEX_FILE_CREDENTIAL_STORE)
+  result.push('')
+
+  return result.join('\n')
+}
 
 const restoreCompleteMarkedBlock = (lines: string[], begin: string, end: string): string[] => {
   const result = [...lines]
@@ -462,6 +496,13 @@ export const clearImportedCodexProviderRoute = async (destinationHome: string): 
   }
 }
 
+// Switching away from an imported profile must discard the copied credential without invoking
+// Codex logout. Logging out a copied token can revoke the same session still used by the user's
+// global CLI profile; unlinking only the app-owned copy preserves that external login.
+export const clearAppOwnedCodexAuthentication = async (destinationHome: string): Promise<void> => {
+  await rm(join(destinationHome, 'auth.json'), { force: true })
+}
+
 const abortError = (message: string): Error => {
   const error = new Error(message)
   error.name = 'AbortError'
@@ -684,7 +725,21 @@ export const ensureCodexAuthHome = async (
   _mode: CodexAuthMode,
   storageRoot: string
 ): Promise<void> => {
-  await mkdir(codexSubscriptionStorageDir(storageRoot), { recursive: true })
+  const codexHome = codexSubscriptionStorageDir(storageRoot)
+  const configPath = join(codexHome, 'config.toml')
+  await mkdir(codexHome, { recursive: true })
+
+  let existingConfigToml = ''
+  try {
+    existingConfigToml = await readFile(configPath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+
+  const nextConfigToml = serializeCodexFileCredentialStore(existingConfigToml)
+  if (nextConfigToml !== existingConfigToml) {
+    await writePrivateFileAtomically(configPath, nextConfigToml)
+  }
 }
 
 export const openCodexAuthSession = async ({

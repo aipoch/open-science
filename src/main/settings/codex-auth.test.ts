@@ -29,15 +29,55 @@ const session = (overrides: Partial<CodexAuthSession> = {}): CodexAuthSession =>
 })
 
 describe('ensureCodexAuthHome', () => {
-  it('creates the same app-owned home for legacy shared and isolated modes', async () => {
+  it('creates the same app-owned home with file-only credentials for both auth modes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-auth-home-'))
     try {
       await ensureCodexAuthHome('shared', root)
       expect(existsSync(codexSubscriptionStorageDir(root))).toBe(true)
+      expect(await readFile(join(codexSubscriptionStorageDir(root), 'config.toml'), 'utf8')).toBe(
+        'cli_auth_credentials_store = "file"\n'
+      )
 
       await rm(codexSubscriptionStorageDir(root), { recursive: true, force: true })
       await ensureCodexAuthHome('isolated', root)
       expect(existsSync(codexSubscriptionStorageDir(root))).toBe(true)
+      expect(await readFile(join(codexSubscriptionStorageDir(root), 'config.toml'), 'utf8')).toBe(
+        'cli_auth_credentials_store = "file"\n'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('replaces a global-capable credential store without changing other profile config', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-home-'))
+    const home = codexSubscriptionStorageDir(root)
+    try {
+      await mkdir(home, { recursive: true })
+      await writeFile(
+        join(home, 'config.toml'),
+        [
+          'model = "account-default"',
+          'cli_auth_credentials_store = "auto"',
+          '',
+          '[model_providers.local]',
+          'base_url = "http://127.0.0.1:1087/v1"',
+          ''
+        ].join('\n')
+      )
+
+      await ensureCodexAuthHome('isolated', root)
+
+      expect(await readFile(join(home, 'config.toml'), 'utf8')).toBe(
+        [
+          'model = "account-default"',
+          '',
+          'cli_auth_credentials_store = "file"',
+          '[model_providers.local]',
+          'base_url = "http://127.0.0.1:1087/v1"',
+          ''
+        ].join('\n')
+      )
     } finally {
       await rm(root, { recursive: true, force: true })
     }

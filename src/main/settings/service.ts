@@ -230,8 +230,10 @@ import type {
 } from './types'
 import { classifyStatus, validateProvider } from './validate'
 import {
+  clearAppOwnedCodexAuthentication,
   clearImportedCodexProviderRoute,
   CodexAuthController,
+  ensureCodexAuthHome,
   importCodexAuthentication,
   openCodexAuthSession,
   type CodexAuthControllerPort,
@@ -2243,7 +2245,15 @@ class SettingsService {
         this.advanceProviderValidationGeneration(requestedId)
       }
     } else if (request.type === 'codex-isolated' && existing?.codexAuthMode !== 'isolated') {
-      await clearImportedCodexProviderRoute(codexSubscriptionStorageDir(this.storageRoot))
+      const codexHome = codexSubscriptionStorageDir(this.storageRoot)
+      await clearImportedCodexProviderRoute(codexHome)
+      await clearAppOwnedCodexAuthentication(codexHome)
+    }
+    if (isCodexSubscriptionProvider(request.type)) {
+      await ensureCodexAuthHome(
+        request.type === 'codex-shared' ? 'shared' : 'isolated',
+        this.storageRoot
+      )
     }
 
     const provider: StoredProvider = {
@@ -2477,33 +2487,38 @@ class SettingsService {
   }
 
   async logoutIsolatedCodex(): Promise<ValidateProviderResult> {
-    const status = await this.codexAuth.logoutIsolated()
-
-    // A sign-out is confirmed only when the adapter acknowledged it cleanly, which is the only path
-    // that sets no message. A timeout or capability failure leaves the status ambiguous — the
-    // credential may still be in the isolated home — so we preserve the verified markers and surface
-    // the failure rather than falsely reporting the account as signed out.
-    const succeeded = status.authenticated === false && status.message === undefined
-
     const settings = await this.repository.getSettings()
     const provider = settings.providers.find(
       (candidate) => candidate.id === codexSubscriptionProviderIdentity().id
     )
-    if (provider && succeeded) {
-      await this.repository.upsertProvider({
-        ...provider,
-        lastValidatedAt: undefined,
-        lastValidationFailure: undefined
-      })
-    }
-
-    if (!succeeded) {
+    if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated') {
       return {
         ok: false,
-        category: status.message?.toLowerCase().includes('timed out') ? 'timeout' : 'unknown',
-        message: status.message ?? 'Codex sign-out did not complete.'
+        category: 'unknown',
+        message: 'No isolated Open Science Codex login is configured.'
       }
     }
+
+    // Never call the adapter's account/logout here. A legacy isolated profile may still hold a
+    // token copied from the user's CLI profile, and remotely revoking it would sign the CLI out as
+    // well. Removing only the file under the app-owned CODEX_HOME disconnects Open Science while
+    // preserving every external Codex login.
+    this.codexAuth.cancelLogin()
+    try {
+      await clearAppOwnedCodexAuthentication(codexSubscriptionStorageDir(this.storageRoot))
+    } catch {
+      return {
+        ok: false,
+        category: 'unknown',
+        message: 'The Open Science Codex login could not be removed.'
+      }
+    }
+
+    await this.repository.upsertProvider({
+      ...provider,
+      lastValidatedAt: undefined,
+      lastValidationFailure: undefined
+    })
 
     return { ok: true, category: 'ok' }
   }
@@ -3587,6 +3602,12 @@ class SettingsService {
         ? await this.probeCodexNativeVersion(settings.codex?.nativePath)
         : undefined
     const provider = this.resolveProvider(activeProvider, effectiveModel)
+    if (framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)) {
+      // Runtime resolution can be reached without opening a Settings auth session first. Enforce
+      // file-backed credentials here as well so a direct prompt never falls through to the user's
+      // global Codex keyring.
+      await ensureCodexAuthHome('isolated', this.storageRoot)
+    }
     // `codex-shared` is accepted only as a legacy/provider-time import request. Every runtime
     // subscription record converges on the same app-owned backend and profile boundary.
     const backendProviderId =

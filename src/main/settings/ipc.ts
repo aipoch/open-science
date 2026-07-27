@@ -422,9 +422,8 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:logout-isolated-codex', async () => {
     const result = await service.logoutIsolatedCodex()
 
-    // Reconnect only when the sign-out actually cleared the credential. A timed-out sign-out leaves
-    // it in place, so forcing the live agent to reconnect would just re-authenticate against the
-    // credential we failed to remove.
+    // Reconnect only when the app-owned credential was actually removed. If local cleanup fails,
+    // keep the live agent untouched because it may still hold the credential in memory.
     if (result.ok) {
       const snapshot = await service.getSettingsView()
       if (snapshot.activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID) {

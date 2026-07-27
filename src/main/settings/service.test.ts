@@ -280,6 +280,7 @@ describe('SettingsService: providers', () => {
     )
     expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
       [
+        'cli_auth_credentials_store = "file"',
         '# Open Science: begin imported Codex route selection',
         'model_provider = "subscription-route"',
         '# Open Science: end imported Codex route selection',
@@ -343,15 +344,15 @@ describe('SettingsService: providers', () => {
 
     await expect(
       readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.toBe('cli_auth_credentials_store = "file"\n')
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')
     ).rejects.toMatchObject({ code: 'ENOENT' })
     expect(isolated.providers[0]).toMatchObject({
       type: 'codex-isolated',
       codexAuthMode: 'isolated'
     })
     expect(isolated.providers[0].lastValidatedAt).toBeUndefined()
-    expect(await readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')).toBe(
-      '{"tokens":{"access_token":"secret"}}'
-    )
   })
 
   it('clears an imported Codex route when isolated setup is recreated after deletion', async () => {
@@ -381,6 +382,9 @@ describe('SettingsService: providers', () => {
 
     await expect(
       readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.toBe('cli_auth_credentials_store = "file"\n')
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')
     ).rejects.toMatchObject({ code: 'ENOENT' })
     expect(isolated.providers[0]).toMatchObject({
       type: 'codex-isolated',
@@ -854,7 +858,7 @@ describe('SettingsService: providers', () => {
     expect(snapshot.providers[0].lastValidatedAt).toBeUndefined()
   })
 
-  it('cancels isolated login and clears provider readiness on logout', async () => {
+  it('cancels isolated login and removes only the app-owned credential on logout', async () => {
     const codexAuth: CodexAuthControllerPort = {
       getStatus: vi.fn(),
       loginIsolated: vi.fn().mockResolvedValue({
@@ -872,50 +876,44 @@ describe('SettingsService: providers', () => {
     const service = createService(undefined, { codexAuth })
     await service.upsertProvider({ type: 'codex-isolated' })
     await service.loginIsolatedCodex()
+    const appAuthPath = join(storageRoot, 'codex-subscription', 'auth.json')
+    await writeFile(appAuthPath, '{"tokens":{"access_token":"isolated"}}')
 
     service.cancelCodexLogin()
     await service.logoutIsolatedCodex()
 
-    expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
-    expect(codexAuth.logoutIsolated).toHaveBeenCalledOnce()
+    expect(codexAuth.cancelLogin).toHaveBeenCalledTimes(2)
+    expect(codexAuth.logoutIsolated).not.toHaveBeenCalled()
+    await expect(readFile(appAuthPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.lastValidatedAt).toBeUndefined()
     expect(stored.lastValidationFailure).toBeUndefined()
   })
 
-  it('preserves the verified markers when isolated sign-out times out', async () => {
-    // The P1 fix: a timed-out sign-out never called logout(), so the credential may still be in the
-    // isolated home. Clearing lastValidatedAt would falsely mark the provider as signed out while
-    // the credential is usable — instead preserve the verified state and return the failure so the
-    // user knows to retry.
+  it('rejects isolated logout for imported authentication without deleting its copy', async () => {
     const codexAuth = {
       getStatus: vi.fn(),
-      loginIsolated: vi.fn().mockResolvedValue({
-        mode: 'isolated',
-        supported: true,
-        authenticated: true
-      }),
+      loginIsolated: vi.fn(),
       cancelLogin: vi.fn(),
-      logoutIsolated: vi.fn().mockResolvedValue({
-        mode: 'isolated',
-        supported: true,
-        authenticated: false,
-        message: 'Codex sign-out timed out.'
-      })
+      logoutIsolated: vi.fn()
     }
     const service = createService(undefined, { codexAuth })
-    await service.upsertProvider({ type: 'codex-isolated' })
-    await service.loginIsolatedCodex()
+    await service.upsertProvider({ type: 'codex-shared' })
+    const appAuthPath = join(storageRoot, 'codex-subscription', 'auth.json')
 
     const result = await service.logoutIsolatedCodex()
 
-    expect(result).toEqual({ ok: false, category: 'timeout', message: 'Codex sign-out timed out.' })
-    const stored = (await repository.getSettings()).providers[0]
-    expect(stored.lastValidatedAt).toBeGreaterThan(0)
-    expect(stored.lastValidationFailure).toBeUndefined()
+    expect(result).toEqual({
+      ok: false,
+      category: 'unknown',
+      message: 'No isolated Open Science Codex login is configured.'
+    })
+    expect(codexAuth.cancelLogin).not.toHaveBeenCalled()
+    expect(codexAuth.logoutIsolated).not.toHaveBeenCalled()
+    await expect(readFile(appAuthPath, 'utf8')).resolves.toContain('access_token')
   })
 
-  it('returns success when isolated sign-out completes cleanly', async () => {
+  it('returns success when the app-owned isolated credential is already absent', async () => {
     const codexAuth = {
       getStatus: vi.fn(),
       loginIsolated: vi.fn().mockResolvedValue({
@@ -937,6 +935,8 @@ describe('SettingsService: providers', () => {
     const result = await service.logoutIsolatedCodex()
 
     expect(result).toEqual({ ok: true, category: 'ok' })
+    expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
+    expect(codexAuth.logoutIsolated).not.toHaveBeenCalled()
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.lastValidatedAt).toBeUndefined()
     expect(stored.lastValidationFailure).toBeUndefined()
@@ -2354,6 +2354,9 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.env.NO_BROWSER).toBeUndefined()
     expect(backend.env.CODEX_PATH).toBe('/data/codex-managed/native/codex')
     expect(backend.env.CODEX_HOME).toBe(join(storageRoot, 'codex-subscription'))
+    expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
+      'cli_auth_credentials_store = "file"\n'
+    )
     expect(await readFile(join(storageRoot, 'codex', 'config.toml'), 'utf8')).toBe(
       'model = "account-default"\ncli_auth_credentials_store = "ephemeral"\n'
     )

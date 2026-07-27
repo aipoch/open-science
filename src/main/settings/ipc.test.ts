@@ -257,16 +257,13 @@ describe('settings IPC handlers', () => {
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
   })
 
-  it('does not reconnect when isolated logout times out', async () => {
-    // Reconnecting when the sign-out timed out would re-authenticate with the credential that is
-    // still in place — the opposite of what the user intended. Skip the reconnect so the live
-    // agent keeps its existing session until a retry clears the credential.
+  it('does not reconnect when app-owned isolated logout fails', async () => {
     handlers.clear()
     const service = createFakeService()
     service.logoutIsolatedCodex.mockResolvedValue({
       ok: false,
-      category: 'timeout',
-      message: 'Codex sign-out timed out.'
+      category: 'unknown',
+      message: 'The Open Science Codex login could not be removed.'
     })
     const onActiveProviderChanged = vi.fn()
     registerSettingsIpcHandlers({
