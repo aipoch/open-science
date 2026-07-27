@@ -182,6 +182,17 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
       }
     >
   >({})
+  // Mutable cleanup ledgers bridge the async runtime-deletion window. Uploads that finish or queue
+  // after confirmation are added here so a successful deletion cannot strand staged files.
+  const sessionDeletionCleanupRef = useRef<
+    Record<
+      string,
+      {
+        attachments: UploadedAttachment[]
+        attachmentTransfers: ComposerUploadTransfer[]
+      }
+    >
+  >({})
   const previousDraftKeyRef = useRef<string>(selectedSessionId ?? NEW_CONVERSATION_DRAFT_KEY)
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([])
   const [attachmentTransfers, setAttachmentTransfers] = useState<ComposerUploadTransfer[]>([])
@@ -604,6 +615,14 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     transferId: string,
     attachment: UploadedAttachment
   ): void => {
+    const deletionCleanup = sessionDeletionCleanupRef.current[draftKey]
+    if (deletionCleanup) {
+      deletionCleanup.attachmentTransfers = deletionCleanup.attachmentTransfers.filter(
+        (transfer) => transfer.transferId !== transferId
+      )
+      deletionCleanup.attachments.push(attachment)
+    }
+
     if (previousDraftKeyRef.current === draftKey) {
       setAttachmentTransfers((transfers) =>
         transfers.filter((transfer) => transfer.transferId !== transferId)
@@ -678,6 +697,10 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
       ...transfers,
       ...pending.map(({ transfer }) => transfer)
     ])
+    const deletionCleanup = sessionDeletionCleanupRef.current[draftKey]
+    if (deletionCleanup) {
+      deletionCleanup.attachmentTransfers.push(...pending.map(({ transfer }) => transfer))
+    }
 
     void (async () => {
       // Serialize files so a multi-select never holds one chunk per attachment in memory at once.
@@ -708,6 +731,10 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
               )
             }
           })
+          if (controller.signal.aborted) {
+            await window.api.uploads.deleteUpload({ path: attachment.path }).catch(() => undefined)
+            continue
+          }
           commitDraftAttachment(draftKey, transfer.transferId, attachment)
         } catch (uploadError) {
           if (controller.signal.aborted) {
@@ -759,6 +786,12 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     setAttachments((currentAttachments) =>
       currentAttachments.filter((item) => item.id !== attachment.id)
     )
+    const deletionCleanup = sessionDeletionCleanupRef.current[previousDraftKeyRef.current]
+    if (deletionCleanup) {
+      deletionCleanup.attachments = deletionCleanup.attachments.filter(
+        (item) => item.id !== attachment.id
+      )
+    }
     void window.api.uploads.deleteUpload({ path: attachment.path }).catch((error) => {
       setAttachmentError(getErrorMessage(error))
     })
@@ -875,27 +908,36 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
 
     const deletedSessionId = sessionToDelete.id
     const isActiveSession = deletedSessionId === selectedSessionId
+    if (sessionDeletionCleanupRef.current[deletedSessionId]) {
+      setSessionToDelete(undefined)
+      return
+    }
     const storedDraft = composerDraftsRef.current[deletedSessionId]
-    const abandonedAttachments = storedDraft?.attachments ?? (isActiveSession ? attachments : [])
-    const abandonedTransfers =
-      storedDraft?.attachmentTransfers ?? (isActiveSession ? attachmentTransfers : [])
+    sessionDeletionCleanupRef.current[deletedSessionId] = {
+      attachments: [...(isActiveSession ? attachments : (storedDraft?.attachments ?? []))],
+      attachmentTransfers: [
+        ...(isActiveSession ? attachmentTransfers : (storedDraft?.attachmentTransfers ?? []))
+      ]
+    }
 
     setSessionToDelete(undefined)
     // Staged bytes and local draft state are owned by the session until runtime and durable deletion
     // both succeed. The store's successful deletion updates selection and lets the draft effect load
     // the fallback session without clearing that replacement draft here.
     void deleteRuntimeSession(deletedSessionId).then((deleted) => {
-      if (!deleted) return
+      const deletionCleanup = sessionDeletionCleanupRef.current[deletedSessionId]
+      delete sessionDeletionCleanupRef.current[deletedSessionId]
+      if (!deleted || !deletionCleanup) return
 
       delete composerDraftsRef.current[deletedSessionId]
-      for (const transfer of abandonedTransfers) {
+      for (const transfer of deletionCleanup.attachmentTransfers) {
         // Queued files have no controller yet. Mark every transfer before aborting the active one so
         // the serialized loop skips later entries after the in-flight request settles.
         cancelledAttachmentTransfersRef.current.add(transfer.transferId)
         attachmentTransferControllersRef.current[transfer.transferId]?.abort()
         void window.api.uploads.abortTransfer({ transferId: transfer.transferId })
       }
-      deleteAttachmentFiles(abandonedAttachments)
+      deleteAttachmentFiles(deletionCleanup.attachments)
     })
   }
 

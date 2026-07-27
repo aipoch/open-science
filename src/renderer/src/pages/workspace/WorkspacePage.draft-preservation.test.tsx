@@ -412,6 +412,150 @@ describe('WorkspacePage draft preservation', () => {
     expect(stageLocalFile).toHaveBeenCalledTimes(1)
   })
 
+  it('deletes an attachment that finishes while active-session deletion is pending', async () => {
+    await renderPage()
+
+    // Returning to A leaves an inactive-draft snapshot in composerDraftsRef; active live state must
+    // win over that older snapshot when deletion eventually succeeds.
+    await openSession('sess-b')
+    await openSession('sess-a')
+
+    const attachment = createAttachment('att-finished-during-delete')
+    let finishUpload: ((value: UploadedAttachment) => void) | undefined
+    stageLocalFile.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishUpload = resolve
+        })
+    )
+    let finishDeletion: (() => void) | undefined
+    runtime.deleteRuntimeSession.mockImplementationOnce(
+      (id: string) =>
+        new Promise((resolve) => {
+          finishDeletion = () => {
+            useSessionStore.getState().deleteSession(id)
+            resolve(true)
+          }
+        })
+    )
+
+    await act(async () => {
+      conversationProps.onStageAttachmentFiles([
+        new File(['data'], 'late.txt', { type: 'text/plain' })
+      ])
+      await Promise.resolve()
+    })
+
+    const sessionA = useSessionStore.getState().sessions.find((session) => session.id === 'sess-a')!
+    await act(async () => {
+      sidebarProps.onDeleteSession(sessionA)
+    })
+    await act(async () => {
+      deleteDialogProps.onConfirmDelete()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      finishUpload?.(attachment)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(conversationProps.attachments).toEqual([attachment])
+
+    await act(async () => {
+      finishDeletion?.()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(deleteUpload).toHaveBeenCalledWith({ path: attachment.path })
+  })
+
+  it('deletes a staged attachment when deletion settles before the upload continuation', async () => {
+    await renderPage()
+
+    const attachment = createAttachment('att-resolved-before-continuation')
+    let finishUpload: ((value: UploadedAttachment) => void) | undefined
+    stageLocalFile.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishUpload = resolve
+        })
+    )
+    let finishDeletion: (() => void) | undefined
+    runtime.deleteRuntimeSession.mockImplementationOnce(
+      (id: string) =>
+        new Promise((resolve) => {
+          finishDeletion = () => {
+            useSessionStore.getState().deleteSession(id)
+            resolve(true)
+          }
+        })
+    )
+
+    await act(async () => {
+      conversationProps.onStageAttachmentFiles([
+        new File(['data'], 'late-continuation.txt', { type: 'text/plain' })
+      ])
+      await Promise.resolve()
+    })
+    const sessionA = useSessionStore.getState().sessions.find((session) => session.id === 'sess-a')!
+    await act(async () => {
+      sidebarProps.onDeleteSession(sessionA)
+    })
+    await act(async () => {
+      deleteDialogProps.onConfirmDelete()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      // Resolving in this order queues the upload's inner continuation, then deletion. Deletion
+      // aborts the controller before WorkspacePage receives the staged attachment.
+      finishUpload?.(attachment)
+      finishDeletion?.()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(deleteUpload).toHaveBeenCalledWith({ path: attachment.path })
+  })
+
+  it('ignores a duplicate deletion request while the same session deletion is pending', async () => {
+    await renderPage()
+
+    const finishDeletions: Array<(deleted: boolean) => void> = []
+    runtime.deleteRuntimeSession.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishDeletions.push(resolve)
+        })
+    )
+    const sessionA = useSessionStore.getState().sessions.find((session) => session.id === 'sess-a')!
+
+    await act(async () => {
+      sidebarProps.onDeleteSession(sessionA)
+    })
+    await act(async () => {
+      deleteDialogProps.onConfirmDelete()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      sidebarProps.onDeleteSession(sessionA)
+    })
+    await act(async () => {
+      deleteDialogProps.onConfirmDelete()
+      await Promise.resolve()
+    })
+
+    expect(runtime.deleteRuntimeSession).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      finishDeletions[0]?.(false)
+      await Promise.resolve()
+    })
+  })
+
   it('keeps a stored draft and its staged files when session deletion fails', async () => {
     await renderPage()
 
