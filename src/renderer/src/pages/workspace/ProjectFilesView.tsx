@@ -1305,7 +1305,7 @@ const ProjectFilesViewContent = ({
                 <ToggleGroup.Item
                   value="grid"
                   aria-label="Grid view"
-                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 data-[state=on]:bg-muted data-[state=on]:text-text-000"
+                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
                 >
                   <LayoutGrid className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
                 </ToggleGroup.Item>
@@ -1317,7 +1317,7 @@ const ProjectFilesViewContent = ({
                 <ToggleGroup.Item
                   value="list"
                   aria-label="List view"
-                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 data-[state=on]:bg-muted data-[state=on]:text-text-000"
+                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
                 >
                   <List className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
                 </ToggleGroup.Item>

@@ -571,7 +571,7 @@ describe('ProjectFilesView', () => {
     expect(listFiles).toHaveBeenCalledTimes(fileCalls)
   })
 
-  it('uses the standard file-row treatment and tooltips for the view controls', async () => {
+  it('uses a strong selected state, standard focus treatment, and view tooltips', async () => {
     await renderView([
       createSession({
         artifacts: [
@@ -587,12 +587,21 @@ describe('ProjectFilesView', () => {
     const gridControl = container.querySelector<HTMLButtonElement>('[aria-label="Grid view"]')
     const listControl = container.querySelector<HTMLButtonElement>('[aria-label="List view"]')
 
+    expect(gridControl?.getAttribute('aria-checked')).toBe('true')
+    expect(listControl?.getAttribute('aria-checked')).toBe('false')
+    expect(gridControl?.className).toContain('aria-checked:bg-bg-400')
+    expect(gridControl?.className).toContain('aria-checked:hover:bg-bg-400')
+    expect(gridControl?.className).toContain('aria-checked:shadow-sm')
+    expect(listControl?.className).toContain('aria-checked:bg-bg-400')
+
     await act(async () => gridControl?.focus())
     expect(document.body.textContent).toContain('Grid view')
     expect(gridControl?.className).toContain('focus-visible:ring-3')
     expect(listControl?.className).toContain('focus-visible:ring-3')
 
     await act(async () => listControl?.click())
+    expect(gridControl?.getAttribute('aria-checked')).toBe('false')
+    expect(listControl?.getAttribute('aria-checked')).toBe('true')
     const listRow = container.querySelector<HTMLButtonElement>(
       '[aria-label="Preview generated file result.txt"]'
     )?.parentElement
