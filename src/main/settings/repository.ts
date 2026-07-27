@@ -406,9 +406,7 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
         // Releases before codexAuthMode normalized both setup choices to the subscription id, so
         // that shape is ambiguous. Prefer isolated to preserve the established runtime behavior;
         // legacy shared users can explicitly re-import into the new app-owned profile.
-        codexAuthMode:
-          selectedCodexProvider.codexAuthMode ??
-          (selectedCodexProvider.type === 'codex-shared' ? 'imported' : 'isolated'),
+        codexAuthMode: selectedCodexProvider.codexAuthMode ?? 'isolated',
         name: codexSubscriptionProviderIdentity().name
       }
     : undefined

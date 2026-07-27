@@ -91,6 +91,11 @@ const parseTomlString = (literal: string): string | undefined => {
 const parseTomlKey = (literal: string): string | undefined =>
   /^[A-Za-z0-9_-]+$/.test(literal) ? literal : parseTomlString(literal)
 
+const parseTomlAssignmentKey = (line: string): string | undefined => {
+  const match = line.match(/^\s*("(?:\\.|[^"\\])*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.|\s*=)/)
+  return match ? parseTomlKey(match[1]) : undefined
+}
+
 const parseTomlScalarAssignment = (
   line: string
 ): { key: string; value: TomlScalar } | undefined => {
@@ -146,6 +151,17 @@ const isLoopbackHostname = (hostname: string): boolean => {
     : ipVersion === 6 && unwrappedHostname === '::1'
 }
 
+// These provider fields can carry credentials or make the route depend on values that the isolated
+// profile deliberately does not copy. Reject the whole route instead of persisting a sanitized but
+// unusable endpoint. Scalar retry/timing options remain safe to omit.
+const UNSAFE_IMPORTED_ROUTE_KEYS = new Set([
+  'env_key',
+  'experimental_bearer_token',
+  'http_headers',
+  'env_http_headers',
+  'query_params'
+])
+
 // Import only the active provider's non-secret route. This preserves a working local Codex network
 // path (for example a loopback proxy endpoint) without copying models, MCP servers, hooks,
 // headers, bearer tokens, or any other user configuration into the app-owned profile.
@@ -173,10 +189,20 @@ const extractCodexProviderRoute = (configToml: string): ImportedCodexProviderRou
 
   for (const line of lines) {
     if (/^\s*\[/.test(line)) {
-      inActiveProviderTable = parseModelProviderTableId(line) === activeProviderId
+      const providerTableId = parseModelProviderTableId(line)
+      const providerTableRootId = parseModelProviderTableRootId(line)
+      // Nested provider tables are not serialized into the app-owned profile and commonly carry
+      // headers/query parameters. Treat any nested dependency on the active route as incompatible.
+      if (providerTableRootId === activeProviderId && providerTableId !== activeProviderId) {
+        return undefined
+      }
+      inActiveProviderTable = providerTableId === activeProviderId
       continue
     }
     if (!inActiveProviderTable) continue
+
+    const assignmentKey = parseTomlAssignmentKey(line)
+    if (assignmentKey && UNSAFE_IMPORTED_ROUTE_KEYS.has(assignmentKey)) return undefined
 
     const assignment = parseTomlScalarAssignment(line)
     if (!assignment) continue

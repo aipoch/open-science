@@ -213,7 +213,6 @@ describe('importCodexAuthentication', () => {
           "'supports_websockets' = false",
           '"wire_api" = "responses"',
           '"base_url" = "http://127.0.0.1:1087/v1"',
-          'experimental_bearer_token = "must-not-be-copied"',
           ''
         ].join('\n')
       )
@@ -245,6 +244,47 @@ describe('importCodexAuthentication', () => {
       expect(await readFile(join(destination, 'config.toml'), 'utf8')).toBe(
         'model = "app-default"\n'
       )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['inline bearer token', 'experimental_bearer_token = "private-token"'],
+    ['API-key environment variable', 'env_key = "PRIVATE_TOKEN"'],
+    ['literal HTTP headers', 'http_headers = { Authorization = "private-token" }'],
+    ['dotted HTTP headers', 'http_headers.Authorization = "private-token"'],
+    ['environment HTTP headers', 'env_http_headers = { Authorization = "PRIVATE_TOKEN" }'],
+    ['query parameters', 'query_params = { api_key = "private-token" }'],
+    [
+      'nested HTTP headers',
+      '[model_providers.subscription-route.http_headers]\nAuthorization = "private-token"'
+    ]
+  ])('does not import a loopback route that depends on %s', async (_label, credentialLine) => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-route-secret-reject-'))
+    const source = join(root, 'source')
+    const destination = join(root, 'destination')
+    try {
+      await mkdir(source, { recursive: true })
+      await writeFile(join(source, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+      await writeFile(
+        join(source, 'config.toml'),
+        [
+          'model_provider = "subscription-route"',
+          '',
+          '[model_providers.subscription-route]',
+          'name = "OpenAI"',
+          'requires_openai_auth = true',
+          'wire_api = "responses"',
+          'base_url = "http://127.0.0.1:1087/v1"',
+          credentialLine,
+          ''
+        ].join('\n')
+      )
+
+      await importCodexAuthentication(source, destination)
+
+      expect(existsSync(join(destination, 'config.toml'))).toBe(false)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
