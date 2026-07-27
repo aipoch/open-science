@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ComputeJob } from '../../shared/compute'
 import type { ComputeHostRepository } from './repository'
@@ -108,6 +112,54 @@ const sampleHost = (): import('../../shared/compute').ComputeHost => ({
   updatedAt: 1
 })
 
+const launcherFixtures: string[] = []
+
+afterEach(() => {
+  for (const fixture of launcherFixtures.splice(0)) {
+    rmSync(fixture, { recursive: true, force: true })
+  }
+})
+
+const runLauncher = (
+  command: string,
+  bashrc?: string
+): { result: ReturnType<typeof spawnSync>; exitCode: string; stdout: string; stderr: string } => {
+  const workdir = mkdtempSync(join(tmpdir(), 'open-science-job-launcher-'))
+  launcherFixtures.push(workdir)
+  const home = join(workdir, 'home')
+  const bin = join(workdir, 'bin')
+  mkdirSync(home)
+  mkdirSync(bin)
+
+  // Keep this test portable to hosts without GNU timeout while exercising the generated script's
+  // command and exit-code lifecycle. The production launcher still invokes timeout(1).
+  const timeoutShim = join(bin, 'timeout')
+  writeFileSync(timeoutShim, '#!/usr/bin/env bash\nshift 5\nexec "$@"\n')
+  chmodSync(timeoutShim, 0o755)
+
+  if (bashrc !== undefined) writeFileSync(join(home, '.bashrc'), bashrc)
+  writeFileSync(join(workdir, 'command.sh'), command)
+  writeFileSync(join(workdir, 'launcher.sh'), buildLauncherScript(3600))
+
+  const result = spawnSync('bash', ['launcher.sh'], {
+    cwd: workdir,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: home,
+      PATH: `${bin}:${process.env.PATH ?? ''}`,
+      BASH_ENV: ''
+    }
+  })
+
+  return {
+    result,
+    exitCode: readFileSync(join(workdir, 'exit_code'), 'utf8'),
+    stdout: readFileSync(join(workdir, 'stdout'), 'utf8'),
+    stderr: readFileSync(join(workdir, 'stderr'), 'utf8')
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Pure function tests
 // ---------------------------------------------------------------------------
@@ -127,8 +179,54 @@ describe('buildLauncherScript', () => {
 
   it('isolates login shell stderr using exec pattern', () => {
     const script = buildLauncherScript(3600)
-    // Should use -c with exec to prevent login shell initialization messages from polluting stderr
-    expect(script).toContain("bash -l -c 'exec bash command.sh'")
+    // The initialized shell execs the workload so its exit code reaches the normal job lifecycle.
+    expect(script).toContain('exec bash command.sh')
+    expect(script).toContain('if [ -r ~/.bashrc ]; then . ~/.bashrc || exit $?; fi')
+  })
+
+  it('sources a readable .bashrc before the user command runs', () => {
+    const { exitCode, stdout, stderr } = runLauncher(
+      'printf %s "$COMPUTE_BASHRC_MARKER"',
+      'export COMPUTE_BASHRC_MARKER=from-bashrc\n'
+    )
+
+    expect(exitCode).toBe('0\n')
+    expect(stdout).toBe('from-bashrc')
+    expect(stderr).toBe('')
+  })
+
+  it('treats a missing .bashrc as a no-op', () => {
+    const { exitCode, stdout, stderr } = runLauncher("printf '%s' no-bashrc")
+
+    expect(exitCode).toBe('0\n')
+    expect(stdout).toBe('no-bashrc')
+    expect(stderr).toBe('')
+  })
+
+  it('continues when .bashrc returns early for a non-interactive shell', () => {
+    const { exitCode, stdout, stderr } = runLauncher(
+      'printf %s "${COMPUTE_BASHRC_MARKER-unset}"',
+      'case $- in *i*) ;; *) return ;; esac\nexport COMPUTE_BASHRC_MARKER=from-bashrc\n'
+    )
+
+    expect(exitCode).toBe('0\n')
+    expect(stdout).toBe('unset')
+    expect(stderr).toBe('')
+  })
+
+  it('persists a .bashrc initialization failure as the job exit code', () => {
+    const { exitCode, stdout } = runLauncher("printf '%s' must-not-run", 'return 23\n')
+
+    expect(exitCode).toBe('23\n')
+    expect(stdout).toBe('')
+  })
+
+  it('keeps literal command content intact until the initialized shell evaluates command.sh', () => {
+    const command = "printf '%s' 'literal $HOME $(printf altered) `uname` \"quotes\"'"
+    const { exitCode, stdout } = runLauncher(command, 'export UNUSED_MARKER=initialized\n')
+
+    expect(exitCode).toBe('0\n')
+    expect(stdout).toBe('literal $HOME $(printf altered) `uname` "quotes"')
   })
 })
 

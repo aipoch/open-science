@@ -112,7 +112,10 @@ const hostCompute = {
     return computeRpc({ op: 'list_compute', session_id: COMPUTE_SESSION_ID })
   },
   // Bind a thin handle to one provider (no network call). call_command runs one short remote command;
-  // login_shell defaults to true (loads the login shell so module/conda PATH is visible), timeout_seconds
+  // login_shell defaults to true (runs login profiles, then attempts a readable ~/.bashrc, before the
+  // command). A .bashrc can deliberately return early for non-interactive shells. false performs no
+  // shell initialization.
+  // timeout_seconds
   // is optional (the service applies its own default when omitted). Session/project context is threaded
   // from the spawn env so the approval broker can remember a grant for this conversation/project.
   //
