@@ -7,6 +7,7 @@ import {
   WINDOW_FIND_READY_CHANNEL,
   WINDOW_FIND_UNREADY_CHANNEL,
   announceWindowFindReady,
+  isWindowFindAppearance,
   isCloseWindowChord,
   isFindInPageChord,
   subscribeCloseActivePane,
@@ -99,6 +100,19 @@ describe('isFindInPageChord', () => {
     expect(isFindInPageChord(chord({ key: 'f', control: true, isAutoRepeat: true }), 'linux')).toBe(
       false
     )
+  })
+})
+
+describe('isWindowFindAppearance', () => {
+  it('accepts the typed light/dark appearance contract', () => {
+    expect(isWindowFindAppearance({ theme: 'light', followsSystem: false })).toBe(true)
+    expect(isWindowFindAppearance({ theme: 'dark', followsSystem: true })).toBe(true)
+  })
+
+  it('rejects malformed appearance payloads received over IPC', () => {
+    expect(isWindowFindAppearance(null)).toBe(false)
+    expect(isWindowFindAppearance({ theme: 'sepia', followsSystem: false })).toBe(false)
+    expect(isWindowFindAppearance({ theme: 'dark', followsSystem: 'yes' })).toBe(false)
   })
 })
 

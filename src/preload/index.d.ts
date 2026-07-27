@@ -597,6 +597,7 @@ interface OpenScienceAPI {
     // Overlay-only: main signals the bar was shown; the overlay asks main to hide it.
     onShowWindowFind?(listener: AcpListener<WindowFindAppearance>): RemoveListener
     onWindowFindAppearance?(listener: AcpListener<WindowFindAppearance>): RemoveListener
+    announceWindowFindAppearance?(appearance: WindowFindAppearance): void
     closeFind?(): void
     // Fires when main asks to confirm a close/quit; the renderer renders the modal and replies.
     onCloseConfirmRequest?(listener: (payload: CloseConfirmRequest) => void): RemoveListener

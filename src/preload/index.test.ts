@@ -98,6 +98,10 @@ type PreloadApi = {
     onWindowFindAppearance?: (
       listener: (appearance: { theme: 'light' | 'dark'; followsSystem: boolean }) => void
     ) => unknown
+    announceWindowFindAppearance?: (appearance: {
+      theme: 'light' | 'dark'
+      followsSystem: boolean
+    }) => void
     announceWindowFindReady?: () => unknown
   }
 }
@@ -164,6 +168,14 @@ describe('preload bridge — window find IPC channels', () => {
     api.window.announceWindowFindReady?.()
 
     expect(sendMock).toHaveBeenCalledWith('shortcut:window-find-ready')
+  })
+
+  it('forwards renderer theme changes to main as a typed appearance payload', () => {
+    const appearance = { theme: 'dark' as const, followsSystem: false }
+
+    api.window.announceWindowFindAppearance?.(appearance)
+
+    expect(sendMock).toHaveBeenCalledWith('window:find-appearance-changed', appearance)
   })
 })
 

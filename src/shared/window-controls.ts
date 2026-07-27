@@ -40,6 +40,10 @@ export const WINDOW_FIND_SHOW_CHANNEL = 'window:find-show'
 // separate from SHOW so a late theme result never steals focus or re-runs the remembered query.
 export const WINDOW_FIND_APPEARANCE_CHANNEL = 'window:find-appearance'
 
+// Main renderer -> main: the app's resolved appearance changed. Main validates and caches this on the
+// window-owned overlay manager, which forwards it if the find bar is currently open.
+export const WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL = 'window:find-appearance-changed'
+
 // Overlay -> main: the user closed the find bar — hide the overlay and release the main-window focus.
 export const WINDOW_FIND_CLOSE_CHANNEL = 'window:find-close'
 
@@ -60,6 +64,15 @@ export type WindowFindResult = {
 export type WindowFindAppearance = {
   theme: 'light' | 'dark'
   followsSystem: boolean
+}
+
+export const isWindowFindAppearance = (value: unknown): value is WindowFindAppearance => {
+  if (!value || typeof value !== 'object') return false
+  const appearance = value as Partial<WindowFindAppearance>
+  return (
+    (appearance.theme === 'light' || appearance.theme === 'dark') &&
+    typeof appearance.followsSystem === 'boolean'
+  )
 }
 
 // The minimal IPC surface the renderer handshake needs, kept structural so the wiring can be unit-tested

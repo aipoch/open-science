@@ -4,6 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Find in window</title>
+    <script>
+      // Before the renderer-owned appearance arrives, match the OS for the first paint. The overlay
+      // logic removes this class for an explicit light preference before the view is reused.
+      document.documentElement.classList.toggle(
+        'dark',
+        window.matchMedia?.('(prefers-color-scheme: dark)').matches === true
+      )
+    </script>
     <style>
       :root {
         color-scheme: light;

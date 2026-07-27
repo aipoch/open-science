@@ -36,6 +36,7 @@ type OverlayWebContents = {
 type OverlayView = {
   webContents: OverlayWebContents
   setBounds(bounds: { x: number; y: number; width: number; height: number }): void
+  setBackgroundColor(color: string): void
   destroy?(): void
 }
 
@@ -46,11 +47,7 @@ type OverlayMainWindow = {
   on(event: 'resize', listener: () => void): void
   removeListener?(event: 'resize', listener: () => void): void
   off?(event: 'resize', listener: () => void): void
-  webContents: {
-    executeJavaScript(code: string): Promise<unknown>
-    focus(): void
-    stopFindInPage(action: 'clearSelection'): void
-  }
+  webContents: { focus(): void; stopFindInPage(action: 'clearSelection'): void }
 }
 
 export type FindOverlayDeps = {
@@ -71,33 +68,13 @@ export type FindOverlayManager = {
   close: () => void
   destroy: () => void
   isOpen: () => boolean
+  updateAppearance: (appearance: WindowFindAppearance) => void
 }
 
 const ZERO_BOUNDS = { x: 0, y: 0, width: 0, height: 0 }
 const FALLBACK_APPEARANCE: WindowFindAppearance = { theme: 'light', followsSystem: true }
-
-// The main renderer can be http://localhost in development while the overlay is file://, so their
-// localStorage is intentionally not shared. Read the renderer's already-applied class and its theme
-// preference in the renderer origin, then send only the small appearance contract to the overlay.
-const READ_APPEARANCE_SCRIPT = `(() => {
-  let preference = 'system'
-  try {
-    preference = window.localStorage.getItem('open-science-theme') ?? 'system'
-  } catch {}
-  return {
-    theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
-    followsSystem: preference !== 'light' && preference !== 'dark'
-  }
-})()`
-
-const isWindowFindAppearance = (value: unknown): value is WindowFindAppearance => {
-  if (!value || typeof value !== 'object') return false
-  const appearance = value as Partial<WindowFindAppearance>
-  return (
-    (appearance.theme === 'light' || appearance.theme === 'dark') &&
-    typeof appearance.followsSystem === 'boolean'
-  )
-}
+const LIGHT_BACKGROUND = '#fafaf8'
+const DARK_BACKGROUND = '#1a1a18'
 
 // Owns the find overlay WebContentsView for one main window. The view is created lazily on first open
 // and stays attached for the life of the window: open/close toggle its bounds (real vs. zero) rather
@@ -108,8 +85,10 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
   let view: OverlayView | null = null
   let loadPromise: Promise<void> | null = null
   let opened = false
-  let showRequestId = 0
   let cachedAppearance = FALLBACK_APPEARANCE
+
+  const backgroundFor = (appearance: WindowFindAppearance): string =>
+    appearance.theme === 'dark' ? DARK_BACKGROUND : LIGHT_BACKGROUND
 
   const position = (): void => {
     if (!view) return
@@ -118,26 +97,16 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
   }
 
   const onResize = (): void => {
-    if (opened) position()
+    if (opened && !loadPromise) position()
   }
   deps.mainWindow.on('resize', onResize)
 
   const close = (): void => {
     if (!opened) return
     opened = false
-    showRequestId += 1
     view?.setBounds(ZERO_BOUNDS)
     deps.mainWindow.webContents.stopFindInPage('clearSelection')
     deps.mainWindow.webContents.focus()
-  }
-
-  const readAppearance = async (): Promise<WindowFindAppearance | null> => {
-    try {
-      const appearance = await deps.mainWindow.webContents.executeJavaScript(READ_APPEARANCE_SCRIPT)
-      return isWindowFindAppearance(appearance) ? appearance : null
-    } catch {
-      return null
-    }
   }
 
   const appearancesEqual = (left: WindowFindAppearance, right: WindowFindAppearance): boolean =>
@@ -145,29 +114,10 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
 
   const showLoadedView = (): void => {
     if (!opened || !view || loadPromise) return
-    const pendingView = view
-    const requestId = ++showRequestId
-    const shownAppearance = cachedAppearance
-    // Keep the shortcut hot path synchronous: once the page is loaded, focus and SHOW immediately so
-    // keystrokes following Cmd/Ctrl+F land in the query field. Theme freshness is less important than
-    // input ownership and is reconciled below without refocusing or re-running the query.
-    pendingView.webContents.focus()
-    pendingView.webContents.send(WINDOW_FIND_SHOW_CHANNEL, shownAppearance)
-    void readAppearance().then((appearance) => {
-      if (
-        !appearance ||
-        requestId !== showRequestId ||
-        !opened ||
-        view !== pendingView ||
-        loadPromise
-      ) {
-        return
-      }
-      cachedAppearance = appearance
-      if (!appearancesEqual(appearance, shownAppearance)) {
-        pendingView.webContents.send(WINDOW_FIND_APPEARANCE_CHANNEL, appearance)
-      }
-    })
+    // Keep the shortcut path synchronous once the static overlay page is loaded so keystrokes
+    // immediately following Cmd/Ctrl+F land in the query field.
+    view.webContents.focus()
+    view.webContents.send(WINDOW_FIND_SHOW_CHANNEL, cachedAppearance)
   }
 
   return {
@@ -179,12 +129,15 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
           webPreferences: { preload: deps.preloadPath, sandbox: true, contextIsolation: true }
         })
         const pendingView = view
+        pendingView.setBounds(ZERO_BOUNDS)
+        pendingView.setBackgroundColor(backgroundFor(cachedAppearance))
         const firstLoad = view.webContents.loadFile(deps.overlayHtmlPath)
         loadPromise = firstLoad
         void firstLoad.then(
           () => {
             if (loadPromise !== firstLoad) return
             loadPromise = null
+            if (opened) position()
             showLoadedView()
           },
           () => {
@@ -200,11 +153,22 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
         deps.registerOwner?.(view.webContents, { mainWindow: deps.mainWindow, closeOverlay: close })
       }
       opened = true
-      position()
-      showLoadedView()
+      if (!loadPromise) {
+        position()
+        showLoadedView()
+      }
     },
 
     close,
+
+    updateAppearance: (appearance) => {
+      if (appearancesEqual(appearance, cachedAppearance)) return
+      cachedAppearance = appearance
+      view?.setBackgroundColor(backgroundFor(appearance))
+      if (opened && view && !loadPromise) {
+        view.webContents.send(WINDOW_FIND_APPEARANCE_CHANNEL, appearance)
+      }
+    },
 
     destroy: () => {
       ;(deps.mainWindow.removeListener ?? deps.mainWindow.off)?.('resize', onResize)
@@ -212,7 +176,6 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
       view = null
       loadPromise = null
       opened = false
-      showRequestId += 1
     }
   }
 }

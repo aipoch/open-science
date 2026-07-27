@@ -39,7 +39,8 @@ const mocks = vi.hoisted(() => {
     },
     sessionPersistenceReady: true,
     startupView: 'home' as 'home' | 'onboarding',
-    getInfo: vi.fn()
+    getInfo: vi.fn(),
+    syncWindowFindAppearance: vi.fn()
   }
 })
 
@@ -58,6 +59,9 @@ vi.mock('@/hooks/useLifecycleSync', () => ({
     dismissNotice: vi.fn(),
     viewNotice: vi.fn()
   })
+}))
+vi.mock('@/hooks/useWindowFindAppearanceSync', () => ({
+  useWindowFindAppearanceSync: mocks.syncWindowFindAppearance
 }))
 vi.mock('@/stores/navigation-store', () => ({
   useNavigationStore: Object.assign(
@@ -163,6 +167,7 @@ describe('App startup routing', () => {
     mocks.startupView = 'home'
     mocks.sessionPersistenceReady = true
     mocks.deepLinkNavigation.mockClear()
+    mocks.syncWindowFindAppearance.mockClear()
     mocks.getInfo.mockResolvedValue({
       dataRoot: '/workspace/OpenScience',
       dataRootMissing: false,
@@ -204,6 +209,7 @@ describe('App startup routing', () => {
     await render()
 
     expect(container.innerHTML).toBe('')
+    expect(mocks.syncWindowFindAppearance).toHaveBeenCalledTimes(1)
   })
 
   it('passes session persistence readiness to deep-link navigation', async () => {

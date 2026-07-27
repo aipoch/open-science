@@ -140,6 +140,8 @@ describe('createFindOverlay', () => {
     expect(overlayHtml).toMatch(/\.btn\s*\{[^}]*border-radius:\s*6px/s)
     expect(overlayHtml).toMatch(/\.btn\s*\{[^}]*transition:\s*(?:background-color|color)/s)
     expect(overlayHtml).toContain('@media (prefers-reduced-motion: reduce)')
+    expect(overlayHtml).toContain("matchMedia?.('(prefers-color-scheme: dark)')")
+    expect(overlayHtml.indexOf('matchMedia?.')).toBeLessThan(overlayHtml.indexOf('<style>'))
   })
 
   it('on show: focuses input and restores remembered query, searching with requestId 1', () => {
@@ -177,6 +179,16 @@ describe('createFindOverlay', () => {
     ctx.emitShow({ theme: 'dark', followsSystem: false })
 
     expect(document.documentElement.classList.contains('dark')).toBe(true)
+  })
+
+  it('lets an explicit light appearance override the dark-system startup fallback', () => {
+    createFindOverlay(ctx.deps)
+    ctx.emitSystemTheme(true)
+    document.documentElement.classList.add('dark')
+
+    ctx.emitShow({ theme: 'light', followsSystem: false })
+
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
   })
 
   it('live-follows OS theme changes while the app preference is system', () => {

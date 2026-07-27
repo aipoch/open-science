@@ -18,6 +18,7 @@ import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
 import { useCloseActivePaneShortcut } from '@/hooks/useCloseActivePaneShortcut'
 import { useLifecycleSync } from '@/hooks/useLifecycleSync'
+import { useWindowFindAppearanceSync } from '@/hooks/useWindowFindAppearanceSync'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -35,6 +36,7 @@ const App = (): React.JSX.Element | null => {
   const view = useNavigationStore((state) => state.view)
   // Cmd+W / Ctrl+W closes the open preview panel before it closes the window.
   useCloseActivePaneShortcut()
+  useWindowFindAppearanceSync()
   const loadProjects = useProjectStore((state) => state.loadProjects)
   const isSettingsLoaded = useSettingsStore((state) => state.isLoaded)
   const onboardingCompletedAt = useSettingsStore((state) => state.onboardingCompletedAt)

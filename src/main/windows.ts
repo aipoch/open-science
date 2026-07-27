@@ -17,10 +17,12 @@ import {
   CLOSE_ACTIVE_PANE_CHANNEL,
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
   CLOSE_ACTIVE_PANE_UNREADY_CHANNEL,
+  WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL,
   WINDOW_FIND_READY_CHANNEL,
   WINDOW_FIND_UNREADY_CHANNEL,
   isCloseWindowChord,
   isFindInPageChord,
+  isWindowFindAppearance,
   type CloseClassification,
   type CloseConfirmChoice
 } from '../shared/window-controls'
@@ -130,10 +132,15 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
     windowFindListenerReady = false
     findOverlay.close()
   }
+  const onWindowFindAppearanceChanged = (event: IpcMainEvent, appearance: unknown): void => {
+    if (event.sender !== window.webContents || !isWindowFindAppearance(appearance)) return
+    findOverlay.updateAppearance(appearance)
+  }
   ipcMain.on(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)
   ipcMain.on(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onListenerGone)
   ipcMain.on(WINDOW_FIND_READY_CHANNEL, onWindowFindReady)
   ipcMain.on(WINDOW_FIND_UNREADY_CHANNEL, onWindowFindGone)
+  ipcMain.on(WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL, onWindowFindAppearanceChanged)
   // A top-level document swap replaces the mounted hook, which must re-subscribe; a dead render process
   // took its listener with it. Both revoke readiness until the next READY handshake. Gate on the main
   // frame and a real document change so a dynamic preview iframe loading (or a same-document hash /
@@ -162,6 +169,7 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
     ipcMain.removeListener(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onListenerGone)
     ipcMain.removeListener(WINDOW_FIND_READY_CHANNEL, onWindowFindReady)
     ipcMain.removeListener(WINDOW_FIND_UNREADY_CHANNEL, onWindowFindGone)
+    ipcMain.removeListener(WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL, onWindowFindAppearanceChanged)
     findOverlay.destroy()
   })
 
