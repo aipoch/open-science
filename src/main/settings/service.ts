@@ -85,6 +85,7 @@ import {
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
   providerEndpoints,
+  resolveCodexSubscriptionType,
   requiresChatCompletionsBridge
 } from '../../shared/settings'
 import type { PackageMirror } from '../../shared/mirror'
@@ -2881,7 +2882,9 @@ class SettingsService {
             // action (loginIsolatedCodex), so testing or saving a provider never pops a browser the
             // user didn't ask for.
             await this.codexAuth.getStatus(
-              resolved.provider.type === 'codex-shared' ? 'shared' : 'isolated'
+              resolveCodexSubscriptionType(resolved.provider) === 'codex-shared'
+                ? 'shared'
+                : 'isolated'
             ),
             'Not signed in. Use Sign in to connect your ChatGPT account.'
           )

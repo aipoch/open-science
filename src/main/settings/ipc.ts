@@ -401,16 +401,17 @@ const registerSettingsIpcHandlers = ({
     const result = await service.loginIsolatedCodex()
 
     // A fresh login changes the credentials the live agent relies on; reconnect so it picks them
-    // up. Skip when the outcome was discarded by a mid-flow switch to shared — reconnecting the
-    // now-shared runtime would be redundant (its credentials didn't change).
-    if (result.ok) {
+    // up. Skip when the outcome was discarded by a mid-flow switch to imported auth — reconnecting
+    // the imported runtime would be redundant (its credentials didn't change).
+    if (result.ok && result.applied !== false) {
       const snapshot = await service.getSettingsView()
       const active = snapshot.providers.find(
         (provider) => provider.id === snapshot.activeProviderId
       )
       if (
         snapshot.activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID &&
-        active?.type === 'codex-isolated'
+        active?.type === 'codex-isolated' &&
+        active.codexAuthMode === 'isolated'
       ) {
         onActiveProviderChanged?.()
       }

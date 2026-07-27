@@ -500,13 +500,15 @@ describe('SettingsService: providers', () => {
     expect((await repository.getSettings()).providers).toEqual([])
   })
 
-  it('validates imported and in-app subscription setup through the isolated status check', async () => {
+  it('validates imported and in-app subscription setup through their matching status checks', async () => {
     const codexAuth: CodexAuthControllerPort = {
-      getStatus: vi.fn().mockResolvedValue({
-        mode: 'shared',
-        supported: true,
-        authenticated: true
-      }),
+      getStatus: vi.fn((mode) =>
+        Promise.resolve({
+          mode,
+          supported: true,
+          authenticated: true
+        })
+      ),
       loginIsolated: vi.fn().mockResolvedValue({
         mode: 'isolated',
         supported: true,
@@ -521,16 +523,44 @@ describe('SettingsService: providers', () => {
     await expect(
       service.validateProvider({ providerId: CODEX_SHARED_PROVIDER_ID })
     ).resolves.toMatchObject({ ok: true })
+    expect(codexAuth.getStatus).toHaveBeenNthCalledWith(1, 'shared')
     await service.upsertProvider({ type: 'codex-isolated' })
     await expect(
       service.validateProvider({ providerId: CODEX_ISOLATED_PROVIDER_ID })
     ).resolves.toMatchObject({ ok: true })
-    expect(codexAuth.getStatus).toHaveBeenCalledWith('isolated')
+    expect(codexAuth.getStatus).toHaveBeenNthCalledWith(2, 'isolated')
     // Validation never opens the browser login; that is the explicit sign-in action's job.
     expect(codexAuth.loginIsolated).not.toHaveBeenCalled()
 
     const stored = await repository.getSettings()
     expect(stored.providers.every((provider) => provider.lastValidatedAt !== undefined)).toBe(true)
+  })
+
+  it('reports imported login guidance when imported subscription auth is unavailable', async () => {
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn((mode) =>
+        Promise.resolve({
+          mode,
+          supported: true,
+          authenticated: false
+        })
+      ),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
+    const service = createService(undefined, { codexAuth })
+    await service.upsertProvider({ type: 'codex-shared' })
+
+    await expect(
+      service.validateProvider({ providerId: CODEX_SHARED_PROVIDER_ID })
+    ).resolves.toMatchObject({
+      ok: false,
+      category: 'auth',
+      message:
+        'No existing Codex login was found. Run `codex login` or use the isolated Open Science login.'
+    })
+    expect(codexAuth.getStatus).toHaveBeenCalledWith('shared')
   })
 
   it('does not apply a pending Codex validation after the subscription auth mode changes', async () => {
