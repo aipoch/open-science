@@ -102,6 +102,9 @@ type TargetOptions = {
   isFork?: boolean
   forkMode?: 'disabled' | 'manual' | 'automatic'
   reviewMode?: 'both' | 'correctness' | 'architecture' | 'disabled'
+  credentialPairs?: Array<'review' | 'correctness' | 'architecture' | 'shared'>
+  credentialKeys?: Array<'review' | 'correctness' | 'architecture' | 'shared'>
+  credentialBaseUrls?: Array<'review' | 'correctness' | 'architecture' | 'shared'>
 }
 
 function runTarget(options: TargetOptions = {}): {
@@ -123,6 +126,9 @@ printf '%s' "$PR_JSON"
 `
   )
   const event = options.event ?? 'pull_request_target'
+  const credentialPairs = options.credentialPairs ?? ['shared']
+  const credentialKeys = options.credentialKeys ?? credentialPairs
+  const credentialBaseUrls = options.credentialBaseUrls ?? credentialPairs
   const result = spawnSync(
     'bash',
     ['-c', getRun(mainWorkflow, 'review_target', 'Resolve pull request metadata')],
@@ -149,6 +155,14 @@ printf '%s' "$PR_JSON"
         CODEX_REVIEW_AUTH_MODE: options.authMode ?? 'subscription',
         CODEX_REVIEW_MODE: options.reviewMode ?? 'correctness',
         ENABLE_CODEX_REVIEW: options.enabled ?? 'true',
+        REVIEW_API_KEY_CONFIGURED: String(credentialKeys.includes('review')),
+        REVIEW_BASE_URL_CONFIGURED: String(credentialBaseUrls.includes('review')),
+        CORRECTNESS_API_KEY_CONFIGURED: String(credentialKeys.includes('correctness')),
+        CORRECTNESS_BASE_URL_CONFIGURED: String(credentialBaseUrls.includes('correctness')),
+        ARCHITECTURE_API_KEY_CONFIGURED: String(credentialKeys.includes('architecture')),
+        ARCHITECTURE_BASE_URL_CONFIGURED: String(credentialBaseUrls.includes('architecture')),
+        SHARED_API_KEY_CONFIGURED: String(credentialKeys.includes('shared')),
+        SHARED_BASE_URL_CONFIGURED: String(credentialBaseUrls.includes('shared')),
         REVIEW_EVENT: event,
         GITHUB_OUTPUT: output
       }
@@ -169,6 +183,8 @@ type AuthOptions = {
   installAvailable?: boolean
   isFork?: boolean
   openAiApiKey?: string
+  sandboxAvailable?: boolean
+  sandboxProbeAvailable?: boolean
   subscriptionAvailable?: boolean
 }
 
@@ -200,6 +216,15 @@ if [[ -z "\${CODEX_HOME:-}" || ! -s "$CODEX_HOME/auth.json" ]]; then
   echo 'staged subscription credential is unavailable' >&2
   exit 2
 fi
+if [[ "\${1:-}" == 'sandbox' ]]; then
+  if [[ "$SANDBOX_PROBE_AVAILABLE" != 'true' ]]; then
+    exit 4
+  fi
+  if [[ " $* " == *'/auth.json'* ]]; then
+    exit 1
+  fi
+  exit 0
+fi
 if [[ "$SUBSCRIPTION_AVAILABLE" != 'true' ]]; then
   echo 'subscription authentication rejected' >&2
   exit 1
@@ -218,7 +243,10 @@ if [[ "$1" == '-u' && "$2" == 'nobody' && "$3" == '--' ]]; then
   shift 3
   if [[ "$1" == 'env' && "$2" == '-i' ]]; then
     shift 2
-    exec env -i SUBSCRIPTION_AVAILABLE="$SUBSCRIPTION_AVAILABLE" "$@"
+    exec env -i \
+      SANDBOX_PROBE_AVAILABLE="$SANDBOX_PROBE_AVAILABLE" \
+      SUBSCRIPTION_AVAILABLE="$SUBSCRIPTION_AVAILABLE" \
+      "$@"
   fi
 fi
 exec "$@"
@@ -237,6 +265,7 @@ exec "$@"
         CODEX_AUTH_MODE: options.authMode ?? 'api-key',
         CODEX_BASE_URL: options.baseUrl ?? 'https://api.openai.com',
         CODEX_INSTALL_OUTCOME: options.installAvailable === false ? 'failure' : 'success',
+        CODEX_SANDBOX_OUTCOME: options.sandboxAvailable === false ? 'failure' : 'success',
         CODEX_MODEL: 'gpt-5.6-sol',
         GITHUB_OUTPUT: output,
         GITHUB_REPOSITORY: 'aipoch/open-science',
@@ -245,6 +274,7 @@ exec "$@"
         OPENAI_API_KEY: options.openAiApiKey ?? 'sk-test',
         REVIEW_EVENT: options.event ?? 'workflow_dispatch',
         RUNNER_TEMP: root,
+        SANDBOX_PROBE_AVAILABLE: String(options.sandboxProbeAvailable ?? true),
         SUBSCRIPTION_AVAILABLE: String(options.subscriptionAvailable ?? true)
       }
     }
@@ -451,6 +481,31 @@ describe('single Codex workflow contract', () => {
     ).toBe('true')
   })
 
+  it('selects API credentials as an atomic pair with deterministic legacy priority', () => {
+    expect(runTarget({ credentialPairs: ['shared'] }).outputs.credential_scope).toBe('shared')
+    expect(
+      runTarget({ credentialPairs: ['architecture', 'shared'] }).outputs.credential_scope
+    ).toBe('architecture')
+    expect(
+      runTarget({ credentialPairs: ['correctness', 'architecture'] }).outputs.credential_scope
+    ).toBe('correctness')
+    expect(runTarget({ credentialPairs: ['review', 'correctness'] }).outputs.credential_scope).toBe(
+      'review'
+    )
+    expect(
+      runTarget({
+        credentialKeys: ['review', 'correctness'],
+        credentialBaseUrls: ['correctness']
+      }).outputs.credential_scope
+    ).toBe('correctness')
+    expect(
+      runTarget({
+        credentialKeys: ['architecture', 'shared'],
+        credentialBaseUrls: ['review', 'shared']
+      }).outputs.credential_scope
+    ).toBe('shared')
+  })
+
   it('rejects an invalid reviewer enable flag', () => {
     const result = runTarget({ enabled: 'sometimes' })
     expect(result.status).not.toBe(0)
@@ -546,18 +601,18 @@ describe('single Codex workflow contract', () => {
     expect(review.with).toMatchObject({
       auth_mode: '${{ needs.review_target.outputs.auth_mode }}',
       model:
-        "${{ vars.CODEX_REVIEW_MODEL || vars.CODEX_CORRECTNESS_MODEL || vars.CODEX_ARCHITECTURE_MODEL || 'gpt-5.6-sol' }}",
+        "${{ vars.CODEX_REVIEW_MODEL || (needs.review_target.outputs.credential_scope == 'correctness' && vars.CODEX_CORRECTNESS_MODEL) || (needs.review_target.outputs.credential_scope == 'architecture' && vars.CODEX_ARCHITECTURE_MODEL) || ((needs.review_target.outputs.credential_scope == 'shared' || needs.review_target.outputs.credential_scope == 'none') && (vars.CODEX_CORRECTNESS_MODEL || vars.CODEX_ARCHITECTURE_MODEL)) || 'gpt-5.6-sol' }}",
       effort:
-        "${{ vars.CODEX_REVIEW_EFFORT || vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_ARCHITECTURE_EFFORT || 'high' }}"
+        "${{ vars.CODEX_REVIEW_EFFORT || (needs.review_target.outputs.credential_scope == 'correctness' && vars.CODEX_CORRECTNESS_EFFORT) || (needs.review_target.outputs.credential_scope == 'architecture' && vars.CODEX_ARCHITECTURE_EFFORT) || ((needs.review_target.outputs.credential_scope == 'shared' || needs.review_target.outputs.credential_scope == 'none') && (vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_ARCHITECTURE_EFFORT)) || 'high' }}"
     })
     expect(review.with).not.toHaveProperty('scope')
     expect(review.secrets).toEqual({
       CODEX_AUTH_JSON:
         "${{ needs.review_target.outputs.auth_mode == 'subscription' && secrets.CODEX_AUTH_JSON || '' }}",
       OPENAI_API_KEY:
-        '${{ secrets.CODEX_REVIEW_API_KEY || secrets.CODEX_CORRECTNESS_API_KEY || secrets.CODEX_ARCHITECTURE_API_KEY || secrets.OPENAI_API_KEY }}',
+        "${{ (needs.review_target.outputs.credential_scope == 'review' && secrets.CODEX_REVIEW_API_KEY) || (needs.review_target.outputs.credential_scope == 'correctness' && secrets.CODEX_CORRECTNESS_API_KEY) || (needs.review_target.outputs.credential_scope == 'architecture' && secrets.CODEX_ARCHITECTURE_API_KEY) || (needs.review_target.outputs.credential_scope == 'shared' && secrets.OPENAI_API_KEY) || '' }}",
       CODEX_BASE_URL:
-        '${{ secrets.CODEX_REVIEW_BASE_URL || secrets.CODEX_CORRECTNESS_BASE_URL || secrets.CODEX_ARCHITECTURE_BASE_URL || secrets.CODEX_BASE_URL }}'
+        "${{ (needs.review_target.outputs.credential_scope == 'review' && secrets.CODEX_REVIEW_BASE_URL) || (needs.review_target.outputs.credential_scope == 'correctness' && secrets.CODEX_CORRECTNESS_BASE_URL) || (needs.review_target.outputs.credential_scope == 'architecture' && secrets.CODEX_ARCHITECTURE_BASE_URL) || (needs.review_target.outputs.credential_scope == 'shared' && secrets.CODEX_BASE_URL) || '' }}"
     })
   })
 
@@ -628,6 +683,28 @@ describe('single Codex workflow contract', () => {
     })
     expect(installFailed.status, installFailed.stderr).toBe(0)
     expect(installFailed.outputs.auth_mode).toBe('api-key')
+
+    const sandboxFailed = runAuth({
+      authJson: JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: { refresh_token: 'refresh-seed' }
+      }),
+      authMode: 'subscription',
+      sandboxAvailable: false
+    })
+    expect(sandboxFailed.status, sandboxFailed.stderr).toBe(0)
+    expect(sandboxFailed.outputs.auth_mode).toBe('api-key')
+
+    const sandboxProbeFailed = runAuth({
+      authJson: JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: { refresh_token: 'refresh-seed' }
+      }),
+      authMode: 'subscription',
+      sandboxProbeAvailable: false
+    })
+    expect(sandboxProbeFailed.status, sandboxProbeFailed.stderr).toBe(0)
+    expect(sandboxProbeFailed.outputs.auth_mode).toBe('api-key')
   })
 
   it('fails closed when neither subscription nor API-key credentials are available', () => {
@@ -713,9 +790,15 @@ describe('single Codex workflow contract', () => {
       'review',
       'Prepare GitHub-hosted sandbox for subscription auth'
     )
-    expect(sandbox.if).toBe("${{ steps.codex_auth.outputs.auth_mode == 'subscription' }}")
+    expect(sandbox.id).toBe('prepare_subscription_sandbox')
+    expect(sandbox.if).toBe("${{ inputs.auth_mode == 'subscription' }}")
+    expect(sandbox['continue-on-error']).toBe(true)
     expect(sandbox.run).toContain('kernel.unprivileged_userns_clone')
     expect(sandbox.run).toContain('kernel.apparmor_restrict_unprivileged_userns')
+    const stepNames = codexWorkflow.jobs.review.steps?.map(({ name }) => name) ?? []
+    expect(stepNames.indexOf('Prepare GitHub-hosted sandbox for subscription auth')).toBeLessThan(
+      stepNames.indexOf('Prepare Codex authentication')
+    )
   })
 
   it('drops sudo and verifies the subscription credential is denied to sandboxed commands', () => {

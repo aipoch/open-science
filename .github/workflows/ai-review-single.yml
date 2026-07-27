@@ -5,7 +5,7 @@ name: AI PR Review (Single)
 # and their security boundaries.
 # - Shared API secrets: OPENAI_API_KEY and CODEX_BASE_URL
 # - Review-specific secrets: CODEX_REVIEW_API_KEY and CODEX_REVIEW_BASE_URL
-# - Legacy fallback secrets: correctness-specific and then architecture-specific API keys/base URLs
+# - Legacy fallback secrets: complete correctness-specific and then architecture-specific key/URL pairs
 #   (base URLs may omit the trailing slash or include the full /v1/responses endpoint)
 # - Subscription bootstrap secret: CODEX_AUTH_JSON
 # Set CODEX_REVIEW_AUTH_MODE to subscription (default) or api-key. Automatic and manually
@@ -14,8 +14,8 @@ name: AI PR Review (Single)
 # checkout and review execution.
 # Set ENABLE_CODEX_REVIEW=false to disable the automated reviewer.
 # Legacy CODEX_REVIEW_MODE=disabled keeps automatic reviews disabled while preserving dispatch.
-# CODEX_REVIEW_MODEL and CODEX_REVIEW_EFFORT select its model and effort. Legacy correctness and
-# architecture variables remain ordered fallbacks so existing repository configuration keeps working.
+# CODEX_REVIEW_MODEL and CODEX_REVIEW_EFFORT select its model and effort. A selected legacy
+# credential pair uses model/effort from the same scope; shared credentials keep ordered fallbacks.
 # Set FORK_REVIEW_MODE to disabled, manual, or automatic (default: manual). Same-repository PRs
 # always run. Manual mode permits workflow_dispatch reviews of forks; automatic mode also reviews
 # fork PRs on opened, synchronize, and reopened events. Disabled mode blocks both fork paths.
@@ -59,6 +59,7 @@ jobs:
       review_allowed: ${{ steps.target.outputs.review_allowed }}
       review_enabled: ${{ steps.target.outputs.review_enabled }}
       auth_mode: ${{ steps.target.outputs.auth_mode }}
+      credential_scope: ${{ steps.target.outputs.credential_scope }}
     steps:
       - name: Resolve pull request metadata
         id: target
@@ -71,6 +72,14 @@ jobs:
           CODEX_REVIEW_AUTH_MODE: ${{ vars.CODEX_REVIEW_AUTH_MODE || 'subscription' }}
           CODEX_REVIEW_MODE: ${{ vars.CODEX_REVIEW_MODE || 'correctness' }}
           ENABLE_CODEX_REVIEW: ${{ vars.ENABLE_CODEX_REVIEW || 'true' }}
+          REVIEW_API_KEY_CONFIGURED: ${{ secrets.CODEX_REVIEW_API_KEY != '' }}
+          REVIEW_BASE_URL_CONFIGURED: ${{ secrets.CODEX_REVIEW_BASE_URL != '' }}
+          CORRECTNESS_API_KEY_CONFIGURED: ${{ secrets.CODEX_CORRECTNESS_API_KEY != '' }}
+          CORRECTNESS_BASE_URL_CONFIGURED: ${{ secrets.CODEX_CORRECTNESS_BASE_URL != '' }}
+          ARCHITECTURE_API_KEY_CONFIGURED: ${{ secrets.CODEX_ARCHITECTURE_API_KEY != '' }}
+          ARCHITECTURE_BASE_URL_CONFIGURED: ${{ secrets.CODEX_ARCHITECTURE_BASE_URL != '' }}
+          SHARED_API_KEY_CONFIGURED: ${{ secrets.OPENAI_API_KEY != '' }}
+          SHARED_BASE_URL_CONFIGURED: ${{ secrets.CODEX_BASE_URL != '' }}
           REVIEW_EVENT: ${{ github.event_name }}
         shell: bash
         run: |
@@ -131,6 +140,20 @@ jobs:
             review_allowed=true
           fi
           effective_auth_mode="$CODEX_REVIEW_AUTH_MODE"
+          credential_scope=none
+          if [[ "$REVIEW_API_KEY_CONFIGURED" == "true" &&
+            "$REVIEW_BASE_URL_CONFIGURED" == "true" ]]; then
+            credential_scope=review
+          elif [[ "$CORRECTNESS_API_KEY_CONFIGURED" == "true" &&
+            "$CORRECTNESS_BASE_URL_CONFIGURED" == "true" ]]; then
+            credential_scope=correctness
+          elif [[ "$ARCHITECTURE_API_KEY_CONFIGURED" == "true" &&
+            "$ARCHITECTURE_BASE_URL_CONFIGURED" == "true" ]]; then
+            credential_scope=architecture
+          elif [[ "$SHARED_API_KEY_CONFIGURED" == "true" &&
+            "$SHARED_BASE_URL_CONFIGURED" == "true" ]]; then
+            credential_scope=shared
+          fi
 
           review_enabled="$ENABLE_CODEX_REVIEW"
           if [[ "$REVIEW_EVENT" != "workflow_dispatch" && "$CODEX_REVIEW_MODE" == "disabled" ]]; then
@@ -150,6 +173,7 @@ jobs:
             echo "review_allowed=$review_allowed"
             echo "review_enabled=$review_enabled"
             echo "auth_mode=$effective_auth_mode"
+            echo "credential_scope=$credential_scope"
           } >> "$GITHUB_OUTPUT"
 
   codex_review_gate:
@@ -225,12 +249,12 @@ jobs:
       pull_request_title: ${{ needs.review_target.outputs.title }}
       is_fork: ${{ needs.review_target.outputs.is_fork == 'true' }}
       fork_mode: ${{ needs.review_target.outputs.fork_mode }}
-      model: ${{ vars.CODEX_REVIEW_MODEL || vars.CODEX_CORRECTNESS_MODEL || vars.CODEX_ARCHITECTURE_MODEL || 'gpt-5.6-sol' }}
-      effort: ${{ vars.CODEX_REVIEW_EFFORT || vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_ARCHITECTURE_EFFORT || 'high' }}
+      model: ${{ vars.CODEX_REVIEW_MODEL || (needs.review_target.outputs.credential_scope == 'correctness' && vars.CODEX_CORRECTNESS_MODEL) || (needs.review_target.outputs.credential_scope == 'architecture' && vars.CODEX_ARCHITECTURE_MODEL) || ((needs.review_target.outputs.credential_scope == 'shared' || needs.review_target.outputs.credential_scope == 'none') && (vars.CODEX_CORRECTNESS_MODEL || vars.CODEX_ARCHITECTURE_MODEL)) || 'gpt-5.6-sol' }}
+      effort: ${{ vars.CODEX_REVIEW_EFFORT || (needs.review_target.outputs.credential_scope == 'correctness' && vars.CODEX_CORRECTNESS_EFFORT) || (needs.review_target.outputs.credential_scope == 'architecture' && vars.CODEX_ARCHITECTURE_EFFORT) || ((needs.review_target.outputs.credential_scope == 'shared' || needs.review_target.outputs.credential_scope == 'none') && (vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_ARCHITECTURE_EFFORT)) || 'high' }}
     secrets:
       CODEX_AUTH_JSON: ${{ needs.review_target.outputs.auth_mode == 'subscription' && secrets.CODEX_AUTH_JSON || '' }}
-      OPENAI_API_KEY: ${{ secrets.CODEX_REVIEW_API_KEY || secrets.CODEX_CORRECTNESS_API_KEY || secrets.CODEX_ARCHITECTURE_API_KEY || secrets.OPENAI_API_KEY }}
-      CODEX_BASE_URL: ${{ secrets.CODEX_REVIEW_BASE_URL || secrets.CODEX_CORRECTNESS_BASE_URL || secrets.CODEX_ARCHITECTURE_BASE_URL || secrets.CODEX_BASE_URL }}
+      OPENAI_API_KEY: ${{ (needs.review_target.outputs.credential_scope == 'review' && secrets.CODEX_REVIEW_API_KEY) || (needs.review_target.outputs.credential_scope == 'correctness' && secrets.CODEX_CORRECTNESS_API_KEY) || (needs.review_target.outputs.credential_scope == 'architecture' && secrets.CODEX_ARCHITECTURE_API_KEY) || (needs.review_target.outputs.credential_scope == 'shared' && secrets.OPENAI_API_KEY) || '' }}
+      CODEX_BASE_URL: ${{ (needs.review_target.outputs.credential_scope == 'review' && secrets.CODEX_REVIEW_BASE_URL) || (needs.review_target.outputs.credential_scope == 'correctness' && secrets.CODEX_CORRECTNESS_BASE_URL) || (needs.review_target.outputs.credential_scope == 'architecture' && secrets.CODEX_ARCHITECTURE_BASE_URL) || (needs.review_target.outputs.credential_scope == 'shared' && secrets.CODEX_BASE_URL) || '' }}
 
   post_codex_feedback:
     name: Post Codex feedback

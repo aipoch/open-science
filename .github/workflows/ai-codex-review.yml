@@ -102,6 +102,27 @@ jobs:
           npm install -g "@openai/codex@${CODEX_VERSION}"
           codex --version
 
+      # The API action enables these only when it receives an API key or prompt. Subscription mode
+      # installs the CLI directly, so prepare the packaged Linux sandbox before the auth preflight.
+      - name: Prepare GitHub-hosted sandbox for subscription auth
+        id: prepare_subscription_sandbox
+        if: ${{ inputs.auth_mode == 'subscription' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_userns="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
+          if [[ -n "$current_userns" && "$current_userns" != "1" ]]; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+
+          current_apparmor="$(
+            sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true
+          )"
+          if [[ -n "$current_apparmor" && "$current_apparmor" != "0" ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
       - name: Prepare Codex authentication
         id: codex_auth
         env:
@@ -110,6 +131,7 @@ jobs:
           CODEX_BASE_URL: ${{ secrets.CODEX_BASE_URL }}
           CODEX_INSTALL_OUTCOME: ${{ steps.install_subscription_cli.outcome || 'skipped' }}
           CODEX_MODEL: ${{ inputs.model }}
+          CODEX_SANDBOX_OUTCOME: ${{ steps.prepare_subscription_sandbox.outcome || 'skipped' }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         shell: bash
         run: |
@@ -130,6 +152,12 @@ jobs:
           if [[ "$effective_auth_mode" == "subscription" &&
             "$CODEX_INSTALL_OUTCOME" != "success" ]]; then
             echo "::warning::Pinned Codex CLI setup failed; falling back to API-key auth."
+            effective_auth_mode=api-key
+          fi
+
+          if [[ "$effective_auth_mode" == "subscription" &&
+            "$CODEX_SANDBOX_OUTCOME" != "success" ]]; then
+            echo "::warning::Codex sandbox setup failed; falling back to API-key auth."
             effective_auth_mode=api-key
           fi
 
@@ -154,6 +182,8 @@ jobs:
             preflight_error="$RUNNER_TEMP/codex-auth-preflight.stderr"
             preflight_key="$(jq -Rn --arg path "$preflight_dir" '$path')"
             preflight_home_key="$(jq -Rn --arg path "$preflight_home" '$path')"
+            preflight_sentinel="$preflight_dir/sandbox-readable"
+            printf '%s\n' 'sandbox-ready' > "$preflight_sentinel"
             cp "$auth_file" "$preflight_home/auth.json"
             {
               echo 'default_permissions = "ai_review"'
@@ -175,37 +205,60 @@ jobs:
               preflight_gid="$(id -g nobody 2> /dev/null)" &&
               sudo chown -R "$preflight_uid:$preflight_gid" "$preflight_home" "$preflight_dir"; then
               set +e
-              # Redirect as the runner so the unprivileged process cannot rewrite status files.
-              # shellcheck disable=SC2024
-              printf '%s\n' 'Reply with exactly OK. Do not call tools.' | \
-                sudo -u nobody -- env -i \
+              sudo -u nobody -- env -i \
                 PATH="$PATH" \
                 HOME="$preflight_home" \
                 CODEX_HOME="$preflight_home" \
-                codex exec \
-                --strict-config \
-                --skip-git-repo-check \
-                --cd "$preflight_dir" \
-                --model "$CODEX_MODEL" \
-                --config 'model_reasoning_effort="low"' \
-                --config 'default_permissions="ai_review"' \
-                --ephemeral \
-                --ignore-rules \
-                --json \
-                > "$preflight_output" \
-                2> "$preflight_error"
-              preflight_status=$?
+                codex sandbox --permission-profile ai_review -C "$preflight_dir" -- \
+                test -r "$preflight_home/auth.json"
+              credential_probe_status=$?
+              sudo -u nobody -- env -i \
+                PATH="$PATH" \
+                HOME="$preflight_home" \
+                CODEX_HOME="$preflight_home" \
+                codex sandbox --permission-profile ai_review -C "$preflight_dir" -- \
+                test -r "$preflight_sentinel"
+              readable_probe_status=$?
               set -e
 
-              if (( preflight_status == 0 )) &&
-                jq -s -e 'any(.[]; .type == "turn.completed")' \
-                  "$preflight_output" > /dev/null 2>&1 &&
-                sudo cp -- "$preflight_home/auth.json" "$auth_file"; then
-                chmod 600 "$auth_file"
-              else
-                echo "::warning::Codex subscription authentication failed; falling back to API-key auth."
+              if (( credential_probe_status == 0 || readable_probe_status != 0 )); then
+                echo "::warning::Codex subscription sandbox probes failed; falling back to API-key auth."
                 effective_auth_mode=api-key
                 rm -f "$auth_file"
+              else
+                set +e
+                # Redirect as the runner so the unprivileged process cannot rewrite status files.
+                # shellcheck disable=SC2024
+                printf '%s\n' 'Reply with exactly OK. Do not call tools.' | \
+                sudo -u nobody -- env -i \
+                  PATH="$PATH" \
+                  HOME="$preflight_home" \
+                  CODEX_HOME="$preflight_home" \
+                  codex exec \
+                  --strict-config \
+                  --skip-git-repo-check \
+                  --cd "$preflight_dir" \
+                  --model "$CODEX_MODEL" \
+                  --config 'model_reasoning_effort="low"' \
+                  --config 'default_permissions="ai_review"' \
+                  --ephemeral \
+                  --ignore-rules \
+                  --json \
+                  > "$preflight_output" \
+                  2> "$preflight_error"
+                preflight_status=$?
+                set -e
+
+                if (( preflight_status == 0 )) &&
+                  jq -s -e 'any(.[]; .type == "turn.completed")' \
+                    "$preflight_output" > /dev/null 2>&1 &&
+                  sudo cp -- "$preflight_home/auth.json" "$auth_file"; then
+                  chmod 600 "$auth_file"
+                else
+                  echo "::warning::Codex subscription authentication failed; falling back to API-key auth."
+                  effective_auth_mode=api-key
+                  rm -f "$auth_file"
+                fi
               fi
               sudo rm -rf -- "$preflight_home" "$preflight_dir"
             else
@@ -411,25 +464,6 @@ jobs:
             echo "schema_file=$schema_file"
             echo "review_header=$review_header"
           } >> "$GITHUB_OUTPUT"
-
-      # The API action enables these only when it receives an API key or prompt. Subscription mode
-      # installs the CLI directly, so prepare the packaged Linux sandbox before `codex exec`.
-      - name: Prepare GitHub-hosted sandbox for subscription auth
-        if: ${{ steps.codex_auth.outputs.auth_mode == 'subscription' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          current_userns="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
-          if [[ -n "$current_userns" && "$current_userns" != "1" ]]; then
-            sudo sysctl -w kernel.unprivileged_userns_clone=1
-          fi
-
-          current_apparmor="$(
-            sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true
-          )"
-          if [[ -n "$current_apparmor" && "$current_apparmor" != "0" ]]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
 
       - name: Prepare Codex review runtime
         if: ${{ steps.codex_auth.outputs.auth_mode == 'api-key' }}

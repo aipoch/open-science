@@ -21,13 +21,16 @@ The combined reviewer can use review-specific credentials instead:
 - `CODEX_REVIEW_BASE_URL`
 
 For compatibility, correctness-specific and then architecture-specific credentials remain ordered
-fallbacks between the review-specific and shared secrets.
+fallbacks between the review-specific and shared secrets. A scope is selected only when both its API
+key and base URL are configured; keys and endpoints from different scopes are never combined.
 
 Set the `CODEX_REVIEW_AUTH_MODE` repository variable to `api-key` to override the subscription
 default. Keep API-key secrets configured for automatic fallback. Model, effort, fork, enablement,
 and round-limit variables continue to apply. `CODEX_REVIEW_MODEL` and `CODEX_REVIEW_EFFORT` take
 precedence; the legacy correctness variables and then architecture variables remain ordered
-fallbacks.
+fallbacks. When a legacy credential scope is selected, its model and effort variables are used as a
+bundle; shared or subscription-only configurations keep the legacy correctness-then-architecture
+fallback order.
 
 `ENABLE_CODEX_REVIEW=false` disables automatic and manually dispatched reviews. For compatibility,
 legacy `CODEX_REVIEW_MODE=disabled` disables only automatic pull request events; a manual dispatch
@@ -58,13 +61,15 @@ The subscription path installs the pinned Codex CLI directly and does not pass s
 credentials through `openai/codex-action`. API-key mode continues using the pinned action for its
 Responses API proxy and key-isolation behavior.
 
-Before checking out pull request code, the subscription path sends a fixed, low-effort, no-tool
-Codex request from an empty temporary directory. The same credential-directory deny rule applies to
-this authentication preflight. The CLI runs as the unprivileged `nobody` user with a clean
-environment, so it has neither passwordless sudo nor the fallback API key or base URL. If CLI setup,
-preflight isolation, or account authentication or refresh fails, the workflow removes the temporary
-subscription credential and selects the API-key runtime. This adds one small Codex request to each
-subscription review but avoids rerunning a full review after an authentication failure.
+Before checking out pull request code, the subscription path installs the pinned CLI, prepares the
+packaged Linux sandbox prerequisites, verifies positive and negative filesystem probes, and sends a
+fixed, low-effort, no-tool Codex request from an empty temporary directory. The same
+credential-directory deny rule applies to these preflight checks. The CLI runs as the unprivileged
+`nobody` user with a clean environment, so it has neither passwordless sudo nor the fallback API key
+or base URL. If CLI setup, sandbox setup or probes, preflight isolation, or account authentication or
+refresh fails, the workflow removes the temporary subscription credential and selects the API-key
+runtime. This adds one small Codex request to each subscription review but avoids rerunning a full
+review after an authentication failure.
 
 ### 1. Create file-backed credentials
 
