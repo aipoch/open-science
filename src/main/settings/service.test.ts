@@ -2325,7 +2325,9 @@ describe('SettingsService: preflight & spawn config', () => {
           HTTP_PROXY: 'http://proxy.example.test:3128',
           HTTPS_PROXY: 'http://proxy.example.test:3128',
           http_proxy: 'http://proxy.example.test:3128',
-          https_proxy: 'http://proxy.example.test:3128'
+          https_proxy: 'http://proxy.example.test:3128',
+          NO_PROXY: 'localhost,127.0.0.1,::1',
+          no_proxy: 'localhost,127.0.0.1,::1'
         })
     })
     await repository.setCodexInfo({
@@ -2366,6 +2368,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.env.CODEX_PATH).toBe('/data/codex-managed/native/codex')
     expect(backend.env.CODEX_HOME).toBe(join(storageRoot, 'codex-subscription'))
     expect(backend.env.HTTPS_PROXY).toBe('http://proxy.example.test:3128')
+    expect(backend.env.NO_PROXY).toContain('127.0.0.1')
     expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
       'cli_auth_credentials_store = "file"\n'
     )

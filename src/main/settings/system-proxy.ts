@@ -7,12 +7,31 @@ const CODEX_PROXY_TARGET_URL = 'https://chatgpt.com/'
 
 export type SystemProxyEnvironment = Partial<
   Record<
-    'HTTP_PROXY' | 'HTTPS_PROXY' | 'http_proxy' | 'https_proxy' | 'ALL_PROXY' | 'all_proxy',
+    | 'HTTP_PROXY'
+    | 'HTTPS_PROXY'
+    | 'http_proxy'
+    | 'https_proxy'
+    | 'ALL_PROXY'
+    | 'all_proxy'
+    | 'NO_PROXY'
+    | 'no_proxy',
     string
   >
 >
 
 export type ResolveProxy = (url: string) => Promise<string>
+
+// Imported subscription routes are intentionally restricted to loopback. Keep those local calls
+// out of a resolved corporate/system proxy while covering the common spellings understood by
+// different HTTP stacks (host, IPv4 range/CIDR, and bracketed/unbracketed IPv6).
+const LOOPBACK_PROXY_BYPASS = [
+  'localhost',
+  '.localhost',
+  '127.0.0.1',
+  '127.0.0.0/8',
+  '::1',
+  '[::1]'
+] as const
 
 const proxyEnvironmentForDirective = (
   kind: string,
@@ -80,10 +99,20 @@ export const parseSystemProxyRules = (rules: string): SystemProxyEnvironment => 
 }
 
 export const resolveSystemProxyEnvironment = async (
-  resolveProxy: ResolveProxy = (url) => session.defaultSession.resolveProxy(url)
+  resolveProxy: ResolveProxy = (url) => session.defaultSession.resolveProxy(url),
+  sourceEnv: NodeJS.ProcessEnv = process.env
 ): Promise<SystemProxyEnvironment> => {
   try {
-    return parseSystemProxyRules(await resolveProxy(CODEX_PROXY_TARGET_URL))
+    const proxyEnv = parseSystemProxyRules(await resolveProxy(CODEX_PROXY_TARGET_URL))
+    if (Object.keys(proxyEnv).length === 0) return {}
+
+    const bypass = [sourceEnv.NO_PROXY, sourceEnv.no_proxy]
+      .flatMap((value) => value?.split(',') ?? [])
+      .map((value) => value.trim())
+      .filter(Boolean)
+    const noProxy = [...new Set([...bypass, ...LOOPBACK_PROXY_BYPASS])].join(',')
+
+    return { ...proxyEnv, NO_PROXY: noProxy, no_proxy: noProxy }
   } catch {
     // A resolver failure must not block users whose network is reachable directly (or whose app
     // process already carries proxy environment variables). The normal inherited environment stays.

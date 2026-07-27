@@ -123,14 +123,18 @@ describe('createCodexAuthEnvironment', () => {
           HTTP_PROXY: 'http://proxy.example.test:3128',
           HTTPS_PROXY: 'http://proxy.example.test:3128',
           http_proxy: 'http://proxy.example.test:3128',
-          https_proxy: 'http://proxy.example.test:3128'
+          https_proxy: 'http://proxy.example.test:3128',
+          NO_PROXY: 'localhost,127.0.0.1,::1',
+          no_proxy: 'localhost,127.0.0.1,::1'
         }
       )
     ).toMatchObject({
       HTTP_PROXY: 'http://proxy.example.test:3128',
       HTTPS_PROXY: 'http://proxy.example.test:3128',
       http_proxy: 'http://proxy.example.test:3128',
-      https_proxy: 'http://proxy.example.test:3128'
+      https_proxy: 'http://proxy.example.test:3128',
+      NO_PROXY: 'localhost,127.0.0.1,::1',
+      no_proxy: 'localhost,127.0.0.1,::1'
     })
   })
 })
