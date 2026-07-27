@@ -29,6 +29,17 @@ export type ProviderType =
 // sign-in and accidentally discard its imported loopback route.
 export type CodexSubscriptionAuthMode = 'imported' | 'isolated'
 
+// Stored Codex subscriptions share one runtime type, while renderer surfaces still need the setup
+// choice. Legacy codex-shared views have no discriminator, so their type remains the fallback.
+export const resolveCodexSubscriptionType = (provider: {
+  type: ProviderType
+  codexAuthMode?: CodexSubscriptionAuthMode
+}): 'codex-shared' | 'codex-isolated' =>
+  provider.codexAuthMode === 'imported' ||
+  (provider.codexAuthMode === undefined && provider.type === 'codex-shared')
+    ? 'codex-shared'
+    : 'codex-isolated'
+
 export const CODEX_SHARED_PROVIDER_ID = 'builtin-codex-shared'
 export const CODEX_ISOLATED_PROVIDER_ID = 'builtin-codex-isolated'
 export const CODEX_SUBSCRIPTION_PROVIDER_ID = 'builtin-codex-subscription'

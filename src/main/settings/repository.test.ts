@@ -143,6 +143,7 @@ describe('settings repository', () => {
       expect.objectContaining({
         id: 'builtin-codex-subscription',
         type: 'codex-isolated',
+        codexAuthMode: 'isolated',
         name: 'Codex subscription'
       })
     ])
@@ -168,6 +169,7 @@ describe('settings repository', () => {
       expect.objectContaining({
         id: 'builtin-codex-subscription',
         type: 'codex-isolated',
+        codexAuthMode: 'imported',
         name: 'Codex subscription'
       })
     ])

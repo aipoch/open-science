@@ -4,7 +4,6 @@ import {
   preferredEndpoint,
   type AgentFrameworkId,
   type ChatApiEndpoint,
-  type ProviderView,
   type ProviderType
 } from '../../../../shared/settings'
 import {
@@ -78,13 +77,6 @@ export const providerFormApiEndpoints = (value: ProviderFormValue): ChatApiEndpo
   value.type === 'official' && value.vendorId
     ? resolveVendorApiEndpoints(value.vendorId)
     : [value.apiEndpoint]
-
-export const providerTypeForForm = (
-  provider: Pick<ProviderView, 'type' | 'codexAuthMode'>
-): ProviderType =>
-  provider.type === 'codex-isolated' && provider.codexAuthMode === 'imported'
-    ? 'codex-shared'
-    : provider.type
 
 // The provider kind pre-selected when the Add provider form opens, matched to the active agent
 // framework's most common official vendor: Claude Code → Anthropic, Codex → OpenAI,

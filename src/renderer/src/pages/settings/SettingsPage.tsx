@@ -15,7 +15,11 @@ import {
 import { Dialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
-import type { ProviderView, UpsertProviderRequest } from '../../../../shared/settings'
+import {
+  resolveCodexSubscriptionType,
+  type ProviderView,
+  type UpsertProviderRequest
+} from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -45,7 +49,6 @@ import {
   getProviderFormErrors,
   hasProviderFormErrors,
   providerFormApiEndpoints,
-  providerTypeForForm,
   providerKindPatch,
   type ProviderFormValue
 } from './provider-form-value'
@@ -61,7 +64,10 @@ type ModelView = { kind: 'list' } | { kind: 'create' } | { kind: 'edit'; provide
 // Builds a form value from an existing provider (never carrying the plaintext key).
 const toFormValue = (provider: ProviderView): ProviderFormValue =>
   createEmptyProviderFormValue({
-    type: providerTypeForForm(provider),
+    type:
+      provider.type === 'codex-shared' || provider.type === 'codex-isolated'
+        ? resolveCodexSubscriptionType(provider)
+        : provider.type,
     name: provider.name,
     baseUrl: provider.baseUrl ?? '',
     model: provider.model ?? '',

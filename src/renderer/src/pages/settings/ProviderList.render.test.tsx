@@ -236,6 +236,26 @@ describe('ProviderList', () => {
     expect(buttonByLabel('Sign out')).toBeUndefined()
   })
 
+  it('renders a normalized imported Codex provider with imported copy and actions', () => {
+    renderList([
+      provider({
+        id: 'builtin-codex-subscription',
+        type: 'codex-isolated',
+        codexAuthMode: 'imported',
+        name: 'Codex subscription',
+        models: [],
+        model: undefined,
+        maskedKey: undefined,
+        hasKey: false
+      })
+    ])
+
+    expect(container.textContent).toContain('Authentication imported into Open Science')
+    expect(buttonByLabel('Check Codex login')).toBeDefined()
+    expect(buttonByLabel('Sign in')).toBeUndefined()
+    expect(buttonByLabel('Sign out')).toBeUndefined()
+  })
+
   it('renders shared and isolated Codex modes as one subscription card', () => {
     renderList([
       provider({

@@ -8,7 +8,6 @@ import {
   getProviderFormErrors,
   hasProviderFormErrors,
   providerFormApiEndpoints,
-  providerTypeForForm,
   providerKindPatch,
   selectedKindKey
 } from './provider-form-value'
@@ -151,15 +150,6 @@ describe('provider-kind helpers', () => {
     )
     expect(selectedKindKey(createEmptyProviderFormValue({ type: 'codex-isolated' }))).toBe(
       'codex-subscription'
-    )
-  })
-
-  it('rehydrates an imported app-owned Codex provider as the import form mode', () => {
-    expect(providerTypeForForm({ type: 'codex-isolated', codexAuthMode: 'imported' })).toBe(
-      'codex-shared'
-    )
-    expect(providerTypeForForm({ type: 'codex-isolated', codexAuthMode: 'isolated' })).toBe(
-      'codex-isolated'
     )
   })
 

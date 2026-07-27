@@ -23,6 +23,7 @@ import {
   isCodexSubscriptionProvider,
   providerEndpoints,
   providerValidationFailed,
+  resolveCodexSubscriptionType,
   selectClaudeSubscriptionProvider
 } from '../../../../shared/settings'
 import { getOfficialVendor } from '../../../../shared/provider-registry'
@@ -184,6 +185,9 @@ const ProviderList = ({
           // A passing test shows a green check. Suppressed while a test is in flight.
           const isVerified = !failure && !isBusy && provider.lastValidatedAt !== undefined
           const isCodexSubscription = isCodexSubscriptionProvider(provider.type)
+          const codexSubscriptionType = isCodexSubscription
+            ? resolveCodexSubscriptionType(provider)
+            : undefined
           // The provider sourcing the selected model (and the last remaining one) can't be deleted:
           // removing it would leave no model to run, so its delete action stays disabled.
           const canDelete = !isActiveSource && displayedProviders.length > 1
@@ -262,9 +266,9 @@ const ProviderList = ({
                     ) : null}
                   </div>
                   <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-                    {provider.type === 'codex-shared' ? (
+                    {codexSubscriptionType === 'codex-shared' ? (
                       <div>Authentication imported into Open Science</div>
-                    ) : provider.type === 'codex-isolated' ? (
+                    ) : codexSubscriptionType === 'codex-isolated' ? (
                       <div>Codex login stored separately by Open Science</div>
                     ) : provider.type === 'claude-isolated' && isClaudeIsolatedLoginPending ? (
                       // Browser sign-in in flight. `claude setup-token` opens the browser itself and
@@ -322,7 +326,7 @@ const ProviderList = ({
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  {provider.type === 'codex-isolated' && isCodexLoginPending ? (
+                  {codexSubscriptionType === 'codex-isolated' && isCodexLoginPending ? (
                     <SettingsIconAction
                       label="Cancel sign-in"
                       icon={X}
@@ -343,7 +347,9 @@ const ProviderList = ({
                       className="border border-border text-foreground"
                     />
                   )}
-                  {provider.type === 'codex-isolated' && !isVerified && !isCodexLoginPending ? (
+                  {codexSubscriptionType === 'codex-isolated' &&
+                  !isVerified &&
+                  !isCodexLoginPending ? (
                     <SettingsIconAction
                       label="Sign in"
                       icon={LogIn}
@@ -352,7 +358,7 @@ const ProviderList = ({
                       className="border border-border text-foreground"
                     />
                   ) : null}
-                  {provider.type === 'codex-isolated' && isVerified ? (
+                  {codexSubscriptionType === 'codex-isolated' && isVerified ? (
                     <SettingsIconAction
                       label="Sign out"
                       icon={LogOut}
