@@ -166,6 +166,81 @@ describe('importCodexAuthentication', () => {
     }
   })
 
+  it('replaces conflicting app-owned provider config without creating duplicate TOML keys', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-route-conflict-'))
+    const source = join(root, 'source')
+    const destination = join(root, 'destination')
+    try {
+      await mkdir(source, { recursive: true })
+      await mkdir(destination, { recursive: true })
+      await writeFile(join(source, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+      await writeFile(
+        join(source, 'config.toml'),
+        [
+          'model_provider = "subscription-route"',
+          '',
+          '[model_providers.subscription-route]',
+          'name = "Imported"',
+          'requires_openai_auth = true',
+          'wire_api = "responses"',
+          'base_url = "http://127.0.0.1:1087/v1"',
+          ''
+        ].join('\n')
+      )
+      await writeFile(
+        join(destination, 'config.toml'),
+        [
+          '"model_provider" = "app-default-route"',
+          'model = "app-default"',
+          '',
+          '[model_providers.subscription-route]',
+          'name = "Stale"',
+          'base_url = "http://127.0.0.1:9999/v1"',
+          '',
+          '[model_providers.app-default-route]',
+          'name = "App default"',
+          'base_url = "https://app.example/v1"',
+          '',
+          '[mcp_servers.app]',
+          'command = "app-command"',
+          ''
+        ].join('\n')
+      )
+
+      await importCodexAuthentication(source, destination)
+
+      const configToml = await readFile(join(destination, 'config.toml'), 'utf8')
+      const activeConfigToml = configToml
+        .split('\n')
+        .filter((line) => !line.startsWith('#'))
+        .join('\n')
+      expect(
+        activeConfigToml.match(/^(?:model_provider|"model_provider"|'model_provider')\s*=/gm)
+      ).toHaveLength(1)
+      expect(activeConfigToml.match(/^\[model_providers\."subscription-route"\]$/gm)).toHaveLength(
+        1
+      )
+      expect(activeConfigToml).not.toContain('http://127.0.0.1:9999/v1')
+      expect(configToml).toContain('[model_providers.app-default-route]')
+      expect(configToml).toContain('base_url = "https://app.example/v1"')
+      expect(configToml).toContain('[mcp_servers.app]')
+      expect(configToml).toContain('command = "app-command"')
+
+      await writeFile(join(source, 'config.toml'), 'model = "private-model"\n')
+      await importCodexAuthentication(source, destination)
+
+      const restoredConfigToml = await readFile(join(destination, 'config.toml'), 'utf8')
+      expect(restoredConfigToml).toContain('"model_provider" = "app-default-route"')
+      expect(restoredConfigToml).toContain('[model_providers.subscription-route]')
+      expect(restoredConfigToml).toContain('base_url = "http://127.0.0.1:9999/v1"')
+      expect(restoredConfigToml).toContain('[model_providers.app-default-route]')
+      expect(restoredConfigToml).toContain('[mcp_servers.app]')
+      expect(restoredConfigToml).not.toContain('Open Science:')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('does not import a model-provider route backed by separate credentials', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-auth-route-reject-'))
     const source = join(root, 'source')

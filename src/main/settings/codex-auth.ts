@@ -113,6 +113,19 @@ const parseModelProviderTableId = (line: string): string | undefined => {
   return /^[A-Za-z0-9_-]+$/.test(key) ? key : parseTomlString(key)
 }
 
+const parseModelProviderTableRootId = (line: string): string | undefined => {
+  const match = line.match(
+    /^\s*\[\s*model_providers\s*\.\s*("(?:\\.|[^"\\])*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.|\s*\])/
+  )
+  if (!match) return undefined
+
+  const key = match[1]
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : parseTomlString(key)
+}
+
+const isModelProviderAssignment = (line: string): boolean =>
+  /^\s*(?:model_provider|"model_provider"|'model_provider')\s*=/.test(line)
+
 const isLoopbackHostname = (hostname: string): boolean => {
   const unwrappedHostname =
     hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
@@ -217,8 +230,9 @@ const IMPORTED_ROUTE_SELECTION_BEGIN = '# Open Science: begin imported Codex rou
 const IMPORTED_ROUTE_SELECTION_END = '# Open Science: end imported Codex route selection'
 const IMPORTED_ROUTE_PROVIDER_BEGIN = '# Open Science: begin imported Codex provider'
 const IMPORTED_ROUTE_PROVIDER_END = '# Open Science: end imported Codex provider'
+const IMPORTED_ROUTE_PRESERVED_LINE = '# Open Science: preserved Codex config '
 
-const removeCompleteMarkedBlock = (lines: string[], begin: string, end: string): string[] => {
+const restoreCompleteMarkedBlock = (lines: string[], begin: string, end: string): string[] => {
   const result = [...lines]
   let beginIndex = result.indexOf(begin)
 
@@ -226,27 +240,44 @@ const removeCompleteMarkedBlock = (lines: string[], begin: string, end: string):
     const relativeEndIndex = result.slice(beginIndex + 1).indexOf(end)
     if (relativeEndIndex < 0) break
 
-    result.splice(beginIndex, relativeEndIndex + 2)
+    const endIndex = beginIndex + relativeEndIndex + 1
+    const preservedLines = result.slice(beginIndex + 1, endIndex).flatMap((line) => {
+      if (!line.startsWith(IMPORTED_ROUTE_PRESERVED_LINE)) return []
+      try {
+        const preservedLine = JSON.parse(
+          line.slice(IMPORTED_ROUTE_PRESERVED_LINE.length)
+        ) as unknown
+        return typeof preservedLine === 'string' ? [preservedLine] : []
+      } catch {
+        return []
+      }
+    })
+    result.splice(beginIndex, relativeEndIndex + 2, ...preservedLines)
     beginIndex = result.indexOf(begin)
   }
 
   return result
 }
 
+const hasCompleteMarkedBlock = (lines: string[], begin: string, end: string): boolean => {
+  const beginIndex = lines.indexOf(begin)
+  return beginIndex >= 0 && lines.slice(beginIndex + 1).includes(end)
+}
+
 const removeImportedCodexProviderRoute = (configToml: string): string => {
-  const withoutMarkedBlocks = removeCompleteMarkedBlock(
-    removeCompleteMarkedBlock(
-      configToml.split(/\r?\n/),
-      IMPORTED_ROUTE_SELECTION_BEGIN,
-      IMPORTED_ROUTE_SELECTION_END
-    ),
+  const lines = configToml.split(/\r?\n/)
+  const hasMarkedRoute =
+    hasCompleteMarkedBlock(lines, IMPORTED_ROUTE_SELECTION_BEGIN, IMPORTED_ROUTE_SELECTION_END) ||
+    hasCompleteMarkedBlock(lines, IMPORTED_ROUTE_PROVIDER_BEGIN, IMPORTED_ROUTE_PROVIDER_END)
+  const withoutMarkedBlocks = restoreCompleteMarkedBlock(
+    restoreCompleteMarkedBlock(lines, IMPORTED_ROUTE_SELECTION_BEGIN, IMPORTED_ROUTE_SELECTION_END),
     IMPORTED_ROUTE_PROVIDER_BEGIN,
     IMPORTED_ROUTE_PROVIDER_END
   ).join('\n')
 
   // Builds produced before route markers wrote only the sanitized route. Recognize that exact shape
   // so switching modes can clean it up without ever treating a mixed, user-authored config as ours.
-  const legacyRoute = extractCodexProviderRoute(withoutMarkedBlocks)
+  const legacyRoute = hasMarkedRoute ? undefined : extractCodexProviderRoute(withoutMarkedBlocks)
   if (
     legacyRoute &&
     withoutMarkedBlocks.trim() === serializeLegacyCodexProviderRoute(legacyRoute).trim()
@@ -257,11 +288,51 @@ const removeImportedCodexProviderRoute = (configToml: string): string => {
   return withoutMarkedBlocks
 }
 
+const removeConflictingCodexProviderRoute = (
+  lines: string[],
+  providerId: string
+): { lines: string[]; selection: string[]; provider: string[] } => {
+  const result: string[] = []
+  const selection: string[] = []
+  const provider: string[] = []
+  let inTopLevel = true
+  let inConflictingProviderTable = false
+
+  for (const line of lines) {
+    if (/^\s*\[/.test(line)) {
+      inTopLevel = false
+      inConflictingProviderTable = parseModelProviderTableRootId(line) === providerId
+      if (inConflictingProviderTable) {
+        provider.push(line)
+        continue
+      }
+    } else if (inConflictingProviderTable) {
+      provider.push(line)
+      continue
+    }
+
+    if (inTopLevel && isModelProviderAssignment(line)) {
+      selection.push(line)
+      continue
+    }
+    result.push(line)
+  }
+
+  return { lines: result, selection, provider }
+}
+
+const serializePreservedConfigLines = (lines: string[]): string[] =>
+  lines.map((line) => `${IMPORTED_ROUTE_PRESERVED_LINE}${JSON.stringify(line)}`)
+
 const serializeImportedCodexProviderRoute = (
   route: ImportedCodexProviderRoute,
   existingConfigToml: string
 ): string => {
-  const baseLines = removeImportedCodexProviderRoute(existingConfigToml).split(/\r?\n/)
+  const conflictingRoute = removeConflictingCodexProviderRoute(
+    removeImportedCodexProviderRoute(existingConfigToml).split(/\r?\n/),
+    route.id
+  )
+  const baseLines = conflictingRoute.lines
   while (baseLines.at(-1) === '') baseLines.pop()
 
   const firstTableIndex = baseLines.findIndex((line) => /^\s*\[/.test(line))
@@ -270,11 +341,13 @@ const serializeImportedCodexProviderRoute = (
     selectionIndex,
     0,
     IMPORTED_ROUTE_SELECTION_BEGIN,
+    ...serializePreservedConfigLines(conflictingRoute.selection),
     `model_provider = ${JSON.stringify(route.id)}`,
     IMPORTED_ROUTE_SELECTION_END
   )
   baseLines.push(
     IMPORTED_ROUTE_PROVIDER_BEGIN,
+    ...serializePreservedConfigLines(conflictingRoute.provider),
     `[model_providers.${JSON.stringify(route.id)}]`,
     `name = ${JSON.stringify(route.name)}`,
     `base_url = ${JSON.stringify(route.baseUrl)}`,
