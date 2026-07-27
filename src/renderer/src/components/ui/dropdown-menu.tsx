@@ -26,7 +26,10 @@ function DropdownMenuSubTrigger({
 
 function DropdownMenuSubContent({
   className,
-  sideOffset = 2,
+  // Must clear the parent content's padding + border or the submenu visibly overlaps the parent
+  // menu: radix anchors the submenu to the SubTrigger's edge, which sits inside the parent's
+  // padding box. 8px covers both p-1 (4px) and p-1.5 (6px) parents with a small visual gap.
+  sideOffset = 8,
   alignOffset = -5,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>): React.JSX.Element {
