@@ -652,6 +652,60 @@ describe('SettingsPage layout', () => {
     )
   })
 
+  it('preserves the saved API format when editing a custom gateway', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const provider = {
+      id: 'custom-messages',
+      type: 'custom',
+      name: 'Messages gateway',
+      baseUrl: 'https://gateway.example',
+      model: 'model-a',
+      models: ['model-a'],
+      apiEndpoints: ['anthropic'],
+      supportsImageInput: false,
+      hasKey: true,
+      maskedKey: 'sk-…test',
+      needsKey: false
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: {},
+      opencode: { resolvedPath: '/x/opencode' },
+      codex: {},
+      providers: [provider],
+      activeProviderId: provider.id,
+      activeModel: provider.model,
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportedApiTypes: ['anthropic', 'openai'],
+          supportsSkills: true
+        }
+      ]
+    })
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      opencodeReady: true,
+      agentFrameworkId: 'opencode',
+      agentReady: true,
+      activeProviderReady: true
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    })
+
+    expect(document.body.querySelector('[aria-label="Provider type"]')?.textContent).toContain(
+      'Custom Gateway'
+    )
+    expect(document.body.querySelector('[aria-label="API format"]')?.textContent).toContain(
+      '/v1/messages'
+    )
+  })
+
   it('switches to the General panel and shows the diagnostic log file', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
