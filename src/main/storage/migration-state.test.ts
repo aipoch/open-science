@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 vi.mock('electron', () => ({ dialog: { showMessageBoxSync: vi.fn() } }))
 
 const {
+  acquireDataRootWriter,
   beginMigration,
   clearMigrationPending,
   endMigration,
@@ -106,6 +107,23 @@ describe('migration-state', () => {
 
     releaseWrite?.()
     await activeWrite
+    await drainPromise
+    expect(drained).toBe(true)
+  })
+
+  it('keeps a logical writer active across calls until its idempotent release', async () => {
+    const release = acquireDataRootWriter()
+    beginMigration()
+
+    let drained = false
+    const drainPromise = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+
+    release()
+    release()
     await drainPromise
     expect(drained).toBe(true)
   })

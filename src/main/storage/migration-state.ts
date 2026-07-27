@@ -54,17 +54,31 @@ export const assertNoMigrationPending = (): void => {
   }
 }
 
-export const withDataRootWrite = async <Result>(write: () => Promise<Result>): Promise<Result> => {
+// Acquires one logical writer slot until the returned release callback is invoked. Long-lived
+// multi-call operations (for example a chunked upload) keep this lease across their entire protocol
+// so migration cannot begin in a gap between individual IPC requests. Release is idempotent.
+export const acquireDataRootWriter = (): (() => void) => {
   assertNoMigrationPending()
   activeDataRootWriters += 1
-  try {
-    return await write()
-  } finally {
+
+  let released = false
+  return () => {
+    if (released) return
+    released = true
     activeDataRootWriters -= 1
     if (activeDataRootWriters === 0) {
       for (const resolve of writerDrainWaiters) resolve()
       writerDrainWaiters.clear()
     }
+  }
+}
+
+export const withDataRootWrite = async <Result>(write: () => Promise<Result>): Promise<Result> => {
+  const release = acquireDataRootWriter()
+  try {
+    return await write()
+  } finally {
+    release()
   }
 }
 

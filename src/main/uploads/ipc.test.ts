@@ -73,23 +73,35 @@ describe('default upload repository', () => {
     ).resolves.toMatchObject({ content })
   })
 
-  it('keeps migration drain pending until an upload that already started finishes', async () => {
-    let releaseUpload: (() => void) | undefined
+  it('holds one migration writer lease across the complete chunk transfer', async () => {
     const repository = {
-      beginTransfer: vi.fn(
-        () =>
-          new Promise<void>((resolve) => {
-            releaseUpload = resolve
-          })
-      )
+      beginTransfer: vi.fn(async () => ({
+        transferId: 'transfer-1',
+        name: 'data.csv',
+        receivedBytes: 0,
+        totalBytes: 10
+      })),
+      appendTransfer: vi.fn(async () => ({
+        transferId: 'transfer-1',
+        name: 'data.csv',
+        receivedBytes: 10,
+        totalBytes: 10
+      })),
+      finishTransfer: vi.fn(async () => undefined)
     } as unknown as UploadRepository
     registerUploadIpcHandlers(repository)
-    const stage = ipcHandlers.get('uploads:begin-transfer')!
+    const begin = ipcHandlers.get('uploads:begin-transfer')!
+    const append = ipcHandlers.get('uploads:append-transfer')!
+    const finish = ipcHandlers.get('uploads:finish-transfer')!
 
-    const uploadPromise = Promise.resolve(
-      stage(undefined, { transferId: 'transfer-1', name: 'data.csv', size: 10 })
-    )
+    await begin(undefined, { transferId: 'transfer-1', name: 'data.csv', size: 10 })
     beginMigration()
+    await append(undefined, {
+      transferId: 'transfer-1',
+      offset: 0,
+      chunk: new Uint8Array(10)
+    })
+
     let drained = false
     const drainPromise = waitForDataRootWriters().then(() => {
       drained = true
@@ -97,10 +109,46 @@ describe('default upload repository', () => {
     await Promise.resolve()
     expect(drained).toBe(false)
 
-    releaseUpload?.()
-    await uploadPromise
+    await finish(undefined, { transferId: 'transfer-1' })
     await drainPromise
     expect(drained).toBe(true)
+    expect(repository.appendTransfer).toHaveBeenCalledOnce()
+    expect(repository.finishTransfer).toHaveBeenCalledOnce()
+  })
+
+  it('waits for begin before aborting and releases the transfer during migration', async () => {
+    let finishBegin: (() => void) | undefined
+    const repository = {
+      beginTransfer: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishBegin = resolve
+          })
+      ),
+      abortTransfer: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const begin = ipcHandlers.get('uploads:begin-transfer')!
+    const abort = ipcHandlers.get('uploads:abort-transfer')!
+
+    const beginPromise = Promise.resolve(
+      begin(undefined, { transferId: 'transfer-2', name: 'data.csv', size: 10 })
+    )
+    beginMigration()
+    const abortPromise = Promise.resolve(abort(undefined, { transferId: 'transfer-2' }))
+    let drained = false
+    const drainPromise = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+
+    finishBegin?.()
+    await beginPromise
+    await abortPromise
+    await drainPromise
+    expect(drained).toBe(true)
+    expect(repository.abortTransfer).toHaveBeenCalledWith({ transferId: 'transfer-2' })
   })
 
   it('does not expose the removed whole-file base64 staging channel', () => {

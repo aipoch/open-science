@@ -727,6 +727,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
           }
         } finally {
           delete attachmentTransferControllersRef.current[transfer.transferId]
+          cancelledAttachmentTransfersRef.current.delete(transfer.transferId)
         }
       }
     })()
@@ -888,6 +889,9 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
 
       delete composerDraftsRef.current[deletedSessionId]
       for (const transfer of abandonedTransfers) {
+        // Queued files have no controller yet. Mark every transfer before aborting the active one so
+        // the serialized loop skips later entries after the in-flight request settles.
+        cancelledAttachmentTransfersRef.current.add(transfer.transferId)
         attachmentTransferControllersRef.current[transfer.transferId]?.abort()
         void window.api.uploads.abortTransfer({ transferId: transfer.transferId })
       }

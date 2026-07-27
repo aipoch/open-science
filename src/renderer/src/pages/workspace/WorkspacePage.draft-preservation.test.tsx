@@ -17,12 +17,14 @@ import {
 } from '@/stores/session-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 
+import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 
 // Capture the props passed to the heavy child components so the test can drive selection and drafts.
 let conversationProps: {
   draftDoc: ComposerDoc
   attachments: UploadedAttachment[]
+  attachmentTransfers: ComposerUploadTransfer[]
   onDraftDocChange: (doc: ComposerDoc) => void
   onSendMessage: (forcedSkillIds: string[]) => void
   onStageAttachmentFiles: (files: File[]) => void
@@ -122,6 +124,7 @@ const textDoc = (text: string): ComposerDoc => ({ nodes: [{ type: 'text', text }
 
 const deleteUpload = vi.fn(() => Promise.resolve())
 const stageLocalFile = vi.fn()
+const abortTransfer = vi.fn(() => Promise.resolve())
 
 describe('WorkspacePage draft preservation', () => {
   let container: HTMLDivElement
@@ -174,7 +177,7 @@ describe('WorkspacePage draft preservation', () => {
         appendTransfer: vi.fn(),
         getTransferStatus: vi.fn(),
         finishTransfer: vi.fn(),
-        abortTransfer: vi.fn(() => Promise.resolve()),
+        abortTransfer,
         onTransferProgress: vi.fn(() => vi.fn())
       },
       reviewer: {
@@ -364,6 +367,49 @@ describe('WorkspacePage draft preservation', () => {
     expect(deleteUpload).toHaveBeenCalledWith({ path: attachmentB.path })
     expect(runtime.deleteRuntimeSession).toHaveBeenCalledWith('sess-b')
     expect(conversationProps.draftDoc).toEqual(emptyDoc)
+  })
+
+  it('cancels in-flight and queued transfers before deleting their session draft', async () => {
+    await renderPage()
+
+    let rejectFirstUpload: ((reason?: unknown) => void) | undefined
+    stageLocalFile.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFirstUpload = reject
+        })
+    )
+    await act(async () => {
+      conversationProps.onStageAttachmentFiles([
+        new File(['first'], 'first.txt', { type: 'text/plain' }),
+        new File(['second'], 'second.txt', { type: 'text/plain' })
+      ])
+      await Promise.resolve()
+    })
+
+    const transferIds = conversationProps.attachmentTransfers.map(({ transferId }) => transferId)
+    expect(transferIds).toHaveLength(2)
+    expect(stageLocalFile).toHaveBeenCalledTimes(1)
+
+    const sessionA = useSessionStore.getState().sessions.find((session) => session.id === 'sess-a')!
+    await act(async () => {
+      sidebarProps.onDeleteSession(sessionA)
+    })
+    await act(async () => {
+      deleteDialogProps.onConfirmDelete()
+      await Promise.resolve()
+    })
+
+    for (const transferId of transferIds) {
+      expect(abortTransfer).toHaveBeenCalledWith({ transferId })
+    }
+
+    await act(async () => {
+      rejectFirstUpload?.(new Error('Upload cancelled'))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(stageLocalFile).toHaveBeenCalledTimes(1)
   })
 
   it('keeps a stored draft and its staged files when session deletion fails', async () => {
