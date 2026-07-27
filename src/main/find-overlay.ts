@@ -1,4 +1,8 @@
-import { WINDOW_FIND_SHOW_CHANNEL, type WindowFindAppearance } from '../shared/window-controls'
+import {
+  WINDOW_FIND_APPEARANCE_CHANNEL,
+  WINDOW_FIND_SHOW_CHANNEL,
+  type WindowFindAppearance
+} from '../shared/window-controls'
 import type { FindOverlayOwner } from './find-overlay-registry'
 
 // Preferred geometry for the find overlay, in CSS pixels. 420px ~ 26rem at the app's 16px base.
@@ -105,6 +109,7 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
   let loadPromise: Promise<void> | null = null
   let opened = false
   let showRequestId = 0
+  let cachedAppearance = FALLBACK_APPEARANCE
 
   const position = (): void => {
     if (!view) return
@@ -126,23 +131,42 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
     deps.mainWindow.webContents.focus()
   }
 
-  const readAppearance = async (): Promise<WindowFindAppearance> => {
+  const readAppearance = async (): Promise<WindowFindAppearance | null> => {
     try {
       const appearance = await deps.mainWindow.webContents.executeJavaScript(READ_APPEARANCE_SCRIPT)
-      return isWindowFindAppearance(appearance) ? appearance : FALLBACK_APPEARANCE
+      return isWindowFindAppearance(appearance) ? appearance : null
     } catch {
-      return FALLBACK_APPEARANCE
+      return null
     }
   }
+
+  const appearancesEqual = (left: WindowFindAppearance, right: WindowFindAppearance): boolean =>
+    left.theme === right.theme && left.followsSystem === right.followsSystem
 
   const showLoadedView = (): void => {
     if (!opened || !view || loadPromise) return
     const pendingView = view
     const requestId = ++showRequestId
+    const shownAppearance = cachedAppearance
+    // Keep the shortcut hot path synchronous: once the page is loaded, focus and SHOW immediately so
+    // keystrokes following Cmd/Ctrl+F land in the query field. Theme freshness is less important than
+    // input ownership and is reconciled below without refocusing or re-running the query.
+    pendingView.webContents.focus()
+    pendingView.webContents.send(WINDOW_FIND_SHOW_CHANNEL, shownAppearance)
     void readAppearance().then((appearance) => {
-      if (requestId !== showRequestId || !opened || view !== pendingView || loadPromise) return
-      pendingView.webContents.focus()
-      pendingView.webContents.send(WINDOW_FIND_SHOW_CHANNEL, appearance)
+      if (
+        !appearance ||
+        requestId !== showRequestId ||
+        !opened ||
+        view !== pendingView ||
+        loadPromise
+      ) {
+        return
+      }
+      cachedAppearance = appearance
+      if (!appearancesEqual(appearance, shownAppearance)) {
+        pendingView.webContents.send(WINDOW_FIND_APPEARANCE_CHANNEL, appearance)
+      }
     })
   }
 

@@ -95,6 +95,9 @@ type PreloadApi = {
     onShowWindowFind?: (
       listener: (appearance: { theme: 'light' | 'dark'; followsSystem: boolean }) => void
     ) => unknown
+    onWindowFindAppearance?: (
+      listener: (appearance: { theme: 'light' | 'dark'; followsSystem: boolean }) => void
+    ) => unknown
     announceWindowFindReady?: () => unknown
   }
 }
@@ -132,21 +135,29 @@ describe('preload bridge — window find IPC channels', () => {
     expect(sendMock).toHaveBeenNthCalledWith(2, 'window:clear-find-in-page')
   })
 
-  it('forwards the overlay close request and the show appearance payload from main', () => {
-    const listener = vi.fn()
+  it('forwards the overlay close request and both appearance-bearing events from main', () => {
+    const showListener = vi.fn()
+    const appearanceListener = vi.fn()
     api.window.closeFind?.()
-    api.window.onShowWindowFind?.(listener)
+    api.window.onShowWindowFind?.(showListener)
+    api.window.onWindowFindAppearance?.(appearanceListener)
 
     expect(sendMock).toHaveBeenCalledWith('window:find-close')
     expect(onMock).toHaveBeenCalledWith('window:find-show', expect.any(Function))
+    expect(onMock).toHaveBeenCalledWith('window:find-appearance', expect.any(Function))
 
     const wrappedListener = onMock.mock.calls.find(
       ([channel]) => channel === 'window:find-show'
     )?.[1] as ((event: unknown, appearance: unknown) => void) | undefined
+    const wrappedAppearanceListener = onMock.mock.calls.find(
+      ([channel]) => channel === 'window:find-appearance'
+    )?.[1] as ((event: unknown, appearance: unknown) => void) | undefined
     const appearance = { theme: 'dark' as const, followsSystem: false }
     wrappedListener?.({}, appearance)
+    wrappedAppearanceListener?.({}, appearance)
 
-    expect(listener).toHaveBeenCalledWith(appearance)
+    expect(showListener).toHaveBeenCalledWith(appearance)
+    expect(appearanceListener).toHaveBeenCalledWith(appearance)
   })
 
   it('announces Workspace find readiness to main on mount', () => {

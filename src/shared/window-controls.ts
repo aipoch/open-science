@@ -36,6 +36,10 @@ export const WINDOW_FIND_RESULT_CHANNEL = 'window:find-in-page-result'
 // live-follow OS changes without trying to read the renderer's origin-scoped localStorage.
 export const WINDOW_FIND_SHOW_CHANNEL = 'window:find-show'
 
+// Main -> overlay: refresh only the overlay appearance after an asynchronous renderer lookup. Kept
+// separate from SHOW so a late theme result never steals focus or re-runs the remembered query.
+export const WINDOW_FIND_APPEARANCE_CHANNEL = 'window:find-appearance'
+
 // Overlay -> main: the user closed the find bar — hide the overlay and release the main-window focus.
 export const WINDOW_FIND_CLOSE_CHANNEL = 'window:find-close'
 

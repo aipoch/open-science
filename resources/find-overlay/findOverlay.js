@@ -29,7 +29,7 @@ export function createFindOverlay(deps) {
   }
   systemTheme?.addEventListener('change', onSystemThemeChange)
 
-  const handleShow = (appearance) => {
+  const handleAppearance = (appearance) => {
     followsSystem = appearance?.followsSystem === true
     const theme =
       followsSystem && systemTheme
@@ -42,6 +42,10 @@ export function createFindOverlay(deps) {
             ? 'dark'
             : 'light'
     applyTheme(theme)
+  }
+
+  const handleShow = (appearance) => {
+    handleAppearance(appearance)
     input.focus()
     const remembered = storage.getItem(LAST_QUERY_STORAGE_KEY) ?? ''
     if (remembered) {
@@ -111,11 +115,13 @@ export function createFindOverlay(deps) {
 
   const offResult = api.onFindInPageResult(onResult)
   const offShow = api.onShowWindowFind(handleShow)
+  const offAppearance = api.onWindowFindAppearance(handleAppearance)
 
   return {
     destroy() {
       offResult()
       offShow()
+      offAppearance()
       input.removeEventListener('input', onInput)
       ownerDocument.removeEventListener('keydown', onKeydown)
       prev.removeEventListener('click', goBackward)

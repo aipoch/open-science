@@ -17,6 +17,7 @@ function setup() {
 
   const resultListeners = new Set()
   const showListeners = new Set()
+  const appearanceListeners = new Set()
   const api = {
     findInPage: vi.fn(),
     clearFind: vi.fn(),
@@ -28,6 +29,10 @@ function setup() {
     onShowWindowFind: vi.fn((listener) => {
       showListeners.add(listener)
       return () => showListeners.delete(listener)
+    }),
+    onWindowFindAppearance: vi.fn((listener) => {
+      appearanceListeners.add(listener)
+      return () => appearanceListeners.delete(listener)
     })
   }
 
@@ -57,6 +62,7 @@ function setup() {
   const emitResult = (r) => resultListeners.forEach((l) => l(r))
   const emitShow = (appearance = { theme: 'light', followsSystem: false }) =>
     showListeners.forEach((l) => l(appearance))
+  const emitAppearance = (appearance) => appearanceListeners.forEach((l) => l(appearance))
   const emitSystemTheme = (matches) => {
     systemDark = matches
     systemThemeListeners.forEach((listener) => listener({ matches }))
@@ -73,6 +79,7 @@ function setup() {
     close,
     emitResult,
     emitShow,
+    emitAppearance,
     emitSystemTheme,
     mediaQuery
   }
@@ -86,15 +93,17 @@ describe('createFindOverlay', () => {
     ctx = setup()
   })
 
-  it('subscribes to api events and returns a destroy() that unsubscribes both', () => {
+  it('subscribes to api events and returns a destroy() that unsubscribes all', () => {
     const overlay = createFindOverlay(ctx.deps)
     expect(ctx.api.onShowWindowFind).toHaveBeenCalledTimes(1)
     expect(ctx.api.onFindInPageResult).toHaveBeenCalledTimes(1)
+    expect(ctx.api.onWindowFindAppearance).toHaveBeenCalledTimes(1)
 
     overlay.destroy()
 
     // After destroy, emitted events must not reach handlers (no throw, no find calls).
     expect(() => ctx.emitShow()).not.toThrow()
+    expect(() => ctx.emitAppearance({ theme: 'dark', followsSystem: false })).not.toThrow()
     expect(() =>
       ctx.emitResult({ requestId: 1, activeMatchOrdinal: 1, matches: 1, finalUpdate: true })
     ).not.toThrow()
@@ -185,6 +194,21 @@ describe('createFindOverlay', () => {
     ctx.emitShow({ theme: 'dark', followsSystem: true })
 
     expect(document.documentElement.classList.contains('dark')).toBe(false)
+  })
+
+  it('applies an asynchronous appearance update without refocusing or rerunning the query', () => {
+    const focusSpy = vi.spyOn(ctx.input, 'focus')
+    ctx.store.set(LAST_QUERY_STORAGE_KEY, 'protein')
+    createFindOverlay(ctx.deps)
+    ctx.emitShow({ theme: 'light', followsSystem: false })
+    focusSpy.mockClear()
+    ctx.api.findInPage.mockClear()
+
+    ctx.emitAppearance({ theme: 'dark', followsSystem: false })
+
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(focusSpy).not.toHaveBeenCalled()
+    expect(ctx.api.findInPage).not.toHaveBeenCalled()
   })
 
   it('typing a non-empty value searches with an incremented requestId and persists', () => {
@@ -404,10 +428,12 @@ describe('createFindOverlay', () => {
     ctx.next.dispatchEvent(new Event('click', { bubbles: true }))
     ctx.prev.dispatchEvent(new Event('click', { bubbles: true }))
     ctx.close.dispatchEvent(new Event('click', { bubbles: true }))
+    ctx.emitAppearance({ theme: 'dark', followsSystem: false })
 
     expect(ctx.api.findInPage).not.toHaveBeenCalled()
     expect(ctx.api.closeFind).not.toHaveBeenCalled()
     expect(ctx.storage.setItem).not.toHaveBeenCalled()
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
     expect(ctx.mediaQuery.removeEventListener).toHaveBeenCalledWith('change', expect.any(Function))
   })
 })
