@@ -19,7 +19,7 @@ const chatSseResponse = (body: string = toolCallSse): Response =>
   new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } })
 
 describe('validate: request construction', () => {
-  it('builds a bearer /v1/messages probe with anthropic-version and a 1-token body', () => {
+  it('builds a bearer /v1/messages probe with anthropic-version and a small reasoning budget', () => {
     const request = buildValidationRequest({
       type: 'custom',
       baseUrl: 'https://api.anthropic.com',
@@ -30,7 +30,7 @@ describe('validate: request construction', () => {
     expect(request.url).toBe('https://api.anthropic.com/v1/messages')
     expect(request.headers.authorization).toBe('Bearer test-token')
     expect(request.headers['anthropic-version']).toBe('2023-06-01')
-    expect(JSON.parse(request.body)).toMatchObject({ model: 'claude-sonnet-4-5', max_tokens: 1 })
+    expect(JSON.parse(request.body)).toMatchObject({ model: 'claude-sonnet-4-5', max_tokens: 16 })
   })
 
   it('normalizes a base URL that already carries /v1 so the probe never doubles it', () => {
@@ -269,6 +269,35 @@ describe('validate: provider dispatch', () => {
     const result = await validateProvider(
       { type: 'custom', baseUrl: 'https://g/v1', key: 'k', model: 'm' },
       { fetchImpl: fetchImpl as unknown as typeof fetch }
+    )
+
+    expect(result).toMatchObject({ ok: true, category: 'ok', status: 200 })
+  })
+
+  it('gives reasoning Anthropic providers enough output budget to return a message envelope', async () => {
+    const fetchImpl = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { max_tokens: number }
+      const message =
+        request.max_tokens >= 16
+          ? {
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'thinking', thinking: '...' }],
+              usage: { input_tokens: 1, output_tokens: request.max_tokens }
+            }
+          : {
+              type: '',
+              role: '',
+              content: [{ type: 'text', text: '' }],
+              usage: { input_tokens: 1, output_tokens: request.max_tokens }
+            }
+
+      return Promise.resolve(new Response(JSON.stringify(message), { status: 200 }))
+    })
+
+    const result = await validateProvider(
+      { type: 'custom', baseUrl: 'https://api.kimi.com/coding', key: 'k', model: 'kimi-k3' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch, frameworkEndpoints: ['anthropic'] }
     )
 
     expect(result).toMatchObject({ ok: true, category: 'ok', status: 200 })

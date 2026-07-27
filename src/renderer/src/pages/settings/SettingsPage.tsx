@@ -44,6 +44,7 @@ import {
   defaultProviderKindKey,
   getProviderFormErrors,
   hasProviderFormErrors,
+  providerFormApiEndpoints,
   providerKindPatch,
   type ProviderFormValue
 } from './provider-form-value'
@@ -87,7 +88,7 @@ const toUpsertRequest = (
         ? Number(value.contextWindow)
         : null
       : undefined,
-  apiEndpoints: [value.apiEndpoint],
+  apiEndpoints: providerFormApiEndpoints(value),
   supportsImageInput: value.supportsImageInput,
   reasoningEffortPreset: value.type === 'custom' ? value.reasoningEffortPreset : undefined,
   reasoningEffortTransport: value.type === 'custom' ? value.reasoningEffortTransport : undefined,

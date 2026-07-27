@@ -17,6 +17,7 @@ import {
 } from './onboarding-test-utils'
 import {
   createEmptyProviderFormValue,
+  providerKindPatch,
   type ProviderFormValue
 } from '../settings/provider-form-value'
 
@@ -438,6 +439,35 @@ describe('ProviderStep', () => {
     expect(container.querySelector('[aria-label="API format"]')?.textContent).toContain(
       '/v1/messages'
     )
+  })
+
+  it('lets Codex continue with a bridge-compatible official provider', async () => {
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      agentFrameworks: [
+        {
+          id: 'codex',
+          displayName: 'Codex',
+          supportedApiTypes: ['responses'],
+          supportsSkills: true
+        }
+      ]
+    })
+    const saveAndActivateProvider = vi
+      .fn()
+      .mockResolvedValue({ providerId: 'p1', validation: { ok: true, category: 'ok' } })
+    useSettingsStore.setState({ saveAndActivateProvider })
+
+    await renderStep({
+      initialValue: createEmptyProviderFormValue({
+        ...providerKindPatch('official:kimiforcode'),
+        key: 'sk-test'
+      })
+    })
+    await clickButton(/test & continue/i)
+
+    expect(container.textContent).not.toContain("isn't compatible with Codex")
+    expect(saveAndActivateProvider).toHaveBeenCalledOnce()
   })
 
   // Switches the auth picker to the isolated "Sign in with Open Science" mode — the only path that

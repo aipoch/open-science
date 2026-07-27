@@ -19,6 +19,11 @@ import { ResponsesBridge, responsesToChatRequest } from './responses-bridge'
 // Default probe timeout; a stuck gateway should fail fast rather than hang the wizard.
 const DEFAULT_VALIDATE_TIMEOUT_MS = 20_000
 const ANTHROPIC_VERSION = '2023-06-01'
+// Reasoning providers may spend the first few output tokens on an internal block. With a one-token
+// budget Kimi k3 returns a 200 response whose message envelope is incomplete (`type`/`role` empty),
+// even though normal Claude Code requests work. Sixteen tokens is still a cheap probe while allowing
+// the provider to finish the Anthropic envelope that validation checks below.
+const ANTHROPIC_PROBE_MAX_TOKENS = 16
 // Keep an unmodified loopback fetch for the temporary local bridge. Tests and callers may inject/mock
 // the upstream fetch, but that must not intercept the request from the validator into 127.0.0.1.
 const loopbackFetch = globalThis.fetch.bind(globalThis)
@@ -105,7 +110,7 @@ const buildAnthropicValidationRequest = (provider: ResolvedProvider): Validation
 
   const body = JSON.stringify({
     model: provider.model ?? '',
-    max_tokens: 1,
+    max_tokens: ANTHROPIC_PROBE_MAX_TOKENS,
     messages: [{ role: 'user', content: 'ping' }]
   })
 

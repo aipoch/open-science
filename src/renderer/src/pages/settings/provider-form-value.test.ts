@@ -7,6 +7,7 @@ import {
   defaultProviderKindKey,
   getProviderFormErrors,
   hasProviderFormErrors,
+  providerFormApiEndpoints,
   providerKindPatch,
   selectedKindKey
 } from './provider-form-value'
@@ -105,6 +106,23 @@ describe('getProviderFormErrors', () => {
 })
 
 describe('provider-kind helpers', () => {
+  it('uses registry endpoints for official providers and the selected endpoint for custom gateways', () => {
+    expect(
+      providerFormApiEndpoints(
+        createEmptyProviderFormValue({
+          type: 'official',
+          vendorId: 'kimiforcode',
+          apiEndpoint: 'anthropic'
+        })
+      )
+    ).toEqual(['anthropic', 'openai'])
+    expect(
+      providerFormApiEndpoints(
+        createEmptyProviderFormValue({ type: 'custom', apiEndpoint: 'responses' })
+      )
+    ).toEqual(['responses'])
+  })
+
   it('groups each subscription on its own, official vendors under API, and custom under Other', () => {
     const groupKeys = (group: string): string[] =>
       PROVIDER_KINDS.filter((kind) => kind.group === group).map((kind) => kind.key)

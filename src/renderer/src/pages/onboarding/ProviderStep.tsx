@@ -19,6 +19,7 @@ import {
   defaultCustomApiEndpoint,
   getProviderFormErrors,
   hasProviderFormErrors,
+  providerFormApiEndpoints,
   providerKindPatch,
   type ProviderFormValue
 } from '../settings/provider-form-value'
@@ -36,7 +37,7 @@ const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
   vendorId: value.vendorId,
   region: value.region,
   // Persist the chosen API format so an OpenAI-compatible provider is validated + driven correctly.
-  apiEndpoints: [value.apiEndpoint],
+  apiEndpoints: providerFormApiEndpoints(value),
   supportsImageInput: value.supportsImageInput,
   reasoningEffortPreset: value.type === 'custom' ? value.reasoningEffortPreset : undefined,
   reasoningEffortTransport: value.type === 'custom' ? value.reasoningEffortTransport : undefined,
@@ -175,7 +176,7 @@ const ProviderStep = ({
     // finish with a pair the agent can't actually spawn.
     if (
       !isProviderUsableByFramework(
-        { apiEndpoints: [formValue.apiEndpoint], type: formValue.type },
+        { apiEndpoints: providerFormApiEndpoints(formValue), type: formValue.type },
         { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
       )
     ) {
