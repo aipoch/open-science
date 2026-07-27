@@ -148,12 +148,13 @@ jobs:
             printf '%s' "$CODEX_AUTH_JSON" > "$auth_file"
             chmod 600 "$auth_file"
 
-            preflight_dir="$RUNNER_TEMP/codex-auth-preflight"
+            preflight_dir="$(mktemp -d /tmp/codex-auth-preflight-work.XXXXXX)"
+            preflight_home="$(mktemp -d /tmp/codex-auth-preflight-home.XXXXXX)"
             preflight_output="$RUNNER_TEMP/codex-auth-preflight.jsonl"
             preflight_error="$RUNNER_TEMP/codex-auth-preflight.stderr"
-            mkdir -p "$preflight_dir"
             preflight_key="$(jq -Rn --arg path "$preflight_dir" '$path')"
-            preflight_home_key="$(jq -Rn --arg path "$codex_home" '$path')"
+            preflight_home_key="$(jq -Rn --arg path "$preflight_home" '$path')"
+            cp "$auth_file" "$preflight_home/auth.json"
             {
               echo 'default_permissions = "ai_review"'
               echo 'project_doc_max_bytes = 0'
@@ -167,32 +168,51 @@ jobs:
               echo
               echo '[permissions.ai_review.filesystem]'
               printf '%s = "deny"\n' "$preflight_home_key"
-            } > "$codex_home/config.toml"
-            chmod 600 "$codex_home/config.toml"
+            } > "$preflight_home/config.toml"
+            chmod 600 "$preflight_home/auth.json" "$preflight_home/config.toml"
 
-            set +e
-            printf '%s\n' 'Reply with exactly OK. Do not call tools.' | \
-              CODEX_HOME="$codex_home" codex exec \
-              --strict-config \
-              --skip-git-repo-check \
-              --cd "$preflight_dir" \
-              --model "$CODEX_MODEL" \
-              --config 'model_reasoning_effort="low"' \
-              --config 'default_permissions="ai_review"' \
-              --ephemeral \
-              --ignore-rules \
-              --json \
-              > "$preflight_output" \
-              2> "$preflight_error"
-            preflight_status=$?
-            set -e
+            if preflight_uid="$(id -u nobody 2> /dev/null)" &&
+              preflight_gid="$(id -g nobody 2> /dev/null)" &&
+              sudo chown -R "$preflight_uid:$preflight_gid" "$preflight_home" "$preflight_dir"; then
+              set +e
+              # Redirect as the runner so the unprivileged process cannot rewrite status files.
+              # shellcheck disable=SC2024
+              printf '%s\n' 'Reply with exactly OK. Do not call tools.' | \
+                sudo -u nobody -- env -i \
+                PATH="$PATH" \
+                HOME="$preflight_home" \
+                CODEX_HOME="$preflight_home" \
+                codex exec \
+                --strict-config \
+                --skip-git-repo-check \
+                --cd "$preflight_dir" \
+                --model "$CODEX_MODEL" \
+                --config 'model_reasoning_effort="low"' \
+                --config 'default_permissions="ai_review"' \
+                --ephemeral \
+                --ignore-rules \
+                --json \
+                > "$preflight_output" \
+                2> "$preflight_error"
+              preflight_status=$?
+              set -e
 
-            if (( preflight_status != 0 )) ||
-              ! jq -s -e 'any(.[]; .type == "turn.completed")' \
-                "$preflight_output" > /dev/null 2>&1; then
-              echo "::warning::Codex subscription authentication failed; falling back to API-key auth."
+              if (( preflight_status == 0 )) &&
+                jq -s -e 'any(.[]; .type == "turn.completed")' \
+                  "$preflight_output" > /dev/null 2>&1 &&
+                sudo cp -- "$preflight_home/auth.json" "$auth_file"; then
+                chmod 600 "$auth_file"
+              else
+                echo "::warning::Codex subscription authentication failed; falling back to API-key auth."
+                effective_auth_mode=api-key
+                rm -f "$auth_file"
+              fi
+              sudo rm -rf -- "$preflight_home" "$preflight_dir"
+            else
+              echo "::warning::Codex subscription preflight isolation failed; falling back to API-key auth."
               effective_auth_mode=api-key
               rm -f "$auth_file"
+              rm -rf -- "$preflight_home" "$preflight_dir" 2> /dev/null || true
             fi
             rm -f "$preflight_output" "$preflight_error"
           fi

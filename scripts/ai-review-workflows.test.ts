@@ -190,6 +190,10 @@ function runAuth(options: AuthOptions = {}): {
     join(bin, 'codex'),
     `#!/usr/bin/env bash
 set -euo pipefail
+if [[ -n "\${OPENAI_API_KEY:-}" || -n "\${CODEX_BASE_URL:-}" ]]; then
+  echo 'fallback API credentials leaked into subscription preflight' >&2
+  exit 3
+fi
 if [[ -z "\${CODEX_HOME:-}" || ! -s "$CODEX_HOME/auth.json" ]]; then
   echo 'staged subscription credential is unavailable' >&2
   exit 2
@@ -199,6 +203,23 @@ if [[ "$SUBSCRIPTION_AVAILABLE" != 'true' ]]; then
   exit 1
 fi
 printf '%s\n' '{"type":"turn.completed"}'
+`
+  )
+  executable(
+    join(bin, 'sudo'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == 'chown' ]]; then
+  exit 0
+fi
+if [[ "$1" == '-u' && "$2" == 'nobody' && "$3" == '--' ]]; then
+  shift 3
+  if [[ "$1" == 'env' && "$2" == '-i' ]]; then
+    shift 2
+    exec env -i SUBSCRIPTION_AVAILABLE="$SUBSCRIPTION_AVAILABLE" "$@"
+  fi
+fi
+exec "$@"
 `
   )
   const result = spawnSync(
@@ -516,8 +537,10 @@ describe('single Codex workflow contract', () => {
     expect(review.permissions).toEqual({ contents: 'read' })
     expect(review.with).toMatchObject({
       auth_mode: '${{ needs.review_target.outputs.auth_mode }}',
-      model: "${{ vars.CODEX_REVIEW_MODEL || vars.CODEX_CORRECTNESS_MODEL || 'gpt-5.6-sol' }}",
-      effort: "${{ vars.CODEX_REVIEW_EFFORT || vars.CODEX_CORRECTNESS_EFFORT || 'high' }}"
+      model:
+        "${{ vars.CODEX_REVIEW_MODEL || vars.CODEX_CORRECTNESS_MODEL || vars.CODEX_ARCHITECTURE_MODEL || 'gpt-5.6-sol' }}",
+      effort:
+        "${{ vars.CODEX_REVIEW_EFFORT || vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_ARCHITECTURE_EFFORT || 'high' }}"
     })
     expect(review.with).not.toHaveProperty('scope')
     expect(review.secrets).toEqual({
@@ -655,6 +678,15 @@ describe('single Codex workflow contract', () => {
     expect(installCli.env).toEqual({ CODEX_VERSION: '0.144.6' })
     expect(installCli.run).toContain('npm install -g "@openai/codex@${CODEX_VERSION}"')
     expect(installCli.run).toContain('codex --version')
+    const prepareAuth = getStep(codexWorkflow, 'review', 'Prepare Codex authentication')
+    expect(prepareAuth.run).toContain('sudo -u nobody -- env -i')
+    expect(prepareAuth.run).toContain(
+      'preflight_dir="$(mktemp -d /tmp/codex-auth-preflight-work.XXXXXX)"'
+    )
+    expect(prepareAuth.run).toContain(
+      'sudo chown -R "$preflight_uid:$preflight_gid" "$preflight_home" "$preflight_dir"'
+    )
+    expect(prepareAuth.run).toContain('CODEX_HOME="$preflight_home"')
     expect(getStep(codexWorkflow, 'review', 'Run Codex review').env?.CODEX_PERMISSION_PROFILE).toBe(
       "${{ steps.codex_auth.outputs.auth_mode == 'subscription' && 'ai_review' || ':read-only' }}"
     )
