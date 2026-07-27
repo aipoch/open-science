@@ -16,4 +16,22 @@ describe('agent framework registry', () => {
       acceptsStdioMcp: true
     })
   })
+
+  it('declares native compaction commands separately from host-owned auto thresholds', () => {
+    expect(getAgentFramework('claude-code').contextCompaction).toEqual({
+      kind: 'native-command',
+      command: '/compact',
+      triggerAtPercent: 90,
+      failureTextPrefix: 'Compacting failed'
+    })
+    expect(getAgentFramework('opencode').contextCompaction).toEqual({
+      kind: 'native-command',
+      command: '/compact',
+      triggerAtPercent: 90
+    })
+    expect(getAgentFramework('codex').contextCompaction).toEqual({
+      kind: 'native-command',
+      command: '/compact'
+    })
+  })
 })

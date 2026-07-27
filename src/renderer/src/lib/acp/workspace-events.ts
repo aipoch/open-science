@@ -271,6 +271,24 @@ const applyWorkspaceRuntimeEvent = async (
     return true
   }
 
+  // Native compaction is a framework control turn, not a chat turn. Reflect its lifecycle in the
+  // existing neutral compacting state while keeping command/status output out of the transcript.
+  if (event.kind === 'compaction' && event.sessionId) {
+    if (event.status === 'in_progress') {
+      store.beginCompaction(event.sessionId)
+    } else if (event.compactionReason === 'overflow-recovery') {
+      // The recovery flow owns the terminal transition: keep the composer gated until its retry
+      // replaces compacting with a new active run, or its fallback reports a concrete failure.
+      return true
+    } else if (event.status === 'completed' || event.status === 'cancelled') {
+      store.finishCompaction(event.sessionId)
+    } else if (event.status === 'failed') {
+      store.failCompaction(event.sessionId, getEventErrorText(event))
+    }
+
+    return true
+  }
+
   if (
     event.kind === 'artifact' &&
     event.sessionId &&

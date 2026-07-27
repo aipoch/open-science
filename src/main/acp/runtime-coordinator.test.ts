@@ -42,6 +42,7 @@ const createFakeRuntime = (options: {
   connect: ReturnType<typeof vi.fn>
   createSession: ReturnType<typeof vi.fn>
   resetSessionContext: ReturnType<typeof vi.fn>
+  compactSession: ReturnType<typeof vi.fn>
   resumeSession: ReturnType<typeof vi.fn>
   cancelPrompt: ReturnType<typeof vi.fn>
   deleteSession: ReturnType<typeof vi.fn>
@@ -84,6 +85,7 @@ const createFakeRuntime = (options: {
     frameworkId: options.frameworkId,
     contextReset: true
   }))
+  const compactSession = vi.fn(async () => ({ stopReason: 'end_turn' }))
   const cancelPrompt = vi.fn(async () => snapshot)
   const deleteSession = vi.fn(async ({ sessionId }: { sessionId: string }) => {
     snapshot = {
@@ -146,6 +148,7 @@ const createFakeRuntime = (options: {
     createSession,
     resumeSession,
     resetSessionContext,
+    compactSession,
     cancelPrompt,
     deleteSession,
     revokePermissionGrant: vi.fn(
@@ -182,6 +185,7 @@ const createFakeRuntime = (options: {
     connect,
     createSession,
     resetSessionContext,
+    compactSession,
     resumeSession,
     cancelPrompt,
     deleteSession,
@@ -212,6 +216,26 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it('routes native compaction to the session owner and publishes only owned capabilities', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: [`session-${created.length + 1}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const session = await coordinator.createSession()
+    created[0].emitState({ nativeContextCompactionSessionIds: [session.sessionId, 'unowned'] })
+
+    expect(coordinator.getSnapshot().nativeContextCompactionSessionIds).toEqual([session.sessionId])
+    await coordinator.compactSession({ sessionId: session.sessionId })
+
+    expect(created[0].compactSession).toHaveBeenCalledWith({ sessionId: session.sessionId })
+  })
+
   it('does not run lifecycle requests after disconnect supersedes initialization', async () => {
     const initialization = createDeferred()
     const created: ReturnType<typeof createFakeRuntime>[] = []
@@ -531,6 +555,170 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created).toHaveLength(2)
     expect(created[1].resumeSession).toHaveBeenCalledOnce()
     expect(created[1].sendPrompt).toHaveBeenCalledOnce()
+
+    retirement.resolve()
+    await reloadRequest
+  })
+
+  it('publishes prompt ownership only from the runtime that currently owns the session', async () => {
+    const retirement = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+        sessionIds: [`agent-session-${created.length + 1}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    const session = await coordinator.createSession()
+    created[0].emitState({
+      promptInFlight: true,
+      promptInFlightSessionIds: [session.sessionId]
+    })
+    created[0].requestRetirement.mockReturnValue(retirement.promise)
+    const reloadRequest = coordinator.requestSkillsReload()
+
+    expect(coordinator.getSnapshot().promptInFlightSessionIds).toEqual([session.sessionId])
+
+    await coordinator.resumeSession({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      previousFrameworkId: 'claude-code'
+    })
+
+    // The old generation is still draining the same logical session, but the fresh runtime now owns
+    // user actions for it, so retired ownership must not keep the new conversation locked.
+    expect(coordinator.getSnapshot().promptInFlightSessionIds).toEqual([])
+
+    created[1].emitState({
+      promptInFlight: true,
+      promptInFlightSessionIds: [session.sessionId]
+    })
+    expect(coordinator.getSnapshot().promptInFlightSessionIds).toEqual([session.sessionId])
+
+    retirement.resolve()
+    await reloadRequest
+  })
+
+  it('drops late recoverable overflow events from a previous session owner', async () => {
+    const retirement = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const forwardedEvents: AcpRuntimeEvent[] = []
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+          sessionIds: [`agent-session-${created.length + 1}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      { onEvent: (event) => forwardedEvents.push(event) }
+    )
+
+    const session = await coordinator.createSession()
+    created[0].emitState({
+      promptInFlight: true,
+      promptInFlightSessionIds: [session.sessionId]
+    })
+    created[0].requestRetirement.mockReturnValue(retirement.promise)
+    const reloadRequest = coordinator.requestSkillsReload()
+    const overflowEvent = (id: string): AcpRuntimeEvent => ({
+      id,
+      timestamp: 1,
+      kind: 'error',
+      level: 'error',
+      sessionId: session.sessionId,
+      recoverable: 'context-overflow',
+      title: 'Prompt failed'
+    })
+
+    // The draining runtime still owns the session until a fresh generation adopts it.
+    created[0].emitEvent(overflowEvent('owner-overflow'))
+    expect(forwardedEvents.map((event) => event.id)).toEqual(['runtime-1:owner-overflow'])
+
+    await coordinator.resumeSession({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      previousFrameworkId: 'claude-code'
+    })
+
+    created[0].emitEvent(overflowEvent('late-retired-overflow'))
+    expect(forwardedEvents.map((event) => event.id)).toEqual(['runtime-1:owner-overflow'])
+    expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([])
+
+    created[1].emitEvent(overflowEvent('fresh-owner-overflow'))
+    expect(forwardedEvents.map((event) => event.id)).toEqual([
+      'runtime-1:owner-overflow',
+      'runtime-2:fresh-owner-overflow'
+    ])
+    expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([
+      'runtime-2:fresh-owner-overflow'
+    ])
+
+    retirement.resolve()
+    await reloadRequest
+  })
+
+  it('drops late compaction events from a previous session owner', async () => {
+    const retirement = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const forwardedEvents: AcpRuntimeEvent[] = []
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+          sessionIds: [`agent-session-${created.length + 1}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      { onEvent: (event) => forwardedEvents.push(event) }
+    )
+
+    const session = await coordinator.createSession()
+    created[0].emitState({
+      promptInFlight: true,
+      promptInFlightSessionIds: [session.sessionId]
+    })
+    created[0].requestRetirement.mockReturnValue(retirement.promise)
+    const reloadRequest = coordinator.requestSkillsReload()
+    const compactionEvent = (id: string, status: string): AcpRuntimeEvent => ({
+      id,
+      timestamp: 1,
+      kind: 'compaction',
+      level: status === 'failed' ? 'error' : 'info',
+      sessionId: session.sessionId,
+      status,
+      title: 'Context compaction'
+    })
+
+    created[0].emitEvent(compactionEvent('owner-compaction', 'in_progress'))
+    expect(forwardedEvents.map((event) => event.id)).toEqual(['runtime-1:owner-compaction'])
+
+    await coordinator.resumeSession({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      previousFrameworkId: 'claude-code'
+    })
+
+    created[0].emitEvent(compactionEvent('late-retired-compaction', 'failed'))
+    expect(forwardedEvents.map((event) => event.id)).toEqual(['runtime-1:owner-compaction'])
+    expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([])
+
+    created[1].emitEvent(compactionEvent('fresh-owner-compaction', 'completed'))
+    expect(forwardedEvents.map((event) => event.id)).toEqual([
+      'runtime-1:owner-compaction',
+      'runtime-2:fresh-owner-compaction'
+    ])
+    expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([
+      'runtime-2:fresh-owner-compaction'
+    ])
 
     retirement.resolve()
     await reloadRequest

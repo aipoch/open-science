@@ -1,5 +1,6 @@
 import type {
   AcpCancelPromptRequest,
+  AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
@@ -232,6 +233,7 @@ interface OpenScienceAPI {
     resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
     resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
     sendPrompt(request: AcpPromptRequest): Promise<AcpStateSnapshot>
+    compactSession(request: AcpCompactSessionRequest): Promise<AcpStateSnapshot>
     cancel(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot>
     deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot>
     respondToPermission(response: AcpPermissionResponse): Promise<AcpStateSnapshot>

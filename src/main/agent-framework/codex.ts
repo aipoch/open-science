@@ -332,6 +332,9 @@ export const createCodexFramework = ({
 }: CodexFrameworkDeps = {}): AgentFramework => ({
   id: 'codex',
   displayName: 'Codex',
+  // codex-acp exposes `/compact` as a built-in command backed by `thread/compact/start`. Codex still
+  // owns automatic compaction, so no host trigger threshold is declared here.
+  contextCompaction: { kind: 'native-command', command: '/compact' },
   supportsSkills: true,
   acceptsStdioMcp: true,
   // codex-acp advertises a thought_level effort option and honors set_config_option on live sessions

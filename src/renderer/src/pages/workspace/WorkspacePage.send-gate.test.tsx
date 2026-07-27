@@ -25,11 +25,16 @@ import { type ComposerDoc } from './composer/composer-doc'
 let conversationProps: {
   draftDoc: ComposerDoc
   canSendMessage: boolean
+  canCompactContext: boolean
+  compactContextDisabledReason?: string
   onDraftDocChange: (doc: ComposerDoc) => void
 }
 
 const runtime = vi.hoisted(() => ({
+  promptInFlightSessionIds: [] as string[],
+  nativeContextCompactionSessionIds: ['sess-a'] as string[],
   sendMessage: vi.fn(),
+  compactContext: vi.fn(),
   cancelRun: vi.fn(),
   deleteRuntimeSession: vi.fn(),
   respondToPermission: vi.fn()
@@ -46,7 +51,10 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
   useWorkspaceAgentRuntime: () => ({
     actionError: null,
     pendingPermissions: [],
+    promptInFlightSessionIds: runtime.promptInFlightSessionIds,
+    nativeContextCompactionSessionIds: runtime.nativeContextCompactionSessionIds,
     sendMessage: runtime.sendMessage,
+    compactContext: runtime.compactContext,
     cancelRun: runtime.cancelRun,
     deleteRuntimeSession: runtime.deleteRuntimeSession,
     respondToPermission: runtime.respondToPermission
@@ -110,6 +118,8 @@ describe('WorkspacePage send gate while compacting', () => {
       selectedSessionId: 'sess-a'
     })
     vi.clearAllMocks()
+    runtime.promptInFlightSessionIds = []
+    runtime.nativeContextCompactionSessionIds = ['sess-a']
 
     window.api = {
       notebook: {
@@ -171,5 +181,41 @@ describe('WorkspacePage send gate while compacting', () => {
       useSessionStore.getState().finishRun('sess-a')
     })
     expect(conversationProps.canSendMessage).toBe(true)
+  })
+
+  it('disables sending while the runtime owns an otherwise idle session', async () => {
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('wait for compaction'))
+    })
+    expect(conversationProps.canSendMessage).toBe(true)
+
+    runtime.promptInFlightSessionIds = ['sess-a']
+    await act(async () => {
+      root.render(<WorkspacePage isSessionPersistenceReady={true} />)
+    })
+    expect(conversationProps.canSendMessage).toBe(false)
+
+    runtime.promptInFlightSessionIds = []
+    await act(async () => {
+      root.render(<WorkspacePage isSessionPersistenceReady={true} />)
+    })
+    expect(conversationProps.canSendMessage).toBe(true)
+  })
+
+  it('allows manual compaction only for an idle session, not an unresolved error', async () => {
+    await renderPage()
+
+    expect(conversationProps.canCompactContext).toBe(true)
+
+    await act(async () => {
+      useSessionStore.getState().failRun('sess-a', 'Keep this failure visible')
+    })
+
+    expect(conversationProps.canCompactContext).toBe(false)
+    expect(conversationProps.compactContextDisabledReason).toBe(
+      'Resolve the current session error before compacting.'
+    )
   })
 })

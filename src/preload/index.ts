@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 
 import type {
   AcpCancelPromptRequest,
+  AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
@@ -267,6 +268,7 @@ type OpenScienceAPI = {
     resumeSession: (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
     resetSessionContext: (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
     sendPrompt: (request: AcpPromptRequest) => Promise<AcpStateSnapshot>
+    compactSession: (request: AcpCompactSessionRequest) => Promise<AcpStateSnapshot>
     cancel: (request: AcpCancelPromptRequest) => Promise<AcpStateSnapshot>
     deleteSession: (request: AcpDeleteSessionRequest) => Promise<AcpStateSnapshot>
     respondToPermission: (response: AcpPermissionResponse) => Promise<AcpStateSnapshot>
@@ -687,6 +689,8 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('acp:reset-session-context', request) as Promise<AcpCreateSessionResponse>,
     sendPrompt: (request) =>
       ipcRenderer.invoke('acp:send-prompt', request) as Promise<AcpStateSnapshot>,
+    compactSession: (request) =>
+      ipcRenderer.invoke('acp:compact-session', request) as Promise<AcpStateSnapshot>,
     cancel: (request) => ipcRenderer.invoke('acp:cancel', request) as Promise<AcpStateSnapshot>,
     deleteSession: (request) =>
       ipcRenderer.invoke('acp:delete-session', request) as Promise<AcpStateSnapshot>,

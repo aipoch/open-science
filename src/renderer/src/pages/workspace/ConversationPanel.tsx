@@ -111,6 +111,9 @@ type ConversationPanelProps = {
   permissionGrants: AcpPermissionGrant[]
   // Latest context-window usage for the active session (undefined when the framework never reported it).
   contextUsage: AcpContextUsage | undefined
+  canCompactContext?: boolean
+  compactContextDisabledReason?: string
+  onCompactContext?: () => void
   canChangePermissionProfile: boolean
   // Auto-review toggle: whether the current session has auto-review enabled (default false).
   autoReviewEnabled: boolean
@@ -160,6 +163,9 @@ const ConversationPanel = ({
   permissionProfileState,
   permissionGrants,
   contextUsage,
+  canCompactContext = false,
+  compactContextDisabledReason,
+  onCompactContext,
   canChangePermissionProfile,
   autoReviewEnabled,
   onDraftDocChange,
@@ -604,7 +610,13 @@ const ConversationPanel = ({
 
                         {/* Context-window usage for the active session (renders nothing when the
                             framework doesn't report usage). Sits with the model it pertains to. */}
-                        <ComposerContextUsage contextUsage={contextUsage} />
+                        <ComposerContextUsage
+                          contextUsage={contextUsage}
+                          canCompact={canCompactContext}
+                          compacting={activeSession?.compacting === true}
+                          compactDisabledReason={compactContextDisabledReason}
+                          onCompact={onCompactContext}
+                        />
 
                         {/* Model/provider switcher; hides itself unless more than one is configured.
                             Grouped on the right with Send, mirroring the reference composer layout. */}
@@ -612,6 +624,7 @@ const ConversationPanel = ({
 
                         {activeSession?.status === 'running' ||
                         activeSession?.status === 'waiting-permission' ||
+                        activeSession?.compacting ||
                         activeSession?.fixLoopActive ? (
                           // Running sessions expose cancel instead of send to prevent overlapping turns.
                           // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs

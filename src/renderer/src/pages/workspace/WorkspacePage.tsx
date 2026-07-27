@@ -146,6 +146,9 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     permissionProfiles,
     permissionGrants,
     contextUsageBySession,
+    promptInFlightSessionIds = [],
+    nativeContextCompactionSessionIds,
+    compactContext,
     sendMessage,
     resendEditedMessage,
     cancelRun,
@@ -235,6 +238,9 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     () => sessions.find((session) => session.id === selectedSessionId),
     [selectedSessionId, sessions]
   )
+  const activeSessionHasRuntimeInteraction = activeSession
+    ? promptInFlightSessionIds.includes(activeSession.id)
+    : false
   const visiblePermissionRequests = useMemo(
     () => getVisiblePermissionRequests(pendingPermissions, activeSession?.id),
     [activeSession?.id, pendingPermissions]
@@ -248,6 +254,9 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   // Session grants only exist for a bound Agent session; new conversations have none yet.
   const activePermissionGrants = activeSession ? (permissionGrants?.[activeSession.id] ?? []) : []
   const activeContextUsage = activeSession ? contextUsageBySession?.[activeSession.id] : undefined
+  const activeSessionSupportsNativeCompaction = activeSession
+    ? nativeContextCompactionSessionIds?.includes(activeSession.id) === true
+    : false
   // Auto-review defaults off: an existing session is enabled only when explicitly turned on; a new
   // conversation uses the draft toggle (which also starts off).
   const activeAutoReviewEnabled = activeSession
@@ -308,6 +317,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     (!docIsEmpty(draftDoc) || attachments.length > 0) &&
     activeSession?.status !== 'running' &&
     activeSession?.status !== 'waiting-permission' &&
+    !activeSessionHasRuntimeInteraction &&
     !activeSession?.fixLoopActive &&
     // Auto-recovery drops the session to idle while it resets context and replays the transcript; block
     // sends in that window so a manual prompt can't race the recovery resend into the same session.
@@ -318,13 +328,34 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     isSessionPersistenceReady &&
     activeSession?.status !== 'running' &&
     activeSession?.status !== 'waiting-permission' &&
+    !activeSessionHasRuntimeInteraction &&
     !activeSession?.fixLoopActive &&
     !activeSession?.compacting
   const canChangePermissionProfile =
     isSessionPersistenceReady &&
     activeSession?.status !== 'running' &&
-    activeSession?.status !== 'waiting-permission'
+    activeSession?.status !== 'waiting-permission' &&
+    !activeSessionHasRuntimeInteraction &&
+    !activeSession?.compacting
+  const canCompactContext =
+    isSessionPersistenceReady &&
+    activeSessionSupportsNativeCompaction &&
+    activeSession?.status === 'idle' &&
+    !activeSessionHasRuntimeInteraction &&
+    !activeSession.interrupted &&
+    !activeSession.fixLoopActive &&
+    !activeSession.compacting
+  const compactContextDisabledReason = !activeSessionSupportsNativeCompaction
+    ? 'Send a message to reconnect this session before compacting.'
+    : activeSession?.status === 'error'
+      ? 'Resolve the current session error before compacting.'
+      : 'Wait for the current agent activity to finish.'
   const visibleActionError = attachmentError ?? (activeSession ? null : actionError)
+
+  const compactActiveContext = useCallback((): void => {
+    if (!activeSession || !canCompactContext) return
+    void compactContext?.(activeSession.id)
+  }, [activeSession, canCompactContext, compactContext])
 
   const animatePreviewPanelSize = useCallback(
     (
@@ -1113,6 +1144,9 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             permissionProfileState={activePermissionProfileState}
             permissionGrants={activePermissionGrants}
             contextUsage={activeContextUsage}
+            canCompactContext={canCompactContext}
+            compactContextDisabledReason={compactContextDisabledReason}
+            onCompactContext={compactActiveContext}
             canChangePermissionProfile={canChangePermissionProfile}
             autoReviewEnabled={activeAutoReviewEnabled}
             onDraftDocChange={setDraftDoc}

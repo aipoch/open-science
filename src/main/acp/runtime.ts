@@ -22,6 +22,7 @@ import { pathToFileURL } from 'node:url'
 
 import type {
   AcpCancelPromptRequest,
+  AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
@@ -618,7 +619,8 @@ class AcpRuntime {
   // Running total of base64 image bytes this session has inlined. The agent replays full history each
   // turn, so this accumulates; once it nears the request ceiling further images degrade to file links
   // (see canInlineImageInSession) so a long conversation can never overflow the request or break
-  // compaction with `media_unstrippable`. Cleared on session delete and on disconnect.
+  // compaction with `media_unstrippable`. Cleared after successful native compaction, on session
+  // delete, and on disconnect.
   private readonly sessionInlineImageBytes = new Map<string, number>()
   // Per-session names of the MCP servers the agent was actually given (from createMcpServers), so
   // MCP-originated tool calls can be recognized across frameworks (Claude's mcp__<server>__<tool> vs
@@ -664,6 +666,9 @@ class AcpRuntime {
   // framework while moving to a different on-disk session store, where the old id is not resumable.
   private readonly sessionBackendIds = new Map<string, string>()
   private readonly promptInFlightSessionIds = new Set<string>()
+  // Framework control turns use a separate lock so an overflowed prompt's late `finally` can release
+  // only its own prompt lock without making an in-progress native compaction look idle.
+  private readonly contextCompactionInFlightSessionIds = new Set<string>()
   // Public operations acquire this lease synchronously, before backend resolution, skill checks, or
   // session handshakes can await. Retirement cannot remove a generation while one of those preflight
   // phases is still capable of spawning or attaching a process/session.
@@ -816,7 +821,7 @@ class AcpRuntime {
   // Returns an immutable renderer-facing view of connection and session state.
   getSnapshot(): AcpStateSnapshot {
     const sessionIds = Array.from(this.sessions.keys())
-    const promptInFlightSessionIds = Array.from(this.promptInFlightSessionIds)
+    const promptInFlightSessionIds = this.getInFlightSessionIds()
 
     return {
       status: this.status,
@@ -831,6 +836,8 @@ class AcpRuntime {
         sessionIds.map((sessionId) => [sessionId, this.permissionBroker.listGrants(sessionId)])
       ),
       contextUsageBySession: Object.fromEntries(this.contextUsageBySession),
+      nativeContextCompactionSessionIds:
+        this.framework.contextCompaction.kind === 'native-command' ? sessionIds : [],
       promptInFlight: promptInFlightSessionIds.length > 0,
       promptInFlightSessionIds
     }
@@ -838,10 +845,23 @@ class AcpRuntime {
 
   // Lists sessions with an in-flight prompt, for the pre-migration active-session warning.
   getActivePromptSessions(): { projectName: string; sessionId: string }[] {
-    return Array.from(this.promptInFlightSessionIds, (sessionId) => ({
+    return this.getInFlightSessionIds().map((sessionId) => ({
       projectName: this.resolveSessionProjectName(sessionId),
       sessionId
     }))
+  }
+
+  private getInFlightSessionIds(): string[] {
+    return Array.from(
+      new Set([...this.promptInFlightSessionIds, ...this.contextCompactionInFlightSessionIds])
+    )
+  }
+
+  private hasSessionInteractionInFlight(sessionId: string): boolean {
+    return (
+      this.promptInFlightSessionIds.has(sessionId) ||
+      this.contextCompactionInFlightSessionIds.has(sessionId)
+    )
   }
 
   // Run ids of turns currently in flight, from live in-memory state (not the persisted current-run
@@ -1507,8 +1527,158 @@ class AcpRuntime {
     // after async artifact cleanup, so the recovery resend that follows this reset would otherwise race
     // it and be rejected with "An ACP prompt is already running for this session".
     this.promptInFlightSessionIds.delete(request.sessionId)
+    this.contextCompactionInFlightSessionIds.delete(request.sessionId)
 
     return this.adoptFreshSession(connection, request, sessionCwd, projectName)
+  }
+
+  // Invokes the framework's own context compaction command on the attached agent session. The
+  // command is an internal control turn: fresh usage updates are retained, while its command
+  // echo/status output is not projected into the user's conversation.
+  async compactSession(request: AcpCompactSessionRequest): Promise<PromptResponse> {
+    return this.withOperationLease(() => this.compactSessionOperation(request))
+  }
+
+  private async compactSessionOperation(
+    request: AcpCompactSessionRequest
+  ): Promise<PromptResponse> {
+    const session = this.sessions.get(request.sessionId)
+    if (!session) throw new Error(`ACP session not found: ${request.sessionId}`)
+    if (this.contextCompactionInFlightSessionIds.has(request.sessionId)) {
+      throw new Error('Context compaction is already running for this session')
+    }
+    if (
+      this.promptInFlightSessionIds.has(request.sessionId) &&
+      request.reason !== 'overflow-recovery'
+    ) {
+      throw new Error('An ACP prompt is already running for this session')
+    }
+
+    // A recoverable overflow is emitted only after the provider prompt has already rejected; the old
+    // turn may still be doing artifact cleanup, but it no longer owns the agent session. Transfer its
+    // public lock to the control turn now so the retry can start immediately after compaction, while the
+    // dedicated compaction lock below keeps unrelated sends blocked during `/compact` itself.
+    if (request.reason === 'overflow-recovery') {
+      this.promptInFlightSessionIds.delete(request.sessionId)
+    }
+
+    this.contextCompactionInFlightSessionIds.add(request.sessionId)
+    this.emitState()
+
+    try {
+      return await this.performNativeContextCompaction(
+        session,
+        request.sessionId,
+        request.reason ?? 'manual'
+      )
+    } finally {
+      const cancelTimer = this.cancelTimers.get(request.sessionId)
+      if (cancelTimer) this.clearTimer(cancelTimer)
+      this.cancelTimers.delete(request.sessionId)
+      this.contextCompactionInFlightSessionIds.delete(request.sessionId)
+      this.emitState()
+    }
+  }
+
+  private shouldAutoCompactContext(sessionId: string): boolean {
+    const strategy = this.framework.contextCompaction
+    if (strategy.kind !== 'native-command' || strategy.triggerAtPercent === undefined) return false
+
+    const usage = this.contextUsageBySession.get(sessionId)
+    if (!usage || usage.size <= 0 || usage.used < 0) return false
+
+    return (usage.used / usage.size) * 100 >= strategy.triggerAtPercent
+  }
+
+  private async performNativeContextCompaction(
+    session: ActiveSession,
+    appSessionId: string,
+    reason: NonNullable<AcpRuntimeEvent['compactionReason']>
+  ): Promise<PromptResponse> {
+    const strategy = this.framework.contextCompaction
+    if (strategy.kind !== 'native-command') {
+      throw new Error(`${this.framework.displayName} manages context compaction automatically.`)
+    }
+    const contextUsageBeforeCompaction = this.contextUsageBySession.get(appSessionId)
+
+    this.pushEvent({
+      kind: 'compaction',
+      compactionReason: reason,
+      level: 'info',
+      sessionId: appSessionId,
+      status: 'in_progress',
+      title: 'Compacting context'
+    })
+
+    try {
+      let failureText: string | undefined
+      const promptFailure = new Promise<never>((_, reject) => {
+        session.prompt([{ type: 'text', text: strategy.command }]).catch(reject)
+      })
+
+      for (;;) {
+        const message = await Promise.race([session.nextUpdate(), promptFailure])
+        if (message.kind === 'stop') {
+          if (message.response.stopReason === 'cancelled') {
+            this.pushEvent({
+              kind: 'compaction',
+              compactionReason: reason,
+              level: 'info',
+              sessionId: appSessionId,
+              status: 'cancelled',
+              title: 'Context compaction cancelled'
+            })
+            return message.response
+          }
+          if (message.response.stopReason !== 'end_turn') {
+            throw new Error(
+              `Context compaction stopped before completion: ${message.response.stopReason}`
+            )
+          }
+          if (failureText) throw new Error(failureText)
+
+          // Some adapters do not emit usage_update for their compaction control turn. Invalidate only
+          // the unchanged pre-compaction reading; a fresh update received during the turn is a new
+          // object and remains available to the context meter and auto-compaction threshold.
+          if (this.contextUsageBySession.get(appSessionId) === contextUsageBeforeCompaction) {
+            this.contextUsageBySession.delete(appSessionId)
+          }
+          this.sessionInlineImageBytes.delete(appSessionId)
+          this.pushEvent({
+            kind: 'compaction',
+            compactionReason: reason,
+            level: 'info',
+            sessionId: appSessionId,
+            status: 'completed',
+            title: 'Context compacted'
+          })
+          return message.response
+        }
+
+        const update = message.notification.update
+        if (
+          !failureText &&
+          strategy.failureTextPrefix &&
+          update.sessionUpdate === 'agent_message_chunk' &&
+          update.content.type === 'text' &&
+          update.content.text.trimStart().startsWith(strategy.failureTextPrefix)
+        ) {
+          failureText = update.content.text.trim()
+        }
+        this.handleSessionUpdate(message.notification, appSessionId, false)
+      }
+    } catch (error) {
+      this.pushEvent({
+        kind: 'compaction',
+        compactionReason: reason,
+        level: 'error',
+        sessionId: appSessionId,
+        status: 'failed',
+        title: 'Context compaction failed',
+        text: errorMessage(error)
+      })
+      throw error
+    }
   }
 
   // Races the network-bound resume against a timeout so a stalled agent handshake cannot hang Resume
@@ -1734,7 +1904,7 @@ class AcpRuntime {
     const session = this.sessions.get(request.sessionId)
 
     if (!session) throw new Error(`ACP session not found: ${request.sessionId}`)
-    if (this.promptInFlightSessionIds.has(request.sessionId)) {
+    if (this.hasSessionInteractionInFlight(request.sessionId)) {
       throw new Error('Permission profile cannot be changed while the Agent is running.')
     }
     if (this.permissionBroker.hasPendingForSession(request.sessionId)) {
@@ -1964,6 +2134,7 @@ class AcpRuntime {
   private hasBlockingActivity(): boolean {
     return (
       this.promptInFlightSessionIds.size > 0 ||
+      this.contextCompactionInFlightSessionIds.size > 0 ||
       this.reviewerSessionIds.size > 0 ||
       this.activityLeaseCount > 0
     )
@@ -1999,6 +2170,7 @@ class AcpRuntime {
       this.permissionBroker.cancelAllPending()
       this.clearReviewerSessionState()
       this.promptInFlightSessionIds.clear()
+      this.contextCompactionInFlightSessionIds.clear()
       // Context usage belongs to this live agent-context generation. Invalidate it before teardown,
       // including when a later session.dispose throws. A reconnect may resume the native context or
       // replay history into a fresh one; only that generation's own usage_update can repopulate it.
@@ -2210,7 +2382,7 @@ class AcpRuntime {
       throw new Error(`ACP session not found: ${request.sessionId}`)
     }
 
-    if (this.promptInFlightSessionIds.has(request.sessionId)) {
+    if (this.hasSessionInteractionInFlight(request.sessionId)) {
       throw new Error('An ACP prompt is already running for this session')
     }
 
@@ -2228,7 +2400,7 @@ class AcpRuntime {
         // The Skill check yields before a force-load reconnect mutates runtime-wide state. A newer turn
         // may have claimed this session meanwhile, so refuse the stale reconnect before it can tear down
         // that turn.
-        if (this.promptInFlightSessionIds.has(request.sessionId)) {
+        if (this.hasSessionInteractionInFlight(request.sessionId)) {
           throw new Error('An ACP prompt is already running for this session')
         }
 
@@ -2270,7 +2442,7 @@ class AcpRuntime {
     // Another prompt can claim this session while the force-load check above is awaiting. Re-acquire
     // the turn lock before publishing its token so a delayed attempt cannot overwrite a newer turn's
     // lifecycle state.
-    if (this.promptInFlightSessionIds.has(request.sessionId)) {
+    if (this.hasSessionInteractionInFlight(request.sessionId)) {
       throw new Error('An ACP prompt is already running for this session')
     }
 
@@ -2450,6 +2622,20 @@ class AcpRuntime {
             text: message.stopReason,
             raw: message.response
           })
+          if (this.shouldAutoCompactContext(request.sessionId)) {
+            try {
+              await this.performNativeContextCompaction(
+                activeSession,
+                request.sessionId,
+                'automatic'
+              )
+            } catch (error) {
+              log.warn('automatic context compaction failed', {
+                sessionId: request.sessionId,
+                ...errorLogFields(error)
+              })
+            }
+          }
           return message.response
         }
 
@@ -2479,8 +2665,8 @@ class AcpRuntime {
       // provider's real rejection reason from the log.
       log.error('prompt failed', { sessionId: request.sessionId, ...errorLogFields(error) })
       const text = describePromptError(error, { model: this.pendingSessionModel })
-      // Tag a request-size overflow as recoverable so the renderer compacts-and-retries (reset context +
-      // replay a text transcript) instead of dead-ending; the error still throws to drive that recovery.
+      // Tag a request-size overflow as recoverable so the renderer tries native compaction, falls back
+      // to context replacement + text replay, and retries instead of dead-ending.
       // The structured errorKind slug is checked alongside the message text: providers relay the same
       // overflow in different wordings, and a slug-only match needs no message at all.
       const recoverable =
@@ -2591,7 +2777,7 @@ class AcpRuntime {
       this.cancelTimers.set(
         request.sessionId,
         this.setTimer(() => {
-          if (!this.promptInFlightSessionIds.has(request.sessionId)) return
+          if (!this.hasSessionInteractionInFlight(request.sessionId)) return
           this.pushEvent({
             kind: 'error',
             level: 'error',
@@ -2698,6 +2884,7 @@ class AcpRuntime {
     this.skillImportRoutingIds.delete(request.sessionId)
     this.skillImportTurnTokens.delete(request.sessionId)
     this.promptInFlightSessionIds.delete(request.sessionId)
+    this.contextCompactionInFlightSessionIds.delete(request.sessionId)
 
     // Only announce a deletion and shift the current session when something was actually attached; a
     // detached cleanup (post-switch) must not emit a spurious event or move currentSessionId.
@@ -4332,7 +4519,11 @@ class AcpRuntime {
   }
 
   // Normalizes low-level session notifications into runtime/workspace events.
-  private handleSessionUpdate(notification: SessionNotification, appSessionId?: string): void {
+  private handleSessionUpdate(
+    notification: SessionNotification,
+    appSessionId?: string,
+    visible = true
+  ): void {
     // When a session was adopted onto a replaced agent, the agent labels updates with its own id;
     // relabel to the app-facing id so events land in the conversation the renderer tracks.
     const routed =
@@ -4368,6 +4559,8 @@ class AcpRuntime {
       this.emitState()
       return
     }
+
+    if (!visible) return
 
     // Tool results (e.g. WebFetch's claude.ai domain-safety preflight, a failed Bash command) stream as
     // tool_call_update content, which the session-update log omits — so a tool that runs and fails leaves
@@ -4418,7 +4611,7 @@ class AcpRuntime {
         // Attribute stderr to a session only when exactly one prompt is in flight — then it's
         // unambiguously that turn's. With zero or multiple concurrent prompts, omit the sessionId
         // rather than risk pinning it to the wrong conversation's waiting indicator.
-        const inFlight = Array.from(this.promptInFlightSessionIds)
+        const inFlight = this.getInFlightSessionIds()
         this.pushEvent({
           kind: 'system',
           level: 'warning',
@@ -4512,6 +4705,7 @@ class AcpRuntime {
     this.connection = undefined
     this.agentProcess = undefined
     this.promptInFlightSessionIds.clear()
+    this.contextCompactionInFlightSessionIds.clear()
     // The connection is already gone, so any ensureConnected caller waiting on
     // the reconnect barrier must unblock now — it will fall through to connect()
     // and pick up the new backend from resolveBackend. A fresh spawn re-provisions
@@ -4562,6 +4756,7 @@ class AcpRuntime {
       timestamp: event.timestamp ?? Date.now(),
       level: event.level ?? 'info',
       kind: event.kind,
+      compactionReason: event.compactionReason,
       recoverable: event.recoverable,
       providerError: event.providerError,
       sessionId: event.sessionId,

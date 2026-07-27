@@ -199,7 +199,11 @@ type SessionStore = SessionStoreData & {
   setAgentStatus: (sessionId: string, text: string) => void
   // Enters the auto-recovery "compacting" state after a request-size overflow: clears the error so the
   // UI shows a neutral note instead of a dead-end, without blocking the recovery re-send.
-  beginCompaction: (sessionId: string) => void
+  beginCompaction: (sessionId: string, options?: { supersedeActiveRun?: boolean }) => void
+  // Compaction completion/failure may arrive after a recovery retry has started. These transitions
+  // apply only while the session still owns the compacting state and never settle a newer run.
+  finishCompaction: (sessionId: string) => void
+  failCompaction: (sessionId: string, error: string) => void
   markResumed: (
     sessionId: string,
     agentFrameworkId?: PersistedChatSession['agentFrameworkId'],
@@ -1340,10 +1344,10 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   // Enters the transient "compacting" state after a request-size overflow. Clears the error and settles
   // any half-streamed message so nothing hangs, but leaves the status non-running so the recovery re-send
   // is not blocked by the duplicate-submit guard. The UI shows a neutral note keyed off `compacting`.
-  beginCompaction: (sessionId) => {
+  beginCompaction: (sessionId, options) => {
     set((state) => ({
       sessions: state.sessions.map((session) =>
-        session.id === sessionId
+        session.id === sessionId && (!session.activeRun || options?.supersedeActiveRun)
           ? {
               ...session,
               status: 'idle',
@@ -1355,6 +1359,36 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
               activityGroups: completeOpenActivityGroups(session.activityGroups, Date.now()),
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  finishCompaction: (sessionId) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId && session.compacting && !session.activeRun
+          ? { ...session, status: 'idle', compacting: undefined, updatedAt: Date.now() }
+          : session
+      )
+    }))
+  },
+
+  failCompaction: (sessionId, error) => {
+    const message = error.trim()
+    if (!message) return
+
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId && session.compacting && !session.activeRun
+          ? {
+              ...session,
+              status: 'error',
+              compacting: undefined,
+              error: message,
+              errorReportable: false,
               updatedAt: Date.now()
             }
           : session

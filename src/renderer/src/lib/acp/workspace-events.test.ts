@@ -221,6 +221,138 @@ describe('workspace runtime events', () => {
     expect(useSessionStore.getState().sessions[0].errorReportable).toBe(true)
   })
 
+  it('tracks native context compaction without adding chat messages', async () => {
+    useSessionStore.getState().finishRun('transport-session-1')
+    const messageCount = useSessionStore.getState().sessions[0].messages.length
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'compact-start', kind: 'compaction', status: 'in_progress' })
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      compacting: true
+    })
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'compact-done', kind: 'compaction', status: 'completed' })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.compacting).toBeUndefined()
+    expect(session.status).toBe('idle')
+    expect(session.messages).toHaveLength(messageCount)
+  })
+
+  it('settles cancelled native compaction without surfacing a session error', async () => {
+    useSessionStore.getState().finishRun('transport-session-1')
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'compact-start', kind: 'compaction', status: 'in_progress' })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'compact-cancelled', kind: 'compaction', status: 'cancelled' })
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      compacting: undefined,
+      error: undefined
+    })
+  })
+
+  it('surfaces native compaction failures as non-reportable session errors', async () => {
+    useSessionStore.getState().finishRun('transport-session-1')
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'compact-start', kind: 'compaction', status: 'in_progress' })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'compact-failed',
+        kind: 'compaction',
+        status: 'failed',
+        text: 'Agent rejected /compact'
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      compacting: undefined,
+      error: 'Agent rejected /compact',
+      errorReportable: false
+    })
+  })
+
+  it('ignores stale compaction events after a newer retry owns the session', async () => {
+    useSessionStore.getState().finishRun('transport-session-1')
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'compact-start', kind: 'compaction', status: 'in_progress' })
+    )
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'retry after compaction'
+    })
+    const activeRun = useSessionStore.getState().sessions[0].activeRun
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'compact-done', kind: 'compaction', status: 'completed' })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'compact-failed',
+        kind: 'compaction',
+        status: 'failed',
+        text: 'late failure'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'compact-late-start', kind: 'compaction', status: 'in_progress' })
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'running',
+      activeRun,
+      compacting: undefined,
+      error: undefined
+    })
+  })
+
+  it('leaves overflow compaction terminal state to the recovery retry owner', async () => {
+    useSessionStore.getState().finishRun('transport-session-1')
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'overflow-compact-start',
+        kind: 'compaction',
+        compactionReason: 'overflow-recovery',
+        status: 'in_progress'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'overflow-compact-failed',
+        kind: 'compaction',
+        compactionReason: 'overflow-recovery',
+        status: 'failed',
+        text: 'native compaction failed'
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      compacting: true,
+      error: undefined
+    })
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'fallback retry'
+    })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'running',
+      compacting: undefined,
+      error: undefined
+    })
+  })
+
   const overflowEvent = (): AcpRuntimeEvent =>
     createEvent({
       id: 'event-overflow',
@@ -237,7 +369,7 @@ describe('workspace runtime events', () => {
       content: 'compare these screenshots'
     })
     // The recovery effect flips the session to compacting before this event is applied.
-    useSessionStore.getState().beginCompaction('transport-session-1')
+    useSessionStore.getState().beginCompaction('transport-session-1', { supersedeActiveRun: true })
 
     const applied = await applyWorkspaceRuntimeEvent(overflowEvent())
 

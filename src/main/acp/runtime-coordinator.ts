@@ -2,6 +2,7 @@ import type { ActiveSession } from '@agentclientprotocol/sdk'
 
 import type {
   AcpCancelPromptRequest,
+  AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
@@ -10,6 +11,7 @@ import type {
   AcpPromptRequest,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
+  AcpRuntimeEvent,
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
@@ -86,10 +88,12 @@ class AcpRuntimeCoordinator {
     const primary = snapshots.find(({ runtime }) => runtime === primaryRuntime)?.snapshot
     const events = snapshots
       .flatMap(({ runtime, snapshot }) =>
-        snapshot.events.map((event) => ({
-          ...event,
-          id: this.eventId(runtime, event.id)
-        }))
+        snapshot.events
+          .filter((event) => this.shouldPublishEvent(runtime, event))
+          .map((event) => ({
+            ...event,
+            id: this.eventId(runtime, event.id)
+          }))
       )
       .sort((left, right) => left.timestamp - right.timestamp)
       .slice(-MAX_EVENTS)
@@ -98,8 +102,16 @@ class AcpRuntimeCoordinator {
         snapshots.flatMap(({ runtime, snapshot }) => this.visibleSessionIds(runtime, snapshot))
       )
     )
-    const promptInFlightSessionIds = snapshots.flatMap(
-      ({ snapshot }) => snapshot.promptInFlightSessionIds
+    const promptInFlightSessionIds = Array.from(
+      new Set(
+        snapshots.flatMap(({ runtime, snapshot }) =>
+          snapshot.promptInFlightSessionIds.filter(
+            // A retired generation may keep draining after the same logical session was resumed by
+            // a fresh runtime. Only its current owner may keep renderer interactions locked.
+            (sessionId) => this.sessionRuntimes.get(sessionId) === runtime
+          )
+        )
+      )
     )
     const contextUsageBySession = Object.fromEntries(
       snapshots.flatMap(({ runtime, snapshot }) =>
@@ -115,6 +127,14 @@ class AcpRuntimeCoordinator {
               return contextUsage ? [[sessionId, contextUsage] as const] : []
             })
       )
+    )
+    const nativeContextCompactionSessionIds = snapshots.flatMap(({ runtime, snapshot }) =>
+      this.retiredRuntimes.has(runtime)
+        ? []
+        : (snapshot.nativeContextCompactionSessionIds ?? []).filter(
+            (sessionId) =>
+              this.sessionRuntimes.get(sessionId) === runtime && sessionIds.includes(sessionId)
+          )
     )
 
     return {
@@ -134,6 +154,7 @@ class AcpRuntimeCoordinator {
       ),
       permissionGrants: this.permissionGrantStore.snapshot(),
       contextUsageBySession,
+      nativeContextCompactionSessionIds,
       promptInFlight: promptInFlightSessionIds.length > 0,
       promptInFlightSessionIds
     }
@@ -230,6 +251,12 @@ class AcpRuntimeCoordinator {
     this.sessionRuntimes.set(response.sessionId, runtime)
     this.lastRuntime = runtime
     return response
+  }
+
+  async compactSession(request: AcpCompactSessionRequest): Promise<AcpStateSnapshot> {
+    await this.waitForInitialization()
+    await this.runtimeForSession(request.sessionId).compactSession(request)
+    return this.getSnapshot()
   }
 
   sendPrompt(request: AcpPromptRequest): ReturnType<AcpRuntime['sendPrompt']> {
@@ -512,8 +539,10 @@ class AcpRuntimeCoordinator {
     const runtime = this.createRuntime(
       {
         onStateChanged: (snapshot) => this.handleRuntimeState(runtime, snapshot),
-        onEvent: (event) =>
-          this.callbacks.onEvent?.({ ...event, id: this.eventId(runtime, event.id) }),
+        onEvent: (event) => {
+          if (!this.shouldPublishEvent(runtime, event)) return
+          this.callbacks.onEvent?.({ ...event, id: this.eventId(runtime, event.id) })
+        },
         onPermissionRequest: (request) => {
           this.permissionRuntimes.set(request.requestId, runtime)
           this.callbacks.onPermissionRequest?.(request)
@@ -628,6 +657,21 @@ class AcpRuntimeCoordinator {
       ...snapshot.pendingPermissions.map((request) => request.sessionId)
     ])
     return snapshot.sessionIds.filter((sessionId) => active.has(sessionId))
+  }
+
+  private shouldPublishEvent(runtime: AcpRuntime, event: AcpRuntimeEvent): boolean {
+    if (
+      !event.sessionId ||
+      (event.recoverable !== 'context-overflow' && event.kind !== 'compaction')
+    ) {
+      return true
+    }
+
+    const owner = this.sessionRuntimes.get(event.sessionId)
+    // A late overflow or compaction lifecycle transition from a draining generation must not mutate a
+    // newer owner's live turn. Preserve events while ownership is unknown so discovery and
+    // pre-adoption behavior stay intact.
+    return owner === undefined || owner === runtime
   }
 
   private eventId(runtime: AcpRuntime, eventId: string): string {

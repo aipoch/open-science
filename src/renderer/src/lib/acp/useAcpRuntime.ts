@@ -61,6 +61,10 @@ const useAcpRuntime = (): {
     projectName?: string,
     permissionProfile?: PermissionProfileId
   ) => Promise<AcpCreateSessionResponse>
+  compactSession: (
+    sessionId: string,
+    reason?: 'manual' | 'overflow-recovery'
+  ) => Promise<AcpStateSnapshot | undefined>
   deleteSession: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
   cancel: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
   sendPrompt: (
@@ -249,6 +253,15 @@ const useAcpRuntime = (): {
     [runValueAction]
   )
 
+  // Asks the active agent framework to compact its own session context.
+  const compactSession = useCallback(
+    (sessionId: string, reason?: 'manual' | 'overflow-recovery') =>
+      runSnapshotAction(undefined, () =>
+        window.api.acp.compactSession({ sessionId, ...(reason ? { reason } : {}) })
+      ),
+    [runSnapshotAction]
+  )
+
   // Deletes a runtime session and returns the updated snapshot if it succeeds.
   const deleteSession = useCallback(
     (sessionId: string) =>
@@ -337,6 +350,7 @@ const useAcpRuntime = (): {
     createSession,
     resumeSession,
     resetSessionContext,
+    compactSession,
     deleteSession,
     cancel,
     sendPrompt,

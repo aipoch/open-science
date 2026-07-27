@@ -71,6 +71,7 @@ type PreloadApi = {
   acp: {
     resumeSession: (request: unknown) => unknown
     resetSessionContext: (request: unknown) => unknown
+    compactSession: (request: unknown) => unknown
   }
   notifications: {
     takePendingOpenSession: () => unknown
@@ -410,6 +411,12 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.acp.resetSessionContext(sampleResumeRequest),
     channel: 'acp:reset-session-context',
     args: [sampleResumeRequest]
+  },
+  {
+    name: 'acp.compactSession → acp:compact-session',
+    invoke: (a) => a.acp.compactSession({ sessionId: 's-1' }),
+    channel: 'acp:compact-session',
+    args: [{ sessionId: 's-1' }]
   },
   // Notification click target: the renderer pulls it once sessions are hydrated.
   {

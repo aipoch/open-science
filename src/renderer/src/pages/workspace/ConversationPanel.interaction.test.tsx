@@ -532,15 +532,21 @@ describe('ConversationPanel compacting state', () => {
   }
 
   it('shows a neutral compacting note and hides the overflow error during recovery', () => {
+    const onCancelRun = vi.fn()
     // The raw overflow error is still present as a global actionError, but must be suppressed while the
     // session is compacting so the user sees the recovery affordance, not a dead-end.
     renderPanel({
       activeSession: compactingSession,
-      actionError: 'Internal error: Request too large (max 32MB).'
+      actionError: 'Internal error: Request too large (max 32MB).',
+      onCancelRun
     })
 
     expect(container.textContent).toContain('Compacting conversation to fit the context limit')
     expect(container.textContent).not.toContain('Request too large')
+    const cancelButton = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
+    expect(cancelButton).not.toBeNull()
+    act(() => cancelButton.click())
+    expect(onCancelRun).toHaveBeenCalledOnce()
   })
 })
 

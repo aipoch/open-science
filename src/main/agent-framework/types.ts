@@ -107,11 +107,29 @@ export type AgentSpawnInput = {
   debug?: boolean
 }
 
+// How a framework keeps long-running sessions inside their context window. A native command makes
+// manual compaction available over ACP session/prompt. `triggerAtPercent` is present only when the host
+// also owns automatic triggering; frameworks that compact automatically themselves omit it.
+export type ContextCompactionStrategy =
+  | {
+      kind: 'native-command'
+      command: string
+      triggerAtPercent?: number
+      // Some ACP adapters report a failed control turn only through assistant output, then return
+      // end_turn. The runtime suppresses that output but uses this prefix to preserve failure state.
+      failureTextPrefix?: string
+    }
+  | { kind: 'framework-managed' }
+
 // One switchable agent backend. The ACP runtime stays generic and delegates only the framework-coupled
 // decisions to this interface. See docs/internal/pluggable-agent-framework-feasibility.md.
 export interface AgentFramework {
   readonly id: AgentFrameworkId
   readonly displayName: string
+
+  // Keeps slash-command details at the framework seam so the generic runtime only asks for native
+  // compaction and never branches on framework ids.
+  readonly contextCompaction: ContextCompactionStrategy
 
   // Launch the ACP agent subprocess (stdio JSON-RPC), wrapping the per-framework binary + args.
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams

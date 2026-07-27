@@ -13,7 +13,9 @@ import {
 } from '../../stores/preview-workbench-store'
 import { applyWorkspaceRuntimeEvent } from './workspace-events'
 import {
+  cancelWorkspaceRun,
   createWorkspaceRuntimeEventProcessor,
+  compactWorkspaceSession,
   deleteWorkspaceSession,
   getResumeFailureMessage,
   markRunningSessionsDisconnectedOnDrop,
@@ -1071,6 +1073,40 @@ describe('workspace agent message sending', () => {
     expect(runtime.sendPrompt).toHaveBeenCalledTimes(1)
   })
 
+  it('does not append a prompt while the runtime owns the session for compaction', async () => {
+    const runtime = {
+      state: {
+        ...createSnapshot(['session-1']),
+        promptInFlight: true,
+        promptInFlightSessionIds: ['session-1']
+      },
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Previous prompt',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const messagesBeforeSend = useSessionStore.getState().sessions[0]?.messages
+
+    await expect(
+      sendWorkspaceMessage(runtime, {
+        sessionId: 'session-1',
+        text: 'Do not race compaction',
+        cwd: '/workspace/project'
+      })
+    ).resolves.toBeUndefined()
+
+    expect(useSessionStore.getState().sessions[0]?.messages).toEqual(messagesBeforeSend)
+    expect(runtime.resumeSession).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+  })
+
   it('fails the run with an actionable message when the resumed workspace folder is gone', async () => {
     const runtime = {
       state: createSnapshot(),
@@ -1360,6 +1396,31 @@ describe('resuming an interrupted session on demand', () => {
     expect(session.status).toBe('error')
     expect(session.interrupted).toBe(true)
     expect(session.error).toBe('Connection lost — Resume to reconnect and continue.')
+  })
+
+  it('flags a compacting session as interrupted when the connection drops', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Keep the compacted context',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.getState().beginCompaction('session-1')
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      compacting: true
+    })
+
+    markRunningSessionsDisconnectedOnDrop('connected', 'closed')
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      interrupted: true,
+      compacting: undefined,
+      error: 'Connection lost — Resume to reconnect and continue.'
+    })
   })
 
   it('uses the owning runtime status instead of another generation global status', () => {
@@ -1818,7 +1879,11 @@ describe('recovering from a request-size overflow', () => {
     seedOverflowedConversation()
 
     const runtime = {
-      state: createSnapshot(['session-1']),
+      state: {
+        ...createSnapshot(['session-1']),
+        promptInFlight: true,
+        promptInFlightSessionIds: ['session-1']
+      },
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn().mockResolvedValue({
@@ -1845,6 +1910,132 @@ describe('recovering from a request-size overflow', () => {
     expect(preamble).toContain('Analyze the first screenshot')
     expect(preamble).toContain('Here is what it shows')
     expect(preamble).not.toContain('now compare with this new screenshot')
+  })
+
+  it('uses native framework compaction and retries without replaying app-owned history', async () => {
+    seedOverflowedConversation()
+    const staleNativeSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1']
+    }
+    const compactedSnapshot = {
+      ...staleNativeSnapshot,
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    }
+    const runtime = {
+      state: staleNativeSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(compactedSnapshot),
+      sendPrompt: vi.fn().mockResolvedValue(compactedSnapshot)
+    }
+
+    const recovered = await recoverContextOverflowWorkspaceSession(runtime, 'session-1')
+    await flushRuntimeTasks()
+
+    expect(recovered).toBe(true)
+    expect(runtime.compactSession).toHaveBeenCalledWith('session-1', 'overflow-recovery')
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt.mock.calls[0]?.[1]).toBe('now compare with this new screenshot')
+    expect(runtime.sendPrompt.mock.calls[0]?.[5]).toBeUndefined()
+  })
+
+  it('preserves the failed turn when compaction still reports runtime ownership', async () => {
+    seedOverflowedConversation()
+    const prematureSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1']
+    }
+    const runtime = {
+      state: prematureSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(prematureSnapshot),
+      sendPrompt: vi.fn()
+    }
+
+    const recovered = await recoverContextOverflowWorkspaceSession(runtime, 'session-1')
+
+    expect(recovered).toBe(false)
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]?.messages.at(-1)?.content).toBe(
+      'now compare with this new screenshot'
+    )
+  })
+
+  it('falls back to context reset and history replay when native compaction fails', async () => {
+    seedOverflowedConversation()
+    const nativeSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1']
+    }
+    const runtime = {
+      state: nativeSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(undefined),
+      resetSessionContext: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true
+      }),
+      sendPrompt: vi.fn().mockResolvedValue(nativeSnapshot)
+    }
+
+    const recovered = await recoverContextOverflowWorkspaceSession(runtime, 'session-1')
+    await flushRuntimeTasks()
+
+    expect(recovered).toBe(true)
+    expect(runtime.compactSession).toHaveBeenCalledWith('session-1', 'overflow-recovery')
+    expect(runtime.resetSessionContext).toHaveBeenCalledTimes(1)
+    expect(runtime.sendPrompt.mock.calls[0]?.[5]).toContain('Analyze the first screenshot')
+  })
+
+  it('does not reset or retry after native overflow recovery is cancelled', async () => {
+    seedOverflowedConversation()
+    const cancelledSessionIds = new Set<string>()
+    const nativeSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1']
+    }
+    const runtime = {
+      state: nativeSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      compactSession: vi.fn().mockImplementation(async () => {
+        cancelledSessionIds.add('session-1')
+        // Main treats the cancelled native control turn as a benign terminal response and the
+        // coordinator therefore still returns a snapshot. Cancellation intent, not falsiness,
+        // must prevent reset-and-retry.
+        return nativeSnapshot
+      }),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const recovered = await recoverContextOverflowWorkspaceSession(
+      runtime,
+      'session-1',
+      cancelledSessionIds
+    )
+
+    expect(recovered).toBe(false)
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      compacting: undefined
+    })
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)?.content).toBe(
+      'now compare with this new screenshot'
+    )
   })
 
   it('keeps the error visible when the context reset itself fails', async () => {
@@ -1875,7 +2066,8 @@ describe('recovering from a request-size overflow', () => {
     }
     const recover = vi.fn().mockResolvedValue(true)
     const handled = new Set<string>()
-    const recovering = new Set<string>()
+    const cooldown = new Set<string>()
+    const active = new Set<string>()
     const event = createEvent({
       id: 'overflow-1',
       kind: 'error',
@@ -1885,12 +2077,54 @@ describe('recovering from a request-size overflow', () => {
       text: 'Internal error: Request too large (max 32MB).'
     })
 
-    processContextOverflowRecovery(runtime, [event], handled, recovering, recover)
+    processContextOverflowRecovery(runtime, [event], handled, cooldown, active, recover)
     // A repeated snapshot delivering the same event must not recover twice.
-    processContextOverflowRecovery(runtime, [event], handled, recovering, recover)
+    processContextOverflowRecovery(runtime, [event], handled, cooldown, active, recover)
 
     expect(recover).toHaveBeenCalledTimes(1)
     expect(recover).toHaveBeenCalledWith(runtime, 'session-1')
+  })
+
+  it('tracks only the live recovery separately from the cooldown', async () => {
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+    let finishRecovery!: () => void
+    const recovery = new Promise<boolean>((resolve) => {
+      finishRecovery = () => resolve(true)
+    })
+    const recover = vi.fn().mockReturnValue(recovery)
+    const cooldown = new Set<string>()
+    const active = new Set<string>()
+
+    processContextOverflowRecovery(
+      runtime,
+      [
+        createEvent({
+          id: 'overflow-live',
+          kind: 'error',
+          level: 'error',
+          sessionId: 'session-1',
+          recoverable: 'context-overflow'
+        })
+      ],
+      new Set(),
+      cooldown,
+      active,
+      recover
+    )
+
+    expect(active).toEqual(new Set(['session-1']))
+    finishRecovery()
+    await recovery
+    await Promise.resolve()
+
+    expect(active).toEqual(new Set())
+    expect(cooldown).toEqual(new Set(['session-1']))
   })
 
   it('triggers recovery from the recoverable marker even when the message does not match', () => {
@@ -1912,7 +2146,7 @@ describe('recovering from a request-size overflow', () => {
       text: 'Internal error: -32603'
     })
 
-    processContextOverflowRecovery(runtime, [event], new Set(), new Set(), recover)
+    processContextOverflowRecovery(runtime, [event], new Set(), new Set(), new Set(), recover)
 
     expect(recover).toHaveBeenCalledTimes(1)
   })
@@ -1941,6 +2175,7 @@ describe('recovering from a request-size overflow', () => {
       ],
       new Set(),
       new Set(),
+      new Set(),
       recover
     )
     // A detached session goes through the normal Resume path, not auto-recovery.
@@ -1955,6 +2190,7 @@ describe('recovering from a request-size overflow', () => {
           text: 'Request too large'
         })
       ],
+      new Set(),
       new Set(),
       new Set(),
       recover
@@ -1973,10 +2209,157 @@ describe('recovering from a request-size overflow', () => {
       ],
       new Set(),
       new Set(['session-1']),
+      new Set(),
       recover
     )
 
     expect(recover).not.toHaveBeenCalled()
+  })
+})
+
+describe('manual native context compaction', () => {
+  beforeEach(() => {
+    useSessionStore.setState(createInitialSessionState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Preserve this conversation',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+  })
+
+  it('invokes the attached framework capability without rewriting local messages', async () => {
+    const snapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1']
+    }
+    const runtime = {
+      state: snapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(snapshot),
+      sendPrompt: vi.fn()
+    }
+    const before = useSessionStore.getState().sessions[0].messages
+
+    await expect(compactWorkspaceSession(runtime, 'session-1')).resolves.toBe(true)
+
+    expect(runtime.compactSession).toHaveBeenCalledWith('session-1')
+    expect(useSessionStore.getState().sessions[0].messages).toEqual(before)
+  })
+
+  it('acquires a local compaction lock before the runtime snapshot returns', async () => {
+    const snapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1']
+    }
+    let finishCompaction!: (value: AcpStateSnapshot) => void
+    const pendingCompaction = new Promise<AcpStateSnapshot>((resolve) => {
+      finishCompaction = resolve
+    })
+    const runtime = {
+      state: snapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockReturnValue(pendingCompaction),
+      sendPrompt: vi.fn()
+    }
+    const messageCount = useSessionStore.getState().sessions[0].messages.length
+
+    const compacting = compactWorkspaceSession(runtime, 'session-1')
+
+    expect(useSessionStore.getState().sessions[0].compacting).toBe(true)
+    await expect(
+      sendWorkspaceMessage(runtime, {
+        sessionId: 'session-1',
+        text: 'do not append while compacting',
+        cwd: '/workspace/project'
+      })
+    ).resolves.toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].messages).toHaveLength(messageCount)
+
+    finishCompaction(snapshot)
+    await expect(compacting).resolves.toBe(true)
+    expect(useSessionStore.getState().sessions[0].compacting).toBeUndefined()
+  })
+
+  it('surfaces a session failure when compaction returns no runtime snapshot', async () => {
+    const snapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1']
+    }
+    const runtime = {
+      state: snapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(undefined),
+      sendPrompt: vi.fn()
+    }
+
+    await expect(compactWorkspaceSession(runtime, 'session-1')).resolves.toBe(false)
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error: 'Context compaction failed.',
+      compacting: undefined
+    })
+  })
+
+  it('refuses sessions whose framework does not expose native compaction', async () => {
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    await expect(compactWorkspaceSession(runtime, 'session-1')).resolves.toBe(false)
+    expect(runtime.compactSession).not.toHaveBeenCalled()
+  })
+
+  it('refuses manual compaction for an errored session without clearing its failure', async () => {
+    useSessionStore.getState().failRun('session-1', 'Preserve this failure')
+    const snapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1']
+    }
+    const runtime = {
+      state: snapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    await expect(compactWorkspaceSession(runtime, 'session-1')).resolves.toBe(false)
+
+    expect(runtime.compactSession).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error: 'Preserve this failure',
+      compacting: undefined
+    })
+  })
+
+  it('keeps the local compaction lock until cancellation reaches a terminal response', async () => {
+    useSessionStore.getState().beginCompaction('session-1')
+    const cancelledSessionIds = new Set<string>()
+    const runtime = { cancel: vi.fn().mockResolvedValue(createSnapshot(['session-1'])) }
+
+    await cancelWorkspaceRun(runtime, 'session-1', cancelledSessionIds)
+
+    expect(runtime.cancel).toHaveBeenCalledWith('session-1')
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      compacting: true
+    })
+    expect(cancelledSessionIds).toEqual(new Set(['session-1']))
   })
 })
 
@@ -2120,6 +2503,34 @@ describe('resendEditedWorkspaceMessage', () => {
       'user-3'
     ])
     expect(useSessionStore.getState().sessions[0]?.status).toBe('error')
+  })
+
+  it('refuses an edited resend before truncating while runtime compaction is in flight', async () => {
+    seedConversation()
+
+    const runtime = {
+      state: {
+        ...createSnapshot(['session-1']),
+        promptInFlight: true,
+        promptInFlightSessionIds: ['session-1']
+      },
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+    const messagesBeforeResend = useSessionStore.getState().sessions[0]?.messages
+
+    const resent = await resendEditedWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      messageId: 'user-2',
+      text: 'second prompt, edited'
+    })
+
+    expect(resent).toBe(false)
+    expect(useSessionStore.getState().sessions[0]?.messages).toEqual(messagesBeforeResend)
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
   it('refuses the edit before truncating when the kept history needs image replay the model cannot take', async () => {

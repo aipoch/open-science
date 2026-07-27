@@ -7,6 +7,7 @@ import { app, ipcMain } from 'electron'
 
 import type {
   AcpCancelPromptRequest,
+  AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
   AcpRuntimeEvent,
@@ -223,6 +224,9 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator =
   )
   ipcMain.handle('acp:reset-session-context', (_event, request: AcpResumeSessionRequest) =>
     runtime.resetSessionContext(request)
+  )
+  ipcMain.handle('acp:compact-session', (_event, request: AcpCompactSessionRequest) =>
+    runtime.compactSession(request)
   )
   // Prompt calls wait for the turn to stop, then return the latest snapshot.
   ipcMain.handle('acp:send-prompt', async (_event, request: AcpPromptRequest) => {

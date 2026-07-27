@@ -149,6 +149,8 @@ const startFakeAgent = (
       text: string
       prompt: ContentBlock[]
     }) => Promise<PromptResponse | void> | PromptResponse | void
+    replyForPrompt?: (text: string) => string
+    usageForPrompt?: (text: string) => { used: number; size: number } | undefined
   } = {}
 ): {
   authRequests: unknown[]
@@ -286,6 +288,13 @@ const startFakeAgent = (
         text,
         prompt: ctx.params.prompt
       })
+      const usage = options.usageForPrompt?.(text)
+      if (usage) {
+        await ctx.client.notify(acp.methods.client.session.update, {
+          sessionId: ctx.params.sessionId,
+          update: { sessionUpdate: 'usage_update', ...usage }
+        })
+      }
       // Stream one assistant chunk through the client callback path before stopping.
       await ctx.client.notify(acp.methods.client.session.update, {
         sessionId: ctx.params.sessionId,
@@ -294,7 +303,7 @@ const startFakeAgent = (
           messageId: `reply-${ctx.params.sessionId}`,
           content: {
             type: 'text',
-            text: `reply for ${ctx.params.sessionId}`
+            text: options.replyForPrompt?.(text) ?? `reply for ${ctx.params.sessionId}`
           }
         }
       })
@@ -518,6 +527,9 @@ const contextUsageMap = (runtime: AcpRuntime): Map<string, { used: number; size:
       contextUsageBySession: Map<string, { used: number; size: number }>
     }
   ).contextUsageBySession
+
+const sessionInlineImageBytesMap = (runtime: AcpRuntime): Map<string, number> =>
+  (runtime as unknown as { sessionInlineImageBytes: Map<string, number> }).sessionInlineImageBytes
 
 const handleSessionUpdate = (runtime: AcpRuntime, notification: SessionNotification): void =>
   (
@@ -1728,6 +1740,203 @@ describe('ACP runtime session management', () => {
     // The fresh session still accepts prompts, so the conversation continues after the reset.
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'continue after compaction' })
     expect(receivedPrompts.at(-1)).toBeDefined()
+  })
+
+  it('uses the framework native command to compact without adding command output to chat events', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    sessionInlineImageBytesMap(runtime).set(session.sessionId, 2048)
+    contextUsageMap(runtime).set(session.sessionId, { used: 180_000, size: 200_000 })
+    expect(runtime.getSnapshot().nativeContextCompactionSessionIds).toEqual([session.sessionId])
+    await runtime.compactSession({ sessionId: session.sessionId })
+
+    expect(agent.prompts).toEqual([{ sessionId: 'remote-session-1', text: '/compact' }])
+    expect(sessionInlineImageBytesMap(runtime).has(session.sessionId)).toBe(false)
+    expect(runtime.getSnapshot().contextUsageBySession).toEqual({})
+    expect(
+      runtime
+        .getSnapshot()
+        .events.filter((event) => event.kind === 'message' || event.kind === 'thought')
+    ).toEqual([])
+  })
+
+  it('settles a cancelled native command without reporting compaction failure', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: ({ text }) =>
+        text === '/compact' ? { stopReason: 'cancelled' as const } : undefined
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    sessionInlineImageBytesMap(runtime).set(session.sessionId, 2048)
+
+    await expect(runtime.compactSession({ sessionId: session.sessionId })).resolves.toMatchObject({
+      stopReason: 'cancelled'
+    })
+
+    expect(sessionInlineImageBytesMap(runtime).get(session.sessionId)).toBe(2048)
+    expect(
+      runtime
+        .getSnapshot()
+        .events.filter((event) => event.kind === 'compaction')
+        .map(({ status, title, text }) => ({ status, title, text }))
+    ).toEqual([
+      { status: 'in_progress', title: 'Compacting context', text: undefined },
+      {
+        status: 'cancelled',
+        title: 'Context compaction cancelled',
+        text: undefined
+      }
+    ])
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
+  })
+
+  it('preserves the image budget when the adapter reports native compaction failure as output', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['remote-session-1'], {
+      replyForPrompt: (text) =>
+        text === '/compact' ? '\n\nCompacting failed: media_unstrippable' : 'reply'
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    sessionInlineImageBytesMap(runtime).set(session.sessionId, 2048)
+
+    await expect(runtime.compactSession({ sessionId: session.sessionId })).rejects.toThrow(
+      'Compacting failed: media_unstrippable'
+    )
+
+    expect(sessionInlineImageBytesMap(runtime).get(session.sessionId)).toBe(2048)
+    expect(runtime.getSnapshot().events).toContainEqual(
+      expect.objectContaining({
+        kind: 'compaction',
+        status: 'failed',
+        text: 'Compacting failed: media_unstrippable'
+      })
+    )
+  })
+
+  it('keeps overflow-recovery compaction locked while the failed prompt finishes unwinding', async () => {
+    const process = new FakeAgentProcess()
+    const compactTurn = createDeferred<PromptResponse>()
+    const retryTurn = createDeferred<PromptResponse>()
+    const agent = startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: ({ text }) =>
+        text === '/compact'
+          ? compactTurn.promise
+          : text === 'retry after overflow'
+            ? retryTurn.promise
+            : undefined
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework,
+      cancelTimeoutMs: 5
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const internals = runtime as unknown as {
+      promptInFlightSessionIds: Set<string>
+    }
+    // Mirrors the short window after a failed prompt emitted its overflow event but before its
+    // artifact/finally cleanup released the normal turn lock.
+    internals.promptInFlightSessionIds.add(session.sessionId)
+
+    await expect(runtime.compactSession({ sessionId: session.sessionId })).rejects.toThrow(
+      /already running/
+    )
+    const compacting = runtime.compactSession({
+      sessionId: session.sessionId,
+      reason: 'overflow-recovery'
+    })
+    await vi.waitFor(() => expect(agent.prompts.at(-1)?.text).toBe('/compact'))
+
+    // Ownership moved away from the failed prompt, but native compaction still keeps the session
+    // unavailable to another user turn until the framework control turn stops.
+    expect(internals.promptInFlightSessionIds.has(session.sessionId)).toBe(false)
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([session.sessionId])
+    await runtime.cancelPrompt({ sessionId: session.sessionId })
+    expect(agent.cancelledSessions).toEqual([session.sessionId])
+
+    compactTurn.resolve({ stopReason: 'end_turn' })
+    await compacting
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
+    const retry = runtime.sendPrompt({ sessionId: session.sessionId, text: 'retry after overflow' })
+    await vi.waitFor(() => expect(agent.prompts.at(-1)?.text).toBe('retry after overflow'))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(runtime.getSnapshot().status).toBe('connected')
+    retryTurn.resolve({ stopReason: 'end_turn' })
+    await expect(retry).resolves.toMatchObject({ stopReason: 'end_turn' })
+  })
+
+  it('automatically invokes native compaction after a turn reaches the framework threshold', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['remote-session-1'], {
+      usageForPrompt: (text) =>
+        text === '/compact' ? { used: 24_000, size: 200_000 } : { used: 180_000, size: 200_000 }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'analyze the results' })
+
+    expect(agent.prompts).toEqual([
+      { sessionId: 'remote-session-1', text: 'analyze the results' },
+      { sessionId: 'remote-session-1', text: '/compact' }
+    ])
+    expect(runtime.getSnapshot().contextUsageBySession[session.sessionId]).toEqual({
+      used: 24_000,
+      size: 200_000
+    })
+  })
+
+  it('exposes manual compaction without duplicating framework-owned automatic compaction', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['remote-session-1'], {
+      usageForPrompt: () => ({ used: 180_000, size: 200_000 })
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: {
+        ...claudeCodeFramework,
+        contextCompaction: { kind: 'native-command', command: '/compact' }
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'analyze the results' })
+
+    expect(agent.prompts).toEqual([{ sessionId: 'remote-session-1', text: 'analyze the results' }])
+
+    await runtime.compactSession({ sessionId: session.sessionId })
+    expect(agent.prompts.at(-1)).toEqual({ sessionId: 'remote-session-1', text: '/compact' })
   })
 
   it('clears the previous context usage before a context reset replacement reports usage', async () => {

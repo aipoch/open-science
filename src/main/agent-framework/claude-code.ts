@@ -47,6 +47,12 @@ const renderClaudeMcpToolNames = (append: string): string =>
 export const claudeCodeFramework: AgentFramework = {
   id: 'claude-code',
   displayName: 'Claude Code',
+  contextCompaction: {
+    kind: 'native-command',
+    command: '/compact',
+    triggerAtPercent: 90,
+    failureTextPrefix: 'Compacting failed'
+  },
   supportsSkills: true,
   // Claude launches stdio MCP servers directly — the app's artifact/notebook tooling relies on this.
   acceptsStdioMcp: true,
