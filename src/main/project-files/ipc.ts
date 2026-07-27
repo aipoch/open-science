@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 
 import type {
   ArtifactGroupPage,
+  GetProjectFilesOverviewRequest,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
   ProjectFilesOverview,
@@ -9,7 +10,7 @@ import type {
 } from '../../shared/project-files'
 
 type ProjectFilesQueryRepository = {
-  getOverview(projectId: string): Promise<ProjectFilesOverview>
+  getOverview(request: GetProjectFilesOverviewRequest): Promise<ProjectFilesOverview>
   listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage>
   listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage>
 }
@@ -23,7 +24,7 @@ type ProjectFilesRecoveryBackend = {
 }
 
 type ProjectFilesHandlers = {
-  getOverview(request: { projectId: string }): Promise<ProjectFilesOverview>
+  getOverview(request: GetProjectFilesOverviewRequest): Promise<ProjectFilesOverview>
   listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage>
   listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage>
   repairIndex(request: { projectId: string }): Promise<void>
@@ -36,9 +37,9 @@ const createProjectFilesHandlers = (
   repairBackend: ProjectFilesRepairBackend,
   recoveryBackend: ProjectFilesRecoveryBackend
 ): ProjectFilesHandlers => ({
-  getOverview: async ({ projectId }) => {
+  getOverview: async (request) => {
     await recoveryBackend.recoverPendingDeletions()
-    return repository.getOverview(projectId)
+    return repository.getOverview(request)
   },
   listFiles: async (request) => {
     await recoveryBackend.recoverPendingDeletions()
@@ -63,7 +64,7 @@ const registerProjectFilesIpcHandlers = (
 ): void => {
   const handlers = createProjectFilesHandlers(repository, repairBackend, recoveryBackend)
 
-  ipcMain.handle('project-files:get-overview', (_event, request: { projectId: string }) =>
+  ipcMain.handle('project-files:get-overview', (_event, request: GetProjectFilesOverviewRequest) =>
     handlers.getOverview(request)
   )
   ipcMain.handle('project-files:list-files', (_event, request: ListProjectFilesRequest) =>

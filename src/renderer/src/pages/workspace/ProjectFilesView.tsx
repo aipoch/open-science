@@ -1,4 +1,16 @@
-import { Check, ChevronDown, File, Folder, Paperclip, Plus, Server } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  File,
+  Folder,
+  LayoutGrid,
+  List,
+  Paperclip,
+  Plus,
+  Search,
+  Server
+} from 'lucide-react'
+import { ToggleGroup } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
@@ -11,6 +23,8 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
@@ -41,7 +55,12 @@ import { isUnavailableFileError, FILE_MISSING_TAG } from './previews/preview-err
 import { getPreviewFileReader } from './previews/preview-file-reader'
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
-import { FILE_PAGE_SIZE, useProjectFilesIndex, type PageState } from './use-project-files-index'
+import {
+  FILE_PAGE_SIZE,
+  useProjectFilesIndex,
+  type PageState,
+  type ProjectFilesIndexScope
+} from './use-project-files-index'
 
 type ProjectFilesFilterOption = {
   id: string
@@ -74,11 +93,13 @@ type ProjectFilePreviewState = Record<string, ProjectFilePreviewEntry | undefine
 
 type ProjectFilePreviewReadResult = ProjectFilePreviewEntry & { id: string }
 type FilePageLoadMode = 'manual' | 'scroll'
+type ProjectFilesViewMode = 'grid' | 'list'
 
 const PREVIEW_READ_CONCURRENCY = 4
 const MAX_PREVIEW_CACHE_ENTRIES = 96
 // Keeps manual pagination recognizable without the outline competing with the surrounding file tiles.
 const loadMoreButtonClassName = 'bg-bg-200 text-text-100 hover:bg-bg-300 hover:text-text-000'
+const formatFileCount = (count: number): string => `${count} file${count === 1 ? '' : 's'}`
 
 const MINUTE_MS = 60 * 1000
 const HOUR_MS = 60 * MINUTE_MS
@@ -531,6 +552,122 @@ const FileTile = ({
   )
 }
 
+const FileListRow = ({
+  file,
+  previewLabel,
+  onPreview
+}: {
+  file: ProjectFileItem
+  previewLabel: string
+  onPreview: () => void
+}): React.JSX.Element => {
+  const [setRowElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
+  const missing = useUnavailablePreviewProbe({
+    enabled: isNearViewport,
+    path: file.path,
+    source: file.source
+  })
+  const sizeLabel = formatByteSize(file.size)
+  const relativeTimeLabel = formatRelativeFileTime(file.mtimeMs ?? file.sortAtMs)
+
+  return (
+    <div className="group flex h-9 min-w-0 items-center rounded-md hover:bg-accent hover:text-accent-foreground focus-within:ring-3 focus-within:ring-ring/50 focus-within:ring-inset">
+      <button
+        ref={setRowElement}
+        type="button"
+        className="flex h-full min-w-0 flex-1 items-center gap-2.5 px-2 text-left"
+        aria-label={previewLabel}
+        title={file.name}
+        onClick={onPreview}
+      >
+        <span className="flex size-7 shrink-0 items-center justify-center rounded bg-bg-200 text-text-300">
+          <File className="size-4" strokeWidth={1.7} aria-hidden="true" />
+        </span>
+        <span
+          className={cn(
+            'min-w-0 flex-1 truncate text-[12px] text-text-000',
+            missing && 'opacity-50'
+          )}
+        >
+          {file.name}
+        </span>
+        {missing ? (
+          <span className="shrink-0 text-[9px] font-semibold uppercase text-text-300">
+            {FILE_MISSING_TAG}
+          </span>
+        ) : null}
+        {sizeLabel ? (
+          <span className="hidden w-16 shrink-0 text-right text-[10px] tabular-nums text-text-300 sm:block">
+            {sizeLabel}
+          </span>
+        ) : null}
+        {relativeTimeLabel ? (
+          <span className="hidden w-20 shrink-0 text-right text-[10px] text-text-300 md:block">
+            {relativeTimeLabel}
+          </span>
+        ) : null}
+      </button>
+      <ManagedFileDownloadButton
+        source={file.source}
+        path={file.path}
+        suggestedName={file.name}
+        disabled={missing}
+        revealOnParentHover
+        wrapperClassName="mr-2 shrink-0"
+      />
+    </div>
+  )
+}
+
+const ProjectFileItems = ({
+  files,
+  viewMode,
+  previewById,
+  onPreview
+}: {
+  files: ProjectFileItem[]
+  viewMode: ProjectFilesViewMode
+  previewById: Map<string, ArtifactPreviewResult | undefined>
+  onPreview: (file: ProjectFileItem) => void
+}): React.JSX.Element => (
+  <div
+    data-view-mode={viewMode}
+    className={cn(
+      viewMode === 'grid'
+        ? 'grid grid-cols-[repeat(auto-fill,minmax(132px,1fr))] gap-2 px-4 py-3'
+        : 'px-4 py-2'
+    )}
+  >
+    {files.map((file) => {
+      const previewLabel = `Preview ${file.source === 'upload' ? 'uploaded' : 'generated'} file ${file.name}`
+      if (viewMode === 'list') {
+        return (
+          <FileListRow
+            key={file.id}
+            file={file}
+            previewLabel={previewLabel}
+            onPreview={() => onPreview(file)}
+          />
+        )
+      }
+
+      return (
+        <FileTile
+          key={file.id}
+          name={file.name}
+          previewArtifact={createProjectFilePreviewArtifact(file)}
+          preview={previewById.get(file.id)}
+          source={file.source}
+          size={file.size}
+          timestamp={file.mtimeMs ?? file.sortAtMs}
+          previewLabel={previewLabel}
+          onPreview={() => onPreview(file)}
+        />
+      )
+    })}
+  </div>
+)
+
 const FilterMenuItem = ({
   option,
   isSelected,
@@ -682,6 +819,7 @@ const ProjectArtifactGroupSection = ({
   onToggle,
   loadMore,
   onManualLoadMore,
+  viewMode,
   previewById,
   onPreview
 }: {
@@ -694,6 +832,7 @@ const ProjectArtifactGroupSection = ({
   onToggle: (id: string) => void
   loadMore: (sessionId: string) => Promise<void>
   onManualLoadMore: () => void
+  viewMode: ProjectFilesViewMode
   previewById: Map<string, ArtifactPreviewResult | undefined>
   onPreview: (file: ProjectFileItem) => void
 }): React.JSX.Element => {
@@ -718,32 +857,19 @@ const ProjectArtifactGroupSection = ({
       <SectionHeader
         id={sectionId}
         title={title}
-        countLabel={`${group.artifactCount} files`}
+        countLabel={formatFileCount(group.artifactCount)}
         isCollapsed={isCollapsed}
         onToggle={onToggle}
       />
       {!isCollapsed ? (
         <>
           {visibleItems.length ? (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(132px,1fr))] gap-2 px-4 py-3">
-              {visibleItems.map((file) => {
-                const artifact = createProjectFilePreviewArtifact(file)
-
-                return (
-                  <FileTile
-                    key={file.id}
-                    name={file.name}
-                    previewArtifact={artifact}
-                    preview={previewById.get(file.id)}
-                    source="artifact"
-                    size={file.size}
-                    timestamp={file.mtimeMs}
-                    previewLabel={`Preview generated file ${file.name}`}
-                    onPreview={() => onPreview(file)}
-                  />
-                )
-              })}
-            </div>
+            <ProjectFileItems
+              files={visibleItems}
+              viewMode={viewMode}
+              previewById={previewById}
+              onPreview={onPreview}
+            />
           ) : null}
           {page?.error ? (
             <PageLoadError message={page.error} onRetry={() => void loadPage()} />
@@ -780,6 +906,9 @@ const ProjectFilesViewContent = ({
   const [selectedFilterId, setSelectedFilterId] = useState('all')
   const [selectedSessionFallback, setSelectedSessionFallback] = useState<ProjectFilesFilterOption>()
   const [allVisibleItemLimits, setAllVisibleItemLimits] = useState<Record<string, number>>({})
+  const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
+  const [viewMode, setViewMode] = useState<ProjectFilesViewMode>('grid')
   // Files-tab previews are transient dialog state; opening a file must not create a workbench tab.
   const [dialogItem, setDialogItem] = useState<PreviewFileItem | undefined>(undefined)
 
@@ -820,7 +949,13 @@ const ProjectFilesViewContent = ({
     },
     [activeProjectId, selectedFilterId]
   )
-  const index = useProjectFilesIndex(activeProjectId, handleIndexChanged)
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery.trim()), 250)
+    return () => window.clearTimeout(timer)
+  }, [searchQuery])
+
+  const catalogIndex = useProjectFilesIndex(activeProjectId, handleIndexChanged)
+  const isSearchActive = debouncedSearchQuery.length > 0
   const sessionTitleById = useMemo(
     () =>
       new Map(
@@ -840,16 +975,16 @@ const ProjectFilesViewContent = ({
       {
         id: 'all',
         label: 'All artifacts',
-        count: index.overview.totalCount,
+        count: catalogIndex.overview.totalCount,
         kind: 'all'
       },
       {
         id: 'uploads',
         label: 'Your uploads',
-        count: index.overview.uploadCount,
+        count: catalogIndex.overview.uploadCount,
         kind: 'uploads'
       },
-      ...index.groups.items.map((group) => ({
+      ...catalogIndex.groups.items.map((group) => ({
         id: `session:${group.sessionId}`,
         label: getSessionTitle(group.sessionId),
         count: group.artifactCount,
@@ -866,16 +1001,17 @@ const ProjectFilesViewContent = ({
       const sessionId = selectedSessionFallback.id.slice('session:'.length)
       options.push({
         ...selectedSessionFallback,
-        count: index.artifactsBySession[sessionId]?.totalCount ?? selectedSessionFallback.count
+        count:
+          catalogIndex.artifactsBySession[sessionId]?.totalCount ?? selectedSessionFallback.count
       })
     }
 
     return options
   }, [
     getSessionTitle,
-    index.artifactsBySession,
-    index.groups.items,
-    index.overview,
+    catalogIndex.artifactsBySession,
+    catalogIndex.groups.items,
+    catalogIndex.overview,
     selectedSessionFallback
   ])
   const selectedSessionId = selectedFilterId.startsWith('session:')
@@ -887,14 +1023,15 @@ const ProjectFilesViewContent = ({
       )
     : false
   const selectedSessionIsLoaded = selectedSessionId
-    ? index.groups.items.some((group) => group.sessionId === selectedSessionId)
+    ? catalogIndex.groups.items.some((group) => group.sessionId === selectedSessionId)
     : false
 
   useEffect(() => {
     if (!selectedSessionId || selectedSessionStillExists || selectedSessionIsLoaded) return
 
-    const sessionPage = index.artifactsBySession[selectedSessionId]
-    const groupsSettled = index.groups.isLoaded && !index.groups.isLoading && !index.groups.error
+    const sessionPage = catalogIndex.artifactsBySession[selectedSessionId]
+    const groupsSettled =
+      catalogIndex.groups.isLoaded && !catalogIndex.groups.isLoading && !catalogIndex.groups.error
     const sessionPageSettled = sessionPage?.isLoaded && !sessionPage.isLoading && !sessionPage.error
     if (!groupsSettled || !sessionPageSettled || sessionPage.totalCount > 0) return
 
@@ -911,8 +1048,8 @@ const ProjectFilesViewContent = ({
       canceled = true
     }
   }, [
-    index.artifactsBySession,
-    index.groups,
+    catalogIndex.artifactsBySession,
+    catalogIndex.groups,
     selectedSessionId,
     selectedSessionIsLoaded,
     selectedSessionStillExists
@@ -928,45 +1065,80 @@ const ProjectFilesViewContent = ({
       : 'all'
   const selectedFilterOption =
     filterOptions.find((option) => option.id === effectiveFilterId) ?? filterOptions[0]
+  const isAllFilter = selectedFilterOption.kind === 'all'
+  const isUploadsFilter = selectedFilterOption.kind === 'uploads'
+  const effectiveSessionId =
+    selectedFilterOption.kind === 'session'
+      ? selectedFilterOption.id.slice('session:'.length)
+      : undefined
+  const searchScope = useMemo<ProjectFilesIndexScope>(
+    () =>
+      isUploadsFilter
+        ? { kind: 'uploads' }
+        : effectiveSessionId
+          ? {
+              kind: 'sessionArtifacts',
+              sessionId: effectiveSessionId
+            }
+          : { kind: 'all' },
+    [effectiveSessionId, isUploadsFilter]
+  )
+  const searchIndex = useProjectFilesIndex(
+    isSearchActive ? activeProjectId : undefined,
+    undefined,
+    isSearchActive ? { filenameContains: debouncedSearchQuery } : undefined,
+    searchScope
+  )
+  const index = isSearchActive ? searchIndex : catalogIndex
   const uploadsCollapsed = collapsedSectionIds.has('uploads')
   const allUploadVisibleItemLimit = allVisibleItemLimits.uploads ?? FILE_PAGE_SIZE
   const visibleUploadFiles = useMemo(() => {
-    if (effectiveFilterId === 'uploads') return index.uploads.items
-    if (effectiveFilterId === 'all') {
+    if (isUploadsFilter) return index.uploads.items
+    if (isAllFilter) {
       return index.uploads.items.slice(0, allUploadVisibleItemLimit)
     }
     return []
-  }, [allUploadVisibleItemLimit, effectiveFilterId, index.uploads.items])
+  }, [allUploadVisibleItemLimit, index.uploads.items, isAllFilter, isUploadsFilter])
   const visibleArtifactGroups = useMemo(
     () =>
-      effectiveFilterId === 'all'
+      isAllFilter
         ? index.groups.items
-        : effectiveFilterId.startsWith('session:')
+        : effectiveSessionId
           ? [
-              index.groups.items.find(
-                (group) => `session:${group.sessionId}` === effectiveFilterId
-              ) ?? {
-                sessionId: effectiveFilterId.slice('session:'.length),
+              index.groups.items.find((group) => group.sessionId === effectiveSessionId) ?? {
+                sessionId: effectiveSessionId,
                 artifactCount:
-                  index.artifactsBySession[effectiveFilterId.slice('session:'.length)]
-                    ?.totalCount ?? selectedFilterOption.count
+                  index.artifactsBySession[effectiveSessionId]?.totalCount ??
+                  (isSearchActive ? 0 : selectedFilterOption.count)
               }
             ]
           : [],
-    [effectiveFilterId, index.artifactsBySession, index.groups.items, selectedFilterOption.count]
+    [
+      effectiveSessionId,
+      index.artifactsBySession,
+      index.groups.items,
+      isAllFilter,
+      isSearchActive,
+      selectedFilterOption.count
+    ]
   )
-  const visibleFileCount =
-    effectiveFilterId === 'all'
+  // Catalog counts remain authoritative even when a collapsed section has not loaded its file page.
+  // Search counts come from the scoped search index because they describe matches, not the catalog.
+  const visibleFileCount = isSearchActive
+    ? isAllFilter
       ? index.overview.totalCount
-      : effectiveFilterId === 'uploads'
-        ? index.overview.uploadCount
-        : (visibleArtifactGroups[0]?.artifactCount ?? 0)
+      : isUploadsFilter
+        ? index.uploads.totalCount
+        : ((effectiveSessionId
+            ? index.artifactsBySession[effectiveSessionId]?.totalCount
+            : undefined) ?? 0)
+    : selectedFilterOption.count
   const visibleArtifactFiles = useMemo(
     () =>
       visibleArtifactGroups.flatMap((group) => {
         if (collapsedSectionIds.has(`session:${group.sessionId}`)) return []
         const items = index.artifactsBySession[group.sessionId]?.items ?? []
-        if (effectiveFilterId !== 'all') return items
+        if (!isAllFilter) return items
 
         const visibleItemLimit =
           allVisibleItemLimits[`session:${group.sessionId}`] ?? FILE_PAGE_SIZE
@@ -975,25 +1147,27 @@ const ProjectFilesViewContent = ({
     [
       allVisibleItemLimits,
       collapsedSectionIds,
-      effectiveFilterId,
       index.artifactsBySession,
+      isAllFilter,
       visibleArtifactGroups
     ]
   )
   const previewTargets = useMemo<ProjectFilePreviewTarget[]>(
     // Collapsed sections are intentionally absent: they neither protect cache entries nor enqueue new
-    // thumbnail reads. Expanding the section reconstructs targets from the already loaded page.
+    // thumbnail reads. List rows use only the lightweight availability probe and need no thumbnails.
     () =>
-      [...(uploadsCollapsed ? [] : visibleUploadFiles), ...visibleArtifactFiles].map((file) =>
-        createProjectFilePreviewTarget({
-          id: file.id,
-          path: file.path,
-          source: file.source,
-          artifact: createProjectFilePreviewArtifact(file),
-          projectId: activeProjectId ?? ''
-        })
-      ),
-    [activeProjectId, uploadsCollapsed, visibleArtifactFiles, visibleUploadFiles]
+      viewMode === 'grid'
+        ? [...(uploadsCollapsed ? [] : visibleUploadFiles), ...visibleArtifactFiles].map((file) =>
+            createProjectFilePreviewTarget({
+              id: file.id,
+              path: file.path,
+              source: file.source,
+              artifact: createProjectFilePreviewArtifact(file),
+              projectId: activeProjectId ?? ''
+            })
+          )
+        : [],
+    [activeProjectId, uploadsCollapsed, viewMode, visibleArtifactFiles, visibleUploadFiles]
   )
   const filePreviews = useProjectFilePreviews(previewTargets, previewReader)
   // A previous version may remain cached while the current path loads; never render it as current.
@@ -1072,7 +1246,7 @@ const ProjectFilesViewContent = ({
     // scrolling the page cannot silently expand every uploads/session section.
     !uploadsCollapsed &&
       supportsIntersectionObserver &&
-      effectiveFilterId === 'uploads' &&
+      isUploadsFilter &&
       visibleUploadFiles.length > 0 &&
       !index.uploads.isLoading &&
       !index.uploads.error &&
@@ -1081,97 +1255,157 @@ const ProjectFilesViewContent = ({
   )
   const groupsSentinelRef = useInfiniteLoad(
     // Group headers have their own cursor because loading another session must not advance any file page.
-    effectiveFilterId === 'all' &&
+    isAllFilter &&
       supportsIntersectionObserver &&
       !index.groups.isLoading &&
       !index.groups.error &&
       Boolean(index.groups.nextCursor),
     index.loadMoreGroups
   )
-  const hasLoadedInitialPages = index.uploads.isLoaded && index.groups.isLoaded
-  const hasPageError = Boolean(index.overviewError || index.uploads.error || index.groups.error)
+  const selectedSessionPage = effectiveSessionId
+    ? index.artifactsBySession[effectiveSessionId]
+    : undefined
+  const hasLoadedInitialPages = isAllFilter
+    ? index.isOverviewLoaded && index.uploads.isLoaded && index.groups.isLoaded
+    : isUploadsFilter
+      ? index.uploads.isLoaded
+      : Boolean(selectedSessionPage?.isLoaded)
+  const hasPageError = isAllFilter
+    ? Boolean(index.overviewError || index.uploads.error || index.groups.error)
+    : isUploadsFilter
+      ? Boolean(index.uploads.error)
+      : Boolean(selectedSessionPage?.error)
 
   return (
     <div data-testid="files-view" className="flex h-full min-h-0 w-full flex-col bg-bg-10">
-      <div className="flex shrink-0 items-center justify-between px-4 pb-3 pt-1">
+      <div className="flex shrink-0 items-center justify-between gap-3 px-4 pb-2 pt-1">
         <ProjectFilesFilterMenu
-          label={effectiveFilterId === 'all' ? 'Artifacts' : selectedFilterOption.label}
+          label={isAllFilter ? 'Artifacts' : selectedFilterOption.label}
           options={filterOptions}
           selectedOptionId={effectiveFilterId}
           onSelect={selectFilter}
-          canLoadMoreOptions={Boolean(index.groups.nextCursor) && !index.groups.isLoading}
-          onLoadMoreOptions={() => void index.loadMoreGroups()}
+          canLoadMoreOptions={
+            Boolean(catalogIndex.groups.nextCursor) && !catalogIndex.groups.isLoading
+          }
+          onLoadMoreOptions={() => void catalogIndex.loadMoreGroups()}
           onBrowseRemoteHost={(providerId) => setBrowseProviderId(providerId)}
         />
-        <div className="text-[11px] text-text-300">{visibleFileCount} files</div>
+        <TooltipProvider delayDuration={200}>
+          <ToggleGroup.Root
+            type="single"
+            value={viewMode}
+            aria-label="File view"
+            className="flex h-8 shrink-0 items-center rounded-lg border border-border bg-card p-0.5"
+            onValueChange={(value) => {
+              if (value === 'grid' || value === 'list') setViewMode(value)
+            }}
+          >
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <ToggleGroup.Item
+                  value="grid"
+                  aria-label="Grid view"
+                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 data-[state=on]:bg-muted data-[state=on]:text-text-000"
+                >
+                  <LayoutGrid className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+                </ToggleGroup.Item>
+              </TooltipTrigger>
+              <TooltipContent>Grid view</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <ToggleGroup.Item
+                  value="list"
+                  aria-label="List view"
+                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 data-[state=on]:bg-muted data-[state=on]:text-text-000"
+                >
+                  <List className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+                </ToggleGroup.Item>
+              </TooltipTrigger>
+              <TooltipContent>List view</TooltipContent>
+            </Tooltip>
+          </ToggleGroup.Root>
+        </TooltipProvider>
+      </div>
+      <div className="flex shrink-0 items-center gap-3 border-y border-border-300/60 px-4 py-2">
+        <div className="relative min-w-0 flex-1">
+          <Search
+            className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-text-300"
+            strokeWidth={1.8}
+            aria-hidden="true"
+          />
+          <Input
+            type="search"
+            aria-label="Search project files"
+            placeholder="Search artifacts..."
+            value={searchQuery}
+            maxLength={256}
+            className="h-7 bg-transparent pl-8 shadow-none"
+            onChange={(event) => setSearchQuery(event.target.value)}
+          />
+        </div>
+        <div className="shrink-0 text-[11px] tabular-nums text-text-300">
+          {formatFileCount(visibleFileCount)}
+        </div>
       </div>
 
       <div data-testid="project-files-scroll" className="min-h-0 flex-1 overflow-y-auto pb-4">
-        {!index.overview.isIndexComplete ? (
+        {!catalogIndex.overview.isIndexComplete ? (
           <div className="mx-4 mb-2 flex items-center justify-between gap-3 border-l-2 border-warning-000 px-3 py-2 text-[11px] text-text-200">
             <span className="min-w-0 flex-1">
-              {index.repairError ?? 'Some files could not be indexed yet.'}
+              {catalogIndex.repairError ?? 'Some files could not be indexed yet.'}
             </span>
             <Button
               type="button"
               variant="outline"
               size="xs"
               aria-label="Retry indexing project files"
-              disabled={index.isRepairing}
-              onClick={() => void index.repairIndex()}
+              disabled={catalogIndex.isRepairing}
+              onClick={() => void catalogIndex.repairIndex()}
             >
-              {index.isRepairing ? 'Retrying...' : 'Retry'}
+              {catalogIndex.isRepairing ? 'Retrying...' : 'Retry'}
             </Button>
           </div>
         ) : null}
 
-        {index.overviewError ? (
+        {catalogIndex.overviewError ? (
+          <PageLoadError message={catalogIndex.overviewError} onRetry={catalogIndex.reload} />
+        ) : null}
+
+        {isSearchActive && isAllFilter && index.overviewError ? (
           <PageLoadError message={index.overviewError} onRetry={index.reload} />
         ) : null}
 
         {hasLoadedInitialPages &&
-        index.overview.isIndexComplete &&
+        catalogIndex.overview.isIndexComplete &&
         visibleFileCount === 0 &&
         !hasPageError ? (
           <div className="flex h-full items-center justify-center px-6 text-center text-[12px] text-text-300">
-            No files yet
+            {isSearchActive ? `No files match “${debouncedSearchQuery}”` : 'No files yet'}
           </div>
         ) : null}
 
-        {(effectiveFilterId === 'all' || effectiveFilterId === 'uploads') &&
-        (index.overview.uploadCount > 0 || Boolean(index.uploads.error)) ? (
+        {(isAllFilter || isUploadsFilter) &&
+        (index.uploads.totalCount > 0 || Boolean(index.uploads.error)) ? (
           <section>
             <SectionHeader
               id="uploads"
               title="Your uploads"
-              countLabel={`${index.overview.uploadCount}`}
+              countLabel={`${index.uploads.totalCount}`}
               isCollapsed={uploadsCollapsed}
               onToggle={toggleSection}
             />
             {!uploadsCollapsed ? (
               <>
                 {visibleUploadFiles.length > 0 ? (
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(132px,1fr))] gap-2 px-4 py-3">
-                    {visibleUploadFiles.map((file) => (
-                      <FileTile
-                        key={file.id}
-                        name={file.name}
-                        previewArtifact={createProjectFilePreviewArtifact(file)}
-                        preview={currentFilePreviewById.get(file.id)}
-                        source="upload"
-                        size={file.size}
-                        timestamp={file.mtimeMs ?? file.sortAtMs}
-                        previewLabel={`Preview uploaded file ${file.name}`}
-                        onPreview={() => previewFile(file)}
-                      />
-                    ))}
-                    <div
-                      ref={uploadSentinelRef}
-                      data-testid="upload-page-sentinel"
-                      className="col-span-full h-px"
-                    />
-                  </div>
+                  <ProjectFileItems
+                    files={visibleUploadFiles}
+                    viewMode={viewMode}
+                    previewById={currentFilePreviewById}
+                    onPreview={previewFile}
+                  />
                 ) : null}
+                <div ref={uploadSentinelRef} data-testid="upload-page-sentinel" className="h-px" />
                 {index.uploads.error ? (
                   <PageLoadError
                     message={index.uploads.error}
@@ -1180,15 +1414,11 @@ const ProjectFilesViewContent = ({
                 ) : null}
                 <FilePageFooter
                   page={index.uploads}
-                  mode={
-                    effectiveFilterId === 'all' || !supportsIntersectionObserver
-                      ? 'manual'
-                      : 'scroll'
-                  }
+                  mode={isAllFilter || !supportsIntersectionObserver ? 'manual' : 'scroll'}
                   visibleItemCount={visibleUploadFiles.length}
                   loadMoreLabel="Load more uploaded files"
                   onLoadMore={() =>
-                    effectiveFilterId === 'all'
+                    isAllFilter
                       ? revealNextAllPage(
                           'uploads',
                           allUploadVisibleItemLimit,
@@ -1203,13 +1433,13 @@ const ProjectFilesViewContent = ({
           </section>
         ) : null}
 
-        {effectiveFilterId === 'all' && index.groups.error ? (
+        {isAllFilter && index.groups.error ? (
           <PageLoadError message={index.groups.error} onRetry={() => void index.loadMoreGroups()} />
         ) : null}
 
         {visibleArtifactGroups.length > 0 ? (
           <section>
-            {effectiveFilterId === 'all' ? (
+            {isAllFilter ? (
               <div className="px-4 pb-1 pt-3 text-[11px] font-medium uppercase tracking-normal text-text-300">
                 Generated files
               </div>
@@ -1220,7 +1450,7 @@ const ProjectFilesViewContent = ({
                 group={group}
                 title={getSessionTitle(group.sessionId)}
                 page={index.artifactsBySession[group.sessionId]}
-                loadMode={effectiveFilterId === 'all' ? 'manual' : 'scroll'}
+                loadMode={isAllFilter ? 'manual' : 'scroll'}
                 manualVisibleItemLimit={
                   allVisibleItemLimits[`session:${group.sessionId}`] ?? FILE_PAGE_SIZE
                 }
@@ -1237,13 +1467,14 @@ const ProjectFilesViewContent = ({
                     () => index.loadMoreArtifacts(group.sessionId)
                   )
                 }}
+                viewMode={viewMode}
                 previewById={currentFilePreviewById}
                 onPreview={previewFile}
               />
             ))}
             <div ref={groupsSentinelRef} data-testid="group-page-sentinel" className="h-px" />
             {!supportsIntersectionObserver &&
-            effectiveFilterId === 'all' &&
+            isAllFilter &&
             index.groups.nextCursor &&
             !index.groups.isLoading &&
             !index.groups.error ? (

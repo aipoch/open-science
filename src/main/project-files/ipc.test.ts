@@ -54,11 +54,16 @@ describe('project files IPC handlers', () => {
     }
     const groupsRequest = { projectId: 'project-1', limit: 10 }
 
-    await expect(handlers.getOverview({ projectId: 'project-1' })).resolves.toBe(overview)
+    const overviewRequest = {
+      projectId: 'project-1',
+      search: { filenameContains: 'timeline' }
+    }
+    await expect(handlers.getOverview(overviewRequest)).resolves.toBe(overview)
     await expect(handlers.listFiles(filesRequest)).resolves.toBe(filePage)
     await expect(handlers.listArtifactGroups(groupsRequest)).resolves.toBe(groupPage)
     expect(repository.listFiles).toHaveBeenCalledWith(filesRequest)
     expect(repository.listArtifactGroups).toHaveBeenCalledWith(groupsRequest)
+    expect(repository.getOverview).toHaveBeenCalledWith(overviewRequest)
   })
 
   it('routes an explicit index repair through the session coordinator', async () => {
@@ -193,7 +198,7 @@ describe('registerProjectFilesIpcHandlers', () => {
     await invoke('project-files:get-overview', { projectId: 'project-1' })
 
     expect(order).toEqual(['recover', 'overview'])
-    expect(localRepository.getOverview).toHaveBeenCalledWith('project-1')
+    expect(localRepository.getOverview).toHaveBeenCalledWith({ projectId: 'project-1' })
   })
 
   it('list-files handler waits for deletion recovery before listing files', async () => {

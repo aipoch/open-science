@@ -108,6 +108,7 @@ import type {
 } from '../shared/projects'
 import type {
   ArtifactGroupPage,
+  GetProjectFilesOverviewRequest,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
   ProjectFilesChangedEvent,
@@ -396,7 +397,7 @@ type OpenScienceAPI = {
     onDeleted: (listener: AcpListener<ProjectDeletedEvent>) => RemoveListener
   }
   projectFiles: {
-    getOverview: (request: { projectId: string }) => Promise<ProjectFilesOverview>
+    getOverview: (request: GetProjectFilesOverviewRequest) => Promise<ProjectFilesOverview>
     listFiles: (request: ListProjectFilesRequest) => Promise<ProjectFilesPage>
     listArtifactGroups: (request: ListArtifactGroupsRequest) => Promise<ArtifactGroupPage>
     repairIndex: (request: { projectId: string }) => Promise<void>

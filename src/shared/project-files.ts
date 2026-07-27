@@ -17,11 +17,22 @@ export type ProjectFileItem = {
   sortAtMs: number
 }
 
+export type ProjectFilesSearch = {
+  // Filename substring search is ASCII case-insensitive; non-ASCII characters match literally.
+  filenameContains: string
+}
+
+export type GetProjectFilesOverviewRequest = {
+  projectId: string
+  search?: ProjectFilesSearch
+}
+
 export type ListProjectFilesRequest = {
   projectId: string
   // Uploads and each session's artifacts are deliberately separate collections with independent
   // cursors; flattening them would break uploads-first and session-grouped rendering.
   collection: { kind: 'uploads' } | { kind: 'sessionArtifacts'; sessionId: string }
+  search?: ProjectFilesSearch
   cursor?: string
   limit: number
 }
@@ -34,6 +45,7 @@ export type ProjectFilesPage = {
 
 export type ListArtifactGroupsRequest = {
   projectId: string
+  search?: ProjectFilesSearch
   cursor?: string
   limit: number
 }
