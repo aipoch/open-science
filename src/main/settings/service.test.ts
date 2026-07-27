@@ -406,6 +406,40 @@ describe('SettingsService: providers', () => {
     expect(refreshed.providers[0].lastValidatedAt).toBeUndefined()
   })
 
+  it('discards an in-flight Codex validation when imported authentication is refreshed', async () => {
+    let resolveStatus!: (status: CodexAuthStatus) => void
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn(
+        () =>
+          new Promise<CodexAuthStatus>((resolve) => {
+            resolveStatus = resolve
+          })
+      ),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
+    const service = createService(undefined, { codexAuth })
+    const imported = await service.upsertProvider({ type: 'codex-shared' })
+
+    const pendingValidation = service.validateProvider({
+      providerId: imported.providers[0].id
+    })
+    await writeFile(
+      join(storageRoot, 'no-user-codex', 'auth.json'),
+      '{"tokens":{"access_token":"refreshed"}}'
+    )
+    await service.upsertProvider({
+      id: imported.providers[0].id,
+      type: 'codex-shared',
+      reimportCodexAuthentication: true
+    })
+    resolveStatus({ mode: 'shared', supported: true, authenticated: true })
+
+    await expect(pendingValidation).resolves.toMatchObject({ ok: true, applied: false })
+    expect((await repository.getSettings()).providers[0].lastValidatedAt).toBeUndefined()
+  })
+
   it.each([
     ['codex-shared', CODEX_SHARED_PROVIDER_ID, 'Codex subscription'],
     ['codex-isolated', CODEX_ISOLATED_PROVIDER_ID, 'Codex subscription']

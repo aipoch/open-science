@@ -2236,6 +2236,12 @@ class SettingsService {
         this.userCodexDir,
         codexSubscriptionStorageDir(this.storageRoot)
       )
+      // Re-import can replace auth.json and the loopback route without changing any persisted
+      // provider field. Advance the generation so a status check started against the previous copy
+      // cannot write its result onto the refreshed credentials.
+      if (reimportCodexAuthentication && requestedId) {
+        this.advanceProviderValidationGeneration(requestedId)
+      }
     } else if (request.type === 'codex-isolated' && existing?.codexAuthMode !== 'isolated') {
       await clearImportedCodexProviderRoute(codexSubscriptionStorageDir(this.storageRoot))
     }
@@ -2862,11 +2868,8 @@ class SettingsService {
       : undefined
 
     const validationGeneration = resolved.storedId
-      ? (this.providerValidationGenerations.get(resolved.storedId) ?? 0) + 1
+      ? this.advanceProviderValidationGeneration(resolved.storedId)
       : undefined
-    if (resolved.storedId && validationGeneration !== undefined) {
-      this.providerValidationGenerations.set(resolved.storedId, validationGeneration)
-    }
 
     // Test against the framework the agent will actually spawn with. An OpenAI-only gateway tested
     // while Claude Code is active would otherwise fail a raw /v1/messages probe and be reported as an
@@ -4145,6 +4148,12 @@ class SettingsService {
       left.key === right.key &&
       (left.apiEndpoints ?? []).join(',') === (right.apiEndpoints ?? []).join(',')
     )
+  }
+
+  private advanceProviderValidationGeneration(providerId: string): number {
+    const generation = (this.providerValidationGenerations.get(providerId) ?? 0) + 1
+    this.providerValidationGenerations.set(providerId, generation)
+    return generation
   }
 
   private async runClaudeSubscriptionProbe(
