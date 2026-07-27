@@ -20,15 +20,18 @@ The combined reviewer can use review-specific credentials instead:
 - `CODEX_REVIEW_API_KEY`
 - `CODEX_REVIEW_BASE_URL`
 
-For compatibility, `CODEX_CORRECTNESS_API_KEY` and `CODEX_CORRECTNESS_BASE_URL` remain fallbacks
-between the review-specific and shared secrets. Architecture-specific credentials are no longer
-used because each workflow run now has one combined review.
+For compatibility, correctness-specific and then architecture-specific credentials remain ordered
+fallbacks between the review-specific and shared secrets.
 
 Set the `CODEX_REVIEW_AUTH_MODE` repository variable to `api-key` to override the subscription
 default. Keep API-key secrets configured for automatic fallback. Model, effort, fork, enablement,
 and round-limit variables continue to apply. `CODEX_REVIEW_MODEL` and `CODEX_REVIEW_EFFORT` take
 precedence; the legacy correctness variables and then architecture variables remain ordered
 fallbacks.
+
+`ENABLE_CODEX_REVIEW=false` disables automatic and manually dispatched reviews. For compatibility,
+legacy `CODEX_REVIEW_MODE=disabled` disables only automatic pull request events; a manual dispatch
+still starts the single combined reviewer.
 
 ## Codex subscription mode
 

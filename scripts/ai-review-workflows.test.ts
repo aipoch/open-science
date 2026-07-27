@@ -101,6 +101,7 @@ type TargetOptions = {
   enabled?: string
   isFork?: boolean
   forkMode?: 'disabled' | 'manual' | 'automatic'
+  reviewMode?: 'both' | 'correctness' | 'architecture' | 'disabled'
 }
 
 function runTarget(options: TargetOptions = {}): {
@@ -146,6 +147,7 @@ printf '%s' "$PR_JSON"
         EVENT_PR_NUMBER: event === 'pull_request_target' ? '392' : '',
         FORK_REVIEW_MODE: options.forkMode ?? 'manual',
         CODEX_REVIEW_AUTH_MODE: options.authMode ?? 'subscription',
+        CODEX_REVIEW_MODE: options.reviewMode ?? 'correctness',
         ENABLE_CODEX_REVIEW: options.enabled ?? 'true',
         REVIEW_EVENT: event,
         GITHUB_OUTPUT: output
@@ -436,11 +438,17 @@ describe('single Codex workflow contract', () => {
   })
 
   it('uses one reviewer for automatic and manual runs', () => {
-    expect(mainText).not.toMatch(/\bCODEX_REVIEW_MODE\b/)
     expect(mainText).not.toContain('DISPATCH_REVIEWER')
     expect(runTarget().outputs.review_enabled).toBe('true')
     expect(runTarget({ event: 'workflow_dispatch' }).outputs.review_enabled).toBe('true')
     expect(runTarget({ enabled: 'false' }).outputs.review_enabled).toBe('false')
+  })
+
+  it('preserves the legacy manual-only review mode', () => {
+    expect(runTarget({ reviewMode: 'disabled' }).outputs.review_enabled).toBe('false')
+    expect(
+      runTarget({ event: 'workflow_dispatch', reviewMode: 'disabled' }).outputs.review_enabled
+    ).toBe('true')
   })
 
   it('rejects an invalid reviewer enable flag', () => {
@@ -547,9 +555,9 @@ describe('single Codex workflow contract', () => {
       CODEX_AUTH_JSON:
         "${{ needs.review_target.outputs.auth_mode == 'subscription' && secrets.CODEX_AUTH_JSON || '' }}",
       OPENAI_API_KEY:
-        '${{ secrets.CODEX_REVIEW_API_KEY || secrets.CODEX_CORRECTNESS_API_KEY || secrets.OPENAI_API_KEY }}',
+        '${{ secrets.CODEX_REVIEW_API_KEY || secrets.CODEX_CORRECTNESS_API_KEY || secrets.CODEX_ARCHITECTURE_API_KEY || secrets.OPENAI_API_KEY }}',
       CODEX_BASE_URL:
-        '${{ secrets.CODEX_REVIEW_BASE_URL || secrets.CODEX_CORRECTNESS_BASE_URL || secrets.CODEX_BASE_URL }}'
+        '${{ secrets.CODEX_REVIEW_BASE_URL || secrets.CODEX_CORRECTNESS_BASE_URL || secrets.CODEX_ARCHITECTURE_BASE_URL || secrets.CODEX_BASE_URL }}'
     })
   })
 

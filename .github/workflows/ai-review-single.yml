@@ -5,7 +5,7 @@ name: AI PR Review (Single)
 # and their security boundaries.
 # - Shared API secrets: OPENAI_API_KEY and CODEX_BASE_URL
 # - Review-specific secrets: CODEX_REVIEW_API_KEY and CODEX_REVIEW_BASE_URL
-# - Legacy fallback secrets: CODEX_CORRECTNESS_API_KEY and CODEX_CORRECTNESS_BASE_URL
+# - Legacy fallback secrets: correctness-specific and then architecture-specific API keys/base URLs
 #   (base URLs may omit the trailing slash or include the full /v1/responses endpoint)
 # - Subscription bootstrap secret: CODEX_AUTH_JSON
 # Set CODEX_REVIEW_AUTH_MODE to subscription (default) or api-key. Automatic and manually
@@ -13,6 +13,7 @@ name: AI PR Review (Single)
 # and subscription CLI setup failures fall back to the configured API-key credentials before
 # checkout and review execution.
 # Set ENABLE_CODEX_REVIEW=false to disable the automated reviewer.
+# Legacy CODEX_REVIEW_MODE=disabled keeps automatic reviews disabled while preserving dispatch.
 # CODEX_REVIEW_MODEL and CODEX_REVIEW_EFFORT select its model and effort. Legacy correctness and
 # architecture variables remain ordered fallbacks so existing repository configuration keeps working.
 # Set FORK_REVIEW_MODE to disabled, manual, or automatic (default: manual). Same-repository PRs
@@ -68,6 +69,7 @@ jobs:
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           FORK_REVIEW_MODE: ${{ vars.FORK_REVIEW_MODE || 'manual' }}
           CODEX_REVIEW_AUTH_MODE: ${{ vars.CODEX_REVIEW_AUTH_MODE || 'subscription' }}
+          CODEX_REVIEW_MODE: ${{ vars.CODEX_REVIEW_MODE || 'correctness' }}
           ENABLE_CODEX_REVIEW: ${{ vars.ENABLE_CODEX_REVIEW || 'true' }}
           REVIEW_EVENT: ${{ github.event_name }}
         shell: bash
@@ -91,6 +93,13 @@ jobs:
             api-key|subscription) ;;
             *)
               echo "CODEX_REVIEW_AUTH_MODE must be api-key or subscription." >&2
+              exit 1
+              ;;
+          esac
+          case "$CODEX_REVIEW_MODE" in
+            both|correctness|architecture|disabled) ;;
+            *)
+              echo "CODEX_REVIEW_MODE must be both, correctness, architecture, or disabled." >&2
               exit 1
               ;;
           esac
@@ -124,6 +133,9 @@ jobs:
           effective_auth_mode="$CODEX_REVIEW_AUTH_MODE"
 
           review_enabled="$ENABLE_CODEX_REVIEW"
+          if [[ "$REVIEW_EVENT" != "workflow_dispatch" && "$CODEX_REVIEW_MODE" == "disabled" ]]; then
+            review_enabled=false
+          fi
 
           {
             echo "number=$(jq -r '.number' pr.json)"
@@ -217,8 +229,8 @@ jobs:
       effort: ${{ vars.CODEX_REVIEW_EFFORT || vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_ARCHITECTURE_EFFORT || 'high' }}
     secrets:
       CODEX_AUTH_JSON: ${{ needs.review_target.outputs.auth_mode == 'subscription' && secrets.CODEX_AUTH_JSON || '' }}
-      OPENAI_API_KEY: ${{ secrets.CODEX_REVIEW_API_KEY || secrets.CODEX_CORRECTNESS_API_KEY || secrets.OPENAI_API_KEY }}
-      CODEX_BASE_URL: ${{ secrets.CODEX_REVIEW_BASE_URL || secrets.CODEX_CORRECTNESS_BASE_URL || secrets.CODEX_BASE_URL }}
+      OPENAI_API_KEY: ${{ secrets.CODEX_REVIEW_API_KEY || secrets.CODEX_CORRECTNESS_API_KEY || secrets.CODEX_ARCHITECTURE_API_KEY || secrets.OPENAI_API_KEY }}
+      CODEX_BASE_URL: ${{ secrets.CODEX_REVIEW_BASE_URL || secrets.CODEX_CORRECTNESS_BASE_URL || secrets.CODEX_ARCHITECTURE_BASE_URL || secrets.CODEX_BASE_URL }}
 
   post_codex_feedback:
     name: Post Codex feedback
