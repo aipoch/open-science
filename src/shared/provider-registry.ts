@@ -471,6 +471,11 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     models: [
       // Anthropic
       {
+        id: 'anthropic/claude-opus-5',
+        contextWindow: 1_000_000,
+        reasoningEffort: 'standard-5'
+      },
+      {
         id: 'anthropic/claude-opus-4.8',
         contextWindow: 1_000_000,
         reasoningEffort: 'standard-5'
@@ -540,6 +545,11 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         reasoningEffort: 'unsupported'
       },
       {
+        id: 'google/gemini-3.6-flash',
+        contextWindow: 1_048_576,
+        reasoningEffort: 'minimal-low-medium-high'
+      },
+      {
         id: 'google/gemini-3.5-flash',
         contextWindow: 1_048_576,
         reasoningEffort: 'unsupported'
@@ -558,7 +568,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       {
         id: 'moonshotai/kimi-k3',
         contextWindow: 1_048_576,
-        reasoningEffort: 'standard-5'
+        reasoningEffort: 'low-high-max'
       },
       {
         id: 'qwen/qwen3.7-max',
@@ -571,6 +581,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // text-only members (gpt-5.3-codex, deepseek-v4-pro, glm-5.2) are intentionally omitted.
     multimodal: {
       multimodalModels: [
+        'anthropic/claude-opus-5',
         'anthropic/claude-opus-4.8',
         'anthropic/claude-sonnet-5',
         'anthropic/claude-haiku-4.5',
@@ -583,6 +594,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         'openai/gpt-5.5-pro',
         'openai/gpt-5.5',
         'google/gemini-3.1-pro-preview',
+        'google/gemini-3.6-flash',
         'google/gemini-3.5-flash',
         'x-ai/grok-4.5',
         'moonshotai/kimi-k3',

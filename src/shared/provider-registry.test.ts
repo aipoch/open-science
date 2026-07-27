@@ -138,6 +138,10 @@ describe('provider registry', () => {
     expect(resolveVendorModelReasoningEffort('openrouter', 'anthropic/claude-haiku-4.5')).toEqual({
       supported: false
     })
+    expect(resolveVendorModelReasoningEffort('openrouter', 'anthropic/claude-opus-5')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'xhigh', 'max']
+    })
     expect(resolveVendorModelReasoningEffort('openrouter', 'openai/gpt-5.6-terra')).toEqual({
       supported: true,
       slots: ['none', 'low', 'medium', 'high', 'max']
@@ -152,7 +156,11 @@ describe('provider registry', () => {
     })
     expect(resolveVendorModelReasoningEffort('openrouter', 'moonshotai/kimi-k3')).toEqual({
       supported: true,
-      slots: ['low', 'medium', 'high', 'xhigh', 'max']
+      slots: ['low', 'high', 'max', 'max', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('openrouter', 'google/gemini-3.6-flash')).toEqual({
+      supported: true,
+      slots: ['minimal', 'low', 'medium', 'high', 'high']
     })
     expect(
       resolveVendorModelReasoningEffort('openrouter', 'google/gemini-3.1-pro-preview')
@@ -198,7 +206,7 @@ describe('provider registry', () => {
     )
     // Curated (300+ live ids would flood the picker), so refresh-from-vendor is hidden.
     expect(resolveVendorModelsUrl('openrouter')).toBeUndefined()
-    expect(defaultVendorModel('openrouter')).toBe('anthropic/claude-opus-4.8')
+    expect(defaultVendorModel('openrouter')).toBe('anthropic/claude-opus-5')
   })
 
   it('routes Xiaomi MIMO through both APIs with a live model list', () => {
@@ -374,8 +382,10 @@ describe('provider registry', () => {
     })
 
     it('returns true for OpenRouter vision-capable models', () => {
+      expect(isVendorModelMultimodal('openrouter', 'anthropic/claude-opus-5')).toBe(true)
       expect(isVendorModelMultimodal('openrouter', 'anthropic/claude-opus-4.8')).toBe(true)
       expect(isVendorModelMultimodal('openrouter', 'openai/gpt-5.5')).toBe(true)
+      expect(isVendorModelMultimodal('openrouter', 'google/gemini-3.6-flash')).toBe(true)
       expect(isVendorModelMultimodal('openrouter', 'google/gemini-3.5-flash')).toBe(true)
       expect(isVendorModelMultimodal('openrouter', 'moonshotai/kimi-k3')).toBe(true)
     })
@@ -429,7 +439,9 @@ describe('provider registry', () => {
     })
 
     it('resolves OpenRouter cross-vendor slugs from OpenRouter metadata', () => {
+      expect(resolveModelContextWindow('openrouter', 'anthropic/claude-opus-5')).toBe(1_000_000)
       expect(resolveModelContextWindow('openrouter', 'anthropic/claude-opus-4.8')).toBe(1_000_000)
+      expect(resolveModelContextWindow('openrouter', 'google/gemini-3.6-flash')).toBe(1_048_576)
       expect(resolveModelContextWindow('openrouter', 'google/gemini-3.1-pro-preview')).toBe(
         1_048_576
       )
