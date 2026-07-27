@@ -87,7 +87,7 @@ describe('importCodexAuthentication', () => {
       await writeFile(join(source, 'skills', 'private-skill', 'SKILL.md'), '# Private')
       await writeFile(join(source, 'sessions', 'session.jsonl'), 'private session')
       await mkdir(destination, { recursive: true })
-      await writeFile(join(destination, 'config.toml'), 'model_provider = "stale"\n')
+      await writeFile(join(destination, 'config.toml'), 'model = "app-default"\n')
 
       await importCodexAuthentication(source, destination)
 
@@ -95,7 +95,9 @@ describe('importCodexAuthentication', () => {
         '{"tokens":{"access_token":"secret"}}'
       )
       expect((await stat(join(destination, 'auth.json'))).mode & 0o777).toBe(0o600)
-      expect(existsSync(join(destination, 'config.toml'))).toBe(false)
+      expect(await readFile(join(destination, 'config.toml'), 'utf8')).toBe(
+        'model = "app-default"\n'
+      )
       expect(existsSync(join(destination, 'skills'))).toBe(false)
       expect(existsSync(join(destination, 'sessions'))).toBe(false)
     } finally {
@@ -109,7 +111,9 @@ describe('importCodexAuthentication', () => {
     const destination = join(root, 'destination')
     try {
       await mkdir(source, { recursive: true })
+      await mkdir(destination, { recursive: true })
       await writeFile(join(source, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+      await writeFile(join(destination, 'config.toml'), 'model = "app-default"\n')
       await writeFile(
         join(source, 'config.toml'),
         [
@@ -134,18 +138,29 @@ describe('importCodexAuthentication', () => {
 
       expect(await readFile(join(destination, 'config.toml'), 'utf8')).toBe(
         [
+          'model = "app-default"',
+          '# Open Science: begin imported Codex route selection',
           'model_provider = "subscription-route"',
-          '',
+          '# Open Science: end imported Codex route selection',
+          '# Open Science: begin imported Codex provider',
           '[model_providers."subscription-route"]',
           'name = "OpenAI"',
           'base_url = "http://127.0.0.1:1087/v1"',
           'wire_api = "responses"',
           'requires_openai_auth = true',
           'supports_websockets = false',
+          '# Open Science: end imported Codex provider',
           ''
         ].join('\n')
       )
       expect((await stat(join(destination, 'config.toml'))).mode & 0o777).toBe(0o600)
+
+      await writeFile(join(source, 'config.toml'), 'model = "private-model"\n')
+      await importCodexAuthentication(source, destination)
+
+      expect(await readFile(join(destination, 'config.toml'), 'utf8')).toBe(
+        'model = "app-default"\n'
+      )
     } finally {
       await rm(root, { recursive: true, force: true })
     }

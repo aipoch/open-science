@@ -198,7 +198,7 @@ const extractCodexProviderRoute = (configToml: string): ImportedCodexProviderRou
   }
 }
 
-const serializeCodexProviderRoute = (route: ImportedCodexProviderRoute): string =>
+const serializeLegacyCodexProviderRoute = (route: ImportedCodexProviderRoute): string =>
   [
     `model_provider = ${JSON.stringify(route.id)}`,
     '',
@@ -212,6 +212,83 @@ const serializeCodexProviderRoute = (route: ImportedCodexProviderRoute): string 
       : [`supports_websockets = ${String(route.supportsWebsockets)}`]),
     ''
   ].join('\n')
+
+const IMPORTED_ROUTE_SELECTION_BEGIN = '# Open Science: begin imported Codex route selection'
+const IMPORTED_ROUTE_SELECTION_END = '# Open Science: end imported Codex route selection'
+const IMPORTED_ROUTE_PROVIDER_BEGIN = '# Open Science: begin imported Codex provider'
+const IMPORTED_ROUTE_PROVIDER_END = '# Open Science: end imported Codex provider'
+
+const removeCompleteMarkedBlock = (lines: string[], begin: string, end: string): string[] => {
+  const result = [...lines]
+  let beginIndex = result.indexOf(begin)
+
+  while (beginIndex >= 0) {
+    const relativeEndIndex = result.slice(beginIndex + 1).indexOf(end)
+    if (relativeEndIndex < 0) break
+
+    result.splice(beginIndex, relativeEndIndex + 2)
+    beginIndex = result.indexOf(begin)
+  }
+
+  return result
+}
+
+const removeImportedCodexProviderRoute = (configToml: string): string => {
+  const withoutMarkedBlocks = removeCompleteMarkedBlock(
+    removeCompleteMarkedBlock(
+      configToml.split(/\r?\n/),
+      IMPORTED_ROUTE_SELECTION_BEGIN,
+      IMPORTED_ROUTE_SELECTION_END
+    ),
+    IMPORTED_ROUTE_PROVIDER_BEGIN,
+    IMPORTED_ROUTE_PROVIDER_END
+  ).join('\n')
+
+  // Builds produced before route markers wrote only the sanitized route. Recognize that exact shape
+  // so switching modes can clean it up without ever treating a mixed, user-authored config as ours.
+  const legacyRoute = extractCodexProviderRoute(withoutMarkedBlocks)
+  if (
+    legacyRoute &&
+    withoutMarkedBlocks.trim() === serializeLegacyCodexProviderRoute(legacyRoute).trim()
+  ) {
+    return ''
+  }
+
+  return withoutMarkedBlocks
+}
+
+const serializeImportedCodexProviderRoute = (
+  route: ImportedCodexProviderRoute,
+  existingConfigToml: string
+): string => {
+  const baseLines = removeImportedCodexProviderRoute(existingConfigToml).split(/\r?\n/)
+  while (baseLines.at(-1) === '') baseLines.pop()
+
+  const firstTableIndex = baseLines.findIndex((line) => /^\s*\[/.test(line))
+  const selectionIndex = firstTableIndex < 0 ? baseLines.length : firstTableIndex
+  baseLines.splice(
+    selectionIndex,
+    0,
+    IMPORTED_ROUTE_SELECTION_BEGIN,
+    `model_provider = ${JSON.stringify(route.id)}`,
+    IMPORTED_ROUTE_SELECTION_END
+  )
+  baseLines.push(
+    IMPORTED_ROUTE_PROVIDER_BEGIN,
+    `[model_providers.${JSON.stringify(route.id)}]`,
+    `name = ${JSON.stringify(route.name)}`,
+    `base_url = ${JSON.stringify(route.baseUrl)}`,
+    'wire_api = "responses"',
+    'requires_openai_auth = true',
+    ...(route.supportsWebsockets === undefined
+      ? []
+      : [`supports_websockets = ${String(route.supportsWebsockets)}`]),
+    IMPORTED_ROUTE_PROVIDER_END,
+    ''
+  )
+
+  return baseLines.join('\n')
+}
 
 const writePrivateFileAtomically = async (
   destinationPath: string,
@@ -269,9 +346,15 @@ export const importCodexAuthentication = async (
   await mkdir(destinationHome, { recursive: true })
   await writePrivateFileAtomically(destinationPath, content)
   if (providerRoute) {
+    let existingConfigToml = ''
+    try {
+      existingConfigToml = await readFile(destinationConfigPath, 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
     await writePrivateFileAtomically(
       destinationConfigPath,
-      serializeCodexProviderRoute(providerRoute)
+      serializeImportedCodexProviderRoute(providerRoute, existingConfigToml)
     )
   } else {
     await clearImportedCodexProviderRoute(destinationHome)
@@ -279,7 +362,24 @@ export const importCodexAuthentication = async (
 }
 
 export const clearImportedCodexProviderRoute = async (destinationHome: string): Promise<void> => {
-  await rm(join(destinationHome, 'config.toml'), { force: true })
+  const destinationConfigPath = join(destinationHome, 'config.toml')
+  let existingConfigToml: string
+
+  try {
+    existingConfigToml = await readFile(destinationConfigPath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+
+  const cleanedConfigToml = removeImportedCodexProviderRoute(existingConfigToml)
+  if (cleanedConfigToml === existingConfigToml) return
+
+  if (cleanedConfigToml.trim()) {
+    await writePrivateFileAtomically(destinationConfigPath, cleanedConfigToml)
+  } else {
+    await rm(destinationConfigPath, { force: true })
+  }
 }
 
 const abortError = (message: string): Error => {

@@ -280,14 +280,17 @@ describe('SettingsService: providers', () => {
     )
     expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
       [
+        '# Open Science: begin imported Codex route selection',
         'model_provider = "subscription-route"',
-        '',
+        '# Open Science: end imported Codex route selection',
+        '# Open Science: begin imported Codex provider',
         '[model_providers."subscription-route"]',
         'name = "OpenAI"',
         'base_url = "http://127.0.0.1:1087/v1"',
         'wire_api = "responses"',
         'requires_openai_auth = true',
         'supports_websockets = false',
+        '# Open Science: end imported Codex provider',
         ''
       ].join('\n')
     )
@@ -327,6 +330,8 @@ describe('SettingsService: providers', () => {
     await expect(
       readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
     ).resolves.toContain('model_provider = "subscription-route"')
+    const verifiedImportedProvider = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({ ...verifiedImportedProvider, lastValidatedAt: 123 })
 
     const isolated = await service.upsertProvider({
       id: imported.providers[0].id,
@@ -340,6 +345,7 @@ describe('SettingsService: providers', () => {
       type: 'codex-isolated',
       codexAuthMode: 'isolated'
     })
+    expect(isolated.providers[0].lastValidatedAt).toBeUndefined()
     expect(await readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')).toBe(
       '{"tokens":{"access_token":"secret"}}'
     )
