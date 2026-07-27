@@ -237,23 +237,28 @@ describe('ProviderList', () => {
   })
 
   it('renders a normalized imported Codex provider with imported copy and actions', () => {
-    renderList([
-      provider({
-        id: 'builtin-codex-subscription',
-        type: 'codex-isolated',
-        codexAuthMode: 'imported',
-        name: 'Codex subscription',
-        models: [],
-        model: undefined,
-        maskedKey: undefined,
-        hasKey: false
-      })
-    ])
+    const imported = provider({
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      codexAuthMode: 'imported',
+      name: 'Codex subscription',
+      models: [],
+      model: undefined,
+      maskedKey: undefined,
+      hasKey: false
+    })
+    renderList([imported])
 
     expect(container.textContent).toContain('Authentication imported into Open Science')
     expect(buttonByLabel('Check Codex login')).toBeDefined()
     expect(buttonByLabel('Sign in')).toBeUndefined()
     expect(buttonByLabel('Sign out')).toBeUndefined()
+
+    const onCancel = vi.fn()
+    renderList([imported], undefined, undefined, { onCancel, isCodexLoginPending: true })
+    act(() => buttonByLabel('Cancel sign-in')?.click())
+    expect(onCancel).toHaveBeenCalledOnce()
+    expect(buttonByLabel('Check Codex login')).toBeUndefined()
   })
 
   it('renders shared and isolated Codex modes as one subscription card', () => {

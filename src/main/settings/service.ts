@@ -2205,14 +2205,6 @@ class SettingsService {
   // Encrypts any new key, recomputes its mask, and inserts/updates the provider record.
   async upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot> {
     const settings = await this.repository.getSettings()
-    if (request.type === 'codex-shared') {
-      await importCodexAuthentication(
-        this.userCodexDir,
-        codexSubscriptionStorageDir(this.storageRoot)
-      )
-    } else if (request.type === 'codex-isolated') {
-      await clearImportedCodexProviderRoute(codexSubscriptionStorageDir(this.storageRoot))
-    }
     // Both Codex and Claude subscription providers use a fixed builtin id so the add path, the
     // token-save path, and every id-keyed lookup in this service converge on a single record.
     // Without this, a random id from `createProviderId()` would shadow the token-holding record
@@ -2228,6 +2220,18 @@ class SettingsService {
     const existing = requestedId
       ? settings.providers.find((provider) => provider.id === requestedId)
       : undefined
+
+    // An imported subscription becomes app-owned after the initial copy. Ordinary edits must not
+    // depend on the external CLI profile still existing or re-read a route that changed afterward.
+    // Only a new import or an explicit isolated -> imported switch crosses that profile boundary.
+    if (request.type === 'codex-shared' && existing?.codexAuthMode !== 'imported') {
+      await importCodexAuthentication(
+        this.userCodexDir,
+        codexSubscriptionStorageDir(this.storageRoot)
+      )
+    } else if (request.type === 'codex-isolated' && existing?.codexAuthMode !== 'isolated') {
+      await clearImportedCodexProviderRoute(codexSubscriptionStorageDir(this.storageRoot))
+    }
 
     const provider: StoredProvider = {
       id: subscriptionIdentity?.id ?? existing?.id ?? this.createProviderId(),
@@ -2262,8 +2266,7 @@ class SettingsService {
       provider.apiEndpoints = ['responses']
       provider.codexAuthMode = request.type === 'codex-shared' ? 'imported' : 'isolated'
       credentialsChanged =
-        existing !== undefined &&
-        (request.type === 'codex-shared' || existing.codexAuthMode !== provider.codexAuthMode)
+        existing !== undefined && existing.codexAuthMode !== provider.codexAuthMode
     } else if (request.type === 'claude-isolated') {
       // claude-isolated has no fields of its own: the type tells the renderer/env-builder what to do
       // with the encrypted token (stored separately on login). A model override is allowed. The

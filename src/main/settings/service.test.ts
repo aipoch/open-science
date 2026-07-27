@@ -323,15 +323,18 @@ describe('SettingsService: providers', () => {
       readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
     ).resolves.toContain('model_provider = "subscription-route"')
 
-    await service.upsertProvider({
+    const verifiedImportedProvider = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({ ...verifiedImportedProvider, lastValidatedAt: 123 })
+    await rm(userCodexDir, { recursive: true, force: true })
+
+    const resaved = await service.upsertProvider({
       id: imported.providers[0].id,
       type: imported.providers[0].codexAuthMode === 'imported' ? 'codex-shared' : 'codex-isolated'
     })
     await expect(
       readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
     ).resolves.toContain('model_provider = "subscription-route"')
-    const verifiedImportedProvider = (await repository.getSettings()).providers[0]
-    await repository.upsertProvider({ ...verifiedImportedProvider, lastValidatedAt: 123 })
+    expect(resaved.providers[0].lastValidatedAt).toBe(123)
 
     const isolated = await service.upsertProvider({
       id: imported.providers[0].id,

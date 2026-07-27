@@ -326,7 +326,7 @@ const ProviderList = ({
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  {codexSubscriptionType === 'codex-isolated' && isCodexLoginPending ? (
+                  {isCodexSubscription && isCodexLoginPending ? (
                     <SettingsIconAction
                       label="Cancel sign-in"
                       icon={X}
