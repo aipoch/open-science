@@ -303,6 +303,10 @@ const WorkspaceMessageScroller = ({
   // Opens an artifact mention in the preview panel, probing existence first so a stale link warns.
   const onPreviewMentionArtifact = async (part: ArtifactMentionPart): Promise<void> => {
     if (!currentSessionId) return
+    if (part.source === 'linked-folder') {
+      showMentionNotice('Linked-folder files are not available until the folder is connected.')
+      return
+    }
 
     const read =
       part.source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview

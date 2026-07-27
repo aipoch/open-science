@@ -149,7 +149,7 @@ describe('WorkspacePage inline edit resend', () => {
         load: vi.fn(() => Promise.resolve(undefined)),
         save: vi.fn(() => Promise.resolve())
       },
-      uploads: { deleteUpload: vi.fn(), stageFiles: vi.fn() },
+      uploads: { deleteUpload: vi.fn() },
       reviewer: {
         onUpdated: vi.fn(() => vi.fn()),
         onSuppressNextAutoReview: vi.fn(() => vi.fn()),

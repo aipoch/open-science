@@ -116,6 +116,29 @@ describe('docToArtifactRefs', () => {
   it('returns an empty array when there are no artifact nodes', () => {
     expect(docToArtifactRefs(docFromText('plain text'))).toEqual([])
   })
+
+  it('preserves and de-duplicates linked-folder references by granted root and relative path', () => {
+    const linked = {
+      type: 'artifact' as const,
+      id: 'linked-1',
+      name: 'study.csv',
+      source: 'linked-folder' as const,
+      rootId: 'root-1',
+      relativePath: 'data/study.csv',
+      mimeType: 'text/csv'
+    }
+
+    expect(docToArtifactRefs({ nodes: [linked, { ...linked, id: 'linked-2' }] })).toEqual([
+      {
+        id: 'linked-1',
+        name: 'study.csv',
+        source: 'linked-folder',
+        rootId: 'root-1',
+        relativePath: 'data/study.csv',
+        mimeType: 'text/csv'
+      }
+    ])
+  })
 })
 
 describe('docArtifactCount', () => {
@@ -262,6 +285,31 @@ describe('applyDocToDom + domToDoc round-trip', () => {
     expect(domToDoc(root)).toEqual(doc)
   })
 
+  it('round-trips a future linked-folder chip without an absolute path', () => {
+    const doc: ComposerDoc = {
+      nodes: [
+        {
+          type: 'artifact',
+          id: 'linked-1',
+          name: 'study.csv',
+          source: 'linked-folder',
+          rootId: 'root-1',
+          relativePath: 'data/study.csv',
+          mimeType: 'text/csv'
+        }
+      ]
+    }
+    const root = document.createElement('div')
+
+    applyDocToDom(root, doc)
+
+    const chip = root.querySelector('span[data-mention-source="linked-folder"]')
+    expect(chip?.getAttribute('data-mention-path')).toBeNull()
+    expect(chip?.getAttribute('data-mention-root-id')).toBe('root-1')
+    expect(chip?.getAttribute('data-mention-relative-path')).toBe('data/study.csv')
+    expect(domToDoc(root)).toEqual(doc)
+  })
+
   it('renders an artifact chip with the green mention attributes and @ label', () => {
     const root = document.createElement('div')
     applyDocToDom(root, {
@@ -330,5 +378,32 @@ describe('docFromMessageParts', () => {
 
   it('returns the empty doc for an empty parts list', () => {
     expect(docFromMessageParts([])).toEqual(emptyDoc)
+  })
+
+  it('restores a linked-folder message part without introducing an absolute path', () => {
+    expect(
+      docFromMessageParts([
+        {
+          type: 'artifact',
+          id: 'linked-1',
+          name: 'study.csv',
+          source: 'linked-folder',
+          rootId: 'root-1',
+          relativePath: 'data/study.csv'
+        }
+      ])
+    ).toEqual({
+      nodes: [
+        {
+          type: 'artifact',
+          id: 'linked-1',
+          name: 'study.csv',
+          source: 'linked-folder',
+          rootId: 'root-1',
+          relativePath: 'data/study.csv',
+          mimeType: undefined
+        }
+      ]
+    })
   })
 })

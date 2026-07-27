@@ -12,14 +12,16 @@ export const MAX_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 // Composer total attachment cap; enforced renderer-side since main is stateless about composer state.
 export const MAX_COMPOSER_ATTACHMENTS = 10
 
-export type StageUploadFile = {
-  name: string
-  content: string
-  mimeType?: string
-}
+export const formatUploadSizeLimit = (bytes: number): string => {
+  const gibibytes = bytes / (1024 * 1024 * 1024)
+  if (bytes >= 1024 * 1024 * 1024) {
+    return `${Number.isInteger(gibibytes) ? gibibytes : gibibytes.toFixed(1)} GB`
+  }
 
-export type StageUploadFilesRequest = {
-  files: StageUploadFile[]
+  if (bytes >= 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`
+
+  return `${bytes} B`
 }
 
 // Preload-only request used by the desktop fast path. The renderer supplies the File object;

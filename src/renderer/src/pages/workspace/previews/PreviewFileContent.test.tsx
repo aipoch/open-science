@@ -130,7 +130,6 @@ describe('PreviewFileContent', () => {
         finalizeRunArtifacts: vi.fn()
       },
       uploads: {
-        stageFiles: vi.fn(),
         deleteUpload: vi.fn(),
         finalizeSession: vi.fn(),
         readPreview: vi.fn().mockResolvedValue({

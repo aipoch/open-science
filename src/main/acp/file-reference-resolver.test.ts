@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { UploadRepository } from '../uploads/repository'
+import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import { createManagedFileReferenceResolver } from './file-reference-resolver'
 
 let root: string | undefined
@@ -17,7 +18,7 @@ describe('managed file reference resolver', () => {
   it('validates upload paths and returns trusted on-disk metadata', async () => {
     root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
     const uploads = new UploadRepository(root)
-    const [pending] = await uploads.stageFiles({
+    const [pending] = await stageUploadFixtures(uploads, {
       files: [
         {
           name: 'study.csv',

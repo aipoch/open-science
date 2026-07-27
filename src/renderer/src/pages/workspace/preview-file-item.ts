@@ -11,6 +11,7 @@ export type MessageUploadAttachment = NonNullable<
   ChatSession['messages'][number]['uploads']
 >[number]
 type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
+type ManagedArtifactMentionPart = Exclude<ArtifactMentionPart, { source: 'linked-folder' }>
 
 // Builds the common preview workbench file item for generated artifacts and user uploads.
 export const createPreviewFileItem = ({
@@ -91,7 +92,7 @@ export const createPreviewFileItemFromUpload = (
 
 // Converts a sent-message artifact mention into the same preview shape used by its source panel.
 export const createPreviewFileItemFromMention = (
-  part: ArtifactMentionPart,
+  part: ManagedArtifactMentionPart,
   sessionId: string
 ): PreviewFileItem =>
   createPreviewFileItem({

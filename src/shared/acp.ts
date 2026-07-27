@@ -1,5 +1,5 @@
 import type { ToolCallContent, ToolCallLocation, ToolKind } from '@agentclientprotocol/sdk'
-import type { ArtifactFile, ArtifactReference } from './artifacts'
+import type { ArtifactFile, FileReference } from './artifacts'
 import type { UploadedAttachment } from './uploads'
 import type { PermissionProfileId, SessionPermissionProfileState } from './permission-profiles'
 import type { AgentFrameworkId } from './settings'
@@ -271,7 +271,7 @@ export type AcpPromptRequest = {
   // Skills the user explicitly picked in the composer; the runtime force-loads and nudges them.
   forcedSkillIds?: string[]
   // Existing files referenced via composer `@` mentions; appended as prompt content blocks.
-  referencedArtifacts?: ArtifactReference[]
+  referencedArtifacts?: FileReference[]
   // Transcript of prior turns injected only into the content sent to the agent (never the user-facing
   // message), so a freshly-adopted session after a framework switch keeps conversational continuity.
   historyPreamble?: string

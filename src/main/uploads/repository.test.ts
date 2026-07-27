@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { UploadRepository } from './repository'
+import { stageUploadFixtures } from './repository.test-utils'
 
 let storageRoot: string | undefined
 
@@ -56,7 +57,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const repository = new UploadRepository(root)
 
-    const [attachment] = await repository.stageFiles({
+    const [attachment] = await stageUploadFixtures(repository, {
       files: [
         {
           name: 'paste.png',
@@ -158,16 +159,16 @@ describe('upload repository', () => {
     const oversized = Buffer.alloc(17)
 
     await expect(
-      repository.stageFiles({
+      stageUploadFixtures(repository, {
         files: [{ name: 'huge.bin', content: oversized.toString('base64') }]
       })
-    ).rejects.toThrow(/maximum allowed size/)
+    ).rejects.toThrow(/16 B per-file limit/)
   })
 
   it('finalizes pending uploads into the real session directory without changing ids', async () => {
     const root = await createStorageRoot()
     const repository = new UploadRepository(root)
-    const [attachment] = await repository.stageFiles({
+    const [attachment] = await stageUploadFixtures(repository, {
       files: [
         {
           name: 'notes.txt',
@@ -194,7 +195,7 @@ describe('upload repository', () => {
   it('keeps finalized uploads reusable for the same session', async () => {
     const root = await createStorageRoot()
     const repository = new UploadRepository(root)
-    const [attachment] = await repository.stageFiles({
+    const [attachment] = await stageUploadFixtures(repository, {
       files: [
         {
           name: 'notes.txt',
@@ -220,7 +221,7 @@ describe('upload repository', () => {
   it('reads bounded previews only from managed uploads', async () => {
     const root = await createStorageRoot()
     const repository = new UploadRepository(root)
-    const [attachment] = await repository.stageFiles({
+    const [attachment] = await stageUploadFixtures(repository, {
       files: [
         {
           name: 'notes.txt',
@@ -250,7 +251,7 @@ describe('upload repository', () => {
   it('removes staged uploads only from the managed upload tree', async () => {
     const root = await createStorageRoot()
     const repository = new UploadRepository(root)
-    const [attachment] = await repository.stageFiles({
+    const [attachment] = await stageUploadFixtures(repository, {
       files: [
         {
           name: 'remove-me.txt',
@@ -270,7 +271,7 @@ describe('upload repository', () => {
   it('rejects deletion of finalized uploads while keeping their bytes readable', async () => {
     const root = await createStorageRoot()
     const repository = new UploadRepository(root)
-    const [staged] = await repository.stageFiles({
+    const [staged] = await stageUploadFixtures(repository, {
       files: [{ name: 'keep.txt', content: Buffer.from('durable upload').toString('base64') }]
     })
     const [finalized] = await repository.finalizePendingSessionUploads('session-1', [staged])

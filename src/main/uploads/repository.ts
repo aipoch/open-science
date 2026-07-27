@@ -1,5 +1,5 @@
 import { constants, createReadStream } from 'node:fs'
-import { copyFile, link, mkdir, open, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, link, mkdir, open, realpath, rm, stat } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
@@ -9,11 +9,11 @@ import {
   MAX_UPLOAD_CHUNK_BYTES,
   MAX_UPLOAD_FILE_BYTES,
   PENDING_UPLOAD_SESSION_ID,
+  formatUploadSizeLimit,
   type AppendUploadTransferRequest,
   type BeginUploadTransferRequest,
   type DeleteUploadRequest,
   type StageLocalUploadRequest,
-  type StageUploadFilesRequest,
   type UploadTransferProgress,
   type UploadTransferRequest,
   type UploadTransferStatus,
@@ -144,7 +144,9 @@ class UploadRepository {
       throw new Error(`Invalid upload size: ${name}`)
     }
     if (request.size > maxFileBytes) {
-      throw new Error(`Upload exceeds the maximum allowed size: ${name}`)
+      throw new Error(
+        `Upload exceeds the ${formatUploadSizeLimit(maxFileBytes)} per-file limit: ${name}`
+      )
     }
 
     const existing = this.activeTransfers.get(transferId)
@@ -310,7 +312,9 @@ class UploadRepository {
       throw new Error(`Upload source is not a file: ${originalName}`)
     }
     if (sourceInfo.size > maxFileBytes || request.size > maxFileBytes) {
-      throw new Error(`Upload exceeds the maximum allowed size: ${originalName}`)
+      throw new Error(
+        `Upload exceeds the ${formatUploadSizeLimit(maxFileBytes)} per-file limit: ${originalName}`
+      )
     }
     if (sourceInfo.size !== request.size) {
       throw new Error(`Upload source changed before it could be staged: ${originalName}`)
@@ -341,7 +345,9 @@ class UploadRepository {
         const nextReceivedBytes = receivedBytes + bytes.byteLength
 
         if (nextReceivedBytes > maxFileBytes) {
-          throw new Error(`Upload exceeds the maximum allowed size: ${originalName}`)
+          throw new Error(
+            `Upload exceeds the ${formatUploadSizeLimit(maxFileBytes)} per-file limit: ${originalName}`
+          )
         }
 
         let written = 0
@@ -391,45 +397,6 @@ class UploadRepository {
       await rm(stagingPath, { force: true })
       throw error
     }
-  }
-
-  // Writes selected or pasted files to the pending session directory before a prompt is sent.
-  async stageFiles(request: StageUploadFilesRequest): Promise<UploadedAttachment[]> {
-    const directory = this.getSessionUploadDir(PENDING_UPLOAD_SESSION_ID)
-
-    await mkdir(directory, { recursive: true })
-
-    return Promise.all(
-      request.files.map(async (file) => {
-        // Preserve the original display name separately from the sanitized filesystem name.
-        const originalName = file.name.trim() || 'upload'
-        const content = Buffer.from(file.content, 'base64')
-
-        // Legacy whole-base64 callers retain the old cap. Large files must use path/chunk staging.
-        const legacyLimit = Math.min(
-          this.options.maxFileBytes ?? MAX_UPLOAD_FILE_BYTES,
-          50 * 1024 * 1024
-        )
-        if (content.byteLength > legacyLimit) {
-          throw new Error(`Upload exceeds the maximum allowed size: ${originalName}`)
-        }
-
-        const { filename, filePath } = await this.writeUniqueFile(
-          directory,
-          toSafeUploadFilename(originalName),
-          content
-        )
-
-        return this.createAttachment({
-          id: randomUUID(),
-          sessionId: PENDING_UPLOAD_SESSION_ID,
-          filename,
-          originalName,
-          filePath,
-          mimeType: file.mimeType
-        })
-      })
-    )
   }
 
   // Moves pending attachments into their durable session directory once the runtime id is known.
@@ -596,29 +563,6 @@ class UploadRepository {
       receivedBytes: transfer.receivedBytes,
       totalBytes: transfer.totalBytes
     }
-  }
-
-  // Writes a new file without overwriting an existing upload with the same display name.
-  private async writeUniqueFile(
-    directory: string,
-    filename: string,
-    content: Buffer
-  ): Promise<{ filename: string; filePath: string }> {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const candidate = attempt === 0 ? filename : appendFilenameSuffix(filename, attempt + 1)
-      const filePath = join(directory, candidate)
-
-      try {
-        // The wx flag makes the write fail when another upload already claimed this filename.
-        await writeFile(filePath, content, { flag: 'wx' })
-        return { filename: candidate, filePath }
-      } catch (error) {
-        if (isFileExistsError(error)) continue
-        throw error
-      }
-    }
-
-    throw new Error(`Could not allocate upload filename: ${filename}`)
   }
 
   // Moves an already-staged file into a target directory while preserving unique filenames.

@@ -7,8 +7,7 @@ import type {
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
   StageLocalUploadRequest,
-  UploadTransferRequest,
-  StageUploadFilesRequest
+  UploadTransferRequest
 } from '../../shared/uploads'
 import { resolveDataRoot } from '../storage-root'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -21,9 +20,6 @@ const createDefaultUploadRepository = (): UploadRepository =>
 // Registers the small upload IPC surface used by the renderer composer and preview panel.
 const registerUploadIpcHandlers = (repository = createDefaultUploadRepository()): void => {
   // Uploads write/mutate under the data root, so block them during the data-root copy→commit window.
-  ipcMain.handle('uploads:stage-files', (_event, request: StageUploadFilesRequest) =>
-    withDataRootWrite(() => repository.stageFiles(request))
-  )
   ipcMain.handle('uploads:stage-local-file', (event, request: StageLocalUploadRequest) =>
     withDataRootWrite(() =>
       repository.stageLocalFile(request, (progress) => {

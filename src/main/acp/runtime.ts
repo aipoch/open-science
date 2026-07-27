@@ -127,7 +127,7 @@ import {
 } from './file-reference-resolver'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
-import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
+import type { ArtifactFile, FileReference } from '../../shared/artifacts'
 import { isMediaOverflowError } from '../../shared/media-overflow'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import { REVIEWER_MCP_SERVER_NAME, REVIEWER_MCP_TOOLS } from '../../shared/reviewer'
@@ -2916,20 +2916,20 @@ class AcpRuntime {
   // session-owner check for every path that was not selected in this turn.
   private async authorizeReferencedSkillUploads(
     sessionId: string,
-    references: ArtifactReference[]
+    references: FileReference[]
   ): Promise<(() => void) | undefined> {
     if (!this.skillImportEnabled) return undefined
 
     const authorize = this.skillImportOptions?.authorizeReferencedUploads
     if (!authorize) return undefined
 
-    const paths = references
-      .filter((reference) => {
-        if (reference.source !== 'upload') return false
-        const normalizedName = reference.name.toLowerCase()
-        return normalizedName.endsWith('.skill') || normalizedName.endsWith('.zip')
-      })
-      .map((reference) => reference.path)
+    const paths = references.flatMap((reference) => {
+      if (reference.source !== 'upload') return []
+      const normalizedName = reference.name.toLowerCase()
+      return normalizedName.endsWith('.skill') || normalizedName.endsWith('.zip')
+        ? [reference.path]
+        : []
+    })
 
     return paths.length > 0 ? authorize(sessionId, paths) : undefined
   }
@@ -2975,7 +2975,7 @@ class AcpRuntime {
   // Converts one `@`-mentioned artifact into the same content block an equivalent upload produces.
   private async createReferencedArtifactContentBlock(
     sessionId: string,
-    reference: ArtifactReference
+    reference: FileReference
   ): Promise<ContentBlock[]> {
     const resolvedReference = await this.fileReferenceResolver.resolve({ sessionId }, reference)
 

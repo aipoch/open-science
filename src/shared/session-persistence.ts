@@ -1,4 +1,5 @@
 import type { UploadedAttachment } from './uploads'
+import type { FileReference } from './artifacts'
 import {
   MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
@@ -51,15 +52,7 @@ export type PersistedMessageImage = AcpMessageImage & {
 export type MessagePart =
   | { type: 'text'; text: string }
   | { type: 'skill'; id: string; name: string }
-  | {
-      type: 'artifact'
-      id: string
-      name: string
-      path: string
-      source: 'upload' | 'artifact'
-      mimeType?: string
-      versionId?: string
-    }
+  | ({ type: 'artifact' } & FileReference)
 
 export type PersistedChatMessage = {
   id: string
@@ -569,13 +562,31 @@ const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
     case 'artifact': {
       const id = asString(part.id)
       const name = asString(part.name)
-      const path = asString(part.path)
       const source = asString(part.source)
 
-      if (!id || !name || !path || (source !== 'upload' && source !== 'artifact')) return undefined
+      if (!id || !name) return undefined
+
+      const mimeType = asString(part.mimeType)
+      if (source === 'linked-folder') {
+        const rootId = asString(part.rootId)
+        const relativePath = asString(part.relativePath)
+        if (!rootId || !relativePath) return undefined
+
+        return {
+          type: 'artifact',
+          id,
+          name,
+          source,
+          rootId,
+          relativePath,
+          ...(mimeType ? { mimeType } : {})
+        }
+      }
+
+      const path = asString(part.path)
+      if (!path || (source !== 'upload' && source !== 'artifact')) return undefined
 
       const sanitized: MessagePart = { type: 'artifact', id, name, path, source }
-      const mimeType = asString(part.mimeType)
       const versionId = asString(part.versionId)
 
       return {

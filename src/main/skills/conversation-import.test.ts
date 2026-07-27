@@ -7,6 +7,7 @@ import { deflateRawSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { UploadRepository } from '../uploads/repository'
+import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import {
   ConversationSkillImporter,
   SkillImportApprovalBroker,
@@ -103,7 +104,7 @@ describe('ConversationSkillImporter', () => {
         )
       }
     ])
-    const [staged] = await uploads.stageFiles({
+    const [staged] = await stageUploadFixtures(uploads, {
       files: [
         {
           name: 'paper-finder.skill',
@@ -162,7 +163,7 @@ describe('ConversationSkillImporter', () => {
         content: Buffer.from('---\nname: Private Skill\n---\nDo the thing.', 'utf8')
       }
     ])
-    const [staged] = await uploads.stageFiles({
+    const [staged] = await stageUploadFixtures(uploads, {
       files: [{ name: 'private.skill', content: zip.toString('base64') }]
     })
     const [attachment] = await uploads.finalizePendingSessionUploads('session-2', [staged])
@@ -189,7 +190,7 @@ describe('ConversationSkillImporter', () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)
     const uploads = new UploadRepository(root)
-    const [staged] = await uploads.stageFiles({
+    const [staged] = await stageUploadFixtures(uploads, {
       files: [
         {
           name: 'ordinary-data.zip',
@@ -226,7 +227,7 @@ describe('ConversationSkillImporter', () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)
     const uploads = new UploadRepository(root)
-    const [staged] = await uploads.stageFiles({
+    const [staged] = await stageUploadFixtures(uploads, {
       files: [
         {
           name: 'older-turn.skill',
@@ -269,7 +270,7 @@ describe('ConversationSkillImporter', () => {
     roots.push(root)
     const uploads = new UploadRepository(root)
     const skills = new UserSkillRepository(root)
-    const [staged] = await uploads.stageFiles({
+    const [staged] = await stageUploadFixtures(uploads, {
       files: [
         {
           name: 'slow-preview.skill',
@@ -339,7 +340,7 @@ describe('ConversationSkillImporter', () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)
     const uploads = new UploadRepository(root)
-    const [staged] = await uploads.stageFiles({
+    const [staged] = await stageUploadFixtures(uploads, {
       files: [
         {
           name: 'duplicate-targets.skill',
@@ -402,7 +403,7 @@ describe('ConversationSkillImporter', () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)
     const uploads = new UploadRepository(root)
-    const [staged] = await uploads.stageFiles({
+    const [staged] = await stageUploadFixtures(uploads, {
       files: [
         {
           name: 'replacement.skill',

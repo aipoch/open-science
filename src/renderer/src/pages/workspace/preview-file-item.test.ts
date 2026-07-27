@@ -11,7 +11,7 @@ import {
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type MessageUploadAttachment = NonNullable<ChatSession['messages'][number]['uploads']>[number]
-type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
+type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact'; source: 'upload' | 'artifact' }>
 
 const createManagedArtifact = (overrides: Partial<MessageArtifact> = {}): MessageArtifact => ({
   id: 'artifact-1',

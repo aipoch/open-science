@@ -199,6 +199,14 @@ afterEach(() => {
 })
 
 describe('ConversationPanel composer intake', () => {
+  it('shows file type and per-file size behavior before selection', () => {
+    renderPanel()
+
+    expect(container.querySelector('[data-testid="attachment-limits"]')?.textContent).toContain(
+      'Any file type · 10 GB per file. Large files are linked, not embedded.'
+    )
+  })
+
   it('shows per-file progress and cancels only the selected transfer', () => {
     const onCancelAttachmentTransfer = vi.fn()
     const transfer = {

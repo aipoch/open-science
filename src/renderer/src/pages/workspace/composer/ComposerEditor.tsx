@@ -49,13 +49,16 @@ const nodesEqual = (a: ComposerNode[], b: ComposerNode[]): boolean => {
       return node.id === other.id && node.name === other.name
     }
     if (node.type === 'artifact' && other.type === 'artifact') {
-      return (
-        node.id === other.id &&
-        node.name === other.name &&
-        node.path === other.path &&
-        node.source === other.source &&
-        node.versionId === other.versionId
-      )
+      if (node.id !== other.id || node.name !== other.name || node.source !== other.source) {
+        return false
+      }
+      if (node.source === 'linked-folder' && other.source === 'linked-folder') {
+        return node.rootId === other.rootId && node.relativePath === other.relativePath
+      }
+      if (node.source !== 'linked-folder' && other.source !== 'linked-folder') {
+        return node.path === other.path && node.versionId === other.versionId
+      }
+      return false
     }
     return false
   })

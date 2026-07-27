@@ -29,6 +29,7 @@ import {
 } from '../activity-groups/mcp-server'
 import type { UploadedAttachment } from '../../shared/uploads'
 import { UploadRepository } from '../uploads/repository'
+import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import { MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES } from '../uploads/attachment-media'
 import { ConversationSkillImporter, SkillImportApprovalBroker } from '../skills/conversation-import'
 import {
@@ -1281,7 +1282,7 @@ describe('ACP runtime session management', () => {
   it('sends staged uploads as ACP prompt content blocks', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
-    const stagedAttachments = await uploadRepository.stageFiles({
+    const stagedAttachments = await stageUploadFixtures(uploadRepository, {
       files: [
         {
           name: 'paste.png',
@@ -1346,7 +1347,7 @@ describe('ACP runtime session management', () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
     const skillArchive = buildStoredSkillArchive('Example Package')
-    const stagedAttachments = await uploadRepository.stageFiles({
+    const stagedAttachments = await stageUploadFixtures(uploadRepository, {
       files: [
         {
           name: 'ordinary-data.zip',
@@ -1429,7 +1430,7 @@ describe('ACP runtime session management', () => {
   it('keeps Skill packages as ordinary archive references when conversation import is disabled', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
-    const stagedAttachments = await uploadRepository.stageFiles({
+    const stagedAttachments = await stageUploadFixtures(uploadRepository, {
       files: [
         {
           name: 'example-package.skill',
@@ -1481,7 +1482,7 @@ describe('ACP runtime session management', () => {
     const uploadRepository = new UploadRepository(root)
     // Some drag/drop and paste sources omit the MIME (undefined) or send a generic octet-stream; the
     // runtime must still recognize these as images by extension and send real pixels, not a file link.
-    const stagedAttachments = await uploadRepository.stageFiles({
+    const stagedAttachments = await stageUploadFixtures(uploadRepository, {
       files: [
         {
           name: 'no-mime.png',
@@ -1534,7 +1535,7 @@ describe('ACP runtime session management', () => {
   it('degrades an image attachment to a resource link when replay images consume the inline budget', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
-    const [attachment] = await uploadRepository.stageFiles({
+    const [attachment] = await stageUploadFixtures(uploadRepository, {
       files: [
         {
           name: 'overflow.png',
@@ -1603,7 +1604,7 @@ describe('ACP runtime session management', () => {
     const session = await runtime.createSession({ cwd: '/workspace' })
 
     const stageImage = (name: string): Promise<UploadedAttachment[]> =>
-      uploadRepository.stageFiles({
+      stageUploadFixtures(uploadRepository, {
         files: [
           { name, mimeType: 'image/png', content: Buffer.from('png-bytes').toString('base64') }
         ]
@@ -1651,7 +1652,7 @@ describe('ACP runtime session management', () => {
     const tailMarker = '\nSENTINEL_PAST_PREVIEW_WINDOW'
     const csvBody = `${header}${filler}${tailMarker}`
     expect(Buffer.byteLength(csvBody, 'utf8')).toBeGreaterThan(512 * 1024)
-    const stagedAttachments = await uploadRepository.stageFiles({
+    const stagedAttachments = await stageUploadFixtures(uploadRepository, {
       files: [
         { name: 'big.csv', mimeType: 'text/csv', content: Buffer.from(csvBody).toString('base64') }
       ]
@@ -2052,7 +2053,7 @@ describe('ACP runtime session management', () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
     // Non-PDF bytes make extraction fail deterministically; the block must still be text, not the file.
-    const stagedAttachments = await uploadRepository.stageFiles({
+    const stagedAttachments = await stageUploadFixtures(uploadRepository, {
       files: [
         {
           name: 'doc.pdf',
@@ -2165,7 +2166,7 @@ describe('ACP runtime session management', () => {
     const artifactRepository = new ArtifactRepository(root)
 
     // A referenced upload (an already-staged file) resolves through the upload path validator.
-    const [uploadRef] = await uploadRepository.stageFiles({
+    const [uploadRef] = await stageUploadFixtures(uploadRepository, {
       files: [
         {
           name: 'summary.txt',
@@ -2315,7 +2316,7 @@ describe('ACP runtime session management', () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
     const currentSkillArchive = buildStoredSkillArchive('Current Skill')
-    const staged = await uploadRepository.stageFiles({
+    const staged = await stageUploadFixtures(uploadRepository, {
       files: [
         {
           name: 'current.skill',
@@ -2401,7 +2402,7 @@ describe('ACP runtime session management', () => {
   it('allows a cross-session Skill upload only while the user explicitly references it', async () => {
     const root = await realpath(await createTemporaryRoot())
     const uploads = new UploadRepository(root)
-    const [staged] = await uploads.stageFiles({
+    const [staged] = await stageUploadFixtures(uploads, {
       files: [
         {
           name: 'paper-finder.skill',

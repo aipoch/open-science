@@ -8,7 +8,11 @@ import type {
   PermissionProfileId,
   SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
-import type { UploadedAttachment } from '../../../../shared/uploads'
+import {
+  MAX_UPLOAD_FILE_BYTES,
+  formatUploadSizeLimit,
+  type UploadedAttachment
+} from '../../../../shared/uploads'
 import { isReportableRunFailure } from '../../../../shared/run-error-classification'
 import {
   ArrowUp,
@@ -535,7 +539,7 @@ const ConversationPanel = ({
                               <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
                             </button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent side="top" align="start" className="w-48">
+                          <DropdownMenuContent side="top" align="start" className="w-64">
                             <DropdownMenuItem
                               data-testid="menu-attach-files"
                               onSelect={() => fileInputRef.current?.click()}
@@ -543,6 +547,13 @@ const ConversationPanel = ({
                               <FileText className="mr-2 size-4 text-text-300" aria-hidden="true" />
                               Attach files
                             </DropdownMenuItem>
+                            <div
+                              className="px-2 py-1.5 text-[11px] leading-4 text-text-300"
+                              data-testid="attachment-limits"
+                            >
+                              Any file type · {formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)} per
+                              file. Large files are linked, not embedded.
+                            </div>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               data-testid="menu-request-review"

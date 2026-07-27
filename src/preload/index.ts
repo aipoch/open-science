@@ -198,7 +198,6 @@ import type {
   BeginUploadTransferRequest,
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
-  StageUploadFilesRequest,
   UploadTransferProgress,
   UploadTransferRequest,
   UploadTransferStatus,
@@ -489,8 +488,6 @@ type OpenScienceAPI = {
     readPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
   }
   uploads: {
-    // Stages files selected or pasted in the renderer into app-managed upload storage.
-    stageFiles: (request: StageUploadFilesRequest) => Promise<UploadedAttachment[]>
     // Desktop-only path fast path. A null result means this File has no native path.
     stageLocalFile?: (
       file: File,
@@ -1034,8 +1031,6 @@ const api: OpenScienceAPI = {
   },
   uploads: {
     // Upload IPC remains behind the preload bridge so renderer code never receives raw fs access.
-    stageFiles: (request) =>
-      ipcRenderer.invoke('uploads:stage-files', request) as Promise<UploadedAttachment[]>,
     stageLocalFile: (file, request) => {
       const sourcePath = webUtils.getPathForFile(file)
       if (!sourcePath) return Promise.resolve(null)

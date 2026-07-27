@@ -1,16 +1,13 @@
-import { MAX_COMPOSER_ATTACHMENTS, MAX_UPLOAD_FILE_BYTES } from '../../../../shared/uploads'
+import {
+  MAX_COMPOSER_ATTACHMENTS,
+  MAX_UPLOAD_FILE_BYTES,
+  formatUploadSizeLimit
+} from '../../../../shared/uploads'
 
 // Result of applying the composer size/count limits to an incoming batch of files.
 export type ComposerAttachmentIntake = {
   accepted: File[]
   error: string | null
-}
-
-const formatLimit = (bytes: number): string => {
-  const gibibytes = bytes / (1024 * 1024 * 1024)
-  if (Number.isInteger(gibibytes)) return `${gibibytes} GB`
-
-  return `${Math.round(bytes / (1024 * 1024))} MB`
 }
 
 // Applies per-file size and total count limits before any file is read or uploaded.
@@ -30,7 +27,7 @@ export const planComposerAttachmentIntake = (
 
   const oversizedError =
     oversized.length > 0
-      ? `${oversized.map((file) => file.name).join(', ')} exceeds the ${formatLimit(MAX_UPLOAD_FILE_BYTES)} limit`
+      ? `${oversized.map((file) => file.name).join(', ')} exceeds the ${formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)} limit`
       : null
 
   return { accepted: withinSize, error: oversizedError }

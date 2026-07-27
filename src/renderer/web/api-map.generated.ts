@@ -189,7 +189,6 @@ export const WEB_INVOKE_CHANNELS = {
   'uploads.finishTransfer': 'uploads:finish-transfer',
   'uploads.getTransferStatus': 'uploads:transfer-status',
   'uploads.readPreview': 'uploads:read-preview',
-  'uploads.stageFiles': 'uploads:stage-files',
   'uploads.stageLocalFile': 'uploads:stage-local-file',
   'window.close': 'window:close'
 } as const

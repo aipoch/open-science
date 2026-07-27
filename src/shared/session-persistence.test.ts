@@ -25,6 +25,46 @@ const createSessionWithActivity = (activity: unknown): Record<string, unknown> =
 const getRestoredActivities = (session: unknown): PersistedChatSession['activities'] =>
   normalizeSessionFile(session)?.activities
 
+describe('message part persistence', () => {
+  it('preserves a linked-folder reference as root id plus relative path', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: '@study.csv',
+          parts: [
+            {
+              type: 'artifact',
+              id: 'linked-1',
+              name: 'study.csv',
+              source: 'linked-folder',
+              rootId: 'root-1',
+              relativePath: 'data/study.csv',
+              path: '/must/not/be/persisted'
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    expect(restored?.messages[0].parts).toEqual([
+      {
+        type: 'artifact',
+        id: 'linked-1',
+        name: 'study.csv',
+        source: 'linked-folder',
+        rootId: 'root-1',
+        relativePath: 'data/study.csv'
+      }
+    ])
+  })
+})
+
 describe('message image persistence', () => {
   it('keeps only bounded raster images with recomputed byte metadata', () => {
     const images = sanitizeMessageImages([

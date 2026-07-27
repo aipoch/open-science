@@ -189,7 +189,6 @@ import type {
   BeginUploadTransferRequest,
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
-  StageUploadFilesRequest,
   UploadTransferProgress,
   UploadTransferRequest,
   UploadTransferStatus,
@@ -443,8 +442,6 @@ interface OpenScienceAPI {
     readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
   }
   uploads: {
-    // Stages files selected or pasted in the renderer into app-managed upload storage.
-    stageFiles(request: StageUploadFilesRequest): Promise<UploadedAttachment[]>
     // Desktop-only path fast path; omitted by the Web capability map.
     stageLocalFile?(
       file: File,

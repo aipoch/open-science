@@ -14,7 +14,7 @@ import {
   type SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
 import type { UploadedAttachment } from '../../../../shared/uploads'
-import type { ArtifactReference } from '../../../../shared/artifacts'
+import type { FileReference } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
@@ -51,7 +51,7 @@ type SendWorkspaceMessageInput = {
   // Skills the user picked in the composer; force-loaded and nudged for this turn only.
   forcedSkillIds?: string[]
   // Existing files referenced via `@` mentions; attached to the prompt as content blocks.
-  referencedArtifacts?: ArtifactReference[]
+  referencedArtifacts?: FileReference[]
   // Structured mention segments of the draft, persisted so the sent bubble renders styled pills.
   parts?: MessagePart[]
   // Set by the interrupted-resume path when its own resume already reset the agent's context. The
@@ -80,7 +80,7 @@ type ResendEditedMessageInput = {
   // Skills picked in the inline editor; force-loaded and nudged for the resent turn only.
   forcedSkillIds?: string[]
   // Files referenced via `@` mentions in the inline editor; attached to the resent prompt.
-  referencedArtifacts?: ArtifactReference[]
+  referencedArtifacts?: FileReference[]
 }
 
 type WorkspaceMessageRuntime = Pick<
@@ -341,7 +341,7 @@ const startPendingSessionPrompt = (
   projectName: string | undefined,
   permissionProfile: PermissionProfileId,
   forcedSkillIds: string[] | undefined,
-  referencedArtifacts: ArtifactReference[] | undefined
+  referencedArtifacts: FileReference[] | undefined
 ): void => {
   void (async () => {
     let createdSession

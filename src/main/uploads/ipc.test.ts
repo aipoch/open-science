@@ -29,6 +29,7 @@ import {
 } from '../storage/migration-state'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './ipc'
 import type { UploadRepository } from './repository'
+import { stageUploadFixtures } from './repository.test-utils'
 
 describe('default upload repository', () => {
   let homeRoot: string | undefined
@@ -46,7 +47,7 @@ describe('default upload repository', () => {
     const repository = createDefaultUploadRepository()
     const content = 'event,count\nheadache,4\n'
 
-    const [attachment] = await repository.stageFiles({
+    const [attachment] = await stageUploadFixtures(repository, {
       files: [
         {
           name: 'adverse_events.csv',
@@ -75,7 +76,7 @@ describe('default upload repository', () => {
   it('keeps migration drain pending until an upload that already started finishes', async () => {
     let releaseUpload: (() => void) | undefined
     const repository = {
-      stageFiles: vi.fn(
+      beginTransfer: vi.fn(
         () =>
           new Promise<void>((resolve) => {
             releaseUpload = resolve
@@ -83,9 +84,11 @@ describe('default upload repository', () => {
       )
     } as unknown as UploadRepository
     registerUploadIpcHandlers(repository)
-    const stage = ipcHandlers.get('uploads:stage-files')!
+    const stage = ipcHandlers.get('uploads:begin-transfer')!
 
-    const uploadPromise = Promise.resolve(stage(undefined, { files: [] }))
+    const uploadPromise = Promise.resolve(
+      stage(undefined, { transferId: 'transfer-1', name: 'data.csv', size: 10 })
+    )
     beginMigration()
     let drained = false
     const drainPromise = waitForDataRootWriters().then(() => {
@@ -98,5 +101,11 @@ describe('default upload repository', () => {
     await uploadPromise
     await drainPromise
     expect(drained).toBe(true)
+  })
+
+  it('does not expose the removed whole-file base64 staging channel', () => {
+    registerUploadIpcHandlers({} as UploadRepository)
+
+    expect(ipcHandlers.has('uploads:stage-files')).toBe(false)
   })
 })
