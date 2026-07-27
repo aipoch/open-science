@@ -279,7 +279,7 @@ const ProviderForm = ({
           </div>
           <p className="text-xs text-muted-foreground">
             {value.type === 'codex-shared'
-              ? "Copies Codex authentication and, when compatible, the active provider's non-secret network route into Open Science app data. Other global config, Skills and sessions are not imported."
+              ? "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported."
               : 'Stores a separate Codex login in Open Science app data without changing your Codex CLI profile.'}
           </p>
         </div>

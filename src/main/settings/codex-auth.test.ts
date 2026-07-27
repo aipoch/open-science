@@ -179,6 +179,38 @@ describe('importCodexAuthentication', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it.each(['https://proxy.example/v1', 'http://192.0.2.1/v1'])(
+    'does not send shared authentication to a non-loopback route at %s',
+    async (baseUrl) => {
+      const root = await mkdtemp(join(tmpdir(), 'codex-auth-remote-route-reject-'))
+      const source = join(root, 'source')
+      const destination = join(root, 'destination')
+      try {
+        await mkdir(source, { recursive: true })
+        await writeFile(join(source, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+        await writeFile(
+          join(source, 'config.toml'),
+          [
+            'model_provider = "remote-route"',
+            '',
+            '[model_providers.remote-route]',
+            'name = "Remote"',
+            'requires_openai_auth = true',
+            'wire_api = "responses"',
+            `base_url = ${JSON.stringify(baseUrl)}`,
+            ''
+          ].join('\n')
+        )
+
+        await importCodexAuthentication(source, destination)
+
+        expect(existsSync(join(destination, 'config.toml'))).toBe(false)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
 })
 
 describe('CodexAuthController', () => {

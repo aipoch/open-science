@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { isIP } from 'node:net'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 
@@ -112,8 +113,19 @@ const parseModelProviderTableId = (line: string): string | undefined => {
   return /^[A-Za-z0-9_-]+$/.test(key) ? key : parseTomlString(key)
 }
 
+const isLoopbackHostname = (hostname: string): boolean => {
+  const unwrappedHostname =
+    hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
+  if (unwrappedHostname === 'localhost') return true
+
+  const ipVersion = isIP(unwrappedHostname)
+  return ipVersion === 4
+    ? unwrappedHostname.startsWith('127.')
+    : ipVersion === 6 && unwrappedHostname === '::1'
+}
+
 // Import only the active provider's non-secret route. This preserves a working local Codex network
-// path (for example a loopback cc-switch endpoint) without copying models, MCP servers, hooks,
+// path (for example a loopback proxy endpoint) without copying models, MCP servers, hooks,
 // headers, bearer tokens, or any other user configuration into the app-owned profile.
 const extractCodexProviderRoute = (configToml: string): ImportedCodexProviderRoute | undefined => {
   const lines = configToml.split(/\r?\n/)
@@ -166,6 +178,7 @@ const extractCodexProviderRoute = (configToml: string): ImportedCodexProviderRou
     const url = new URL(baseUrl)
     if (
       (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+      !isLoopbackHostname(url.hostname) ||
       url.username ||
       url.password ||
       url.search ||
@@ -261,8 +274,12 @@ export const importCodexAuthentication = async (
       serializeCodexProviderRoute(providerRoute)
     )
   } else {
-    await rm(destinationConfigPath, { force: true })
+    await clearImportedCodexProviderRoute(destinationHome)
   }
+}
+
+export const clearImportedCodexProviderRoute = async (destinationHome: string): Promise<void> => {
+  await rm(join(destinationHome, 'config.toml'), { force: true })
 }
 
 const abortError = (message: string): Error => {

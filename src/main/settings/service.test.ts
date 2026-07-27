@@ -291,6 +291,40 @@ describe('SettingsService: providers', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('clears an imported Codex route when switching to an in-app sign-in', async () => {
+    const userCodexDir = join(storageRoot, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+    await writeFile(
+      join(userCodexDir, 'config.toml'),
+      [
+        'model_provider = "subscription-route"',
+        '',
+        '[model_providers.subscription-route]',
+        'name = "OpenAI"',
+        'requires_openai_auth = true',
+        'wire_api = "responses"',
+        'base_url = "http://127.0.0.1:1087/v1"',
+        ''
+      ].join('\n')
+    )
+    const service = createService(undefined, { userCodexDir })
+
+    await service.upsertProvider({ type: 'codex-shared' })
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.toContain('model_provider = "subscription-route"')
+
+    await service.upsertProvider({ type: 'codex-isolated' })
+
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')).toBe(
+      '{"tokens":{"access_token":"secret"}}'
+    )
+  })
+
   it.each([
     ['codex-shared', CODEX_SHARED_PROVIDER_ID, 'Codex subscription'],
     ['codex-isolated', CODEX_ISOLATED_PROVIDER_ID, 'Codex subscription']

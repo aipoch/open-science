@@ -229,6 +229,7 @@ import type {
 } from './types'
 import { classifyStatus, validateProvider } from './validate'
 import {
+  clearImportedCodexProviderRoute,
   CodexAuthController,
   importCodexAuthentication,
   openCodexAuthSession,
@@ -2209,6 +2210,8 @@ class SettingsService {
         this.userCodexDir,
         codexSubscriptionStorageDir(this.storageRoot)
       )
+    } else if (request.type === 'codex-isolated') {
+      await clearImportedCodexProviderRoute(codexSubscriptionStorageDir(this.storageRoot))
     }
     // Both Codex and Claude subscription providers use a fixed builtin id so the add path, the
     // token-save path, and every id-keyed lookup in this service converge on a single record.
