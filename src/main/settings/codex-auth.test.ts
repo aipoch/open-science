@@ -143,6 +143,19 @@ describe('createCodexAuthEnvironment', () => {
     expect(env.ALL_PROXY).toBeUndefined()
     expect(env.NO_PROXY).not.toContain('stale-bypass.example.test')
   })
+
+  it('preserves inherited proxies when system proxy resolution fails', () => {
+    const env = createCodexAuthEnvironment('isolated', '/data', {
+      PATH: 'bin',
+      HTTPS_PROXY: 'http://inherited-proxy.example.test:3128',
+      NO_PROXY: 'inherited-bypass.example.test'
+    })
+
+    expect(env).toMatchObject({
+      HTTPS_PROXY: 'http://inherited-proxy.example.test:3128',
+      NO_PROXY: 'inherited-bypass.example.test'
+    })
+  })
 })
 
 describe('importCodexAuthentication', () => {

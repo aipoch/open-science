@@ -512,7 +512,7 @@ export type SettingsServiceOptions = {
   codexAuth?: CodexAuthControllerPort
   // Resolves the user's current native/PAC proxy for Codex subscription traffic. Injectable so
   // tests do not depend on the host machine's Electron session configuration.
-  resolveCodexProxyEnvironment?: () => Promise<SystemProxyEnvironment>
+  resolveCodexProxyEnvironment?: () => Promise<SystemProxyEnvironment | undefined>
   // Encrypted-token controller for claude-isolated; default-constructed against this.storageRoot
   // when omitted. Storage is delegated to the host's SettingsRepository + encrypt/tryDecryptKey
   // pipeline, mirroring how CodexAuthController delegates to openCodexAuthSession.
@@ -546,7 +546,7 @@ class SettingsService {
   private readonly installManagedCodexImpl: (
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
-  private readonly resolveCodexProxyEnvironment: () => Promise<SystemProxyEnvironment>
+  private readonly resolveCodexProxyEnvironment: () => Promise<SystemProxyEnvironment | undefined>
   private readonly codexAuth: CodexAuthControllerPort
   private readonly claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort
   private readonly claudeSharedAuth: ClaudeSharedAuthControllerPort
@@ -2513,6 +2513,10 @@ class SettingsService {
     // preserving every external Codex login.
     this.codexAuth.cancelLogin()
     try {
+      // Legacy isolated homes could still point at the OS keychain. Pin the app-owned profile to the
+      // file store before removing auth.json so future status/runtime checks cannot re-authenticate
+      // through a credential shared with the user's global CLI profile.
+      await ensureCodexAuthHome('isolated', this.storageRoot)
       await clearAppOwnedCodexAuthentication(codexSubscriptionStorageDir(this.storageRoot))
     } catch {
       return {
@@ -3662,10 +3666,9 @@ class SettingsService {
         instructions: connectorInstructions
       })
       await writeAgentConfigFiles(modelConfig.configFiles)
-      const proxyEnv =
+      const usesCodexSystemProxy =
         framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)
-          ? await this.resolveCodexProxyEnvironment()
-          : {}
+      const proxyEnv = usesCodexSystemProxy ? await this.resolveCodexProxyEnvironment() : undefined
 
       // Protocol-driven frameworks apply an explicit model through the ACP session configOption. A Codex
       // subscription with no explicit selection leaves this undefined so Codex uses the account default.
@@ -3676,12 +3679,15 @@ class SettingsService {
         executablePath,
         env: {
           ...(modelConfig.env ?? {}),
-          ...proxyEnv,
+          ...(proxyEnv ?? {}),
           ...(framework.id === 'codex' && settings.codex?.nativePath
             ? { CODEX_PATH: settings.codex.nativePath }
             : {})
         },
         args: modelConfig.args,
+        ...(usesCodexSystemProxy
+          ? { proxyEnvironmentMode: proxyEnv === undefined ? 'inherit' : 'replace' }
+          : {}),
         sessionModel,
         ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type) && sessionModel
           ? { sessionModelRequired: true }

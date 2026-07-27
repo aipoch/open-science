@@ -709,6 +709,7 @@ describe('codexFramework', () => {
 
     framework.spawn({
       executablePath: '/usr/local/bin/codex-acp',
+      proxyEnvironmentMode: 'replace',
       env: {
         CODEX_HOME: '/data/codex-subscription',
         HTTP_PROXY: 'http://system-proxy.example.test:3128',
@@ -729,6 +730,7 @@ describe('codexFramework', () => {
 
     framework.spawn({
       executablePath: '/usr/local/bin/codex-acp',
+      proxyEnvironmentMode: 'replace',
       env: { CODEX_HOME: '/data/codex-subscription' },
       args: []
     })
@@ -737,6 +739,30 @@ describe('codexFramework', () => {
     expect(directEnv.HTTPS_PROXY).toBeUndefined()
     expect(directEnv.ALL_PROXY).toBeUndefined()
     expect(directEnv.NO_PROXY).toBeUndefined()
+  })
+
+  it('preserves inherited proxies when subscription proxy resolution fails', () => {
+    const spawnProcess = vi.fn().mockReturnValue(fakeChild)
+    const framework = createCodexFramework({
+      sourceEnv: {
+        PATH: '/parent-bin',
+        HTTPS_PROXY: 'http://inherited-proxy.example.test:3128',
+        NO_PROXY: 'inherited-bypass.example.test'
+      },
+      spawnProcess
+    })
+
+    framework.spawn({
+      executablePath: '/usr/local/bin/codex-acp',
+      proxyEnvironmentMode: 'inherit',
+      env: { CODEX_HOME: '/data/codex-subscription' },
+      args: []
+    })
+
+    expect(spawnProcess.mock.calls[0][2].env).toMatchObject({
+      HTTPS_PROXY: 'http://inherited-proxy.example.test:3128',
+      NO_PROXY: 'inherited-bypass.example.test'
+    })
   })
 })
 

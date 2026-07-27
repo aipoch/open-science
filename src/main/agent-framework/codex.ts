@@ -276,10 +276,9 @@ const buildSpawnEnvironment = (
   const env = augmentedPathEnv(sourceEnv)
 
   for (const key of CODEX_ENV_KEYS) delete env[key]
-  // A subscription gets an authoritative proxy decision from Electron immediately before backend
-  // resolution. Drop every inherited proxy shape first so a stale ALL_PROXY/HTTP_PROXY cannot win
-  // over that decision (including DIRECT, represented by no proxy keys in input.env).
-  if (/[\\/]codex-subscription$/.test(input.env.CODEX_HOME ?? '')) {
+  // A resolved proxy or DIRECT decision is authoritative. A resolver failure uses `inherit` so a
+  // working proxy supplied by the process launcher remains available as the fallback.
+  if (input.proxyEnvironmentMode === 'replace') {
     clearSystemProxyEnvironment(env)
   }
 

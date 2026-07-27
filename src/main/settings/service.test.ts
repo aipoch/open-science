@@ -142,7 +142,7 @@ const createService = (
     // When false, the ACP smoke test fails (adapter present but can't initialize).
     codexSmokeOk?: boolean
     codexAuth?: CodexAuthControllerPort
-    resolveCodexProxyEnvironment?: () => Promise<SystemProxyEnvironment>
+    resolveCodexProxyEnvironment?: () => Promise<SystemProxyEnvironment | undefined>
     claudeIsolatedAuth?: ClaudeIsolatedAuthControllerPort
     claudeSharedAuth?: ClaudeSharedAuthControllerPort
     executeClaudeProbe?: (
@@ -935,12 +935,17 @@ describe('SettingsService: providers', () => {
     const service = createService(undefined, { codexAuth })
     await service.upsertProvider({ type: 'codex-isolated' })
     await service.loginIsolatedCodex()
+    const appConfigPath = join(storageRoot, 'codex-subscription', 'config.toml')
+    await writeFile(appConfigPath, 'cli_auth_credentials_store = "auto"\n')
 
     const result = await service.logoutIsolatedCodex()
 
     expect(result).toEqual({ ok: true, category: 'ok' })
     expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
     expect(codexAuth.logoutIsolated).not.toHaveBeenCalled()
+    await expect(readFile(appConfigPath, 'utf8')).resolves.toBe(
+      'cli_auth_credentials_store = "file"\n'
+    )
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.lastValidatedAt).toBeUndefined()
     expect(stored.lastValidationFailure).toBeUndefined()
@@ -2369,12 +2374,23 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.env.CODEX_HOME).toBe(join(storageRoot, 'codex-subscription'))
     expect(backend.env.HTTPS_PROXY).toBe('http://proxy.example.test:3128')
     expect(backend.env.NO_PROXY).toContain('127.0.0.1')
+    expect(backend.proxyEnvironmentMode).toBe('replace')
     expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
       'cli_auth_credentials_store = "file"\n'
     )
     expect(await readFile(join(storageRoot, 'codex', 'config.toml'), 'utf8')).toBe(
       'model = "account-default"\ncli_auth_credentials_store = "ephemeral"\n'
     )
+
+    const fallbackService = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' },
+      resolveCodexProxyEnvironment: () => Promise.resolve(undefined)
+    })
+    const fallbackBackend = await fallbackService.resolveActiveAgentBackend()
+
+    expect(fallbackBackend.proxyEnvironmentMode).toBe('inherit')
+    expect(fallbackBackend.env).not.toHaveProperty('HTTP_PROXY')
+    expect(fallbackBackend.env).not.toHaveProperty('HTTPS_PROXY')
   })
 
   it('resolves an unpinned subscription backend to the Codex account default', async () => {

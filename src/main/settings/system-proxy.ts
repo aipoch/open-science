@@ -104,7 +104,7 @@ export const parseSystemProxyRules = (rules: string): SystemProxyEnvironment => 
 export const resolveSystemProxyEnvironment = async (
   resolveProxy: ResolveProxy = (url) => session.defaultSession.resolveProxy(url),
   sourceEnv: NodeJS.ProcessEnv = process.env
-): Promise<SystemProxyEnvironment> => {
+): Promise<SystemProxyEnvironment | undefined> => {
   try {
     const proxyEnv = parseSystemProxyRules(await resolveProxy(CODEX_PROXY_TARGET_URL))
     if (Object.keys(proxyEnv).length === 0) return {}
@@ -117,8 +117,8 @@ export const resolveSystemProxyEnvironment = async (
 
     return { ...proxyEnv, NO_PROXY: noProxy, no_proxy: noProxy }
   } catch {
-    // A resolver failure must not block users whose network is reachable directly (or whose app
-    // process already carries proxy environment variables). The normal inherited environment stays.
-    return {}
+    // `undefined` is distinct from the empty environment produced by an explicit DIRECT decision.
+    // Callers preserve the app's inherited proxy variables only for this resolver-failure fallback.
+    return undefined
   }
 }

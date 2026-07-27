@@ -424,15 +424,15 @@ export const createCodexAuthEnvironment = (
   _mode: CodexAuthMode,
   storageRoot: string,
   sourceEnv: NodeJS.ProcessEnv = process.env,
-  proxyEnv: SystemProxyEnvironment = {}
+  proxyEnv?: SystemProxyEnvironment
 ): NodeJS.ProcessEnv => {
   const env = augmentedPathEnv(sourceEnv)
   for (const key of CODEX_ENV_KEYS) delete env[key]
-  clearSystemProxyEnvironment(env)
+  if (proxyEnv !== undefined) clearSystemProxyEnvironment(env)
 
   return {
     ...env,
-    ...proxyEnv,
+    ...(proxyEnv ?? {}),
     CODEX_HOME: codexSubscriptionStorageDir(storageRoot)
   }
 }

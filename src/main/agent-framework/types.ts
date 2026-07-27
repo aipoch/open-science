@@ -98,12 +98,17 @@ export type SessionSetup = {
   promptPrefix?: string
 }
 
+export type ProxyEnvironmentMode = 'inherit' | 'replace'
+
 // Already-resolved spawn inputs: env and args come from prepareModelConfig merged over the base
 // process env; configFiles are written by the runtime before this call.
 export type AgentSpawnInput = {
   executablePath: string
   env: Record<string, string>
   args: string[]
+  // `replace` means the host resolved an explicit proxy or DIRECT decision and inherited proxy
+  // variables must not override it. `inherit` preserves them after a host resolver failure.
+  proxyEnvironmentMode?: ProxyEnvironmentMode
   debug?: boolean
 }
 
@@ -158,6 +163,7 @@ export type ResolvedAgentBackend = {
   executablePath: string
   env: Record<string, string>
   args?: string[]
+  proxyEnvironmentMode?: ProxyEnvironmentMode
   // Framework-native session options retained by the runtime and passed through buildSessionSetup.
   sessionOptions?: Record<string, unknown>
   // Backend-resolved guidance appended to every session. Connector conventions use this channel for

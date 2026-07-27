@@ -46,17 +46,18 @@ describe('resolveSystemProxyEnvironment', () => {
       vi.fn().mockResolvedValue('PROXY proxy.example.test:3128'),
       {}
     )
+    expect(resolved).toBeDefined()
 
     for (const host of ['localhost', '127.0.0.1', '127.0.0.0/8', '::1', '[::1]']) {
-      expect(resolved.NO_PROXY?.split(',')).toContain(host)
-      expect(resolved.no_proxy?.split(',')).toContain(host)
+      expect(resolved?.NO_PROXY?.split(',')).toContain(host)
+      expect(resolved?.no_proxy?.split(',')).toContain(host)
     }
   })
 
   it('falls back to the inherited or direct network when resolution fails', async () => {
     const resolveProxy = vi.fn().mockRejectedValue(new Error('proxy resolver unavailable'))
 
-    await expect(resolveSystemProxyEnvironment(resolveProxy)).resolves.toEqual({})
+    await expect(resolveSystemProxyEnvironment(resolveProxy)).resolves.toBeUndefined()
   })
 
   it('does not add bypass variables when the system selects direct access', async () => {

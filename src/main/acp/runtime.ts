@@ -2118,7 +2118,8 @@ class AcpRuntime {
       process = backend.framework.spawn({
         executablePath: backend.executablePath,
         env: backend.env,
-        args: backend.args ?? []
+        args: backend.args ?? [],
+        proxyEnvironmentMode: backend.proxyEnvironmentMode
       })
     } catch (error) {
       // Wrap (never mutate) the failure with the framework this spawn targeted: the connect-level catch
