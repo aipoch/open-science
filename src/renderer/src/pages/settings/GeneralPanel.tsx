@@ -1,12 +1,12 @@
-import { ExternalLink, FolderOpen, Globe, Moon, Terminal } from 'lucide-react'
+import { ExternalLink, FolderOpen, Globe, Terminal } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { ThemeSegmentedControl } from '@/components/ThemeControls'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { useSettingsStore } from '@/stores/settings-store'
-import { useThemeStore } from '@/stores/theme-store'
 import type { CloseActionPreference } from '../../../../shared/window-controls'
 import type { CliLauncherStatus } from '../../../../shared/cli'
 import { APP } from '../../../../shared/app-config'
@@ -46,8 +46,6 @@ const GeneralPanel = (): React.JSX.Element => {
   const setNotificationsEnabled = useSettingsStore((state) => state.setNotificationsEnabled)
   const closePreference = useSettingsStore((state) => state.closePreference)
   const setClosePreference = useSettingsStore((state) => state.setClosePreference)
-  const theme = useThemeStore((state) => state.theme)
-  const toggleTheme = useThemeStore((state) => state.toggleTheme)
 
   useEffect(() => {
     void window.api.logs.getPath().then(setLogPath)
@@ -108,23 +106,16 @@ const GeneralPanel = (): React.JSX.Element => {
 
       <SettingsSection
         title="Appearance"
-        description="Switch between the light and dark theme. Your choice is remembered on this device."
+        description="Choose how the app looks. System follows your device; light and dark stay fixed. Your choice is remembered on this device."
         aria-label="Appearance"
         separated
       >
         <SettingsRow
-          label="Dark mode"
-          description="Use a dark color scheme across the app."
+          label="Theme"
+          description="Follow the system setting, or force light or dark."
           className="pt-0"
         >
-          <div className="flex items-center justify-end gap-2">
-            <Moon className="size-4 text-muted-foreground" aria-hidden="true" />
-            <SettingsToggle
-              enabled={theme === 'dark'}
-              aria-label="Toggle dark mode"
-              onToggle={toggleTheme}
-            />
-          </div>
+          <ThemeSegmentedControl />
         </SettingsRow>
       </SettingsSection>
 

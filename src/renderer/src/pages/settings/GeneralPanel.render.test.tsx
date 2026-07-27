@@ -195,8 +195,8 @@ describe('GeneralPanel notifications', () => {
 })
 
 describe('GeneralPanel appearance', () => {
-  it('toggles dark mode on <html> and reflects the theme store', async () => {
-    useThemeStore.setState({ theme: 'light' })
+  it('sets the theme preference from the segmented control and reflects it on <html>', async () => {
+    useThemeStore.getState().setPreference('light')
     document.documentElement.classList.remove('dark')
 
     await act(async () => {
@@ -204,19 +204,33 @@ describe('GeneralPanel appearance', () => {
     })
     await flush()
 
-    const toggle = container.querySelector(
-      '[aria-label="Toggle dark mode"]'
+    const group = container.querySelector('[role="radiogroup"][aria-label="Theme"]')
+    expect(group).not.toBeNull()
+
+    const darkRadio = group?.querySelector(
+      '[role="radio"][aria-label="Dark"]'
     ) as HTMLButtonElement | null
-    expect(toggle).not.toBeNull()
-    expect(toggle?.getAttribute('data-state')).toBe('unchecked')
+    expect(darkRadio).not.toBeNull()
+    expect(darkRadio?.getAttribute('aria-checked')).toBe('false')
 
     await act(async () => {
-      toggle?.click()
+      darkRadio?.click()
     })
     await flush()
 
-    expect(useThemeStore.getState().theme).toBe('dark')
+    expect(useThemeStore.getState().preference).toBe('dark')
+    expect(useThemeStore.getState().resolvedTheme).toBe('dark')
     expect(document.documentElement.classList.contains('dark')).toBe(true)
+
+    const systemRadio = group?.querySelector(
+      '[role="radio"][aria-label="System"]'
+    ) as HTMLButtonElement | null
+    await act(async () => {
+      systemRadio?.click()
+    })
+    await flush()
+
+    expect(useThemeStore.getState().preference).toBe('system')
   })
 })
 
