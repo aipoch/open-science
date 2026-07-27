@@ -201,6 +201,52 @@ describe('native Responses compatibility', () => {
     })
   })
 
+  it('continues scanning for smaller Skills after a candidate exceeds the catalog byte budget', async () => {
+    const fetchImpl = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        const request = JSON.parse(String(init?.body)) as {
+          tools: Array<{
+            parameters: { properties: { skill_names: { items: { enum: string[] } } } }
+          }>
+        }
+        expect(request.tools[0].parameters.properties.skill_names.items.enum).toContain('mcp-late')
+        return new Response(
+          JSON.stringify({
+            output: [
+              {
+                type: 'function_call',
+                name: 'select_skills',
+                arguments: '{"skill_names":["mcp-late"]}'
+              }
+            ]
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      }
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.minimaxi.com/v1', model: 'MiniMax-M3' },
+      fetchImpl
+    )
+    const catalog = [
+      ...Array.from({ length: 125 }, (_, index) => ({
+        name: `mcp-filler-${index}`,
+        description: 'x'.repeat(2_048),
+        path: `/skills/filler-${index}/SKILL.md`
+      })),
+      {
+        name: 'mcp-over-budget',
+        description: 'x'.repeat(2_048),
+        path: '/skills/over-budget/SKILL.md'
+      },
+      { name: 'mcp-late', description: 'Relevant small Skill.', path: '/skills/late/SKILL.md' }
+    ]
+
+    await expect(proxy.selectSkills('use the late Skill', catalog)).resolves.toEqual([
+      { name: 'mcp-late', path: '/skills/late/SKILL.md' }
+    ])
+  })
+
   it('replaces reviewer-session tools with only the scope-bounded reviewer surface', async () => {
     const upstreamRequests: Record<string, unknown>[] = []
     const fetchImpl = vi.fn(

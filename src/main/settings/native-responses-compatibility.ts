@@ -273,8 +273,8 @@ const boundedSkillCatalog = (
       JSON.stringify({ name: candidate.name, description: candidate.description }),
       'utf8'
     )
-    if (totalBytes + candidateBytes > MAX_SKILL_SELECTOR_CATALOG_BYTES) break
-    totalBytes += candidateBytes
+    if (totalBytes + candidateBytes + 1 > MAX_SKILL_SELECTOR_CATALOG_BYTES) continue
+    totalBytes += candidateBytes + 1
     bounded.push(candidate)
   }
   return bounded
