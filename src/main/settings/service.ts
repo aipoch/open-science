@@ -2260,7 +2260,10 @@ class SettingsService {
 
     if (isCodexSubscriptionProvider(request.type)) {
       provider.apiEndpoints = ['responses']
-      credentialsChanged = existing !== undefined && existing.type !== request.type
+      provider.codexAuthMode = request.type === 'codex-shared' ? 'imported' : 'isolated'
+      credentialsChanged =
+        existing !== undefined &&
+        (request.type === 'codex-shared' || existing.codexAuthMode !== provider.codexAuthMode)
     } else if (request.type === 'claude-isolated') {
       // claude-isolated has no fields of its own: the type tells the renderer/env-builder what to do
       // with the encrypted token (stored separately on login). A model override is allowed. The
@@ -3827,6 +3830,7 @@ class SettingsService {
     return {
       id: provider.id,
       type: provider.type,
+      codexAuthMode: provider.codexAuthMode,
       name: provider.name,
       apiEndpoints: this.resolveProviderApiEndpoints(provider),
       baseUrl: provider.baseUrl,

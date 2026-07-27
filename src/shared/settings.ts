@@ -24,6 +24,11 @@ export const SETTINGS_FILE_VERSION = 2
 export type ProviderType =
   'custom' | 'claude-shared' | 'claude-isolated' | 'official' | 'codex-shared' | 'codex-isolated'
 
+// The stored Codex subscription always uses the app-owned runtime type. This discriminator preserves
+// which setup choice produced it so editing an imported profile does not masquerade as an isolated
+// sign-in and accidentally discard its imported loopback route.
+export type CodexSubscriptionAuthMode = 'imported' | 'isolated'
+
 export const CODEX_SHARED_PROVIDER_ID = 'builtin-codex-shared'
 export const CODEX_ISOLATED_PROVIDER_ID = 'builtin-codex-isolated'
 export const CODEX_SUBSCRIPTION_PROVIDER_ID = 'builtin-codex-subscription'
@@ -223,6 +228,7 @@ export type ProviderValidationFailure = {
 export type ProviderView = {
   id: string
   type: ProviderType
+  codexAuthMode?: CodexSubscriptionAuthMode
   name: string
   // Which chat APIs this provider's endpoint speaks; drives per-framework availability. Absent ⇒
   // treat as ['anthropic'] (every legacy provider).

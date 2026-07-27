@@ -3,6 +3,7 @@ import type {
   ChatApiEndpoint,
   ClaudeSubscriptionProviderId,
   ClaudeInfo,
+  CodexSubscriptionAuthMode,
   CodexInfo,
   ProviderType,
   ProviderValidationFailure,
@@ -29,6 +30,9 @@ import type { AgentFrameworkId } from '../agent-framework'
 export type StoredProvider = {
   id: string
   type: ProviderType
+  // Records whether the app-owned Codex profile came from an import or an in-app sign-in. Runtime
+  // behavior still keys on the normalized codex-isolated provider type.
+  codexAuthMode?: CodexSubscriptionAuthMode
   name: string
   // Which chat APIs a custom gateway speaks. Official providers derive it from the registry; absent
   // means ['anthropic'] (all pre-existing providers). Legacy records may carry the removed scalar

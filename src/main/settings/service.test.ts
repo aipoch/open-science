@@ -268,7 +268,12 @@ describe('SettingsService: providers', () => {
 
     expect(snapshot.providers[0]).toMatchObject({
       id: CODEX_SUBSCRIPTION_PROVIDER_ID,
-      type: 'codex-isolated'
+      type: 'codex-isolated',
+      codexAuthMode: 'imported'
+    })
+    expect((await repository.getSettings()).providers[0]).toMatchObject({
+      type: 'codex-isolated',
+      codexAuthMode: 'imported'
     })
     expect(await readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')).toBe(
       '{"tokens":{"access_token":"secret"}}'
@@ -291,7 +296,7 @@ describe('SettingsService: providers', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('clears an imported Codex route when switching to an in-app sign-in', async () => {
+  it('preserves an imported Codex route on resave and clears it on an explicit mode switch', async () => {
     const userCodexDir = join(storageRoot, 'user-codex')
     await mkdir(userCodexDir, { recursive: true })
     await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
@@ -310,16 +315,31 @@ describe('SettingsService: providers', () => {
     )
     const service = createService(undefined, { userCodexDir })
 
-    await service.upsertProvider({ type: 'codex-shared' })
+    const imported = await service.upsertProvider({ type: 'codex-shared' })
     await expect(
       readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
     ).resolves.toContain('model_provider = "subscription-route"')
 
-    await service.upsertProvider({ type: 'codex-isolated' })
+    await service.upsertProvider({
+      id: imported.providers[0].id,
+      type: imported.providers[0].codexAuthMode === 'imported' ? 'codex-shared' : 'codex-isolated'
+    })
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.toContain('model_provider = "subscription-route"')
+
+    const isolated = await service.upsertProvider({
+      id: imported.providers[0].id,
+      type: 'codex-isolated'
+    })
 
     await expect(
       readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
     ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(isolated.providers[0]).toMatchObject({
+      type: 'codex-isolated',
+      codexAuthMode: 'isolated'
+    })
     expect(await readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')).toBe(
       '{"tokens":{"access_token":"secret"}}'
     )

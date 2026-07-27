@@ -45,6 +45,7 @@ import {
   getProviderFormErrors,
   hasProviderFormErrors,
   providerFormApiEndpoints,
+  providerTypeForForm,
   providerKindPatch,
   type ProviderFormValue
 } from './provider-form-value'
@@ -60,7 +61,7 @@ type ModelView = { kind: 'list' } | { kind: 'create' } | { kind: 'edit'; provide
 // Builds a form value from an existing provider (never carrying the plaintext key).
 const toFormValue = (provider: ProviderView): ProviderFormValue =>
   createEmptyProviderFormValue({
-    type: provider.type,
+    type: providerTypeForForm(provider),
     name: provider.name,
     baseUrl: provider.baseUrl ?? '',
     model: provider.model ?? '',
