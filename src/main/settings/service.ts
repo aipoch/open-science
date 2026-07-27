@@ -2433,10 +2433,12 @@ class SettingsService {
     )
     // The provider can be edited while the browser flow is open. Unless the stored record is still
     // the isolated subscription the login was started for, the outcome is stale and discarded —
-    // recording it could stamp a switched-to-shared (and unauthenticated) profile as verified. Flag
+    // recording it could overwrite a switched-to-imported profile's independent validation. Flag
     // it as not-applied so a caller gating navigation on success (onboarding) does not advance on a
     // result the stored provider never received.
-    if (provider?.type !== 'codex-isolated') return { ...result, applied: false }
+    if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated') {
+      return { ...result, applied: false }
+    }
 
     await this.repository.upsertProvider(
       result.ok

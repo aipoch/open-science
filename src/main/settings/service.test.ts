@@ -633,21 +633,15 @@ describe('SettingsService: providers', () => {
     })
   })
 
-  it('keeps the sign-in outcome when existing authentication is reimported mid-flow', async () => {
-    let resolveLogin!: (status: {
-      mode: 'isolated'
-      supported: boolean
-      authenticated: boolean
-    }) => void
+  it('discards a late isolated sign-in failure after authentication is imported mid-flow', async () => {
+    let resolveLogin!: (status: CodexAuthStatus) => void
     const codexAuth: CodexAuthControllerPort = {
       getStatus: vi.fn(),
       loginIsolated: vi.fn(
         () =>
-          new Promise<{ mode: 'isolated'; supported: boolean; authenticated: boolean }>(
-            (resolve) => {
-              resolveLogin = resolve
-            }
-          )
+          new Promise<CodexAuthStatus>((resolve) => {
+            resolveLogin = resolve
+          })
       ),
       cancelLogin: vi.fn(),
       logoutIsolated: vi.fn()
@@ -655,16 +649,23 @@ describe('SettingsService: providers', () => {
     const service = createService(undefined, { codexAuth })
     await service.upsertProvider({ type: 'codex-isolated' })
 
-    // Importing existing authentication converges on the same app-owned runtime profile, so it does
-    // not create a second profile boundary while the browser flow is open.
     const pending = service.loginIsolatedCodex()
     await service.upsertProvider({ type: 'codex-shared' })
-    resolveLogin({ mode: 'isolated', supported: true, authenticated: true })
+    const imported = (await repository.getSettings()).providers[0]
+    expect(imported.codexAuthMode).toBe('imported')
+    await repository.upsertProvider({ ...imported, lastValidatedAt: 123 })
+    resolveLogin({
+      mode: 'isolated',
+      supported: true,
+      authenticated: false,
+      message: 'Codex sign-in timed out.'
+    })
 
-    await expect(pending).resolves.toMatchObject({ ok: true, applied: true })
+    await expect(pending).resolves.toMatchObject({ ok: false, applied: false })
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.type).toBe('codex-isolated')
-    expect(stored.lastValidatedAt).toBeDefined()
+    expect(stored.codexAuthMode).toBe('imported')
+    expect(stored.lastValidatedAt).toBe(123)
     expect(stored.lastValidationFailure).toBeUndefined()
   })
 
