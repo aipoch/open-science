@@ -179,7 +179,7 @@ describe('settings repository', () => {
     expect(settings.activeProviderId).toBe('builtin-codex-subscription')
   })
 
-  it('migrates an ambiguous normalized Codex subscription as imported', () => {
+  it('migrates an ambiguous normalized Codex subscription as isolated', () => {
     const settings = sanitizeSettings({
       activeProviderId: 'builtin-codex-subscription',
       providers: [
@@ -195,7 +195,7 @@ describe('settings repository', () => {
       expect.objectContaining({
         id: 'builtin-codex-subscription',
         type: 'codex-isolated',
-        codexAuthMode: 'imported',
+        codexAuthMode: 'isolated',
         name: 'Codex subscription'
       })
     ])
