@@ -60,6 +60,160 @@ const CODEX_ENV_KEYS = [
   'NO_BROWSER'
 ] as const
 
+type ImportedCodexProviderRoute = {
+  id: string
+  name: string
+  baseUrl: string
+  supportsWebsockets?: boolean
+}
+
+type TomlScalar = string | boolean
+
+const parseTomlString = (literal: string): string | undefined => {
+  const trimmed = literal.trim()
+
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown
+      return typeof parsed === 'string' ? parsed : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) return trimmed.slice(1, -1)
+  return undefined
+}
+
+const parseTomlScalarAssignment = (
+  line: string
+): { key: string; value: TomlScalar } | undefined => {
+  const stringMatch = line.match(
+    /^\s*([A-Za-z0-9_-]+)\s*=\s*("(?:\\.|[^"\\])*"|'[^']*')\s*(?:#.*)?$/
+  )
+  if (stringMatch) {
+    const value = parseTomlString(stringMatch[2])
+    return value === undefined ? undefined : { key: stringMatch[1], value }
+  }
+
+  const booleanMatch = line.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*(true|false)\s*(?:#.*)?$/)
+  if (!booleanMatch) return undefined
+
+  return { key: booleanMatch[1], value: booleanMatch[2] === 'true' }
+}
+
+const parseModelProviderTableId = (line: string): string | undefined => {
+  const match = line.match(
+    /^\s*\[\s*model_providers\s*\.\s*("(?:\\.|[^"\\])*"|'[^']*'|[A-Za-z0-9_-]+)\s*\]\s*(?:#.*)?$/
+  )
+  if (!match) return undefined
+
+  const key = match[1]
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : parseTomlString(key)
+}
+
+// Import only the active provider's non-secret route. This preserves a working local Codex network
+// path (for example a loopback cc-switch endpoint) without copying models, MCP servers, hooks,
+// headers, bearer tokens, or any other user configuration into the app-owned profile.
+const extractCodexProviderRoute = (configToml: string): ImportedCodexProviderRoute | undefined => {
+  const lines = configToml.split(/\r?\n/)
+  let activeProviderId: string | undefined
+
+  for (const line of lines) {
+    if (/^\s*\[/.test(line)) break
+    const assignment = parseTomlScalarAssignment(line)
+    if (assignment?.key === 'model_provider' && typeof assignment.value === 'string') {
+      activeProviderId = assignment.value
+      break
+    }
+  }
+
+  if (!activeProviderId || activeProviderId.length > 128) return undefined
+
+  let inActiveProviderTable = false
+  let name: string | undefined
+  let baseUrl: string | undefined
+  let wireApi: string | undefined
+  let requiresOpenAiAuth: boolean | undefined
+  let supportsWebsockets: boolean | undefined
+
+  for (const line of lines) {
+    if (/^\s*\[/.test(line)) {
+      inActiveProviderTable = parseModelProviderTableId(line) === activeProviderId
+      continue
+    }
+    if (!inActiveProviderTable) continue
+
+    const assignment = parseTomlScalarAssignment(line)
+    if (!assignment) continue
+
+    if (assignment.key === 'name' && typeof assignment.value === 'string') {
+      name = assignment.value
+    } else if (assignment.key === 'base_url' && typeof assignment.value === 'string') {
+      baseUrl = assignment.value
+    } else if (assignment.key === 'wire_api' && typeof assignment.value === 'string') {
+      wireApi = assignment.value
+    } else if (assignment.key === 'requires_openai_auth' && typeof assignment.value === 'boolean') {
+      requiresOpenAiAuth = assignment.value
+    } else if (assignment.key === 'supports_websockets' && typeof assignment.value === 'boolean') {
+      supportsWebsockets = assignment.value
+    }
+  }
+
+  if (!baseUrl || wireApi !== 'responses' || requiresOpenAiAuth !== true) return undefined
+
+  try {
+    const url = new URL(baseUrl)
+    if (
+      (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    ) {
+      return undefined
+    }
+  } catch {
+    return undefined
+  }
+
+  return {
+    id: activeProviderId,
+    name: name?.trim() || activeProviderId,
+    baseUrl,
+    ...(supportsWebsockets === undefined ? {} : { supportsWebsockets })
+  }
+}
+
+const serializeCodexProviderRoute = (route: ImportedCodexProviderRoute): string =>
+  [
+    `model_provider = ${JSON.stringify(route.id)}`,
+    '',
+    `[model_providers.${JSON.stringify(route.id)}]`,
+    `name = ${JSON.stringify(route.name)}`,
+    `base_url = ${JSON.stringify(route.baseUrl)}`,
+    'wire_api = "responses"',
+    'requires_openai_auth = true',
+    ...(route.supportsWebsockets === undefined
+      ? []
+      : [`supports_websockets = ${String(route.supportsWebsockets)}`]),
+    ''
+  ].join('\n')
+
+const writePrivateFileAtomically = async (
+  destinationPath: string,
+  content: string
+): Promise<void> => {
+  const temporaryPath = `${destinationPath}.${randomUUID()}.tmp`
+  try {
+    await writeFile(temporaryPath, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+    await chmod(temporaryPath, 0o600)
+    await rename(temporaryPath, destinationPath)
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined)
+  }
+}
+
 export const createCodexAuthEnvironment = (
   _mode: CodexAuthMode,
   storageRoot: string,
@@ -71,14 +225,17 @@ export const createCodexAuthEnvironment = (
   return { ...env, CODEX_HOME: codexSubscriptionStorageDir(storageRoot) }
 }
 
-// Provider setup may import an existing login, but runtime isolation is strict: copy the credential
-// file only. Global config, Skills, sessions, memories, and hooks remain outside Open Science.
+// Provider setup imports an existing login plus the safe, non-secret subset of its active provider
+// route. Global model defaults, MCP servers, Skills, sessions, memories, hooks, and tokens embedded in
+// provider config remain outside Open Science.
 export const importCodexAuthentication = async (
   sourceHome: string,
   destinationHome: string
 ): Promise<void> => {
   const sourcePath = join(sourceHome, 'auth.json')
   const destinationPath = join(destinationHome, 'auth.json')
+  const sourceConfigPath = join(sourceHome, 'config.toml')
+  const destinationConfigPath = join(destinationHome, 'config.toml')
   let content: string
 
   try {
@@ -89,14 +246,22 @@ export const importCodexAuthentication = async (
     throw new Error('The selected Codex profile does not contain importable authentication.')
   }
 
-  await mkdir(destinationHome, { recursive: true })
-  const temporaryPath = `${destinationPath}.${randomUUID()}.tmp`
+  let providerRoute: ImportedCodexProviderRoute | undefined
   try {
-    await writeFile(temporaryPath, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
-    await chmod(temporaryPath, 0o600)
-    await rename(temporaryPath, destinationPath)
-  } finally {
-    await rm(temporaryPath, { force: true }).catch(() => undefined)
+    providerRoute = extractCodexProviderRoute(await readFile(sourceConfigPath, 'utf8'))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+
+  await mkdir(destinationHome, { recursive: true })
+  await writePrivateFileAtomically(destinationPath, content)
+  if (providerRoute) {
+    await writePrivateFileAtomically(
+      destinationConfigPath,
+      serializeCodexProviderRoute(providerRoute)
+    )
+  } else {
+    await rm(destinationConfigPath, { force: true })
   }
 }
 

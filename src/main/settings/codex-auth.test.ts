@@ -75,7 +75,7 @@ describe('createCodexAuthEnvironment', () => {
 })
 
 describe('importCodexAuthentication', () => {
-  it('copies only auth.json into the app-owned subscription home', async () => {
+  it('copies auth.json without unrelated Codex config or private runtime data', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-auth-import-'))
     const source = join(root, 'source')
     const destination = join(root, 'destination')
@@ -86,6 +86,8 @@ describe('importCodexAuthentication', () => {
       await writeFile(join(source, 'config.toml'), 'model = "private"\n')
       await writeFile(join(source, 'skills', 'private-skill', 'SKILL.md'), '# Private')
       await writeFile(join(source, 'sessions', 'session.jsonl'), 'private session')
+      await mkdir(destination, { recursive: true })
+      await writeFile(join(destination, 'config.toml'), 'model_provider = "stale"\n')
 
       await importCodexAuthentication(source, destination)
 
@@ -96,6 +98,83 @@ describe('importCodexAuthentication', () => {
       expect(existsSync(join(destination, 'config.toml'))).toBe(false)
       expect(existsSync(join(destination, 'skills'))).toBe(false)
       expect(existsSync(join(destination, 'sessions'))).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('imports only the active ChatGPT-authenticated model-provider route', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-route-import-'))
+    const source = join(root, 'source')
+    const destination = join(root, 'destination')
+    try {
+      await mkdir(source, { recursive: true })
+      await writeFile(join(source, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+      await writeFile(
+        join(source, 'config.toml'),
+        [
+          'model_provider = "subscription-route"',
+          'model = "private-model"',
+          '',
+          '[mcp_servers.private]',
+          'command = "private-command"',
+          '',
+          '[model_providers.subscription-route]',
+          'name = "OpenAI"',
+          'requires_openai_auth = true',
+          'supports_websockets = false',
+          'wire_api = "responses"',
+          'base_url = "http://127.0.0.1:1087/v1"',
+          'experimental_bearer_token = "must-not-be-copied"',
+          ''
+        ].join('\n')
+      )
+
+      await importCodexAuthentication(source, destination)
+
+      expect(await readFile(join(destination, 'config.toml'), 'utf8')).toBe(
+        [
+          'model_provider = "subscription-route"',
+          '',
+          '[model_providers."subscription-route"]',
+          'name = "OpenAI"',
+          'base_url = "http://127.0.0.1:1087/v1"',
+          'wire_api = "responses"',
+          'requires_openai_auth = true',
+          'supports_websockets = false',
+          ''
+        ].join('\n')
+      )
+      expect((await stat(join(destination, 'config.toml'))).mode & 0o777).toBe(0o600)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not import a model-provider route backed by separate credentials', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-route-reject-'))
+    const source = join(root, 'source')
+    const destination = join(root, 'destination')
+    try {
+      await mkdir(source, { recursive: true })
+      await writeFile(join(source, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+      await writeFile(
+        join(source, 'config.toml'),
+        [
+          'model_provider = "private-gateway"',
+          '',
+          '[model_providers.private-gateway]',
+          'name = "Private"',
+          'requires_openai_auth = false',
+          'wire_api = "responses"',
+          'base_url = "https://private.example/v1"',
+          ''
+        ].join('\n')
+      )
+
+      await importCodexAuthentication(source, destination)
+
+      expect(existsSync(join(destination, 'config.toml'))).toBe(false)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

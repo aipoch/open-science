@@ -239,11 +239,28 @@ afterEach(async () => {
 })
 
 describe('SettingsService: providers', () => {
-  it('imports only existing Codex authentication and persists an isolated provider', async () => {
+  it('imports existing Codex authentication and its safe active provider route', async () => {
     const userCodexDir = join(storageRoot, 'user-codex')
     await mkdir(join(userCodexDir, 'skills', 'private'), { recursive: true })
     await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
-    await writeFile(join(userCodexDir, 'config.toml'), 'model = "private"\n')
+    await writeFile(
+      join(userCodexDir, 'config.toml'),
+      [
+        'model_provider = "subscription-route"',
+        'model = "private"',
+        '',
+        '[mcp_servers.private]',
+        'command = "private-command"',
+        '',
+        '[model_providers.subscription-route]',
+        'name = "OpenAI"',
+        'requires_openai_auth = true',
+        'supports_websockets = false',
+        'wire_api = "responses"',
+        'base_url = "http://127.0.0.1:1087/v1"',
+        ''
+      ].join('\n')
+    )
     await writeFile(join(userCodexDir, 'skills', 'private', 'SKILL.md'), '# Private')
     const service = createService(undefined, { userCodexDir })
 
@@ -256,9 +273,19 @@ describe('SettingsService: providers', () => {
     expect(await readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')).toBe(
       '{"tokens":{"access_token":"secret"}}'
     )
-    await expect(
-      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
-    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
+      [
+        'model_provider = "subscription-route"',
+        '',
+        '[model_providers."subscription-route"]',
+        'name = "OpenAI"',
+        'base_url = "http://127.0.0.1:1087/v1"',
+        'wire_api = "responses"',
+        'requires_openai_auth = true',
+        'supports_websockets = false',
+        ''
+      ].join('\n')
+    )
     await expect(
       readFile(join(storageRoot, 'codex-subscription', 'skills', 'private', 'SKILL.md'), 'utf8')
     ).rejects.toMatchObject({ code: 'ENOENT' })

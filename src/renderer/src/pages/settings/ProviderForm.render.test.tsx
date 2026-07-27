@@ -179,7 +179,9 @@ describe('ProviderForm field switching', () => {
     expect(container.querySelector('[aria-label="Provider name"]')).toBeNull()
     expect(container.querySelector('[aria-label="API key"]')).toBeNull()
     expect(container.querySelector('[aria-label="Model"]')).toBeNull()
-    expect(container.textContent).toContain('Copies only Codex authentication into Open Science')
+    expect(container.textContent).toContain(
+      "Copies Codex authentication and, when compatible, the active provider's non-secret network route into Open Science"
+    )
     expect(container.textContent).toContain('Skills and sessions are not imported')
   })
 
