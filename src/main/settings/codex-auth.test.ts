@@ -117,18 +117,18 @@ describe('importCodexAuthentication', () => {
       await writeFile(
         join(source, 'config.toml'),
         [
-          'model_provider = "subscription-route"',
+          '"model_provider" = "subscription-route"',
           'model = "private-model"',
           '',
           '[mcp_servers.private]',
           'command = "private-command"',
           '',
           '[model_providers.subscription-route]',
-          'name = "OpenAI"',
-          'requires_openai_auth = true',
-          'supports_websockets = false',
-          'wire_api = "responses"',
-          'base_url = "http://127.0.0.1:1087/v1"',
+          '"name" = "OpenAI"',
+          '"requires_openai_auth" = true',
+          "'supports_websockets' = false",
+          '"wire_api" = "responses"',
+          '"base_url" = "http://127.0.0.1:1087/v1"',
           'experimental_bearer_token = "must-not-be-copied"',
           ''
         ].join('\n')

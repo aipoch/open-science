@@ -86,21 +86,28 @@ const parseTomlString = (literal: string): string | undefined => {
   return undefined
 }
 
+const parseTomlKey = (literal: string): string | undefined =>
+  /^[A-Za-z0-9_-]+$/.test(literal) ? literal : parseTomlString(literal)
+
 const parseTomlScalarAssignment = (
   line: string
 ): { key: string; value: TomlScalar } | undefined => {
   const stringMatch = line.match(
-    /^\s*([A-Za-z0-9_-]+)\s*=\s*("(?:\\.|[^"\\])*"|'[^']*')\s*(?:#.*)?$/
+    /^\s*("(?:\\.|[^"\\])*"|'[^']*'|[A-Za-z0-9_-]+)\s*=\s*("(?:\\.|[^"\\])*"|'[^']*')\s*(?:#.*)?$/
   )
   if (stringMatch) {
+    const key = parseTomlKey(stringMatch[1])
     const value = parseTomlString(stringMatch[2])
-    return value === undefined ? undefined : { key: stringMatch[1], value }
+    return key === undefined || value === undefined ? undefined : { key, value }
   }
 
-  const booleanMatch = line.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*(true|false)\s*(?:#.*)?$/)
+  const booleanMatch = line.match(
+    /^\s*("(?:\\.|[^"\\])*"|'[^']*'|[A-Za-z0-9_-]+)\s*=\s*(true|false)\s*(?:#.*)?$/
+  )
   if (!booleanMatch) return undefined
 
-  return { key: booleanMatch[1], value: booleanMatch[2] === 'true' }
+  const key = parseTomlKey(booleanMatch[1])
+  return key === undefined ? undefined : { key, value: booleanMatch[2] === 'true' }
 }
 
 const parseModelProviderTableId = (line: string): string | undefined => {

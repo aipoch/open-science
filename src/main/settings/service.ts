@@ -4003,6 +4003,7 @@ class SettingsService {
 
     return {
       type: provider.type,
+      ...(provider.codexAuthMode === undefined ? {} : { codexAuthMode: provider.codexAuthMode }),
       baseUrl: provider.baseUrl,
       model,
       ...(contextWindow === undefined ? {} : { contextWindow }),
@@ -4122,6 +4123,7 @@ class SettingsService {
   private sameValidationTarget(left: ResolvedProvider, right: ResolvedProvider): boolean {
     return (
       left.type === right.type &&
+      left.codexAuthMode === right.codexAuthMode &&
       left.baseUrl === right.baseUrl &&
       left.openaiBaseUrl === right.openaiBaseUrl &&
       left.model === right.model &&

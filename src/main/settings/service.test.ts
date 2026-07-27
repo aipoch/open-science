@@ -10,7 +10,7 @@ import {
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   type ClaudeDetectResult
 } from '../../shared/settings'
-import type { CodexAuthControllerPort } from './codex-auth'
+import type { CodexAuthControllerPort, CodexAuthStatus } from './codex-auth'
 import type {
   ClaudeIsolatedAuthControllerPort,
   ClaudeIsolatedAuthStatus
@@ -528,6 +528,37 @@ describe('SettingsService: providers', () => {
 
     const stored = await repository.getSettings()
     expect(stored.providers.every((provider) => provider.lastValidatedAt !== undefined)).toBe(true)
+  })
+
+  it('does not apply a pending Codex validation after the subscription auth mode changes', async () => {
+    const userCodexDir = join(storageRoot, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+    let finishStatus!: () => void
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn(
+        () =>
+          new Promise<CodexAuthStatus>((resolve) => {
+            finishStatus = () => resolve({ mode: 'isolated', supported: true, authenticated: true })
+          })
+      ),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
+    const service = createService(undefined, { codexAuth, userCodexDir })
+    await service.upsertProvider({ type: 'codex-shared' })
+
+    const validation = service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })
+    await vi.waitFor(() => expect(codexAuth.getStatus).toHaveBeenCalledOnce())
+    await service.upsertProvider({ type: 'codex-isolated' })
+    finishStatus()
+
+    await expect(validation).resolves.toMatchObject({ ok: true, applied: false })
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.codexAuthMode).toBe('isolated')
+    expect(stored.lastValidatedAt).toBeUndefined()
+    expect(stored.lastValidationFailure).toBeUndefined()
   })
 
   it('reports an unauthenticated isolated status without triggering sign-in', async () => {
