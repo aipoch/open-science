@@ -1,7 +1,8 @@
 name: AI Review Labels
 
 # Type and stale-label operations run from the base branch with a write-capable token. Review
-# outcome labels are applied by the final job in ai-review.yml from that run's published outputs.
+# outcome labels are applied by the final job in ai-review-single.yml from that run's published
+# output.
 on:
   pull_request_target:
     branches:

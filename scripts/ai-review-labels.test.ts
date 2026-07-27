@@ -11,7 +11,7 @@ const labelsWorkflow = load(
   readFileSync(join(process.cwd(), '.github/workflows/ai-review-labels.yml'), 'utf8')
 ) as { jobs: Record<string, WorkflowJob> }
 const reviewWorkflow = load(
-  readFileSync(join(process.cwd(), '.github/workflows/ai-review.yml'), 'utf8')
+  readFileSync(join(process.cwd(), '.github/workflows/ai-review-single.yml'), 'utf8')
 ) as { jobs: Record<string, WorkflowJob> }
 
 type MockFn = ReturnType<typeof vi.fn>
@@ -120,46 +120,33 @@ function reviewEnv(overrides: Record<string, string> = {}): Record<string, strin
   return {
     PR_NUMBER: '7',
     REVIEW_HEAD_SHA: 'sha1',
-    CORRECTNESS_REQUIRED: 'true',
-    CORRECTNESS_RESULT: 'success',
-    CORRECTNESS_POST_RESULT: 'success',
-    CORRECTNESS_POSTED: 'true',
-    CORRECTNESS_REVIEW_BODY: reviewBody('## Codex Correctness Review', 'mergeable'),
-    ARCHITECTURE_REQUIRED: 'false',
-    ARCHITECTURE_RESULT: 'skipped',
-    ARCHITECTURE_POST_RESULT: 'skipped',
-    ARCHITECTURE_POSTED: '',
-    ARCHITECTURE_REVIEW_BODY: '',
+    REVIEW_REQUIRED: 'true',
+    REVIEW_RESULT: 'success',
+    REVIEW_POST_RESULT: 'success',
+    REVIEW_POSTED: 'true',
+    REVIEW_BODY: reviewBody('## Codex Review', 'mergeable'),
     ...overrides
   }
 }
 
 describe('apply_review_outcome', () => {
-  it('labels ready-to-merge when the skipped reviewer is ignored and the rest mergeable', async () => {
+  it('labels ready-to-merge when the combined reviewer is mergeable', async () => {
     const { github, added, removed } = makeGithub()
     await runJob('apply_review_outcome', reviewContext(), github, reviewEnv())
     expect(added).toEqual([['ready-to-merge']])
     expect(removed).toEqual([])
   })
 
-  it('labels ready-to-merge when every completed reviewer is mergeable', async () => {
-    const { github, added, removed } = makeGithub()
-
+  it('removes ready-to-merge when the reviewer is disabled', async () => {
+    const { github, added, removed } = makeGithub({ labels: ['ready-to-merge'] })
     await runJob(
       'apply_review_outcome',
       reviewContext(),
       github,
-      reviewEnv({
-        ARCHITECTURE_REQUIRED: 'true',
-        ARCHITECTURE_RESULT: 'success',
-        ARCHITECTURE_POST_RESULT: 'success',
-        ARCHITECTURE_POSTED: 'true',
-        ARCHITECTURE_REVIEW_BODY: reviewBody('## Codex Architecture Review', 'mergeable')
-      })
+      reviewEnv({ REVIEW_REQUIRED: 'false' })
     )
-
-    expect(added).toEqual([['ready-to-merge']])
-    expect(removed).toEqual([])
+    expect(added).toEqual([])
+    expect(removed).toEqual(['ready-to-merge'])
   })
 
   it('fails closed when a reviewer job ran but did not succeed', async () => {
@@ -168,7 +155,7 @@ describe('apply_review_outcome', () => {
       'apply_review_outcome',
       reviewContext(),
       github,
-      reviewEnv({ ARCHITECTURE_REQUIRED: 'true', ARCHITECTURE_RESULT: 'failure' })
+      reviewEnv({ REVIEW_RESULT: 'failure' })
     )
     expect(added).toEqual([])
     expect(removed).toEqual(['ready-to-merge'])
@@ -181,10 +168,10 @@ describe('apply_review_outcome', () => {
       reviewContext(),
       github,
       reviewEnv({
-        CORRECTNESS_RESULT: 'skipped',
-        CORRECTNESS_POST_RESULT: 'skipped',
-        CORRECTNESS_POSTED: '',
-        CORRECTNESS_REVIEW_BODY: ''
+        REVIEW_RESULT: 'skipped',
+        REVIEW_POST_RESULT: 'skipped',
+        REVIEW_POSTED: '',
+        REVIEW_BODY: ''
       })
     )
     expect(added).toEqual([])
@@ -197,7 +184,7 @@ describe('apply_review_outcome', () => {
       'apply_review_outcome',
       reviewContext(),
       github,
-      reviewEnv({ CORRECTNESS_POSTED: 'false' })
+      reviewEnv({ REVIEW_POSTED: 'false' })
     )
     expect(added).toEqual([])
     expect(removed).toEqual(['ready-to-merge'])
@@ -209,9 +196,7 @@ describe('apply_review_outcome', () => {
       'apply_review_outcome',
       reviewContext(),
       github,
-      reviewEnv({
-        CORRECTNESS_REVIEW_BODY: reviewBody('## Codex Correctness Review', 'needs changes')
-      })
+      reviewEnv({ REVIEW_BODY: reviewBody('## Codex Review', 'needs changes') })
     )
     expect(added).toEqual([])
     expect(removed).toEqual(['ready-to-merge'])
@@ -223,7 +208,7 @@ describe('apply_review_outcome', () => {
       'apply_review_outcome',
       reviewContext(),
       github,
-      reviewEnv({ CORRECTNESS_REVIEW_BODY: 'review unavailable' })
+      reviewEnv({ REVIEW_BODY: 'review unavailable' })
     )
     expect(added).toEqual([])
     expect(removed).toEqual(['ready-to-merge'])
