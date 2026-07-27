@@ -593,4 +593,25 @@ describe('validate: provider dispatch', () => {
     expect(result.category).toBe('bad-url')
     expect(fetchImpl).not.toHaveBeenCalled()
   })
+
+  it('reports bad-url before starting native Responses compatibility validation', async () => {
+    const fetchImpl = vi.fn()
+
+    const result = await validateProvider(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'nonsense',
+        key: 'k',
+        model: 'm'
+      },
+      {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        requireNativeResponsesCompatibility: true
+      }
+    )
+
+    expect(result.category).toBe('bad-url')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
 })

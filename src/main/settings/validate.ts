@@ -551,6 +551,12 @@ const validateProviderThroughNativeResponsesCompatibility = async (
   const targetBaseUrl = normalizeResponsesBaseUrl(provider.openaiBaseUrl ?? provider.baseUrl)
   if (!targetBaseUrl) return toResult('bad-url', { message: 'Missing base URL.' })
 
+  try {
+    void new URL(targetBaseUrl)
+  } catch {
+    return toResult('bad-url', { message: 'Invalid base URL.' })
+  }
+
   const proxy = new NativeResponsesCompatibilityProxy(
     { baseUrl: targetBaseUrl, key: provider.key, model: provider.model },
     fetchImpl
