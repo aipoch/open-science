@@ -36,7 +36,10 @@ export type NativeResponsesToolAliases = Map<string, NativeResponsesToolIdentity
 
 type NativeFetch = typeof fetch
 
-const MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024
+// Open Science can put up to 24 MiB of base64 image data in one turn before Codex adds text,
+// replayed history, and tool declarations. Match the app's 64 MiB local request envelope so those
+// valid multimodal turns fit while this authenticated loopback boundary remains memory-bounded.
+const MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024
 const MAX_SKILL_SELECTOR_CANDIDATES = 128
 const MAX_SKILL_SELECTOR_NAME_BYTES = 128
 const MAX_SKILL_SELECTOR_DESCRIPTION_BYTES = 2 * 1024

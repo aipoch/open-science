@@ -320,4 +320,53 @@ describe('native Responses compatibility', () => {
       await proxy.close()
     }
   })
+
+  it('forwards a near-limit multimodal request larger than 32 MiB', async () => {
+    const upstreamBodies: string[] = []
+    const fetchImpl = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamBodies.push(String(init?.body))
+        return new Response(JSON.stringify({ id: 'large-response', output: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+      }
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.minimaxi.com/v1', model: 'MiniMax-M3' },
+      fetchImpl
+    )
+    const connection = await proxy.start()
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'MiniMax-M3',
+          stream: false,
+          input: [
+            {
+              role: 'user',
+              content: [
+                { type: 'input_text', text: 'p'.repeat(8 * 1024 * 1024) },
+                {
+                  type: 'input_image',
+                  image_url: `data:image/png;base64,${'a'.repeat(24 * 1024 * 1024)}`
+                }
+              ]
+            }
+          ]
+        })
+      })
+
+      expect(response.ok, await response.text()).toBe(true)
+      expect(upstreamBodies).toHaveLength(1)
+      expect(Buffer.byteLength(upstreamBodies[0], 'utf8')).toBeGreaterThan(32 * 1024 * 1024)
+    } finally {
+      await proxy.close()
+    }
+  })
 })
