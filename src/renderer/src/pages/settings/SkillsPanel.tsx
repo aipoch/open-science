@@ -147,14 +147,19 @@ const SkillsPanel = ({
     <div className="p-5">
       <SettingsSection
         title="Conversation imports"
-        description="Control whether conversations can offer to import attached Skill packages."
+        description="Choose what conversations can import into Open Science."
         aria-label="Conversation imports"
-        className="mb-5 border-b border-border pb-5"
+        className="mb-4 border-b border-border pb-4"
+        contentClassName="mt-1"
       >
         <SettingsRow
-          label="Import attached Skill packages"
-          description="Allow the agent to detect attached .zip and .skill packages and open an import confirmation. Turn this off to remove the import tool and its instructions from conversations."
-          className="pt-0"
+          label="Skill packages"
+          description={
+            <span className="line-clamp-2">
+              Let the agent detect attached .zip and .skill packages and ask before importing them.
+            </span>
+          }
+          className="min-h-0 py-1.5"
         >
           <div className="flex justify-end">
             <SettingsToggle

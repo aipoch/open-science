@@ -206,7 +206,18 @@ describe('SkillsPanel (list view)', () => {
     })
 
     expect(document.body.textContent).toContain('Conversation imports')
-    expect(document.body.textContent).toContain('remove the import tool and its instructions')
+    expect(document.body.textContent).toContain(
+      'Choose what conversations can import into Open Science.'
+    )
+    expect(document.body.textContent).toContain('Skill packages')
+    expect(document.body.textContent).toContain('ask before importing them')
+    const section = document.body.querySelector<HTMLElement>(
+      '[data-slot="settings-section"][aria-label="Conversation imports"]'
+    )
+    const row = section?.querySelector<HTMLElement>('[data-slot="settings-row"]')
+    expect(section?.className).toContain('pb-4')
+    expect(row?.className).toContain('min-h-0')
+    expect(row?.querySelector('.line-clamp-2')).not.toBeNull()
     const toggle = document.body.querySelector<HTMLButtonElement>(
       '[aria-label="Toggle conversation Skill imports"]'
     )
