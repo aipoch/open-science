@@ -19,6 +19,7 @@ import type { ClaudeSharedAuthControllerPort } from './claude-shared-auth'
 import type { UserSkillRepository } from '../skills/user-skill-repository'
 import type { ResponsesBridge } from './responses-bridge'
 import type { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
+import type { SystemProxyEnvironment } from './system-proxy'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -141,6 +142,7 @@ const createService = (
     // When false, the ACP smoke test fails (adapter present but can't initialize).
     codexSmokeOk?: boolean
     codexAuth?: CodexAuthControllerPort
+    resolveCodexProxyEnvironment?: () => Promise<SystemProxyEnvironment>
     claudeIsolatedAuth?: ClaudeIsolatedAuthControllerPort
     claudeSharedAuth?: ClaudeSharedAuthControllerPort
     executeClaudeProbe?: (
@@ -219,6 +221,8 @@ const createService = (
       managedCodexPath: options.managedCodexNativePath ?? options.codexDetected?.nativePath
     },
     codexAuth: options.codexAuth,
+    resolveCodexProxyEnvironment:
+      options.resolveCodexProxyEnvironment ?? (() => Promise.resolve({})),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     claudeIsolatedAuth: options.claudeIsolatedAuth as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2315,7 +2319,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' },
+      resolveCodexProxyEnvironment: () =>
+        Promise.resolve({
+          HTTP_PROXY: 'http://proxy.example.test:3128',
+          HTTPS_PROXY: 'http://proxy.example.test:3128',
+          http_proxy: 'http://proxy.example.test:3128',
+          https_proxy: 'http://proxy.example.test:3128'
+        })
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
@@ -2354,6 +2365,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.env.NO_BROWSER).toBeUndefined()
     expect(backend.env.CODEX_PATH).toBe('/data/codex-managed/native/codex')
     expect(backend.env.CODEX_HOME).toBe(join(storageRoot, 'codex-subscription'))
+    expect(backend.env.HTTPS_PROXY).toBe('http://proxy.example.test:3128')
     expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
       'cli_auth_credentials_store = "file"\n'
     )

@@ -112,6 +112,27 @@ describe('createCodexAuthEnvironment', () => {
       CODEX_HOME: expect.stringMatching(/[\\/]data[\\/]codex-subscription$/)
     })
   })
+
+  it('applies the resolved system proxy to authentication sessions', () => {
+    expect(
+      createCodexAuthEnvironment(
+        'isolated',
+        '/data',
+        { PATH: 'bin' },
+        {
+          HTTP_PROXY: 'http://proxy.example.test:3128',
+          HTTPS_PROXY: 'http://proxy.example.test:3128',
+          http_proxy: 'http://proxy.example.test:3128',
+          https_proxy: 'http://proxy.example.test:3128'
+        }
+      )
+    ).toMatchObject({
+      HTTP_PROXY: 'http://proxy.example.test:3128',
+      HTTPS_PROXY: 'http://proxy.example.test:3128',
+      http_proxy: 'http://proxy.example.test:3128',
+      https_proxy: 'http://proxy.example.test:3128'
+    })
+  })
 })
 
 describe('importCodexAuthentication', () => {

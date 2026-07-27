@@ -10,6 +10,7 @@ import * as acp from '@agentclientprotocol/sdk'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { terminateProcessTree } from '../process-tree'
 import { augmentedPathEnv } from './shell-path'
+import type { SystemProxyEnvironment } from './system-proxy'
 
 export type CodexAuthMode = 'shared' | 'isolated'
 
@@ -39,6 +40,7 @@ export type CodexAuthLaunch = {
   nativePath?: string
   mode: CodexAuthMode
   storageRoot: string
+  proxyEnv?: SystemProxyEnvironment
 }
 
 type CodexAuthControllerOptions = {
@@ -421,12 +423,17 @@ const writePrivateFileAtomically = async (
 export const createCodexAuthEnvironment = (
   _mode: CodexAuthMode,
   storageRoot: string,
-  sourceEnv: NodeJS.ProcessEnv = process.env
+  sourceEnv: NodeJS.ProcessEnv = process.env,
+  proxyEnv: SystemProxyEnvironment = {}
 ): NodeJS.ProcessEnv => {
   const env = augmentedPathEnv(sourceEnv)
   for (const key of CODEX_ENV_KEYS) delete env[key]
 
-  return { ...env, CODEX_HOME: codexSubscriptionStorageDir(storageRoot) }
+  return {
+    ...env,
+    ...proxyEnv,
+    CODEX_HOME: codexSubscriptionStorageDir(storageRoot)
+  }
 }
 
 // Provider setup imports an existing login plus the safe, non-secret subset of its active provider
@@ -746,7 +753,8 @@ export const openCodexAuthSession = async ({
   adapterPath,
   nativePath,
   mode,
-  storageRoot
+  storageRoot,
+  proxyEnv
 }: CodexAuthLaunch): Promise<CodexAuthSession> => {
   await ensureCodexAuthHome(mode, storageRoot)
 
@@ -754,7 +762,7 @@ export const openCodexAuthSession = async ({
   const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(adapterPath)
   const command = isJavaScript ? process.execPath : needsShell ? `"${adapterPath}"` : adapterPath
   const args = isJavaScript ? [adapterPath] : []
-  const env = createCodexAuthEnvironment(mode, storageRoot)
+  const env = createCodexAuthEnvironment(mode, storageRoot, process.env, proxyEnv)
   if (isJavaScript) env.ELECTRON_RUN_AS_NODE = '1'
   if (nativePath) env.CODEX_PATH = nativePath
 

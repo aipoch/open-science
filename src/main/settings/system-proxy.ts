@@ -1,0 +1,92 @@
+import { session } from 'electron'
+
+// Resolve the same public origin the subscription contacts. Electron evaluates the user's native
+// proxy settings (including PAC rules) for this URL; the resulting endpoint can then be handed to
+// the native Codex process, which does not use Chromium's network stack itself.
+const CODEX_PROXY_TARGET_URL = 'https://chatgpt.com/'
+
+export type SystemProxyEnvironment = Partial<
+  Record<
+    'HTTP_PROXY' | 'HTTPS_PROXY' | 'http_proxy' | 'https_proxy' | 'ALL_PROXY' | 'all_proxy',
+    string
+  >
+>
+
+export type ResolveProxy = (url: string) => Promise<string>
+
+const proxyEnvironmentForDirective = (
+  kind: string,
+  address: string
+): SystemProxyEnvironment | undefined => {
+  const normalizedKind = kind.toUpperCase()
+  const scheme =
+    normalizedKind === 'HTTPS'
+      ? 'https'
+      : normalizedKind === 'SOCKS4'
+        ? 'socks4'
+        : normalizedKind === 'SOCKS' || normalizedKind === 'SOCKS5'
+          ? 'socks5'
+          : normalizedKind === 'PROXY' || normalizedKind === 'HTTP'
+            ? 'http'
+            : undefined
+  if (!scheme) return undefined
+
+  try {
+    const url = new URL(`${scheme}://${address}`)
+    if (
+      !url.hostname ||
+      url.username ||
+      url.password ||
+      (url.pathname !== '' && url.pathname !== '/') ||
+      url.search ||
+      url.hash
+    ) {
+      return undefined
+    }
+
+    // WHATWG URL reports the origin of non-special schemes such as socks5 as `null`; rebuild from
+    // the already-validated normalized host so every supported directive produces a usable URL.
+    const proxyUrl = `${scheme}://${url.host}`
+    if (scheme === 'socks4' || scheme === 'socks5') {
+      return { ALL_PROXY: proxyUrl, all_proxy: proxyUrl }
+    }
+
+    return {
+      HTTP_PROXY: proxyUrl,
+      HTTPS_PROXY: proxyUrl,
+      http_proxy: proxyUrl,
+      https_proxy: proxyUrl
+    }
+  } catch {
+    return undefined
+  }
+}
+
+// Electron returns a semicolon-delimited fallback list such as
+// `PROXY proxy.example:3128; DIRECT`. Preserve its order and use the first supported decision.
+export const parseSystemProxyRules = (rules: string): SystemProxyEnvironment => {
+  for (const rawDirective of rules.split(';')) {
+    const directive = rawDirective.trim()
+    if (!directive) continue
+
+    const [kind, ...addressParts] = directive.split(/\s+/)
+    if (kind.toUpperCase() === 'DIRECT') return {}
+
+    const environment = proxyEnvironmentForDirective(kind, addressParts.join(' '))
+    if (environment) return environment
+  }
+
+  return {}
+}
+
+export const resolveSystemProxyEnvironment = async (
+  resolveProxy: ResolveProxy = (url) => session.defaultSession.resolveProxy(url)
+): Promise<SystemProxyEnvironment> => {
+  try {
+    return parseSystemProxyRules(await resolveProxy(CODEX_PROXY_TARGET_URL))
+  } catch {
+    // A resolver failure must not block users whose network is reachable directly (or whose app
+    // process already carries proxy environment variables). The normal inherited environment stays.
+    return {}
+  }
+}
