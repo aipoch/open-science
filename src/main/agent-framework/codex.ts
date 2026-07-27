@@ -27,6 +27,7 @@ import type {
 } from './types'
 import { isCodexSubscriptionProvider } from '../../shared/settings'
 import { CODEX_VERSION } from '../settings/managed-codex'
+import { clearSystemProxyEnvironment } from '../settings/system-proxy'
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
 
 const CODEX_PROVIDER_ID = 'open-science'
@@ -275,6 +276,12 @@ const buildSpawnEnvironment = (
   const env = augmentedPathEnv(sourceEnv)
 
   for (const key of CODEX_ENV_KEYS) delete env[key]
+  // A subscription gets an authoritative proxy decision from Electron immediately before backend
+  // resolution. Drop every inherited proxy shape first so a stale ALL_PROXY/HTTP_PROXY cannot win
+  // over that decision (including DIRECT, represented by no proxy keys in input.env).
+  if (/[\\/]codex-subscription$/.test(input.env.CODEX_HOME ?? '')) {
+    clearSystemProxyEnvironment(env)
+  }
 
   return {
     ...env,

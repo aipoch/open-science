@@ -5,21 +5,24 @@ import { session } from 'electron'
 // the native Codex process, which does not use Chromium's network stack itself.
 const CODEX_PROXY_TARGET_URL = 'https://chatgpt.com/'
 
-export type SystemProxyEnvironment = Partial<
-  Record<
-    | 'HTTP_PROXY'
-    | 'HTTPS_PROXY'
-    | 'http_proxy'
-    | 'https_proxy'
-    | 'ALL_PROXY'
-    | 'all_proxy'
-    | 'NO_PROXY'
-    | 'no_proxy',
-    string
-  >
->
+export const SYSTEM_PROXY_ENV_KEYS = [
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'ALL_PROXY',
+  'all_proxy',
+  'NO_PROXY',
+  'no_proxy'
+] as const
+
+export type SystemProxyEnvironment = Partial<Record<(typeof SYSTEM_PROXY_ENV_KEYS)[number], string>>
 
 export type ResolveProxy = (url: string) => Promise<string>
+
+export const clearSystemProxyEnvironment = (env: NodeJS.ProcessEnv): void => {
+  for (const key of SYSTEM_PROXY_ENV_KEYS) delete env[key]
+}
 
 // Imported subscription routes are intentionally restricted to loopback. Keep those local calls
 // out of a resolved corporate/system proxy while covering the common spellings understood by

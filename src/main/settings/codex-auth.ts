@@ -10,7 +10,7 @@ import * as acp from '@agentclientprotocol/sdk'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { terminateProcessTree } from '../process-tree'
 import { augmentedPathEnv } from './shell-path'
-import type { SystemProxyEnvironment } from './system-proxy'
+import { clearSystemProxyEnvironment, type SystemProxyEnvironment } from './system-proxy'
 
 export type CodexAuthMode = 'shared' | 'isolated'
 
@@ -428,6 +428,7 @@ export const createCodexAuthEnvironment = (
 ): NodeJS.ProcessEnv => {
   const env = augmentedPathEnv(sourceEnv)
   for (const key of CODEX_ENV_KEYS) delete env[key]
+  clearSystemProxyEnvironment(env)
 
   return {
     ...env,

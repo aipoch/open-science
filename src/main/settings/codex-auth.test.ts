@@ -114,21 +114,25 @@ describe('createCodexAuthEnvironment', () => {
   })
 
   it('applies the resolved system proxy to authentication sessions', () => {
-    expect(
-      createCodexAuthEnvironment(
-        'isolated',
-        '/data',
-        { PATH: 'bin' },
-        {
-          HTTP_PROXY: 'http://proxy.example.test:3128',
-          HTTPS_PROXY: 'http://proxy.example.test:3128',
-          http_proxy: 'http://proxy.example.test:3128',
-          https_proxy: 'http://proxy.example.test:3128',
-          NO_PROXY: 'localhost,127.0.0.1,::1',
-          no_proxy: 'localhost,127.0.0.1,::1'
-        }
-      )
-    ).toMatchObject({
+    const env = createCodexAuthEnvironment(
+      'isolated',
+      '/data',
+      {
+        PATH: 'bin',
+        ALL_PROXY: 'socks5://stale-proxy.example.test:9050',
+        NO_PROXY: 'stale-bypass.example.test'
+      },
+      {
+        HTTP_PROXY: 'http://proxy.example.test:3128',
+        HTTPS_PROXY: 'http://proxy.example.test:3128',
+        http_proxy: 'http://proxy.example.test:3128',
+        https_proxy: 'http://proxy.example.test:3128',
+        NO_PROXY: 'localhost,127.0.0.1,::1',
+        no_proxy: 'localhost,127.0.0.1,::1'
+      }
+    )
+
+    expect(env).toMatchObject({
       HTTP_PROXY: 'http://proxy.example.test:3128',
       HTTPS_PROXY: 'http://proxy.example.test:3128',
       http_proxy: 'http://proxy.example.test:3128',
@@ -136,6 +140,8 @@ describe('createCodexAuthEnvironment', () => {
       NO_PROXY: 'localhost,127.0.0.1,::1',
       no_proxy: 'localhost,127.0.0.1,::1'
     })
+    expect(env.ALL_PROXY).toBeUndefined()
+    expect(env.NO_PROXY).not.toContain('stale-bypass.example.test')
   })
 })
 
