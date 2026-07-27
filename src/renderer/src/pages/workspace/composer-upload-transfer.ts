@@ -133,7 +133,12 @@ export const stageComposerFile = async (
     }
 
     assertNotAborted(options.signal)
-    return await api.finishTransfer({ transferId: request.transferId })
+    const attachment = await api.finishTransfer({ transferId: request.transferId })
+    if (options.signal?.aborted) {
+      await api.deleteUpload({ path: attachment.path }).catch(() => undefined)
+      throw abortError()
+    }
+    return attachment
   } catch (error) {
     await api.abortTransfer({ transferId: request.transferId }).catch(() => undefined)
     throw error

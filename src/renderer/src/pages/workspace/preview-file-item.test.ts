@@ -177,4 +177,22 @@ describe('preview file item helpers', () => {
       format: 'image'
     })
   })
+
+  it('uses mention mime type when the file name has no previewable extension', () => {
+    expect(
+      createPreviewFileItemFromMention(
+        createMentionPart({
+          id: 'extensionless-pdf',
+          name: 'research-paper',
+          path: '/workspace/results/research-paper',
+          mimeType: 'application/pdf'
+        }),
+        'session-1'
+      )
+    ).toMatchObject({
+      name: 'research-paper',
+      mimeType: 'application/pdf',
+      format: 'pdf'
+    })
+  })
 })

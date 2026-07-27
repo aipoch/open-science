@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
   buildDatasetAttachmentNotice,
+  buildDeferredMediaNotice,
   buildOversizedAttachmentNotice,
   formatBytes,
   imageAttachmentMimeType,
@@ -172,6 +173,20 @@ describe('binary dataset attachments', () => {
     expect(notice).toContain('sample')
     expect(notice).toContain('notebook')
     expect(notice).toContain('Do not load the whole file')
+  })
+})
+
+describe('buildDeferredMediaNotice', () => {
+  it.each([
+    ['image', 'microscopy.png'],
+    ['PDF', 'paper.pdf']
+  ] as const)('describes an oversized %s as an on-disk linked resource', (kind, name) => {
+    const notice = buildDeferredMediaNotice({ name, size: 3 * 1024 * 1024 * 1024, kind })
+
+    expect(notice).toContain(name)
+    expect(notice).toContain('3.0 GB')
+    expect(notice).toContain('too large for automatic in-memory processing')
+    expect(notice).toContain('available on disk via the linked resource below')
   })
 })
 

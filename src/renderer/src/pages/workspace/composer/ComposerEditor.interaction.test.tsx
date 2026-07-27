@@ -204,6 +204,32 @@ describe('ComposerEditor', () => {
     expect(document.body.querySelector('[aria-hidden="true"]')).toBeNull()
   })
 
+  it('refreshes an artifact chip when only its MIME type changes', () => {
+    const artifact = {
+      type: 'artifact' as const,
+      id: 'artifact-1',
+      name: 'research-paper',
+      path: '/workspace/research-paper',
+      source: 'artifact' as const
+    }
+    renderEditor({ doc: { nodes: [artifact] } })
+    expect(
+      editor()
+        .querySelector('[data-mention-type="artifact"]')
+        ?.getAttribute('data-mention-mime-type')
+    ).toBeNull()
+
+    renderEditor({
+      doc: { nodes: [{ ...artifact, mimeType: 'application/pdf' }] }
+    })
+
+    expect(
+      editor()
+        .querySelector('[data-mention-type="artifact"]')
+        ?.getAttribute('data-mention-mime-type')
+    ).toBe('application/pdf')
+  })
+
   it('emits the typed text as a doc on input', () => {
     const onDocChange = vi.fn()
     renderEditor({ onDocChange })

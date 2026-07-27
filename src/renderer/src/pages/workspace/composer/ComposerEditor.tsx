@@ -49,7 +49,12 @@ const nodesEqual = (a: ComposerNode[], b: ComposerNode[]): boolean => {
       return node.id === other.id && node.name === other.name
     }
     if (node.type === 'artifact' && other.type === 'artifact') {
-      if (node.id !== other.id || node.name !== other.name || node.source !== other.source) {
+      if (
+        node.id !== other.id ||
+        node.name !== other.name ||
+        node.source !== other.source ||
+        node.mimeType !== other.mimeType
+      ) {
         return false
       }
       if (node.source === 'linked-folder' && other.source === 'linked-folder') {

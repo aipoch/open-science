@@ -100,5 +100,6 @@ export const createPreviewFileItemFromMention = (
     sessionId,
     path: part.path,
     name: part.name,
+    mimeType: part.mimeType,
     source: part.source === 'upload' ? 'upload' : undefined
   })
