@@ -89,6 +89,25 @@ describe('ProviderForm field switching', () => {
     )
   })
 
+  it('renders the bundled Grok brand mark for the xAI provider', () => {
+    render(
+      createEmptyProviderFormValue({
+        type: 'official',
+        name: 'Grok (xAI)',
+        vendorId: 'xai',
+        apiEndpoint: 'responses'
+      })
+    )
+
+    const providerType = container.querySelector('[aria-label="Provider type"]')
+    const icon = providerType?.querySelector('img')
+
+    expect(providerType?.textContent).toContain('Grok (xAI)')
+    expect(icon?.getAttribute('src')).toMatch(/^data:image\/svg\+xml/)
+    expect(decodeURIComponent(icon?.getAttribute('src') ?? '')).toContain('<title>Grok</title>')
+    expect(container.textContent).toContain('grok-4.5')
+  })
+
   it('allows a custom gateway to select the Responses endpoint', () => {
     render(
       createEmptyProviderFormValue({

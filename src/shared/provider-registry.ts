@@ -17,6 +17,7 @@ import {
 export type OfficialVendorId =
   | 'openai'
   | 'anthropic'
+  | 'xai'
   | 'deepseek'
   | 'zhipu'
   | 'glmcodingplan'
@@ -156,6 +157,34 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     ],
     // Every current Claude model is vision-capable, including any surfaced by the live model-list
     // refresh above — so this is a blanket rule, not the four bundled ids.
+    multimodal: { allMultimodal: true }
+  },
+  {
+    id: 'xai',
+    label: 'Grok (xAI)',
+    // xAI documents four selectable effort values for Grok 4.5. Models with a different capability
+    // override this default below; models without a documented effort control stay unsupported.
+    reasoningEffort: 'low-medium-high-xhigh',
+    // xAI serves OpenAI-compatible Chat Completions and native Responses from the same versioned
+    // `/v1` base. Keep the bare API root in baseUrl for the official-vendor invariant and publish the
+    // exact versioned base separately so OpenCode, validation, and Codex do not append another `/v1`.
+    apiEndpoints: ['openai', 'responses'],
+    baseUrl: 'https://api.x.ai',
+    openaiBaseUrl: 'https://api.x.ai/v1',
+    apiKeyUrl: 'https://console.x.ai/team/default/api-keys',
+    // Curated from xAI's language-model catalog. The live /v1/models response also includes image,
+    // audio, and video generation models, so exposing refresh would pollute the chat-model picker.
+    // Experimental Grok 4.20 beta variants are intentionally omitted from the stable default list.
+    models: [
+      { id: 'grok-4.5', contextWindow: 500_000 },
+      {
+        id: 'grok-4.3',
+        contextWindow: 1_000_000,
+        reasoningEffort: 'none-low-medium-high-xhigh'
+      },
+      { id: 'grok-build-0.1', contextWindow: 256_000, reasoningEffort: 'unsupported' }
+    ],
+    // Every curated xAI language model accepts text and image input.
     multimodal: { allMultimodal: true }
   },
   {
