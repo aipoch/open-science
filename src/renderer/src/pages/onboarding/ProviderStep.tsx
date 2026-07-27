@@ -107,7 +107,7 @@ const ProviderStep = ({
   useEffect(() => {
     setFormValue((current) => {
       if (
-        current.providerSelectionTouched ||
+        current.providerFormTouched ||
         current.name ||
         current.baseUrl ||
         current.model ||
@@ -340,7 +340,9 @@ const ProviderStep = ({
           ) : null}
           <ProviderForm
             value={formValue}
-            onChange={(patch) => setFormValue((current) => ({ ...current, ...patch }))}
+            onChange={(patch) =>
+              setFormValue((current) => ({ ...current, ...patch, providerFormTouched: true }))
+            }
             errors={showProviderErrors ? formErrors : undefined}
             disabled={isSaving}
             encryptionAvailable={encryptionAvailable}

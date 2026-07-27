@@ -194,12 +194,7 @@ const ProviderForm = ({
         </div>
         <Select
           value={selectedKey}
-          onValueChange={(key) =>
-            onChange({
-              ...providerKindPatch(key, defaultCustomApiEndpoint),
-              providerSelectionTouched: true
-            })
-          }
+          onValueChange={(key) => onChange(providerKindPatch(key, defaultCustomApiEndpoint))}
         >
           <SelectTrigger aria-label="Provider type">
             <span className="flex items-center gap-2">
@@ -266,10 +261,7 @@ const ProviderForm = ({
               value={value.type}
               disabled={disabled}
               onValueChange={(type) =>
-                onChange({
-                  type: type as 'codex-shared' | 'codex-isolated',
-                  providerSelectionTouched: true
-                })
+                onChange({ type: type as 'codex-shared' | 'codex-isolated' })
               }
             >
               <SelectTrigger aria-label="Codex authentication" disabled={disabled}>
@@ -300,10 +292,7 @@ const ProviderForm = ({
                 value={value.type}
                 disabled={disabled}
                 onValueChange={(type) =>
-                  onChange({
-                    type: type as 'claude-shared' | 'claude-isolated',
-                    providerSelectionTouched: true
-                  })
+                  onChange({ type: type as 'claude-shared' | 'claude-isolated' })
                 }
               >
                 <SelectTrigger aria-label="Claude authentication" disabled={disabled}>
@@ -399,10 +388,7 @@ const ProviderForm = ({
               value={value.apiEndpoint}
               disabled={disabled}
               onValueChange={(apiEndpoint) =>
-                onChange({
-                  apiEndpoint: apiEndpoint as ProviderFormValue['apiEndpoint'],
-                  providerSelectionTouched: true
-                })
+                onChange({ apiEndpoint: apiEndpoint as ProviderFormValue['apiEndpoint'] })
               }
             >
               <SelectTrigger aria-label="API format" disabled={disabled}>

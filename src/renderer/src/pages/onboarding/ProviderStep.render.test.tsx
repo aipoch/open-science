@@ -138,13 +138,41 @@ describe('ProviderStep', () => {
     await renderStep({
       initialValue: {
         ...createEmptyProviderFormValue({ apiEndpoint: 'anthropic' }),
-        providerSelectionTouched: true
+        providerFormTouched: true
       }
     })
 
     expect(container.querySelector('[aria-label="API format"]')?.textContent).toContain(
       '/v1/messages'
     )
+  })
+
+  it('preserves any user-edited custom draft when the active framework changes', async () => {
+    await renderStep()
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Supports image input"]')?.click()
+    })
+    await act(async () => {
+      useSettingsStore.setState({
+        agentFrameworkId: 'codex',
+        agentFrameworks: [
+          {
+            id: 'codex',
+            displayName: 'Codex',
+            supportedApiTypes: ['responses'],
+            supportsSkills: true
+          }
+        ]
+      })
+    })
+
+    expect(container.querySelector('[aria-label="Provider type"]')?.textContent).toContain(
+      'Custom Gateway'
+    )
+    expect(
+      container.querySelector('[aria-label="Supports image input"]')?.getAttribute('data-state')
+    ).toBe('checked')
   })
 
   it('defers required-field errors until the first submit attempt', async () => {

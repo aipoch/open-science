@@ -29,9 +29,9 @@ export type ProviderFormValue = {
   // 'anthropic'. A custom provider serves exactly one endpoint (official providers take theirs from
   // the registry); it is stored as the single-entry apiEndpoints array.
   apiEndpoint: ChatApiEndpoint
-  // Form-only state: protects an explicit provider-kind/API-format choice when onboarding remounts.
-  // It is intentionally omitted from the persisted provider request.
-  providerSelectionTouched: boolean
+  // Form-only state: protects any user-edited onboarding draft when the step remounts or the active
+  // framework changes. It is intentionally omitted from the persisted provider request.
+  providerFormTouched: boolean
   supportsImageInput: boolean
   // Optional at rest for backwards compatibility; the form always materializes the five-level default.
   reasoningEffortPreset: ReasoningEffortPresetSetting
@@ -55,7 +55,7 @@ export const createEmptyProviderFormValue = (
   model: '',
   contextWindow: '',
   apiEndpoint: 'anthropic',
-  providerSelectionTouched: false,
+  providerFormTouched: false,
   supportsImageInput: false,
   reasoningEffortPreset: 'standard-5',
   reasoningEffortTransport: 'reasoning-effort',
