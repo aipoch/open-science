@@ -425,6 +425,72 @@ describe('importCodexAuthentication', () => {
       }
     }
   )
+
+  it.each(['http://localhost:1087/v1#', 'http://localhost:1087/v1?'])(
+    'does not import a loopback route with an empty URL delimiter at %s',
+    async (baseUrl) => {
+      const root = await mkdtemp(join(tmpdir(), 'codex-auth-empty-url-delimiter-reject-'))
+      const source = join(root, 'source')
+      const destination = join(root, 'destination')
+      try {
+        await mkdir(source, { recursive: true })
+        await writeFile(join(source, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+        await writeFile(
+          join(source, 'config.toml'),
+          [
+            'model_provider = "subscription-route"',
+            '',
+            '[model_providers.subscription-route]',
+            'name = "OpenAI"',
+            'requires_openai_auth = true',
+            'wire_api = "responses"',
+            `base_url = ${JSON.stringify(baseUrl)}`,
+            ''
+          ].join('\n')
+        )
+
+        await importCodexAuthentication(source, destination)
+
+        expect(existsSync(join(destination, 'config.toml'))).toBe(false)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each(['["model_providers"."subscription-route"]', "['model_providers'.'subscription-route']"])(
+    'imports a compatible route with quoted TOML table keys: %s',
+    async (tableHeader) => {
+      const root = await mkdtemp(join(tmpdir(), 'codex-auth-quoted-route-import-'))
+      const source = join(root, 'source')
+      const destination = join(root, 'destination')
+      try {
+        await mkdir(source, { recursive: true })
+        await writeFile(join(source, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+        await writeFile(
+          join(source, 'config.toml'),
+          [
+            'model_provider = "subscription-route"',
+            '',
+            tableHeader,
+            'name = "OpenAI"',
+            'requires_openai_auth = true',
+            'wire_api = "responses"',
+            'base_url = "http://127.0.0.1:1087/v1"',
+            ''
+          ].join('\n')
+        )
+
+        await importCodexAuthentication(source, destination)
+
+        await expect(readFile(join(destination, 'config.toml'), 'utf8')).resolves.toContain(
+          'base_url = "http://127.0.0.1:1087/v1"'
+        )
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
 })
 
 describe('CodexAuthController', () => {
@@ -647,6 +713,36 @@ describe('CodexAuthController', () => {
       message: 'Codex sign-in was cancelled.'
     })
     expect(vi.mocked(isolated.close)).toHaveBeenCalledOnce()
+  })
+
+  it('waits for a cancelled isolated session to close completely', async () => {
+    let finishClose!: () => void
+    const closeGate = new Promise<void>((resolve) => {
+      finishClose = resolve
+    })
+    const isolated = session({
+      status: vi.fn().mockResolvedValue({ type: 'unauthenticated' }),
+      authenticateChatGpt: vi.fn(() => new Promise<void>(() => undefined)),
+      close: vi.fn(() => closeGate)
+    })
+    const controller = new CodexAuthController({
+      openSession: vi.fn().mockResolvedValue(isolated),
+      loginTimeoutMs: 60_000
+    })
+
+    const pending = controller.loginIsolated()
+    await vi.waitFor(() => expect(isolated.authenticateChatGpt).toHaveBeenCalledOnce())
+    let cancellationSettled = false
+    const cancellation = Promise.resolve(controller.cancelLogin()).then(() => {
+      cancellationSettled = true
+    })
+    await vi.waitFor(() => expect(isolated.close).toHaveBeenCalledOnce())
+    await Promise.resolve()
+
+    expect(cancellationSettled).toBe(false)
+    finishClose()
+    await cancellation
+    await expect(pending).resolves.toMatchObject({ message: 'Codex sign-in was cancelled.' })
   })
 
   it('rejects a second concurrent sign-in without opening a second session', async () => {

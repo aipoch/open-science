@@ -83,6 +83,7 @@ import {
   isClaudeSubscriptionProvider,
   isClaudeSubscriptionProviderId,
   isCodexSubscriptionProvider,
+  isCodexSubscriptionProviderId,
   isProviderUsableByFramework,
   providerEndpoints,
   resolveCodexSubscriptionType,
@@ -2242,6 +2243,9 @@ class SettingsService {
       request.type === 'codex-shared' &&
       (existing?.codexAuthMode !== 'imported' || reimportCodexAuthentication)
     ) {
+      // The isolated adapter owns auth.json until its session has closed. Waiting here prevents a
+      // late browser-login write from replacing the credentials copied immediately below.
+      await this.codexAuth.cancelLogin()
       await importCodexAuthentication(
         this.userCodexDir,
         codexSubscriptionStorageDir(this.storageRoot)
@@ -2253,6 +2257,7 @@ class SettingsService {
         this.advanceProviderValidationGeneration(requestedId)
       }
     } else if (request.type === 'codex-isolated' && existing?.codexAuthMode !== 'isolated') {
+      if (existing) await this.codexAuth.cancelLogin()
       const codexHome = codexSubscriptionStorageDir(this.storageRoot)
       await clearImportedCodexProviderRoute(codexHome)
       await clearAppOwnedCodexAuthentication(codexHome)
@@ -2435,6 +2440,13 @@ class SettingsService {
   }
 
   async deleteProvider(id: string): Promise<SettingsSnapshot> {
+    if (isCodexSubscriptionProviderId(id)) {
+      await this.codexAuth.cancelLogin()
+      const codexHome = codexSubscriptionStorageDir(this.storageRoot)
+      await clearImportedCodexProviderRoute(codexHome)
+      await clearAppOwnedCodexAuthentication(codexHome)
+    }
+
     if (isClaudeSubscriptionProviderId(id)) {
       this.claudeIsolatedAuth.cancelLogin()
       this.claudeSharedAuth.cancelLogin()
@@ -2446,7 +2458,7 @@ class SettingsService {
   }
 
   cancelCodexLogin(): void {
-    this.codexAuth.cancelLogin()
+    void this.codexAuth.cancelLogin()
   }
 
   cancelClaudeLogin(): void {
@@ -2511,7 +2523,7 @@ class SettingsService {
     // token copied from the user's CLI profile, and remotely revoking it would sign the CLI out as
     // well. Removing only the file under the app-owned CODEX_HOME disconnects Open Science while
     // preserving every external Codex login.
-    this.codexAuth.cancelLogin()
+    await this.codexAuth.cancelLogin()
     try {
       // Legacy isolated homes could still point at the OS keychain. Pin the app-owned profile to the
       // file store before removing auth.json so future status/runtime checks cannot re-authenticate

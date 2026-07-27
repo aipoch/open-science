@@ -119,7 +119,7 @@ const parseTomlScalarAssignment = (
 
 const parseModelProviderTableId = (line: string): string | undefined => {
   const match = line.match(
-    /^\s*\[\s*model_providers\s*\.\s*("(?:\\.|[^"\\])*"|'[^']*'|[A-Za-z0-9_-]+)\s*\]\s*(?:#.*)?$/
+    /^\s*\[\s*(?:model_providers|"model_providers"|'model_providers')\s*\.\s*("(?:\\.|[^"\\])*"|'[^']*'|[A-Za-z0-9_-]+)\s*\]\s*(?:#.*)?$/
   )
   if (!match) return undefined
 
@@ -129,7 +129,7 @@ const parseModelProviderTableId = (line: string): string | undefined => {
 
 const parseModelProviderTableRootId = (line: string): string | undefined => {
   const match = line.match(
-    /^\s*\[\s*model_providers\s*\.\s*("(?:\\.|[^"\\])*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.|\s*\])/
+    /^\s*\[\s*(?:model_providers|"model_providers"|'model_providers')\s*\.\s*("(?:\\.|[^"\\])*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.|\s*\])/
   )
   if (!match) return undefined
 
@@ -221,6 +221,10 @@ const extractCodexProviderRoute = (configToml: string): ImportedCodexProviderRou
   }
 
   if (!baseUrl || wireApi !== 'responses' || requiresOpenAiAuth !== true) return undefined
+
+  // WHATWG URL normalizes an empty trailing query or fragment away, so inspect the raw value as
+  // well. Imported routes never need either delimiter, even when no query/hash content follows it.
+  if (baseUrl.includes('?') || baseUrl.includes('#')) return undefined
 
   try {
     const url = new URL(baseUrl)
@@ -589,7 +593,7 @@ export class CodexAuthController {
   private readonly openSession: (mode: CodexAuthMode) => Promise<CodexAuthSession>
   private readonly loginTimeoutMs: number
   private readonly statusTimeoutMs: number
-  private activeLogin: AbortController | undefined
+  private activeLogin: { abort: AbortController; completion: Promise<void> } | undefined
 
   constructor(options: CodexAuthControllerOptions) {
     this.openSession = options.openSession
@@ -603,14 +607,13 @@ export class CodexAuthController {
   // abort, timeout, and teardown. The caller supplies the AbortController so it can register it
   // synchronously before any await (loginIsolated stores it in activeLogin, before this async helper
   // is even entered, so its re-entrancy guard cannot race); `onAborted` maps a timeout/cancel into a
-  // result, and `onSettled` runs in the finally for caller-side teardown (clearing activeLogin).
+  // result.
   private async withBoundedSession(
     mode: CodexAuthMode,
     timeoutMs: number,
     run: (session: CodexAuthSession, signal: AbortSignal) => Promise<CodexAuthStatus>,
     onAborted: (reason: unknown) => CodexAuthStatus,
-    abort: AbortController = new AbortController(),
-    onSettled?: () => void
+    abort: AbortController = new AbortController()
   ): Promise<CodexAuthStatus> {
     const timeout = setTimeout(() => abort.abort('timeout'), timeoutMs)
     let authSession: CodexAuthSession | undefined
@@ -629,7 +632,6 @@ export class CodexAuthController {
       throw error
     } finally {
       clearTimeout(timeout)
-      onSettled?.()
       await authSession?.close()
     }
   }
@@ -674,9 +676,16 @@ export class CodexAuthController {
 
     // Claim the in-progress slot synchronously, in the same tick as the guard above and before the
     // async helper is entered, so two rapid calls cannot both pass the guard and open two browser
-    // sign-ins. cancelLogin aborts this same controller; onSettled clears the slot on teardown.
+    // sign-ins. cancelLogin aborts this same controller and waits for the session teardown below.
     const abort = new AbortController()
-    this.activeLogin = abort
+    let finishCompletion!: () => void
+    const activeLogin = {
+      abort,
+      completion: new Promise<void>((resolve) => {
+        finishCompletion = resolve
+      })
+    }
+    this.activeLogin = activeLogin
 
     return this.withBoundedSession(
       'isolated',
@@ -707,15 +716,19 @@ export class CodexAuthController {
             ? 'Codex sign-in timed out after five minutes.'
             : 'Codex sign-in was cancelled.'
       }),
-      abort,
-      () => {
-        this.activeLogin = undefined
-      }
-    )
+      abort
+    ).finally(() => {
+      if (this.activeLogin === activeLogin) this.activeLogin = undefined
+      finishCompletion()
+    })
   }
 
-  cancelLogin(): void {
-    this.activeLogin?.abort('cancelled')
+  async cancelLogin(): Promise<void> {
+    const activeLogin = this.activeLogin
+    if (!activeLogin) return
+
+    activeLogin.abort.abort('cancelled')
+    await activeLogin.completion
   }
 
   async logoutIsolated(): Promise<CodexAuthStatus> {

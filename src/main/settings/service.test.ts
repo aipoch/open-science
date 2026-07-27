@@ -396,6 +396,45 @@ describe('SettingsService: providers', () => {
     })
   })
 
+  it('deleting a Codex subscription removes only its app-owned authentication and route', async () => {
+    const userCodexDir = join(storageRoot, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"global"}}')
+    await writeFile(
+      join(userCodexDir, 'config.toml'),
+      [
+        'model_provider = "subscription-route"',
+        '',
+        '[model_providers.subscription-route]',
+        'name = "OpenAI"',
+        'requires_openai_auth = true',
+        'wire_api = "responses"',
+        'base_url = "http://127.0.0.1:1087/v1"',
+        ''
+      ].join('\n')
+    )
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn(),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
+    const service = createService(undefined, { codexAuth, userCodexDir })
+    await service.upsertProvider({ type: 'codex-shared' })
+    vi.mocked(codexAuth.cancelLogin).mockClear()
+
+    await service.deleteProvider(CODEX_SUBSCRIPTION_PROVIDER_ID)
+
+    expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.not.toContain('Open Science:')
+    await expect(readFile(join(userCodexDir, 'auth.json'), 'utf8')).resolves.toContain('global')
+  })
+
   it('refreshes an imported Codex profile only when re-import is explicitly requested', async () => {
     const userCodexDir = join(storageRoot, 'user-codex')
     await mkdir(userCodexDir, { recursive: true })
@@ -827,6 +866,34 @@ describe('SettingsService: providers', () => {
     expect(stored.lastValidationFailure).toBeUndefined()
   })
 
+  it('waits for isolated sign-in cancellation before importing authentication', async () => {
+    const userCodexDir = join(storageRoot, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"imported"}}')
+    let finishCancellation!: () => void
+    const cancellationGate = new Promise<void>((resolve) => {
+      finishCancellation = resolve
+    })
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn(),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(() => cancellationGate),
+      logoutIsolated: vi.fn()
+    }
+    const service = createService(undefined, { codexAuth, userCodexDir })
+    await service.upsertProvider({ type: 'codex-isolated' })
+    const appAuthPath = join(storageRoot, 'codex-subscription', 'auth.json')
+    await writeFile(appAuthPath, '{"tokens":{"access_token":"isolated"}}')
+
+    const switching = service.upsertProvider({ type: 'codex-shared' })
+    await vi.waitFor(() => expect(codexAuth.cancelLogin).toHaveBeenCalledOnce())
+    await expect(readFile(appAuthPath, 'utf8')).resolves.toContain('isolated')
+
+    finishCancellation()
+    await switching
+    await expect(readFile(appAuthPath, 'utf8')).resolves.toContain('imported')
+  })
+
   it('keeps the Codex account default when a subscription is activated without a model', async () => {
     const service = createService()
     const provider = (await service.upsertProvider({ type: 'codex-shared' })).providers[0]
@@ -903,6 +970,7 @@ describe('SettingsService: providers', () => {
     }
     const service = createService(undefined, { codexAuth })
     await service.upsertProvider({ type: 'codex-shared' })
+    codexAuth.cancelLogin.mockClear()
     const appAuthPath = join(storageRoot, 'codex-subscription', 'auth.json')
 
     const result = await service.logoutIsolatedCodex()
