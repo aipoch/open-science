@@ -57,6 +57,7 @@ export type MessagePart =
       name: string
       path: string
       source: 'upload' | 'artifact'
+      mimeType?: string
       versionId?: string
     }
 
@@ -574,9 +575,14 @@ const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
       if (!id || !name || !path || (source !== 'upload' && source !== 'artifact')) return undefined
 
       const sanitized: MessagePart = { type: 'artifact', id, name, path, source }
+      const mimeType = asString(part.mimeType)
       const versionId = asString(part.versionId)
 
-      return versionId ? { ...sanitized, versionId } : sanitized
+      return {
+        ...sanitized,
+        ...(mimeType ? { mimeType } : {}),
+        ...(versionId ? { versionId } : {})
+      }
     }
     default:
       return undefined

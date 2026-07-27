@@ -201,6 +201,7 @@ export const ComposerEditor = ({
       name: ref.name,
       path: ref.path,
       source: ref.source,
+      mimeType: ref.mimeType,
       versionId: ref.versionId
     })
     artifactMention.cancel()

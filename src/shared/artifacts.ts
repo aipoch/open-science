@@ -25,6 +25,19 @@ export type ArtifactReference = {
   versionId?: string
 }
 
+// Reserved reference shape for future user-linked folders. Persist only a granted root id and a
+// relative path; never expose or accept an arbitrary renderer-provided absolute path.
+export type LinkedFolderFileReference = {
+  id: string
+  name: string
+  source: 'linked-folder'
+  rootId: string
+  relativePath: string
+  mimeType?: string
+}
+
+export type FileReference = ArtifactReference | LinkedFolderFileReference
+
 export type ArtifactWriteEncoding = 'utf8' | 'base64'
 
 export type ArtifactWriteSource =

@@ -68,8 +68,11 @@ import { describePromptError, isProviderPromptError } from './prompt-error'
 import {
   ATTACHMENT_PREVIEW_BYTES,
   MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
+  buildDatasetAttachmentNotice,
+  buildDeferredMediaNotice,
   buildOversizedAttachmentNotice,
   imageAttachmentMimeType,
+  isDatasetAttachment,
   isTabularAttachment,
   isTextLikeAttachment,
   mimeEssence
@@ -118,6 +121,10 @@ import type { ResponsesBridgeSkillCandidate } from '../settings/responses-bridge
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
 import { CodexSkillActivityProjector } from './codex-skill-activity'
+import {
+  createManagedFileReferenceResolver,
+  type FileReferenceResolver
+} from './file-reference-resolver'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
@@ -130,6 +137,8 @@ import {
   consumeInlineImageBudget,
   extractPdfText,
   ImageContentError,
+  MAX_AUTO_EXTRACT_PDF_BYTES,
+  MAX_AUTO_PROCESS_IMAGE_BYTES,
   MAX_SESSION_INLINE_IMAGE_BYTES,
   type InlineImageBudget
 } from '../uploads/attachment-media'
@@ -738,6 +747,7 @@ class AcpRuntime {
   private readonly artifactRepository: ArtifactRepository | undefined
   private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
   private readonly uploadRepository: UploadRepository | undefined
+  private readonly fileReferenceResolver: FileReferenceResolver
   private readonly artifactSessionIds = new Map<string, string>()
   // app session id -> the notebook routing id registered with the http MCP host, so it can be
   // unregistered on session delete (the artifact routing id is tracked in artifactSessionIds).
@@ -780,6 +790,10 @@ class AcpRuntime {
       ? (options.artifacts.runRegistry ?? new ArtifactRunRegistry())
       : undefined
     this.uploadRepository = options.uploads?.repository
+    this.fileReferenceResolver = createManagedFileReferenceResolver({
+      uploads: this.uploadRepository,
+      artifacts: this.artifactRepository
+    })
     this.permissionBroker = new AcpPermissionBroker((request) => {
       // Relabel to the app-facing id when this session was adopted onto a replaced agent.
       const sessionId = this.agentToAppSessionId.get(request.sessionId) ?? request.sessionId
@@ -2963,55 +2977,19 @@ class AcpRuntime {
     sessionId: string,
     reference: ArtifactReference
   ): Promise<ContentBlock[]> {
-    const { filePath, allowSkillImportReference } = await this.resolveReferencedArtifactPath(
-      sessionId,
-      reference
-    )
-    const { size } = await stat(filePath)
+    const resolvedReference = await this.fileReferenceResolver.resolve({ sessionId }, reference)
 
     return this.buildFileContentBlock({
       sessionId,
-      absolutePath: filePath,
-      uri: pathToFileURL(filePath).href,
-      name: reference.name,
-      mimeType: reference.mimeType,
-      size,
+      absolutePath: resolvedReference.absolutePath,
+      uri: resolvedReference.uri,
+      name: resolvedReference.name,
+      mimeType: resolvedReference.mimeType,
+      size: resolvedReference.size,
       // The import tool currently owns only session uploads. Artifact-store paths remain ordinary
       // references so the prompt never advertises a URI that main will reject at the trust boundary.
-      allowSkillImportReference
+      allowSkillImportReference: resolvedReference.allowSkillImportReference
     })
-  }
-
-  // Resolves a referenced file through the managed-path validator for its owning repository.
-  private async resolveReferencedArtifactPath(
-    sessionId: string,
-    reference: ArtifactReference
-  ): Promise<{ filePath: string; allowSkillImportReference: boolean }> {
-    if (reference.source === 'upload') {
-      if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
-      try {
-        return {
-          filePath: await this.uploadRepository.resolveSessionUploadPath(sessionId, {
-            path: reference.path
-          }),
-          allowSkillImportReference: true
-        }
-      } catch {
-        // An explicit `@` reference grants this exact managed upload path for the active turn. The
-        // importer still requires the matching turn token and URI allowlist entry, and rejects every
-        // unreferenced cross-session path through its normal ownership check.
-        return {
-          filePath: await this.uploadRepository.resolveManagedUploadPath({ path: reference.path }),
-          allowSkillImportReference: true
-        }
-      }
-    }
-
-    if (!this.artifactRepository) throw new Error('Artifact storage is not configured.')
-    return {
-      filePath: await this.artifactRepository.resolveManagedFilePath({ path: reference.path }),
-      allowSkillImportReference: false
-    }
   }
 
   // Builds the richest ACP content block that is safe for a resolved file, shared by uploads and
@@ -3085,6 +3063,15 @@ class AcpRuntime {
     const imageMimeType = imageAttachmentMimeType(name, mimeType)
 
     if (imageMimeType) {
+      if (size > MAX_AUTO_PROCESS_IMAGE_BYTES) {
+        return [
+          {
+            type: 'text',
+            text: buildDeferredMediaNotice({ name, size, kind: 'image' })
+          },
+          { type: 'resource_link', uri, name, title: name, mimeType: imageMimeType, size }
+        ]
+      }
       const { data, mimeType: outMimeType } = await buildImageContentData(
         absolutePath,
         imageMimeType,
@@ -3109,6 +3096,15 @@ class AcpRuntime {
     // PDFs are never inlined as base64 (a 20MB file overflows the 32MB request limit); instead we
     // extract selectable text so the model reads readable content. Page images are a future option.
     if (this.isPdfFile(name, mimeType)) {
+      if (size > MAX_AUTO_EXTRACT_PDF_BYTES) {
+        return [
+          {
+            type: 'text',
+            text: buildDeferredMediaNotice({ name, size, kind: 'PDF' })
+          },
+          { type: 'resource_link', uri, name, title: name, mimeType: 'application/pdf', size }
+        ]
+      }
       return [await this.createPdfContentBlock(name, absolutePath, uri)]
     }
 
@@ -3143,6 +3139,13 @@ class AcpRuntime {
             tabular: isTabularAttachment(name, mimeType)
           })
         },
+        { type: 'resource_link', uri, name, title: name, mimeType, size }
+      ]
+    }
+
+    if (isDatasetAttachment(name, mimeType)) {
+      return [
+        { type: 'text', text: buildDatasetAttachmentNotice({ name, size }) },
         { type: 'resource_link', uri, name, title: name, mimeType, size }
       ]
     }

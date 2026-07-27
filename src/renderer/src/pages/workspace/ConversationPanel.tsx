@@ -41,6 +41,7 @@ import type { ChatSession } from '@/stores/session-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
 
 import { ComposerEditor } from './composer/ComposerEditor'
+import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { ComposerContextUsage } from './ComposerContextUsage'
@@ -83,7 +84,10 @@ const formatAttachmentSize = (size: number): string => {
 
   if (kilobytes < 1024) return `${Math.round(kilobytes)} KB`
 
-  return `${Math.round(kilobytes / 1024)} MB`
+  const megabytes = kilobytes / 1024
+  if (megabytes < 1024) return `${Math.round(megabytes)} MB`
+
+  return `${(megabytes / 1024).toFixed(1)} GB`
 }
 
 type ConversationPanelProps = {
@@ -94,6 +98,7 @@ type ConversationPanelProps = {
   actionError: string | null
   isPreviewPanelCollapsed: boolean
   attachments: UploadedAttachment[]
+  attachmentTransfers: ComposerUploadTransfer[]
   isUploadingAttachments: boolean
   notebookReference: NotebookSessionReference | undefined
   pendingPermissions: AcpPermissionRequest[]
@@ -109,6 +114,7 @@ type ConversationPanelProps = {
   onSendMessage: (forcedSkillIds: string[]) => void
   onStageAttachmentFiles: (files: File[]) => void
   onRemoveAttachment: (attachment: UploadedAttachment) => void
+  onCancelAttachmentTransfer: (transfer: ComposerUploadTransfer) => void
   onCancelRun: () => void
   onResumeSession: () => Promise<void>
   onOpenNotebook: (notebook: NotebookSessionReference) => void
@@ -142,6 +148,7 @@ const ConversationPanel = ({
   actionError,
   isPreviewPanelCollapsed,
   attachments,
+  attachmentTransfers,
   isUploadingAttachments,
   notebookReference,
   pendingPermissions,
@@ -155,6 +162,7 @@ const ConversationPanel = ({
   onSendMessage,
   onStageAttachmentFiles,
   onRemoveAttachment,
+  onCancelAttachmentTransfer,
   onCancelRun,
   onResumeSession,
   onOpenNotebook,
@@ -209,7 +217,7 @@ const ConversationPanel = ({
 
   // Drag-and-drop shares the same staging callback as the picker and paste paths.
   const { isDragging, dropZoneProps } = useFileDropZone({
-    enabled: canEditDraft,
+    enabled: canEditDraft && !isUploadingAttachments,
     onFiles: onStageAttachmentFiles
   })
 
@@ -233,7 +241,7 @@ const ConversationPanel = ({
 
   // Treats pasted clipboard files exactly like selected files, then keeps text paste behavior intact.
   const handleMessageDraftPaste = (event: React.ClipboardEvent<HTMLDivElement>): void => {
-    if (!canEditDraft) return
+    if (!canEditDraft || isUploadingAttachments) return
 
     const files = Array.from(event.clipboardData.files)
 
@@ -389,7 +397,7 @@ const ConversationPanel = ({
                       <FileDropOverlay label="Drop files to attach" className="rounded-2xl" />
                     ) : null}
                     <div className="flex flex-col gap-2">
-                      {attachments.length > 0 ? (
+                      {attachments.length > 0 || attachmentTransfers.length > 0 ? (
                         <div className="flex max-h-[92px] flex-wrap gap-2 overflow-y-auto border-b border-border-200 pb-2">
                           {/* Composer attachments remain removable until the prompt is submitted. */}
                           {attachments.map((attachment) => {
@@ -416,9 +424,81 @@ const ConversationPanel = ({
                                 <button
                                   type="button"
                                   className={attachmentRemoveButtonClassName}
-                                  disabled={!canEditDraft || isUploadingAttachments}
+                                  disabled={!canEditDraft}
                                   aria-label={`Remove attachment ${attachmentName}`}
                                   onClick={() => onRemoveAttachment(attachment)}
+                                >
+                                  <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+                                </button>
+                              </div>
+                            )
+                          })}
+                          {attachmentTransfers.map((transfer) => {
+                            const AttachmentIcon = transfer.mimeType?.startsWith('image/')
+                              ? ImageIcon
+                              : FileText
+                            const percent =
+                              transfer.totalBytes === 0
+                                ? 100
+                                : Math.min(
+                                    100,
+                                    Math.round((transfer.receivedBytes / transfer.totalBytes) * 100)
+                                  )
+                            const statusLabel =
+                              transfer.status === 'queued'
+                                ? 'Queued'
+                                : transfer.status === 'cancelling'
+                                  ? 'Cancelling…'
+                                  : transfer.status === 'error'
+                                    ? transfer.error || 'Upload failed'
+                                    : `${percent}% of ${formatAttachmentSize(transfer.totalBytes)}`
+
+                            return (
+                              <div
+                                key={transfer.transferId}
+                                className={`${attachmentChipClassName} h-11`}
+                              >
+                                <AttachmentIcon
+                                  className="size-4 shrink-0 text-text-300"
+                                  strokeWidth={2}
+                                  aria-hidden="true"
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate text-[12px] leading-4">
+                                    {transfer.name}
+                                  </div>
+                                  <div
+                                    className={`truncate text-[11px] leading-3 ${
+                                      transfer.status === 'error' ? 'text-red-600' : 'text-text-300'
+                                    }`}
+                                    title={statusLabel}
+                                  >
+                                    {statusLabel}
+                                  </div>
+                                  {transfer.status === 'uploading' ? (
+                                    <div
+                                      className="mt-1 h-0.5 overflow-hidden rounded-full bg-bg-300"
+                                      role="progressbar"
+                                      aria-label={`Uploading ${transfer.name}`}
+                                      aria-valuemin={0}
+                                      aria-valuemax={100}
+                                      aria-valuenow={percent}
+                                    >
+                                      <div
+                                        className="h-full rounded-full bg-primary transition-[width]"
+                                        style={{ width: `${percent}%` }}
+                                      />
+                                    </div>
+                                  ) : null}
+                                </div>
+                                <button
+                                  type="button"
+                                  className={attachmentRemoveButtonClassName}
+                                  disabled={!canEditDraft || transfer.status === 'cancelling'}
+                                  aria-label={`${
+                                    transfer.status === 'error' ? 'Remove failed' : 'Cancel'
+                                  } attachment ${transfer.name}`}
+                                  onClick={() => onCancelAttachmentTransfer(transfer)}
                                 >
                                   <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
                                 </button>
@@ -436,7 +516,7 @@ const ConversationPanel = ({
                           onSubmit={handleSubmit}
                           onPaste={handleMessageDraftPaste}
                           disabled={!canEditDraft}
-                          placeholder="Ask anything — / for skills, @ for artifacts"
+                          placeholder="Ask anything — / for skills, @ for files"
                           ariaLabel="Ask anything"
                         />
                       </div>

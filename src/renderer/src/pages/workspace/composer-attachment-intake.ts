@@ -6,7 +6,12 @@ export type ComposerAttachmentIntake = {
   error: string | null
 }
 
-const MB_LIMIT = MAX_UPLOAD_FILE_BYTES / (1024 * 1024)
+const formatLimit = (bytes: number): string => {
+  const gibibytes = bytes / (1024 * 1024 * 1024)
+  if (Number.isInteger(gibibytes)) return `${gibibytes} GB`
+
+  return `${Math.round(bytes / (1024 * 1024))} MB`
+}
 
 // Applies per-file size and total count limits before any file is read or uploaded.
 export const planComposerAttachmentIntake = (
@@ -25,7 +30,7 @@ export const planComposerAttachmentIntake = (
 
   const oversizedError =
     oversized.length > 0
-      ? `${oversized.map((file) => file.name).join(', ')} exceeds the ${MB_LIMIT} MB limit`
+      ? `${oversized.map((file) => file.name).join(', ')} exceeds the ${formatLimit(MAX_UPLOAD_FILE_BYTES)} limit`
       : null
 
   return { accepted: withinSize, error: oversizedError }

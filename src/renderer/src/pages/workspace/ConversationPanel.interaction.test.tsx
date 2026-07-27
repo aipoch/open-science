@@ -112,6 +112,7 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         actionError={null}
         isPreviewPanelCollapsed={false}
         attachments={[]}
+        attachmentTransfers={[]}
         isUploadingAttachments={false}
         notebookReference={undefined}
         pendingPermissions={[]}
@@ -124,6 +125,7 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         onSendMessage={vi.fn()}
         onStageAttachmentFiles={onStageAttachmentFiles}
         onRemoveAttachment={vi.fn()}
+        onCancelAttachmentTransfer={vi.fn()}
         onCancelRun={vi.fn()}
         onResumeSession={vi.fn().mockResolvedValue(undefined)}
         onOpenNotebook={vi.fn()}
@@ -197,6 +199,34 @@ afterEach(() => {
 })
 
 describe('ConversationPanel composer intake', () => {
+  it('shows per-file progress and cancels only the selected transfer', () => {
+    const onCancelAttachmentTransfer = vi.fn()
+    const transfer = {
+      transferId: 'transfer-1',
+      name: 'large.csv',
+      mimeType: 'text/csv',
+      receivedBytes: 25,
+      totalBytes: 100,
+      status: 'uploading' as const
+    }
+    renderPanel({
+      attachmentTransfers: [transfer],
+      isUploadingAttachments: true,
+      onCancelAttachmentTransfer
+    })
+
+    const progress = container.querySelector('[role="progressbar"]')
+    const cancel = container.querySelector(
+      'button[aria-label="Cancel attachment large.csv"]'
+    ) as HTMLButtonElement | null
+
+    expect(progress?.getAttribute('aria-valuenow')).toBe('25')
+    expect(container.textContent).toContain('25% of 100 B')
+    expect(cancel).not.toBeNull()
+    act(() => cancel?.click())
+    expect(onCancelAttachmentTransfer).toHaveBeenCalledWith(transfer)
+  })
+
   it('stages a pasted non-image file', () => {
     renderPanel()
     const pdf = new File(['%PDF'], 'report.pdf', { type: 'application/pdf' })

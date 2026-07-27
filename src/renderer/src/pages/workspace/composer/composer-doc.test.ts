@@ -31,7 +31,14 @@ describe('docToText', () => {
     const doc: ComposerDoc = {
       nodes: [
         { type: 'text', text: 'compare ' },
-        { type: 'artifact', id: 'a1', name: 'fig1.png', path: '/p/fig1.png', source: 'artifact' },
+        {
+          type: 'artifact',
+          id: 'a1',
+          name: 'fig1.png',
+          path: '/p/fig1.png',
+          source: 'artifact',
+          mimeType: 'image/png'
+        },
         { type: 'text', text: ' and ' },
         {
           type: 'artifact',
@@ -72,7 +79,14 @@ describe('docToArtifactRefs', () => {
   it('collects artifact refs in order and de-duplicates by path', () => {
     const doc: ComposerDoc = {
       nodes: [
-        { type: 'artifact', id: 'a1', name: 'fig1.png', path: '/p/fig1.png', source: 'artifact' },
+        {
+          type: 'artifact',
+          id: 'a1',
+          name: 'fig1.png',
+          path: '/p/fig1.png',
+          source: 'artifact',
+          mimeType: 'image/png'
+        },
         { type: 'text', text: ' and ' },
         { type: 'artifact', id: 'u1', name: 'notes.md', path: '/u/notes.md', source: 'upload' },
         // Same path as the first, mentioned again with a different chip id — collapsed.
@@ -80,8 +94,22 @@ describe('docToArtifactRefs', () => {
       ]
     }
     expect(docToArtifactRefs(doc)).toEqual([
-      { id: 'a1', name: 'fig1.png', path: '/p/fig1.png', source: 'artifact', versionId: undefined },
-      { id: 'u1', name: 'notes.md', path: '/u/notes.md', source: 'upload', versionId: undefined }
+      {
+        id: 'a1',
+        name: 'fig1.png',
+        path: '/p/fig1.png',
+        source: 'artifact',
+        mimeType: 'image/png',
+        versionId: undefined
+      },
+      {
+        id: 'u1',
+        name: 'notes.md',
+        path: '/u/notes.md',
+        source: 'upload',
+        mimeType: undefined,
+        versionId: undefined
+      }
     ])
   })
 

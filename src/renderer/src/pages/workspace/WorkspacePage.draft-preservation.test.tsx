@@ -121,7 +121,7 @@ const createAttachment = (id: string): UploadedAttachment => ({
 const textDoc = (text: string): ComposerDoc => ({ nodes: [{ type: 'text', text }] })
 
 const deleteUpload = vi.fn(() => Promise.resolve())
-const stageFiles = vi.fn()
+const stageLocalFile = vi.fn()
 
 describe('WorkspacePage draft preservation', () => {
   let container: HTMLDivElement
@@ -169,7 +169,13 @@ describe('WorkspacePage draft preservation', () => {
       },
       uploads: {
         deleteUpload,
-        stageFiles
+        stageLocalFile,
+        beginTransfer: vi.fn(),
+        appendTransfer: vi.fn(),
+        getTransferStatus: vi.fn(),
+        finishTransfer: vi.fn(),
+        abortTransfer: vi.fn(() => Promise.resolve()),
+        onTransferProgress: vi.fn(() => vi.fn())
       },
       reviewer: {
         onUpdated: vi.fn(() => vi.fn()),
@@ -202,7 +208,7 @@ describe('WorkspacePage draft preservation', () => {
 
   // Drives the composer's real staging pipeline so a per-session attachment lands in page state.
   const stageAttachment = async (attachment: UploadedAttachment): Promise<void> => {
-    stageFiles.mockResolvedValueOnce([attachment])
+    stageLocalFile.mockResolvedValueOnce(attachment)
     await act(async () => {
       conversationProps.onStageAttachmentFiles([
         new File(['data'], `${attachment.id}.txt`, { type: 'text/plain' })

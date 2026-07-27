@@ -1,9 +1,9 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { MAX_UPLOAD_FILE_BYTES, PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
+import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { UploadRepository } from './repository'
 
 let storageRoot: string | undefined
@@ -21,6 +21,37 @@ afterEach(async () => {
 })
 
 describe('upload repository', () => {
+  it('stages a local file by path without loading its bytes into the renderer', async () => {
+    const root = await createStorageRoot()
+    const repository = new UploadRepository(root)
+    const sourcePath = join(root, 'dataset.csv')
+    const content = Buffer.from('sample,value\na,1\nb,2\n')
+    const progress: number[] = []
+
+    await writeFile(sourcePath, content)
+
+    const attachment = await repository.stageLocalFile(
+      {
+        transferId: 'local-transfer-1',
+        sourcePath,
+        name: 'dataset.csv',
+        mimeType: 'text/csv',
+        size: content.byteLength
+      },
+      ({ receivedBytes }) => progress.push(receivedBytes)
+    )
+
+    expect(attachment).toMatchObject({
+      sessionId: PENDING_UPLOAD_SESSION_ID,
+      name: 'dataset.csv',
+      originalName: 'dataset.csv',
+      mimeType: 'text/csv',
+      size: content.byteLength
+    })
+    await expect(readFile(attachment.path)).resolves.toEqual(content)
+    expect(progress.at(-1)).toBe(content.byteLength)
+  })
+
   it('stages uploaded files under the default project pending directory', async () => {
     const root = await createStorageRoot()
     const repository = new UploadRepository(root)
@@ -51,10 +82,80 @@ describe('upload repository', () => {
     await expect(readFile(attachment.path, 'utf8')).resolves.toBe('png-bytes')
   })
 
-  it('rejects staging a file whose content exceeds the size limit', async () => {
+  it('stages pathless files in bounded, offset-checked chunks', async () => {
     const root = await createStorageRoot()
     const repository = new UploadRepository(root)
-    const oversized = Buffer.alloc(MAX_UPLOAD_FILE_BYTES + 1)
+    const content = Buffer.from('sample,value\na,1\nb,2\n')
+
+    await repository.beginTransfer({
+      transferId: 'chunk-transfer-1',
+      name: 'dataset.csv',
+      mimeType: 'text/csv',
+      size: content.byteLength
+    })
+    await repository.appendTransfer({
+      transferId: 'chunk-transfer-1',
+      offset: 0,
+      chunk: content.subarray(0, 10)
+    })
+
+    await expect(
+      repository.appendTransfer({
+        transferId: 'chunk-transfer-1',
+        offset: 0,
+        chunk: content.subarray(10)
+      })
+    ).rejects.toThrow(/offset/i)
+
+    await repository.appendTransfer({
+      transferId: 'chunk-transfer-1',
+      offset: 10,
+      chunk: content.subarray(10)
+    })
+    await expect(repository.getTransferStatus({ transferId: 'chunk-transfer-1' })).resolves.toEqual(
+      {
+        transferId: 'chunk-transfer-1',
+        name: 'dataset.csv',
+        receivedBytes: content.byteLength,
+        totalBytes: content.byteLength
+      }
+    )
+
+    const attachment = await repository.finishTransfer({ transferId: 'chunk-transfer-1' })
+
+    await expect(readFile(attachment.path)).resolves.toEqual(content)
+    await expect(
+      repository.getTransferStatus({ transferId: 'chunk-transfer-1' })
+    ).resolves.toBeNull()
+  })
+
+  it('aborts chunk transfers and clears crash-orphaned partial files', async () => {
+    const root = await createStorageRoot()
+    const stagingDir = join(root, 'uploads', 'default-project', '.staging')
+    const stalePath = join(stagingDir, 'stale.part')
+    await mkdir(stagingDir, { recursive: true })
+    await writeFile(stalePath, 'orphan')
+    const repository = new UploadRepository(root)
+
+    await repository.beginTransfer({ transferId: 'cancel-me', name: 'data.csv', size: 2 })
+    await expect(
+      repository.appendTransfer({
+        transferId: 'cancel-me',
+        offset: 0,
+        chunk: new Uint8Array()
+      })
+    ).rejects.toThrow(/must not be empty/i)
+    await repository.abortTransfer({ transferId: 'cancel-me' })
+
+    await expect(repository.getTransferStatus({ transferId: 'cancel-me' })).resolves.toBeNull()
+    await expect(stat(join(stagingDir, 'cancel-me.part'))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(stalePath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rejects staging a file whose content exceeds the size limit', async () => {
+    const root = await createStorageRoot()
+    const repository = new UploadRepository(root, { maxFileBytes: 16 })
+    const oversized = Buffer.alloc(17)
 
     await expect(
       repository.stageFiles({

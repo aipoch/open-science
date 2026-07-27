@@ -40,7 +40,7 @@ const runtime = vi.hoisted(() => ({
   respondToPermission: vi.fn()
 }))
 
-const stageFiles = vi.hoisted(() => vi.fn())
+const stageLocalFile = vi.hoisted(() => vi.fn())
 
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanelGroup: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
@@ -162,7 +162,16 @@ describe('WorkspacePage image attachment gating', () => {
         load: vi.fn(() => Promise.resolve(undefined)),
         save: vi.fn(() => Promise.resolve())
       },
-      uploads: { deleteUpload: vi.fn(), stageFiles },
+      uploads: {
+        stageLocalFile,
+        beginTransfer: vi.fn(),
+        appendTransfer: vi.fn(),
+        getTransferStatus: vi.fn(),
+        finishTransfer: vi.fn(),
+        abortTransfer: vi.fn(() => Promise.resolve()),
+        deleteUpload: vi.fn(() => Promise.resolve()),
+        onTransferProgress: vi.fn(() => vi.fn())
+      },
       reviewer: {
         onUpdated: vi.fn(() => vi.fn()),
         onSuppressNextAutoReview: vi.fn(() => vi.fn()),
@@ -203,7 +212,7 @@ describe('WorkspacePage image attachment gating', () => {
       mimeType: 'image/png',
       size: 3
     }
-    stageFiles.mockResolvedValue([staged])
+    stageLocalFile.mockResolvedValue(staged)
     runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a' })
 
     await renderPage()
@@ -212,11 +221,10 @@ describe('WorkspacePage image attachment gating', () => {
       conversationProps.onStageAttachmentFiles([imageFile()])
     })
 
-    // The image is read (FileReader) and forwarded to the upload IPC, then surfaced as a composer
-    // attachment — wait on that observable state instead of a fixed tick so the async pipeline settles.
+    // The image takes the native-path upload adapter and then surfaces as a composer attachment.
     await act(async () => {
       await vi.waitFor(() => {
-        expect(stageFiles).toHaveBeenCalledTimes(1)
+        expect(stageLocalFile).toHaveBeenCalledTimes(1)
         expect(conversationProps.attachments).toEqual([staged])
       })
     })
@@ -245,7 +253,7 @@ describe('WorkspacePage image attachment gating', () => {
     await act(async () => {
       await vi.waitFor(() => expect(conversationProps.actionError).toBe(IMAGE_BLOCKED_MESSAGE))
     })
-    expect(stageFiles).not.toHaveBeenCalled()
+    expect(stageLocalFile).not.toHaveBeenCalled()
     expect(conversationProps.attachments).toEqual([])
   })
 
@@ -261,7 +269,7 @@ describe('WorkspacePage image attachment gating', () => {
       mimeType: 'image/png',
       size: 3
     }
-    stageFiles.mockResolvedValue([staged])
+    stageLocalFile.mockResolvedValue(staged)
 
     await renderPage()
 

@@ -13,6 +13,7 @@ export type ComposerArtifactNode = {
   name: string
   path: string
   source: 'upload' | 'artifact'
+  mimeType?: string
   versionId?: string
 }
 
@@ -61,6 +62,7 @@ export const docToArtifactRefs = (doc: ComposerDoc): ArtifactReference[] => {
       name: node.name,
       path: node.path,
       source: node.source,
+      mimeType: node.mimeType,
       versionId: node.versionId
     })
   }
@@ -87,6 +89,7 @@ export const docFromMessageParts = (parts: MessagePart[]): ComposerDoc => {
       name: part.name,
       path: part.path,
       source: part.source,
+      mimeType: part.mimeType,
       versionId: part.versionId
     }
   })
@@ -111,7 +114,8 @@ const artifactNodeFromEl = (el: HTMLElement): ComposerArtifactNode | null => {
   // Prefer the stored filename; fall back to the visible label with its leading `@` stripped.
   const name = el.getAttribute('data-mention-filename') ?? (el.textContent ?? '').replace(/^@/, '')
   const versionId = el.getAttribute('data-mention-version-id') ?? undefined
-  return { type: 'artifact', id, name, path, source, versionId }
+  const mimeType = el.getAttribute('data-mention-mime-type') ?? undefined
+  return { type: 'artifact', id, name, path, source, mimeType, versionId }
 }
 
 // Read a contenteditable root into a doc, mapping chip spans to skill/artifact nodes and collapsing
@@ -177,6 +181,7 @@ export const createArtifactChip = (node: ComposerArtifactNode): HTMLSpanElement 
   span.setAttribute('data-mention-path', node.path)
   span.setAttribute('data-mention-source', node.source)
   span.setAttribute('data-mention-filename', node.name)
+  if (node.mimeType) span.setAttribute('data-mention-mime-type', node.mimeType)
   if (node.versionId) span.setAttribute('data-mention-version-id', node.versionId)
   // Green mention pill, distinct from the blue skill chip.
   span.className = `${CHIP_BASE_CLASS} bg-mention-chip text-mention-chip-foreground`

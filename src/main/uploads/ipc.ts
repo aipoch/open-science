@@ -2,8 +2,12 @@ import { ipcMain } from 'electron'
 
 import type { ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import type {
+  AppendUploadTransferRequest,
+  BeginUploadTransferRequest,
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
+  StageLocalUploadRequest,
+  UploadTransferRequest,
   StageUploadFilesRequest
 } from '../../shared/uploads'
 import { resolveDataRoot } from '../storage-root'
@@ -19,6 +23,28 @@ const registerUploadIpcHandlers = (repository = createDefaultUploadRepository())
   // Uploads write/mutate under the data root, so block them during the data-root copy→commit window.
   ipcMain.handle('uploads:stage-files', (_event, request: StageUploadFilesRequest) =>
     withDataRootWrite(() => repository.stageFiles(request))
+  )
+  ipcMain.handle('uploads:stage-local-file', (event, request: StageLocalUploadRequest) =>
+    withDataRootWrite(() =>
+      repository.stageLocalFile(request, (progress) => {
+        event.sender.send('uploads:transfer-progress', progress)
+      })
+    )
+  )
+  ipcMain.handle('uploads:begin-transfer', (_event, request: BeginUploadTransferRequest) =>
+    withDataRootWrite(() => repository.beginTransfer(request))
+  )
+  ipcMain.handle('uploads:append-transfer', (_event, request: AppendUploadTransferRequest) =>
+    withDataRootWrite(() => repository.appendTransfer(request))
+  )
+  ipcMain.handle('uploads:transfer-status', (_event, request: UploadTransferRequest) =>
+    repository.getTransferStatus(request)
+  )
+  ipcMain.handle('uploads:finish-transfer', (_event, request: UploadTransferRequest) =>
+    withDataRootWrite(() => repository.finishTransfer(request))
+  )
+  ipcMain.handle('uploads:abort-transfer', (_event, request: UploadTransferRequest) =>
+    withDataRootWrite(() => repository.abortTransfer(request))
   )
   ipcMain.handle('uploads:delete', (_event, request: DeleteUploadRequest) =>
     withDataRootWrite(() => repository.deleteUpload(request))

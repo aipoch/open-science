@@ -181,10 +181,16 @@ export const WEB_INVOKE_CHANNELS = {
   'update.download': 'update:download',
   'update.getAppInfo': 'update:get-app-info',
   'update.getStatus': 'update:get-status',
+  'uploads.abortTransfer': 'uploads:abort-transfer',
+  'uploads.appendTransfer': 'uploads:append-transfer',
+  'uploads.beginTransfer': 'uploads:begin-transfer',
   'uploads.deleteUpload': 'uploads:delete',
   'uploads.finalizeSession': 'uploads:finalize-session',
+  'uploads.finishTransfer': 'uploads:finish-transfer',
+  'uploads.getTransferStatus': 'uploads:transfer-status',
   'uploads.readPreview': 'uploads:read-preview',
   'uploads.stageFiles': 'uploads:stage-files',
+  'uploads.stageLocalFile': 'uploads:stage-local-file',
   'window.close': 'window:close'
 } as const
 
@@ -216,5 +222,6 @@ export const WEB_EVENT_CHANNELS = {
   'storage.onProgress': 'storage:migrate-progress',
   'update.onProgress': 'update:progress',
   'update.onStatus': 'update:status',
+  'uploads.onTransferProgress': 'uploads:transfer-progress',
   'window.onCloseActivePane': 'shortcut:close-active-pane'
 } as const
