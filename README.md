@@ -94,7 +94,7 @@ Want to develop the app instead? Skip to [Building From Source](#building-from-s
 
 ### One workspace from task to artifacts
 
-Projects keep related sessions, uploads, generated files, and preview state together. The conversation records the agent's answer and the commands, file reads, edits, searches, and connector calls that produced it. Generated reports, figures, and tables remain attached to the session and are also collected in the project file library.
+Projects keep related sessions, uploads, generated files, and preview state together. The conversation records the agent's answer and the commands, file reads, edits, searches, and connector calls that produced it. Generated reports, figures, and tables remain attached to the session and are also collected in the project file library. Use `Cmd/Ctrl+F` to search the whole workspace — transcripts, notebook output, and rendered pages — through an overlay that stays independent of the page being searched.
 
 <table>
   <tr>
@@ -107,7 +107,7 @@ Projects keep related sessions, uploads, generated files, and preview state toge
   </tr>
 </table>
 
-Open Science previews common scientific data, Office documents (DOCX, XLSX, PPTX), images (with zoom and pan), source code, molecular structures and reactions, and Notebook history. Preview limits do not truncate the underlying file—the full artifact stays available to the agent and external tools.
+Open Science previews common scientific data, Office documents (DOCX, XLSX, PPTX), images (with zoom and pan), source code, molecular structures and reactions, and Notebook history. Preview limits do not truncate the underlying file—the full artifact stays available to the agent and external tools. A dark mode rounds out the workspace: toggle the theme in **Settings → General** and the whole shell, transcript, and renderer palette switch without a flash.
 
 ### Scientific skills and data connectors
 
@@ -167,11 +167,11 @@ This section describes durable product capabilities rather than a version-specif
 | Area                         | Core capability                                                                                                                                                                                                                                                             |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Projects and sessions**    | Create, rename, and delete projects; maintain multiple sessions with pinning to keep key sessions at the top of the sidebar; restore recent work, drafts, conversation history, and preview state.                                                                                                                                      |
-| **Agent workflow**           | Natural-language tasks, streamed responses, typed tool-activity cards grouped under declared purpose titles, a live context-usage indicator, stop controls, approval pauses, a confirmation step (with a remembered preference) before closing or quitting during a running task, desktop notifications on task completion and failure, and recovery of sessions interrupted by an application restart.                                |
+| **Agent workflow**           | Natural-language tasks, streamed responses, typed tool-activity cards grouped under declared purpose titles, a live context-usage indicator with on-demand context compaction, stop controls, approval pauses, a confirmation step (with a remembered preference) before closing or quitting during a running task, desktop notifications on task completion and failure, and recovery of sessions interrupted by an application restart.                                |
 | **Models**                   | Built-in cloud providers, custom compatible gateways, Claude and Codex subscription logins, connection validation, per-model multimodal image input, per-model reasoning-effort control, and model selection per session.                                                                                                               |
 | **Agent backend**            | A selectable agent-framework backend so the same workspace can run on more than one underlying agent implementation, with provider and model choices validated against the selected backend, and app-managed backends installable, switchable, and removable from Settings. |
 | **Execution**                | Persistent notebook kernels (Python, R, and a REPL control plane) with durable code/output history, app-managed environments with offline provisioning and bring-your-own interpreters, remote SSH compute hosts as additional execution targets, and a user terminal shared with the agent.                          |
-| **Inputs and artifacts**     | File attachments, a project-level file library with indexed pagination and session grouping for large projects, generated artifact cards, \`@\` references to existing uploads/outputs, read-only multi-tab previews, file download/export from the library, and session export as `.ipynb` (per-tab or download-all). |
+| **Inputs and artifacts**     | File attachments (up to 10 GB per file with streaming upload), a project-level file library with indexed pagination and session grouping for large projects, generated artifact cards, \`@\` references to existing uploads/outputs, read-only multi-tab previews, file download/export from the library, and session export as `.ipynb` (per-tab or download-all). |
 | **Preview formats**          | Common scientific data, Office documents (DOCX, XLSX, PPTX), images (with zoom and pan), source code, molecular structures and reactions, and Notebook history, viewable inline or full-screen.                                                                                                                           |
 | **Local data management**    | Local project and application data, configurable storage location, and guided migration.                                                                                                                                                                                    |
 | **Skills**                   | Featured and personal skills, package upload, GitHub preview/import, import of installed global skills with candidate preview, agent-requested package imports in a session, enable/disable controls, and explicit `/` selection in a session.                                                                                                                                      |
@@ -185,7 +185,7 @@ This section describes durable product capabilities rather than a version-specif
 | Provider mode                | How it works                                                                                      |
 | ---------------------------- | ------------------------------------------------------------------------------------------------- |
 | **Built-in cloud providers** | Choose from the provider list shown by the installed app and authenticate with the requested key. |
-| **Custom Gateway**           | Supply a compatible Base URL, API Key, and exact model ID.                                        |
+| **Custom Gateway**           | Supply a compatible Base URL, API Key, and exact model ID. The default API format (Messages, Chat Completions, or Responses) is derived from the active agent framework, so a new custom gateway is compatible out of the box.                                        |
 | **Codex Subscription**       | Select the Codex agent framework first, then you can select Codex subscription in provider type   |
 | **Claude Subscription**      | Sign in with a Claude subscription in two modes: **shared** (a browser login that stores credentials in your default `~/.claude` profile) or **isolated** (an app-managed `claude setup-token` run under an app-owned `CLAUDE_CONFIG_DIR`, fully isolated from `~/.claude/`, with a browser flow plus a paste-a-token fallback). |
 
@@ -193,7 +193,7 @@ The legacy **Local Claude** provider has been removed. Previously stored Local C
 dropped during upgrade; add **Claude Subscription** and authenticate with `claude setup-token`
 instead.
 
-Built-in cloud vendors currently include OpenAI, Anthropic, DeepSeek, Zhipu AI (GLM) with a dedicated GLM Coding Plan endpoint, Kimi (Moonshot), MiniMax, StepFun with a dedicated Step Plan subscription endpoint, Xiaomi MIMO, SenseNova, Volcengine Ark, and the OpenRouter aggregation gateway, among others; some are region-specific.
+Built-in cloud vendors currently include OpenAI, Anthropic, Grok (xAI), DeepSeek, Zhipu AI (GLM) with a dedicated GLM Coding Plan endpoint, Kimi (Moonshot), MiniMax, StepFun with a dedicated Step Plan subscription endpoint, Xiaomi MIMO, SenseNova, Volcengine Ark, and the OpenRouter aggregation gateway, among others; some are region-specific.
 
 Provider vendors, available models, and regional endpoints can evolve independently of this README. Treat the provider picker and connection test in the installed app as the source of truth. Unless the app states otherwise, a Custom Gateway must expose an Anthropic-compatible messages endpoint.
 
