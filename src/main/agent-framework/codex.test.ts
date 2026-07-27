@@ -7,6 +7,7 @@ import {
   CODEX_BRIDGE_MODEL,
   buildCodexConfig,
   createCodexFramework,
+  isOfficialOpenAiResponsesBase,
   normalizeResponsesBaseUrl
 } from './codex'
 import { CODEX_VERSION } from '../settings/managed-codex'
@@ -78,6 +79,33 @@ describe('codexFramework', () => {
         vendorId: 'openai',
         apiEndpoints: ['responses'],
         baseUrl: 'https://gateway.example/v1',
+        model: 'gpt-5.4',
+        key: 'sk-plaintext-secret'
+      },
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        nativeVersion: CODEX_VERSION
+      }
+    )
+
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).not.toHaveProperty('model_catalog_json')
+    expect(config.configFiles).toEqual([
+      {
+        path: join('/data', 'codex', 'config.toml'),
+        content: 'cli_auth_credentials_store = "ephemeral"\n',
+        mode: 0o600
+      }
+    ])
+  })
+
+  it('keeps bundled metadata for a custom Responses provider on the official OpenAI API host', () => {
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.openai.com/v1/responses',
         model: 'gpt-5.4',
         key: 'sk-plaintext-secret'
       },
@@ -505,6 +533,17 @@ describe('codexFramework', () => {
     ['https://gateway.example/v1/responses', 'https://gateway.example/v1']
   ])('normalizes %s to %s for the Responses base URL', (input, expected) => {
     expect(normalizeResponsesBaseUrl(input)).toBe(expected)
+  })
+
+  it.each([
+    ['https://api.openai.com', true],
+    ['https://API.OPENAI.COM/v1/responses', true],
+    ['https://api.openai.com.proxy.example/v1', false],
+    ['https://openai.com/v1', false],
+    ['not a URL', false],
+    [undefined, false]
+  ])('classifies %s as an official OpenAI Responses base: %s', (input, expected) => {
+    expect(isOfficialOpenAiResponsesBase(input)).toBe(expected)
   })
 
   it('appends /v1 to a bare official OpenAI base URL in the serialized Codex config', () => {

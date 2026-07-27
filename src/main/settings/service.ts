@@ -149,6 +149,7 @@ import { opencodeConfigDir } from '../agent-framework/opencode'
 import {
   codexStorageDir,
   codexSubscriptionStorageDir,
+  isOfficialOpenAiResponsesBase,
   normalizeResponsesBaseUrl
 } from '../agent-framework/codex'
 import { ClaudeCodeSkillMaterializer, OS_SKILL_PREFIX } from '../skills/materializer'
@@ -266,15 +267,6 @@ type LeasedResponsesBridgeConnection = ResponsesBridgeConnection & {
 }
 
 const execFileAsync = promisify(execFile)
-
-const isOfficialOpenAiResponsesBase = (value: string | undefined): boolean => {
-  if (!value) return false
-  try {
-    return new URL(value).hostname.toLowerCase() === 'api.openai.com'
-  } catch {
-    return false
-  }
-}
 
 // Hard ceiling for a Claude credential probe so a stuck process can never hang the wizard.
 const CLAUDE_PROBE_TIMEOUT_MS = 20_000

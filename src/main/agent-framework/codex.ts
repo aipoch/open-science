@@ -121,6 +121,15 @@ const normalizeResponsesBaseUrl = (value: string | undefined): string | undefine
   return normalized
 }
 
+const isOfficialOpenAiResponsesBase = (value: string | undefined): boolean => {
+  if (!value) return false
+  try {
+    return new URL(value).hostname.toLowerCase() === 'api.openai.com'
+  } catch {
+    return false
+  }
+}
+
 // Just the model + reasoning-effort fields a Codex config can carry, with no provider plumbing.
 // The bridge path layers the open-science custom provider on top of this; the codex-isolated path
 // uses it on its own so codex-acp can drive the ChatGPT subscription with the user's selected
@@ -173,6 +182,8 @@ const buildCodexConfig = (provider: {
 const buildCodexNativeModelCatalog = (provider: {
   model?: string
   vendorId?: OfficialVendorId
+  baseUrl?: string
+  openaiBaseUrl?: string
   nativeVersion?: string
   contextWindow?: number
   supportsImageInput?: boolean
@@ -180,8 +191,9 @@ const buildCodexNativeModelCatalog = (provider: {
   reasoningEfforts?: readonly ModelReasoningEffort[]
 }): Record<string, unknown> | undefined => {
   const model = provider.model?.trim()
-  // Bundled capabilities are trustworthy only for an exact model/version pair from an official
-  // OpenAI provider. Every other Responses backend gets the conservative app-owned catalog below.
+  // Bundled capabilities are trustworthy only for an exact model/version pair on OpenAI's official
+  // backend. A custom provider may represent the real api.openai.com endpoint, so vendor identity
+  // alone is insufficient; custom gateways that merely reuse an OpenAI model slug stay conservative.
   const bundledModelIds =
     provider.nativeVersion &&
     Object.hasOwn(CODEX_BUNDLED_MODEL_IDS_BY_VERSION, provider.nativeVersion)
@@ -190,7 +202,9 @@ const buildCodexNativeModelCatalog = (provider: {
         ]
       : undefined
   const hasTrustedBundledMetadata =
-    provider.vendorId === 'openai' && bundledModelIds?.includes(model ?? '') === true
+    (provider.vendorId === 'openai' ||
+      isOfficialOpenAiResponsesBase(provider.openaiBaseUrl ?? provider.baseUrl)) &&
+    bundledModelIds?.includes(model ?? '') === true
   if (!model || hasTrustedBundledMetadata) return undefined
 
   const contextWindow =
@@ -473,4 +487,9 @@ export const createCodexFramework = ({
 
 export const codexFramework = createCodexFramework()
 
-export { buildCodexConfig, mapCodexPermissionProfile, normalizeResponsesBaseUrl }
+export {
+  buildCodexConfig,
+  isOfficialOpenAiResponsesBase,
+  mapCodexPermissionProfile,
+  normalizeResponsesBaseUrl
+}
