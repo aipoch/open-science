@@ -48,7 +48,7 @@ const createFakeRuntime = (options: {
   disconnect: ReturnType<typeof vi.fn>
   requestRetirement: ReturnType<typeof vi.fn>
   requestProviderReconnect: ReturnType<typeof vi.fn>
-  requestSkillsReload: ReturnType<typeof vi.fn>
+  sendPrompt: ReturnType<typeof vi.fn>
   applyReasoningEffortChange: ReturnType<typeof vi.fn>
   respondToPermission: ReturnType<typeof vi.fn>
   emitEvent: (event: AcpRuntimeEvent) => void
@@ -97,7 +97,6 @@ const createFakeRuntime = (options: {
   const disconnect = vi.fn(async () => snapshot)
   const requestRetirement = vi.fn(async () => undefined)
   const requestProviderReconnect = vi.fn(async () => undefined)
-  const requestSkillsReload = vi.fn(async () => undefined)
   const applyReasoningEffortChange = vi.fn(async () => true)
   const respondToPermission = vi.fn(() => snapshot)
   const shutdown = vi.fn()
@@ -171,7 +170,6 @@ const createFakeRuntime = (options: {
     disconnect,
     requestRetirement,
     requestProviderReconnect,
-    requestSkillsReload,
     applyReasoningEffortChange,
     respondToPermission,
     shutdown,
@@ -190,7 +188,7 @@ const createFakeRuntime = (options: {
     disconnect,
     requestRetirement,
     requestProviderReconnect,
-    requestSkillsReload,
+    sendPrompt,
     applyReasoningEffortChange,
     respondToPermission,
     emitEvent: (event) => {
@@ -467,7 +465,7 @@ describe('AcpRuntimeCoordinator', () => {
     expect(coordinator.getSnapshot().permissionGrants).toEqual({})
   })
 
-  it('keeps reconnecting settings and model-resolved effort on the active generation', async () => {
+  it('moves later settings and model-resolved effort across active generations', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
       const fake = createFakeRuntime({
@@ -486,13 +484,56 @@ describe('AcpRuntimeCoordinator', () => {
     await coordinator.requestSkillsReload()
     await expect(coordinator.applyReasoningEffortChange('high')).resolves.toBe(true)
 
-    expect(created).toHaveLength(2)
+    expect(created).toHaveLength(3)
     expect(created[0].requestProviderReconnect).not.toHaveBeenCalled()
-    expect(created[0].requestSkillsReload).not.toHaveBeenCalled()
     expect(created[0].applyReasoningEffortChange).not.toHaveBeenCalled()
     expect(created[1].requestProviderReconnect).toHaveBeenCalledOnce()
-    expect(created[1].requestSkillsReload).toHaveBeenCalledOnce()
-    expect(created[1].applyReasoningEffortChange).toHaveBeenCalledWith('high')
+    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
+    expect(created[1].applyReasoningEffortChange).not.toHaveBeenCalled()
+    expect(created[2].applyReasoningEffortChange).toHaveBeenCalledWith('high')
+  })
+
+  it('detaches idle sessions while an active turn retires and resumes them on a fresh runtime', async () => {
+    const retirement = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: created.length === 0 ? ['active-session', 'idle-session'] : ['fresh-session'],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    const activeSession = await coordinator.createSession()
+    const idleSession = await coordinator.createSession()
+    created[0].emitState({
+      promptInFlight: true,
+      promptInFlightSessionIds: [activeSession.sessionId]
+    })
+    created[0].requestRetirement.mockReturnValue(retirement.promise)
+    const reloadRequest = coordinator.requestSkillsReload()
+
+    expect(coordinator.getSnapshot().sessionIds).toEqual([activeSession.sessionId])
+    await expect(
+      coordinator.sendPrompt({ sessionId: idleSession.sessionId, text: 'stale turn' })
+    ).rejects.toThrow('resume')
+    expect(created[0].sendPrompt).not.toHaveBeenCalled()
+
+    await coordinator.resumeSession({
+      sessionId: idleSession.sessionId,
+      cwd: '/workspace',
+      previousFrameworkId: 'claude-code'
+    })
+    await coordinator.sendPrompt({ sessionId: idleSession.sessionId, text: 'fresh turn' })
+
+    expect(created).toHaveLength(2)
+    expect(created[1].resumeSession).toHaveBeenCalledOnce()
+    expect(created[1].sendPrompt).toHaveBeenCalledOnce()
+
+    retirement.resolve()
+    await reloadRequest
   })
 
   it('surfaces an active generation effort failure without touching a retiring model', async () => {

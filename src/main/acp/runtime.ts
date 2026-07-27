@@ -1923,21 +1923,6 @@ class AcpRuntime {
     }
   }
 
-  // Re-materializes the agent's skills on the next reconnect: a disconnect makes the next prompt spawn a
-  // fresh agent, whose provisioning copies the current enabled set into the config dir before the session
-  // resumes with full context. Defers past an in-flight prompt exactly like a provider switch. Called
-  // when a skill is toggled in settings.
-  async requestSkillsReload(): Promise<void> {
-    if (this.hasBlockingActivity()) {
-      this.pendingSkillsReload = true
-      this.armReconnectBarrier()
-      return
-    }
-
-    this.pendingSkillsReload = false
-    await this.disconnect()
-  }
-
   // Holds this generation across a multi-step background workflow, including gaps with no live session.
   async withActivity<T>(
     _options: AcpRuntimeActivityOptions,

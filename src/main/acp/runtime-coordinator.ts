@@ -233,7 +233,12 @@ class AcpRuntimeCoordinator {
   }
 
   sendPrompt(request: AcpPromptRequest): ReturnType<AcpRuntime['sendPrompt']> {
-    const runtime = this.runtimeForSession(request.sessionId)
+    const owner = this.findRuntimeForSession(request.sessionId)
+    if (owner && this.retiredRuntimes.has(owner)) {
+      return Promise.reject(new Error('ACP session must resume before sending a prompt'))
+    }
+
+    const runtime = owner ?? this.getActiveRuntime()
     const attempt: PendingPromptStart = {
       id: `prompt-attempt-${++this.promptAttemptSequence}`,
       runtime,
@@ -315,8 +320,17 @@ class AcpRuntimeCoordinator {
     return this.getActiveRuntime().requestProviderReconnect()
   }
 
-  requestSkillsReload(): Promise<void> {
-    return this.getActiveRuntime().requestSkillsReload()
+  async requestSkillsReload(): Promise<void> {
+    const retiring = this.activeRuntime
+    if (!retiring) return
+
+    // Skills are part of a runtime generation's tool list and context. Retire that generation
+    // immediately so idle conversations detach before the settings call returns; active turns finish
+    // on the old generation, while every later turn resumes through a freshly provisioned runtime.
+    this.retiredRuntimes.add(retiring)
+    this.rotateActiveRuntime()
+    this.callbacks.onStateChanged?.(this.getSnapshot())
+    await retiring.requestRetirement()
   }
 
   async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
