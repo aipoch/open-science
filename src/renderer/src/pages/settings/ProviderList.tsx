@@ -5,6 +5,7 @@ import {
   LogOut,
   Pencil,
   PlugZap,
+  RefreshCw,
   Route,
   TriangleAlert,
   Trash2,
@@ -47,6 +48,7 @@ type ProviderListProps = {
   onCancelCodexLogin?: () => void
   onLoginIsolatedCodex?: () => void
   onLogoutIsolatedCodex?: () => void
+  onReimportCodexAuthentication?: (provider: ProviderView) => void
   // Claude subscription's browser OAuth sign-in (shared mode): opens the browser and lands
   // credentials in ~/.claude. Mirrors the codex-isolated flow shape.
   isClaudeSharedLoginPending?: boolean
@@ -130,6 +132,7 @@ const ProviderList = ({
   onCancelCodexLogin,
   onLoginIsolatedCodex,
   onLogoutIsolatedCodex,
+  onReimportCodexAuthentication,
   isClaudeSharedLoginPending = false,
   onLoginSharedClaude,
   onCancelSharedClaudeLogin,
@@ -347,6 +350,15 @@ const ProviderList = ({
                       className="border border-border text-foreground"
                     />
                   )}
+                  {codexSubscriptionType === 'codex-shared' && !isCodexLoginPending ? (
+                    <SettingsIconAction
+                      label="Re-import Codex login"
+                      icon={RefreshCw}
+                      onClick={() => onReimportCodexAuthentication?.(provider)}
+                      disabled={isBusy}
+                      className="border border-border text-foreground"
+                    />
+                  ) : null}
                   {codexSubscriptionType === 'codex-isolated' &&
                   !isVerified &&
                   !isCodexLoginPending ? (

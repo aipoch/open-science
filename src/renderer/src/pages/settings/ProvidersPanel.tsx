@@ -37,6 +37,7 @@ const ProvidersPanel = ({
   )
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const deleteProvider = useSettingsStore((state) => state.deleteProvider)
+  const saveProvider = useSettingsStore((state) => state.saveProvider)
   const validateProvider = useSettingsStore((state) => state.validateProvider)
   const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
   const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
@@ -154,6 +155,28 @@ const ProvidersPanel = ({
       }
     } catch (error) {
       setProviderTestError(error instanceof Error ? error.message : 'Could not sign out of Codex.')
+    }
+  }
+
+  // Imported authentication is copied into the app-owned profile. Refresh only on this explicit
+  // action so ordinary edits stay self-contained, while users can still pick up a later CLI login or
+  // loopback-route change without toggling auth modes.
+  const handleCodexReimport = async (provider: ProviderView): Promise<void> => {
+    onBusyProviderChange(provider.id)
+    setProviderTestError(undefined)
+
+    try {
+      await saveProvider({
+        id: provider.id,
+        type: 'codex-shared',
+        reimportCodexAuthentication: true
+      })
+    } catch (error) {
+      setProviderTestError(
+        error instanceof Error ? error.message : 'Could not re-import the Codex login.'
+      )
+    } finally {
+      onBusyProviderChange(undefined)
     }
   }
 
@@ -307,6 +330,7 @@ const ProvidersPanel = ({
           onCancelCodexLogin={() => void cancelCodexLogin()}
           onLoginIsolatedCodex={() => void handleCodexLogin()}
           onLogoutIsolatedCodex={() => void handleCodexLogout()}
+          onReimportCodexAuthentication={(provider) => void handleCodexReimport(provider)}
           isClaudeSharedLoginPending={isClaudeSharedLoginPending}
           onLoginSharedClaude={() => void handleClaudeSharedLogin()}
           onCancelSharedClaudeLogin={() => void cancelSharedClaudeLogin()}

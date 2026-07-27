@@ -354,6 +354,58 @@ describe('SettingsService: providers', () => {
     )
   })
 
+  it('refreshes an imported Codex profile only when re-import is explicitly requested', async () => {
+    const userCodexDir = join(storageRoot, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"old"}}')
+    await writeFile(
+      join(userCodexDir, 'config.toml'),
+      [
+        'model_provider = "old-route"',
+        '',
+        '[model_providers.old-route]',
+        'name = "Old route"',
+        'requires_openai_auth = true',
+        'wire_api = "responses"',
+        'base_url = "http://127.0.0.1:1087/v1"',
+        ''
+      ].join('\n')
+    )
+    const service = createService(undefined, { userCodexDir })
+    const imported = await service.upsertProvider({ type: 'codex-shared' })
+    const stored = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({ ...stored, lastValidatedAt: 123 })
+
+    await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"new"}}')
+    await writeFile(
+      join(userCodexDir, 'config.toml'),
+      [
+        'model_provider = "new-route"',
+        '',
+        '[model_providers.new-route]',
+        'name = "New route"',
+        'requires_openai_auth = true',
+        'wire_api = "responses"',
+        'base_url = "http://127.0.0.1:2087/v1"',
+        ''
+      ].join('\n')
+    )
+
+    const refreshed = await service.upsertProvider({
+      id: imported.providers[0].id,
+      type: 'codex-shared',
+      reimportCodexAuthentication: true
+    })
+
+    expect(await readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')).toBe(
+      '{"tokens":{"access_token":"new"}}'
+    )
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.toContain('base_url = "http://127.0.0.1:2087/v1"')
+    expect(refreshed.providers[0].lastValidatedAt).toBeUndefined()
+  })
+
   it.each([
     ['codex-shared', CODEX_SHARED_PROVIDER_ID, 'Codex subscription'],
     ['codex-isolated', CODEX_ISOLATED_PROVIDER_ID, 'Codex subscription']

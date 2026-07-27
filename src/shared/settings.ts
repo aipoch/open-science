@@ -475,6 +475,9 @@ export type ProviderDraft = {
 // Create/update request: an existing `id` edits in place, otherwise a new provider is created.
 export type UpsertProviderRequest = ProviderDraft & {
   id?: string
+  // Explicitly refreshes an existing imported Codex subscription from the user's CLI profile.
+  // Ordinary edits remain app-owned and never cross that external profile boundary.
+  reimportCodexAuthentication?: boolean
 }
 
 export type DeleteProviderRequest = {

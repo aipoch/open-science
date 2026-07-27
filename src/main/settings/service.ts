@@ -2224,8 +2224,14 @@ class SettingsService {
 
     // An imported subscription becomes app-owned after the initial copy. Ordinary edits must not
     // depend on the external CLI profile still existing or re-read a route that changed afterward.
-    // Only a new import or an explicit isolated -> imported switch crosses that profile boundary.
-    if (request.type === 'codex-shared' && existing?.codexAuthMode !== 'imported') {
+    // Only a new import, an explicit isolated -> imported switch, or the card's explicit re-import
+    // action crosses that profile boundary.
+    const reimportCodexAuthentication =
+      request.type === 'codex-shared' && request.reimportCodexAuthentication === true
+    if (
+      request.type === 'codex-shared' &&
+      (existing?.codexAuthMode !== 'imported' || reimportCodexAuthentication)
+    ) {
       await importCodexAuthentication(
         this.userCodexDir,
         codexSubscriptionStorageDir(this.storageRoot)
@@ -2267,7 +2273,8 @@ class SettingsService {
       provider.apiEndpoints = ['responses']
       provider.codexAuthMode = request.type === 'codex-shared' ? 'imported' : 'isolated'
       credentialsChanged =
-        existing !== undefined && existing.codexAuthMode !== provider.codexAuthMode
+        existing !== undefined &&
+        (existing.codexAuthMode !== provider.codexAuthMode || reimportCodexAuthentication)
     } else if (request.type === 'claude-isolated') {
       // claude-isolated has no fields of its own: the type tells the renderer/env-builder what to do
       // with the encrypted token (stored separately on login). A model override is allowed. The

@@ -45,6 +45,7 @@ const renderList = (
     onCancel?: () => void
     onLogin?: () => void
     onLogout?: () => void
+    onReimport?: (provider: ProviderView) => void
     isCodexLoginPending?: boolean
     isClaudeSharedLoginPending?: boolean
     onLoginSharedClaude?: () => void
@@ -71,6 +72,7 @@ const renderList = (
         onCancelCodexLogin={callbacks.onCancel}
         onLoginIsolatedCodex={callbacks.onLogin}
         onLogoutIsolatedCodex={callbacks.onLogout}
+        onReimportCodexAuthentication={callbacks.onReimport}
         isClaudeSharedLoginPending={callbacks.isClaudeSharedLoginPending}
         onLoginSharedClaude={callbacks.onLoginSharedClaude}
         onCancelSharedClaudeLogin={callbacks.onCancelSharedClaudeLogin}
@@ -237,6 +239,7 @@ describe('ProviderList', () => {
   })
 
   it('renders a normalized imported Codex provider with imported copy and actions', () => {
+    const onReimport = vi.fn()
     const imported = provider({
       id: 'builtin-codex-subscription',
       type: 'codex-isolated',
@@ -247,10 +250,12 @@ describe('ProviderList', () => {
       maskedKey: undefined,
       hasKey: false
     })
-    renderList([imported])
+    renderList([imported], undefined, undefined, { onReimport })
 
     expect(container.textContent).toContain('Authentication imported into Open Science')
     expect(buttonByLabel('Check Codex login')).toBeDefined()
+    act(() => buttonByLabel('Re-import Codex login')?.click())
+    expect(onReimport).toHaveBeenCalledWith(imported)
     expect(buttonByLabel('Sign in')).toBeUndefined()
     expect(buttonByLabel('Sign out')).toBeUndefined()
 
