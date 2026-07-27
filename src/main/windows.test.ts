@@ -5,6 +5,7 @@ import {
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
   CLOSE_ACTIVE_PANE_UNREADY_CHANNEL,
   WINDOW_FIND_READY_CHANNEL,
+  WINDOW_FIND_UNREADY_CHANNEL,
   type KeyChordInput
 } from '../shared/window-controls'
 
@@ -277,6 +278,9 @@ describe('close chord interception', () => {
   const signalWindowFindReady = (window: FakeBrowserWindow): void =>
     fireHandshake(window, WINDOW_FIND_READY_CHANNEL)
 
+  const signalWindowFindGone = (window: FakeBrowserWindow): void =>
+    fireHandshake(window, WINDOW_FIND_UNREADY_CHANNEL)
+
   // Drives one of the captured webContents lifecycle handlers (render-process-gone, unresponsive, ...).
   const fireWebContentsEvent = (
     window: FakeBrowserWindow,
@@ -337,6 +341,18 @@ describe('close chord interception', () => {
     expect(window.closeMock).not.toHaveBeenCalled()
   })
 
+  it('closes the find overlay when the searchable Workspace unmounts', () => {
+    createMainWindow()
+    const window = currentWindow!
+    signalWindowFindReady(window)
+    fireInput(window, findChord())
+    findOverlayMock.close.mockClear()
+
+    signalWindowFindGone(window)
+
+    expect(findOverlayMock.close).toHaveBeenCalledTimes(1)
+  })
+
   it('closes the find overlay on Escape while it is open, regardless of input focus', () => {
     createMainWindow()
     const window = currentWindow!
@@ -368,6 +384,18 @@ describe('close chord interception', () => {
 
     expect(window.closeMock).toHaveBeenCalledTimes(1)
     expect(window.sendMock).not.toHaveBeenCalled()
+  })
+
+  it('closes the find overlay before a top-level document navigation', () => {
+    createMainWindow()
+    const window = currentWindow!
+    signalWindowFindReady(window)
+    fireInput(window, findChord())
+    findOverlayMock.close.mockClear()
+
+    fireWebContentsEvent(window, 'did-start-navigation', mainFrameNavigation)
+
+    expect(findOverlayMock.close).toHaveBeenCalledTimes(1)
   })
 
   it('keeps forwarding when a subframe or same-document navigation fires', () => {
@@ -420,6 +448,18 @@ describe('close chord interception', () => {
     expect(window.sendMock).not.toHaveBeenCalled()
   })
 
+  it('closes the find overlay when the renderer process is gone', () => {
+    createMainWindow()
+    const window = currentWindow!
+    signalWindowFindReady(window)
+    fireInput(window, findChord())
+    findOverlayMock.close.mockClear()
+
+    fireWebContentsEvent(window, 'render-process-gone')
+
+    expect(findOverlayMock.close).toHaveBeenCalledTimes(1)
+  })
+
   it('closes directly while the renderer is unresponsive, then forwards again once responsive', () => {
     createMainWindow()
     const window = currentWindow!
@@ -437,6 +477,18 @@ describe('close chord interception', () => {
     fireInput(window, closeChord())
     expect(window.sendMock).toHaveBeenCalledWith(CLOSE_ACTIVE_PANE_CHANNEL)
     expect(window.closeMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes the find overlay when the renderer becomes unresponsive', () => {
+    createMainWindow()
+    const window = currentWindow!
+    signalWindowFindReady(window)
+    fireInput(window, findChord())
+    findOverlayMock.close.mockClear()
+
+    fireWebContentsEvent(window, 'unresponsive')
+
+    expect(findOverlayMock.close).toHaveBeenCalledTimes(1)
   })
 
   it('forwards again after unresponsive -> crash -> reload -> ready, with no responsive event', () => {

@@ -31,7 +31,9 @@ export const WINDOW_FIND_REQUEST_CHANNEL = 'window:find-in-page'
 export const WINDOW_FIND_CLEAR_CHANNEL = 'window:clear-find-in-page'
 export const WINDOW_FIND_RESULT_CHANNEL = 'window:find-in-page-result'
 
-// Main -> overlay: the find bar was just shown — focus the field and re-run the remembered query.
+// Main -> overlay: the find bar was just shown — apply the main renderer's resolved appearance,
+// focus the field, and re-run the remembered query. `followsSystem` lets the separate file:// overlay
+// live-follow OS changes without trying to read the renderer's origin-scoped localStorage.
 export const WINDOW_FIND_SHOW_CHANNEL = 'window:find-show'
 
 // Overlay -> main: the user closed the find bar — hide the overlay and release the main-window focus.
@@ -49,6 +51,11 @@ export type WindowFindResult = {
   activeMatchOrdinal: number
   matches: number
   finalUpdate: boolean
+}
+
+export type WindowFindAppearance = {
+  theme: 'light' | 'dark'
+  followsSystem: boolean
 }
 
 // The minimal IPC surface the renderer handshake needs, kept structural so the wiring can be unit-tested

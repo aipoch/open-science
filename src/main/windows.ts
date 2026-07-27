@@ -126,7 +126,9 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
     rendererResponsive = true
   }
   const onWindowFindGone = (event: IpcMainEvent): void => {
-    if (event.sender === window.webContents) windowFindListenerReady = false
+    if (event.sender !== window.webContents) return
+    windowFindListenerReady = false
+    findOverlay.close()
   }
   ipcMain.on(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)
   ipcMain.on(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onListenerGone)
@@ -140,14 +142,17 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
     if (details.isMainFrame && !details.isSameDocument) {
       rendererListenerReady = false
       windowFindListenerReady = false
+      findOverlay.close()
     }
   })
   window.webContents.on('render-process-gone', () => {
     rendererListenerReady = false
     windowFindListenerReady = false
+    findOverlay.close()
   })
   window.webContents.on('unresponsive', () => {
     rendererResponsive = false
+    findOverlay.close()
   })
   window.webContents.on('responsive', () => {
     rendererResponsive = true

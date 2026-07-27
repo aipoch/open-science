@@ -223,6 +223,7 @@ import {
   WINDOW_FIND_SHOW_CHANNEL,
   type CloseConfirmRequest,
   type CloseConfirmResponse,
+  type WindowFindAppearance,
   type WindowFindRequest,
   type WindowFindResult
 } from '../shared/window-controls'
@@ -645,7 +646,7 @@ type OpenScienceAPI = {
     clearFind?: () => void
     announceWindowFindReady?: () => RemoveListener
     onFindInPageResult?: (listener: AcpListener<WindowFindResult>) => RemoveListener
-    onShowWindowFind?: (listener: () => void) => RemoveListener
+    onShowWindowFind?: (listener: AcpListener<WindowFindAppearance>) => RemoveListener
     closeFind?: () => void
     // Fires when main asks to confirm a close/quit; the renderer renders the modal and replies.
     onCloseConfirmRequest?: (listener: (payload: CloseConfirmRequest) => void) => RemoveListener

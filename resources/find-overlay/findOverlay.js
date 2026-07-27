@@ -1,9 +1,13 @@
 export const LAST_QUERY_STORAGE_KEY = 'open-science:window-find:last-query'
+const DARK_QUERY = '(prefers-color-scheme: dark)'
 
 export function createFindOverlay(deps) {
   const { input, count, prev, next, close, api, storage } = deps
+  const ownerDocument = input.ownerDocument
+  const systemTheme = ownerDocument.defaultView?.matchMedia?.(DARK_QUERY)
 
   let currentRequestId = 0
+  let followsSystem = false
   count.textContent = '0 / 0'
 
   const nextRequestId = () => {
@@ -16,7 +20,28 @@ export function createFindOverlay(deps) {
     api.findInPage({ requestId, text, findNext, forward })
   }
 
-  const handleShow = () => {
+  const applyTheme = (theme) => {
+    ownerDocument.documentElement.classList.toggle('dark', theme === 'dark')
+  }
+
+  const onSystemThemeChange = (event) => {
+    if (followsSystem) applyTheme(event.matches ? 'dark' : 'light')
+  }
+  systemTheme?.addEventListener('change', onSystemThemeChange)
+
+  const handleShow = (appearance) => {
+    followsSystem = appearance?.followsSystem === true
+    const theme =
+      followsSystem && systemTheme
+        ? systemTheme.matches
+          ? 'dark'
+          : 'light'
+        : appearance?.theme === 'dark' || appearance?.theme === 'light'
+          ? appearance.theme
+          : systemTheme?.matches
+            ? 'dark'
+            : 'light'
+    applyTheme(theme)
     input.focus()
     const remembered = storage.getItem(LAST_QUERY_STORAGE_KEY) ?? ''
     if (remembered) {
@@ -65,7 +90,7 @@ export function createFindOverlay(deps) {
   }
 
   const onKeydown = (event) => {
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && event.target === input) {
       event.preventDefault()
       if (event.shiftKey) {
         goBackward()
@@ -79,7 +104,7 @@ export function createFindOverlay(deps) {
   }
 
   input.addEventListener('input', onInput)
-  input.addEventListener('keydown', onKeydown)
+  ownerDocument.addEventListener('keydown', onKeydown)
   prev.addEventListener('click', goBackward)
   next.addEventListener('click', goForward)
   close.addEventListener('click', handleClose)
@@ -92,10 +117,11 @@ export function createFindOverlay(deps) {
       offResult()
       offShow()
       input.removeEventListener('input', onInput)
-      input.removeEventListener('keydown', onKeydown)
+      ownerDocument.removeEventListener('keydown', onKeydown)
       prev.removeEventListener('click', goBackward)
       next.removeEventListener('click', goForward)
       close.removeEventListener('click', handleClose)
+      systemTheme?.removeEventListener('change', onSystemThemeChange)
     }
   }
 }
