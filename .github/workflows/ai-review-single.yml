@@ -15,7 +15,7 @@ name: AI PR Review (Single)
 # Set ENABLE_CODEX_REVIEW=false to disable the automated reviewer.
 # Legacy CODEX_REVIEW_MODE=disabled keeps automatic reviews disabled while preserving dispatch.
 # CODEX_REVIEW_MODEL and CODEX_REVIEW_EFFORT select its model and effort. A selected legacy
-# credential pair uses model/effort from the same scope; shared credentials keep ordered fallbacks.
+# credential pair uses model/effort from the same scope; generic credentials keep ordered fallbacks.
 # Set FORK_REVIEW_MODE to disabled, manual, or automatic (default: manual). Same-repository PRs
 # always run. Manual mode permits workflow_dispatch reviews of forks; automatic mode also reviews
 # fork PRs on opened, synchronize, and reopened events. Disabled mode blocks both fork paths.
@@ -249,8 +249,8 @@ jobs:
       pull_request_title: ${{ needs.review_target.outputs.title }}
       is_fork: ${{ needs.review_target.outputs.is_fork == 'true' }}
       fork_mode: ${{ needs.review_target.outputs.fork_mode }}
-      model: ${{ vars.CODEX_REVIEW_MODEL || (needs.review_target.outputs.credential_scope == 'correctness' && vars.CODEX_CORRECTNESS_MODEL) || (needs.review_target.outputs.credential_scope == 'architecture' && vars.CODEX_ARCHITECTURE_MODEL) || ((needs.review_target.outputs.credential_scope == 'shared' || needs.review_target.outputs.credential_scope == 'none') && (vars.CODEX_CORRECTNESS_MODEL || vars.CODEX_ARCHITECTURE_MODEL)) || 'gpt-5.6-sol' }}
-      effort: ${{ vars.CODEX_REVIEW_EFFORT || (needs.review_target.outputs.credential_scope == 'correctness' && vars.CODEX_CORRECTNESS_EFFORT) || (needs.review_target.outputs.credential_scope == 'architecture' && vars.CODEX_ARCHITECTURE_EFFORT) || ((needs.review_target.outputs.credential_scope == 'shared' || needs.review_target.outputs.credential_scope == 'none') && (vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_ARCHITECTURE_EFFORT)) || 'high' }}
+      model: ${{ vars.CODEX_REVIEW_MODEL || (needs.review_target.outputs.credential_scope == 'correctness' && vars.CODEX_CORRECTNESS_MODEL) || (needs.review_target.outputs.credential_scope == 'architecture' && vars.CODEX_ARCHITECTURE_MODEL) || ((needs.review_target.outputs.credential_scope == 'review' || needs.review_target.outputs.credential_scope == 'shared' || needs.review_target.outputs.credential_scope == 'none') && (vars.CODEX_CORRECTNESS_MODEL || vars.CODEX_ARCHITECTURE_MODEL)) || 'gpt-5.6-sol' }}
+      effort: ${{ vars.CODEX_REVIEW_EFFORT || (needs.review_target.outputs.credential_scope == 'correctness' && vars.CODEX_CORRECTNESS_EFFORT) || (needs.review_target.outputs.credential_scope == 'architecture' && vars.CODEX_ARCHITECTURE_EFFORT) || ((needs.review_target.outputs.credential_scope == 'review' || needs.review_target.outputs.credential_scope == 'shared' || needs.review_target.outputs.credential_scope == 'none') && (vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_ARCHITECTURE_EFFORT)) || 'high' }}
     secrets:
       CODEX_AUTH_JSON: ${{ needs.review_target.outputs.auth_mode == 'subscription' && secrets.CODEX_AUTH_JSON || '' }}
       OPENAI_API_KEY: ${{ (needs.review_target.outputs.credential_scope == 'review' && secrets.CODEX_REVIEW_API_KEY) || (needs.review_target.outputs.credential_scope == 'correctness' && secrets.CODEX_CORRECTNESS_API_KEY) || (needs.review_target.outputs.credential_scope == 'architecture' && secrets.CODEX_ARCHITECTURE_API_KEY) || (needs.review_target.outputs.credential_scope == 'shared' && secrets.OPENAI_API_KEY) || '' }}

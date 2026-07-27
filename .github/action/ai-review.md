@@ -29,8 +29,8 @@ default. Keep API-key secrets configured for automatic fallback. Model, effort, 
 and round-limit variables continue to apply. `CODEX_REVIEW_MODEL` and `CODEX_REVIEW_EFFORT` take
 precedence; the legacy correctness variables and then architecture variables remain ordered
 fallbacks. When a legacy credential scope is selected, its model and effort variables are used as a
-bundle; shared or subscription-only configurations keep the legacy correctness-then-architecture
-fallback order.
+bundle; review-specific, shared, or subscription-only configurations keep the legacy
+correctness-then-architecture fallback order.
 
 `ENABLE_CODEX_REVIEW=false` disables automatic and manually dispatched reviews. For compatibility,
 legacy `CODEX_REVIEW_MODE=disabled` disables only automatic pull request events; a manual dispatch
