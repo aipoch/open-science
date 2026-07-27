@@ -493,6 +493,8 @@ type OpenScienceAPI = {
       file: File,
       request: BeginUploadTransferRequest
     ) => Promise<UploadedAttachment | null>
+    // Acknowledges that the renderer committed a native-path upload into its draft state.
+    claimLocalFile?: (request: UploadTransferRequest) => Promise<void>
     beginTransfer: (request: BeginUploadTransferRequest) => Promise<UploadTransferStatus>
     appendTransfer: (request: AppendUploadTransferRequest) => Promise<UploadTransferStatus>
     getTransferStatus: (request: UploadTransferRequest) => Promise<UploadTransferStatus | null>
@@ -1031,14 +1033,16 @@ const api: OpenScienceAPI = {
   },
   uploads: {
     // Upload IPC remains behind the preload bridge so renderer code never receives raw fs access.
-    stageLocalFile: (file, request) => {
+    stageLocalFile: async (file, request) => {
       const sourcePath = webUtils.getPathForFile(file)
-      if (!sourcePath) return Promise.resolve(null)
-      return ipcRenderer.invoke('uploads:stage-local-file', {
+      if (!sourcePath) return null
+      return (await ipcRenderer.invoke('uploads:stage-local-file', {
         ...request,
         sourcePath
-      }) as Promise<UploadedAttachment>
+      })) as UploadedAttachment
     },
+    claimLocalFile: (request) =>
+      ipcRenderer.invoke('uploads:claim-local-file', request) as Promise<void>,
     beginTransfer: (request) =>
       ipcRenderer.invoke('uploads:begin-transfer', request) as Promise<UploadTransferStatus>,
     appendTransfer: (request) =>

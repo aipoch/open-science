@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { Readable } from 'node:stream'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { UploadRepository } from './repository'
@@ -51,6 +52,67 @@ describe('upload repository', () => {
     })
     await expect(readFile(attachment.path)).resolves.toEqual(content)
     expect(progress.at(-1)).toBe(content.byteLength)
+  })
+
+  it('cancels a local-path upload before asynchronous source validation finishes', async () => {
+    const root = await createStorageRoot()
+    const repository = new UploadRepository(root)
+    const sourcePath = join(root, 'dataset.csv')
+    const content = Buffer.from('sample,value\na,1\n')
+    await writeFile(sourcePath, content)
+
+    const stagePromise = repository.stageLocalFile({
+      transferId: 'local-transfer-cancel-early',
+      sourcePath,
+      name: 'dataset.csv',
+      mimeType: 'text/csv',
+      size: content.byteLength
+    })
+    const stageRejection = expect(stagePromise).rejects.toThrow(/upload cancelled/i)
+    await repository.abortTransfer({ transferId: 'local-transfer-cancel-early' })
+
+    await stageRejection
+    await expect(
+      stat(join(root, 'uploads', 'default-project', PENDING_UPLOAD_SESSION_ID, 'dataset.csv'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('interrupts a stalled local source stream and waits for staging cleanup', async () => {
+    const root = await createStorageRoot()
+    const sourcePath = join(root, 'slow-dataset.csv')
+    const content = Buffer.from('sample,value\na,1\n')
+    const stalledSource = new Readable({ read: () => undefined })
+    let sourceSignal: AbortSignal | undefined
+    const repository = new UploadRepository(root, {
+      createLocalReadStream: (_path, options) => {
+        sourceSignal = options.signal
+        options.signal.addEventListener(
+          'abort',
+          () => stalledSource.destroy(new Error('Source stream aborted.')),
+          { once: true }
+        )
+        return stalledSource as never
+      }
+    })
+    await writeFile(sourcePath, content)
+
+    const stagePromise = repository.stageLocalFile({
+      transferId: 'local-transfer-stalled',
+      sourcePath,
+      name: 'slow-dataset.csv',
+      mimeType: 'text/csv',
+      size: content.byteLength
+    })
+    const stageRejection = expect(stagePromise).rejects.toThrow(/source stream aborted/i)
+    await vi.waitFor(() => expect(sourceSignal).toBeDefined())
+
+    await repository.abortTransfer({ transferId: 'local-transfer-stalled' })
+
+    expect(sourceSignal?.aborted).toBe(true)
+    await stageRejection
+    await expect(
+      stat(join(root, 'uploads', 'default-project', '.staging', 'local-transfer-stalled.part'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('stages uploaded files under the default project pending directory', async () => {

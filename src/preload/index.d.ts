@@ -447,6 +447,8 @@ interface OpenScienceAPI {
       file: File,
       request: BeginUploadTransferRequest
     ): Promise<UploadedAttachment | null>
+    // Acknowledges that the renderer committed a native-path upload into its draft state.
+    claimLocalFile?(request: UploadTransferRequest): Promise<void>
     beginTransfer(request: BeginUploadTransferRequest): Promise<UploadTransferStatus>
     appendTransfer(request: AppendUploadTransferRequest): Promise<UploadTransferStatus>
     getTransferStatus(request: UploadTransferRequest): Promise<UploadTransferStatus | null>

@@ -27,6 +27,10 @@ const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 type UploadRepositoryOptions = {
   maxFileBytes?: number
+  createLocalReadStream?: (
+    sourcePath: string,
+    options: { highWaterMark: number; signal: AbortSignal }
+  ) => ReturnType<typeof createReadStream>
 }
 
 type ActiveUploadTransfer = {
@@ -43,6 +47,9 @@ type ActiveUploadTransfer = {
 type ActiveLocalTransfer = {
   stagingPath: string
   cancelled: boolean
+  abortController: AbortController
+  settled: Promise<void>
+  resolveSettled: () => void
 }
 
 type CreateAttachmentInput = {
@@ -286,6 +293,8 @@ class UploadRepository {
     const localTransfer = this.activeLocalTransfers.get(transferId)
     if (localTransfer) {
       localTransfer.cancelled = true
+      localTransfer.abortController.abort()
+      await localTransfer.settled
       return
     }
     const transfer = this.activeTransfers.get(transferId)
@@ -306,19 +315,6 @@ class UploadRepository {
     const transferId = assertSafePathSegment(request.transferId)
     const originalName = request.name.trim() || 'upload'
     const maxFileBytes = this.options.maxFileBytes ?? MAX_UPLOAD_FILE_BYTES
-    const sourceInfo = await stat(request.sourcePath)
-
-    if (!sourceInfo.isFile()) {
-      throw new Error(`Upload source is not a file: ${originalName}`)
-    }
-    if (sourceInfo.size > maxFileBytes || request.size > maxFileBytes) {
-      throw new Error(
-        `Upload exceeds the ${formatUploadSizeLimit(maxFileBytes)} per-file limit: ${originalName}`
-      )
-    }
-    if (sourceInfo.size !== request.size) {
-      throw new Error(`Upload source changed before it could be staged: ${originalName}`)
-    }
     if (this.activeLocalTransfers.has(transferId) || this.activeTransfers.has(transferId)) {
       throw new Error(`Upload transfer already exists: ${transferId}`)
     }
@@ -326,20 +322,52 @@ class UploadRepository {
     const stagingDir = this.getSessionUploadDir(STAGING_UPLOAD_SESSION_ID)
     const pendingDir = this.getSessionUploadDir(PENDING_UPLOAD_SESSION_ID)
     const stagingPath = join(stagingDir, `${transferId}.part`)
+    let resolveSettled = (): void => undefined
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve
+    })
+    const localTransfer: ActiveLocalTransfer = {
+      stagingPath,
+      cancelled: false,
+      abortController: new AbortController(),
+      settled,
+      resolveSettled
+    }
     let receivedBytes = 0
     let output: Awaited<ReturnType<typeof open>> | undefined
 
-    await this.ensureStagingDirectory()
-    await mkdir(pendingDir, { recursive: true })
-    const localTransfer: ActiveLocalTransfer = { stagingPath, cancelled: false }
+    // Register before the first await so renderer teardown can cancel validation/directory setup too.
     this.activeLocalTransfers.set(transferId, localTransfer)
 
     try {
+      const sourceInfo = await stat(request.sourcePath)
+
+      if (!sourceInfo.isFile()) {
+        throw new Error(`Upload source is not a file: ${originalName}`)
+      }
+      if (sourceInfo.size > maxFileBytes || request.size > maxFileBytes) {
+        throw new Error(
+          `Upload exceeds the ${formatUploadSizeLimit(maxFileBytes)} per-file limit: ${originalName}`
+        )
+      }
+      if (sourceInfo.size !== request.size) {
+        throw new Error(`Upload source changed before it could be staged: ${originalName}`)
+      }
+      if (localTransfer.cancelled) throw new Error(`Upload cancelled: ${originalName}`)
+
+      await this.ensureStagingDirectory()
+      await mkdir(pendingDir, { recursive: true })
+      if (localTransfer.cancelled) throw new Error(`Upload cancelled: ${originalName}`)
       output = await open(stagingPath, 'wx')
 
-      for await (const chunk of createReadStream(request.sourcePath, {
-        highWaterMark: MAX_UPLOAD_CHUNK_BYTES
-      })) {
+      const sourceStream = (this.options.createLocalReadStream ?? createReadStream)(
+        request.sourcePath,
+        {
+          highWaterMark: MAX_UPLOAD_CHUNK_BYTES,
+          signal: localTransfer.abortController.signal
+        }
+      )
+      for await (const chunk of sourceStream) {
         if (localTransfer.cancelled) throw new Error(`Upload cancelled: ${originalName}`)
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
         const nextReceivedBytes = receivedBytes + bytes.byteLength
@@ -381,7 +409,6 @@ class UploadRepository {
         pendingDir,
         toSafeUploadFilename(originalName)
       )
-      this.activeLocalTransfers.delete(transferId)
 
       return this.createAttachment({
         id: randomUUID(),
@@ -392,10 +419,14 @@ class UploadRepository {
         mimeType: request.mimeType
       })
     } catch (error) {
-      this.activeLocalTransfers.delete(transferId)
       await output?.close().catch(() => undefined)
       await rm(stagingPath, { force: true })
       throw error
+    } finally {
+      if (this.activeLocalTransfers.get(transferId) === localTransfer) {
+        this.activeLocalTransfers.delete(transferId)
+      }
+      localTransfer.resolveSettled()
     }
   }
 

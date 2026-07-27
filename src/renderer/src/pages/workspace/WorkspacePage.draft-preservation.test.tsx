@@ -124,6 +124,7 @@ const textDoc = (text: string): ComposerDoc => ({ nodes: [{ type: 'text', text }
 
 const deleteUpload = vi.fn(() => Promise.resolve())
 const stageLocalFile = vi.fn()
+const claimLocalFile = vi.fn(() => Promise.resolve())
 const abortTransfer = vi.fn(() => Promise.resolve())
 
 describe('WorkspacePage draft preservation', () => {
@@ -173,6 +174,7 @@ describe('WorkspacePage draft preservation', () => {
       uploads: {
         deleteUpload,
         stageLocalFile,
+        claimLocalFile,
         beginTransfer: vi.fn(),
         appendTransfer: vi.fn(),
         getTransferStatus: vi.fn(),
@@ -301,6 +303,7 @@ describe('WorkspacePage draft preservation', () => {
     const attachmentA = createAttachment('att-a')
     await stageAttachment(attachmentA)
     expect(conversationProps.attachments).toEqual([attachmentA])
+    expect(claimLocalFile).toHaveBeenCalledWith({ transferId: expect.any(String) })
 
     // Switching away must not delete the staged file and must clear the composer for B.
     await openSession('sess-b')

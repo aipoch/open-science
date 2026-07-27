@@ -732,10 +732,18 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             }
           })
           if (controller.signal.aborted) {
-            await window.api.uploads.deleteUpload({ path: attachment.path }).catch(() => undefined)
+            await Promise.all([
+              window.api.uploads.deleteUpload({ path: attachment.path }).catch(() => undefined),
+              window.api.uploads
+                .abortTransfer({ transferId: transfer.transferId })
+                .catch(() => undefined)
+            ])
             continue
           }
           commitDraftAttachment(draftKey, transfer.transferId, attachment)
+          await window.api.uploads
+            .claimLocalFile?.({ transferId: transfer.transferId })
+            .catch((error) => console.warn('Failed to claim staged local upload', error))
         } catch (uploadError) {
           if (controller.signal.aborted) {
             updateDraftTransfers(draftKey, (transfers) =>

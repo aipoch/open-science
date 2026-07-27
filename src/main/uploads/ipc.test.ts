@@ -300,6 +300,211 @@ describe('default upload repository', () => {
     expect(repository.abortTransfer).toHaveBeenCalledWith({ transferId: 'transfer-4' })
   })
 
+  it('aborts a native-path upload and releases its migration lease when its renderer is destroyed', async () => {
+    let rejectStage: ((error: Error) => void) | undefined
+    const repository = {
+      stageLocalFile: vi.fn(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectStage = reject
+          })
+      ),
+      abortTransfer: vi.fn(async () => {
+        rejectStage?.(new Error('Upload cancelled: data.csv'))
+      })
+    } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const stageLocalFile = ipcHandlers.get('uploads:stage-local-file')!
+    const sender = createIpcEvent()
+
+    const stagePromise = Promise.resolve(
+      stageLocalFile(sender.event, {
+        transferId: 'local-transfer-1',
+        sourcePath: '/fixtures/data.csv',
+        name: 'data.csv',
+        size: 10
+      })
+    )
+    await Promise.resolve()
+    beginMigration()
+    sender.emit('destroyed')
+    let drained = false
+    const drainPromise = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+
+    await expect(stagePromise).rejects.toThrow(/upload cancelled/i)
+    await drainPromise
+    expect(repository.abortTransfer).toHaveBeenCalledWith({ transferId: 'local-transfer-1' })
+    expect(drained).toBe(true)
+  })
+
+  it('deletes a native-path upload that finishes after its renderer starts navigating', async () => {
+    let finishStage: ((attachment: unknown) => void) | undefined
+    const attachment = {
+      id: 'attachment-1',
+      sessionId: '.pending',
+      name: 'data.csv',
+      originalName: 'data.csv',
+      path: '/managed/.pending/data.csv',
+      size: 10
+    }
+    const repository = {
+      stageLocalFile: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finishStage = resolve
+          })
+      ),
+      abortTransfer: vi.fn(async () => undefined),
+      deleteUpload: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const stageLocalFile = ipcHandlers.get('uploads:stage-local-file')!
+    const sender = createIpcEvent()
+
+    const stagePromise = Promise.resolve(
+      stageLocalFile(sender.event, {
+        transferId: 'local-transfer-2',
+        sourcePath: '/fixtures/data.csv',
+        name: 'data.csv',
+        size: 10
+      })
+    )
+    await Promise.resolve()
+    sender.emit('did-start-navigation', {}, 'http://localhost/', false, false)
+    expect(repository.abortTransfer).not.toHaveBeenCalled()
+
+    sender.emit('did-start-navigation', {}, 'http://localhost/', false, true)
+    finishStage?.(attachment)
+
+    await expect(stagePromise).rejects.toThrow(/renderer is no longer available/i)
+    expect(repository.abortTransfer).toHaveBeenCalledWith({ transferId: 'local-transfer-2' })
+    expect(repository.deleteUpload).toHaveBeenCalledWith({ path: attachment.path })
+  })
+
+  it('keeps a completed native-path upload owned until the renderer claims it', async () => {
+    const attachment = {
+      id: 'attachment-awaiting-claim',
+      sessionId: '.pending',
+      name: 'data.csv',
+      originalName: 'data.csv',
+      path: '/managed/.pending/data.csv',
+      size: 10
+    }
+    const repository = {
+      stageLocalFile: vi.fn(async () => attachment),
+      abortTransfer: vi.fn(async () => undefined),
+      deleteUpload: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const stageLocalFile = ipcHandlers.get('uploads:stage-local-file')!
+    const sender = createIpcEvent()
+
+    await expect(
+      stageLocalFile(sender.event, {
+        transferId: 'local-transfer-awaiting-claim',
+        sourcePath: '/fixtures/data.csv',
+        name: 'data.csv',
+        size: 10
+      })
+    ).resolves.toEqual(attachment)
+
+    beginMigration()
+    let drained = false
+    const drainPromise = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+
+    sender.emit('destroyed')
+    await drainPromise
+    await vi.waitFor(() => {
+      expect(repository.deleteUpload).toHaveBeenCalledWith({ path: attachment.path })
+    })
+    expect(drained).toBe(true)
+  })
+
+  it('releases a completed native-path upload after the owning renderer claims it', async () => {
+    const attachment = {
+      id: 'attachment-claimed',
+      sessionId: '.pending',
+      name: 'data.csv',
+      originalName: 'data.csv',
+      path: '/managed/.pending/data.csv',
+      size: 10
+    }
+    const repository = {
+      stageLocalFile: vi.fn(async () => attachment),
+      abortTransfer: vi.fn(async () => undefined),
+      deleteUpload: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const stageLocalFile = ipcHandlers.get('uploads:stage-local-file')!
+    const claim = ipcHandlers.get('uploads:claim-local-file')!
+    const sender = createIpcEvent()
+
+    await stageLocalFile(sender.event, {
+      transferId: 'local-transfer-claimed',
+      sourcePath: '/fixtures/data.csv',
+      name: 'data.csv',
+      size: 10
+    })
+    await claim(sender.event, { transferId: 'local-transfer-claimed' })
+    sender.emit('destroyed')
+
+    expect(repository.deleteUpload).not.toHaveBeenCalled()
+  })
+
+  it('does not let another renderer cancel an active native-path upload', async () => {
+    let finishStage: ((attachment: unknown) => void) | undefined
+    const attachment = {
+      id: 'attachment-owned',
+      sessionId: '.pending',
+      name: 'data.csv',
+      originalName: 'data.csv',
+      path: '/managed/.pending/data.csv',
+      size: 10
+    }
+    const repository = {
+      stageLocalFile: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finishStage = resolve
+          })
+      ),
+      abortTransfer: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const stageLocalFile = ipcHandlers.get('uploads:stage-local-file')!
+    const abort = ipcHandlers.get('uploads:abort-transfer')!
+    const claim = ipcHandlers.get('uploads:claim-local-file')!
+    const owner = createIpcEvent(1)
+    const otherRenderer = createIpcEvent(2)
+
+    const stagePromise = Promise.resolve(
+      stageLocalFile(owner.event, {
+        transferId: 'local-transfer-owned',
+        sourcePath: '/fixtures/data.csv',
+        name: 'data.csv',
+        size: 10
+      })
+    )
+    await Promise.resolve()
+
+    await expect(
+      abort(otherRenderer.event, { transferId: 'local-transfer-owned' })
+    ).rejects.toThrow(/another renderer/i)
+    expect(repository.abortTransfer).not.toHaveBeenCalled()
+
+    finishStage?.(attachment)
+    await expect(stagePromise).resolves.toEqual(attachment)
+    await claim(owner.event, { transferId: 'local-transfer-owned' })
+  })
+
   it('does not expose the removed whole-file base64 staging channel', () => {
     registerUploadIpcHandlers({} as UploadRepository)
 

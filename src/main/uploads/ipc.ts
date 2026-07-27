@@ -8,7 +8,8 @@ import type {
   FinalizeUploadSessionRequest,
   StageLocalUploadRequest,
   UploadTransferRequest,
-  UploadTransferStatus
+  UploadTransferStatus,
+  UploadedAttachment
 } from '../../shared/uploads'
 import { resolveDataRoot } from '../storage-root'
 import { acquireDataRootWriter, withDataRootWrite } from '../storage/migration-state'
@@ -22,12 +23,12 @@ const createDefaultUploadRepository = (): UploadRepository =>
 const registerUploadIpcHandlers = (repository = createDefaultUploadRepository()): void => {
   // A chunk transfer spans several IPC calls but is one logical write. Holding the writer lease from
   // begin through finish/abort makes data-root migration wait across the gaps between chunks.
-  type ChunkOwner = {
+  type UploadOwner = {
     senderId: number
     transferIds: Set<string>
   }
   type ChunkWriter = {
-    owner: ChunkOwner
+    owner: UploadOwner
     release: () => void
     ready: Promise<UploadTransferStatus>
     cancelled: boolean
@@ -35,8 +36,17 @@ const registerUploadIpcHandlers = (repository = createDefaultUploadRepository())
     inFlight: Set<Promise<unknown>>
     cleanup?: Promise<void>
   }
-  const chunkOwners = new Map<number, ChunkOwner>()
+  type LocalWriter = {
+    owner: UploadOwner
+    release: () => void
+    cancelled: boolean
+    ready?: Promise<UploadedAttachment>
+    attachment?: UploadedAttachment
+    cleanup?: Promise<void>
+  }
+  const uploadOwners = new Map<number, UploadOwner>()
   const chunkWriters = new Map<string, ChunkWriter>()
+  const localWriters = new Map<string, LocalWriter>()
   const releaseChunkWriter = (transferId: string, writer: ChunkWriter): void => {
     if (chunkWriters.get(transferId) !== writer) return
     chunkWriters.delete(transferId)
@@ -58,21 +68,48 @@ const registerUploadIpcHandlers = (repository = createDefaultUploadRepository())
     })()
     return writer.cleanup
   }
-  const registerChunkOwner = (event: IpcMainInvokeEvent): ChunkOwner => {
-    const existing = chunkOwners.get(event.sender.id)
+  const releaseLocalWriter = (transferId: string, writer: LocalWriter): void => {
+    if (localWriters.get(transferId) !== writer) return
+    localWriters.delete(transferId)
+    writer.owner.transferIds.delete(transferId)
+    writer.release()
+  }
+  const abortLocalWriter = (transferId: string, writer: LocalWriter): Promise<void> => {
+    if (writer.cleanup) return writer.cleanup
+
+    writer.cancelled = true
+    writer.cleanup = (async () => {
+      try {
+        await repository.abortTransfer({ transferId }).catch(() => undefined)
+        const attachment = writer.attachment ?? (await writer.ready?.catch(() => undefined))
+        if (attachment) {
+          await repository.deleteUpload({ path: attachment.path }).catch(() => undefined)
+        }
+      } finally {
+        releaseLocalWriter(transferId, writer)
+      }
+    })()
+    return writer.cleanup
+  }
+  const registerUploadOwner = (event: IpcMainInvokeEvent): UploadOwner => {
+    const existing = uploadOwners.get(event.sender.id)
     if (existing) return existing
 
-    const owner: ChunkOwner = { senderId: event.sender.id, transferIds: new Set() }
-    chunkOwners.set(owner.senderId, owner)
+    const owner: UploadOwner = { senderId: event.sender.id, transferIds: new Set() }
+    uploadOwners.set(owner.senderId, owner)
     const releaseOwner = (): void => {
-      if (chunkOwners.get(owner.senderId) !== owner) return
-      chunkOwners.delete(owner.senderId)
+      if (uploadOwners.get(owner.senderId) !== owner) return
+      uploadOwners.delete(owner.senderId)
       event.sender.removeListener('destroyed', releaseOwner)
       event.sender.removeListener('render-process-gone', releaseOwner)
       event.sender.removeListener('did-start-navigation', releaseOnMainFrameNavigation)
       for (const transferId of [...owner.transferIds]) {
-        const writer = chunkWriters.get(transferId)
-        if (writer?.owner === owner && !writer.settling) void abortChunkWriter(transferId, writer)
+        const chunkWriter = chunkWriters.get(transferId)
+        if (chunkWriter?.owner === owner && !chunkWriter.settling) {
+          void abortChunkWriter(transferId, chunkWriter)
+        }
+        const localWriter = localWriters.get(transferId)
+        if (localWriter?.owner === owner) void abortLocalWriter(transferId, localWriter)
       }
     }
     const releaseOnMainFrameNavigation = (
@@ -92,8 +129,19 @@ const registerUploadIpcHandlers = (repository = createDefaultUploadRepository())
     event: IpcMainInvokeEvent,
     transferId: string
   ): ChunkWriter | undefined => {
-    const owner = registerChunkOwner(event)
+    const owner = registerUploadOwner(event)
     const writer = chunkWriters.get(transferId)
+    if (writer && writer.owner !== owner) {
+      throw new Error(`Upload transfer belongs to another renderer: ${transferId}`)
+    }
+    return writer
+  }
+  const getOwnedLocalWriter = (
+    event: IpcMainInvokeEvent,
+    transferId: string
+  ): LocalWriter | undefined => {
+    const owner = registerUploadOwner(event)
+    const writer = localWriters.get(transferId)
     if (writer && writer.owner !== owner) {
       throw new Error(`Upload transfer belongs to another renderer: ${transferId}`)
     }
@@ -101,15 +149,61 @@ const registerUploadIpcHandlers = (repository = createDefaultUploadRepository())
   }
 
   // Uploads write/mutate under the data root, so block them during the data-root copy→commit window.
-  ipcMain.handle('uploads:stage-local-file', (event, request: StageLocalUploadRequest) =>
-    withDataRootWrite(() =>
-      repository.stageLocalFile(request, (progress) => {
-        event.sender.send('uploads:transfer-progress', progress)
+  ipcMain.handle('uploads:stage-local-file', async (event, request: StageLocalUploadRequest) => {
+    const owner = registerUploadOwner(event)
+    const existing = localWriters.get(request.transferId) ?? chunkWriters.get(request.transferId)
+    if (existing) {
+      if (existing.owner !== owner) {
+        throw new Error(`Upload transfer belongs to another renderer: ${request.transferId}`)
+      }
+      throw new Error(`Upload transfer already exists: ${request.transferId}`)
+    }
+
+    const writer: LocalWriter = {
+      owner,
+      release: acquireDataRootWriter(),
+      cancelled: false
+    }
+    localWriters.set(request.transferId, writer)
+    owner.transferIds.add(request.transferId)
+    try {
+      writer.ready = repository.stageLocalFile(request, (progress) => {
+        if (!writer.cancelled) event.sender.send('uploads:transfer-progress', progress)
       })
-    )
-  )
+      const attachment = await writer.ready
+      writer.attachment = attachment
+      if (writer.cancelled) {
+        await writer.cleanup
+        throw new Error(`Upload renderer is no longer available: ${request.transferId}`)
+      }
+      return attachment
+    } catch (error) {
+      if (writer.cancelled) await writer.cleanup
+      else releaseLocalWriter(request.transferId, writer)
+      throw error
+    }
+  })
+  ipcMain.handle('uploads:claim-local-file', (event, request: UploadTransferRequest) => {
+    const writer = getOwnedLocalWriter(event, request.transferId)
+    // Chunk/Web transfers have no local ownership record, so claiming them is an idempotent no-op.
+    if (!writer) return
+    if (!writer.attachment) {
+      throw new Error(`Upload transfer is not ready to claim: ${request.transferId}`)
+    }
+    if (writer.cancelled) {
+      throw new Error(`Upload renderer is no longer available: ${request.transferId}`)
+    }
+    releaseLocalWriter(request.transferId, writer)
+  })
   ipcMain.handle('uploads:begin-transfer', async (event, request: BeginUploadTransferRequest) => {
-    const owner = registerChunkOwner(event)
+    const owner = registerUploadOwner(event)
+    const localWriter = localWriters.get(request.transferId)
+    if (localWriter) {
+      if (localWriter.owner !== owner) {
+        throw new Error(`Upload transfer belongs to another renderer: ${request.transferId}`)
+      }
+      throw new Error(`Upload transfer already exists: ${request.transferId}`)
+    }
     const existing = chunkWriters.get(request.transferId)
     if (existing) {
       if (existing.owner !== owner) {
@@ -182,6 +276,9 @@ const registerUploadIpcHandlers = (repository = createDefaultUploadRepository())
     }
   })
   ipcMain.handle('uploads:abort-transfer', async (event, request: UploadTransferRequest) => {
+    const localWriter = getOwnedLocalWriter(event, request.transferId)
+    if (localWriter) return abortLocalWriter(request.transferId, localWriter)
+
     const writer = getOwnedChunkWriter(event, request.transferId)
     if (!writer) return withDataRootWrite(() => repository.abortTransfer(request))
 

@@ -184,6 +184,7 @@ export const WEB_INVOKE_CHANNELS = {
   'uploads.abortTransfer': 'uploads:abort-transfer',
   'uploads.appendTransfer': 'uploads:append-transfer',
   'uploads.beginTransfer': 'uploads:begin-transfer',
+  'uploads.claimLocalFile': 'uploads:claim-local-file',
   'uploads.deleteUpload': 'uploads:delete',
   'uploads.finalizeSession': 'uploads:finalize-session',
   'uploads.finishTransfer': 'uploads:finish-transfer',
