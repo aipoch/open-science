@@ -114,6 +114,7 @@ const GeneralPanel = (): React.JSX.Element => {
           label="Theme"
           description="Follow the system setting, or force light or dark."
           className="pt-0"
+          controlClassName="flex justify-end"
         >
           <ThemeSegmentedControl />
         </SettingsRow>
