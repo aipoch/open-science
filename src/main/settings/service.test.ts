@@ -354,6 +354,40 @@ describe('SettingsService: providers', () => {
     )
   })
 
+  it('clears an imported Codex route when isolated setup is recreated after deletion', async () => {
+    const userCodexDir = join(storageRoot, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+    await writeFile(
+      join(userCodexDir, 'config.toml'),
+      [
+        'model_provider = "subscription-route"',
+        '',
+        '[model_providers.subscription-route]',
+        'name = "OpenAI"',
+        'requires_openai_auth = true',
+        'wire_api = "responses"',
+        'base_url = "http://127.0.0.1:1087/v1"',
+        ''
+      ].join('\n')
+    )
+    const service = createService(undefined, { userCodexDir })
+
+    await service.upsertProvider({ type: 'codex-shared' })
+    await service.deleteProvider(CODEX_SUBSCRIPTION_PROVIDER_ID)
+    expect((await repository.getSettings()).providers).toEqual([])
+
+    const isolated = await service.upsertProvider({ type: 'codex-isolated' })
+
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(isolated.providers[0]).toMatchObject({
+      type: 'codex-isolated',
+      codexAuthMode: 'isolated'
+    })
+  })
+
   it('refreshes an imported Codex profile only when re-import is explicitly requested', async () => {
     const userCodexDir = join(storageRoot, 'user-codex')
     await mkdir(userCodexDir, { recursive: true })
