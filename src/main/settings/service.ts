@@ -84,7 +84,8 @@ import {
   isClaudeSubscriptionProviderId,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
-  providerEndpoints
+  providerEndpoints,
+  requiresChatCompletionsBridge
 } from '../../shared/settings'
 import type { PackageMirror } from '../../shared/mirror'
 import {
@@ -2875,6 +2876,9 @@ class SettingsService {
                 // only through a proxy (e.g. api.openai.com) would fail the probe as a false `network` error
                 // even with a valid key. The local Responses-bridge loopback stays on the direct fetch.
                 fetchImpl: netFetchStandard,
+                // Codex reaches Chat Completions-only providers through the local Responses bridge.
+                // A plain ping cannot prove the streaming function-call contract that runtime needs.
+                requireBridgeToolCall: requiresChatCompletionsBridge(resolved.provider, framework),
                 // For a multi-route provider, probe the route this framework actually drives so a passing
                 // test proves that route (e.g. Claude Code hits /v1/messages, not /v1/chat/completions).
                 // Codex is excluded: it bridges the provider's OpenAI route under its `responses` protocol,
@@ -3558,10 +3562,7 @@ class SettingsService {
     // their protocol, but use a narrow compatibility proxy because Codex emits namespace tools while
     // several compatible APIs accept only flat function names. Official OpenAI and subscriptions
     // already implement Codex's native wire contract and remain direct.
-    const needsChatResponsesBridge =
-      framework.id === 'codex' &&
-      (provider.apiEndpoints?.includes('openai') ?? false) &&
-      !(provider.apiEndpoints?.includes('responses') ?? false)
+    const needsChatResponsesBridge = requiresChatCompletionsBridge(provider, framework)
     const needsNativeResponsesCompatibility =
       framework.id === 'codex' &&
       (provider.apiEndpoints?.includes('responses') ?? false) &&

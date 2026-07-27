@@ -7,7 +7,8 @@ import {
   isProviderCompatibleWith,
   isProviderUsableByFramework,
   preferredEndpoint,
-  providerEndpoints
+  providerEndpoints,
+  requiresChatCompletionsBridge
 } from './settings'
 
 describe('provider endpoint compatibility', () => {
@@ -60,6 +61,19 @@ describe('provider endpoint compatibility', () => {
     expect(
       isProviderUsableByFramework({ type: 'custom', apiEndpoints: ['responses'] }, codex)
     ).toBe(true)
+  })
+
+  it('requires the Codex bridge only when Chat Completions is the provider best route', () => {
+    const codex = { id: 'codex' as const, supportedApiTypes: ['responses'] as const }
+
+    expect(requiresChatCompletionsBridge({ apiEndpoints: ['openai'] }, codex)).toBe(true)
+    expect(
+      requiresChatCompletionsBridge({ apiEndpoints: ['anthropic', 'openai'] }, codex)
+    ).toBe(true)
+    expect(requiresChatCompletionsBridge({ apiEndpoints: ['responses'] }, codex)).toBe(false)
+    expect(
+      requiresChatCompletionsBridge({ apiEndpoints: ['openai', 'responses'] }, codex)
+    ).toBe(false)
   })
 
   it('marks a vendor model bridge-unsupported only when the registry lists it', () => {

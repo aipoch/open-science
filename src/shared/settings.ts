@@ -110,6 +110,23 @@ export const isProviderCompatibleWith = (
   frameworkEndpoints: readonly ChatApiEndpoint[]
 ): boolean => endpoints.some((endpoint) => frameworkEndpoints.includes(endpoint))
 
+// Codex can drive a Chat Completions-only provider through the app's local Responses bridge. Keep
+// this contract in one module so compatibility, validation, and runtime setup cannot disagree about
+// which provider/framework pairs depend on bridge behavior.
+export const requiresChatCompletionsBridge = (
+  provider: { apiEndpoints?: readonly ChatApiEndpoint[] },
+  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+): boolean => {
+  const endpoints = providerEndpoints(provider)
+
+  return (
+    framework.id === 'codex' &&
+    framework.supportedApiTypes.includes('responses') &&
+    endpoints.includes('openai') &&
+    !endpoints.includes('responses')
+  )
+}
+
 // Whether a provider can actually drive a given framework. Two axes: endpoint compatibility (above),
 // AND provider-type — a `claude-isolated` provider carries an app-owned Anthropic OAuth token
 // that no other framework can consume, so it is only usable by Claude Code regardless of endpoint.
@@ -126,11 +143,7 @@ export const isProviderUsableByFramework = (
 
   const endpoints = providerEndpoints(provider)
 
-  if (
-    framework.id === 'codex' &&
-    framework.supportedApiTypes.includes('responses') &&
-    endpoints.includes('openai')
-  ) {
+  if (requiresChatCompletionsBridge(provider, framework)) {
     return true
   }
 
