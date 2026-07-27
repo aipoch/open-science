@@ -95,6 +95,12 @@ const validBridgeToolCallResponse = (): Response =>
     { status: 200, headers: { 'content-type': 'text/event-stream' } }
   )
 
+const validNativeCompatibilityToolCallResponse = (): Response =>
+  new Response(
+    'data: {"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"open_science__bridge_probe","arguments":"{}"}}\n\ndata: {"type":"response.completed","response":{"output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"open_science__bridge_probe","arguments":"{}"}]}}\n\n',
+    { status: 200, headers: { 'content-type': 'text/event-stream' } }
+  )
+
 type ManagedInstallImpl = (options: {
   installId: string
   onEvent: (event: { kind: string; installId: string }) => void
@@ -2845,6 +2851,24 @@ describe('SettingsService: official vendors', () => {
     expect(body).toMatchObject({
       stream: true,
       tools: [{ type: 'function', function: { name: 'open_science_bridge_probe' } }]
+    })
+  })
+
+  it('probes native Responses vendors through the Codex namespace compatibility contract', async () => {
+    const service = createService()
+    await repository.setAgentFramework('codex')
+    const fetchMock = vi.fn().mockResolvedValue(validNativeCompatibilityToolCallResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await service.validateProvider({
+      draft: { type: 'official', vendorId: 'xai', key: 'sk-xai' }
+    })
+
+    expect(result).toMatchObject({ ok: true, category: 'ok' })
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.x.ai/v1/responses')
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      stream: true,
+      tools: [{ type: 'function', name: 'open_science__bridge_probe' }]
     })
   })
 

@@ -287,6 +287,20 @@ const CODEX_INSTALL_TARGET: InstallTarget = {
   scriptUnix: ''
 }
 
+// Native Responses vendors other than OpenAI run through a protocol-preserving proxy because Codex
+// emits namespace tools that those upstream APIs do not accept directly. Validation and runtime must
+// share this predicate so a passing test proves the same path the agent will use.
+const requiresNativeResponsesCompatibility = (
+  provider: ResolvedProvider,
+  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+): boolean =>
+  framework.id === 'codex' &&
+  framework.supportedApiTypes.includes('responses') &&
+  providerEndpoints(provider).includes('responses') &&
+  !isCodexSubscriptionProvider(provider.type) &&
+  provider.vendorId !== 'openai' &&
+  !isOfficialOpenAiResponsesBase(provider.openaiBaseUrl ?? provider.baseUrl)
+
 // Codex exposes local MCP tools as namespaced Responses functions. Chat Completions has no namespace
 // field, so the bridge receives the app-owned notebook schemas and aliases them for the upstream.
 const CODEX_NOTEBOOK_TOOL_NAMESPACE = `mcp__${NOTEBOOK_MCP_SERVER_NAME.replace(
@@ -2879,6 +2893,10 @@ class SettingsService {
                 // Codex reaches Chat Completions-only providers through the local Responses bridge.
                 // A plain ping cannot prove the streaming function-call contract that runtime needs.
                 requireBridgeToolCall: requiresChatCompletionsBridge(resolved.provider, framework),
+                requireNativeResponsesCompatibility: requiresNativeResponsesCompatibility(
+                  resolved.provider,
+                  framework
+                ),
                 // For a multi-route provider, probe the route this framework actually drives so a passing
                 // test proves that route (e.g. Claude Code hits /v1/messages, not /v1/chat/completions).
                 // Codex is excluded: it bridges the provider's OpenAI route under its `responses` protocol,
@@ -3563,12 +3581,10 @@ class SettingsService {
     // several compatible APIs accept only flat function names. Official OpenAI and subscriptions
     // already implement Codex's native wire contract and remain direct.
     const needsChatResponsesBridge = requiresChatCompletionsBridge(provider, framework)
-    const needsNativeResponsesCompatibility =
-      framework.id === 'codex' &&
-      (provider.apiEndpoints?.includes('responses') ?? false) &&
-      !isCodexSubscriptionProvider(provider.type) &&
-      provider.vendorId !== 'openai' &&
-      !isOfficialOpenAiResponsesBase(provider.openaiBaseUrl ?? provider.baseUrl)
+    const needsNativeResponsesCompatibility = requiresNativeResponsesCompatibility(
+      provider,
+      framework
+    )
     // A bridge may still serve a live Codex runtime from an earlier framework generation. Do not stop
     // or retarget it merely because the newly selected framework/provider does not need one.
     const responsesBridge = needsChatResponsesBridge

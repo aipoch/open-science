@@ -469,6 +469,37 @@ describe('validate: provider dispatch', () => {
     })
   })
 
+  it('keeps a text-only native Responses compatibility provider unverified', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          'data: {"type":"response.output_text.delta","delta":"ok"}\n\ndata: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}}\n\n',
+          { status: 200, headers: { 'content-type': 'text/event-stream' } }
+        )
+      )
+
+    const result = await validateProvider(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.x.ai/v1',
+        key: 'k',
+        model: 'm'
+      },
+      {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        requireNativeResponsesCompatibility: true
+      }
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      category: 'unknown',
+      message: expect.stringContaining('namespace function tool call')
+    })
+  })
+
   it('keeps the friendly auth guidance and does not surface a raw 401 body', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       status: 401,
