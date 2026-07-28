@@ -1368,6 +1368,114 @@ describe('ProjectFilesView', () => {
     )
   })
 
+  it('limits session filters to five and restores that limit after Show fewer', async () => {
+    const sessions = Array.from({ length: 9 }, (_, index) =>
+      createSession({
+        id: `session-${index + 1}`,
+        title: `Session ${index + 1}`,
+        artifacts: [
+          {
+            id: `artifact-${index + 1}`,
+            kind: 'managed-file',
+            path: `/workspace/file-${index + 1}.txt`,
+            name: `file-${index + 1}.txt`
+          }
+        ]
+      })
+    )
+    await renderView(sessions)
+
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+
+    const sessionItems = (): NodeListOf<HTMLElement> =>
+      document.body.querySelectorAll('[data-filter-id^="session:"]')
+    expect(sessionItems()).toHaveLength(5)
+
+    const showAll = document.body.querySelector<HTMLElement>(
+      '[data-testid="session-options-toggle"]'
+    )
+    expect(showAll?.textContent).toBe('Show all 9 sessions')
+
+    await act(async () => {
+      showAll?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(sessionItems()).toHaveLength(9)
+
+    const showFewer = document.body.querySelector<HTMLElement>(
+      '[data-testid="session-options-toggle"]'
+    )
+    expect(showFewer?.textContent).toBe('Show fewer')
+
+    await act(async () => {
+      showFewer?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(sessionItems()).toHaveLength(5)
+    expect(document.body.querySelector('[data-testid="session-options-toggle"]')?.textContent).toBe(
+      'Show all 9 sessions'
+    )
+  })
+
+  it('loads every remaining session page after Show all', async () => {
+    const sessions = Array.from({ length: 12 }, (_, index) =>
+      createSession({
+        id: `session-${index + 1}`,
+        title: `Session ${index + 1}`,
+        artifacts: [
+          {
+            id: `artifact-${index + 1}`,
+            kind: 'managed-file',
+            path: `/workspace/file-${index + 1}.txt`,
+            name: `file-${index + 1}.txt`
+          }
+        ]
+      })
+    )
+    await renderView(sessions)
+
+    vi.mocked(window.api.projectFiles.listArtifactGroups).mockImplementation(async (request) => ({
+      items: (request.cursor ? sessions.slice(10) : sessions.slice(0, 10)).map((session) => ({
+        sessionId: session.id,
+        artifactCount: 1
+      })),
+      nextCursor: request.cursor ? undefined : 'page-2',
+      totalCount: 12
+    }))
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sources: ['artifact'],
+        kind: 'reset'
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+    expect(document.body.querySelectorAll('[data-filter-id^="session:"]')).toHaveLength(5)
+    expect(document.body.querySelector('[data-testid="session-options-toggle"]')?.textContent).toBe(
+      'Show all 12 sessions'
+    )
+
+    await act(async () => {
+      document.body
+        .querySelector<HTMLElement>('[data-testid="session-options-toggle"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelectorAll('[data-filter-id^="session:"]')).toHaveLength(12)
+    expect(document.body.querySelector('[data-filter-id="session:session-12"]')).not.toBeNull()
+  })
+
   it('filters to uploads or a single session from the menu', async () => {
     await renderView([
       createSession({
@@ -1468,6 +1576,11 @@ describe('ProjectFilesView', () => {
       clickDropdownTrigger(
         container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
       )
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLElement>('[data-testid="session-options-toggle"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
     await act(async () => {
       document.body

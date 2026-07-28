@@ -70,6 +70,8 @@ type ProjectFilesFilterOption = {
   kind: 'all' | 'uploads' | 'session'
 }
 
+const COLLAPSED_SESSION_OPTION_COUNT = 5
+
 type ProjectFilePreviewTarget = {
   id: string
   path: string
@@ -709,6 +711,7 @@ const ProjectFilesFilterMenu = ({
   options,
   selectedOptionId,
   onSelect,
+  sessionOptionCount,
   canLoadMoreOptions,
   onLoadMoreOptions,
   onBrowseRemoteHost
@@ -717,12 +720,25 @@ const ProjectFilesFilterMenu = ({
   options: ProjectFilesFilterOption[]
   selectedOptionId: string
   onSelect: (optionId: string) => void
+  sessionOptionCount: number
   canLoadMoreOptions: boolean
   onLoadMoreOptions: () => void
   onBrowseRemoteHost: (providerId: string) => void
 }): React.JSX.Element => {
   const hosts = useComputeStore((state) => state.hosts)
   const openSettingsToCompute = useSettingsStore((state) => state.openSettingsToCompute)
+  const [showAllSessions, setShowAllSessions] = useState(false)
+  const fixedOptions = options.filter((option) => option.kind !== 'session')
+  const sessionOptions = options.filter((option) => option.kind === 'session')
+  const visibleSessionOptions = showAllSessions
+    ? sessionOptions
+    : sessionOptions.slice(0, COLLAPSED_SESSION_OPTION_COUNT)
+  const showSessionOptionsToggle = sessionOptionCount > COLLAPSED_SESSION_OPTION_COUNT
+
+  useEffect(() => {
+    // Expanded menus consume one existing cursor page per render until every session is available.
+    if (showAllSessions && canLoadMoreOptions) onLoadMoreOptions()
+  }, [canLoadMoreOptions, onLoadMoreOptions, showAllSessions])
 
   return (
     <DropdownMenu>
@@ -742,22 +758,10 @@ const ProjectFilesFilterMenu = ({
           />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="start"
-        className="max-h-[360px] w-[320px] overflow-y-auto"
-        onScroll={(event) => {
-          const element = event.currentTarget
-          if (
-            canLoadMoreOptions &&
-            element.scrollHeight - element.scrollTop - element.clientHeight < 48
-          ) {
-            onLoadMoreOptions()
-          }
-        }}
-      >
+      <DropdownMenuContent align="start" className="max-h-[360px] w-[320px] overflow-y-auto">
         <DropdownMenuLabel>Artifacts</DropdownMenuLabel>
         <DropdownMenuGroup>
-          {options.map((option) => (
+          {fixedOptions.map((option) => (
             <FilterMenuItem
               key={option.id}
               option={option}
@@ -765,6 +769,26 @@ const ProjectFilesFilterMenu = ({
               onSelect={onSelect}
             />
           ))}
+          {visibleSessionOptions.map((option) => (
+            <FilterMenuItem
+              key={option.id}
+              option={option}
+              isSelected={option.id === selectedOptionId}
+              onSelect={onSelect}
+            />
+          ))}
+          {showSessionOptionsToggle ? (
+            <DropdownMenuItem
+              data-testid="session-options-toggle"
+              className="min-h-7 py-1 text-[11px] text-muted-foreground"
+              onSelect={(event) => {
+                event.preventDefault()
+                setShowAllSessions((current) => !current)
+              }}
+            >
+              {showAllSessions ? 'Show fewer' : `Show all ${sessionOptionCount} sessions`}
+            </DropdownMenuItem>
+          ) : null}
         </DropdownMenuGroup>
 
         {/* REMOTE section: SSH compute hosts */}
@@ -1297,8 +1321,11 @@ const ProjectFilesViewContent = ({
           options={filterOptions}
           selectedOptionId={effectiveFilterId}
           onSelect={selectFilter}
+          sessionOptionCount={catalogIndex.overview.artifactGroupCount}
           canLoadMoreOptions={
-            Boolean(catalogIndex.groups.nextCursor) && !catalogIndex.groups.isLoading
+            Boolean(catalogIndex.groups.nextCursor) &&
+            !catalogIndex.groups.isLoading &&
+            !catalogIndex.groups.error
           }
           onLoadMoreOptions={() => void catalogIndex.loadMoreGroups()}
           onBrowseRemoteHost={(providerId) => setBrowseProviderId(providerId)}
