@@ -667,11 +667,11 @@ export const sanitizeMessageImages = (value: unknown): PersistedMessageImage[] |
 export const sanitizeSessionMessageImages = (
   session: PersistedChatSession
 ): PersistedChatSession => {
-  let totalBytes = 0
-
-  return {
-    ...session,
-    messages: session.messages.map((message) => {
+  const sanitizeMessages = <Message extends PersistedChatMessage>(
+    messages: readonly Message[]
+  ): Message[] => {
+    let totalBytes = 0
+    return messages.map((message) => {
       const images = (sanitizeMessageImages(message.images) ?? []).filter((image) => {
         if (totalBytes + image.byteLength > MAX_ACP_SESSION_IMAGE_BYTES) return false
         totalBytes += image.byteLength
@@ -679,6 +679,23 @@ export const sanitizeSessionMessageImages = (
       })
       return { ...message, images: images.length > 0 ? images : undefined }
     })
+  }
+
+  if (!session.conversationGraph) {
+    return { ...session, messages: sanitizeMessages(session.messages) }
+  }
+
+  // The graph is canonical and includes inactive Branches. Sanitize it once under one aggregate
+  // budget, then rebuild the active compatibility projection so duplicate active messages are not
+  // counted twice and hidden Branches cannot bypass the on-disk image boundary.
+  const conversationGraph = {
+    ...session.conversationGraph,
+    messages: sanitizeMessages(session.conversationGraph.messages)
+  }
+  return {
+    ...session,
+    conversationGraph,
+    messages: resolveActiveConversationMessages(conversationGraph).map(projectConversationMessage)
   }
 }
 
@@ -1101,10 +1118,13 @@ export type PersistedSessionFile = {
 }
 
 // Wraps a session in the on-disk envelope written per file.
-export const createSessionFile = (session: PersistedChatSession): PersistedSessionFile => ({
-  version: SESSION_FILE_VERSION,
-  session: materializeSessionConversationGraph(session)
-})
+export const createSessionFile = (session: PersistedChatSession): PersistedSessionFile => {
+  const materialized = materializeSessionConversationGraph(session)
+  return {
+    version: SESSION_FILE_VERSION,
+    session: sanitizeSessionMessageImages(materialized)
+  }
+}
 
 // Reads one session-file payload, tolerating either the envelope or a bare session object, and applies
 // the same sanitization + interrupted-run normalization used by the legacy whole-state loader.

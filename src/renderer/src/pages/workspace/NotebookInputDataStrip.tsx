@@ -78,6 +78,8 @@ const NotebookInputDataStrip = ({
                 mimeType: input.contentType,
                 source: 'notebook-input',
                 size: input.sizeBytes,
+                artifactId:
+                  input.sourceKind === 'artifact-version' ? input.sourceFileId : undefined,
                 selectedVersionId: input.inputFileVersionId,
                 versionNumber: input.sourceVersionNumber
               })

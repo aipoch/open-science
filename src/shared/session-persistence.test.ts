@@ -3,12 +3,14 @@ import { describe, expect, it } from 'vitest'
 import { MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
 
 import {
+  createSessionFile,
   sanitizeActivityGroup,
   normalizeSessionFile,
   sanitizeMessageImages,
   sanitizeToolActivity,
   type PersistedChatSession
 } from './session-persistence'
+import { createLinearConversationGraph } from './conversation-graph'
 
 const createSessionWithActivity = (activity: unknown): Record<string, unknown> => ({
   id: 'session-1',
@@ -199,6 +201,78 @@ describe('message image persistence', () => {
     expect(restoredImages.reduce((total, image) => total + image.byteLength, 0)).toBe(
       MAX_ACP_SESSION_IMAGE_BYTES
     )
+  })
+
+  it('sanitizes images that exist only on an inactive conversation branch before writing', () => {
+    const activeMessage = {
+      id: 'active-message',
+      role: 'user' as const,
+      content: 'Active prompt',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [activeMessage],
+      createdAt: 1,
+      updatedAt: 2
+    })
+    const inactiveBranchId = 'message-branch-inactive'
+    const inactiveMessageId = 'inactive-message'
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Images',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [activeMessage],
+      conversationGraph: {
+        ...graph,
+        branches: [
+          ...graph.branches,
+          {
+            id: inactiveBranchId,
+            agentFrameId: graph.rootFrameId,
+            parentBranchId: graph.branches[0].id,
+            headMessageId: inactiveMessageId,
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ],
+        messages: [
+          ...graph.messages,
+          {
+            id: inactiveMessageId,
+            role: 'agent',
+            content: 'Inactive reply',
+            status: 'complete',
+            eventIds: [],
+            images: Array.from({ length: 6 }, (_, index) => ({
+              id: `inactive-image-${index}`,
+              mimeType: 'image/png' as const,
+              data: 'AQID',
+              byteLength: 999
+            })),
+            agentFrameId: graph.rootFrameId,
+            introducedOnBranchId: inactiveBranchId,
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ]
+      },
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    const persisted = createSessionFile(session).session
+    const inactiveImages = persisted.conversationGraph?.messages.find(
+      (message) => message.id === inactiveMessageId
+    )?.images
+
+    expect(inactiveImages).toHaveLength(4)
+    expect(inactiveImages?.every((image) => image.byteLength === 3)).toBe(true)
   })
 })
 

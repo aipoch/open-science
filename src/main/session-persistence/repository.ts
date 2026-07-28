@@ -5,7 +5,6 @@ import {
   createEmptySessionManifest,
   createSessionFile,
   normalizeSessionFile,
-  sanitizeSessionMessageImages,
   sanitizeSessionUploadedAttachments,
   normalizeSessionManifest,
   type LoadAllSessionsResult,
@@ -192,9 +191,7 @@ class SessionRepository {
       )
     }
     const filePath = this.sessionFilePath(session.projectId, session.id)
-    const sanitizedSession = sanitizeSessionUploadedAttachments(
-      sanitizeSessionMessageImages(session)
-    )
+    const sanitizedSession = sanitizeSessionUploadedAttachments(session)
 
     await mkdir(this.projectDir(session.projectId), { recursive: true })
     await this.atomicWrite(filePath, createSessionFile(encodeSessionDataPaths(sanitizedSession)))

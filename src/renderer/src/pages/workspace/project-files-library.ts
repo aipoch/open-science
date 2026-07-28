@@ -67,7 +67,7 @@ export const buildProjectFileLibrary = (
       if (message.role !== 'user' || !message.uploads) continue
 
       for (const attachment of message.uploads) {
-        if (!attachment.path) continue
+        if (!attachment.path && !attachment.versionId) continue
 
         uploadFiles.push({
           id: `upload:${attachment.id}`,
