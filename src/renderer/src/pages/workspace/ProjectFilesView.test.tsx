@@ -42,6 +42,22 @@ const createSession = (overrides: Partial<ChatSession>): ChatSession => ({
   ...overrides
 })
 
+const createArtifactSessions = (count: number): ChatSession[] =>
+  Array.from({ length: count }, (_, index) =>
+    createSession({
+      id: `session-${index + 1}`,
+      title: `Session ${index + 1}`,
+      artifacts: [
+        {
+          id: `artifact-${index + 1}`,
+          kind: 'managed-file',
+          path: `/workspace/file-${index + 1}.txt`,
+          name: `file-${index + 1}.txt`
+        }
+      ]
+    })
+  )
+
 const createUpload = (overrides: Partial<UploadedAttachment> = {}): UploadedAttachment => ({
   id: 'upload-1',
   sessionId: 'session-1',
@@ -1379,20 +1395,7 @@ describe('ProjectFilesView', () => {
   })
 
   it('limits session filters to five and restores that limit after Show fewer', async () => {
-    const sessions = Array.from({ length: 9 }, (_, index) =>
-      createSession({
-        id: `session-${index + 1}`,
-        title: `Session ${index + 1}`,
-        artifacts: [
-          {
-            id: `artifact-${index + 1}`,
-            kind: 'managed-file',
-            path: `/workspace/file-${index + 1}.txt`,
-            name: `file-${index + 1}.txt`
-          }
-        ]
-      })
-    )
+    const sessions = createArtifactSessions(9)
     await renderView(sessions)
 
     await act(async () => {
@@ -1430,20 +1433,7 @@ describe('ProjectFilesView', () => {
   })
 
   it('loads every remaining session page after Show all', async () => {
-    const sessions = Array.from({ length: 12 }, (_, index) =>
-      createSession({
-        id: `session-${index + 1}`,
-        title: `Session ${index + 1}`,
-        artifacts: [
-          {
-            id: `artifact-${index + 1}`,
-            kind: 'managed-file',
-            path: `/workspace/file-${index + 1}.txt`,
-            name: `file-${index + 1}.txt`
-          }
-        ]
-      })
-    )
+    const sessions = createArtifactSessions(12)
     await renderView(sessions)
 
     vi.mocked(window.api.projectFiles.listArtifactGroups).mockImplementation(async (request) => ({
@@ -1497,20 +1487,7 @@ describe('ProjectFilesView', () => {
   })
 
   it('offers a retry when loading every session option fails', async () => {
-    const sessions = Array.from({ length: 12 }, (_, index) =>
-      createSession({
-        id: `session-${index + 1}`,
-        title: `Session ${index + 1}`,
-        artifacts: [
-          {
-            id: `artifact-${index + 1}`,
-            kind: 'managed-file',
-            path: `/workspace/file-${index + 1}.txt`,
-            name: `file-${index + 1}.txt`
-          }
-        ]
-      })
-    )
+    const sessions = createArtifactSessions(12)
     await renderView(sessions)
 
     let continuationAttempts = 0
@@ -1570,20 +1547,7 @@ describe('ProjectFilesView', () => {
   })
 
   it('keeps the selected session visible after Show fewer', async () => {
-    const sessions = Array.from({ length: 9 }, (_, index) =>
-      createSession({
-        id: `session-${index + 1}`,
-        title: `Session ${index + 1}`,
-        artifacts: [
-          {
-            id: `artifact-${index + 1}`,
-            kind: 'managed-file',
-            path: `/workspace/file-${index + 1}.txt`,
-            name: `file-${index + 1}.txt`
-          }
-        ]
-      })
-    )
+    const sessions = createArtifactSessions(9)
     await renderView(sessions)
 
     await act(async () => {

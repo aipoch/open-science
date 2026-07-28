@@ -1056,17 +1056,10 @@ const ProjectFilesViewContent = ({
       sessionTitleById.get(sessionId) ?? `Session ${sessionId.slice(0, 8)}`,
     [sessionTitleById]
   )
-  const filterGroupItems = useMemo(() => {
-    const groupsBySession = new Map(
-      catalogIndex.groups.items.map((group) => [group.sessionId, group] as const)
-    )
-    if (showAllSessionOptions) {
-      for (const group of sessionOptionsIndex.groups.items) {
-        groupsBySession.set(group.sessionId, group)
-      }
-    }
-    return [...groupsBySession.values()]
-  }, [catalogIndex.groups.items, sessionOptionsIndex.groups.items, showAllSessionOptions])
+  const filterGroupItems =
+    showAllSessionOptions && sessionOptionsIndex.groups.items.length > 0
+      ? sessionOptionsIndex.groups.items
+      : catalogIndex.groups.items
   const filterOptions = useMemo<ProjectFilesFilterOption[]>(() => {
     const options: ProjectFilesFilterOption[] = [
       {
