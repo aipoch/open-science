@@ -3,6 +3,11 @@ import { join } from 'node:path'
 
 import { PrismaClient } from '@prisma/client'
 
+import {
+  ensureSqliteCheckConstraints,
+  type SqliteCheckConstraintMigration
+} from './sqlite-schema-migrations'
+
 const PROJECT_DB_FILE = 'open-science.db'
 
 // Exact DDL Prisma generates for the Project model (verified via `prisma migrate diff`). Applying it as
@@ -153,6 +158,7 @@ const FILE_ORIGIN_SESSION_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "FileOriginSes
     "retainedReviewIdsJson" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "FileOriginSession_state_check" CHECK ("state" IN ('active', 'deleting', 'deleted')),
     PRIMARY KEY ("projectId", "sessionId")
 );`
 
@@ -192,6 +198,7 @@ const UPLOAD_VERSION_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "UploadVersion" (
     "createdAt" DATETIME,
     "registeredAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "UploadVersion_state_check" CHECK ("state" IN ('staging', 'ready')),
     CONSTRAINT "UploadVersion_uploadFileId_fkey" FOREIGN KEY ("uploadFileId") REFERENCES "UploadFile" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );`
 
@@ -209,6 +216,7 @@ const ARTIFACT_MESSAGE_SNAPSHOT_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "Artifac
     "messageCount" INTEGER NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ArtifactMessageSnapshot_state_check" CHECK ("state" IN ('staging', 'ready')),
     CONSTRAINT "ArtifactMessageSnapshot_projectId_sessionId_fkey" FOREIGN KEY ("projectId", "sessionId") REFERENCES "FileOriginSession" ("projectId", "sessionId") ON DELETE RESTRICT ON UPDATE CASCADE
 );`
 
@@ -246,6 +254,7 @@ const ARTIFACT_VERSION_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ArtifactVersion"
     "executionSnapshotSchemaVersion" INTEGER,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ArtifactVersion_state_check" CHECK ("state" IN ('staging', 'pending', 'finalized')),
     CONSTRAINT "ArtifactVersion_artifactId_fkey" FOREIGN KEY ("artifactId") REFERENCES "ArtifactLineage" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "ArtifactVersion_messageSnapshotId_fkey" FOREIGN KEY ("messageSnapshotId") REFERENCES "ArtifactMessageSnapshot" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );`
@@ -269,6 +278,11 @@ const ARTIFACT_VERSION_INPUT_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ArtifactVe
     "checksum" TEXT NOT NULL,
     "storageKey" TEXT NOT NULL,
     "strongestAssociation" TEXT NOT NULL,
+    CONSTRAINT "ArtifactVersionInput_sourceKind_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version')),
+    CONSTRAINT "ArtifactVersionInput_sourceIdentity_check" CHECK (
+      ("sourceKind" = 'artifact-version' AND "sourceArtifactVersionId" IS NOT NULL AND "sourceUploadVersionId" IS NULL AND "inputFileVersionId" = "sourceArtifactVersionId") OR
+      ("sourceKind" = 'upload-version' AND "sourceUploadVersionId" IS NOT NULL AND "sourceArtifactVersionId" IS NULL AND "inputFileVersionId" = "sourceUploadVersionId")
+    ),
     CONSTRAINT "ArtifactVersionInput_artifactVersionId_fkey" FOREIGN KEY ("artifactVersionId") REFERENCES "ArtifactVersion" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "ArtifactVersionInput_sourceArtifactVersionId_fkey" FOREIGN KEY ("sourceArtifactVersionId") REFERENCES "ArtifactVersion" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "ArtifactVersionInput_sourceUploadVersionId_fkey" FOREIGN KEY ("sourceUploadVersionId") REFERENCES "UploadVersion" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -302,8 +316,57 @@ const REVIEW_SCOPE_SNAPSHOT_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ReviewScope
     "schemaVersion" INTEGER NOT NULL DEFAULT 1,
     "blockCount" INTEGER NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "ReviewScopeSnapshot_state_check" CHECK ("state" IN ('staging', 'ready')),
     CONSTRAINT "ReviewScopeSnapshot_reviewId_fkey" FOREIGN KEY ("reviewId") REFERENCES "Review" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );`
+
+const PROVENANCE_CHECK_CONSTRAINT_MIGRATIONS: readonly SqliteCheckConstraintMigration[] = [
+  {
+    tableName: 'FileOriginSession',
+    columnName: 'state',
+    constraintNames: ['FileOriginSession_state_check'],
+    allowedValues: ['active', 'deleting', 'deleted'],
+    canonicalTableDdl: FILE_ORIGIN_SESSION_TABLE_DDL
+  },
+  {
+    tableName: 'UploadVersion',
+    columnName: 'state',
+    constraintNames: ['UploadVersion_state_check'],
+    allowedValues: ['staging', 'ready'],
+    canonicalTableDdl: UPLOAD_VERSION_TABLE_DDL
+  },
+  {
+    tableName: 'ArtifactMessageSnapshot',
+    columnName: 'state',
+    constraintNames: ['ArtifactMessageSnapshot_state_check'],
+    allowedValues: ['staging', 'ready'],
+    canonicalTableDdl: ARTIFACT_MESSAGE_SNAPSHOT_TABLE_DDL
+  },
+  {
+    tableName: 'ArtifactVersion',
+    columnName: 'state',
+    constraintNames: ['ArtifactVersion_state_check'],
+    allowedValues: ['staging', 'pending', 'finalized'],
+    canonicalTableDdl: ARTIFACT_VERSION_TABLE_DDL
+  },
+  {
+    tableName: 'ArtifactVersionInput',
+    columnName: 'sourceKind',
+    constraintNames: [
+      'ArtifactVersionInput_sourceKind_check',
+      'ArtifactVersionInput_sourceIdentity_check'
+    ],
+    allowedValues: ['artifact-version', 'upload-version'],
+    canonicalTableDdl: ARTIFACT_VERSION_INPUT_TABLE_DDL
+  },
+  {
+    tableName: 'ReviewScopeSnapshot',
+    columnName: 'state',
+    constraintNames: ['ReviewScopeSnapshot_state_check'],
+    allowedValues: ['staging', 'ready'],
+    canonicalTableDdl: REVIEW_SCOPE_SNAPSHOT_TABLE_DDL
+  }
+]
 
 const ARTIFACT_PROVENANCE_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "FileOriginSession_projectId_state_idx" ON "FileOriginSession"("projectId", "state");`,
@@ -514,6 +577,8 @@ const ensureProjectSchema = async (client: PrismaClient): Promise<void> => {
   await client.$executeRawUnsafe(ARTIFACT_VERSION_INPUT_TABLE_DDL)
   await client.$executeRawUnsafe(REVIEW_FINDING_DISPOSITION_TABLE_DDL)
   await client.$executeRawUnsafe(REVIEW_SCOPE_SNAPSHOT_TABLE_DDL)
+
+  await ensureSqliteCheckConstraints(client, PROVENANCE_CHECK_CONSTRAINT_MIGRATIONS)
 
   for (const ddl of ARTIFACT_PROVENANCE_INDEX_DDLS) {
     await client.$executeRawUnsafe(ddl)

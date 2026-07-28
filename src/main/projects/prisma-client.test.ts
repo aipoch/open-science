@@ -53,6 +53,353 @@ describe('project prisma client (integration)', () => {
     }
   })
 
+  it('rejects unsupported File Origin lifecycle states in a fresh database', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-origin-state-constraint-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await ensureProjectSchema(client)
+    await client.fileOriginSession.create({
+      data: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        state: 'active'
+      }
+    })
+
+    await expect(
+      client.fileOriginSession.update({
+        where: { projectId_sessionId: { projectId: 'project-1', sessionId: 'session-1' } },
+        data: { state: 'unsupported' }
+      })
+    ).rejects.toThrow()
+  })
+
+  it('upgrades an unconstrained File Origin table without losing valid rows', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-origin-state-migration-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await client.$executeRawUnsafe(`CREATE TABLE "FileOriginSession" (
+      "projectId" TEXT NOT NULL,
+      "sessionId" TEXT NOT NULL,
+      "titleSnapshot" TEXT,
+      "state" TEXT NOT NULL DEFAULT 'active',
+      "deletedAt" DATETIME,
+      "deletionOperationId" TEXT,
+      "retainedReviewIdsJson" TEXT,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL,
+      PRIMARY KEY ("projectId", "sessionId")
+    )`)
+    await client.$executeRawUnsafe(
+      `INSERT INTO "FileOriginSession" ("projectId", "sessionId", "state", "updatedAt") VALUES ('project-1', 'session-1', 'active', CURRENT_TIMESTAMP)`
+    )
+    await client.$executeRawUnsafe(`CREATE TABLE "ArtifactLineage" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "projectId" TEXT NOT NULL,
+      "sessionId" TEXT NOT NULL,
+      "normalizedFilename" TEXT NOT NULL,
+      "filename" TEXT NOT NULL,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL,
+      CONSTRAINT "ArtifactLineage_projectId_sessionId_fkey" FOREIGN KEY ("projectId", "sessionId") REFERENCES "FileOriginSession" ("projectId", "sessionId") ON DELETE RESTRICT ON UPDATE CASCADE
+    )`)
+    await client.$executeRawUnsafe(
+      `INSERT INTO "ArtifactLineage" ("id", "projectId", "sessionId", "normalizedFilename", "filename", "updatedAt") VALUES ('artifact-1', 'project-1', 'session-1', 'result.png', 'result.png', CURRENT_TIMESTAMP)`
+    )
+
+    await ensureProjectSchema(client)
+
+    await expect(
+      client.fileOriginSession.findUniqueOrThrow({
+        where: { projectId_sessionId: { projectId: 'project-1', sessionId: 'session-1' } }
+      })
+    ).resolves.toMatchObject({ state: 'active' })
+    await expect(
+      client.artifactLineage.findUniqueOrThrow({ where: { id: 'artifact-1' } })
+    ).resolves.toMatchObject({ projectId: 'project-1', sessionId: 'session-1' })
+    await expect(
+      client.$queryRawUnsafe<Array<Record<string, unknown>>>('PRAGMA foreign_key_check')
+    ).resolves.toEqual([])
+    await expect(
+      client.fileOriginSession.update({
+        where: { projectId_sessionId: { projectId: 'project-1', sessionId: 'session-1' } },
+        data: { state: 'unsupported' }
+      })
+    ).rejects.toThrow()
+  })
+
+  it('blocks a legacy constraint migration without rewriting unsupported values', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-origin-state-invalid-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await client.$executeRawUnsafe(`CREATE TABLE "FileOriginSession" (
+      "projectId" TEXT NOT NULL,
+      "sessionId" TEXT NOT NULL,
+      "titleSnapshot" TEXT,
+      "state" TEXT NOT NULL DEFAULT 'active',
+      "deletedAt" DATETIME,
+      "deletionOperationId" TEXT,
+      "retainedReviewIdsJson" TEXT,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL,
+      PRIMARY KEY ("projectId", "sessionId")
+    )`)
+    await client.$executeRawUnsafe(
+      `INSERT INTO "FileOriginSession" ("projectId", "sessionId", "state", "updatedAt") VALUES ('project-1', 'session-1', 'corrupt', CURRENT_TIMESTAMP)`
+    )
+
+    await expect(ensureProjectSchema(client)).rejects.toThrow(
+      'FileOriginSession.state contains unsupported value "corrupt"'
+    )
+    await expect(
+      client.$queryRawUnsafe<Array<{ state: string }>>(
+        `SELECT state FROM "FileOriginSession" WHERE "projectId" = 'project-1' AND "sessionId" = 'session-1'`
+      )
+    ).resolves.toEqual([{ state: 'corrupt' }])
+  })
+
+  it('refuses to rebuild a legacy table that contains unknown columns', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-origin-state-future-column-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await client.$executeRawUnsafe(`CREATE TABLE "FileOriginSession" (
+      "projectId" TEXT NOT NULL,
+      "sessionId" TEXT NOT NULL,
+      "titleSnapshot" TEXT,
+      "state" TEXT NOT NULL DEFAULT 'active',
+      "deletedAt" DATETIME,
+      "deletionOperationId" TEXT,
+      "retainedReviewIdsJson" TEXT,
+      "futureMarker" TEXT,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL,
+      PRIMARY KEY ("projectId", "sessionId")
+    )`)
+    await client.$executeRawUnsafe(
+      `INSERT INTO "FileOriginSession" ("projectId", "sessionId", "state", "futureMarker", "updatedAt") VALUES ('project-1', 'session-1', 'active', 'keep-me', CURRENT_TIMESTAMP)`
+    )
+
+    await expect(ensureProjectSchema(client)).rejects.toThrow(/futureMarker/)
+    await expect(
+      client.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info('FileOriginSession')`)
+    ).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'futureMarker' })]))
+    await expect(
+      client.$queryRawUnsafe<Array<{ futureMarker: string }>>(
+        `SELECT "futureMarker" FROM "FileOriginSession" WHERE "projectId" = 'project-1' AND "sessionId" = 'session-1'`
+      )
+    ).resolves.toEqual([{ futureMarker: 'keep-me' }])
+  })
+
+  it('rejects unsupported lifecycle and source values across core Provenance records', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-constraints-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await ensureProjectSchema(client)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.artifactLineage.create({
+      data: {
+        id: 'artifact-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        normalizedFilename: 'result.png',
+        filename: 'result.png'
+      }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename: 'input.csv',
+        originalFilename: 'input.csv'
+      }
+    })
+    await client.uploadVersion.create({
+      data: {
+        id: 'upload-version-1',
+        uploadFileId: 'upload-1',
+        versionNumber: 1,
+        state: 'ready',
+        contentStorageKey: 'uploads/input.csv',
+        filename: 'input.csv',
+        originalFilename: 'input.csv',
+        sizeBytes: 3n,
+        checksum: 'a'.repeat(64)
+      }
+    })
+    await client.artifactMessageSnapshot.create({
+      data: {
+        id: 'message-snapshot-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        rootFrameId: 'root-1',
+        agentFrameId: 'agent-1',
+        messageBranchId: 'branch-1',
+        terminalMessageId: 'message-1',
+        state: 'ready',
+        storageKey: 'messages/message-1.json',
+        checksum: 'b'.repeat(64),
+        messageCount: 1
+      }
+    })
+    await client.artifactVersion.create({
+      data: {
+        id: 'artifact-version-1',
+        artifactId: 'artifact-1',
+        versionNumber: 1,
+        artifactRunId: 'artifact-run-1',
+        rootFrameId: 'root-1',
+        agentFrameId: 'agent-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1',
+        state: 'pending',
+        contentStorageKey: 'artifacts/result.png',
+        evidenceStorageKey: 'artifacts/evidence.json',
+        sizeBytes: 3n,
+        checksum: 'c'.repeat(64),
+        evidenceJson: '{}',
+        evidenceChecksum: 'd'.repeat(64)
+      }
+    })
+    await client.artifactVersionInput.create({
+      data: {
+        id: 'input-1',
+        artifactVersionId: 'artifact-version-1',
+        ordinal: 0,
+        inputFileVersionId: 'upload-version-1',
+        sourceKind: 'upload-version',
+        sourceFileId: 'upload-1',
+        sourceUploadVersionId: 'upload-version-1',
+        sourceVersionNumber: 1,
+        sourceProjectId: 'project-1',
+        sourceSessionId: 'session-1',
+        filename: 'input.csv',
+        sizeBytes: 3n,
+        checksum: 'a'.repeat(64),
+        storageKey: 'uploads/input.csv',
+        strongestAssociation: 'turn-attached'
+      }
+    })
+    await client.review.create({
+      data: {
+        id: 'review-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        turnMessageId: 'message-1'
+      }
+    })
+    await client.reviewScopeSnapshot.create({
+      data: {
+        id: 'review-snapshot-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        reviewId: 'review-1',
+        scopeTurnMessageId: 'message-1',
+        state: 'ready',
+        snapshotJson: '{}',
+        checksum: 'e'.repeat(64),
+        storageKey: 'reviews/review-1.json',
+        blockCount: 0
+      }
+    })
+
+    await expect(
+      client.uploadVersion.update({
+        where: { id: 'upload-version-1' },
+        data: { state: 'unsupported' }
+      })
+    ).rejects.toThrow()
+    await expect(
+      client.artifactMessageSnapshot.update({
+        where: { id: 'message-snapshot-1' },
+        data: { state: 'unsupported' }
+      })
+    ).rejects.toThrow()
+    await expect(
+      client.artifactVersion.update({
+        where: { id: 'artifact-version-1' },
+        data: { state: 'unsupported' }
+      })
+    ).rejects.toThrow()
+    await expect(
+      client.artifactVersionInput.update({
+        where: { id: 'input-1' },
+        data: { sourceKind: 'unsupported' }
+      })
+    ).rejects.toThrow()
+    await expect(
+      client.$executeRawUnsafe(
+        `UPDATE "ArtifactVersionInput" SET "sourceArtifactVersionId" = 'artifact-version-1' WHERE "id" = 'input-1'`
+      )
+    ).rejects.toThrow()
+    await expect(
+      client.reviewScopeSnapshot.update({
+        where: { id: 'review-snapshot-1' },
+        data: { state: 'unsupported' }
+      })
+    ).rejects.toThrow()
+  })
+
+  it('adds the typed input source constraint to a legacy input table', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-input-source-migration-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await ensureProjectSchema(client)
+    await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
+    await client.$executeRawUnsafe('DROP TABLE "ArtifactVersionInput"')
+    await client.$executeRawUnsafe(`CREATE TABLE "ArtifactVersionInput" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "artifactVersionId" TEXT NOT NULL,
+      "ordinal" INTEGER NOT NULL,
+      "inputFileVersionId" TEXT NOT NULL,
+      "sourceKind" TEXT NOT NULL,
+      "sourceFileId" TEXT NOT NULL,
+      "sourceArtifactVersionId" TEXT,
+      "sourceUploadVersionId" TEXT,
+      "sourceVersionNumber" INTEGER,
+      "sourceCreatedAt" DATETIME,
+      "sourceProjectId" TEXT NOT NULL,
+      "sourceSessionId" TEXT NOT NULL,
+      "filename" TEXT NOT NULL,
+      "contentType" TEXT,
+      "sizeBytes" BIGINT NOT NULL,
+      "checksum" TEXT NOT NULL,
+      "storageKey" TEXT NOT NULL,
+      "strongestAssociation" TEXT NOT NULL,
+      CONSTRAINT "ArtifactVersionInput_sourceKind_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version'))
+    )`)
+    await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+
+    await ensureProjectSchema(client)
+    await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
+    await expect(
+      client.$executeRawUnsafe(`INSERT INTO "ArtifactVersionInput" (
+        "id", "artifactVersionId", "ordinal", "inputFileVersionId", "sourceKind", "sourceFileId",
+        "sourceProjectId", "sourceSessionId", "filename", "sizeBytes", "checksum", "storageKey",
+        "strongestAssociation"
+      ) VALUES (
+        'input-invalid', 'artifact-version-1', 0, 'upload-version-1', 'upload-version', 'upload-1',
+        'project-1', 'session-1', 'input.csv', 3, '${'a'.repeat(64)}', 'uploads/input.csv',
+        'turn-attached'
+      )`)
+    ).rejects.toThrow()
+  })
+
   it('does not hide additive migration failures when the requested column remains absent', async () => {
     const migrationFailure = new Error('simulated SQLite disk I/O failure')
     const client = {
