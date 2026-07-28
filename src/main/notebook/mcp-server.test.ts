@@ -69,6 +69,9 @@ describe('notebook MCP server config', () => {
     // must steer the model to the saved relative filename — not to a rebuilt absolute path. Guard the
     // old "use an ABSOLUTE path" / "will not resolve a bare relative name" wording from regressing.
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('the SAME relative filename you saved with')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain(
+      'producerRunId` set to the exact `runId` returned by the execution'
+    )
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('use an ABSOLUTE path')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')
   })
@@ -79,6 +82,8 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('notebook_execute')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('append code deltas')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('finish the cell')
+    const executeTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_execute')
+    expect(executeTool?.description).toContain('producerRunId')
   })
 
   it('exposes only the single-step execute tool for writing and running code', () => {

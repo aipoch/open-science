@@ -5,6 +5,7 @@ import { BrowserWindow, ipcMain } from 'electron'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import { createLogger, errorLogFields } from '../logger'
+import { withDataRootWrite } from '../storage/migration-state'
 import {
   planStartupAction,
   type ProvisionProgress,
@@ -228,19 +229,22 @@ export const createNotebookEnvHandlers = (
     language: NotebookLanguage,
     run: () => Promise<void>
   ): Promise<void> => {
-    if (waitForRecovery) await waitForRecovery()
-    assertProvisionAllowed?.(language)
-    await run()
+    await withDataRootWrite(async () => {
+      if (waitForRecovery) await waitForRecovery()
+      assertProvisionAllowed?.(language)
+      await run()
+    })
   }
   return {
     // AWAIT recovery before reading status: recovery populates the blocked-prefix set (and hence
     // status.*RecoveryBlocked) asynchronously. A renderer that reads status before recovery settles
     // would see blocked=false and never surface Reset — the startup gate produces no progress event for
     // an already-ready env, so there is no other signal that would later correct it.
-    status: async () => {
-      if (waitForRecovery) await waitForRecovery()
-      return serialized.status()
-    },
+    status: () =>
+      withDataRootWrite(async () => {
+        if (waitForRecovery) await waitForRecovery()
+        return serialized.status()
+      }),
     provision: (lang, onProgress) =>
       afterRecovery(lang, () =>
         lang === 'r' ? serialized.provisionR(onProgress) : serialized.provisionPython(onProgress)
@@ -250,8 +254,10 @@ export const createNotebookEnvHandlers = (
     // to clear the block), and it force-clears the quarantine before rebuilding. Auto/startup repair
     // (runStartupGate) calls the provisioner directly without force and stays gated by the block.
     repair: async (lang, onProgress) => {
-      if (waitForRecovery) await waitForRecovery()
-      await serialized.repair(lang, onProgress, { force: true })
+      await withDataRootWrite(async () => {
+        if (waitForRecovery) await waitForRecovery()
+        await serialized.repair(lang, onProgress, { force: true })
+      })
     },
     cancel: (language) => serialized.cancel(language)
   }
@@ -271,33 +277,35 @@ export const runStartupGate = async (
   waitForRecovery?: () => Promise<void>
 ): Promise<void> => {
   try {
-    // Let crash recovery settle before touching any prefix — its cleanup/verify must not race the
-    // restore/upgrade/repair below.
-    if (waitForRecovery) await waitForRecovery()
-    // Rebuild any envs a data-root relocation left as offline locks BEFORE planning: a restored
-    // default-python stamps the ready marker, so the plan below then reads 'ready' instead of
-    // re-provisioning the pristine defaults (which would drop the user's relocated packages).
-    await provisioner.restoreRelocatedEnvs(broadcast)
+    await withDataRootWrite(async () => {
+      // Let crash recovery settle under the same lease as subsequent prefix maintenance; recovery
+      // itself may clear journals or quarantines under the old data root.
+      if (waitForRecovery) await waitForRecovery()
+      // Rebuild any envs a data-root relocation left as offline locks BEFORE planning: a restored
+      // default-python stamps the ready marker, so the plan below then reads 'ready' instead of
+      // re-provisioning the pristine defaults (which would drop the user's relocated packages).
+      await provisioner.restoreRelocatedEnvs(broadcast)
 
-    const action = planStartupAction(root, DEFAULT_ENV_VERSION)
-    if (action === 'ready') return
-    if (action === 'upgrade') return void (await provisioner.upgradeIfNeeded(broadcast))
-    if (action === 'repair') {
-      // `needsRepair` also fires from a residual default-r dir with NO Python at all (an R-first user
-      // whose lazy R build left default-r behind; provisionR never writes the Python marker). Repair
-      // (an eager rebuild) only when Python was genuinely provisioned before — a ready marker exists,
-      // or the default-python prefix is on disk (present-but-corrupt). Otherwise this is effectively a
-      // first-time Python and must stay detect-only (built lazily on first use).
-      const pythonWasProvisioned =
-        readReadyMarker(root) !== undefined || existsSync(envPrefix(root, DEFAULT_PY_ENV))
-      if (pythonWasProvisioned) {
-        return void (await provisioner.repair('python', broadcast))
+      const action = planStartupAction(root, DEFAULT_ENV_VERSION)
+      if (action === 'ready') return
+      if (action === 'upgrade') return void (await provisioner.upgradeIfNeeded(broadcast))
+      if (action === 'repair') {
+        // `needsRepair` also fires from a residual default-r dir with NO Python at all (an R-first user
+        // whose lazy R build left default-r behind; provisionR never writes the Python marker). Repair
+        // (an eager rebuild) only when Python was genuinely provisioned before — a ready marker exists,
+        // or the default-python prefix is on disk (present-but-corrupt). Otherwise this is effectively a
+        // first-time Python and must stay detect-only (built lazily on first use).
+        const pythonWasProvisioned =
+          readReadyMarker(root) !== undefined || existsSync(envPrefix(root, DEFAULT_PY_ENV))
+        if (pythonWasProvisioned) {
+          return void (await provisioner.repair('python', broadcast))
+        }
+        return
       }
-      return
-    }
-    // Fresh case: detect-only — do NOT eagerly provision. upgrade/repair above still maintain an
-    // already-existing managed env; a first-time env is built lazily on first notebook use
-    // (ensureDefaultEnvReady), so there is nothing to provision here.
+      // Fresh case: detect-only — do NOT eagerly provision. upgrade/repair above still maintain an
+      // already-existing managed env; a first-time env is built lazily on first notebook use
+      // (ensureDefaultEnvReady), so there is nothing to provision here.
+    })
   } catch (error) {
     // This is the automatic (no per-op logging) path, so record the FULL diagnostics here — including
     // the structured micromamba tails on `error.data` — before broadcasting only the short UI message.

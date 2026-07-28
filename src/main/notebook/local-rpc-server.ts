@@ -6,18 +6,32 @@ import type {
   BeginNotebookCodeCellRequest,
   ExecuteNotebookCodeRequest,
   FinishNotebookCodeCellRequest,
+  NotebookRunProvenanceContext,
   RunNotebookCellRequest
 } from '../../shared/notebook'
 import type { NotebookRpcConnection } from './mcp-server'
 import type { NotebookRuntimeService } from './runtime-service'
 import type {
+  NotebookInputRegistry,
+  NotebookInputRunLease,
+  RegisterNotebookTurnInputsRequest
+} from './input-registry'
+import type {
   ConversationSkillImporter,
   ConversationSkillImportRequest
 } from '../skills/conversation-import'
+import type {
+  ArtifactRpcCapabilityBinding,
+  ArtifactRpcMethod,
+  ArtifactVersionFile,
+  CreateArtifactVersionRequest,
+  ReplayArtifactVersionRequest
+} from '../../shared/artifact-provenance'
 
 type NotebookLocalRpcServerOptions = {
   token?: string
   host?: string
+  now?: () => number
   connectorService?: {
     call(
       server: string,
@@ -77,12 +91,44 @@ type NotebookLocalRpcServerOptions = {
     }>
   }
   skillImporter?: Pick<ConversationSkillImporter, 'request'>
+  artifactProvenance?: {
+    createVersion(request: CreateArtifactVersionRequest): Promise<ArtifactVersionFile>
+    replayVersion?(request: ReplayArtifactVersionRequest): Promise<ArtifactVersionFile | undefined>
+  }
+  inputRegistry?: Pick<NotebookInputRegistry, 'registerTurn' | 'getTurnInputs' | 'clearSession'> &
+    Partial<Pick<NotebookInputRegistry, 'openRun'>>
 }
 
 type NotebookRpcPayload = {
   method?: unknown
   params?: unknown
 }
+
+type ArtifactRpcCapability = Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'> & {
+  allowedMethods: Set<ArtifactRpcMethod>
+  expiresAt: number
+}
+
+class RpcHttpError extends Error {
+  constructor(
+    readonly statusCode: number,
+    message: string
+  ) {
+    super(message)
+  }
+}
+
+const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
+  'artifactCreateVersion',
+  'artifactReplayVersion'
+])
+
+// Capabilities are revoked when the turn ends. This upper bound only limits abandoned tokens, so
+// it must comfortably exceed long notebook executions that remain inside one active turn.
+const DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS = 2 * 60 * 60 * 1_000
+
+const isArtifactRpcMethod = (method: string): method is ArtifactRpcMethod =>
+  ARTIFACT_RPC_METHODS.has(method as ArtifactRpcMethod)
 
 // Narrows parsed JSON into a plain object before dispatching RPC params.
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -116,12 +162,19 @@ const assertSessionParams = (params: Record<string, unknown>): void => {
 class NotebookLocalRpcServer {
   private readonly token: string
   private readonly host: string
+  private readonly now: () => number
   private readonly connectorService: NotebookLocalRpcServerOptions['connectorService']
   private readonly computeService: NotebookLocalRpcServerOptions['computeService']
   private readonly skillImporter: NotebookLocalRpcServerOptions['skillImporter']
+  private readonly artifactProvenance: NotebookLocalRpcServerOptions['artifactProvenance']
+  private readonly inputRegistry: NotebookLocalRpcServerOptions['inputRegistry']
   private server: Server | undefined
   private startPromise: Promise<NotebookRpcConnection> | undefined
   private readonly sessionAliases = new Map<string, string>()
+  private readonly artifactProvenanceContexts = new Map<string, NotebookRunProvenanceContext>()
+  private readonly activeTurnProjectIds = new Map<string, string>()
+  private readonly activeInputRunLeases = new Map<string, Set<NotebookInputRunLease>>()
+  private readonly artifactRpcCapabilities = new Map<string, ArtifactRpcCapability>()
 
   constructor(
     private readonly service: NotebookRuntimeService,
@@ -129,9 +182,38 @@ class NotebookLocalRpcServer {
   ) {
     this.token = options.token ?? randomUUID()
     this.host = options.host ?? '127.0.0.1'
+    this.now = options.now ?? Date.now
     this.connectorService = options.connectorService
     this.computeService = options.computeService
     this.skillImporter = options.skillImporter
+    this.artifactProvenance = options.artifactProvenance
+    this.inputRegistry = options.inputRegistry
+  }
+
+  issueArtifactRunCapability(
+    binding: ArtifactRpcCapabilityBinding,
+    ttlMs = DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS
+  ): string {
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+      throw new Error('Artifact RPC capability lifetime must be positive.')
+    }
+    const token = randomUUID()
+    this.artifactRpcCapabilities.set(token, {
+      ...binding,
+      messageBranchAncestry: binding.messageBranchAncestry
+        ? [...binding.messageBranchAncestry]
+        : undefined,
+      messageAncestry: binding.messageAncestry ? [...binding.messageAncestry] : undefined,
+      allowedMethods: new Set(
+        binding.allowedMethods ?? ['artifactCreateVersion', 'artifactReplayVersion']
+      ),
+      expiresAt: this.now() + ttlMs
+    })
+    return token
+  }
+
+  revokeArtifactRunCapability(token: string): void {
+    this.artifactRpcCapabilities.delete(token)
   }
 
   // Starts the server once on an ephemeral port and returns the connection details for MCP env.
@@ -170,6 +252,7 @@ class NotebookLocalRpcServer {
 
     this.server = undefined
     this.startPromise = undefined
+    this.artifactRpcCapabilities.clear()
 
     if (!server) return
 
@@ -186,6 +269,93 @@ class NotebookLocalRpcServer {
     this.sessionAliases.set(aliasSessionId, sessionId)
   }
 
+  // Pins Notebook executions to the app-owned active turn. The MCP caller cannot submit or override
+  // these graph locators; clearing the turn removes the binding for later user-run cells.
+  setArtifactProvenanceContext(
+    sessionId: string,
+    context: NotebookRunProvenanceContext | undefined
+  ): void {
+    if (context) this.artifactProvenanceContexts.set(sessionId, context)
+    else {
+      this.artifactProvenanceContexts.delete(sessionId)
+      this.activeTurnProjectIds.delete(sessionId)
+    }
+  }
+
+  async registerNotebookTurnInputs(request: RegisterNotebookTurnInputsRequest): Promise<void> {
+    if (!this.inputRegistry) return
+    await this.inputRegistry.registerTurn(request)
+    this.activeTurnProjectIds.set(request.appSessionId, request.projectId)
+  }
+
+  private bindArtifactRpcParams(
+    method: ArtifactRpcMethod,
+    token: string,
+    params: Record<string, unknown>
+  ): Record<string, unknown> {
+    const capability = this.artifactRpcCapabilities.get(token)
+    if (!capability) throw new RpcHttpError(401, 'Invalid Artifact RPC capability.')
+    if (capability.expiresAt <= this.now()) {
+      this.artifactRpcCapabilities.delete(token)
+      throw new RpcHttpError(401, 'Artifact RPC capability expired.')
+    }
+    if (!capability.allowedMethods.has(method)) {
+      throw new RpcHttpError(403, `Artifact RPC capability does not allow ${method}.`)
+    }
+
+    const boundFields =
+      method === 'artifactCreateVersion'
+        ? [
+            'projectId',
+            'appSessionId',
+            'artifactStorageSessionId',
+            'artifactRunId',
+            'rootFrameId',
+            'agentFrameId',
+            'messageBranchId',
+            'runtimeSegmentId',
+            'promptMessageId'
+          ]
+        : ['projectId', 'appSessionId', 'artifactStorageSessionId', 'artifactRunId']
+    for (const field of boundFields) {
+      const expected = capability[field as keyof ArtifactRpcCapabilityBinding]
+      if (params[field] !== expected) {
+        throw new RpcHttpError(403, `Artifact RPC capability does not match ${field}.`)
+      }
+    }
+
+    const trustedParams = { ...params }
+    delete trustedParams.messageBranchAncestry
+    delete trustedParams.messageAncestry
+    delete trustedParams.agentName
+    delete trustedParams.notebookSessionId
+
+    return {
+      ...trustedParams,
+      projectId: capability.projectId,
+      appSessionId: capability.appSessionId,
+      artifactStorageSessionId: capability.artifactStorageSessionId,
+      artifactRunId: capability.artifactRunId,
+      ...(method === 'artifactCreateVersion'
+        ? {
+            rootFrameId: capability.rootFrameId,
+            agentFrameId: capability.agentFrameId,
+            messageBranchId: capability.messageBranchId,
+            messageBranchAncestry: capability.messageBranchAncestry
+              ? [...capability.messageBranchAncestry]
+              : undefined,
+            messageAncestry: capability.messageAncestry
+              ? [...capability.messageAncestry]
+              : undefined,
+            runtimeSegmentId: capability.runtimeSegmentId,
+            promptMessageId: capability.promptMessageId,
+            agentName: capability.agentName,
+            notebookSessionId: capability.notebookSessionId
+          }
+        : {})
+    }
+  }
+
   // Authenticates one HTTP request, dispatches it, and serializes either result or error.
   private async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (request.method !== 'POST') {
@@ -193,15 +363,19 @@ class NotebookLocalRpcServer {
       return
     }
 
-    if (request.headers.authorization !== `Bearer ${this.token}`) {
-      writeJson(response, 401, { error: 'Invalid notebook RPC token.' })
-      return
-    }
-
     try {
       const payload = await readJsonBody(request)
       const method = typeof payload.method === 'string' ? payload.method : ''
-      const params = isRecord(payload.params) ? payload.params : {}
+      let params = isRecord(payload.params) ? payload.params : {}
+      const authorization = request.headers.authorization
+      const bearerToken = authorization?.startsWith('Bearer ')
+        ? authorization.slice('Bearer '.length)
+        : ''
+      if (isArtifactRpcMethod(method)) {
+        params = this.bindArtifactRpcParams(method, bearerToken, params)
+      } else if (authorization !== `Bearer ${this.token}`) {
+        throw new RpcHttpError(401, 'Invalid notebook RPC token.')
+      }
       // Resolve pre-session aliases before the runtime service looks up persistent state.
       const result = await this.dispatch(method, this.resolveSessionAlias(params))
 
@@ -209,12 +383,32 @@ class NotebookLocalRpcServer {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
 
-      writeJson(response, 500, { error: message })
+      writeJson(response, error instanceof RpcHttpError ? error.statusCode : 500, {
+        error: message
+      })
     }
   }
 
   // Maps the narrow RPC method names to strongly-typed runtime service calls.
   private async dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
+    // Artifact stdio/HTTP MCP handlers cannot own SQLite connections. Route the trusted run-bound
+    // save envelope back into the main process, where the Provenance repository owns transactions,
+    // immutable Version publication, and idempotency.
+    if (method === 'artifactCreateVersion') {
+      if (!this.artifactProvenance) {
+        throw new Error('Artifact Provenance persistence is not configured.')
+      }
+
+      return this.artifactProvenance.createVersion(params as CreateArtifactVersionRequest)
+    }
+    if (method === 'artifactReplayVersion') {
+      if (!this.artifactProvenance?.replayVersion) {
+        throw new Error('Artifact Provenance persistence is not configured.')
+      }
+
+      return this.artifactProvenance.replayVersion(params as ReplayArtifactVersionRequest)
+    }
+
     if (method === 'skillImport') {
       if (!this.skillImporter) throw new Error('Conversation Skill import is not configured.')
       if (
@@ -232,6 +426,50 @@ class NotebookLocalRpcServer {
         attachmentUri: params.attachmentUri
       }
       return this.skillImporter.request(request)
+    }
+
+    if (method === 'resolveNotebookInput') {
+      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
+      const sourceKind = params.sourceKind
+      const inputFileVersionId = params.inputFileVersionId
+      if (
+        !sessionId ||
+        (sourceKind !== 'upload-version' && sourceKind !== 'artifact-version') ||
+        typeof inputFileVersionId !== 'string'
+      ) {
+        throw new Error(
+          'Notebook input resolution requires sessionId, sourceKind and inputFileVersionId.'
+        )
+      }
+      const leases = this.activeInputRunLeases.get(sessionId)
+      if (!leases || leases.size === 0) {
+        throw new Error('Notebook input resolution requires an active run lease.')
+      }
+      const matchingLeases = [...leases].filter((lease) =>
+        lease
+          .getRunInputFiles()
+          .some(
+            (input) =>
+              input.sourceKind === sourceKind && input.inputFileVersionId === inputFileVersionId
+          )
+      )
+      if (matchingLeases.length === 0) {
+        throw new Error(`Notebook input is not registered for an active run: ${inputFileVersionId}`)
+      }
+      // Control and data-kernel RPCs may overlap for one Session. Every matching lease is bound to
+      // the same immutable Version; resolve each so its execution snapshot records the dependency,
+      // then reject if a corrupt registry ever maps that identity to different bytes.
+      const resolvedPaths = await Promise.all(
+        matchingLeases.map((lease) => lease.resolve({ sourceKind, inputFileVersionId }))
+      )
+      if (new Set(resolvedPaths).size !== 1) {
+        throw new Error(
+          `Notebook input leases disagree on immutable content: ${inputFileVersionId}`
+        )
+      }
+      return {
+        path: resolvedPaths[0]
+      }
     }
 
     // mcpCall carries no runtime routing fields, so it bypasses assertSessionParams below. It does
@@ -460,6 +698,37 @@ class NotebookLocalRpcServer {
       throw new Error(`Unknown notebook RPC method: ${method}`)
     }
 
+    const projectId =
+      typeof params.sessionId === 'string'
+        ? this.activeTurnProjectIds.get(params.sessionId)
+        : undefined
+    const provenanceContext = params.provenanceContext
+    const opensInputRun = ['runCell', 'execute', 'executeControl', 'executeShell'].includes(method)
+    if (
+      opensInputRun &&
+      projectId &&
+      isRecord(provenanceContext) &&
+      typeof provenanceContext.promptMessageId === 'string' &&
+      this.inputRegistry?.openRun
+    ) {
+      const sessionId = params.sessionId as string
+      const lease = await this.inputRegistry.openRun({
+        projectId,
+        appSessionId: sessionId,
+        promptMessageId: provenanceContext.promptMessageId
+      })
+      const leases = this.activeInputRunLeases.get(sessionId) ?? new Set<NotebookInputRunLease>()
+      leases.add(lease)
+      this.activeInputRunLeases.set(sessionId, leases)
+      try {
+        return await handler({ ...params, registeredInputFiles: lease.getRunInputFiles() })
+      } finally {
+        lease.close()
+        leases.delete(lease)
+        if (leases.size === 0) this.activeInputRunLeases.delete(sessionId)
+      }
+    }
+
     return handler(params)
   }
 
@@ -471,15 +740,23 @@ class NotebookLocalRpcServer {
       return params
     }
 
-    const resolvedSessionId = this.sessionAliases.get(sessionId)
-
-    if (!resolvedSessionId) {
-      return params
-    }
+    const resolvedSessionId = this.sessionAliases.get(sessionId) ?? sessionId
+    const provenanceContext = this.artifactProvenanceContexts.get(resolvedSessionId)
+    const projectId = this.activeTurnProjectIds.get(resolvedSessionId)
+    const registeredInputFiles =
+      provenanceContext && projectId
+        ? this.inputRegistry?.getTurnInputs({
+            projectId,
+            appSessionId: resolvedSessionId,
+            promptMessageId: provenanceContext.promptMessageId
+          })
+        : undefined
 
     return {
       ...params,
-      sessionId: resolvedSessionId
+      sessionId: resolvedSessionId,
+      ...(provenanceContext ? { provenanceContext } : {}),
+      ...(registeredInputFiles ? { registeredInputFiles } : {})
     }
   }
 }

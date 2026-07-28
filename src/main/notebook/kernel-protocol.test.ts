@@ -16,7 +16,20 @@ describe('parseLoopResponse', () => {
       error: null,
       result: '42',
       cwd: '/tmp/nb',
-      figures: [{ mime: 'image/png', path: '/tmp/fig1.png' }]
+      figures: [{ mime: 'image/png', path: '/tmp/fig1.png' }],
+      environment: {
+        runtime_version: '3.13.2',
+        packages: [
+          {
+            name: 'numpy',
+            version: '2.2.0',
+            version_status: 'known',
+            ecosystem: 'python',
+            evidence_sources: ['python-kernel-modules'],
+            loaded_state: 'loaded'
+          }
+        ]
+      }
     })
     expect(parseLoopResponse(line)).toEqual({
       reqId: 'r1',
@@ -26,7 +39,20 @@ describe('parseLoopResponse', () => {
       errorLine: null,
       result: '42',
       cwd: '/tmp/nb',
-      figures: [{ mime: 'image/png', path: '/tmp/fig1.png' }]
+      figures: [{ mime: 'image/png', path: '/tmp/fig1.png' }],
+      environmentOverlay: {
+        runtimeVersion: '3.13.2',
+        packages: [
+          {
+            name: 'numpy',
+            version: '2.2.0',
+            versionStatus: 'known',
+            ecosystem: 'python',
+            evidenceSources: ['python-kernel-modules'],
+            loadedState: 'loaded'
+          }
+        ]
+      }
     })
   })
 

@@ -1,13 +1,17 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, win32 } from 'node:path'
+import { dirname, join, resolve, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { NotebookKernelExecutor } from './kernel-executor'
 import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, pythonBin } from './runtime-paths'
 import { TimeoutController } from './timeout-controller'
+import {
+  startWorkingFileObservation,
+  toPortableNotebookRelativePath
+} from './working-file-observer'
 
 // -- TimeoutController: pure state machine, driven with fake timers + a signal recorder. ------------
 
@@ -193,6 +197,65 @@ afterEach(async () => {
 })
 
 gate('NotebookKernelExecutor (fake loop)', () => {
+  it('normalizes persisted working-file paths across operating systems', () => {
+    expect(
+      toPortableNotebookRelativePath(
+        win32.relative('C:\\session', 'C:\\session\\data\\plot.png'),
+        win32.sep
+      )
+    ).toBe('data/plot.png')
+    expect(toPortableNotebookRelativePath('data/literal\\name.png')).toBe('data/literal\\name.png')
+  })
+
+  it('falls back to a bounded snapshot when the file watcher cannot start', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-working-file-fallback-'))
+    const sessionRoot = join(cwdDir, 'nb')
+    const dataRoot = join(sessionRoot, 'data')
+    await mkdir(dataRoot, { recursive: true })
+    const observation = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot },
+      {
+        watchDirectory: () => {
+          throw Object.assign(new Error('watch unavailable'), { code: 'ENOSPC' })
+        }
+      }
+    )
+
+    await writeFile(join(dataRoot, 'fallback.csv'), 'x,y\n1,2\n')
+
+    expect(await observation.finish()).toEqual([
+      expect.objectContaining({
+        path: resolve(dataRoot, 'fallback.csv'),
+        relativePath: 'data/fallback.csv',
+        size: 8
+      })
+    ])
+  })
+
+  it('ignores watcher startup noise for files that existed before execution', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-working-file-startup-noise-'))
+    const sessionRoot = join(cwdDir, 'nb')
+    const dataRoot = join(sessionRoot, 'data')
+    await mkdir(dataRoot, { recursive: true })
+    await writeFile(join(dataRoot, 'input.csv'), 'sample,value\na,1\n')
+    const watcher = {
+      close: vi.fn(),
+      on: vi.fn().mockReturnThis()
+    }
+
+    const observation = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot },
+      {
+        watchDirectory: ((_path, _options, listener) => {
+          if (typeof listener === 'function') listener('rename', 'input.csv')
+          return watcher
+        }) as never
+      }
+    )
+
+    await expect(observation.finish()).resolves.toEqual([])
+  })
+
   it('runs a cell, echoes stdout, and reports the working directory', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-exec-')
     const executor = makeExecutor()
@@ -203,6 +266,90 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       // The loop reports its resolved cwd (macOS maps /var -> /private/var).
       expect(result.cwdAfter).toBe(realpathSync(cwdDir))
       expect(result.outputs).toContainEqual({ type: 'stream', name: 'stdout', text: 'hello' })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('records files created by a data-kernel cell as trusted working files', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-working-file-')
+    const dataRoot = join(cwdDir, 'nb', 'data')
+    await mkdir(dataRoot, { recursive: true })
+    const executor = makeExecutor()
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        cwd: dataRoot,
+        code: '__WRITE_FILE__'
+      })
+
+      expect(result.status).toBe('completed')
+      expect(result.workingFiles).toEqual([
+        expect.objectContaining({
+          path: resolve(dataRoot, 'generated.csv'),
+          relativePath: 'data/generated.csv',
+          kind: 'other',
+          size: 8
+        })
+      ])
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('records overwritten outputs without claiming unchanged data files', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-overwritten-file-')
+    const dataRoot = join(cwdDir, 'nb', 'data')
+    await mkdir(dataRoot, { recursive: true })
+    await Promise.all([
+      writeFile(join(dataRoot, 'generated.csv'), 'x,y\n1,2\n'),
+      writeFile(join(dataRoot, 'input.csv'), 'sample,value\na,1\n')
+    ])
+    const executor = makeExecutor()
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        cwd: dataRoot,
+        code: '__OVERWRITE_FILE__'
+      })
+
+      expect(result.workingFiles).toEqual([
+        expect.objectContaining({
+          path: resolve(dataRoot, 'generated.csv'),
+          relativePath: 'data/generated.csv',
+          size: 8
+        })
+      ])
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('fails closed instead of cross-attributing files from overlapping kernels', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-overlapping-files-')
+    await stubEnvPython(join(cwdDir, 'runtime'), 'analysis')
+    const dataRoot = join(cwdDir, 'nb', 'data')
+    await mkdir(dataRoot, { recursive: true })
+    const executor = makeExecutor()
+    try {
+      const [first, second] = await Promise.all([
+        executor.execute({
+          ...baseRequest(cwdDir),
+          cwd: dataRoot,
+          code: '__WRITE_DELAYED_A__'
+        }),
+        executor.execute({
+          ...baseRequest(cwdDir),
+          cwd: dataRoot,
+          environment: 'analysis',
+          code: '__WRITE_DELAYED_B__'
+        })
+      ])
+
+      expect(first.status).toBe('completed')
+      expect(second.status).toBe('completed')
+      expect(first.workingFiles).toEqual([])
+      expect(second.workingFiles).toEqual([])
     } finally {
       await executor.shutdown()
     }

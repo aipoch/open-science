@@ -44,6 +44,9 @@ import {
   runStartupGate,
   serializeProvisioner
 } from './env-ipc'
+import { beginMigration, clearMigrationPending } from '../storage/migration-state'
+
+afterEach(() => clearMigrationPending())
 
 const fakeProvisioner = (over: Partial<RuntimeProvisioner> = {}): RuntimeProvisioner => ({
   status: vi
@@ -92,6 +95,17 @@ describe('createNotebookEnvHandlers', () => {
     await handlers.repair('r', () => {})
     // UI repair is the user's Reset: it force-clears the quarantine (force: true).
     expect(provisioner.repair).toHaveBeenCalledWith('r', expect.any(Function), { force: true })
+  })
+
+  it('blocks new Environment mutations while a data-root migration is pending', async () => {
+    const provisioner = fakeProvisioner()
+    const handlers = createNotebookEnvHandlers(provisioner)
+    beginMigration()
+
+    await expect(handlers.provision('python', () => {})).rejects.toThrow(/moving your data/i)
+    await expect(handlers.repair('r', () => {})).rejects.toThrow(/moving your data/i)
+    expect(provisioner.provisionPython).not.toHaveBeenCalled()
+    expect(provisioner.repair).not.toHaveBeenCalled()
   })
 
   it('cancel forwards the language to the provisioner while that language is provisioning', () => {
@@ -479,6 +493,23 @@ describe('registerNotebookEnvIpcHandlers', () => {
 })
 
 describe('runStartupGate', () => {
+  it('does not mutate runtime storage while a data-root migration is pending', async () => {
+    const provisioner = fakeProvisioner()
+    const dir = mkdtempSync(join(tmpdir(), 'os-gate-migration-'))
+    const broadcast = vi.fn()
+    beginMigration()
+
+    await runStartupGate(provisioner, dir, broadcast)
+
+    expect(provisioner.restoreRelocatedEnvs).not.toHaveBeenCalled()
+    expect(broadcast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: 'error',
+        message: expect.stringMatching(/moving your data/i)
+      })
+    )
+  })
+
   it('is detect-only on a fresh empty root: restores relocated envs but does not provision python', async () => {
     const provisioner = fakeProvisioner()
     const dir = mkdtempSync(join(tmpdir(), 'os-gate-'))

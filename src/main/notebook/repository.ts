@@ -125,7 +125,8 @@ const normalizeRun = (sessionRoot: string, run: NotebookRunRecord): NotebookRunR
   text: run.text ?? emptyText(),
   outputs: run.outputs ?? [],
   artifacts: run.artifacts ?? [],
-  workingFiles: normalizeWorkingFiles(sessionRoot, run.runId, run.workingFiles)
+  workingFiles: normalizeWorkingFiles(sessionRoot, run.runId, run.workingFiles),
+  inputFiles: (run.inputFiles ?? []).map((input) => ({ ...input }))
 })
 
 // Repairs or initializes a run document with canonical paths and kernel metadata.
@@ -277,6 +278,10 @@ class NotebookRunRepository {
               ...run,
               status: 'interrupted' as const,
               endedAt: run.endedAt ?? now,
+              environmentCapture:
+                run.kernelKind === 'python' || run.kernelKind === 'r'
+                  ? ({ state: 'unavailable', reason: 'environment-capture-failed' } as const)
+                  : ({ state: 'unavailable', reason: 'environment-not-supported' } as const),
               interruptionReason: 'app-terminated' as const
             }
           : run

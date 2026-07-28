@@ -17,6 +17,9 @@ import type {
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
   NotebookEnvironmentStatus,
+  NotebookEnvironmentManifest,
+  NotebookRunEnvironmentCapture,
+  NotebookLiveEnvironmentOverlay,
   NotebookKernelMetadata,
   NotebookLanguage,
   NotebookOutput,
@@ -69,6 +72,7 @@ import {
   pythonBin,
   pythonReady,
   rBin,
+  rScriptBin,
   rReady,
   resolveEnvName
 } from './runtime-paths'
@@ -104,6 +108,12 @@ import {
 import { isChildUnconfirmedError } from './provisioner-runtime'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { terminateProcessTree } from '../process-tree'
+import {
+  EnvironmentManifestPublicationError,
+  EnvironmentStateTracker,
+  type EnvironmentCaptureTarget
+} from './environment-state-tracker'
+import { startWorkingFileObservation } from './working-file-observer'
 
 // Locale fallback when no explicit locale is injected (see shared/mirror.ts: non-CN locales resolve
 // to public hosts, so this default never silently forces a CN mirror).
@@ -202,6 +212,10 @@ type NotebookExecutionResult = {
   cwdAfter: string
   outputs: NotebookOutput[]
   workingFiles?: NotebookWorkingFile[]
+  environmentOverlay?: NotebookLiveEnvironmentOverlay
+  environmentCapture?: NotebookRunEnvironmentCapture
+  environmentManifest?: NotebookEnvironmentManifest
+  environmentManifestChecksum?: string
 }
 
 // Result of a control-plane REPL run. The mapped outputs (mapLoopOutputs) carry the returned value
@@ -335,6 +349,13 @@ type NotebookRuntimeServiceOptions = {
     projectName: string
     sessionId: string
   }) => Promise<string>
+  environmentStateTracker?: Pick<
+    EnvironmentStateTracker,
+    | 'prepareRun'
+    | 'captureCompletedRun'
+    | 'markPackageMutationDirty'
+    | 'refreshAfterPackageMutation'
+  >
 }
 
 // The wire binding plus the interpreter override the executor needs. `resolvedInterpreter` is set only
@@ -961,12 +982,13 @@ class NotebookRuntimeService {
   // Resolves when startup crash-recovery has finished; awaited by materialize/install so their prefix
   // work never races recovery's cleanup. Undefined until recoverInterruptedOperations is kicked off.
   private recoveryComplete: Promise<void> | undefined
+  private recoveryInFlight: Promise<void> | undefined
   // Env prefixes an interrupted op left possibly-live: recovery couldn't confirm the child process died
   // (liveness 'unknown' — no ps / Windows / unparsable), so a survivor might STILL be writing this
   // prefix. Any op that would write it (default materialize, package install, named-env create, UI
-  // provision/repair) must refuse for the rest of THIS process's life — the recovery barrier resolving
-  // is not enough, since the op wasn't actually reconciled. A later restart re-runs recovery against the
-  // retained journal entry: if the pid is gone/verifiable then, it reconciles and the prefix clears.
+  // provision/repair) must refuse while the durable journal still retains that operation — the recovery
+  // barrier resolving is not enough, since the op wasn't actually reconciled. A later guarded refresh
+  // (or restart) re-runs recovery; once the owner commits or the pid is verifiably gone, the prefix clears.
   private readonly blockedPrefixes = new Set<string>()
   // Runtime IDs an interrupted INSTALL left possibly-live (recovery couldn't confirm the child died).
   // Prefix-keyed blocking doesn't fit an install: an EXTERNAL install writes the user's OWN env (not a
@@ -975,6 +997,12 @@ class NotebookRuntimeService {
   // remove/startup maintenance keep refusing by real prefix (blockedPrefixes). Cleared the same way:
   // a later restart re-runs recovery and, once the pid is gone/verifiable, reconciles the journal entry.
   private readonly blockedRuntimeIds = new Set<string>()
+  // Subsets populated specifically by startup recovery. Unlike same-process live-unconfirmed blocks,
+  // these are refreshable: during a data-root relaunch the prior app can finish and durably remove its
+  // journal record after this process first observed it. A later recovery pass rebuilds these sets from
+  // the current journal instead of retaining a stale in-memory quarantine forever.
+  private readonly startupBlockedPrefixes = new Set<string>()
+  private readonly startupBlockedRuntimeIds = new Set<string>()
   // GLOBAL write barrier set when the operation journal itself is corrupt/unreadable. A corrupt journal
   // means we CANNOT enumerate what was in flight, so we can't know which prefix (if any) an orphan might
   // still be writing — blocking only the two managed defaults (the original fix) left a possibly-live
@@ -995,6 +1023,7 @@ class NotebookRuntimeService {
   // be running NOW — Reset must refuse it until a restart. Read by the provisioner via the injected
   // isPrefixLiveUnconfirmed dep (clearQuarantine). Per-process, so it is empty after a restart.
   private readonly liveUnconfirmedPrefixes = new Set<string>()
+  private readonly liveUnconfirmedRuntimeIds = new Set<string>()
   private readonly runtimeDiscoveryImpl: (
     language: NotebookLanguage
   ) => Promise<DiscoveredInterpreter[]>
@@ -1002,6 +1031,13 @@ class NotebookRuntimeService {
     request: InstallRequest,
     deps?: Partial<InstallDeps>
   ) => Promise<InstallResult>
+  private readonly environmentStateTracker: Pick<
+    EnvironmentStateTracker,
+    | 'prepareRun'
+    | 'captureCompletedRun'
+    | 'markPackageMutationDirty'
+    | 'refreshAfterPackageMutation'
+  >
   private environmentManager: NotebookEnvironmentManager | undefined
   private defaultEnvProvisioner: DefaultEnvProvisioner | undefined
   private defaultEnvProgress: (progress: ProvisionProgress) => void = () => undefined
@@ -1025,6 +1061,8 @@ class NotebookRuntimeService {
         )
       })
     this.installPackagesImpl = options.installPackagesImpl ?? installPackagesDefault
+    this.environmentStateTracker =
+      options.environmentStateTracker ?? new EnvironmentStateTracker({ dataRoot: options.dataRoot })
     this.environmentManager = options.environmentManager
   }
 
@@ -1120,6 +1158,24 @@ class NotebookRuntimeService {
     const binding = session.runtimeBindings.get(language)
     if (binding?.source === 'managed' && binding.envName) return binding.envName
     return this.defaultEnvNameFor(language)
+  }
+
+  private environmentCaptureTarget(
+    language: NotebookLanguage,
+    environmentName: string,
+    binding: InternalRuntimeBinding | undefined,
+    resolvedInterpreter: ResolvedInterpreter | undefined,
+    runtimeRootDir: string
+  ): EnvironmentCaptureTarget {
+    const prefix = envPrefix(runtimeRootDir, environmentName)
+    return {
+      language,
+      environmentName,
+      runtimeSource: binding?.source === 'external' ? 'external' : 'managed',
+      command:
+        resolvedInterpreter?.command ?? (language === 'r' ? rScriptBin(prefix) : pythonBin(prefix)),
+      args: resolvedInterpreter?.args
+    }
   }
 
   // Discovers a language's interpreters (best-effort; a discovery failure yields an empty list so the
@@ -1723,6 +1779,7 @@ class NotebookRuntimeService {
       cwdBefore,
       executionCount: session.executionCount,
       environment: env,
+      ...request.provenanceContext,
       text: {
         stdout: '',
         stderr: '',
@@ -1731,7 +1788,8 @@ class NotebookRuntimeService {
       },
       outputs: [],
       artifacts: [],
-      workingFiles: []
+      workingFiles: [],
+      inputFiles: request.provenanceContext ? (request.registeredInputFiles ?? []) : []
     }
 
     // Surfaces (rather than silently substituting) a missing cwd instead of letting the executor's
@@ -1758,14 +1816,31 @@ class NotebookRuntimeService {
       session,
       runningRun,
       () =>
-        this.envLock.withRun(env, () => {
+        this.envLock.withRun(env, async () => {
           // A failed interpreter resolve (external overlay build) never reached a live kernel; surface
           // it through the same normalization the executor uses so it becomes a failed run, not a throw.
           if (interpreterResolveError !== undefined) {
             executedOnLiveKernel = false
             return Promise.resolve(errorToExecutionResult(interpreterResolveError, cwdBefore))
           }
-          return session.executor
+          const environmentTarget = this.environmentCaptureTarget(
+            cell.language,
+            env,
+            binding,
+            resolvedInterpreter,
+            session.runtimeRoot
+          )
+          let environmentRunStart
+          try {
+            // A dirty generation may represent a crashed installer. Reconcile it before any new
+            // Notebook code executes, then retain the cheap start fingerprint so completion can
+            // detect out-of-band package changes made while the cell was running.
+            environmentRunStart = await this.environmentStateTracker.prepareRun(environmentTarget)
+          } catch (error) {
+            executedOnLiveKernel = false
+            return errorToExecutionResult(error, cwdBefore)
+          }
+          const result = await session.executor
             .execute({
               code: cell.code,
               cwd: cwdBefore,
@@ -1788,6 +1863,39 @@ class NotebookRuntimeService {
               }
               return errorToExecutionResult(error, cwdBefore)
             })
+          if (result.status !== 'completed') return result
+          try {
+            const capture = await this.environmentStateTracker.captureCompletedRun(
+              environmentTarget,
+              result.environmentOverlay,
+              environmentRunStart
+            )
+            return {
+              ...result,
+              environmentCapture: {
+                state: capture.manifest.captureStatus === 'complete' ? 'available' : 'partial',
+                manifestChecksum: capture.checksum,
+                ...(capture.manifest.warnings?.length
+                  ? { warnings: [...capture.manifest.warnings] }
+                  : {})
+              },
+              environmentManifest: capture.manifest,
+              environmentManifestChecksum: capture.checksum
+            }
+          } catch (error) {
+            // Environment evidence is best-effort; a valid Notebook result remains usable when the
+            // local cache/manifest store is unavailable.
+            return {
+              ...result,
+              environmentCapture: {
+                state: 'unavailable',
+                reason:
+                  error instanceof EnvironmentManifestPublicationError
+                    ? 'environment-manifest-publication-failed'
+                    : 'environment-capture-failed'
+              }
+            }
+          }
         }),
       (result) => {
         // The next run starts in whatever directory the shared interpreter ended in.
@@ -1866,6 +1974,7 @@ class NotebookRuntimeService {
       status: 'running',
       startedAt: Date.now(),
       cwdBefore: session.cwd,
+      ...request.provenanceContext,
       text: {
         stdout: '',
         stderr: '',
@@ -1874,7 +1983,8 @@ class NotebookRuntimeService {
       },
       outputs: [],
       artifacts: [],
-      workingFiles: []
+      workingFiles: [],
+      inputFiles: request.provenanceContext ? (request.registeredInputFiles ?? []) : []
     }
 
     // Backed by the RPC server's cached start promise, so it settles to the same stable {endpoint,
@@ -1949,6 +2059,7 @@ class NotebookRuntimeService {
       status: 'running',
       startedAt: Date.now(),
       cwdBefore: session.cwd,
+      ...request.provenanceContext,
       text: {
         stdout: '',
         stderr: '',
@@ -1957,15 +2068,20 @@ class NotebookRuntimeService {
       },
       outputs: [],
       artifacts: [],
-      workingFiles: []
+      workingFiles: [],
+      inputFiles: request.provenanceContext ? (request.registeredInputFiles ?? []) : []
     }
 
     const { result } = await this.persistRun(session, runningRun, async () => {
+      const workingFileObservation = await startWorkingFileObservation(session)
+      let workingFiles: NotebookWorkingFile[] = []
       const shellResult = await runShellCommand({
         command: request.command,
         cwd: session.cwd,
         handoffDir: join(session.notebookSessionRoot, 'handoff'),
         timeoutMs: request.timeoutMs
+      }).finally(async () => {
+        workingFiles = await workingFileObservation.finish()
       })
       // No status/traceback classification for the caller-facing NotebookShellResult (the shell is
       // expected to fail non-zero sometimes), but the run-history record still needs one: exitCode 0
@@ -1993,6 +2109,7 @@ class NotebookRuntimeService {
         traceback: '',
         cwdAfter: session.cwd,
         outputs,
+        workingFiles,
         exitCode: shellResult.exitCode
       }
     })
@@ -2024,8 +2141,10 @@ class NotebookRuntimeService {
       cells: [...session.cells],
       activeWrite: session.activeWrite,
       activeRunId: session.activeRunId,
-      runs: document.runs,
-      recentRuns: document.runs.slice(-20),
+      // run.json retains managed storage keys for later Artifact evidence, but no renderer/agent
+      // state response may expose them.
+      runs: document.runs.map((run) => this.toPublicRunRecord(run)),
+      recentRuns: document.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
       environments: this.buildEnvironmentStatuses(session),
       // v4 session runtime bindings (notebook_state surfaces the current python/r bindings).
       runtimeBindings: this.buildRuntimeBindings(session)
@@ -2398,6 +2517,13 @@ class NotebookRuntimeService {
     // env than the one whose lock, journal target, and repair flag we resolved above. Pin it here so all
     // four agree.
     const pinnedRequest = { ...request, environment: envName }
+    const environmentTarget = this.environmentCaptureTarget(
+      request.language,
+      envName,
+      binding,
+      binding?.resolvedInterpreter,
+      runtimeRoot
+    )
     let result: InstallResult
     let retainForRecovery = false
     let begun = false // did journal.begin() succeed? distinguishes a begin failure from an install error
@@ -2420,36 +2546,58 @@ class NotebookRuntimeService {
           targetPath: journalTarget
         })
         begun = true
-        return this.installPackagesImpl(pinnedRequest, {
-          storageRoot: this.options.dataRoot,
-          condaChannel: mirror.condaChannel,
-          pypiIndex: mirror.pypiIndex,
-          cranMirror: mirror.cranMirror,
-          caBundle: mirror.caBundle,
-          interpreter,
-          // Re-arm the per-spawn intent immediately before EACH installer spawn (conda then CRAN), so a
-          // second spawn whose PID isn't recorded yet blocks rather than trusting the first's PID.
-          onBeforeSpawn: () => recordSpawnIntentSync(runtimeRoot, operationId),
-          // Record each installer child's PID so startup recovery can block on a surviving conda/pip/R
-          // install (never reconcile the env under it) until it is provably gone. Recovery never signals
-          // the child. Persisted SYNCHRONOUSLY (crash-safe) so a spawned child is always probeable; the
-          // async journal update is the normal read path.
-          onChild: (childPid) => {
-            const childStartedAt = Date.now()
-            // Kernel-native identity token captured while the child is alive, so recovery can FALSIFY
-            // pid reuse (a changed token proves the pid is no longer ours); undefined off Linux — see
-            // readProcessStartToken. Never used to authorize a signal.
-            const childStartToken = readProcessStartToken(childPid)
-            recordOperationChildSync(runtimeRoot, operationId, {
-              childPid,
-              childStartedAt,
-              childStartToken
+        const mutation = {
+          operationId,
+          operation: request.operation ?? ('install' as const),
+          packages: request.packages
+        }
+        // Fail closed before the installer can spawn. If the durable dirty marker cannot be
+        // published, a crash during installation would leave the Environment snapshot cache
+        // looking clean even though package state may have changed.
+        await this.environmentStateTracker.markPackageMutationDirty(environmentTarget, mutation)
+        let installResult: InstallResult | undefined
+        try {
+          installResult = await this.installPackagesImpl(pinnedRequest, {
+            storageRoot: this.options.dataRoot,
+            condaChannel: mirror.condaChannel,
+            pypiIndex: mirror.pypiIndex,
+            cranMirror: mirror.cranMirror,
+            caBundle: mirror.caBundle,
+            interpreter,
+            // Re-arm the per-spawn intent immediately before EACH installer spawn (conda then CRAN), so a
+            // second spawn whose PID isn't recorded yet blocks rather than trusting the first's PID.
+            onBeforeSpawn: () => recordSpawnIntentSync(runtimeRoot, operationId),
+            // Record each installer child's PID so startup recovery can block on a surviving conda/pip/R
+            // install (never reconcile the env under it) until it is provably gone. Recovery never signals
+            // the child. Persisted SYNCHRONOUSLY (crash-safe) so a spawned child is always probeable; the
+            // async journal update is the normal read path.
+            onChild: (childPid) => {
+              const childStartedAt = Date.now()
+              // Kernel-native identity token captured while the child is alive, so recovery can FALSIFY
+              // pid reuse (a changed token proves the pid is no longer ours); undefined off Linux — see
+              // readProcessStartToken. Never used to authorize a signal.
+              const childStartToken = readProcessStartToken(childPid)
+              recordOperationChildSync(runtimeRoot, operationId, {
+                childPid,
+                childStartedAt,
+                childStartToken
+              })
+              void journal
+                .update(operationId, { childPid, childStartedAt, childStartToken })
+                .catch(() => undefined)
+            }
+          })
+          return installResult
+        } finally {
+          await this.environmentStateTracker
+            .refreshAfterPackageMutation(environmentTarget, {
+              ...mutation,
+              result: installResult?.ok ? 'success' : 'failure',
+              attempts: installResult?.attempts ?? [],
+              fallbackUsed: installResult?.fallbackUsed ?? false
             })
-            void journal
-              .update(operationId, { childPid, childStartedAt, childStartToken })
-              .catch(() => undefined)
-          }
-        })
+            .catch(() => undefined)
+        }
       })
     } catch (error) {
       // begin() failed (nothing spawned) → structured fail-closed refusal, no cleanup needed.
@@ -2476,6 +2624,7 @@ class NotebookRuntimeService {
         // blockPrefixRecovery ALSO marks the prefix live-unconfirmed, so a force Reset this session
         // refuses to delete + rebuild it out from under the possibly-live installer (clearQuarantine).
         this.blockedRuntimeIds.add(repairRuntimeId)
+        this.liveUnconfirmedRuntimeIds.add(repairRuntimeId)
         if (journalTarget) this.blockPrefixRecovery(journalTarget)
       }
       throw error
@@ -2602,22 +2751,31 @@ class NotebookRuntimeService {
     return { sessionId: request.sessionId, status: 'shutdown' }
   }
 
-  // Crash recovery (WS13): reconcile any runtime operation the previous process left in flight. Run
-  // ONCE at app startup, before new fetches/installs. For each journalled op: if a surviving orphan child
+  // Crash recovery (WS13): reconcile any runtime operation the previous process left in flight. Run at
+  // app startup and refresh guarded startup blocks before new writes. For each journalled op: if a child
   // MIGHT still be running, BLOCK its target and leave the entry (recovery never signals the orphan);
   // only once the child is provably gone does it clean staging / verify the prefix / flag repair-required,
   // then clear the entry. Best-effort — a failure is logged and the entry retried next startup. The
   // download (staging cleanup), materialize (verify/rebuild the env prefix), and install (flag
   // repair-required) paths all populate the journal, so each reconcile action below is wired to a real effect.
   async recoverInterruptedOperations(): Promise<void> {
+    if (this.recoveryInFlight) {
+      await this.recoveryInFlight
+      return
+    }
     // Publish the in-flight recovery so new prefix-touching operations (materialize/install) can await
     // it — otherwise an old op's cleanup/delete could race a fresh fetch/install on the same prefix.
     const run = this.runRecovery()
+    this.recoveryInFlight = run
     this.recoveryComplete = run.then(
       () => undefined,
       () => undefined
     )
-    await run
+    try {
+      await run
+    } finally {
+      if (this.recoveryInFlight === run) this.recoveryInFlight = undefined
+    }
   }
 
   // Awaited by materialize/install before they touch a prefix, so startup recovery has finished
@@ -2627,6 +2785,17 @@ class NotebookRuntimeService {
   // too, not just materialize/install).
   async ensureRecovered(): Promise<void> {
     if (this.recoveryComplete) await this.recoveryComplete
+    // A startup block is a snapshot of another process's in-flight journal. Re-read it before refusing
+    // a new write: the operation owner may have committed and removed the record after our first pass
+    // (notably while the old app drains during a data-root relaunch). Same-process unconfirmed blocks
+    // are excluded from these sets and therefore remain blocked until restart/Reset.
+    if (
+      this.startupBlockedPrefixes.size > 0 ||
+      this.startupBlockedRuntimeIds.size > 0 ||
+      this.recoveryCorrupt
+    ) {
+      await this.recoverInterruptedOperations()
+    }
   }
 
   // Throws if `prefix` is one recovery couldn't confirm free of a live orphan (see blockedPrefixes).
@@ -2670,6 +2839,7 @@ class NotebookRuntimeService {
   // retained journal record + sidecar for the prefix, so the quarantine won't re-arm next startup.
   clearRecoveryBlock(prefix: string): void {
     this.blockedPrefixes.delete(prefix)
+    this.startupBlockedPrefixes.delete(prefix)
   }
 
   // Drops the in-memory recovery block for a runtime ID. An interrupted INSTALL blocks the bound
@@ -2678,6 +2848,7 @@ class NotebookRuntimeService {
   // runtimeIds of the retained install records for the reset prefix and clears them here too.
   clearRuntimeRecoveryBlock(runtimeId: string): void {
     this.blockedRuntimeIds.delete(runtimeId)
+    this.startupBlockedRuntimeIds.delete(runtimeId)
   }
 
   // Releases ONE prefix from the global corrupt-journal write barrier. Called by a force Reset (via the
@@ -2722,6 +2893,8 @@ class NotebookRuntimeService {
 
   private async runRecovery(): Promise<void> {
     const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
+    const nextStartupBlockedPrefixes = new Set<string>()
+    const nextStartupBlockedRuntimeIds = new Set<string>()
     // Reclaim any prior-session pack-download cache FIRST — before the corrupt-journal early return
     // below — so this housekeeping runs on every startup path, not just the healthy-journal one. It is
     // only housekeeping: correctness of "app closes → start from scratch" is guaranteed independently by
@@ -2798,10 +2971,10 @@ class NotebookRuntimeService {
           addRepairRequired(getRuntimeRoot(this.options.dataRoot), record.runtimeId)
       },
       // liveness 'unknown' (couldn't confirm the child died — e.g. Windows with a recorded start time):
-      // a possibly-live orphan may still be writing this operation's env prefix. Block that PREFIX for
-      // the rest of this process's life so any write to it (default materialize, package install,
-      // named-env create, UI provision/repair) refuses — rather than racing the survivor once the
-      // recovery barrier opens. Keyed by targetPath (the prefix the op writes), which materialize/
+      // a possibly-live orphan may still be writing this operation's env prefix. Block that PREFIX while
+      // its durable operation remains so any write to it (default materialize, package install, named-env
+      // create, UI provision/repair) refuses — rather than racing the survivor once the recovery barrier
+      // opens. Keyed by targetPath (the prefix the op writes), which materialize/
       // upgrade/install all carry and which is exactly what the write paths check via
       // assertPrefixRecoverable — unlike a repair-required flag, whose env/interpreter-id key does not
       // match the materialize op's env-NAME runtimeId (so that flag never fired for the default env, and
@@ -2815,13 +2988,44 @@ class NotebookRuntimeService {
         // An INSTALL is identified by its runtimeId, not a managed prefix: an external install's target
         // is the user's own env (no path under runtimeRoot) and a managed named install's identity is
         // its runtimeId. Block the runtimeId so execute()/managePackages() refuse the bound runtime.
-        if (record.kind === 'install') this.blockedRuntimeIds.add(record.runtimeId)
+        if (record.kind === 'install') nextStartupBlockedRuntimeIds.add(record.runtimeId)
         // materialize/upgrade name the real managed prefix they write — block it so managed materialize/
         // create/remove/startup maintenance refuse it. (An external install carries no targetPath, so
         // it never wrongly blocks the app-managed default here.)
-        if (record.targetPath) this.blockedPrefixes.add(record.targetPath)
+        if (record.targetPath) nextStartupBlockedPrefixes.add(record.targetPath)
       }
     })
+
+    // Replace only the blocks derived from the prior recovery snapshot. Same-process unconfirmed
+    // workers remain in the live sets and can never be cleared merely because a journal file vanished.
+    for (const prefix of this.startupBlockedPrefixes) {
+      if (!nextStartupBlockedPrefixes.has(prefix) && !this.liveUnconfirmedPrefixes.has(prefix)) {
+        this.blockedPrefixes.delete(prefix)
+      }
+    }
+    for (const runtimeId of this.startupBlockedRuntimeIds) {
+      if (
+        !nextStartupBlockedRuntimeIds.has(runtimeId) &&
+        !this.liveUnconfirmedRuntimeIds.has(runtimeId)
+      ) {
+        this.blockedRuntimeIds.delete(runtimeId)
+      }
+    }
+    this.startupBlockedPrefixes.clear()
+    this.startupBlockedRuntimeIds.clear()
+    for (const prefix of nextStartupBlockedPrefixes) {
+      this.startupBlockedPrefixes.add(prefix)
+      this.blockedPrefixes.add(prefix)
+    }
+    for (const runtimeId of nextStartupBlockedRuntimeIds) {
+      this.startupBlockedRuntimeIds.add(runtimeId)
+      this.blockedRuntimeIds.add(runtimeId)
+    }
+    // A cleanly readable journal supersedes a previous corrupt snapshot. Reset allowlisting is only
+    // meaningful while the global corrupt barrier is active.
+    this.recoveryCorrupt = false
+    this.corruptResetAllowlist.clear()
+
     // Reconciled records are cleared from the journal, so their PID sidecars are now inert — remove them
     // so they don't accumulate. A retained (unknown-blocked) record keeps its sidecar for the next
     // startup's liveness probe.
@@ -3024,6 +3228,9 @@ class NotebookRuntimeService {
       cwdAfter?: string
       outputs: NotebookOutput[]
       workingFiles?: NotebookWorkingFile[]
+      environmentManifest?: NotebookEnvironmentManifest
+      environmentManifestChecksum?: string
+      environmentCapture?: NotebookRunEnvironmentCapture
     }
   >(
     session: RuntimeSession,
@@ -3042,6 +3249,11 @@ class NotebookRuntimeService {
     const result = await execute()
 
     // Replace the running record instead of appending so each run id has one durable entry.
+    const environmentCapture: NotebookRunEnvironmentCapture =
+      result.environmentCapture ??
+      (runningRun.kernelKind === 'python' || runningRun.kernelKind === 'r'
+        ? { state: 'unavailable', reason: 'environment-capture-failed' }
+        : { state: 'unavailable', reason: 'environment-not-supported' })
     const completedRun: NotebookRunRecord = {
       ...runningRun,
       status: result.status,
@@ -3057,7 +3269,14 @@ class NotebookRuntimeService {
       // mapLoopOutputs / errorToExecutionResult); do NOT append a second one or the panel renders
       // the traceback twice.
       outputs: result.outputs,
-      workingFiles: result.workingFiles ?? []
+      workingFiles: result.workingFiles ?? [],
+      environmentCapture,
+      ...(environmentCapture.state !== 'unavailable' && result.environmentManifest
+        ? { environmentManifest: result.environmentManifest }
+        : {}),
+      ...(environmentCapture.state !== 'unavailable' && result.environmentManifestChecksum
+        ? { environmentManifestChecksum: result.environmentManifestChecksum }
+        : {})
     }
     const document = await this.repository.updateRun({
       projectName: session.projectName,
@@ -3158,13 +3377,32 @@ class NotebookRuntimeService {
 
   // Adds notebook roots and kernel metadata to the run returned to MCP callers.
   private toRunSummary(session: RuntimeSession, run: NotebookRunRecord): NotebookRunSummary {
+    const publicRun = this.toPublicRunRecord(run)
+    const inputFiles = (run.inputFiles ?? []).map((input) => {
+      const publicInput = { ...input } as Partial<typeof input>
+      delete publicInput.storageKey
+      return publicInput as NotebookRunSummary['inputFiles'][number]
+    })
     return {
-      ...run,
+      ...publicRun,
+      inputFiles,
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,
       runtimeRoot: getRuntimeRoot(this.options.dataRoot),
       kernelName: 'python3'
     }
+  }
+
+  private toPublicRunRecord(run: NotebookRunRecord): NotebookRunRecord {
+    const inputFiles = (run.inputFiles ?? []).map((input) => {
+      const publicInput = { ...input } as Partial<typeof input>
+      delete publicInput.storageKey
+      return publicInput
+    })
+    // NotebookRunRecord is also the legacy renderer shape. The boundary deliberately omits the
+    // internal-only required key while keeping every public input field; persisted records remain
+    // strongly typed and complete inside the repository.
+    return { ...run, inputFiles } as NotebookRunRecord
   }
 }
 

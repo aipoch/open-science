@@ -16,6 +16,7 @@ import type {
   RunNotebookCellRequest
 } from '../../shared/notebook'
 import type { NotebookRuntimeService } from './runtime-service'
+import { withDataRootWrite } from '../storage/migration-state'
 
 type NotebookHandlers = {
   state: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
@@ -29,9 +30,7 @@ type NotebookHandlers = {
   finishCodeCell: (
     request: FinishNotebookCodeCellRequest
   ) => ReturnType<NotebookRuntimeService['finishCodeCell']>
-  runCell: (
-    request: RunNotebookCellRequest
-  ) => ReturnType<NotebookRuntimeService['runCell']>
+  runCell: (request: RunNotebookCellRequest) => ReturnType<NotebookRuntimeService['runCell']>
   execute: (request: ExecuteNotebookCodeRequest) => Promise<NotebookRunSummary>
   exportIpynb: (request: ExportNotebookKernelRequest) => Promise<ExportNotebookResult>
   exportIpynbAll: (request: ExportNotebookAllRequest) => Promise<ExportNotebookAllResult>
@@ -39,19 +38,30 @@ type NotebookHandlers = {
   shutdown: (request: NotebookSessionRequest) => ReturnType<NotebookRuntimeService['shutdown']>
 }
 
+const withoutTrustedTurnContext = <Request extends NotebookSessionRequest>(
+  request: Request
+): Request => {
+  const { provenanceContext, registeredInputFiles, ...publicRequest } = request
+  void provenanceContext
+  void registeredInputFiles
+  return publicRequest as Request
+}
+
 // Builds a small delegating surface so tests can validate IPC behavior without Electron wiring.
 const createNotebookHandlers = (service: NotebookRuntimeService): NotebookHandlers => ({
   state: (request) => service.state(request),
   reference: (request) => service.getSessionReference(request),
-  beginCodeCell: (request) => service.beginCodeCell(request),
-  appendCodeCell: (request) => service.appendCodeCell(request),
-  finishCodeCell: (request) => service.finishCodeCell(request),
-  runCell: (request) => service.runCell(request),
-  execute: (request) => service.execute(request),
+  beginCodeCell: (request) => withDataRootWrite(() => service.beginCodeCell(request)),
+  appendCodeCell: (request) => withDataRootWrite(() => service.appendCodeCell(request)),
+  finishCodeCell: (request) => withDataRootWrite(() => service.finishCodeCell(request)),
+  runCell: (request) =>
+    withDataRootWrite(() => service.runCell(withoutTrustedTurnContext(request))),
+  execute: (request) =>
+    withDataRootWrite(() => service.execute(withoutTrustedTurnContext(request))),
   exportIpynb: (request) => service.exportIpynb(request),
   exportIpynbAll: (request) => service.exportIpynbAll(request),
-  restart: (request) => service.restart(request),
-  shutdown: (request) => service.shutdown(request)
+  restart: (request) => withDataRootWrite(() => service.restart(request)),
+  shutdown: (request) => withDataRootWrite(() => service.shutdown(request))
 })
 
 // Registers renderer-callable notebook commands on the main-process IPC bus.

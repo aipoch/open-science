@@ -32,6 +32,7 @@ import type {
   NotebookExecutor
 } from './runtime-service'
 import { DEFAULT_TIMEOUT_MS, TimeoutController } from './timeout-controller'
+import { startWorkingFileObservation, type WorkingFileObservation } from './working-file-observer'
 
 // Driver-internal process kind. 'python'/'r' are the data kernels selected by the agent-facing
 // NotebookLanguage; 'repl' is the control-plane Node kernel reached only via the control path. The
@@ -257,6 +258,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
   // Sends one cell to the kind's loop and resolves with the mapped execution result.
   async execute(request: NotebookExecutionRequest): Promise<NotebookExecutionResult> {
+    let workingFileObservation: WorkingFileObservation | undefined
     try {
       const kind = resolveProcessKind(request)
       const env = kind === 'repl' ? '' : resolveRequestEnv(kind, request)
@@ -268,8 +270,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
         throw new Error('Notebook execution is already running.')
       }
 
+      workingFileObservation = await startWorkingFileObservation(request)
       const reqId = randomUUID()
       const { response, timedOut } = await this.sendRequest(proc, reqId, request)
+      const workingFiles = await workingFileObservation.finish()
+      workingFileObservation = undefined
 
       const figures = await this.readFigures(response.figures)
       const mapped = mapLoopOutputs({
@@ -292,9 +297,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
         traceback: mapped.traceback,
         cwdAfter: response.cwd || request.cwd,
         outputs: mapped.outputs,
-        workingFiles: []
+        workingFiles,
+        environmentOverlay: response.environmentOverlay
       }
     } catch (error) {
+      await workingFileObservation?.finish()
       return errorToExecutionResult(error, request)
     }
   }

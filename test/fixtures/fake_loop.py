@@ -4,6 +4,9 @@
 #   __SLEEP__          sleep, but catch the SIGINT-raised KeyboardInterrupt and still reply (soft path)
 #   __IGNORE_SIGINT__  ignore SIGINT entirely and sleep, forcing the driver's hard SIGKILL path
 #   __FIGURE__         write a real 1x1 PNG into the figures dir and reference it in the response
+#   __WRITE_FILE__      write an output file into the kernel working directory
+#   __OVERWRITE_FILE__  replace a pre-existing output in the kernel working directory
+#   __WRITE_DELAYED_A__ / __WRITE_DELAYED_B__ overlap two kernels writing the same data root
 import base64
 import json
 import os
@@ -25,6 +28,19 @@ def _respond(req_id, code):
         with open(path, "wb") as handle:
             handle.write(_PNG)
         figures = [{"mime": "image/png", "path": path}]
+    if code == "__WRITE_FILE__":
+        with open("generated.csv", "w", encoding="utf-8") as handle:
+            handle.write("x,y\n1,2\n")
+    if code == "__OVERWRITE_FILE__":
+        previous = os.stat("generated.csv")
+        with open("generated.csv", "w", encoding="utf-8") as handle:
+            handle.write("x,y\n3,4\n")
+        os.utime("generated.csv", ns=(previous.st_atime_ns, previous.st_mtime_ns))
+    if code in ("__WRITE_DELAYED_A__", "__WRITE_DELAYED_B__"):
+        time.sleep(0.1)
+        suffix = code.removeprefix("__WRITE_DELAYED_").removesuffix("__").lower()
+        with open(f"generated-{suffix}.csv", "w", encoding="utf-8") as handle:
+            handle.write("x,y\n1,2\n")
     sys.stdout.write(
         json.dumps(
             {

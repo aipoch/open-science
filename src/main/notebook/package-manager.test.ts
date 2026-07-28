@@ -45,12 +45,25 @@ const scriptedSpawn = (
 
 const ok: SpawnResult = { code: 0, stdout: 'done', stderr: '' }
 const fail: SpawnResult = { code: 1, stdout: '', stderr: 'boom' }
+const packageUnavailable: SpawnResult = {
+  code: 1,
+  stdout: JSON.stringify({
+    success: false,
+    solver_problems: ['r-someCranOnlyPkg does not exist (perhaps a typo or a missing channel).'],
+    actions: { LINK: [], UNLINK: [], FETCH: [] }
+  }),
+  stderr: 'Diagnostic: package not found.'
+}
 // micromamba's signal that the package isn't conda-managed (installed via CRAN), which drives the
 // R uninstall fallback to remove.packages().
 const notManaged: SpawnResult = {
   code: 1,
-  stdout: '',
-  stderr: 'Failure: packages to remove not found in the environment:\n  - r-someCranOnlyPkg'
+  stdout: JSON.stringify({
+    success: false,
+    error: 'packages to remove not found in the environment: r-someCranOnlyPkg',
+    actions: {}
+  }),
+  stderr: 'Diagnostic: package not installed.'
 }
 const base = {
   micromamba: '/mm/bin/micromamba',
@@ -142,13 +155,16 @@ describe('installPackages', () => {
         'pandas'
       ])
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       needsRestart: false,
       log: expect.stringContaining('done'),
       method: 'conda',
       prefix
     })
+    expect(result.attempts).toEqual([
+      expect.objectContaining({ installer: 'conda', status: 'succeeded', groupOrdinal: 0 })
+    ])
   })
 
   it('routes python usePip installs to the env pip with the resolved index url', async () => {
@@ -246,7 +262,7 @@ describe('installPackages', () => {
   })
 
   it('falls back to R install.packages against the CRAN mirror when conda r- install fails', async () => {
-    const { spawn, calls } = scriptedSpawn([fail, ok])
+    const { spawn, calls } = scriptedSpawn([packageUnavailable, ok])
     const result = await installPackages(
       { language: 'r', packages: ['someCranOnlyPkg'] },
       { spawn, ...base, cranMirror: 'https://cran.mirror.test' }
@@ -265,18 +281,117 @@ describe('installPackages', () => {
     expect(calls[1][1][1]).toContain(
       `install.packages(c("someCranOnlyPkg"), lib=${JSON.stringify(rLib)}, repos="https://cran.mirror.test")`
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       needsRestart: true,
-      log: expect.stringContaining('boom'),
+      log: expect.stringContaining('does not exist'),
       method: 'cran',
       // The reported location is the env-scoped R library, not the bare env prefix.
       prefix: rLib
     })
+    expect(result.fallbackUsed).toBe(true)
+    expect(result.attempts).toEqual([
+      expect.objectContaining({
+        installer: 'conda',
+        reason: 'package-not-found',
+        mutationRisk: 'none'
+      }),
+      expect.objectContaining({ installer: 'r-install-packages', status: 'succeeded' })
+    ])
+  })
+
+  it('never authorizes a fallback from human-readable conda stderr alone', async () => {
+    const rawDiagnostic: SpawnResult = {
+      code: 1,
+      stdout: '',
+      stderr: 'PackagesNotFoundError: r-only-on-cran does not exist'
+    }
+    const { spawn, calls } = scriptedSpawn([rawDiagnostic, ok])
+
+    const result = await installPackages(
+      { language: 'r', packages: ['only-on-cran'] },
+      { spawn, ...base }
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(result).toMatchObject({ ok: false, fallbackUsed: false })
+    expect(result.attempts).toEqual([
+      expect.objectContaining({
+        installer: 'conda',
+        mutationRisk: 'unknown',
+        reason: 'unknown'
+      })
+    ])
+  })
+
+  it('falls back from structured solver failure for Python and records both attempts', async () => {
+    const solverFailure: SpawnResult = {
+      code: 1,
+      stdout: JSON.stringify({
+        success: false,
+        solver_problems: ['Could not solve: unsatisfiable dependency constraints'],
+        actions: {}
+      }),
+      stderr: 'solver failed'
+    }
+    const { spawn, calls } = scriptedSpawn([solverFailure, ok])
+
+    const result = await installPackages(
+      { language: 'python', packages: ['special-wheel'] },
+      { spawn, ...base, pypiIndex: 'https://pypi.example/simple' }
+    )
+
+    expect(calls).toHaveLength(2)
+    expect(calls[1][0]).toBe(pipBin(envPrefix(runtimeRoot('/root'), DEFAULT_PY_ENV)))
+    expect(result).toMatchObject({ ok: true, method: 'pip', fallbackUsed: true })
+    expect(result.attempts).toEqual([
+      expect.objectContaining({ installer: 'conda', reason: 'solver-failed' }),
+      expect.objectContaining({ installer: 'pip', status: 'succeeded' })
+    ])
+  })
+
+  it('refuses fallback when structured conda actions show possible mutation', async () => {
+    const partialTransaction: SpawnResult = {
+      code: 1,
+      stdout: JSON.stringify({
+        success: false,
+        solver_problems: ['package missing'],
+        actions: { LINK: [{ name: 'dependency' }] }
+      }),
+      stderr: 'Transaction starting\nLinking dependency'
+    }
+    const { spawn, calls } = scriptedSpawn([partialTransaction, ok])
+
+    const result = await installPackages(
+      { language: 'python', packages: ['special-wheel'] },
+      { spawn, ...base }
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(result).toMatchObject({ ok: false, fallbackUsed: false })
+    expect(result.attempts).toEqual([
+      expect.objectContaining({ installer: 'conda', mutationRisk: 'possible' })
+    ])
+  })
+
+  it('fails closed without CRAN fallback when conda failure may have mutated the environment', async () => {
+    const { spawn, calls } = scriptedSpawn([fail])
+    const result = await installPackages(
+      { language: 'r', packages: ['ggplot2'] },
+      { spawn, ...base }
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(result).toMatchObject({
+      ok: false,
+      needsRestart: false,
+      method: 'conda',
+      error: 'conda install failed.'
+    })
   })
 
   it('surfaces an error when both conda and CRAN fallback fail', async () => {
-    const { spawn } = scriptedSpawn([fail, fail])
+    const { spawn } = scriptedSpawn([packageUnavailable, fail])
     const result = await installPackages({ language: 'r', packages: ['x'] }, { spawn, ...base })
     expect(result.ok).toBe(false)
     expect(result.needsRestart).toBe(false)
@@ -555,7 +670,7 @@ describe('installPackages uninstall', () => {
     const prefix = envPrefix(runtimeRoot('/root'), 'my-analysis')
     expect(calls[0][0]).toBe(pipBin(prefix))
     expect(calls[0][1]).toEqual(['uninstall', '-y', 'seaborn'])
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       needsRestart: false,
       log: expect.stringContaining('done'),
@@ -581,6 +696,7 @@ describe('installPackages uninstall', () => {
     expect(args).toEqual([
       '--no-rc',
       'remove',
+      '--json',
       '--root-prefix',
       runtimeRoot('/root'),
       '--prefix',
@@ -589,7 +705,7 @@ describe('installPackages uninstall', () => {
       'numpy',
       'pandas'
     ])
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       needsRestart: false,
       log: expect.stringContaining('done'),
@@ -617,6 +733,7 @@ describe('installPackages uninstall', () => {
     expect(args).toEqual([
       '--no-rc',
       'remove',
+      '--json',
       '--root-prefix',
       runtimeRoot('/root'),
       '--prefix',
@@ -625,7 +742,7 @@ describe('installPackages uninstall', () => {
       'r-ggplot2',
       'bioconductor-deseq2'
     ])
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       // R uninstall asks for a restart just like R install: a live session holds namespaces/DLLs.
       needsRestart: true,
@@ -656,7 +773,7 @@ describe('installPackages uninstall', () => {
     expect(calls[1][1][1]).toContain(
       `remove.packages(c("someCranOnlyPkg"), lib=${JSON.stringify(rLib)})`
     )
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       needsRestart: true,
       // Log carries both the conda not-found signal and the successful CRAN removal.
@@ -665,6 +782,11 @@ describe('installPackages uninstall', () => {
       // The reported location is the env-scoped R library, deterministic from the prefix.
       prefix: rLib
     })
+    expect(result.fallbackUsed).toBe(true)
+    expect(result.attempts).toEqual([
+      expect.objectContaining({ installer: 'conda', mutationRisk: 'none' }),
+      expect.objectContaining({ installer: 'r-install-packages', status: 'succeeded' })
+    ])
   })
 
   it('surfaces an error when an R conda remove fails for a reason other than not-managed', async () => {

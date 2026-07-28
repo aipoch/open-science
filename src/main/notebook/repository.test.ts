@@ -366,6 +366,10 @@ describe('notebook run repository', () => {
     expect(reconciled.runs[0]).toMatchObject({
       runId: 'run-1',
       status: 'interrupted',
+      environmentCapture: {
+        state: 'unavailable',
+        reason: 'environment-capture-failed'
+      },
       interruptionReason: 'app-terminated'
     })
     expect(reconciled.runs[0].endedAt).toBeGreaterThanOrEqual(100)

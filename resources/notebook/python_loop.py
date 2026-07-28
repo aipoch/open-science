@@ -81,6 +81,36 @@ def _capture_figures():
     return figures
 
 
+def _capture_environment():
+    packages = []
+    seen = set()
+    for module_name, module in list(sys.modules.items()):
+        root_name = module_name.split(".", 1)[0]
+        if not root_name or root_name.startswith("_") or root_name in seen or module is None:
+            continue
+        seen.add(root_name)
+        root_module = sys.modules.get(root_name, module)
+        version = getattr(root_module, "__version__", None)
+        if version is not None:
+            try:
+                version = str(version)
+            except Exception:
+                version = None
+        packages.append({
+            "name": root_name,
+            "version": version,
+            "version_status": "known" if version else "unavailable",
+            "ecosystem": "python",
+            "evidence_sources": ["python-kernel-modules"],
+            "loaded_state": "loaded",
+        })
+    packages.sort(key=lambda package: package["name"].casefold())
+    return {
+        "runtime_version": ".".join(str(part) for part in sys.version_info[:3]),
+        "packages": packages,
+    }
+
+
 # Runs one request against the persistent namespace: execs all but a trailing bare expression, then
 # evals that expression so its repr echoes like a REPL. KeyboardInterrupt (from a SIGINT timeout) is
 # caught so the process survives and the driver can map the reply to a timeout.
@@ -114,7 +144,8 @@ def _run(code):
         sys.stdout, sys.stderr = old_out, old_err
     figures = _capture_figures()
     return {"stdout": out.getvalue(), "stderr": err.getvalue(), "error": error,
-            "result": result, "cwd": os.getcwd(), "figures": figures}
+            "result": result, "cwd": os.getcwd(), "figures": figures,
+            "environment": _capture_environment()}
 
 
 def main():
@@ -141,7 +172,8 @@ def main():
             # write; catching it here keeps the loop alive. SystemExit from user code is already turned
             # into an error inside _run, so it doesn't reach this guard.
             fallback = {"stdout": "", "stderr": "", "error": traceback.format_exc(),
-                        "result": None, "cwd": os.getcwd(), "figures": [], "req_id": req_id}
+                        "result": None, "cwd": os.getcwd(), "figures": [],
+                        "environment": _capture_environment(), "req_id": req_id}
             try:
                 _protocol_out.write(json.dumps(fallback) + "\n")
                 _protocol_out.flush()

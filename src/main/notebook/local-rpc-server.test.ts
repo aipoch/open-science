@@ -1,11 +1,13 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { NotebookRunInputFile } from '../../shared/notebook'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { NotebookRuntimeService } from './runtime-service'
 import { NotebookRunRepository } from './repository'
+import type { NotebookInputRunLease } from './input-registry'
 
 let storageRoot: string | undefined
 
@@ -13,6 +15,36 @@ const createStorageRoot = async (): Promise<string> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-notebook-rpc-'))
   return storageRoot
 }
+
+const registeredInput = {
+  inputFileVersionId: 'upload-version-1',
+  sourceKind: 'upload-version' as const,
+  sourceFileId: 'upload-1',
+  sourceVersionNumber: 1,
+  sourceProjectId: 'default-project',
+  sourceSessionId: 'source-session',
+  filename: 'groups.csv',
+  sizeBytes: 10,
+  checksum: 'a'.repeat(64),
+  storageKey: 'uploads/default-project/source-session/upload-version-1/content',
+  association: 'turn-attached' as const
+}
+
+const artifactCapabilityBinding = {
+  projectId: 'project-1',
+  appSessionId: 'session-1',
+  artifactStorageSessionId: 'artifact-session-1',
+  artifactRunId: 'artifact-run-1',
+  rootFrameId: 'frame-root',
+  agentFrameId: 'frame-root',
+  messageBranchId: 'branch-root',
+  messageBranchAncestry: ['branch-parent', 'branch-root'],
+  messageAncestry: ['message-parent', 'message-user-1'],
+  runtimeSegmentId: 'runtime-1',
+  promptMessageId: 'message-user-1',
+  agentName: 'Claude Code',
+  notebookSessionId: 'notebook-session-1'
+} as const
 
 afterEach(async () => {
   if (storageRoot) {
@@ -139,6 +171,478 @@ describe('notebook local RPC server', () => {
     } finally {
       await server.close()
     }
+  })
+
+  it('dispatches Artifact Version creation through the authenticated main-process bridge', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const requests: unknown[] = []
+    const server = new NotebookLocalRpcServer(service, {
+      token: 'secret-token',
+      artifactProvenance: {
+        createVersion: async (request) => {
+          requests.push(request)
+          return {
+            id: 'version-1',
+            artifactId: 'artifact-1',
+            versionId: 'version-1',
+            versionNumber: 1,
+            checksum: 'a'.repeat(64),
+            createdAt: '2026-07-27T00:00:00.000Z',
+            projectName: 'project-1',
+            sessionId: 'session-1',
+            runId: 'artifact-run-1',
+            name: 'sin.png',
+            path: '/managed/content',
+            fileUrl: 'file:///managed/content',
+            mimeType: 'image/png',
+            size: 12,
+            mtimeMs: 1
+          }
+        }
+      }
+    })
+    const connection = await server.ensureStarted()
+    const artifactToken = server.issueArtifactRunCapability(artifactCapabilityBinding)
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      writeOperationId: 'write-1',
+      writeRequestChecksum: 'b'.repeat(64),
+      rootFrameId: 'frame-root',
+      agentFrameId: 'frame-root',
+      messageBranchId: 'branch-root',
+      messageBranchAncestry: ['forged-branch'],
+      messageAncestry: ['forged-message'],
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'message-user-1',
+      agentName: 'forged-agent',
+      notebookSessionId: 'forged-notebook-session',
+      filename: 'sin.png',
+      contentType: 'image/png'
+    }
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${artifactToken}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'artifactCreateVersion', params: request })
+      })
+      const payload = (await response.json()) as {
+        result: { artifactId: string; versionId: string }
+      }
+
+      expect(response.status).toBe(200)
+      expect(payload.result).toMatchObject({ artifactId: 'artifact-1', versionId: 'version-1' })
+      expect(requests).toEqual([
+        {
+          ...request,
+          messageBranchAncestry: ['branch-parent', 'branch-root'],
+          messageAncestry: ['message-parent', 'message-user-1'],
+          agentName: 'Claude Code',
+          notebookSessionId: 'notebook-session-1'
+        }
+      ])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('rejects an Artifact capability when the request names a different run', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const createVersion = vi.fn()
+    const server = new NotebookLocalRpcServer(service, {
+      token: 'secret-token',
+      artifactProvenance: { createVersion }
+    })
+    const connection = await server.ensureStarted()
+    const artifactToken = server.issueArtifactRunCapability(artifactCapabilityBinding)
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${artifactToken}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'artifactCreateVersion',
+          params: {
+            ...artifactCapabilityBinding,
+            artifactRunId: 'artifact-run-forged',
+            writeOperationId: 'write-forged',
+            writeRequestChecksum: 'a'.repeat(64),
+            filename: 'sin.png'
+          }
+        })
+      })
+
+      expect(response.status).toBe(403)
+      await expect(response.json()).resolves.toEqual({
+        error: 'Artifact RPC capability does not match artifactRunId.'
+      })
+      expect(createVersion).not.toHaveBeenCalled()
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('rejects expired and revoked Artifact run capabilities', async () => {
+    const root = await createStorageRoot()
+    let now = 1_000
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const createVersion = vi.fn()
+    const server = new NotebookLocalRpcServer(service, {
+      token: 'secret-token',
+      now: () => now,
+      artifactProvenance: { createVersion }
+    })
+    const connection = await server.ensureStarted()
+    const expiredToken = server.issueArtifactRunCapability(artifactCapabilityBinding, 100)
+    now = 1_101
+
+    const call = (token: string): Promise<Response> =>
+      fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'artifactCreateVersion',
+          params: {
+            ...artifactCapabilityBinding,
+            writeOperationId: 'write-1',
+            writeRequestChecksum: 'a'.repeat(64),
+            filename: 'sin.png'
+          }
+        })
+      })
+
+    try {
+      const expired = await call(expiredToken)
+      expect(expired.status).toBe(401)
+      await expect(expired.json()).resolves.toEqual({ error: 'Artifact RPC capability expired.' })
+
+      const replayOnlyToken = server.issueArtifactRunCapability({
+        ...artifactCapabilityBinding,
+        allowedMethods: ['artifactReplayVersion']
+      })
+      const disallowed = await call(replayOnlyToken)
+      expect(disallowed.status).toBe(403)
+      await expect(disallowed.json()).resolves.toEqual({
+        error: 'Artifact RPC capability does not allow artifactCreateVersion.'
+      })
+
+      const revokedToken = server.issueArtifactRunCapability(artifactCapabilityBinding)
+      server.revokeArtifactRunCapability(revokedToken)
+      const revoked = await call(revokedToken)
+      expect(revoked.status).toBe(401)
+      await expect(revoked.json()).resolves.toEqual({ error: 'Invalid Artifact RPC capability.' })
+      expect(createVersion).not.toHaveBeenCalled()
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('keeps the default Artifact capability valid throughout a long-running turn', async () => {
+    const root = await createStorageRoot()
+    let now = 1_000
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const createVersion = vi.fn().mockResolvedValue({ versionId: 'version-1' })
+    const server = new NotebookLocalRpcServer(service, {
+      token: 'secret-token',
+      now: () => now,
+      artifactProvenance: { createVersion }
+    })
+    const connection = await server.ensureStarted()
+    const token = server.issueArtifactRunCapability(artifactCapabilityBinding)
+    now += 31 * 60 * 1_000
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'artifactCreateVersion',
+          params: {
+            ...artifactCapabilityBinding,
+            writeOperationId: 'write-long-turn',
+            writeRequestChecksum: 'a'.repeat(64),
+            filename: 'sin.png'
+          }
+        })
+      })
+
+      expect(response.status).toBe(200)
+      expect(createVersion).toHaveBeenCalledOnce()
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('dispatches exact Artifact Version replays and reports an unconfigured replay bridge', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const replayRequests: unknown[] = []
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      writeOperationId: 'write-1',
+      writeRequestChecksum: 'b'.repeat(64),
+      rootFrameId: 'frame-root',
+      agentFrameId: 'frame-root',
+      messageBranchId: 'branch-root',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'message-user-1'
+    }
+    const server = new NotebookLocalRpcServer(service, {
+      token: 'secret-token',
+      artifactProvenance: {
+        createVersion: vi.fn(),
+        replayVersion: async (replayRequest) => {
+          replayRequests.push(replayRequest)
+          return undefined
+        }
+      }
+    })
+    const connection = await server.ensureStarted()
+    const replayToken = server.issueArtifactRunCapability(artifactCapabilityBinding)
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${replayToken}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'artifactReplayVersion', params: request })
+      })
+      await expect(response.json()).resolves.toEqual({})
+      expect(response.status).toBe(200)
+      expect(replayRequests).toEqual([request])
+    } finally {
+      await server.close()
+    }
+
+    const unconfigured = new NotebookLocalRpcServer(service, {
+      token: 'secret-token',
+      artifactProvenance: { createVersion: vi.fn() }
+    })
+    const unconfiguredConnection = await unconfigured.ensureStarted()
+    const unconfiguredToken = unconfigured.issueArtifactRunCapability(artifactCapabilityBinding)
+    try {
+      const response = await fetch(unconfiguredConnection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${unconfiguredToken}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'artifactReplayVersion', params: request })
+      })
+      await expect(response.json()).resolves.toEqual({
+        error: 'Artifact Provenance persistence is not configured.'
+      })
+      expect(response.status).toBe(500)
+    } finally {
+      await unconfigured.close()
+    }
+  })
+
+  it('binds notebook runs to the trusted active Artifact conversation context', async () => {
+    const root = await createStorageRoot()
+    let rpcEndpoint = ''
+    let rpcToken = ''
+    const leasedInput: NotebookRunInputFile = { ...registeredInput }
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request) => {
+          const resolved = await fetch(rpcEndpoint, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${rpcToken}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'resolveNotebookInput',
+              params: {
+                sessionId: 'session-1',
+                sourceKind: 'upload-version',
+                inputFileVersionId: 'upload-version-1'
+              }
+            })
+          })
+          expect(resolved.status).toBe(200)
+          await expect(resolved.json()).resolves.toEqual({
+            result: { path: '/managed/groups.csv' }
+          })
+          return {
+            status: 'completed',
+            stdout: 'ok\n',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: [],
+            workingFiles: []
+          }
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      token: 'secret-token',
+      inputRegistry: {
+        registerTurn: async () => undefined,
+        getTurnInputs: () => [registeredInput],
+        openRun: async () =>
+          ({
+            getRunInputFiles: () => [leasedInput],
+            resolve: async () => {
+              leasedInput.association = 'resolver-accessed'
+              return '/managed/groups.csv'
+            },
+            close: () => [{ ...leasedInput }]
+          }) as never,
+        clearSession: () => undefined
+      }
+    })
+    const connection = await server.ensureStarted()
+    rpcEndpoint = connection.endpoint
+    rpcToken = connection.token
+    server.setArtifactProvenanceContext('session-1', {
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'root-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'message-user-1'
+    })
+    await server.registerNotebookTurnInputs({
+      projectId: 'default-project',
+      appSessionId: 'session-1',
+      promptMessageId: 'message-user-1',
+      uploads: [],
+      references: []
+    })
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer secret-token',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'execute',
+          params: {
+            projectName: 'default-project',
+            sessionId: 'session-1',
+            workspaceCwd: '/workspace',
+            code: 'print("ok")'
+          }
+        })
+      })
+
+      expect(response.status).toBe(200)
+      const document = JSON.parse(
+        await readFile(join(root, 'notebooks', 'default-project', 'session-1', 'run.json'), 'utf8')
+      ) as { runs: Array<Record<string, unknown>> }
+      expect(document.runs[0]).toMatchObject({
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'root-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'message-user-1',
+        inputFiles: [{ ...registeredInput, association: 'resolver-accessed' }]
+      })
+      const payload = (await response.json()) as {
+        result: { inputFiles: Array<Record<string, unknown>> }
+      }
+      expect(payload.result.inputFiles).toEqual([
+        expect.objectContaining({ inputFileVersionId: 'upload-version-1' })
+      ])
+      expect(payload.result.inputFiles[0]).not.toHaveProperty('storageKey')
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('resolves the same immutable input while control and data run leases overlap', async () => {
+    const root = await createStorageRoot()
+    const server = new NotebookLocalRpcServer(
+      new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root)
+      }),
+      { token: 'secret-token' }
+    )
+    const firstResolve = vi.fn().mockResolvedValue('/managed/groups.csv')
+    const secondResolve = vi.fn().mockResolvedValue('/managed/groups.csv')
+    const createLease = (resolve: typeof firstResolve): NotebookInputRunLease =>
+      ({
+        getRunInputFiles: () => [{ ...registeredInput }],
+        resolve,
+        close: () => []
+      }) as unknown as NotebookInputRunLease
+    const internals = server as unknown as {
+      activeInputRunLeases: Map<string, Set<NotebookInputRunLease>>
+      dispatch(method: string, params: Record<string, unknown>): Promise<unknown>
+    }
+    internals.activeInputRunLeases.set(
+      'session-1',
+      new Set([createLease(firstResolve), createLease(secondResolve)])
+    )
+
+    await expect(
+      internals.dispatch('resolveNotebookInput', {
+        sessionId: 'session-1',
+        sourceKind: 'upload-version',
+        inputFileVersionId: 'upload-version-1'
+      })
+    ).resolves.toEqual({ path: '/managed/groups.csv' })
+    expect(firstResolve).toHaveBeenCalledTimes(1)
+    expect(secondResolve).toHaveBeenCalledTimes(1)
   })
 
   it('dispatches managePackages to the runtime service', async () => {

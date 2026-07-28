@@ -25,6 +25,7 @@ import {
   recordSpawnIntentSync
 } from './operation-journal'
 import { DefaultRuntimeProvisioner } from './provisioner'
+import { EnvironmentManifestPublicationError } from './environment-state-tracker'
 import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import type {
   InstallDeps as InstallDepsForTest,
@@ -32,7 +33,7 @@ import type {
   InstallResult as InstallResultForTest
 } from './package-manager'
 import type { EnvironmentInfo } from '../../shared/notebook-env'
-import type { NotebookEnvironmentStatus } from '../../shared/notebook'
+import type { NotebookEnvironmentManifest, NotebookEnvironmentStatus } from '../../shared/notebook'
 import type { DiscoveredInterpreter, RuntimeEnablement } from '../../shared/notebook-runtime'
 import {
   addRepairRequired,
@@ -193,11 +194,46 @@ describe('notebook runtime service', () => {
   it('streams agent code into a locked cell and runs it through the shared executor', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
+    const environmentManifest: NotebookEnvironmentManifest = {
+      schemaVersion: 1,
+      captureKind: 'completed-run',
+      capturedAt: '2026-07-27T12:00:00.000Z',
+      installedInventory: {
+        capturedAt: '2026-07-27T12:00:00.000Z',
+        source: 'full-scan',
+        validation: 'full-scan'
+      },
+      kernelKind: 'python',
+      environmentName: 'default-python',
+      runtimeSource: 'managed',
+      runtimeVersion: '3.13.2',
+      platform: 'darwin',
+      architecture: 'arm64',
+      inventorySources: ['kernel-native', 'interpreter-native'],
+      packages: [],
+      complete: true,
+      captureStatus: 'complete'
+    }
+    const captureCompletedRun = vi.fn().mockResolvedValue({
+      manifest: environmentManifest,
+      checksum: 'a'.repeat(64),
+      storagePath: join(root, 'environment-manifest.json')
+    })
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
+      environmentStateTracker: {
+        prepareRun: vi.fn().mockResolvedValue({
+          fingerprint: 'stable',
+          inventoryRefreshed: false,
+          warnings: []
+        }),
+        captureCompletedRun,
+        markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+        refreshAfterPackageMutation: vi.fn().mockResolvedValue(undefined)
+      },
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
           executions.push(request)
@@ -228,6 +264,10 @@ describe('notebook runtime service', () => {
                 text: 'hello\n'
               }
             ],
+            environmentOverlay: {
+              runtimeVersion: '3.13.2',
+              packages: []
+            },
             workingFiles: [
               {
                 path: join(root, 'notebooks', 'default-project', 'session-1', 'data', 'result.csv'),
@@ -296,7 +336,13 @@ describe('notebook runtime service', () => {
           relativePath: 'data/result.csv',
           kind: 'processed-data'
         }
-      ]
+      ],
+      environmentCapture: {
+        state: 'available',
+        manifestChecksum: 'a'.repeat(64)
+      },
+      environmentManifest,
+      environmentManifestChecksum: 'a'.repeat(64)
     })
     expect(executions[0]).toMatchObject({
       code: "print('hello')",
@@ -307,6 +353,15 @@ describe('notebook runtime service', () => {
       dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
       runtimeRoot: join(root, 'runtime')
     })
+    expect(captureCompletedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        language: 'python',
+        environmentName: 'default-python',
+        runtimeSource: 'managed'
+      }),
+      { runtimeVersion: '3.13.2', packages: [] },
+      { fingerprint: 'stable', inventoryRefreshed: false, warnings: [] }
+    )
 
     const rawRunJson = await readFile(
       join(root, 'notebooks', 'default-project', 'session-1', 'run.json'),
@@ -316,7 +371,13 @@ describe('notebook runtime service', () => {
     expect(rawRunJson).toContain(`"script": "print('hello')"`)
     expect(JSON.parse(rawRunJson).runs).toHaveLength(1)
     expect(JSON.parse(rawRunJson).runs[0]).toMatchObject({
-      status: 'completed'
+      status: 'completed',
+      environmentCapture: {
+        state: 'available',
+        manifestChecksum: 'a'.repeat(64)
+      },
+      environmentManifest,
+      environmentManifestChecksum: 'a'.repeat(64)
     })
     expect(rawRunJson).toContain('"relativePath": "data/result.csv"')
   })
@@ -350,11 +411,63 @@ describe('notebook runtime service', () => {
 
     expect(summary).toMatchObject({
       status: 'failed',
+      environmentCapture: {
+        state: 'unavailable',
+        reason: 'environment-capture-failed'
+      },
       text: {
         stderr: 'ModuleNotFoundError: No module named pandas\n',
         traceback: 'Traceback...\nModuleNotFoundError: No module named pandas'
       },
       runtimeRoot: join(root, 'runtime')
+    })
+  })
+
+  it('retains the exact Environment manifest publication failure reason', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      environmentStateTracker: {
+        prepareRun: vi.fn().mockResolvedValue({
+          fingerprint: 'stable',
+          inventoryRefreshed: false,
+          warnings: []
+        }),
+        captureCompletedRun: vi
+          .fn()
+          .mockRejectedValue(new EnvironmentManifestPublicationError(new Error('disk full'))),
+        markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+        refreshAfterPackageMutation: vi.fn().mockResolvedValue(undefined)
+      },
+      executorFactory: () => ({
+        execute: async (request) => ({
+          status: 'completed',
+          stdout: 'ok\n',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+
+    await expect(
+      service.execute({
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace',
+        code: 'print("ok")'
+      })
+    ).resolves.toMatchObject({
+      status: 'completed',
+      environmentCapture: {
+        state: 'unavailable',
+        reason: 'environment-manifest-publication-failed'
+      }
     })
   })
 
@@ -716,6 +829,35 @@ describe('notebook runtime service', () => {
       })
       expect(state.runs[0].text.stdout).toContain('hi')
     })
+
+    it.skipIf(process.platform === 'win32')(
+      'records a shell-created file as a working file for provenance',
+      async () => {
+        const root = await createStorageRoot()
+        const service = new NotebookRuntimeService({
+          configRoot: root,
+          dataRoot: root,
+          projectName: 'default-project',
+          repository: new NotebookRunRepository(root)
+        })
+
+        await service.executeShell({
+          sessionId: 'session-1',
+          workspaceCwd: root,
+          command: "printf 'x,y\\n1,2\\n' > shell-output.csv"
+        })
+
+        const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+        expect(state.runs[0].workingFiles).toEqual([
+          expect.objectContaining({
+            relativePath: 'data/shell-output.csv',
+            kind: 'other',
+            size: 8,
+            createdByRunId: state.runs[0].runId
+          })
+        ])
+      }
+    )
 
     it.skipIf(process.platform !== 'win32')(
       'isolates commands, propagates PowerShell failures, and preserves UTF-8 output on Windows',
@@ -1574,6 +1716,16 @@ describe('notebook runtime service', () => {
         dataRoot: root,
         projectName: 'default-project',
         repository: new NotebookRunRepository(root),
+        environmentStateTracker: {
+          prepareRun: vi.fn().mockResolvedValue({
+            fingerprint: 'stable',
+            inventoryRefreshed: false,
+            warnings: []
+          }),
+          captureCompletedRun: vi.fn().mockRejectedValue(new Error('not under test')),
+          markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+          refreshAfterPackageMutation: vi.fn().mockResolvedValue(undefined)
+        },
         executorFactory: () => ({
           execute: async (request): Promise<NotebookExecutionResult> => {
             await new Promise<void>((resolve) => onStart(request, resolve))
@@ -1684,6 +1836,16 @@ describe('notebook runtime service', () => {
         dataRoot: root,
         projectName: 'default-project',
         repository: new NotebookRunRepository(root),
+        environmentStateTracker: {
+          prepareRun: vi.fn().mockResolvedValue({
+            fingerprint: 'stable',
+            inventoryRefreshed: false,
+            warnings: []
+          }),
+          captureCompletedRun: vi.fn().mockRejectedValue(new Error('not under test')),
+          markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+          refreshAfterPackageMutation: vi.fn().mockResolvedValue(undefined)
+        },
         executorFactory: () => ({
           execute: async (request): Promise<NotebookExecutionResult> => {
             events.push('run:start')
@@ -1735,6 +1897,16 @@ describe('notebook runtime service', () => {
         dataRoot: root,
         projectName: 'default-project',
         repository: new NotebookRunRepository(root),
+        environmentStateTracker: {
+          prepareRun: vi.fn().mockResolvedValue({
+            fingerprint: 'stable',
+            inventoryRefreshed: false,
+            warnings: []
+          }),
+          captureCompletedRun: vi.fn().mockRejectedValue(new Error('not under test')),
+          markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+          refreshAfterPackageMutation: vi.fn().mockResolvedValue(undefined)
+        },
         executorFactory: () => ({
           execute: async (request): Promise<NotebookExecutionResult> => {
             events.push('run:run')
@@ -2049,6 +2221,40 @@ describe('notebook runtime service', () => {
   })
 
   describe('managePackages', () => {
+    it('does not start an installer when the durable Environment dirty marker cannot be written', async () => {
+      const root = await createStorageRoot()
+      const installPackagesImpl = vi.fn().mockResolvedValue({
+        ok: true,
+        needsRestart: false,
+        log: 'unexpected install'
+      })
+      const dirtyFailure = new Error('environment binding is unwritable')
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentStateTracker: {
+          prepareRun: vi.fn(),
+          captureCompletedRun: vi.fn(),
+          markPackageMutationDirty: vi.fn().mockRejectedValue(dirtyFailure),
+          refreshAfterPackageMutation: vi.fn()
+        },
+        executorFactory: () => ({
+          execute: async () => {
+            throw new Error('not used')
+          },
+          shutdown: async () => ({ reaped: true })
+        }),
+        installPackagesImpl
+      })
+
+      await expect(
+        service.managePackages({ language: 'python', packages: ['numpy'], usePip: true })
+      ).rejects.toBe(dirtyFailure)
+      expect(installPackagesImpl).not.toHaveBeenCalled()
+    })
+
     it('resolves the effective mirror from the injected getPackageMirror + locale and forwards it as installPackages deps', async () => {
       const root = await createStorageRoot()
       const calls: Array<[InstallRequestForTest, Partial<InstallDepsForTest> | undefined]> = []
@@ -2334,6 +2540,16 @@ describe('notebook runtime service', () => {
         dataRoot: root,
         projectName: 'default-project',
         repository: new NotebookRunRepository(root),
+        environmentStateTracker: {
+          prepareRun: vi.fn().mockResolvedValue({
+            fingerprint: 'stable',
+            inventoryRefreshed: false,
+            warnings: []
+          }),
+          captureCompletedRun: vi.fn().mockRejectedValue(new Error('not under test')),
+          markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+          refreshAfterPackageMutation: vi.fn().mockResolvedValue(undefined)
+        },
         executorFactory: () => ({
           execute: async (request): Promise<NotebookExecutionResult> => {
             events.push('run:run')
@@ -3614,6 +3830,40 @@ describe('v4 runtime bindings & agent tools', () => {
     const serviceB = bindingService(root)
     await serviceB.recoverInterruptedOperations()
     expect(serviceB.isPrefixRecoveryBlocked(defaultPrefix)).toBe(true)
+  })
+
+  it('refreshes a startup recovery block after the operation owner durably completes it', async () => {
+    // During a data-root relaunch the new app can observe the old app's still-finishing runtime child
+    // and conservatively block its prefix. The old owner then commits and removes the journal record,
+    // but the new app must not retain that now-stale block for its entire process lifetime.
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const defaultPrefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    const journal = new RuntimeOperationJournal(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'migration-owner',
+      kind: 'materialize',
+      runtimeId: DEFAULT_PY_ENV,
+      phase: 'create',
+      startedAt: 100,
+      childPid: process.pid,
+      childStartedAt: 100,
+      targetPath: defaultPrefix
+    })
+
+    const service = bindingService(root)
+    await service.recoverInterruptedOperations()
+    expect(service.isPrefixRecoveryBlocked(defaultPrefix)).toBe(true)
+
+    // Rechecking while the owner's record is still present must remain fail-closed.
+    await service.ensureRecovered()
+    expect(service.isPrefixRecoveryBlocked(defaultPrefix)).toBe(true)
+
+    // The process that owned the operation is the authority that removes this record after commit.
+    await journal.complete('migration-owner')
+    await service.ensureRecovered()
+
+    expect(service.isPrefixRecoveryBlocked(defaultPrefix)).toBe(false)
   })
 
   it('integration: a real provisioner writes the spawn-intent sidecar; service recovery hydrates it and blocks', async () => {

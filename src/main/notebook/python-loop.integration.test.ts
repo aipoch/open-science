@@ -23,6 +23,10 @@ type LoopResponse = {
   result: string | null
   cwd: string
   figures: { mime: string; path: string }[]
+  environment: {
+    runtime_version: string
+    packages: Array<{ name: string; version_status: string; loaded_state: string }>
+  }
 }
 
 // Minimal one-shot client over the loop's stdio protocol for the test.
@@ -60,6 +64,10 @@ gate('python_loop.py', () => {
     try {
       const a = await send('x = 41')
       expect(a.error).toBeNull()
+      expect(a.environment.runtime_version).toMatch(/^3\./)
+      expect(a.environment.packages).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'sys', loaded_state: 'loaded' })])
+      )
 
       // State survives across requests; a trailing bare expression echoes as a repr result.
       const b = await send('x + 1')

@@ -1,5 +1,10 @@
 // Wire protocol shared between the Node kernel driver and the Python/R exec-loop scripts.
 
+import type {
+  NotebookEnvironmentPackage,
+  NotebookLiveEnvironmentOverlay
+} from '../../shared/notebook'
+
 export type KernelLoopFigure = { mime: string; path: string }
 
 export type KernelLoopResponse = {
@@ -12,10 +17,76 @@ export type KernelLoopResponse = {
   result: string | null
   cwd: string
   figures: KernelLoopFigure[]
+  environmentOverlay?: NotebookLiveEnvironmentOverlay
 }
 
 // Env var the driver sets so a loop script knows where to write captured figure files.
 export const KERNEL_FIGURES_DIR_ENV = 'OPEN_SCIENCE_KERNEL_FIGURES_DIR'
+
+const parseEnvironmentPackage = (value: unknown): NotebookEnvironmentPackage | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const pkg = value as Record<string, unknown>
+  const name = typeof pkg.name === 'string' ? pkg.name.trim() : ''
+  const ecosystem = pkg.ecosystem
+  const versionStatus = pkg.version_status
+  if (
+    !name ||
+    (ecosystem !== 'python' && ecosystem !== 'r') ||
+    (versionStatus !== 'known' && versionStatus !== 'unavailable')
+  ) {
+    return undefined
+  }
+  const allowedSources = new Set<NotebookEnvironmentPackage['evidenceSources'][number]>([
+    'python-importlib-metadata',
+    'python-kernel-modules',
+    'r-installed-packages',
+    'r-session-info'
+  ])
+  const evidenceSources = Array.isArray(pkg.evidence_sources)
+    ? pkg.evidence_sources.filter(
+        (source): source is NotebookEnvironmentPackage['evidenceSources'][number] =>
+          typeof source === 'string' &&
+          allowedSources.has(source as NotebookEnvironmentPackage['evidenceSources'][number])
+      )
+    : []
+  const loadedState = pkg.loaded_state
+  const priority = pkg.priority
+  return {
+    name,
+    ...(typeof pkg.version === 'string' && pkg.version ? { version: pkg.version } : {}),
+    versionStatus,
+    ecosystem,
+    evidenceSources,
+    ...(loadedState === 'attached' || loadedState === 'loaded' || loadedState === 'unknown'
+      ? { loadedState }
+      : {}),
+    ...(typeof pkg.library_rank === 'number' && Number.isInteger(pkg.library_rank)
+      ? { libraryRank: pkg.library_rank }
+      : {}),
+    ...(typeof pkg.built_for_runtime === 'string' && pkg.built_for_runtime
+      ? { builtForRuntime: pkg.built_for_runtime }
+      : {}),
+    ...(priority === 'base' || priority === 'recommended' || priority === 'other'
+      ? { priority }
+      : {})
+  }
+}
+
+const parseEnvironmentOverlay = (value: unknown): NotebookLiveEnvironmentOverlay | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const environment = value as Record<string, unknown>
+  const packages = Array.isArray(environment.packages)
+    ? environment.packages
+        .map(parseEnvironmentPackage)
+        .filter((pkg): pkg is NotebookEnvironmentPackage => pkg !== undefined)
+    : []
+  return {
+    ...(typeof environment.runtime_version === 'string' && environment.runtime_version
+      ? { runtimeVersion: environment.runtime_version }
+      : {}),
+    packages
+  }
+}
 
 // Parses one loop stdout line (snake_case wire fields -> camelCase). Returns null when the line is
 // not valid JSON or not an object, since loop stdout can contain unrelated noise the driver ignores.
@@ -35,6 +106,7 @@ export function parseLoopResponse(line: string): KernelLoopResponse | null {
         .filter((f): f is Record<string, unknown> => typeof f === 'object' && f !== null)
         .map((f) => ({ mime: String(f.mime), path: String(f.path) }))
     : []
+  const environmentOverlay = parseEnvironmentOverlay(obj.environment)
 
   return {
     reqId: typeof obj.req_id === 'string' ? obj.req_id : '',
@@ -45,7 +117,8 @@ export function parseLoopResponse(line: string): KernelLoopResponse | null {
       typeof obj.error_line === 'number' && Number.isFinite(obj.error_line) ? obj.error_line : null,
     result: typeof obj.result === 'string' ? obj.result : null,
     cwd: typeof obj.cwd === 'string' ? obj.cwd : '',
-    figures
+    figures,
+    ...(environmentOverlay ? { environmentOverlay } : {})
   }
 }
 
