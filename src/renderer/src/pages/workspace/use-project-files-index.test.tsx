@@ -144,6 +144,8 @@ describe('useProjectFilesIndex', () => {
       expect.objectContaining({ collection: { kind: 'uploads' }, search })
     )
     expect(current.uploads.totalCount).toBe(2)
+    expect(current.overview.totalCount).toBe(0)
+    expect(current.isOverviewLoaded).toBe(false)
   })
 
   it('loads the selected session even when presentation may be collapsed', async () => {
@@ -160,6 +162,8 @@ describe('useProjectFilesIndex', () => {
       })
     )
     expect(current.artifactsBySession['session-1']?.totalCount).toBe(2)
+    expect(current.overview.totalCount).toBe(0)
+    expect(current.isOverviewLoaded).toBe(false)
   })
 
   it('advances upload and per-session artifact cursors independently', async () => {

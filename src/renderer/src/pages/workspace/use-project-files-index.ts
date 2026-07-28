@@ -300,12 +300,6 @@ const useProjectFilesIndex = (
             return
           }
           setUploads({ ...page, isLoading: false, isLoaded: true })
-          setOverview({
-            ...EMPTY_OVERVIEW,
-            totalCount: page.totalCount,
-            uploadCount: page.totalCount
-          })
-          setIsOverviewLoaded(true)
         })
         .catch((error: unknown) => {
           if (
@@ -315,7 +309,6 @@ const useProjectFilesIndex = (
             return
           }
           setUploads({ ...emptyPage(), isLoaded: true, error: getErrorMessage(error) })
-          setIsOverviewLoaded(true)
         })
       return
     }
@@ -345,13 +338,6 @@ const useProjectFilesIndex = (
         setArtifactsBySession({
           [scopeSessionId]: { ...page, isLoading: false, isLoaded: true }
         })
-        setOverview({
-          ...EMPTY_OVERVIEW,
-          totalCount: page.totalCount,
-          artifactCount: page.totalCount,
-          artifactGroupCount: page.totalCount > 0 ? 1 : 0
-        })
-        setIsOverviewLoaded(true)
       })
       .catch((error: unknown) => {
         if (
@@ -363,7 +349,6 @@ const useProjectFilesIndex = (
         setArtifactsBySession({
           [scopeSessionId]: { ...emptyPage(), isLoaded: true, error: getErrorMessage(error) }
         })
-        setIsOverviewLoaded(true)
       })
   }, [filenameContains, projectId, refreshVersion, scopeKind, scopeSessionId])
 

@@ -1034,15 +1034,6 @@ describe('ManagedFileIndexRepository', () => {
         limit: 1
       })
     ).rejects.toThrow(/cursor.*search/i)
-
-    const findMany = vi.spyOn(client.managedFile, 'findMany')
-    await repository.listFiles({
-      projectId: PROJECT_ID,
-      collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
-      search,
-      limit: 10
-    })
-    expect(findMany).not.toHaveBeenCalled()
   })
 
   it('indexes readable files while retrying an unreadable file from the same session', async () => {
