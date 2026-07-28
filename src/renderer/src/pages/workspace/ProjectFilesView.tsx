@@ -1,4 +1,5 @@
 import {
+  Boxes,
   Check,
   ChevronDown,
   File,
@@ -686,7 +687,7 @@ const FilterMenuItem = ({
   isSelected: boolean
   onSelect: (optionId: string) => void
 }): React.JSX.Element => {
-  const Icon = option.kind === 'uploads' ? Paperclip : option.kind === 'session' ? Folder : File
+  const Icon = option.kind === 'uploads' ? Paperclip : option.kind === 'session' ? Folder : Boxes
 
   return (
     <DropdownMenuItem

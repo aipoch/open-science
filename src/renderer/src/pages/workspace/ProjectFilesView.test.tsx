@@ -1321,6 +1321,7 @@ describe('ProjectFilesView', () => {
     expect(document.body.textContent).toContain('Your uploads')
     expect(document.body.textContent).toContain('Session A')
     expect(document.body.textContent).not.toContain('This computer')
+    expect(document.body.querySelector('[data-filter-id="all"] .lucide-boxes')).not.toBeNull()
   })
 
   it('uses the global semantic menu surface and hover feedback for filter items', async () => {
