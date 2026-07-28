@@ -381,7 +381,7 @@ const registerIpcHandlers = async ({
     hostRepository,
     enabledComputeHostsRegistry: hostsRegistry
   } = registerComputeIpcHandlers(undefined, undefined, computeArtifactResolver)
-  const storageRoot = resolveStorageRoot()
+  const dataRoot = resolveDataRoot()
   // Start the JobPoller wired to the shared broadcaster so every state/tail change is pushed to all
   // renderer windows via 'compute:job-updated' (Phase 3d, design.md §9 + §15.3). The dispatcher
   // (inside ComputeService) uses the same hook, so submitted→running/error transitions broadcast too.
@@ -398,7 +398,7 @@ const registerIpcHandlers = async ({
   // observed transitions (submitted→running/error) are drained inside registerComputeIpcHandlers via
   // onJobUpdatedWithDrain (src/main/compute/ipc.ts). Dropping the notifyJobCompleted call below would
   // silently stop queued jobs from dispatching on completion — with no test failure at this seam.
-  const broadcastJobUpdatedHook = createJobUpdatedBroadcaster(hostRepository, storageRoot)
+  const broadcastJobUpdatedHook = createJobUpdatedBroadcaster(hostRepository, dataRoot)
   const jobPoller = new JobPoller({
     runner: sshRunner,
     hostRepository,
@@ -408,14 +408,14 @@ const registerIpcHandlers = async ({
       computeService.notifyJobCompleted(job)
     },
     broadcast: broadcastJobUpdated,
-    storageRoot,
+    storageRoot: dataRoot,
     harvestFn: (job) =>
       harvestJob(job, {
         sshRunner,
         scpRunner,
         hostRepository,
         jobRepository,
-        storageRoot,
+        storageRoot: dataRoot,
         broadcast: broadcastJobUpdated
       })
   })

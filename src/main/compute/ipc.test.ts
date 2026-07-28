@@ -592,6 +592,46 @@ describe('toJobSummary — harvest features and left_on_remote parsing', () => {
     expect(summary.featured_file_count).toBe(2)
   })
 
+  it('scans the relocated data-root workspace rather than a separate config root', async () => {
+    const configRoot = await mkdtemp(join(tmpdir(), 'compute-ipc-config-root-'))
+    const dataRoot = await mkdtemp(join(tmpdir(), 'compute-ipc-data-root-'))
+    const dataFeatured = join(
+      dataRoot,
+      'notebooks',
+      'proj-1',
+      'sess-1',
+      'hpc',
+      'job-harvest',
+      'featured'
+    )
+    const configFeatured = join(
+      configRoot,
+      'notebooks',
+      'proj-1',
+      'sess-1',
+      'hpc',
+      'job-harvest',
+      'featured'
+    )
+    await mkdir(dataFeatured, { recursive: true })
+    await mkdir(configFeatured, { recursive: true })
+    await writeFile(join(dataFeatured, 'data-root.csv'), 'from data root')
+    await writeFile(join(configFeatured, 'stale-config.csv'), 'must not be reported')
+
+    try {
+      const summary = await toJobSummary(sampleJob(), 'Biowulf HPC', dataRoot)
+      expect(summary.featured_files).toEqual([
+        join('hpc', 'job-harvest', 'featured', 'data-root.csv')
+      ])
+      expect(summary.featured_files).not.toContain(
+        join('hpc', 'job-harvest', 'featured', 'stale-config.csv')
+      )
+    } finally {
+      await rm(configRoot, { recursive: true, force: true })
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  })
+
   it('parses left_on_remote JSON and exposes the array plus count', async () => {
     const summary = await toJobSummary(
       sampleJob({
