@@ -17,6 +17,10 @@ vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
 }))
 
+vi.mock('./artifact-preview', () => ({
+  ArtifactPreview: () => null
+}))
+
 let container: HTMLDivElement
 let root: Root
 
@@ -103,6 +107,35 @@ const expectSplitFileName = (
 }
 
 describe('WorkspaceMessageItem mention pills', () => {
+  it('renders path-free Provenance mentions with the normal pill style but no navigation', () => {
+    const onOpenSkillMention = vi.fn()
+    const onPreviewMentionArtifact = vi.fn()
+
+    act(() => {
+      root.render(
+        <WorkspaceMessageItem
+          message={createMessage({ content: 'Path-free snapshot' })}
+          staticParts={[
+            { type: 'text', text: 'Run ' },
+            { type: 'skill', name: 'forecast' },
+            { type: 'text', text: ' on ' },
+            { type: 'artifact', versionId: 'version-1', name: 'clinical trial03.pdf' }
+          ]}
+          onPreviewArtifact={noop}
+          onPreviewUploadAttachment={noop}
+          onOpenSkillMention={onOpenSkillMention}
+          onPreviewMentionArtifact={onPreviewMentionArtifact}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('Run /forecast on @clinical trial03.pdf')
+    expect(container.querySelector('[aria-label="Open skill forecast"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Preview clinical trial03.pdf"]')).toBeNull()
+    expect(onOpenSkillMention).not.toHaveBeenCalled()
+    expect(onPreviewMentionArtifact).not.toHaveBeenCalled()
+  })
+
   it('invokes the skill handler with the skill id when a skill pill is clicked', () => {
     const onOpenSkillMention = vi.fn()
 

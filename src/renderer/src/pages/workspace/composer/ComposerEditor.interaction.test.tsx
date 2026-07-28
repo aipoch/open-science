@@ -112,6 +112,35 @@ const seedProjectFiles = (): void => {
   useNavigationStore.setState({ activeProjectId: 'default' })
 }
 
+const pickerProjectFiles = [
+  {
+    id: 'upload:up-1',
+    source: 'upload' as const,
+    sourceFileId: 'up-1',
+    sourceVersionId: 'up-1-v1',
+    projectId: 'default',
+    sessionId: 'session-1',
+    name: 'sequence.csv',
+    path: 'upload-version:default/session-1/up-1-v1',
+    mimeType: 'text/csv',
+    size: 2048,
+    sortAtMs: 1710000001000
+  },
+  {
+    id: 'art-1',
+    source: 'artifact' as const,
+    sourceFileId: 'art-1',
+    sourceVersionId: 'art-1-v1',
+    projectId: 'default',
+    sessionId: 'session-1',
+    name: 'report.pdf',
+    path: 'artifact-version:default/session-1/art-1/art-1-v1',
+    mimeType: 'application/pdf',
+    size: 4096,
+    sortAtMs: 1710000002000
+  }
+]
+
 beforeEach(() => {
   useSettingsStore.setState({ ...createInitialSettingsState(), skills: seedSkills })
   seedProjectFiles()
@@ -122,6 +151,12 @@ beforeEach(() => {
     },
     artifacts: {
       readPreview: vi.fn().mockResolvedValue({ content: '', encoding: 'base64', size: 0 })
+    },
+    projectFiles: {
+      listFiles: vi.fn().mockResolvedValue({
+        items: pickerProjectFiles,
+        totalCount: pickerProjectFiles.length
+      })
     }
   }
   container = document.createElement('div')
@@ -180,6 +215,13 @@ const dispatchKey = (target: EventTarget, key: string, init: KeyboardEventInit =
     target.dispatchEvent(
       new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init })
     )
+  })
+}
+
+const flushProjectFiles = async (): Promise<void> => {
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
   })
 }
 
@@ -384,7 +426,7 @@ describe('ComposerEditor', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
-  it('inserts a green artifact chip when an artifact is chosen from the `@` popup', () => {
+  it('inserts a green artifact chip when an artifact is chosen from the `@` popup', async () => {
     const onDocChange = vi.fn()
     renderEditor({ onDocChange })
 
@@ -395,6 +437,7 @@ describe('ComposerEditor', () => {
     act(() => {
       editor().dispatchEvent(new Event('input', { bubbles: true }))
     })
+    await flushProjectFiles()
 
     // The artifact popup opens and shows the matching upload.
     expect(document.body.querySelector('[role="listbox"]')).not.toBeNull()
@@ -405,7 +448,7 @@ describe('ComposerEditor', () => {
     const chip = editor().querySelector('[data-mention-type="artifact"]')
     expect(chip).not.toBeNull()
     expect(chip?.textContent).toBe('@sequence.csv')
-    expect(chip?.getAttribute('data-mention-path')).toBe('/uploads/session-1/sequence.csv')
+    expect(chip?.getAttribute('data-mention-path')).toBe('upload-version:default/session-1/up-1-v1')
     expect(chip?.getAttribute('data-mention-source')).toBe('upload')
     expect(chip?.className).toContain('bg-mention-chip')
 
@@ -415,7 +458,7 @@ describe('ComposerEditor', () => {
     ).toBe(true)
   })
 
-  it('allows multiple artifact chips in one message', () => {
+  it('allows multiple artifact chips in one message', async () => {
     const onDocChange = vi.fn()
     renderEditor({
       doc: {
@@ -439,11 +482,14 @@ describe('ComposerEditor', () => {
     act(() => {
       editor().dispatchEvent(new Event('input', { bubbles: true }))
     })
+    await flushProjectFiles()
     dispatchKey(document, 'Enter')
 
     const chips = editor().querySelectorAll('[data-mention-type="artifact"]')
     expect(chips).toHaveLength(2)
-    expect(chips[1]?.getAttribute('data-mention-path')).toBe('/workspace/report.pdf')
+    expect(chips[1]?.getAttribute('data-mention-path')).toBe(
+      'artifact-version:default/session-1/art-1/art-1-v1'
+    )
   })
 
   it('suppresses the `@` popup once the artifact mention cap is reached', () => {

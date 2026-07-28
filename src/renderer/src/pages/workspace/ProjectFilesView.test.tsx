@@ -17,7 +17,7 @@ import {
 } from '@/stores/session-store'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProjectFilesChangedEvent, ProjectFileItem } from '../../../../shared/project-files'
-import type { UploadedAttachment } from '../../../../shared/uploads'
+import { getUploadedAttachmentPath, type UploadedAttachment } from '../../../../shared/uploads'
 
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
   id: 'message-1',
@@ -356,7 +356,7 @@ describe('ProjectFilesView', () => {
       projectId: 'default',
       sessionId: file.sessionId,
       name: file.name,
-      path: file.attachment.path,
+      path: getUploadedAttachmentPath(file.attachment),
       mimeType: file.attachment.mimeType,
       size: file.size,
       mtimeMs: file.timestamp,

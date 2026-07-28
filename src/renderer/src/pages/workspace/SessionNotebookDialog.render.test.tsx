@@ -22,17 +22,13 @@ const makeRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord 
 
 const renderContent = (props: {
   sessionId: string
+  projectId?: string
   runs: NotebookRunRecord[]
   status: 'loading' | 'error' | 'ready'
   error?: string
 }): string =>
   renderToStaticMarkup(
-    <SessionNotebookContent
-      onClose={vi.fn()}
-      onExport={vi.fn()}
-      onExportAll={vi.fn()}
-      {...props}
-    />
+    <SessionNotebookContent onClose={vi.fn()} onExport={vi.fn()} onExportAll={vi.fn()} {...props} />
   )
 
 describe('SessionNotebookContent', () => {
@@ -60,6 +56,42 @@ describe('SessionNotebookContent', () => {
     expect(html).toContain('error (line 2)')
     expect(html).toContain('OPENALEX_API_KEY present: False')
     expect(html).toContain('ModuleNotFoundError')
+  })
+
+  it('shows exact registered input Versions inside the run that used them', () => {
+    const html = renderContent({
+      projectId: 'project-1',
+      sessionId: 's1',
+      status: 'ready',
+      runs: [
+        makeRun({
+          inputFiles: [
+            {
+              inputFileVersionId: 'upload-version-1',
+              sourceKind: 'upload-version',
+              sourceFileId: 'upload-1',
+              sourceVersionNumber: 1,
+              sourceProjectId: 'project-1',
+              sourceSessionId: 'source-session',
+              filename: 'groups.csv',
+              contentType: 'text/csv',
+              sizeBytes: 42,
+              checksum: 'a'.repeat(64),
+              storageKey: 'internal-only',
+              association: 'turn-attached'
+            }
+          ]
+        })
+      ]
+    })
+
+    expect(html).toContain('Input data')
+    expect(html).toContain('groups.csv')
+    expect(html).toContain('v1')
+    expect(html).not.toContain('internal-only')
+    expect(html.indexOf('data-testid="session-notebook-cell"')).toBeLessThan(
+      html.indexOf('data-testid="notebook-input-data"')
+    )
   })
 
   it('enables .ipynb export for a loaded notebook and disables it when empty', () => {

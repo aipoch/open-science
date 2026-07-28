@@ -8,7 +8,11 @@ type PreviewFileReader = (request: ReadArtifactPreviewRequest) => Promise<Artifa
 
 // Selects the managed IPC reader once so callers remain source-neutral.
 const getPreviewFileReader = (source: PreviewFileSource = 'artifact'): PreviewFileReader =>
-  source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
+  source === 'upload'
+    ? window.api.uploads.readPreview
+    : source === 'notebook-input'
+      ? window.api.notebook.readInputPreview
+      : window.api.artifacts.readPreview
 
 export { getPreviewFileReader }
 export type { PreviewFileReader }

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import type { NotebookSessionReference } from '../../../shared/notebook'
+import type { ProjectFileOriginSession } from '../../../shared/project-files'
 import type { FindingLocator } from '../../../shared/reviewer'
 import type { UploadedAttachment } from '../../../shared/uploads'
 
@@ -21,7 +22,7 @@ export type PreviewFileFormat =
   | 'presentation'
   | 'unknown'
 // Distinguishes generated artifacts from user uploads when preview readers and actions differ.
-export type PreviewFileSource = 'artifact' | 'upload'
+export type PreviewFileSource = 'artifact' | 'upload' | 'notebook-input'
 export const PROJECT_FILES_PREVIEW_ID = 'tool:project:files'
 
 type PreviewItemBase = {
@@ -39,6 +40,10 @@ export type PreviewFileItem = PreviewItemBase & {
   mimeType?: string
   size?: number
   mtimeMs?: number
+  artifactId?: string
+  selectedVersionId?: string
+  versionNumber?: number
+  originSession?: ProjectFileOriginSession
 }
 
 // Tool previews share the workbench chrome with files, but keep their own render path.

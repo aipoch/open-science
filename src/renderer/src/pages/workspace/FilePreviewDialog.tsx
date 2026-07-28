@@ -111,7 +111,12 @@ const FilePreviewDialog = ({ item, onClose }: FilePreviewDialogProps): React.JSX
           <FocusScope asChild loop trapped={!(open && hasNestedFullscreen)}>
             <div className="flex size-full min-h-0 min-w-0">
               {dialogItem ? (
-                <PreviewFileSurface item={dialogItem} onClose={onClose} tooltipClassName="z-[70]" />
+                <PreviewFileSurface
+                  item={dialogItem}
+                  onClose={onClose}
+                  provenanceEntry="leading"
+                  tooltipClassName="z-[70]"
+                />
               ) : null}
             </div>
           </FocusScope>

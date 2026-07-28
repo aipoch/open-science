@@ -11,6 +11,7 @@ import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 const contentSpy = vi.fn()
 const rootSpy = vi.fn()
 const focusScopeSpy = vi.fn()
+const previewSurfaceSpy = vi.fn()
 
 vi.mock('@radix-ui/react-focus-scope', () => ({
   FocusScope: ({
@@ -46,9 +47,10 @@ vi.mock('radix-ui', () => ({
 }))
 
 vi.mock('./PreviewFileSurface', () => ({
-  PreviewFileSurface: ({ item }: { item: PreviewFileItem }) => (
-    <div data-testid="preview-surface">{item.title}</div>
-  )
+  PreviewFileSurface: (props: { item: PreviewFileItem; provenanceEntry?: string }) => {
+    previewSurfaceSpy(props)
+    return <div data-testid="preview-surface">{props.item.title}</div>
+  }
 }))
 
 import { FilePreviewDialog } from './FilePreviewDialog'
@@ -71,6 +73,7 @@ beforeEach(() => {
   contentSpy.mockClear()
   rootSpy.mockClear()
   focusScopeSpy.mockClear()
+  previewSurfaceSpy.mockClear()
   container = document.createElement('div')
   container.id = 'root'
   document.body.appendChild(container)
@@ -106,6 +109,14 @@ describe('FilePreviewDialog closing lifecycle', () => {
     const preventDefault = vi.fn()
     onInteractOutside?.({ preventDefault })
     expect(preventDefault).toHaveBeenCalledOnce()
+  })
+
+  it('places a direct Provenance entry in the modal header', () => {
+    act(() => root.render(<FilePreviewDialog item={item} onClose={vi.fn()} />))
+
+    expect(previewSurfaceSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ provenanceEntry: 'leading' })
+    )
   })
 
   it('releases its focus trap while a nested Streamdown fullscreen is open', async () => {

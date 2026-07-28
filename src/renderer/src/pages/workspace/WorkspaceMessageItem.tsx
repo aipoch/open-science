@@ -3,9 +3,18 @@ import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { cn, formatByteSize } from '@/lib/utils'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
-import { Check, Copy, FileText, Image as ImageIcon, Pencil } from 'lucide-react'
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  FileText,
+  Image as ImageIcon,
+  Pencil
+} from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
+import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
 import type { MessagePart } from '../../../../shared/session-persistence'
 import { getUploadedAttachmentName } from '../../../../shared/uploads'
 
@@ -40,12 +49,25 @@ type WorkspaceMessageItemProps = {
   onOpenSkillMention: (skillId: string, name: string) => void
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
   artifacts?: MessageArtifact[]
-  // Inline editing is only enabled once the session's run settles; confirming truncates the
+  // Inline editing is only enabled once the session's run settles; confirming forks the
   // conversation at this message and resends the adjusted doc as a fresh turn.
   canEditMessage?: boolean
+  // Immutable transcript surfaces can reuse the normal message renderer without live actions.
+  showUserActions?: boolean
+  // Embedded transcript surfaces can supply their own horizontal gutter without changing live chat.
+  contentPaddingClassName?: string
   onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
   // Number of user turns after this message; drives the destructive-resend warning threshold.
   subsequentTurns?: number
+  revisionNavigation?: {
+    index: number
+    total: number
+    onPrevious?: () => void
+    onNext?: () => void
+  }
+  // Immutable Provenance uses the normal message surface but keeps mention pills non-interactive.
+  // These path-free parts override message.parts only for display; editing still uses live parts.
+  staticParts?: ProvenanceMessagePart[]
 }
 
 const ARTIFACT_GALLERY_VISIBLE_COUNT = 5
@@ -70,7 +92,7 @@ const editSendButtonClassName =
   'flex h-7 items-center rounded-md bg-primary px-2.5 text-[12px] font-medium text-primary-foreground transition-colors duration-200 ease-out hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary'
 // The inline editor ignores pasted files; plain-text paste is handled by the editor itself.
 const ignoreEditPaste = (): void => {}
-// Resending an edit drops every turn after the edited one; from this many turns up, ask first.
+// A branch-changing resend with several downstream turns asks for confirmation first.
 const EDIT_TRUNCATION_WARNING_TURNS = 2
 // Staged uploads render as gray file pills inside the sent bubble.
 const uploadedAttachmentButtonClassName =
@@ -312,16 +334,28 @@ const MessageUploadAttachmentList = ({
 // Renders a user message's structured mention segments as inline styled pills.
 const MessagePartsContent = ({
   parts,
+  isStatic = false,
   onOpenSkillMention,
   onPreviewMentionArtifact
 }: {
-  parts: MessagePart[]
+  parts: Array<MessagePart | ProvenanceMessagePart>
+  isStatic?: boolean
   onOpenSkillMention: (skillId: string, name: string) => void
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
 }): React.JSX.Element => (
   <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
     {parts.map((part, index) => {
       if (part.type === 'skill') {
+        if (isStatic || !('id' in part)) {
+          return (
+            <span
+              key={index}
+              className={cn(mentionPillClassName, 'bg-skill-chip text-skill-chip-foreground')}
+            >
+              /{part.name}
+            </span>
+          )
+        }
         return (
           <button
             key={index}
@@ -339,6 +373,16 @@ const MessagePartsContent = ({
         )
       }
       if (part.type === 'artifact') {
+        if (isStatic || !('source' in part)) {
+          return (
+            <span
+              key={index}
+              className={cn(mentionPillClassName, 'bg-mention-chip text-mention-chip-foreground')}
+            >
+              @{part.name}
+            </span>
+          )
+        }
         return (
           <button
             key={index}
@@ -373,9 +417,13 @@ const WorkspaceMessageItem = ({
   onOpenSkillMention,
   onPreviewMentionArtifact,
   canEditMessage = false,
+  showUserActions = true,
+  contentPaddingClassName,
   onSendEditedMessage,
   subsequentTurns = 0,
-  artifacts = []
+  revisionNavigation,
+  artifacts = [],
+  staticParts
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const isUserMessage = message.role === 'user'
   const uploads = message.uploads ?? []
@@ -428,7 +476,7 @@ const WorkspaceMessageItem = ({
     setIsEditing(false)
   }
 
-  // Confirms the inline edit; with several later turns at stake, ask before the destructive resend.
+  // Confirms the inline edit; with several later turns changing visibility, ask before branching.
   const handleConfirmEdit = (): void => {
     if (!canEditMessage || docIsEmpty(editDoc)) return
 
@@ -447,7 +495,7 @@ const WorkspaceMessageItem = ({
       scrollAnchor={message.role === 'user'}
       className="min-w-0"
     >
-      <div className="px-4 pb-1 pt-5 md:px-6">
+      <div className={cn('px-4 pb-1 pt-5 md:px-6', contentPaddingClassName)}>
         {/* User prompts stay compact; assistant responses remain a readable transcript surface. */}
         {isUserMessage ? (
           isEditing ? (
@@ -484,36 +532,70 @@ const WorkspaceMessageItem = ({
           ) : (
             <div className="group flex items-center justify-end gap-1">
               {/* Copy/edit actions ride to the left of the user bubble, surfaced on hover or focus. */}
-              <div className={userMessageActionsClassName}>
-                <button
-                  type="button"
-                  className={userMessageActionButtonClassName}
-                  aria-label={copied ? 'Copied' : 'Copy message'}
-                  onClick={handleCopyMessage}
-                >
-                  {copied ? (
-                    <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                  ) : (
-                    <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className={userMessageActionButtonClassName}
-                  aria-label="Edit message"
-                  disabled={!canEditMessage}
-                  onClick={handleStartEdit}
-                >
-                  <Pencil className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                </button>
-              </div>
+              {showUserActions ? (
+                <div className={userMessageActionsClassName}>
+                  {revisionNavigation && revisionNavigation.total > 1 ? (
+                    <div className="mr-1 flex items-center gap-0.5 text-[11px] text-text-300">
+                      <button
+                        type="button"
+                        className={userMessageActionButtonClassName}
+                        aria-label="Previous message revision"
+                        disabled={!revisionNavigation.onPrevious || !canEditMessage}
+                        onClick={revisionNavigation.onPrevious}
+                      >
+                        <ChevronLeft className="size-3.5" aria-hidden="true" />
+                      </button>
+                      <span aria-label="Message revision">
+                        {revisionNavigation.index + 1}/{revisionNavigation.total}
+                      </span>
+                      <button
+                        type="button"
+                        className={userMessageActionButtonClassName}
+                        aria-label="Next message revision"
+                        disabled={!revisionNavigation.onNext || !canEditMessage}
+                        onClick={revisionNavigation.onNext}
+                      >
+                        <ChevronRight className="size-3.5" aria-hidden="true" />
+                      </button>
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    className={userMessageActionButtonClassName}
+                    aria-label={copied ? 'Copied' : 'Copy message'}
+                    onClick={handleCopyMessage}
+                  >
+                    {copied ? (
+                      <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                    ) : (
+                      <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className={userMessageActionButtonClassName}
+                    aria-label="Edit message"
+                    disabled={!canEditMessage}
+                    onClick={handleStartEdit}
+                  >
+                    <Pencil className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                  </button>
+                </div>
+              ) : null}
               <div className={userMessageBubbleClassName}>
                 <MessageUploadAttachmentList
                   attachments={uploads}
                   onPreviewUploadAttachment={onPreviewUploadAttachment}
                 />
                 {/* Structured parts drive styled pills; plain content is the backward-compatible fallback. */}
-                {message.parts && message.parts.length > 0 ? (
+                {staticParts && staticParts.length > 0 ? (
+                  <MessagePartsContent
+                    parts={staticParts}
+                    isStatic
+                    onOpenSkillMention={onOpenSkillMention}
+                    onPreviewMentionArtifact={onPreviewMentionArtifact}
+                  />
+                ) : message.parts && message.parts.length > 0 ? (
                   <MessagePartsContent
                     parts={message.parts}
                     onOpenSkillMention={onOpenSkillMention}

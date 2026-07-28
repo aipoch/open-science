@@ -7,6 +7,7 @@ import type {
   PersistedChatSession,
   SaveSessionManifestRequest
 } from '../../../../shared/session-persistence'
+import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
   isExternallyHydratedSession,
   toPersistedSession,
@@ -99,6 +100,16 @@ const loadPersistedSessions = async (
 const indexById = (sessions: ChatSession[]): Map<string, ChatSession> =>
   new Map(sessions.map((session) => [session.id, session]))
 
+// Upload publication owns the staged path -> immutable Version transition. Saving between append and
+// finalize would race the main-process legacy upgrader and could publish the same bytes twice, so the
+// bridge waits for every pending attachment to acquire its Version identity.
+const hasStagedUploads = (session: ChatSession): boolean =>
+  session.messages.some((message) =>
+    message.uploads?.some(
+      (upload) => upload.sessionId === PENDING_UPLOAD_SESSION_ID && !upload.versionId
+    )
+  )
+
 // Builds an incremental saver: on each store change it persists only sessions whose reference changed
 // and updates the manifest when selection moves. Explicit deletion owns its durable coordinator call.
 const createStoreSaver = (
@@ -128,7 +139,11 @@ const createStoreSaver = (
     for (const session of nextSessions) {
       if (session.isPending || !session.projectId) continue
 
-      if (previousById.get(session.id) !== session && !isExternallyHydratedSession(session)) {
+      if (
+        previousById.get(session.id) !== session &&
+        !isExternallyHydratedSession(session) &&
+        !hasStagedUploads(session)
+      ) {
         const persisted = toPersistedSession(session)
 
         tasks.push(() => api.saveSession(persisted))

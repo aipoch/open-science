@@ -425,7 +425,11 @@ describe('useProjectFilesIndex', () => {
       activeRequests -= 1
       return {
         items: [
-          artifact(request.collection.kind === 'uploads' ? 'upload' : request.collection.sessionId)
+          artifact(
+            request.collection.kind === 'sessionArtifacts'
+              ? request.collection.sessionId
+              : request.collection.kind
+          )
         ],
         totalCount: 1
       }

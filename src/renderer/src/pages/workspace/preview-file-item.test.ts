@@ -4,6 +4,7 @@ import type { ChatSession } from '@/stores/session-store'
 import type { MessagePart } from '../../../../shared/session-persistence'
 
 import {
+  createPreviewFileItem,
   createPreviewFileItemFromArtifact,
   createPreviewFileItemFromMention,
   createPreviewFileItemFromUpload
@@ -48,6 +49,29 @@ const createMentionPart = (overrides: Partial<ArtifactMentionPart> = {}): Artifa
 })
 
 describe('preview file item helpers', () => {
+  it('preserves a deleted origin notice on Project File previews', () => {
+    expect(
+      createPreviewFileItem({
+        id: 'artifact-lineage-1',
+        sessionId: 'session-deleted',
+        path: '/managed/result.png',
+        name: 'result.png',
+        artifactId: 'artifact-lineage-1',
+        selectedVersionId: 'artifact-version-2',
+        originSession: {
+          state: 'deleted',
+          title: 'Retained analysis',
+          deletedAt: '2026-07-27T12:00:00.000Z'
+        }
+      })
+    ).toMatchObject({
+      id: 'artifact-lineage-1',
+      artifactId: 'artifact-lineage-1',
+      selectedVersionId: 'artifact-version-2',
+      originSession: { state: 'deleted', title: 'Retained analysis' }
+    })
+  })
+
   it('creates artifact preview items without an explicit source', () => {
     expect(createPreviewFileItemFromArtifact(createManagedArtifact(), 'session-1')).toEqual({
       id: 'artifact-1',
@@ -60,6 +84,25 @@ describe('preview file item helpers', () => {
       mimeType: 'image/png',
       size: 4096,
       mtimeMs: 1710000001000
+    })
+  })
+
+  it('uses a relocatable Version locator instead of an absolute path for native Artifacts', () => {
+    expect(
+      createPreviewFileItemFromArtifact(
+        createManagedArtifact({
+          artifactId: 'artifact-lineage-1',
+          versionId: 'artifact-version-2',
+          versionNumber: 2
+        }),
+        'session-1',
+        'project-1'
+      )
+    ).toMatchObject({
+      id: 'artifact-lineage-1',
+      artifactId: 'artifact-lineage-1',
+      selectedVersionId: 'artifact-version-2',
+      path: 'artifact-version:project-1/session-1/artifact-lineage-1/artifact-version-2'
     })
   })
 

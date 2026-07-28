@@ -19,6 +19,7 @@ import {
 } from '../../../shared/permission-profiles'
 import {
   INTERRUPTED_SESSION_ERROR,
+  materializeSessionConversationGraph,
   sanitizeMessageImages,
   sanitizeToolActivity,
   sanitizeActivityGroup,
@@ -36,6 +37,18 @@ import {
   type PersistedToolActivity
 } from '../../../shared/session-persistence'
 import { isReportableRunFailure } from '../../../shared/run-error-classification'
+import { PENDING_UPLOAD_SESSION_ID } from '../../../shared/uploads'
+import {
+  createLinearConversationGraph,
+  activateConversationBranch,
+  ensureConversationRuntimeSegment,
+  forkEditedConversationMessage,
+  projectConversationMessage,
+  resolveActiveConversationActivities,
+  resolveActiveConversationMessages,
+  synchronizeActiveConversationActivities,
+  synchronizeActiveConversationMessages
+} from '../../../shared/conversation-graph'
 
 export type SessionStatus = PersistedSessionStatus
 export type ChatMessageRole = PersistedMessageRole
@@ -85,6 +98,13 @@ export type ChatSession = Omit<
   // Transient: latest agent status/stderr line for the in-flight turn, shown in the waiting indicator
   // so a long silent wait (e.g. the agent retrying a slow request) isn't a blank spinner. Not persisted.
   agentStatus?: string
+  // Transient: the durable active Branch changed while the Agent/Notebook still hold the previous
+  // Branch's volatile state. The next continuation must rebuild both contexts before prompting.
+  branchContextResetRequired?: boolean
+  // Transient aggregate of Reviewer, Notebook, Upload-finalization, and deletion activity that lives
+  // outside this store. The workspace projects those operation gates here so direct store callers
+  // cannot bypass disabled revision controls.
+  branchSwitchBlocked?: boolean
 }
 
 type SessionStoreData = {
@@ -153,6 +173,7 @@ type UpsertToolActivityInput = {
 type AttachRunArtifactsInput = {
   sessionId: string
   runId: string
+  promptMessageId?: string
   eventId: string
   artifacts: ArtifactFile[]
 }
@@ -212,6 +233,9 @@ type SessionStore = SessionStoreData & {
   markDisconnected: (sessionId: string, reason?: string) => void
   removeMessage: (sessionId: string, messageId: string) => void
   truncateSessionFromMessage: (sessionId: string, messageId: string) => void
+  activateMessageBranch: (sessionId: string, branchId: string) => void
+  setBranchSwitchBlocked: (sessionId: string, blocked: boolean) => void
+  clearBranchContextReset: (sessionId: string) => void
   upsertToolActivity: (input: UpsertToolActivityInput) => void
   beginActivityGroup: (sessionId: string, groupId: string, title: string) => void
   completeActivityGroup: (sessionId: string) => void
@@ -236,6 +260,8 @@ type SessionStore = SessionStoreData & {
 let messageSequence = 0
 let pendingSessionSequence = 0
 let timelineSequence = 0
+let conversationBranchSequence = 0
+let runtimeSegmentSequence = 0
 const ARTIFACT_ERROR_PREFIX = 'Generated file finalization failed'
 const externallyHydratedSessions = new WeakSet<ChatSession>()
 
@@ -262,6 +288,8 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
     fixLoopActive,
     compacting,
     agentStatus,
+    branchContextResetRequired,
+    branchSwitchBlocked,
     messages,
     ...persistedSession
   } = session
@@ -271,6 +299,8 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
   void fixLoopActive
   void compacting
   void agentStatus
+  void branchContextResetRequired
+  void branchSwitchBlocked
 
   // Persist a bounded projection of tool activities so the transcript survives restarts.
   const persistedActivities = activities
@@ -280,7 +310,7 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
     ?.map(sanitizeActivityGroup)
     .filter((group): group is PersistedActivityGroup => !!group)
 
-  return {
+  return materializeSessionConversationGraph({
     ...persistedSession,
     messages: messages.map(stripTransientMessageState),
     ...(persistedActivities && persistedActivities.length > 0
@@ -289,7 +319,7 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
     ...(persistedActivityGroups && persistedActivityGroups.length > 0
       ? { activityGroups: persistedActivityGroups }
       : {})
-  }
+  })
 }
 
 // Restores a persisted tool activity into the richer runtime shape the UI derives its rows from.
@@ -330,6 +360,53 @@ const createSortIndex = (): number => {
   return timelineSequence
 }
 
+const createConversationBranchId = (): string => {
+  conversationBranchSequence += 1
+  return `message-branch-${Date.now()}-${conversationBranchSequence}`
+}
+
+const createRuntimeSegmentId = (): string => {
+  runtimeSegmentSequence += 1
+  return `runtime-segment-${Date.now()}-${runtimeSegmentSequence}`
+}
+
+const synchronizeSessionGraph = (
+  session: ChatSession,
+  messages: ChatMessage[],
+  now: number,
+  frameworkId = session.agentFrameworkId ?? 'claude-code',
+  backendId = session.agentBackendId,
+  model = session.agentModel
+): NonNullable<PersistedChatSession['conversationGraph']> => {
+  const projection = messages.map(stripTransientMessageState)
+  const initial =
+    session.conversationGraph ??
+    createLinearConversationGraph({
+      sessionId: session.id,
+      messages: session.messages.map(stripTransientMessageState),
+      frameworkId: session.agentFrameworkId,
+      backendId: session.agentBackendId,
+      model: session.agentModel,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt
+    })
+  const withSegment = ensureConversationRuntimeSegment(initial, {
+    id: createRuntimeSegmentId(),
+    frameworkId,
+    backendId,
+    model,
+    startedAt: now
+  })
+  const withMessages = synchronizeActiveConversationMessages(withSegment, projection, now)
+  const persistedActivities = (session.activities ?? [])
+    .map(sanitizeToolActivity)
+    .filter((activity): activity is PersistedToolActivity => Boolean(activity))
+  const persistedGroups = (session.activityGroups ?? [])
+    .map(sanitizeActivityGroup)
+    .filter((group): group is PersistedActivityGroup => Boolean(group))
+  return synchronizeActiveConversationActivities(withMessages, persistedActivities, persistedGroups)
+}
+
 const completeOpenActivityGroups = (
   groups: PersistedActivityGroup[] | undefined,
   now: number
@@ -365,9 +442,18 @@ const createPersistedUpload = (
   sessionId: attachment.sessionId,
   name: attachment.name,
   originalName: attachment.originalName,
-  path: attachment.path,
   mimeType: attachment.mimeType,
-  size: attachment.size
+  size: attachment.size,
+  versionId: attachment.versionId,
+  versionNumber: attachment.versionNumber,
+  createdAt: attachment.createdAt,
+  sha256: attachment.sha256 ?? attachment.checksum,
+  // A staged upload has no Version yet. Keep its main-issued path capability in renderer memory
+  // until finalizeSession publishes the immutable Version; the persistence bridge explicitly waits
+  // for that transition, so newly written Session JSON remains path-free.
+  ...(!attachment.versionId && attachment.sessionId === PENDING_UPLOAD_SESSION_ID && attachment.path
+    ? { path: attachment.path }
+    : {})
 })
 
 // Normalizes message timestamps, ids, stream linkage, and status.
@@ -401,16 +487,23 @@ const createMessage = (
 }
 
 // Converts main-process artifact metadata into the compact persisted renderer reference shape.
-const createPersistedArtifact = (artifact: ArtifactFile): PersistedArtifact => ({
-  id: artifact.id,
-  kind: 'managed-file',
-  path: artifact.path,
-  fileUrl: artifact.fileUrl,
-  name: artifact.name,
-  mimeType: artifact.mimeType,
-  size: artifact.size,
-  mtimeMs: artifact.mtimeMs
-})
+const createPersistedArtifact = (artifact: ArtifactFile): PersistedArtifact => {
+  const persisted: PersistedArtifact = {
+    id: artifact.id,
+    kind: 'managed-file',
+    path: artifact.path,
+    fileUrl: artifact.fileUrl,
+    name: artifact.name,
+    mimeType: artifact.mimeType,
+    size: artifact.size,
+    mtimeMs: artifact.mtimeMs
+  }
+  if (artifact.artifactId) persisted.artifactId = artifact.artifactId
+  if (artifact.versionId) persisted.versionId = artifact.versionId
+  if (artifact.versionNumber !== undefined) persisted.versionNumber = artifact.versionNumber
+  if (artifact.checksum) persisted.sha256 = artifact.checksum
+  return persisted
+}
 
 // Compare only persisted file metadata, in stable array order, before advancing filesRevision. This
 // keeps text/status-only session updates on the repository revision fast path.
@@ -642,6 +735,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
     // Existing sessions keep their message history and restart their active run.
     if (existingSession) {
+      const nextMessages = [...existingSession.messages, userMessage]
       set({
         selectedSessionId: sessionId,
         sessions: state.sessions.map((session) =>
@@ -663,7 +757,15 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                 // cannot inherit a stale `false` and wrongly hide its Report button.
                 errorReportable: undefined,
                 compacting: undefined,
-                messages: [...session.messages, userMessage],
+                messages: nextMessages,
+                conversationGraph: synchronizeSessionGraph(
+                  session,
+                  nextMessages,
+                  now,
+                  agentFrameworkId ?? session.agentFrameworkId ?? 'claude-code',
+                  normalizedAgentBackendId ?? session.agentBackendId,
+                  normalizedAgentModel
+                ),
                 updatedAt: now
               }
             : session
@@ -687,6 +789,14 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         createdAt: now,
         updatedAt: now
       }
+      newSession.conversationGraph = synchronizeSessionGraph(
+        newSession,
+        newSession.messages,
+        now,
+        agentFrameworkId ?? 'claude-code',
+        normalizedAgentBackendId,
+        normalizedAgentModel
+      )
 
       set({
         selectedSessionId: sessionId,
@@ -888,7 +998,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Attaches a runtime artifact event to the best local assistant message before file finalization.
-  attachRunArtifacts: ({ sessionId, runId, eventId, artifacts }) => {
+  attachRunArtifacts: ({ sessionId, runId, promptMessageId, eventId, artifacts }) => {
     if (!sessionId || !runId || !eventId || artifacts.length === 0) return undefined
 
     let result: AppendMessageResult | undefined
@@ -914,33 +1024,35 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           return session
         }
 
-        const responseToMessageId = session.activeRun?.promptMessageId
-        // Prefer the streamed assistant response; otherwise create a file-only assistant message.
-        const existingMessage = [...session.messages]
+        const responseToMessageId = promptMessageId ?? session.activeRun?.promptMessageId
+        // The app-owned prompt identity survives stop/failure event ordering and is authoritative. The
+        // stream-id comparison remains only as a compatibility fallback for older artifact events.
+        const agentMessages = [...session.messages]
           .reverse()
-          .find(
-            (message) =>
-              message.role === 'agent' &&
-              (message.streamId === runId ||
-                (responseToMessageId && message.responseToMessageId === responseToMessageId))
-          )
+          .filter((message) => message.role === 'agent')
+        const existingMessage =
+          (responseToMessageId
+            ? agentMessages.find((message) => message.responseToMessageId === responseToMessageId)
+            : undefined) ?? agentMessages.find((message) => message.streamId === runId)
         const messageId = existingMessage?.id ?? createMessageId()
         result = { sessionId, messageId }
 
         if (existingMessage) {
+          const messages = session.messages.map((message) =>
+            message.id === existingMessage.id
+              ? {
+                  ...message,
+                  eventIds: appendUniqueStrings(message.eventIds, [eventId]),
+                  artifactIds: appendUniqueStrings(message.artifactIds, incomingArtifactIds),
+                  updatedAt: now
+                }
+              : message
+          )
           return {
             ...session,
             artifacts: upsertArtifacts(session.artifacts, incomingArtifacts),
-            messages: session.messages.map((message) =>
-              message.id === existingMessage.id
-                ? {
-                    ...message,
-                    eventIds: appendUniqueStrings(message.eventIds, [eventId]),
-                    artifactIds: appendUniqueStrings(message.artifactIds, incomingArtifactIds),
-                    updatedAt: now
-                  }
-                : message
-            ),
+            messages,
+            conversationGraph: synchronizeSessionGraph(session, messages, now),
             updatedAt: now
           }
         }
@@ -959,11 +1071,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           createdAt: now,
           updatedAt: now
         }
+        const messages = [...session.messages, artifactMessage]
 
         return {
           ...session,
           artifacts: upsertArtifacts(session.artifacts, incomingArtifacts),
-          messages: [...session.messages, artifactMessage],
+          messages,
+          conversationGraph: synchronizeSessionGraph(session, messages, now),
           updatedAt: now
         }
       })
@@ -1002,19 +1116,30 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         }
 
         const now = Date.now()
+        const messages = session.messages.map((item) =>
+          item.id === messageId
+            ? {
+                ...item,
+                artifactIds: incomingArtifactIds,
+                updatedAt: now
+              }
+            : item
+        )
+        const synchronizedGraph = synchronizeSessionGraph(session, messages, now)
+        const conversationGraph = {
+          ...synchronizedGraph,
+          messages: synchronizedGraph.messages.map((item) =>
+            item.id === messageId
+              ? { ...item, artifactIds: incomingArtifactIds, updatedAt: now }
+              : item
+          )
+        }
 
         return {
           ...session,
           artifacts: nextArtifacts,
-          messages: session.messages.map((item) =>
-            item.id === messageId
-              ? {
-                  ...item,
-                  artifactIds: incomingArtifactIds,
-                  updatedAt: now
-                }
-              : item
-          ),
+          messages,
+          conversationGraph,
           filesRevision: (session.filesRevision ?? 0) + 1,
           updatedAt: now
         }
@@ -1039,18 +1164,29 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         }
 
         const now = Date.now()
+        const messages = session.messages.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                uploads: incomingUploads,
+                updatedAt: now
+              }
+            : message
+        )
+        const synchronizedGraph = synchronizeSessionGraph(session, messages, now)
+        const conversationGraph = {
+          ...synchronizedGraph,
+          messages: synchronizedGraph.messages.map((message) =>
+            message.id === messageId
+              ? { ...message, uploads: incomingUploads, updatedAt: now }
+              : message
+          )
+        }
 
         return {
           ...session,
-          messages: session.messages.map((message) =>
-            message.id === messageId
-              ? {
-                  ...message,
-                  uploads: incomingUploads,
-                  updatedAt: now
-                }
-              : message
-          ),
+          messages,
+          conversationGraph,
           filesRevision: (session.filesRevision ?? 0) + 1,
           updatedAt: now
         }
@@ -1275,6 +1411,18 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         if (session.id !== sessionId) return session
 
         const keepArtifactError = isArtifactFinalizationError(session.error)
+        const now = Date.now()
+        const messages = completeStreamingMessages(session.messages)
+        const activities = completeOpenActivities(session.activities)
+        const activityGroups = completeOpenActivityGroups(session.activityGroups, now)
+        // Streaming updates intentionally stay in the lightweight flat projection. Before Branch
+        // navigation is re-enabled, publish the terminal response and its activities into the durable
+        // graph even when Artifact finalization returned an unchanged immutable descriptor.
+        const conversationGraph = synchronizeSessionGraph(
+          { ...session, messages, activities, activityGroups },
+          messages,
+          now
+        )
 
         return {
           ...session,
@@ -1284,10 +1432,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           compacting: undefined,
           error: keepArtifactError ? session.error : undefined,
           errorReportable: keepArtifactError ? session.errorReportable : undefined,
-          messages: completeStreamingMessages(session.messages),
-          activities: completeOpenActivities(session.activities),
-          activityGroups: completeOpenActivityGroups(session.activityGroups, Date.now()),
-          updatedAt: Date.now()
+          messages,
+          activities,
+          activityGroups,
+          conversationGraph,
+          updatedAt: now
         }
       })
     }))
@@ -1305,23 +1454,34 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     const errorReportable = opts?.reportable ?? isReportableRunFailure(message)
 
     set((state) => ({
-      sessions: state.sessions.map((session) =>
-        session.id === sessionId
-          ? {
-              ...session,
-              status: 'error',
-              activeRun: undefined,
-              agentStatus: undefined,
-              compacting: undefined,
-              error: message,
-              errorReportable,
-              messages: failStreamingMessages(session.messages),
-              activities: failOpenActivities(session.activities),
-              activityGroups: completeOpenActivityGroups(session.activityGroups, Date.now()),
-              updatedAt: Date.now()
-            }
-          : session
-      )
+      sessions: state.sessions.map((session) => {
+        if (session.id !== sessionId) return session
+
+        const now = Date.now()
+        const messages = failStreamingMessages(session.messages)
+        const activities = failOpenActivities(session.activities)
+        const activityGroups = completeOpenActivityGroups(session.activityGroups, now)
+        const conversationGraph = synchronizeSessionGraph(
+          { ...session, messages, activities, activityGroups },
+          messages,
+          now
+        )
+
+        return {
+          ...session,
+          status: 'error',
+          activeRun: undefined,
+          agentStatus: undefined,
+          compacting: undefined,
+          error: message,
+          errorReportable,
+          messages,
+          activities,
+          activityGroups,
+          conversationGraph,
+          updatedAt: now
+        }
+      })
     }))
   },
 
@@ -1499,6 +1659,14 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
             activityIds: group.activityIds.filter((id) => retainedActivityIds.has(id))
           }))
           .filter((group) => group.activityIds.length > 0)
+        const now = Date.now()
+        const currentGraph = synchronizeSessionGraph(session, session.messages, now)
+        const conversationGraph = forkEditedConversationMessage(
+          currentGraph,
+          messageId,
+          createConversationBranchId(),
+          now
+        )
 
         return {
           ...session,
@@ -1506,15 +1674,82 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           messages: session.messages.slice(0, cutIndex),
           activities,
           activityGroups,
+          conversationGraph,
           activeRun: undefined,
           agentStatus: undefined,
           error: undefined,
           errorReportable: undefined,
           interrupted: undefined,
+          branchContextResetRequired: true,
           filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
+          updatedAt: now
+        }
+      })
+    }))
+  },
+
+  // Switches the whole durable active-path projection without contacting the Agent or Notebook.
+  activateMessageBranch: (sessionId, branchId) => {
+    if (!sessionId || !branchId) return
+    set((state) => ({
+      sessions: state.sessions.map((session) => {
+        if (
+          session.id !== sessionId ||
+          !session.conversationGraph ||
+          session.activeRun ||
+          session.status === 'running' ||
+          session.status === 'waiting-permission' ||
+          session.fixLoopActive ||
+          session.compacting ||
+          session.branchSwitchBlocked
+        ) {
+          return session
+        }
+        const activeFrame = session.conversationGraph.frames.find(
+          (frame) => frame.id === session.conversationGraph?.activeFrameId
+        )
+        if (activeFrame?.activeBranchId === branchId) return session
+        const conversationGraph = activateConversationBranch(session.conversationGraph, branchId)
+        const messages = resolveActiveConversationMessages(conversationGraph).map(
+          (message, index): ChatMessage => ({
+            ...projectConversationMessage(message),
+            sortIndex: index + 1
+          })
+        )
+        const projected = resolveActiveConversationActivities(conversationGraph)
+        return {
+          ...session,
+          conversationGraph,
+          messages,
+          activities: projected.activities.map(hydrateToolActivity),
+          activityGroups: projected.activityGroups,
+          status: 'idle',
+          activeRun: undefined,
+          error: undefined,
+          errorReportable: undefined,
+          branchContextResetRequired: true,
+          filesRevision: (session.filesRevision ?? 0) + 1,
           updatedAt: Date.now()
         }
       })
+    }))
+  },
+
+  setBranchSwitchBlocked: (sessionId, blocked) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId && Boolean(session.branchSwitchBlocked) !== blocked
+          ? { ...session, branchSwitchBlocked: blocked || undefined }
+          : session
+      )
+    }))
+  },
+
+  clearBranchContextReset: (sessionId) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId ? { ...session, branchContextResetRequired: undefined } : session
+      )
     }))
   },
 

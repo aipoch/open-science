@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 
 import { PREVIEW_STATE_VERSION, type PersistedPreviewState } from '../../../../shared/preview-state'
+import { getUploadedAttachmentPath } from '../../../../shared/uploads'
 import {
   usePreviewWorkbenchStore,
   type PreviewFileFormat,
@@ -52,7 +53,10 @@ const toRestoredSlice = (
   for (const session of sessions) {
     for (const message of session.messages) {
       for (const upload of message.uploads ?? []) {
-        uploadByPreviewId.set(`upload:${upload.id}`, upload)
+        uploadByPreviewId.set(`upload:${upload.id}`, {
+          ...upload,
+          path: getUploadedAttachmentPath(upload, session.projectId)
+        })
       }
     }
   }

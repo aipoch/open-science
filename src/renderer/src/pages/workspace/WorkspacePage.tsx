@@ -209,6 +209,9 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const [sessionToRename, setSessionToRename] = useState<ChatSession | undefined>(undefined)
   const [renameDraft, setRenameDraft] = useState('')
   const [sessionToDelete, setSessionToDelete] = useState<ChatSession | undefined>(undefined)
+  const [sessionDeletionInProgressIds, setSessionDeletionInProgressIds] = useState<
+    ReadonlySet<string>
+  >(new Set())
   const [sessionToViewNotebook, setSessionToViewNotebook] = useState<ChatSession | undefined>(
     undefined
   )
@@ -326,11 +329,20 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   // resent prompt can never overlap an in-flight turn, permission wait, fix loop, or compaction.
   const canEditMessage =
     isSessionPersistenceReady &&
+    attachmentTransfers.length === 0 &&
     activeSession?.status !== 'running' &&
     activeSession?.status !== 'waiting-permission' &&
     !activeSessionHasRuntimeInteraction &&
+    !isReviewing &&
     !activeSession?.fixLoopActive &&
-    !activeSession?.compacting
+    !activeSession?.compacting &&
+    !sessionDeletionInProgressIds.has(activeSession?.id ?? '')
+  useEffect(() => {
+    const sessionId = activeSession?.id
+    if (!sessionId) return
+    useSessionStore.getState().setBranchSwitchBlocked(sessionId, !canEditMessage)
+    return () => useSessionStore.getState().setBranchSwitchBlocked(sessionId, false)
+  }, [activeSession?.id, canEditMessage])
   const canChangePermissionProfile =
     isSessionPersistenceReady &&
     activeSession?.status !== 'running' &&
@@ -512,11 +524,12 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   // A clear=true event cancels that suppression if the correction turn failed to send.
   useEffect(() => {
     const removeSuppressListener = window.api.reviewer.onSuppressNextAutoReview(
-      ({ sessionId, clear }) => {
+      ({ projectId, appSessionId, clear }) => {
+        if (projectId !== scopedProjectId) return
         if (clear) {
-          clearSuppressNextAutoReview(sessionId)
+          clearSuppressNextAutoReview(appSessionId)
         } else {
-          suppressNextAutoReview(sessionId)
+          suppressNextAutoReview(appSessionId)
         }
       }
     )
@@ -524,24 +537,26 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     return () => {
       removeSuppressListener()
     }
-  }, [])
+  }, [scopedProjectId])
 
   // Subscribe to fix loop lifecycle events from the main process. When a fix loop starts for a
   // session, set fixLoopActive=true to disable the send button. When it ends or is aborted, clear
   // the flag. The lock is per-session: other sessions remain interactive.
   useEffect(() => {
-    const removeStartListener = window.api.reviewer.onFixLoopStart(({ sessionId }) => {
-      setFixLoopActive(sessionId, true)
-    })
-    const removeEndListener = window.api.reviewer.onFixLoopEnd(({ sessionId }) => {
-      setFixLoopActive(sessionId, false)
+    const removeStartListener = window.api.reviewer.onFixLoopStart(
+      ({ projectId, appSessionId }) => {
+        if (projectId === scopedProjectId) setFixLoopActive(appSessionId, true)
+      }
+    )
+    const removeEndListener = window.api.reviewer.onFixLoopEnd(({ projectId, appSessionId }) => {
+      if (projectId === scopedProjectId) setFixLoopActive(appSessionId, false)
     })
 
     return () => {
       removeStartListener()
       removeEndListener()
     }
-  }, [setFixLoopActive])
+  }, [scopedProjectId, setFixLoopActive])
 
   // The availability event only fires while the agent is live, so a session opened after relaunch
   // would lose its notebook entry until the next call. Probe persisted run.json on selection to
@@ -958,6 +973,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
         ...(isActiveSession ? attachmentTransfers : (storedDraft?.attachmentTransfers ?? []))
       ]
     }
+    setSessionDeletionInProgressIds((current) => new Set(current).add(deletedSessionId))
 
     setSessionToDelete(undefined)
     // Staged bytes and local draft state are owned by the session until runtime and durable deletion
@@ -966,6 +982,11 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     void deleteRuntimeSession(deletedSessionId).then((deleted) => {
       const deletionCleanup = sessionDeletionCleanupRef.current[deletedSessionId]
       delete sessionDeletionCleanupRef.current[deletedSessionId]
+      setSessionDeletionInProgressIds((current) => {
+        const next = new Set(current)
+        next.delete(deletedSessionId)
+        return next
+      })
       if (!deleted || !deletionCleanup) return
 
       delete composerDraftsRef.current[deletedSessionId]
@@ -995,9 +1016,11 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     // If a fix loop is running, abort it. The abort handler in the main process will stop the loop;
     // the renderer reacts to the FIX_LOOP_END event broadcast and clears fixLoopActive.
     if (activeSession.fixLoopActive) {
-      void window.api.reviewer.abortFixLoop(sessionId).catch((error) => {
-        console.warn('Failed to abort fix loop:', error)
-      })
+      void window.api.reviewer
+        .abortFixLoop({ projectId: activeSession.projectId, appSessionId: sessionId })
+        .catch((error) => {
+          console.warn('Failed to abort fix loop:', error)
+        })
     }
 
     void cancelRun(sessionId)

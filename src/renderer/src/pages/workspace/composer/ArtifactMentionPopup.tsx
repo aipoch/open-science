@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useState } from 'react'
 
 import { formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { useSessionStore } from '@/stores/session-store'
+import type { ProjectFileItem } from '../../../../../shared/project-files'
 
 import { ExtensionPreservingFileName } from '../ExtensionPreservingFileName'
 import { getExtensionPreservingFileNameParts } from '../extension-preserving-file-name'
@@ -10,8 +10,6 @@ import { getExtensionPreservingFileNameParts } from '../extension-preserving-fil
 import { ArtifactFileIcon } from './artifact-file-icon'
 import { fuzzyScore, type FuzzyMatch } from './fuzzy-match'
 import { HighlightedText } from './HighlightedText'
-import { buildProjectFileLibrary } from '../project-files-library'
-import { useProjectArtifactFiles } from '../use-project-artifact-files'
 
 // The reference passed back to the composer when an artifact row is picked.
 export type PickedArtifact = {
@@ -42,47 +40,81 @@ type ArtifactRow = PickedArtifact & {
 // Human-readable section headers, ordered as they render.
 const SECTION_UPLOADS = 'User uploads'
 const SECTION_ARTIFACTS = 'Other artifacts'
+const PROJECT_FILE_PAGE_SIZE = 100
+
+const loadProjectFiles = async (projectId: string): Promise<ProjectFileItem[]> => {
+  const files: ProjectFileItem[] = []
+  const seenCursors = new Set<string>()
+  let cursor: string | undefined
+
+  do {
+    const page = await window.api.projectFiles.listFiles({
+      projectId,
+      collection: { kind: 'all' },
+      limit: PROJECT_FILE_PAGE_SIZE,
+      ...(cursor ? { cursor } : {})
+    })
+    files.push(...page.items)
+    cursor = page.nextCursor
+    if (cursor && seenCursors.has(cursor)) {
+      throw new Error('Project Files returned a repeated file cursor.')
+    }
+    if (cursor) seenCursors.add(cursor)
+  } while (cursor)
+
+  return files
+}
 
 export const ArtifactMentionPopup = ({
   query,
   onSelect,
   onClose
 }: ArtifactMentionPopupProps): React.JSX.Element | null => {
-  const sessions = useSessionStore((state) => state.sessions)
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
-  const diskArtifacts = useProjectArtifactFiles(activeProjectId)
   const listboxId = useId()
+  const [projectFiles, setProjectFiles] = useState<{
+    projectId?: string
+    files: ProjectFileItem[]
+    state: 'loaded' | 'error'
+  }>({ files: [], state: 'loaded' })
 
-  // Derive the project's artifact library the same way the Files panel does: uploads then outputs, plus
-  // orphaned on-disk files so a deleted session's artifacts stay referenceable via `@`.
-  const rows = useMemo<ArtifactRow[]>(() => {
-    const projectSessions = sessions.filter((session) => session.projectId === activeProjectId)
-    const library = buildProjectFileLibrary(projectSessions, diskArtifacts)
+  useEffect(() => {
+    let cancelled = false
+    if (!activeProjectId) return
 
-    const uploadRows: ArtifactRow[] = library.uploadFiles.map((file) => ({
-      id: file.id,
-      name: file.name,
-      path: file.attachment.path,
-      source: 'upload',
-      mimeType: file.attachment.mimeType,
-      size: file.size,
-      tag: 'upload'
-    }))
+    void loadProjectFiles(activeProjectId)
+      .then((files) => {
+        if (!cancelled) setProjectFiles({ projectId: activeProjectId, files, state: 'loaded' })
+      })
+      .catch(() => {
+        if (!cancelled) setProjectFiles({ projectId: activeProjectId, files: [], state: 'error' })
+      })
 
-    const artifactRows: ArtifactRow[] = library.artifactGroups.flatMap((group) =>
-      group.files.map((file) => ({
-        id: file.id,
-        name: file.name,
-        path: file.artifact.path,
-        source: 'artifact',
-        mimeType: file.artifact.mimeType,
-        size: file.size,
-        tag: 'output'
-      }))
-    )
+    return () => {
+      cancelled = true
+    }
+  }, [activeProjectId])
 
-    return [...uploadRows, ...artifactRows]
-  }, [sessions, activeProjectId, diskArtifacts])
+  // ManagedFile is the single picker read model. Its paths are typed immutable Version locators, so
+  // cross-session selections retain exact Upload/Artifact identity without loading Session JSON.
+  const rows = useMemo<ArtifactRow[]>(
+    () =>
+      projectFiles.projectId === activeProjectId
+        ? projectFiles.files.map((file) => ({
+            id: file.id,
+            name: file.name,
+            path: file.path,
+            source: file.source,
+            ...(file.sourceVersionId ? { versionId: file.sourceVersionId } : {}),
+            mimeType: file.mimeType,
+            size: file.size,
+            tag: file.source === 'upload' ? ('upload' as const) : ('output' as const)
+          }))
+        : [],
+    [activeProjectId, projectFiles]
+  )
+  const loadState =
+    !activeProjectId || projectFiles.projectId === activeProjectId ? projectFiles.state : 'loading'
 
   // Fuzzy-match the query against each filename, ranked best-first. Ranking happens within each section
   // so uploads still render before outputs — the flat highlight index depends on that order. Empty
@@ -124,9 +156,11 @@ export const ArtifactMentionPopup = ({
         event.preventDefault()
         if (matches.length > 0) setActiveIndex((safeIndex - 1 + matches.length) % matches.length)
       } else if (event.key === 'Enter') {
+        // The popup owns Enter for its entire mounted lifetime. In particular, do not let the editor
+        // submit a raw @query while the asynchronous Project Files page is still loading.
+        event.preventDefault()
         const active = matches[safeIndex]
         if (active) {
-          event.preventDefault()
           onSelect(toPicked(active))
         }
       } else if (event.key === 'Escape') {
@@ -207,7 +241,13 @@ export const ArtifactMentionPopup = ({
   return (
     <div className="absolute bottom-full left-0 mb-1 z-50 bg-bg-000 border-0.5 border-border-200 rounded-xl shadow-[0_4px_16px_hsl(var(--always-black)/10%)] p-1.5 min-w-[320px] max-w-[440px] max-h-[min(45vh,18rem)] overflow-hidden">
       {matches.length === 0 ? (
-        <div className="px-2 py-1.5 text-sm text-text-300">No artifacts yet</div>
+        <div className="px-2 py-1.5 text-sm text-text-300">
+          {loadState === 'loading'
+            ? 'Loading project files…'
+            : loadState === 'error'
+              ? 'Could not load project files'
+              : 'No artifacts yet'}
+        </div>
       ) : (
         <ul
           id={`${listboxId}-listbox`}

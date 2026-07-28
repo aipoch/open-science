@@ -1,7 +1,12 @@
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
 import type { ChatSession } from '@/stores/session-store'
 import type { MessagePart } from '../../../../shared/session-persistence'
-import { getUploadedAttachmentName } from '../../../../shared/uploads'
+import {
+  createArtifactVersionLocator,
+  type ArtifactLineageProvenance,
+  type ArtifactVersionDescriptor
+} from '../../../../shared/artifact-provenance'
+import { getUploadedAttachmentName, getUploadedAttachmentPath } from '../../../../shared/uploads'
 
 import { getArtifactName } from './artifact-preview-utils'
 import { getPreviewFormatForFile } from './preview-support'
@@ -22,7 +27,11 @@ export const createPreviewFileItem = ({
   mimeType,
   source,
   size,
-  mtimeMs
+  mtimeMs,
+  artifactId,
+  selectedVersionId,
+  versionNumber,
+  originSession
 }: {
   id: string
   sessionId: string
@@ -32,6 +41,10 @@ export const createPreviewFileItem = ({
   source?: PreviewFileSource
   size?: number
   mtimeMs?: number
+  artifactId?: string
+  selectedVersionId?: string
+  versionNumber?: number
+  originSession?: PreviewFileItem['originSession']
 }): PreviewFileItem => {
   const item: PreviewFileItem = {
     id,
@@ -48,6 +61,10 @@ export const createPreviewFileItem = ({
   if (mimeType) item.mimeType = mimeType
   if (typeof size === 'number') item.size = size
   if (typeof mtimeMs === 'number') item.mtimeMs = mtimeMs
+  if (artifactId) item.artifactId = artifactId
+  if (selectedVersionId) item.selectedVersionId = selectedVersionId
+  if (typeof versionNumber === 'number') item.versionNumber = versionNumber
+  if (originSession) item.originSession = originSession
 
   return item
 }
@@ -55,27 +72,76 @@ export const createPreviewFileItem = ({
 // Converts app-managed generated files into preview tabs and ignores unmanaged artifacts.
 export const createPreviewFileItemFromArtifact = (
   artifact: MessageArtifact,
-  sessionId: string
+  sessionId: string,
+  projectId?: string
 ): PreviewFileItem | undefined => {
   if (artifact.kind !== 'managed-file') return undefined
 
   const artifactName = getArtifactName(artifact)
+  const nativeVersionPath =
+    projectId && artifact.artifactId && artifact.versionId
+      ? createArtifactVersionLocator({
+          projectId,
+          appSessionId: sessionId,
+          artifactId: artifact.artifactId,
+          versionId: artifact.versionId
+        })
+      : artifact.path
 
   return createPreviewFileItem({
-    id: artifact.id,
+    id: artifact.artifactId ?? artifact.id,
     sessionId,
-    path: artifact.path,
+    path: nativeVersionPath,
     name: artifactName,
     mimeType: artifact.mimeType,
     size: artifact.size,
-    mtimeMs: artifact.mtimeMs
+    mtimeMs: artifact.mtimeMs,
+    artifactId: artifact.artifactId,
+    selectedVersionId: artifact.versionId,
+    versionNumber: artifact.versionNumber
   })
 }
+
+// Applies one immutable Artifact Version to the stable preview tab identity. Both image preview
+// and Provenance use this projection so switching Versions never creates a second tab.
+export const createPreviewFileItemForArtifactVersion = ({
+  item,
+  version,
+  projectId
+}: {
+  item: PreviewFileItem
+  version: ArtifactVersionDescriptor
+  projectId: string
+}): PreviewFileItem => ({
+  ...item,
+  selectedVersionId: version.versionId,
+  versionNumber: version.versionNumber,
+  path: createArtifactVersionLocator({
+    projectId,
+    appSessionId: item.sessionId,
+    artifactId: version.artifactId,
+    versionId: version.versionId
+  }),
+  name: version.name,
+  title: version.name,
+  size: version.size,
+  mtimeMs: version.mtimeMs
+})
+
+// A persisted preview may briefly carry an obsolete Version id after overwrite/finalization.
+// Lineage is authoritative: keep a valid selection, otherwise use its newest finalized Version.
+export const resolveArtifactVersionDescriptor = (
+  lineage: ArtifactLineageProvenance,
+  selectedVersionId: string | undefined
+): ArtifactVersionDescriptor | undefined =>
+  lineage.versions.find((version) => version.versionId === selectedVersionId) ??
+  lineage.versions.at(-1)
 
 // Converts a sent user upload into the same preview shape used by message attachment clicks.
 export const createPreviewFileItemFromUpload = (
   attachment: MessageUploadAttachment,
-  sessionId: string
+  sessionId: string,
+  projectId?: string
 ): PreviewFileItem => {
   const attachmentName = getUploadedAttachmentName(attachment)
 
@@ -83,7 +149,7 @@ export const createPreviewFileItemFromUpload = (
     id: `upload:${attachment.id}`,
     sessionId,
     source: 'upload',
-    path: attachment.path,
+    path: getUploadedAttachmentPath(attachment, projectId),
     name: attachmentName,
     mimeType: attachment.mimeType,
     size: attachment.size

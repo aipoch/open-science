@@ -12,6 +12,7 @@ import { resolveDataKernelForTab } from '../../../../shared/notebook'
 import type { NotebookKernelKind, NotebookRunRecord } from '../../../../shared/notebook'
 import { NotebookCodeBlock } from './notebook-code'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
+import { NotebookInputDataStrip } from './NotebookInputDataStrip'
 import {
   isProblemRunStatus,
   kernelKindLabel,
@@ -38,10 +39,12 @@ const pluralize = (count: number, word: string): string =>
 // zero-based index is the cell number shown in [n], aligning the display with a notebook's cells.
 const NotebookDialogCell = ({
   run,
-  index
+  index,
+  showInputData = false
 }: {
   run: NotebookRunRecord
   index: number
+  showInputData?: boolean
 }): React.JSX.Element => {
   const isProblem = isProblemRunStatus(run.status)
   const errorLine = isProblem ? resolveRunErrorLine(run) : undefined
@@ -70,6 +73,12 @@ const NotebookDialogCell = ({
           </span>
         ) : null}
       </div>
+      {showInputData ? (
+        <NotebookInputDataStrip
+          inputFiles={run.inputFiles ?? []}
+          className="mb-2 rounded-md border border-border bg-muted px-2 py-1.5"
+        />
+      ) : null}
       <NotebookCodeBlock code={run.script} highlightLine={errorLine} />
       <NotebookRunOutputs run={run} />
     </div>
@@ -78,6 +87,7 @@ const NotebookDialogCell = ({
 
 type SessionNotebookContentProps = {
   sessionId: string
+  projectId?: string
   runs: NotebookRunRecord[]
   status: SessionNotebookStatus
   error?: string
@@ -91,6 +101,7 @@ type SessionNotebookContentProps = {
 // standalone in tests; close is delegated through onClose.
 const SessionNotebookContent = ({
   sessionId,
+  projectId,
   runs,
   status,
   error,
@@ -245,7 +256,12 @@ const SessionNotebookContent = ({
               data-testid={`session-notebook-kernel-${effectiveActiveKind}`}
             >
               {visibleRuns.map((run, index) => (
-                <NotebookDialogCell key={run.runId} run={run} index={index} />
+                <NotebookDialogCell
+                  key={run.runId}
+                  run={run}
+                  index={index}
+                  showInputData={Boolean(projectId)}
+                />
               ))}
             </div>
           </>
@@ -342,6 +358,14 @@ type SessionNotebookDialogProps = {
   onClose: () => void
 }
 
+const filterNotebookRunsForSessionBranch = (
+  runs: NotebookRunRecord[],
+  session: ChatSession
+): NotebookRunRecord[] => {
+  const activeMessageIds = new Set(session.messages.map((message) => message.id))
+  return runs.filter((run) => !run.promptMessageId || activeMessageIds.has(run.promptMessageId))
+}
+
 // Modal container: owns the read-only load lifecycle and wraps the pure content in a Radix dialog.
 const SessionNotebookDialog = ({
   session,
@@ -416,7 +440,8 @@ const SessionNotebookDialog = ({
               // a superseded export) must be discarded rather than leak into the next session.
               key={dialogSession.id}
               sessionId={dialogSession.id}
-              runs={runs}
+              projectId={dialogSession.projectId}
+              runs={filterNotebookRunsForSessionBranch(runs, dialogSession)}
               status={status}
               error={error}
               onClose={onClose}
@@ -447,4 +472,4 @@ const SessionNotebookDialog = ({
   )
 }
 
-export { SessionNotebookContent, SessionNotebookDialog }
+export { NotebookDialogCell, SessionNotebookContent, SessionNotebookDialog }
