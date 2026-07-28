@@ -194,7 +194,9 @@ class NotebookInputRegistry {
     for (const reference of request.references) {
       if (reference.source === 'linked-folder') continue
       if (!reference.versionId) {
-        throw new Error(`Referenced input has no immutable Version identity: ${reference.name}`)
+        // Legacy Project Files remain valid prompt attachments, but they cannot establish an
+        // immutable Notebook input edge until their storage identity is upgraded to a Version.
+        continue
       }
       inputs.push(
         await this.resolveVersion(

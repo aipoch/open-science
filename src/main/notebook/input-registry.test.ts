@@ -204,6 +204,55 @@ describe('NotebookInputRegistry', () => {
     ).resolves.toMatchObject({ content: 'group\nA\n', size: 8 })
   })
 
+  it('skips legacy Project File references without blocking immutable turn inputs', async () => {
+    const registry = await setup()
+    await createArtifact({
+      projectId: 'project-1',
+      sessionId: 'source-session-1',
+      artifactId: 'artifact-1',
+      versionId: 'artifact-version-1',
+      filename: 'normalized.csv',
+      content: 'value\n1\n'
+    })
+
+    await expect(
+      registry.registerTurn({
+        projectId: 'project-1',
+        appSessionId: 'active-session',
+        promptMessageId: 'prompt-1',
+        uploads: [],
+        references: [
+          {
+            id: 'legacy-upload',
+            source: 'upload',
+            name: 'legacy.csv',
+            path: '/legacy/path.csv'
+          },
+          {
+            id: 'artifact-1',
+            versionId: 'artifact-version-1',
+            source: 'artifact',
+            name: 'normalized.csv',
+            path: '/ignored'
+          }
+        ]
+      })
+    ).resolves.toBeUndefined()
+
+    expect(
+      registry.getTurnInputs({
+        projectId: 'project-1',
+        appSessionId: 'active-session',
+        promptMessageId: 'prompt-1'
+      })
+    ).toEqual([
+      expect.objectContaining({
+        sourceKind: 'artifact-version',
+        inputFileVersionId: 'artifact-version-1'
+      })
+    ])
+  })
+
   it('upgrades only resolver-used Versions on an execution-scoped run lease', async () => {
     const registry = await setup()
     const storageKey = await createUpload({
