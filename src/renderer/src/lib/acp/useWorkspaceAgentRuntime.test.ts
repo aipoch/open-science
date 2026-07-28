@@ -280,6 +280,162 @@ describe('workspace agent message sending', () => {
     vi.unstubAllGlobals()
   })
 
+  it('rebuilds Agent and Notebook context before continuing a switched Branch', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Original branch turn',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        branchContextResetRequired: true
+      }))
+    }))
+    const shutdown = vi.fn().mockResolvedValue({
+      sessionId: 'transport-session-1',
+      status: 'shutdown'
+    })
+    vi.stubGlobal('window', { api: { notebook: { shutdown } } })
+    const resetSessionContext = vi.fn().mockResolvedValue({
+      sessionId: 'transport-session-1',
+      cwd: '/workspace/project',
+      contextReset: true
+    })
+    const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext,
+      sendPrompt
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Continue selected branch',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+
+    expect(shutdown).toHaveBeenCalledWith({
+      sessionId: 'transport-session-1',
+      workspaceCwd: '/workspace/project',
+      projectName: 'project-1'
+    })
+    expect(resetSessionContext).toHaveBeenCalledOnce()
+    expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(
+      resetSessionContext.mock.invocationCallOrder[0]
+    )
+    expect(resetSessionContext.mock.invocationCallOrder[0]).toBeLessThan(
+      sendPrompt.mock.invocationCallOrder[0]
+    )
+    expect(sendPrompt).toHaveBeenCalledWith(
+      'transport-session-1',
+      'Continue selected branch',
+      [],
+      undefined,
+      undefined,
+      expect.stringContaining('Original branch turn'),
+      [],
+      [],
+      undefined,
+      expect.objectContaining({ promptMessageId: expect.any(String) })
+    )
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBeUndefined()
+  })
+
+  it('keeps Branch replay required when the reset prompt is rejected', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Original branch turn',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        branchContextResetRequired: true
+      }))
+    }))
+    vi.stubGlobal('window', {
+      api: {
+        notebook: { shutdown: vi.fn().mockResolvedValue({ status: 'shutdown' }) },
+        acp: { getState: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1'])) }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+      sendPrompt: vi.fn().mockRejectedValue(new Error('prompt rejected'))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Continue selected branch',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    await flushRuntimeTasks()
+
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+  })
+
+  it('keeps Branch replay required when selected history cannot be replayed', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Inspect this upload',
+      attachments: [
+        {
+          id: 'upload-1',
+          sessionId: 'transport-session-1',
+          name: 'figure.png',
+          originalName: 'figure.png',
+          path: 'upload-version:upload-version-1',
+          mimeType: 'image/png',
+          size: 12,
+          versionId: 'upload-version-1',
+          versionNumber: 1
+        }
+      ],
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        branchContextResetRequired: true
+      }))
+    }))
+    vi.stubGlobal('window', {
+      api: { notebook: { shutdown: vi.fn().mockResolvedValue({ status: 'shutdown' }) } }
+    })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+      sendPrompt: vi.fn()
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Continue selected branch',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      supportsImageInput: false
+    })
+
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+  })
+
   it('shows a new conversation prompt before ACP session creation resolves', async () => {
     let resolveCreatedSession!: (value: { sessionId: string; cwd?: string }) => void
     const createdSession = new Promise<{ sessionId: string; cwd?: string }>((resolve) => {
@@ -339,7 +495,12 @@ describe('workspace agent message sending', () => {
       'Help me inspect this notebook',
       [],
       undefined,
-      undefined
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      expect.objectContaining({ promptMessageId: expect.any(String) })
     )
   })
 
@@ -503,8 +664,7 @@ describe('workspace agent message sending', () => {
           uploads: [
             expect.objectContaining({
               id: 'upload-1',
-              sessionId: 'transport-session-1',
-              path: finalizedAttachment.path
+              sessionId: 'transport-session-1'
             })
           ]
         })
@@ -515,7 +675,15 @@ describe('workspace agent message sending', () => {
       '',
       [finalizedAttachment],
       undefined,
-      undefined
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      expect.objectContaining({ promptMessageId: expect.any(String) })
+    )
+    expect(useSessionStore.getState().sessions[0].messages[0].uploads?.[0]).not.toHaveProperty(
+      'path'
     )
   })
 
@@ -613,7 +781,12 @@ describe('workspace agent message sending', () => {
       'Try again',
       [],
       undefined,
-      undefined
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      expect.objectContaining({ promptMessageId: expect.any(String) })
     )
     expect(useSessionStore.getState().selectedSessionId).toBe('transport-session-1')
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
@@ -1512,7 +1685,8 @@ describe('resuming an interrupted session on demand', () => {
       undefined,
       undefined,
       undefined,
-      undefined
+      undefined,
+      expect.objectContaining({ promptMessageId: expect.any(String) })
     )
 
     const session = useSessionStore.getState().sessions[0]

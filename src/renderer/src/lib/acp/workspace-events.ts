@@ -1,6 +1,7 @@
 import type { AcpRuntimeEvent, AcpPermissionRequest } from '../../../../shared/acp'
 import type { ArtifactFile, FinalizeRunArtifactsRequest } from '../../../../shared/artifacts'
 import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../shared/reviewer'
+import type { PersistedChatSession } from '../../../../shared/session-persistence'
 import { createPreviewFileItem } from '../../pages/workspace/preview-file-item'
 import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
@@ -9,7 +10,7 @@ import {
   getActivityGroupTitleFromToolEvent,
   isActivityGroupToolEvent
 } from '../../../../shared/activity-groups'
-import { useSessionStore } from '../../stores/session-store'
+import { toPersistedSession, useSessionStore } from '../../stores/session-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import {
   createRuntimeStreamId,
@@ -27,6 +28,21 @@ const pendingPermissionSessionIds = new Set<string>()
 // the renderer calls suppressNextAutoReview(sessionId) so the correction turn's stop event is ignored.
 const suppressAutoReviewOnceFor = new Set<string>()
 const activityGroupToolCallIdsBySession = new Map<string, Set<string>>()
+
+type DeferredArtifactEvent = {
+  event: AcpRuntimeEvent
+  dependencies: WorkspaceRuntimeEventDependencies
+}
+
+// The runtime deliberately publishes generated files immediately before its stop event. Providers may
+// still have a terminal assistant chunk queued behind the tool result, so binding at the artifact event
+// can capture an intermediate message. Hold that one event until stop makes the renderer's terminal
+// Message/Branch projection authoritative.
+const deferredArtifactEventsBySession = new Map<string, DeferredArtifactEvent>()
+
+const resetDeferredArtifactEventsForTests = (): void => {
+  deferredArtifactEventsBySession.clear()
+}
 
 const isActivityGroupControlEvent = (event: AcpRuntimeEvent): boolean => {
   if (!event.sessionId || !event.toolCallId) return false
@@ -61,6 +77,16 @@ const getEventErrorText = (event: AcpRuntimeEvent): string =>
 const getErrorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
+// A terminal message and its Branch projection are persisted by separate runtime events. Even though
+// Artifact finalization explicitly saves first, an already-queued Session save can briefly leave the
+// main process observing the prior Branch head. Retry only this narrow, fail-closed ownership race;
+// root/Frame/Branch identity mismatches and every other validation failure remain terminal.
+const isArtifactOwnershipPersistenceRace = (error: unknown): boolean =>
+  error instanceof Error &&
+  /Artifact finalization (?:message is not a Branch descendant of its prompt|ancestry does not prove message Branch ownership)/.test(
+    error.message
+  )
+
 // Codex writes two informational diagnostics to stderr during otherwise-successful turns: skill
 // descriptions may be compacted to their context budget, and a timed-out WebSocket attempt may fall
 // back to working HTTPS. codex-acp can repeat or concatenate them, but neither asks the user to act
@@ -81,11 +107,86 @@ const isNonActionableCodexDiagnostic = (text: string): boolean => {
 
 type WorkspaceRuntimeEventDependencies = {
   finalizeRunArtifacts?: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
+  saveSession?: (session: PersistedChatSession) => Promise<void>
 }
 
 // Defaults to the preload artifact API while allowing tests to inject a fake finalizer.
 const finalizeRunArtifacts = (request: FinalizeRunArtifactsRequest): Promise<ArtifactFile[]> =>
   window.api.artifacts.finalizeRunArtifacts(request)
+
+// Artifact finalization validates its renderer-selected Message against the durable Session graph.
+// Persist that graph explicitly instead of relying on the asynchronous store saver to win the IPC race.
+const saveSessionForArtifactFinalization = (session: PersistedChatSession): Promise<void> =>
+  window.api.sessions.saveSession(session)
+
+const finalizeArtifactEvent = async (
+  event: AcpRuntimeEvent,
+  dependencies: WorkspaceRuntimeEventDependencies
+): Promise<boolean> => {
+  if (
+    event.kind !== 'artifact' ||
+    !event.sessionId ||
+    !event.runId ||
+    !event.artifactClaimId ||
+    !event.artifacts ||
+    event.artifacts.length === 0
+  ) {
+    return false
+  }
+
+  const store = useSessionStore.getState()
+  const attached = store.attachRunArtifacts({
+    sessionId: event.sessionId,
+    runId: event.runId,
+    promptMessageId: event.promptMessageId,
+    eventId: event.id,
+    artifacts: event.artifacts
+  })
+
+  if (!attached) return true
+
+  try {
+    const persistLatestSession = async (): Promise<void> => {
+      const attachedSession = useSessionStore
+        .getState()
+        .sessions.find((session) => session.id === event.sessionId)
+      if (!attachedSession) {
+        throw new Error('Artifact finalization Session is no longer available.')
+      }
+      await (dependencies.saveSession ?? saveSessionForArtifactFinalization)(
+        toPersistedSession(attachedSession)
+      )
+    }
+
+    await persistLatestSession()
+
+    const finalize = dependencies.finalizeRunArtifacts ?? finalizeRunArtifacts
+    const finalizeRequest = {
+      claimId: event.artifactClaimId,
+      messageId: attached.messageId
+    }
+    let finalizedArtifacts: ArtifactFile[]
+    try {
+      finalizedArtifacts = await finalize(finalizeRequest)
+    } catch (error) {
+      if (!isArtifactOwnershipPersistenceRace(error)) throw error
+      await persistLatestSession()
+      finalizedArtifacts = await finalize(finalizeRequest)
+    }
+
+    store.replaceMessageArtifacts({
+      sessionId: event.sessionId,
+      messageId: attached.messageId,
+      artifacts: finalizedArtifacts
+    })
+    store.clearArtifactError(event.sessionId)
+    openMoleculePreviews(event.sessionId, finalizedArtifacts)
+    return true
+  } catch (error) {
+    store.recordArtifactError(event.sessionId, getErrorText(error))
+    throw error
+  }
+}
 
 // Opens freshly generated molecular-structure artifacts in the preview panel so the OpenChemLib
 // viewer renders them without a manual click. Only molecule-format files auto-open; other artifacts
@@ -264,8 +365,15 @@ const applyWorkspaceRuntimeEvent = async (
     activityGroupToolCallIdsBySession.delete(event.sessionId)
     store.finishRun(event.sessionId)
 
+    const deferredArtifact = deferredArtifactEventsBySession.get(event.sessionId)
+    if (deferredArtifact) {
+      await finalizeArtifactEvent(deferredArtifact.event, deferredArtifact.dependencies)
+      deferredArtifactEventsBySession.delete(event.sessionId)
+    }
+
     // Trigger a background review for the just-completed turn.
-    // We read the session state AFTER finishRun so messages are complete.
+    // We read the session state after both finishRun and Artifact finalization so the scope includes
+    // the terminal message and its finalized Artifact Version ids.
     void triggerAutoReview(event.sessionId)
 
     return true
@@ -297,41 +405,13 @@ const applyWorkspaceRuntimeEvent = async (
     event.artifacts &&
     event.artifacts.length > 0
   ) {
-    // First attach pending artifacts to whichever assistant message represents this run locally.
-    const attached = store.attachRunArtifacts({
-      sessionId: event.sessionId,
-      runId: event.runId,
-      eventId: event.id,
-      artifacts: event.artifacts
-    })
-
-    if (attached) {
-      try {
-        // Then move files from pending run storage into the final message-owned directory.
-        const finalizedArtifacts = await (
-          dependencies.finalizeRunArtifacts ?? finalizeRunArtifacts
-        )({
-          claimId: event.artifactClaimId,
-          messageId: attached.messageId
-        })
-
-        // Replace temporary run paths with finalized message paths before persistence/UI rendering.
-        store.replaceMessageArtifacts({
-          sessionId: event.sessionId,
-          messageId: attached.messageId,
-          artifacts: finalizedArtifacts
-        })
-        store.clearArtifactError(event.sessionId)
-
-        // Auto-open any molecular-structure files this run produced, using the finalized paths.
-        openMoleculePreviews(event.sessionId, finalizedArtifacts)
-      } catch (error) {
-        store.recordArtifactError(event.sessionId, getErrorText(error))
-        throw error
-      }
+    const session = store.sessions.find((candidate) => candidate.id === event.sessionId)
+    if (session?.activeRun) {
+      deferredArtifactEventsBySession.set(event.sessionId, { event, dependencies })
+      return true
     }
 
-    return true
+    return finalizeArtifactEvent(event, dependencies)
   }
 
   if (event.kind === 'error' && event.sessionId) {
@@ -421,5 +501,6 @@ export {
   assembleReviewRunRequest,
   syncWorkspacePermissionState,
   suppressNextAutoReview,
-  clearSuppressNextAutoReview
+  clearSuppressNextAutoReview,
+  resetDeferredArtifactEventsForTests
 }

@@ -13,9 +13,14 @@ import {
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
-import type { UploadedAttachment } from '../../../../shared/uploads'
+import {
+  toPersistedUploadedAttachment,
+  toRuntimeUploadedAttachment,
+  type UploadedAttachment
+} from '../../../../shared/uploads'
 import type { FileReference } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
+import { getActiveConversationContext } from '../../../../shared/conversation-graph'
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import {
@@ -67,6 +72,10 @@ type SendWorkspaceMessageInput = {
   // Internal overflow-recovery handoff: that flow owns the compacting state and replaces it with the
   // retried run synchronously. Ordinary composer sends must never bypass the local compaction gate.
   allowCompactionRecovery?: boolean
+  // Edit-resend performs the reset itself so it can roll back the optimistic Branch on failure. The
+  // common send path still owns replay completion and clears the durable retry marker only after the
+  // provider accepts the prompt.
+  branchContextAlreadyReset?: boolean
 }
 
 type SendWorkspaceMessageResult = {
@@ -233,12 +242,14 @@ const failOrMarkDisconnected = async (
 const finalizeWorkspaceAttachments = async (
   sessionId: string,
   messageId: string,
-  attachments: UploadedAttachment[]
+  attachments: UploadedAttachment[],
+  projectId?: string
 ): Promise<UploadedAttachment[]> => {
   if (attachments.length === 0) return attachments
 
   // The renderer message is written before runtime work starts, so its upload paths are replaced.
   const finalizedAttachments = await window.api.uploads.finalizeSession({
+    projectId,
     sessionId,
     attachments
   })
@@ -246,12 +257,31 @@ const finalizeWorkspaceAttachments = async (
   useSessionStore.getState().replaceMessageUploads({
     sessionId,
     messageId,
-    uploads: finalizedAttachments
+    uploads: finalizedAttachments.map(toPersistedUploadedAttachment)
   })
   // Keep tabs opened from staged attachments pointed at the files after their final move.
   usePreviewWorkbenchStore.getState().reconcileFinalizedUploads(finalizedAttachments)
 
   return finalizedAttachments
+}
+
+const getPromptProvenanceContext = (
+  sessionId: string,
+  promptMessageId: string
+): ReturnType<typeof getActiveConversationContext> | { promptMessageId: string } => {
+  const graph = useSessionStore
+    .getState()
+    .sessions.find((session) => session.id === sessionId)?.conversationGraph
+  return graph ? getActiveConversationContext(graph, promptMessageId) : { promptMessageId }
+}
+
+const shutdownNotebookForBranchChange = async (
+  sessionId: string,
+  workspaceCwd: string,
+  projectName?: string
+): Promise<void> => {
+  if (typeof window === 'undefined' || !window.api?.notebook?.shutdown) return
+  await window.api.notebook.shutdown({ sessionId, workspaceCwd, projectName })
 }
 
 const processVisibleWorkspaceRuntimeEvents = async (
@@ -393,7 +423,8 @@ const startPendingSessionPrompt = (
         promptAttachments = await finalizeWorkspaceAttachments(
           runtimeSessionId,
           bound.messageId,
-          attachments
+          attachments,
+          projectName
         )
       }
     } catch (error) {
@@ -405,7 +436,18 @@ const startPendingSessionPrompt = (
     // turn's error event from a stale one when it derives the report affordance.
     const priorErrorEventId = latestPromptFailureEventId(runtime.state.events, runtimeSessionId)
     void runtime
-      .sendPrompt(runtimeSessionId, content, promptAttachments, forcedSkillIds, referencedArtifacts)
+      .sendPrompt(
+        runtimeSessionId,
+        content,
+        promptAttachments,
+        forcedSkillIds,
+        referencedArtifacts,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        getPromptProvenanceContext(runtimeSessionId, bound.messageId)
+      )
       .catch((error) => {
         // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
         // visible session error, instead of being swallowed as an unhandled rejection.
@@ -435,7 +477,8 @@ const sendWorkspaceMessage = async (
     forceHistoryReplay,
     preAppendedMessageId,
     supportsImageInput,
-    allowCompactionRecovery
+    allowCompactionRecovery,
+    branchContextAlreadyReset
   }: SendWorkspaceMessageInput
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   const content = text.trim()
@@ -495,6 +538,34 @@ const sendWorkspaceMessage = async (
       return appended
     }
 
+    // Branch activation changes only the durable projection. Before the first continuation on that
+    // path, drop both volatile contexts so neither the provider nor a live kernel can leak sibling-
+    // Branch state into the prompt. The active Branch transcript is replayed below after reset.
+    let branchContextResetPerformed = Boolean(branchContextAlreadyReset)
+    if (currentSession?.branchContextResetRequired && !branchContextAlreadyReset) {
+      const resetCwd = targetCwd || currentSession.cwd || runtime.state.cwd
+      if (!resetCwd) {
+        useSessionStore.getState().failRun(targetSessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
+        return undefined
+      }
+      try {
+        await shutdownNotebookForBranchChange(targetSessionId, resetCwd, sessionProjectName)
+        const reset = await runtime.resetSessionContext(
+          targetSessionId,
+          resetCwd,
+          sessionProjectName,
+          currentSession.permissionProfile ?? permissionProfile
+        )
+        useSessionStore
+          .getState()
+          .markResumed(targetSessionId, reset?.frameworkId, reset?.backendId)
+        branchContextResetPerformed = true
+      } catch (error) {
+        useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
+        return undefined
+      }
+    }
+
     // A framework switch applies at the next turn boundary. The retiring runtime may still expose the
     // old session for a brief teardown window, so compare persisted ownership as well as the snapshot.
     const frameworkChanged = Boolean(
@@ -503,7 +574,8 @@ const sendWorkspaceMessage = async (
       agentFrameworkId !== currentSession.agentFrameworkId
     )
     const shouldResumeSession =
-      frameworkChanged || !runtime.state.sessionIds.includes(targetSessionId)
+      !branchContextResetPerformed &&
+      (frameworkChanged || !runtime.state.sessionIds.includes(targetSessionId))
     let resumeCwd: string | undefined
 
     if (shouldResumeSession) {
@@ -577,9 +649,12 @@ const sendWorkspaceMessage = async (
     // happened (interrupted-resume path — its internal re-resume above hits an already-attached session
     // and can't report the reset again). historyMessages ends before the newly appended user message,
     // so this is the prior conversation only — the turn being sent is not duplicated in.
-    if ((contextResetFromResume || forceHistoryReplay) && historyMessages) {
+    if (
+      (branchContextResetPerformed || contextResetFromResume || forceHistoryReplay) &&
+      historyMessages
+    ) {
       historyPreamble = buildHistoryPreamble(historyMessages)
-      const media = buildHistoryReplayMedia(historyMessages)
+      const media = buildHistoryReplayMedia(historyMessages, sessionProjectName)
       if (
         supportsImageInput === false &&
         (media.images.length > 0 || media.attachments.length > 0)
@@ -594,7 +669,7 @@ const sendWorkspaceMessage = async (
     const resumeFallback =
       forcedSkillIds && forcedSkillIds.length > 0 && historyMessages
         ? (() => {
-            const media = buildHistoryReplayMedia(historyMessages)
+            const media = buildHistoryReplayMedia(historyMessages, sessionProjectName)
             return {
               historyPreamble: buildHistoryPreamble(historyMessages),
               historyAttachments: media.attachments,
@@ -611,7 +686,8 @@ const sendWorkspaceMessage = async (
         promptAttachments = await finalizeWorkspaceAttachments(
           targetSessionId,
           appended.messageId,
-          attachments
+          attachments,
+          sessionProjectName
         )
       }
     } catch (error) {
@@ -634,8 +710,15 @@ const sendWorkspaceMessage = async (
         historyPreamble,
         historyAttachments,
         historyImages,
-        resumeFallback
+        resumeFallback,
+        getPromptProvenanceContext(targetSessionId, appended.messageId)
       )
+      .then((snapshot) => {
+        if (branchContextResetPerformed) {
+          useSessionStore.getState().clearBranchContextReset(targetSessionId)
+        }
+        return snapshot
+      })
       .catch((error) => {
         // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
         // visible session error, instead of being swallowed as an unhandled rejection.
@@ -757,7 +840,9 @@ const resumeInterruptedWorkspaceSession = async (
   await sendWorkspaceMessage(runtime, {
     sessionId,
     text: interruptedTurn.content,
-    attachments: interruptedTurn.uploads ?? [],
+    attachments: (interruptedTurn.uploads ?? []).map((upload) =>
+      toRuntimeUploadedAttachment(upload, session.projectId)
+    ),
     parts: interruptedTurn.parts,
     cwd: resumeCwd,
     projectId: session.projectId,
@@ -924,7 +1009,9 @@ const recoverContextOverflowWorkspaceSession = async (
   const retried = await sendWorkspaceMessage(retryRuntime, {
     sessionId,
     text: interruptedTurn.content,
-    attachments: interruptedTurn.uploads ?? [],
+    attachments: (interruptedTurn.uploads ?? []).map((upload) =>
+      toRuntimeUploadedAttachment(upload, session.projectId)
+    ),
     parts: interruptedTurn.parts,
     cwd: resumeCwd,
     projectId: session.projectId,
@@ -958,8 +1045,9 @@ const cancelWorkspaceRun = async (
   }
 }
 
-// Resends an inline-edited prompt by truncating the conversation at the edited message. The cut and
-// the adjusted prompt's bubble are applied optimistically — the run is marked and the waiting
+// Resends an inline-edited prompt by forking the conversation at the edited message. The active
+// projection switches optimistically while the original downstream Branch remains durable; the
+// adjusted prompt's bubble is applied and the run is marked, so the waiting
 // indicator shows immediately, like a composer send — then the agent session is reset (ACP has no
 // history truncation) and the kept turns are replayed as a text preamble on the resent prompt. A
 // failed reset rolls the transcript back so nothing is lost. Returns false when the flow cannot
@@ -987,7 +1075,7 @@ const resendEditedWorkspaceMessage = async (
     return false
   }
 
-  // Validate replay compatibility before the destructive cut: a kept history with images — whether
+  // Validate replay compatibility before the Branch switch: a kept history with images — whether
   // agent-emitted blocks or user uploads — cannot be replayed on a model without image input, and
   // discovering that after the truncation would leave the later turns dropped with no prompt dispatched.
   const replayMedia = buildHistoryReplayMedia(session.messages.slice(0, cutIndex))
@@ -1000,8 +1088,8 @@ const resendEditedWorkspaceMessage = async (
     return false
   }
 
-  // The optimistic cut + append: the edited message and every later turn drop out, and the adjusted
-  // prompt takes their place as a live run with its bubble and waiting indicator already visible.
+  // The optimistic Branch projection + append replaces the visible downstream path while retaining
+  // the original Branch in Session JSON; the adjusted prompt becomes a live run immediately.
   const preEditSession = session
   useSessionStore.getState().truncateSessionFromMessage(input.sessionId, input.messageId)
   const appended = useSessionStore.getState().appendUserMessage({
@@ -1017,6 +1105,7 @@ const resendEditedWorkspaceMessage = async (
   if (!appended) return false
 
   try {
+    await shutdownNotebookForBranchChange(input.sessionId, resumeCwd, session.projectId)
     await runtime.resetSessionContext(
       input.sessionId,
       resumeCwd,
@@ -1047,6 +1136,7 @@ const resendEditedWorkspaceMessage = async (
     forceHistoryReplay: true,
     preAppendedMessageId: appended.messageId,
     supportsImageInput,
+    branchContextAlreadyReset: true,
     agentModel
   })
 

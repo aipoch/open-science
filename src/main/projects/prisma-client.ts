@@ -51,8 +51,7 @@ const REVIEW_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "Review" (
 const REVIEW_ADD_REVIEWER_LOG_DDL = `ALTER TABLE "Review" ADD COLUMN "reviewerLog" TEXT NOT NULL DEFAULT '[]'`
 
 // Migration: add the `status` column to Finding if it doesn't exist yet (for DBs that have the old
-// `severity` column). This is safe to run multiple times (ALTER TABLE ... ADD COLUMN is idempotent
-// when guarded by a catch on the DUPLICATE COLUMN error).
+// `severity` column). The schema guard below checks the desired column before applying this DDL.
 const FINDING_ADD_STATUS_COLUMN_DDL = `ALTER TABLE "Finding" ADD COLUMN "status" TEXT NOT NULL DEFAULT 'pass'`
 
 // The FOREIGN KEY ... ON DELETE CASCADE matches Prisma's generated DDL; the reviewer repository also
@@ -76,8 +75,8 @@ const FINDING_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "Finding" (
 );`
 
 // Migration guard: add the `reflagCount` column to Finding if it doesn't exist yet (for DBs that
-// predate issue 15). Idempotent — the catch swallows the duplicate-column error from SQLite (which
-// does not support IF NOT EXISTS on ALTER TABLE ADD COLUMN).
+// predate issue 15). SQLite does not support IF NOT EXISTS on ALTER TABLE ADD COLUMN, so the schema
+// guard below proves the column postcondition explicitly.
 const FINDING_ADD_REFLAG_COUNT_DDL = `ALTER TABLE "Finding" ADD COLUMN "reflagCount" INTEGER NOT NULL DEFAULT 0`
 const FINDING_ADD_ARTIFACT_BINDING_STATE_DDL = `ALTER TABLE "Finding" ADD COLUMN "artifactBindingState" TEXT NOT NULL DEFAULT 'legacy_unverified'`
 
@@ -405,12 +404,10 @@ const COMPUTE_JOB_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ComputeJob" (
 );`
 
 // Migration guard: add lastPollError to ComputeJob for DBs created before compute-jobs issue 02.
-// Catch swallows the duplicate-column error (SQLite has no IF NOT EXISTS on ALTER TABLE ADD COLUMN).
 const COMPUTE_JOB_ADD_LAST_POLL_ERROR_DDL = `ALTER TABLE "ComputeJob" ADD COLUMN "lastPollError" TEXT`
 
 // Migration guards: add the 4 new Phase 3b harvest columns to ComputeJob for DBs created before
 // compute-harvest issue 01. Each is nullable and defaults to NULL so existing rows are unaffected.
-// Catch swallows the duplicate-column error (idempotent on repeat runs).
 const COMPUTE_JOB_ADD_HARVEST_ERROR_DDL = `ALTER TABLE "ComputeJob" ADD COLUMN "harvestError" TEXT`
 const COMPUTE_JOB_ADD_LEFT_ON_REMOTE_DDL = `ALTER TABLE "ComputeJob" ADD COLUMN "leftOnRemote" TEXT`
 const COMPUTE_JOB_ADD_NOTIFIED_AT_DDL = `ALTER TABLE "ComputeJob" ADD COLUMN "notifiedAt" DATETIME`
@@ -431,6 +428,40 @@ const createProjectDbClient = (storageRoot: string): PrismaClient => {
   return new PrismaClient({ datasources: { db: { url: `file:${dbPath}` } } })
 }
 
+type SqliteTableColumn = { name: string }
+
+const quoteSqliteIdentifier = (value: string): string => `"${value.replaceAll('"', '""')}"`
+
+const hasTableColumn = async (
+  client: PrismaClient,
+  tableName: string,
+  columnName: string
+): Promise<boolean> => {
+  const columns = await client.$queryRawUnsafe<SqliteTableColumn[]>(
+    `PRAGMA table_info(${quoteSqliteIdentifier(tableName)})`
+  )
+  return columns.some((column) => column.name === columnName)
+}
+
+// SQLite does not support ALTER TABLE ... ADD COLUMN IF NOT EXISTS. Prove the desired postcondition
+// instead of interpreting an engine-specific error string: a failed ALTER is ignored only when a
+// second schema read confirms that another initializer added the exact column concurrently.
+const addColumnIfMissing = async (
+  client: PrismaClient,
+  tableName: string,
+  columnName: string,
+  ddl: string
+): Promise<void> => {
+  if (await hasTableColumn(client, tableName, columnName)) return
+
+  try {
+    await client.$executeRawUnsafe(ddl)
+  } catch (error) {
+    if (await hasTableColumn(client, tableName, columnName)) return
+    throw error
+  }
+}
+
 // Creates the schema if missing. Idempotent; no projects are seeded, so a fresh install starts empty.
 const ensureProjectSchema = async (client: PrismaClient): Promise<void> => {
   await client.$executeRawUnsafe(PROJECT_TABLE_DDL)
@@ -439,22 +470,29 @@ const ensureProjectSchema = async (client: PrismaClient): Promise<void> => {
   await client.$executeRawUnsafe(FINDING_TABLE_DDL)
 
   // Migration guard: if this is an old DB with `severity` but not `status`, add the status column.
-  // Catch ignores the error when the column already exists (no IF NOT EXISTS in SQLite ALTER TABLE).
-  await client.$executeRawUnsafe(FINDING_ADD_STATUS_COLUMN_DDL).catch(() => undefined)
+  await addColumnIfMissing(client, 'Finding', 'status', FINDING_ADD_STATUS_COLUMN_DDL)
 
   // Migration guard: if this is an old DB with `reasoning` but not `reviewerLog`, add the new column.
-  // Catch ignores the error when the column already exists (no IF NOT EXISTS in SQLite ALTER TABLE).
-  await client.$executeRawUnsafe(REVIEW_ADD_REVIEWER_LOG_DDL).catch(() => undefined)
+  await addColumnIfMissing(client, 'Review', 'reviewerLog', REVIEW_ADD_REVIEWER_LOG_DDL)
 
   // Migration guard: add reflagCount to Finding for DBs created before issue 15.
-  // Catch ignores the error when the column already exists (no IF NOT EXISTS in SQLite ALTER TABLE).
-  await client.$executeRawUnsafe(FINDING_ADD_REFLAG_COUNT_DDL).catch(() => undefined)
-  await client.$executeRawUnsafe(FINDING_ADD_ARTIFACT_BINDING_STATE_DDL).catch(() => undefined)
+  await addColumnIfMissing(client, 'Finding', 'reflagCount', FINDING_ADD_REFLAG_COUNT_DDL)
+  await addColumnIfMissing(
+    client,
+    'Finding',
+    'artifactBindingState',
+    FINDING_ADD_ARTIFACT_BINDING_STATE_DDL
+  )
 
   await client.$executeRawUnsafe(PROJECT_DELETION_INTENT_TABLE_DDL)
   await client.$executeRawUnsafe(MANAGED_FILE_TABLE_DDL)
-  await client.$executeRawUnsafe(MANAGED_FILE_ADD_SOURCE_VERSION_ID_DDL).catch(() => undefined)
-  await client.$executeRawUnsafe(MANAGED_FILE_ADD_CHECKSUM_DDL).catch(() => undefined)
+  await addColumnIfMissing(
+    client,
+    'ManagedFile',
+    'sourceVersionId',
+    MANAGED_FILE_ADD_SOURCE_VERSION_ID_DDL
+  )
+  await addColumnIfMissing(client, 'ManagedFile', 'checksum', MANAGED_FILE_ADD_CHECKSUM_DDL)
   await client.$executeRawUnsafe(MANAGED_FILE_SESSION_SYNC_TABLE_DDL)
 
   for (const ddl of MANAGED_FILE_INDEX_DDLS) {
@@ -466,7 +504,12 @@ const ensureProjectSchema = async (client: PrismaClient): Promise<void> => {
   await client.$executeRawUnsafe(UPLOAD_FILE_TABLE_DDL)
   await client.$executeRawUnsafe(UPLOAD_VERSION_TABLE_DDL)
   await client.$executeRawUnsafe(ARTIFACT_MESSAGE_SNAPSHOT_TABLE_DDL)
-  await client.$executeRawUnsafe(ARTIFACT_MESSAGE_SNAPSHOT_ADD_CHECKSUM_DDL).catch(() => undefined)
+  await addColumnIfMissing(
+    client,
+    'ArtifactMessageSnapshot',
+    'checksum',
+    ARTIFACT_MESSAGE_SNAPSHOT_ADD_CHECKSUM_DDL
+  )
   await client.$executeRawUnsafe(ARTIFACT_VERSION_TABLE_DDL)
   await client.$executeRawUnsafe(ARTIFACT_VERSION_INPUT_TABLE_DDL)
   await client.$executeRawUnsafe(REVIEW_FINDING_DISPOSITION_TABLE_DDL)
@@ -489,17 +532,24 @@ const ensureProjectSchema = async (client: PrismaClient): Promise<void> => {
   await client.$executeRawUnsafe(COMPUTE_JOB_STATUS_INDEX_DDL)
 
   // Migration guard: add lastPollError column for DBs created before compute-jobs issue 02.
-  // Catch swallows duplicate-column error (idempotent on repeat calls).
-  await client.$executeRawUnsafe(COMPUTE_JOB_ADD_LAST_POLL_ERROR_DDL).catch(() => undefined)
+  await addColumnIfMissing(
+    client,
+    'ComputeJob',
+    'lastPollError',
+    COMPUTE_JOB_ADD_LAST_POLL_ERROR_DDL
+  )
 
   // Migration guards: add Phase 3b harvest columns for DBs created before compute-harvest issue 01.
   // Each column is nullable (default NULL), so existing rows are unaffected (CLAUDE.md requirement).
-  await client.$executeRawUnsafe(COMPUTE_JOB_ADD_HARVEST_ERROR_DDL).catch(() => undefined)
-  await client.$executeRawUnsafe(COMPUTE_JOB_ADD_LEFT_ON_REMOTE_DDL).catch(() => undefined)
-  await client.$executeRawUnsafe(COMPUTE_JOB_ADD_NOTIFIED_AT_DDL).catch(() => undefined)
-  await client
-    .$executeRawUnsafe(COMPUTE_JOB_ADD_NOTIFICATION_CONSUMED_AT_DDL)
-    .catch(() => undefined)
+  await addColumnIfMissing(client, 'ComputeJob', 'harvestError', COMPUTE_JOB_ADD_HARVEST_ERROR_DDL)
+  await addColumnIfMissing(client, 'ComputeJob', 'leftOnRemote', COMPUTE_JOB_ADD_LEFT_ON_REMOTE_DDL)
+  await addColumnIfMissing(client, 'ComputeJob', 'notifiedAt', COMPUTE_JOB_ADD_NOTIFIED_AT_DDL)
+  await addColumnIfMissing(
+    client,
+    'ComputeJob',
+    'notificationConsumedAt',
+    COMPUTE_JOB_ADD_NOTIFICATION_CONSUMED_AT_DDL
+  )
 }
 
 let clientPromise: Promise<PrismaClient> | undefined

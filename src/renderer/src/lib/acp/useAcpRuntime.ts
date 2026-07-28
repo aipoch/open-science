@@ -76,7 +76,8 @@ const useAcpRuntime = (): {
     historyPreamble?: AcpPromptRequest['historyPreamble'],
     historyAttachments?: AcpPromptRequest['historyAttachments'],
     historyImages?: AcpPromptRequest['historyImages'],
-    resumeFallback?: AcpPromptRequest['resumeFallback']
+    resumeFallback?: AcpPromptRequest['resumeFallback'],
+    provenanceContext?: AcpPromptRequest['provenanceContext']
   ) => Promise<AcpStateSnapshot>
   respondToPermission: (
     requestId: string,
@@ -286,7 +287,8 @@ const useAcpRuntime = (): {
       historyPreamble?: AcpPromptRequest['historyPreamble'],
       historyAttachments?: AcpPromptRequest['historyAttachments'],
       historyImages?: AcpPromptRequest['historyImages'],
-      resumeFallback?: AcpPromptRequest['resumeFallback']
+      resumeFallback?: AcpPromptRequest['resumeFallback'],
+      provenanceContext?: AcpPromptRequest['provenanceContext']
     ) =>
       runSendPromptAction(() =>
         window.api.acp.sendPrompt({
@@ -301,7 +303,8 @@ const useAcpRuntime = (): {
           ...(historyPreamble ? { historyPreamble } : {}),
           ...(historyAttachments && historyAttachments.length > 0 ? { historyAttachments } : {}),
           ...(historyImages && historyImages.length > 0 ? { historyImages } : {}),
-          ...(resumeFallback ? { resumeFallback } : {})
+          ...(resumeFallback ? { resumeFallback } : {}),
+          ...(provenanceContext ? { provenanceContext } : {})
         })
       ),
     [runSendPromptAction]

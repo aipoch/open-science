@@ -5,6 +5,8 @@ import { app, BrowserWindow, ipcMain, net, Notification, protocol, webContents }
 
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
+import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
+import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-message-snapshot'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
 import {
   registerComputeIpcHandlers,
@@ -60,10 +62,12 @@ import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { registerRuntimeIpcHandlers } from './notebook/runtime-ipc'
 import { getRuntimeRoot } from './notebook/repository'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
+import { NotebookInputRegistry } from './notebook/input-registry'
 import { effectiveMirrorAsync } from './notebook/mirror-probe'
 import { createProductionProvisioner, type RuntimeProvisioner } from './notebook/provisioner'
 import { runtimeRoot } from './notebook/runtime-paths'
 import type { NotebookEnvironmentManager } from './notebook/runtime-service'
+import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
 import type { NotebookLanguage } from '../shared/notebook'
 import { OFFICE_PREVIEW_STATE_CHANNEL } from '../shared/office-preview'
 import { prepareExternalPythonRuntime } from './notebook/venv-overlay'
@@ -192,6 +196,17 @@ const registerIpcHandlers = async ({
 
   // Constructed once here (rather than left to each register*IpcHandlers' own default) so the
   // one-time legacy-path normalization pass below can share the exact instances the IPC surface uses.
+  const uploadRepository = createDefaultUploadRepository()
+  try {
+    await uploadRepository.recoverStagingUploads()
+  } catch (error) {
+    // Ready bytes remain fail-closed; keep startup available so Files can surface unaffected rows and
+    // the next launch can retry any recoverable staging Version.
+    createLogger('storage').error(
+      'staging upload recovery incomplete; will retry next launch',
+      error
+    )
+  }
   const sessionRepository = createDefaultSessionRepository()
   const projectRepository = createDefaultProjectRepository()
   const previewStateRepository = createDefaultPreviewStateRepository()
@@ -204,6 +219,7 @@ const registerIpcHandlers = async ({
     try {
       await normalizeLegacyDataPaths({
         sessionRepository,
+        sessionUploads: uploadRepository,
         previewStateRepository,
         projectRepository,
         dataRoot: resolveDataRoot()
@@ -219,17 +235,45 @@ const registerIpcHandlers = async ({
 
   // Share one repository and registry so runtime artifact claims and renderer finalization meet.
   const artifactRepository = createDefaultArtifactRepository()
+  const artifactProvenanceRepository = new ArtifactProvenanceRepository({
+    storageRoot: resolveDataRoot(),
+    getClient: () => getProjectDbClient(resolveStorageRoot()),
+    compatibilityRepository: artifactRepository,
+    loadSession: (projectId, appSessionId) => sessionRepository.loadSession(projectId, appSessionId)
+  })
+  const provenanceMessageSnapshots = new ProvenanceMessageSnapshotRepository({
+    storageRoot: resolveDataRoot(),
+    getClient: () => getProjectDbClient(resolveStorageRoot())
+  })
   const artifactRunRegistry = new ArtifactRunRegistry()
-  // Share one upload repository so composer staging, prompt finalization, and previews agree.
-  const uploadRepository = createDefaultUploadRepository()
+  // The upload repository above is shared so staging recovery, Session upgrade, prompt finalization,
+  // and previews all observe one durable Version authority.
+  const notebookInputRegistry = new NotebookInputRegistry({
+    storageRoot: resolveDataRoot(),
+    getClient: () => getProjectDbClient(resolveStorageRoot())
+  })
   // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
   const resolveManagedFilePath = (
-    source: 'artifact' | 'upload',
-    request: { path: string }
+    source: 'artifact' | 'upload' | 'notebook-input',
+    request: { path: string; projectId?: string; sessionId?: string }
   ): Promise<string> =>
     source === 'artifact'
-      ? artifactRepository.resolveManagedFilePath(request)
-      : uploadRepository.resolveManagedUploadPath(request)
+      ? (() => {
+          const versionIdentity = parseArtifactVersionLocator(request.path)
+          return versionIdentity
+            ? artifactProvenanceRepository
+                .resolveVersionContent(versionIdentity)
+                .then((resolved) => resolved.path)
+            : artifactRepository.resolveManagedFilePath(request)
+        })()
+      : source === 'upload'
+        ? uploadRepository.resolveManagedUploadPath(request, {
+            projectId: request.projectId,
+            sessionId: request.sessionId
+          })
+        : notebookInputRegistry
+            .resolvePreviewKey(request.path)
+            .then((target) => target.absolutePath)
   // One registry owns short-lived capability URLs for both managed artifact repositories.
   const previewResources = new ManagedPreviewResources({
     resolvePath: resolveManagedFilePath
@@ -246,14 +290,18 @@ const registerIpcHandlers = async ({
   const sessionPersistenceCoordinator = new SessionPersistenceCoordinator(
     sessionRepository,
     projectFilesRepository,
-    (event) => broadcastToRenderers('project-files:changed', event)
+    (event) => broadcastToRenderers('project-files:changed', event),
+    provenanceMessageSnapshots,
+    uploadRepository,
+    artifactProvenanceRepository
   )
   const reviewRepository = createDefaultReviewRepository()
   const projectDeletionCoordinator = new ProjectDeletionCoordinator(
     projectRepository,
     sessionPersistenceCoordinator,
     previewStateRepository,
-    reviewRepository
+    reviewRepository,
+    artifactProvenanceRepository
   )
   const sessionPersistenceBackend: SessionPersistenceBackend = {
     loadAll: async () => {
@@ -426,7 +474,22 @@ const registerIpcHandlers = async ({
   const notebookRpcServer = new NotebookLocalRpcServer(notebookService, {
     connectorService,
     computeService: computeServiceWithRegistry,
-    skillImporter: conversationSkillImporter
+    skillImporter: conversationSkillImporter,
+    artifactProvenance: {
+      createVersion: (request) =>
+        sessionPersistenceCoordinator.runSessionMutation(
+          request.projectId,
+          request.appSessionId,
+          () => artifactProvenanceRepository.createVersion(request)
+        ),
+      replayVersion: (request) =>
+        sessionPersistenceCoordinator.runSessionMutation(
+          request.projectId,
+          request.appSessionId,
+          () => artifactProvenanceRepository.replayVersion(request)
+        )
+    },
+    inputRegistry: notebookInputRegistry
   })
   // The RPC server needs the runtime service to dispatch to, and the runtime service needs the RPC
   // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to
@@ -493,10 +556,11 @@ const registerIpcHandlers = async ({
     mcpEntryPath: mainEntryPath,
     repository: artifactRepository,
     runRegistry: artifactRunRegistry,
+    provenanceRepository: artifactProvenanceRepository,
     uploadRepository,
     notebookRpcServer,
-    authorizeSkillImportReferencedUploads: (sessionId, paths) =>
-      conversationSkillImporter.authorizeReferencedUploads(sessionId, paths),
+    authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
+      conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),
     settingsService,
     taskNotifications,
     onSessionTurnStarted: (sessionId, turnToken) =>
@@ -709,10 +773,21 @@ const registerIpcHandlers = async ({
     getActivePromptSessions: () => runtime.getActivePromptSessions(),
     settingsService
   })
-  registerArtifactIpcHandlers(artifactRepository, artifactRunRegistry, () =>
-    runtimeRef.current ? runtimeRef.current.getActiveArtifactRunIds() : []
+  registerArtifactIpcHandlers(
+    artifactRepository,
+    artifactRunRegistry,
+    () => (runtimeRef.current ? runtimeRef.current.getActiveArtifactRunIds() : []),
+    artifactProvenanceRepository,
+    (projectId, sessionId, mutation) =>
+      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
   )
-  registerUploadIpcHandlers(uploadRepository)
+  registerUploadIpcHandlers(uploadRepository, {
+    withSessionMutation: (projectId, sessionId, mutation) =>
+      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
+  })
+  ipcMain.handle('notebook:read-input-preview', (_event, request) =>
+    notebookInputRegistry.readPreview(request)
+  )
   registerSessionPersistenceIpcHandlers(sessionPersistenceBackend, reviewRepository)
   registerProjectFilesIpcHandlers(
     projectFilesRepository,
@@ -727,7 +802,12 @@ const registerIpcHandlers = async ({
   // and 'reviewer:get-for-session' so the renderer's fire-and-forget reviewer calls resolve to
   // real handlers instead of no-ops. Passing the already-constructed AcpRuntime so the reviewer
   // can spawn sessions under the same agent connection.
-  registerReviewerIpcHandlers({ acpRuntime: runtime })
+  registerReviewerIpcHandlers({
+    acpRuntime: runtime,
+    artifactProvenanceRepository,
+    withSessionMutation: (projectId, sessionId, mutation) =>
+      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
+  })
 
   // Return the long-lived backend handles so the app lifecycle (before-quit) can shut them down
   // cleanly on quit — the agent process tree and every notebook kernel.

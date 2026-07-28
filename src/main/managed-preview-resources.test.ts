@@ -62,7 +62,11 @@ describe('ManagedPreviewResources', () => {
       mimeType: 'application/pdf',
       version: expect.any(Number)
     })
-    expect(resolvePath).toHaveBeenCalledWith('artifact', { path: filePath })
+    expect(resolvePath).toHaveBeenCalledWith('artifact', {
+      source: 'artifact',
+      path: filePath,
+      mimeType: 'application/pdf'
+    })
     await expect(
       resources.readRange(17, { resourceId: resource.id, begin: 2, end: 6 })
     ).resolves.toEqual({

@@ -127,8 +127,9 @@ import {
   type FileReferenceResolver
 } from './file-reference-resolver'
 import type { UploadRepository } from '../uploads/repository'
-import type { UploadedAttachment } from '../../shared/uploads'
+import { DEFAULT_UPLOAD_PROJECT_NAME, type UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, FileReference } from '../../shared/artifacts'
+import type { ArtifactRpcCapabilityBinding } from '../../shared/artifact-provenance'
 import { isMediaOverflowError } from '../../shared/media-overflow'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import { REVIEWER_MCP_SERVER_NAME, REVIEWER_MCP_TOOLS } from '../../shared/reviewer'
@@ -238,6 +239,13 @@ type AcpRuntimeArtifactOptions = {
   mcpCommand?: string
   repository?: ArtifactRepository
   runRegistry?: ArtifactRunRegistry
+  getRpcConnection?: () => Promise<NotebookRpcConnection>
+  issueRpcCapability?: (binding: ArtifactRpcCapabilityBinding) => string
+  revokeRpcCapability?: (token: string) => void
+  provenance?: Pick<
+    import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
+    'listRunVersions' | 'writeAppGeneratedVersion'
+  >
 }
 
 type AcpRuntimeUploadOptions = {
@@ -245,9 +253,19 @@ type AcpRuntimeUploadOptions = {
 }
 
 type ActiveArtifactRun = {
+  appSessionId: string
   runId: string
   artifactSessionId: string
   currentRunFile: string
+  rootFrameId: string
+  agentFrameId: string
+  messageBranchId: string
+  messageBranchAncestry: string[]
+  messageAncestry: string[]
+  runtimeSegmentId: string
+  promptMessageId: string
+  agentName: string
+  rpcCapabilityToken?: string
 }
 
 type AcpRuntimeNotebookOptions = {
@@ -256,6 +274,17 @@ type AcpRuntimeNotebookOptions = {
   mcpCommand?: string
   getRpcConnection?: () => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
+  setArtifactProvenanceContext?: (
+    sessionId: string,
+    context: import('../../shared/notebook').NotebookRunProvenanceContext | undefined
+  ) => void
+  registerTurnInputs?: (request: {
+    projectId: string
+    appSessionId: string
+    promptMessageId: string
+    uploads: UploadedAttachment[]
+    references: FileReference[]
+  }) => Promise<void>
 }
 
 type AcpRuntimeSkillImportOptions = {
@@ -266,7 +295,11 @@ type AcpRuntimeSkillImportOptions = {
   isEnabled?: () => Promise<boolean>
   getRpcConnection: () => Promise<SkillImportRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
-  authorizeReferencedUploads?: (sessionId: string, paths: string[]) => Promise<() => void>
+  authorizeReferencedUploads?: (
+    projectId: string,
+    sessionId: string,
+    paths: string[]
+  ) => Promise<() => void>
 }
 
 type AcpRuntimeActivityGroupOptions = {
@@ -293,7 +326,14 @@ type CodexMcpToolIdentity = {
 
 type OpenCodeMcpToolInput = {
   title: string
+  providerToolName: string
   rawInput?: unknown
+}
+
+type ClaudeCodeMcpToolInput = {
+  title: string
+  providerToolName: string
+  rawInput: Record<string, unknown>
 }
 
 type OpenCodePermissionContextWaitOutcome = 'ready' | 'timeout' | 'cancelled'
@@ -379,6 +419,7 @@ const codexMcpToolIdentity = (
 const MAX_EVENTS = 500
 // Bounds pending Codex MCP identities even if an agent never emits terminal tool updates.
 const MAX_CODEX_MCP_TOOL_IDENTITIES_PER_SESSION = 32
+const MAX_CLAUDE_CODE_MCP_TOOL_INPUTS_PER_SESSION = 32
 const MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION = 32
 const MAX_PERMISSION_CODE_PREVIEW_CHARS = 7_500
 const OPENCODE_PERMISSION_CONTEXT_WAIT_MS = 1_000
@@ -404,7 +445,9 @@ const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
   '<open_science_artifact_instructions>',
   'When this turn creates or saves local user-facing files such as images, documents, reports, data exports, XML, SVG, HTML, CSV, PDF, or archives, you MUST save them through the MCP tool `write_artifact_file` from the `open-science-artifacts` server.',
   'Do not save generated user-facing files directly into the workspace or current directory unless the user explicitly asks to modify project files.',
-  'Pass only the filename, MIME type, and either inline content or a local source path to `write_artifact_file`; the app assigns the project, session, run, and final message location.',
+  'Pass the filename, MIME type, and either inline content or a local source path to `write_artifact_file`; the app assigns the project, session, Artifact run, and final message location.',
+  'If a Notebook, REPL, or shell execution produced the file, also pass `producerRunId` with the exact `runId` returned by the execution that created or last modified it. Omit `producerRunId` only when no Notebook execution produced the file; never use the Artifact run ID as the producer.',
+  'Only claim a generated file is available after `write_artifact_file` succeeds. If it fails or is denied, state that the local file may exist but was not saved as an Artifact, and do not present it as downloadable.',
   'After using the tool, mention the generated filename rather than an absolute filesystem path. The app will display the generated file list below your message.',
   'Never write files inside a skill directory — loaded skills are read-only; route any file a skill generates through `write_artifact_file`.',
   '</open_science_artifact_instructions>'
@@ -630,6 +673,10 @@ class AcpRuntime {
   // Codex splits an MCP approval across two ACP messages: tool_call carries the identity/arguments,
   // then request_permission carries only the call id. Retain only pending identities until consumed.
   private readonly codexMcpToolIdentities = new Map<string, Map<string, CodexMcpToolIdentity>>()
+  // Claude Code can omit provider metadata from request_permission even though the preceding tool_call
+  // carries the exact qualified MCP title and arguments. Bind those two messages by call id so the
+  // Artifact save exception never has to trust an isolated, presentation-only permission title.
+  private readonly claudeCodeMcpToolInputs = new Map<string, Map<string, ClaudeCodeMcpToolInput>>()
   // OpenCode sends the MCP name in request_permission but drops its arguments to `{}`. The immediately
   // preceding tool update carries those arguments under the same call id, so retain them until the
   // permission arrives. This is required for notebook runtime separation and permission preview.
@@ -763,6 +810,7 @@ class AcpRuntime {
   private skillImportEnabled = true
   private artifactSessionSequence = 0
   private artifactRunSequence = 0
+  private readonly runtimeInstanceId = randomUUID()
   private notebookSessionSequence = 0
   private skillImportSessionSequence = 0
   // The in-flight artifact run keyed by app session id, so app-side tools (e.g. molecule preview)
@@ -1508,6 +1556,7 @@ class AcpRuntime {
     // agent session. Provider tool context must not survive because a fresh agent may reuse call ids.
     this.cancelPermissionFlowForSession(request.sessionId)
     this.codexMcpToolIdentities.delete(request.sessionId)
+    this.claudeCodeMcpToolInputs.delete(request.sessionId)
 
     if (attached) {
       attached.dispose()
@@ -2187,6 +2236,7 @@ class AcpRuntime {
       this.latestSessionConfigOptions.clear()
       this.sessionMcpServerNames.clear()
       this.codexMcpToolIdentities.clear()
+      this.claudeCodeMcpToolInputs.clear()
       this.codexSkillActivity.clear()
       this.clearAllOpenCodePermissionToolContext()
       this.sessionProjectNames.clear()
@@ -2475,7 +2525,7 @@ class AcpRuntime {
 
     try {
       // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
-      artifactRun = await this.activateArtifactRun(request.sessionId)
+      artifactRun = await this.activateArtifactRun(request.sessionId, request.provenanceContext)
       if (artifactRun) {
         this.activeArtifactRuns.set(request.sessionId, artifactRun)
       } else {
@@ -2727,6 +2777,7 @@ class AcpRuntime {
         if (cancelTimer) this.clearTimer(cancelTimer)
         this.cancelTimers.delete(request.sessionId)
         this.codexMcpToolIdentities.delete(request.sessionId)
+        this.claudeCodeMcpToolInputs.delete(request.sessionId)
         this.clearOpenCodePermissionToolContext(request.sessionId)
         this.currentPromptTurnBySession.delete(request.sessionId)
         this.promptInFlightSessionIds.delete(request.sessionId)
@@ -2874,6 +2925,7 @@ class AcpRuntime {
     this.latestSessionConfigOptions.delete(request.sessionId)
     this.sessionMcpServerNames.delete(request.sessionId)
     this.codexMcpToolIdentities.delete(request.sessionId)
+    this.claudeCodeMcpToolInputs.delete(request.sessionId)
     this.clearOpenCodePermissionToolContext(request.sessionId)
     this.sessionProjectNames.delete(request.sessionId)
     this.sessionFrameworks.delete(request.sessionId)
@@ -3029,6 +3081,8 @@ class AcpRuntime {
   ): Promise<string | ContentBlock[]> {
     const attachments = [...(request.historyAttachments ?? []), ...(request.attachments ?? [])]
     const referencedArtifacts = request.referencedArtifacts ?? []
+    const currentUploadIds = new Set((request.attachments ?? []).map((attachment) => attachment.id))
+    let finalizedCurrentUploads: UploadedAttachment[] = []
 
     if (
       attachments.length === 0 &&
@@ -3071,7 +3125,11 @@ class AcpRuntime {
 
       const finalizedAttachments = await this.uploadRepository.finalizePendingSessionUploads(
         sessionId,
-        attachments
+        attachments,
+        this.resolveSessionProjectName(sessionId)
+      )
+      finalizedCurrentUploads = finalizedAttachments.filter((attachment) =>
+        currentUploadIds.has(attachment.id)
       )
 
       // Keep the user's text first, then append files in the same order they were added. A file may
@@ -3094,6 +3152,22 @@ class AcpRuntime {
       for (const block of blocks) {
         appendBlock(block, this.imageOverflowResourceLink(block, reference.name))
       }
+    }
+
+    if (
+      this.notebookOptions?.registerTurnInputs &&
+      (finalizedCurrentUploads.length > 0 || referencedArtifacts.length > 0)
+    ) {
+      await this.notebookOptions.registerTurnInputs({
+        projectId: this.resolveSessionProjectName(sessionId),
+        appSessionId: sessionId,
+        promptMessageId:
+          request.provenanceContext?.promptMessageId ??
+          this.activeArtifactRuns.get(sessionId)?.promptMessageId ??
+          `prompt-unbound-${sessionId}`,
+        uploads: finalizedCurrentUploads,
+        references: referencedArtifacts
+      })
     }
 
     return contentBlocks
@@ -3119,7 +3193,7 @@ class AcpRuntime {
         : []
     })
 
-    return paths.length > 0 ? authorize(sessionId, paths) : undefined
+    return authorize(this.resolveSessionProjectName(sessionId), sessionId, paths)
   }
 
   private imageOverflowResourceLink(
@@ -3146,7 +3220,10 @@ class AcpRuntime {
   ): Promise<ContentBlock[]> {
     if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
 
-    const filePath = await this.uploadRepository.resolveManagedUploadPath({ path: attachment.path })
+    const filePath = await this.uploadRepository.resolveManagedUploadPath(
+      { path: attachment.path },
+      { projectId: this.resolveSessionProjectName(sessionId), sessionId }
+    )
     const { size } = await stat(filePath)
 
     return this.buildFileContentBlock({
@@ -3165,7 +3242,10 @@ class AcpRuntime {
     sessionId: string,
     reference: FileReference
   ): Promise<ContentBlock[]> {
-    const resolvedReference = await this.fileReferenceResolver.resolve({ sessionId }, reference)
+    const resolvedReference = await this.fileReferenceResolver.resolve(
+      { sessionId, projectId: this.resolveSessionProjectName(sessionId) },
+      reference
+    )
 
     return this.buildFileContentBlock({
       sessionId,
@@ -3500,12 +3580,16 @@ class AcpRuntime {
   }
 
   // Builds the artifact MCP environment for one session, shared by the stdio config and the http host.
-  private buildArtifactEnvironment(
+  private async buildArtifactEnvironment(
     artifactSessionId: string,
     sessionCwd: string,
     projectName: string
-  ): ArtifactMcpEnvironment | undefined {
+  ): Promise<ArtifactMcpEnvironment | undefined> {
     if (!this.artifactOptions || !artifactSessionId) return undefined
+
+    const connection = this.artifactOptions.getRpcConnection
+      ? await this.artifactOptions.getRpcConnection()
+      : undefined
 
     // Only the session workspace is a static import root. The notebook session root is intentionally
     // NOT added here: at session creation we only hold the pre-start alias, and authorizing the alias
@@ -3516,17 +3600,22 @@ class AcpRuntime {
       projectName,
       sessionId: artifactSessionId,
       currentRunFile: this.getArtifactCurrentRunFile(artifactSessionId, projectName),
-      allowedImportRoots: [sessionCwd]
+      allowedImportRoots: [sessionCwd],
+      rpcEndpoint: connection?.endpoint
     }
   }
 
   // Provides the agent with exactly one artifact MCP server scoped to this session's storage context.
-  private createArtifactMcpServers(
+  private async createArtifactMcpServers(
     artifactSessionId: string,
     sessionCwd: string,
     projectName: string
-  ): McpServer[] {
-    const environment = this.buildArtifactEnvironment(artifactSessionId, sessionCwd, projectName)
+  ): Promise<McpServer[]> {
+    const environment = await this.buildArtifactEnvironment(
+      artifactSessionId,
+      sessionCwd,
+      projectName
+    )
 
     if (!environment || !this.artifactOptions) return []
 
@@ -3694,7 +3783,7 @@ class AcpRuntime {
       ? [
           ...this.createActivityGroupMcpServers(),
           ...(artifactEnabled
-            ? this.createArtifactMcpServers(artifactSessionId, sessionCwd, projectName)
+            ? await this.createArtifactMcpServers(artifactSessionId, sessionCwd, projectName)
             : []),
           ...(await this.createNotebookMcpServers(notebookSessionId, sessionCwd, projectName)),
           ...(await this.createSkillImportMcpServers(skillImportSessionId))
@@ -3764,7 +3853,7 @@ class AcpRuntime {
     const authHeader = { name: 'authorization', value: `Bearer ${token}` }
     const servers: McpServer[] = []
 
-    const artifactEnvironment = this.buildArtifactEnvironment(
+    const artifactEnvironment = await this.buildArtifactEnvironment(
       artifactSessionId,
       sessionCwd,
       projectName
@@ -3879,12 +3968,20 @@ class AcpRuntime {
 
   // Resolves the artifact/notebook storage project for a session, defaulting to the runtime constant.
   private resolveSessionProjectName(sessionId: string): string {
-    return this.sessionProjectNames.get(sessionId) ?? this.artifactOptions?.projectName ?? ''
+    return (
+      this.sessionProjectNames.get(sessionId) ??
+      this.artifactOptions?.projectName ??
+      DEFAULT_UPLOAD_PROJECT_NAME
+    )
   }
 
   // Normalizes a requested project name, falling back to the runtime default when absent.
   private normalizeProjectName(requestedProjectName: string | undefined): string {
-    return requestedProjectName?.trim() || (this.artifactOptions?.projectName ?? '')
+    return (
+      requestedProjectName?.trim() ||
+      this.artifactOptions?.projectName ||
+      DEFAULT_UPLOAD_PROJECT_NAME
+    )
   }
 
   // Resolves the per-session handoff file that tells the MCP process which run is active.
@@ -3901,19 +3998,50 @@ class AcpRuntime {
   }
 
   // Marks a new assistant turn as the active artifact run before the model can call the MCP tool.
-  private async activateArtifactRun(sessionId: string): Promise<ActiveArtifactRun | undefined> {
+  private async activateArtifactRun(
+    sessionId: string,
+    provenanceContext: AcpPromptRequest['provenanceContext']
+  ): Promise<ActiveArtifactRun | undefined> {
     if (!this.artifactOptions || !this.artifactRepository) return undefined
 
     this.artifactRunSequence += 1
     const artifactSessionId = this.artifactSessionIds.get(sessionId) ?? sessionId
     const projectName = this.resolveSessionProjectName(sessionId)
     const currentRunFile = this.getArtifactCurrentRunFile(artifactSessionId, projectName)
-    const artifactRun = {
-      runId: `artifact-run-${Date.now()}-${this.artifactRunSequence}`,
+    const runId = `artifact-run-${Date.now()}-${this.artifactRunSequence}`
+    const rootFrameId = provenanceContext?.rootFrameId ?? `root-frame-${sessionId}`
+    const messageBranchId = provenanceContext?.messageBranchId ?? `message-branch-${sessionId}`
+    const promptMessageId = provenanceContext?.promptMessageId ?? `prompt-${runId}`
+    // Imported/restored graphs may provide ancestor-only paths, while some legacy paths already
+    // include the active leaf. Canonicalize only the runtime-owned leaf: preserve every ancestor and
+    // keep repository validation strict for duplicates or unrelated ids elsewhere in the proof.
+    const messageBranchAncestry = [
+      ...(provenanceContext?.messageBranchAncestry ?? []).filter(
+        (branchId) => branchId !== messageBranchId
+      ),
+      messageBranchId
+    ]
+    const messageAncestry = [
+      ...(provenanceContext?.messageAncestry ?? []).filter(
+        (messageId) => messageId !== promptMessageId
+      ),
+      promptMessageId
+    ]
+    const artifactRun: ActiveArtifactRun = {
+      appSessionId: sessionId,
+      runId,
       artifactSessionId,
-      currentRunFile
+      currentRunFile,
+      rootFrameId,
+      agentFrameId: provenanceContext?.agentFrameId ?? rootFrameId,
+      messageBranchId,
+      messageBranchAncestry,
+      messageAncestry,
+      runtimeSegmentId:
+        provenanceContext?.runtimeSegmentId ?? `runtime-segment-${this.runtimeInstanceId}`,
+      promptMessageId,
+      agentName: this.framework.displayName
     }
-
     // Notebook kernels are keyed by the FINAL ACP session id (the notebook RPC layer rewrites the
     // pre-start alias to it before touching disk). This handoff runs per turn with that final id, so
     // it — not the session-creation env, which only had the alias — is the correct place to pin the
@@ -3921,7 +4049,17 @@ class AcpRuntime {
     const runContext: ArtifactRunContext =
       this.notebookOptions && this.artifactOptions
         ? {
-            runId: artifactRun.runId,
+            artifactRunId: artifactRun.runId,
+            appSessionId: sessionId,
+            rootFrameId: artifactRun.rootFrameId,
+            agentFrameId: artifactRun.agentFrameId,
+            messageBranchId: artifactRun.messageBranchId,
+            messageBranchAncestry: artifactRun.messageBranchAncestry,
+            messageAncestry: artifactRun.messageAncestry,
+            runtimeSegmentId: artifactRun.runtimeSegmentId,
+            promptMessageId: artifactRun.promptMessageId,
+            agentName: artifactRun.agentName,
+            notebookSessionId: sessionId,
             notebookDataDir: getNotebookDataRoot(
               this.artifactOptions.dataRoot,
               projectName,
@@ -3933,19 +4071,68 @@ class AcpRuntime {
               sessionId
             )
           }
-        : { runId: artifactRun.runId }
+        : {
+            artifactRunId: artifactRun.runId,
+            appSessionId: sessionId,
+            rootFrameId: artifactRun.rootFrameId,
+            agentFrameId: artifactRun.agentFrameId,
+            messageBranchId: artifactRun.messageBranchId,
+            messageBranchAncestry: artifactRun.messageBranchAncestry,
+            messageAncestry: artifactRun.messageAncestry,
+            runtimeSegmentId: artifactRun.runtimeSegmentId,
+            promptMessageId: artifactRun.promptMessageId,
+            agentName: artifactRun.agentName
+          }
 
-    await mkdir(dirname(currentRunFile), { recursive: true })
-    await writeFile(currentRunFile, `${JSON.stringify(runContext)}\n`, 'utf8')
+    artifactRun.rpcCapabilityToken = this.artifactOptions.issueRpcCapability?.({
+      projectId: projectName,
+      appSessionId: sessionId,
+      artifactStorageSessionId: artifactSessionId,
+      artifactRunId: artifactRun.runId,
+      rootFrameId: artifactRun.rootFrameId,
+      agentFrameId: artifactRun.agentFrameId,
+      messageBranchId: artifactRun.messageBranchId,
+      messageBranchAncestry: artifactRun.messageBranchAncestry,
+      messageAncestry: artifactRun.messageAncestry,
+      runtimeSegmentId: artifactRun.runtimeSegmentId,
+      promptMessageId: artifactRun.promptMessageId,
+      agentName: artifactRun.agentName,
+      ...(this.notebookOptions ? { notebookSessionId: sessionId } : {}),
+      allowedMethods: ['artifactCreateVersion', 'artifactReplayVersion']
+    })
+    if (artifactRun.rpcCapabilityToken) {
+      runContext.rpcCapabilityToken = artifactRun.rpcCapabilityToken
+    }
 
-    return artifactRun
+    try {
+      await mkdir(dirname(currentRunFile), { recursive: true })
+      await writeFile(currentRunFile, `${JSON.stringify(runContext)}\n`, 'utf8')
+      this.notebookOptions?.setArtifactProvenanceContext?.(sessionId, {
+        rootFrameId: artifactRun.rootFrameId,
+        agentFrameId: artifactRun.agentFrameId,
+        messageBranchId: artifactRun.messageBranchId,
+        runtimeSegmentId: artifactRun.runtimeSegmentId,
+        promptMessageId: artifactRun.promptMessageId
+      })
+
+      return artifactRun
+    } catch (error) {
+      if (artifactRun.rpcCapabilityToken) {
+        this.artifactOptions.revokeRpcCapability?.(artifactRun.rpcCapabilityToken)
+      }
+      throw error
+    }
   }
 
   // Clears the handoff file after the prompt so late MCP writes cannot attach to a completed turn.
   private async clearArtifactRun(artifactRun: ActiveArtifactRun | undefined): Promise<void> {
     if (!artifactRun) return
 
+    if (artifactRun.rpcCapabilityToken) {
+      this.artifactOptions?.revokeRpcCapability?.(artifactRun.rpcCapabilityToken)
+    }
     await writeFile(artifactRun.currentRunFile, `${JSON.stringify({})}\n`, 'utf8')
+    this.notebookOptions?.setArtifactProvenanceContext?.(artifactRun.appSessionId, undefined)
   }
 
   // Writes an inline file into the in-flight turn's pending artifact run so it attaches to the resulting
@@ -3967,8 +4154,30 @@ class AcpRuntime {
       throw new Error('No active assistant turn to attach a generated file to.')
     }
 
+    const projectName = this.resolveSessionProjectName(sessionId)
+    const provenance = this.artifactOptions?.provenance
+    if (provenance) {
+      return provenance.writeAppGeneratedVersion({
+        projectId: projectName,
+        appSessionId: sessionId,
+        artifactStorageSessionId: run.artifactSessionId,
+        artifactRunId: run.runId,
+        rootFrameId: run.rootFrameId,
+        agentFrameId: run.agentFrameId,
+        messageBranchId: run.messageBranchId,
+        messageBranchAncestry: run.messageBranchAncestry,
+        messageAncestry: run.messageAncestry,
+        runtimeSegmentId: run.runtimeSegmentId,
+        promptMessageId: run.promptMessageId,
+        agentName: run.agentName,
+        filename: input.filename,
+        content: input.content,
+        contentType: input.mimeType
+      })
+    }
+
     return this.artifactRepository.writePendingFile({
-      projectName: this.resolveSessionProjectName(sessionId),
+      projectName,
       sessionId: run.artifactSessionId,
       runId: run.runId,
       filename: input.filename,
@@ -3992,11 +4201,17 @@ class AcpRuntime {
     }
 
     const sessionProjectName = this.resolveSessionProjectName(sessionId)
-    const artifacts = await this.artifactRepository.listPendingRunFiles({
-      projectName: sessionProjectName,
-      sessionId: artifactRun.artifactSessionId,
-      runId: artifactRun.runId
-    })
+    const artifacts = this.artifactOptions.provenance
+      ? await this.artifactOptions.provenance.listRunVersions({
+          projectId: sessionProjectName,
+          appSessionId: sessionId,
+          artifactRunId: artifactRun.runId
+        })
+      : await this.artifactRepository.listPendingRunFiles({
+          projectName: sessionProjectName,
+          sessionId: artifactRun.artifactSessionId,
+          runId: artifactRun.runId
+        })
 
     if (artifacts.length === 0) return
 
@@ -4004,7 +4219,14 @@ class AcpRuntime {
       projectName: sessionProjectName,
       artifactSessionId: artifactRun.artifactSessionId,
       sessionId,
-      runId: artifactRun.runId
+      runId: artifactRun.runId,
+      rootFrameId: artifactRun.rootFrameId,
+      agentFrameId: artifactRun.agentFrameId,
+      messageBranchId: artifactRun.messageBranchId,
+      messageBranchAncestry: artifactRun.messageBranchAncestry,
+      messageAncestry: artifactRun.messageAncestry,
+      runtimeSegmentId: artifactRun.runtimeSegmentId,
+      promptMessageId: artifactRun.promptMessageId
     })
 
     this.pushEvent({
@@ -4013,6 +4235,7 @@ class AcpRuntime {
       sessionId,
       title: 'Generated files',
       runId: artifactRun.runId,
+      promptMessageId: artifactRun.promptMessageId,
       artifactSessionId: artifactRun.artifactSessionId,
       artifactClaimId,
       artifacts
@@ -4113,7 +4336,7 @@ class AcpRuntime {
   private observePermissionToolContext(notification: SessionNotification): void {
     const sessionId = this.agentToAppSessionId.get(notification.sessionId) ?? notification.sessionId
     const framework = this.sessionFrameworks.get(sessionId)
-    if (framework !== 'codex' && framework !== 'opencode') return
+    if (framework !== 'codex' && framework !== 'opencode' && framework !== 'claude-code') return
 
     const routed =
       sessionId === notification.sessionId ? notification : { ...notification, sessionId }
@@ -4141,6 +4364,25 @@ class AcpRuntime {
       return
     }
 
+    if (framework === 'claude-code') {
+      const title = event.title
+      if (!title || !isMcpToolName(title, mcpServerNames) || !isRecord(event.rawInput)) return
+
+      const inputs = this.claudeCodeMcpToolInputs.get(sessionId) ?? new Map()
+      this.setBoundedPermissionToolContext(
+        inputs,
+        event.toolCallId,
+        {
+          title,
+          providerToolName: event.providerToolName ?? title,
+          rawInput: event.rawInput
+        },
+        MAX_CLAUDE_CODE_MCP_TOOL_INPUTS_PER_SESSION
+      )
+      this.claudeCodeMcpToolInputs.set(sessionId, inputs)
+      return
+    }
+
     const update = notification.update
     if (update.sessionUpdate === 'tool_call') {
       const closedToolCalls = this.closedOpenCodeToolCalls.get(sessionId)
@@ -4162,6 +4404,10 @@ class AcpRuntime {
     const canReusePreviousRawInput = event.title == null || event.title === previous?.title
     const next: OpenCodeMcpToolInput = {
       title,
+      // OpenCode may omit _meta.toolName from the later permission request. Retain the identity only
+      // from a preceding MCP-classified tool event with the same toolCallId/title; an isolated
+      // permission title never reaches this cache and therefore cannot obtain an automatic grant.
+      providerToolName: event.providerToolName ?? title,
       ...(hasRawInput
         ? { rawInput }
         : canReusePreviousRawInput && previous?.rawInput !== undefined
@@ -4186,6 +4432,9 @@ class AcpRuntime {
     promptTurn: number | undefined
   ): Promise<RequestPermissionRequest | undefined> {
     const framework = this.sessionFrameworks.get(appSessionId)
+    if (framework === 'claude-code') {
+      return this.restoreClaudeCodeMcpToolInput(params, appSessionId, mcpServerNames)
+    }
     if (framework === 'opencode') {
       const restored = this.restoreOpenCodeMcpToolInput(params, appSessionId, mcpServerNames)
       if (restored !== params || !isMcpToolName(params.toolCall.title, mcpServerNames)) {
@@ -4229,6 +4478,36 @@ class AcpRuntime {
         title: params.toolCall.title ?? identity.title,
         rawInput: params.toolCall.rawInput ?? identity.rawInput,
         _meta: { ...toolMeta, toolName: identity.providerToolName }
+      }
+    }
+  }
+
+  private restoreClaudeCodeMcpToolInput(
+    params: RequestPermissionRequest,
+    appSessionId: string,
+    mcpServerNames: readonly string[]
+  ): RequestPermissionRequest {
+    const title = params.toolCall.title
+    if (!isMcpToolName(title, mcpServerNames)) return params
+
+    const inputs = this.claudeCodeMcpToolInputs.get(appSessionId)
+    const input = inputs?.get(params.toolCall.toolCallId)
+    if (!input || input.title !== title || !isMcpToolName(input.providerToolName, mcpServerNames)) {
+      return params
+    }
+
+    inputs?.delete(params.toolCall.toolCallId)
+    if (inputs?.size === 0) this.claudeCodeMcpToolInputs.delete(appSessionId)
+
+    return {
+      ...params,
+      toolCall: {
+        ...params.toolCall,
+        rawInput: params.toolCall.rawInput ?? input.rawInput,
+        _meta: {
+          ...(isRecord(params.toolCall._meta) ? params.toolCall._meta : {}),
+          toolName: input.providerToolName
+        }
       }
     }
   }
@@ -4335,20 +4614,17 @@ class AcpRuntime {
   ): RequestPermissionRequest {
     const title = params.toolCall.title
     if (!isMcpToolName(title, mcpServerNames)) return params
-    if (isRecord(params.toolCall.rawInput) && Object.keys(params.toolCall.rawInput).length > 0) {
-      return params
-    }
 
     const inputs = this.opencodeMcpToolInputs.get(appSessionId)
     const input = inputs?.get(params.toolCall.toolCallId)
-    if (
-      !input ||
-      input.title !== title ||
-      !isRecord(input.rawInput) ||
-      Object.keys(input.rawInput).length === 0
-    ) {
+    if (!input || input.title !== title || !isMcpToolName(input.providerToolName, mcpServerNames)) {
       return params
     }
+
+    const requestHasInput =
+      isRecord(params.toolCall.rawInput) && Object.keys(params.toolCall.rawInput).length > 0
+    const cachedHasInput = isRecord(input.rawInput) && Object.keys(input.rawInput).length > 0
+    if (!requestHasInput && !cachedHasInput) return params
 
     inputs?.delete(params.toolCall.toolCallId)
     if (inputs?.size === 0) this.opencodeMcpToolInputs.delete(appSessionId)
@@ -4357,7 +4633,11 @@ class AcpRuntime {
       ...params,
       toolCall: {
         ...params.toolCall,
-        rawInput: input.rawInput
+        rawInput: requestHasInput ? params.toolCall.rawInput : input.rawInput,
+        _meta: {
+          ...(isRecord(params.toolCall._meta) ? params.toolCall._meta : {}),
+          toolName: input.providerToolName
+        }
       }
     }
   }
@@ -4379,6 +4659,10 @@ class AcpRuntime {
     const codexIdentities = this.codexMcpToolIdentities.get(sessionId)
     codexIdentities?.delete(toolCallId)
     if (codexIdentities?.size === 0) this.codexMcpToolIdentities.delete(sessionId)
+
+    const claudeCodeInputs = this.claudeCodeMcpToolInputs.get(sessionId)
+    claudeCodeInputs?.delete(toolCallId)
+    if (claudeCodeInputs?.size === 0) this.claudeCodeMcpToolInputs.delete(sessionId)
 
     const opencodeInputs = this.opencodeMcpToolInputs.get(sessionId)
     opencodeInputs?.delete(toolCallId)
@@ -4691,6 +4975,7 @@ class AcpRuntime {
     this.latestSessionConfigOptions.clear()
     this.sessionMcpServerNames.clear()
     this.codexMcpToolIdentities.clear()
+    this.claudeCodeMcpToolInputs.clear()
     this.codexSkillActivity.clear()
     this.clearAllOpenCodePermissionToolContext()
     this.sessionProjectNames.clear()
@@ -4775,6 +5060,7 @@ class AcpRuntime {
       rawInput: event.rawInput,
       rawOutput: event.rawOutput,
       runId: event.runId,
+      promptMessageId: event.promptMessageId,
       artifactSessionId: event.artifactSessionId,
       artifactClaimId: event.artifactClaimId,
       artifacts: event.artifacts,
@@ -4802,6 +5088,7 @@ class AcpRuntime {
       this.unregisterReviewerBridgeSession(sessionId)
       this.removeReviewerDirectory(reviewerCwd)
       this.codexMcpToolIdentities.delete(sessionId)
+      this.claudeCodeMcpToolInputs.delete(sessionId)
       this.clearOpenCodePermissionToolContext(sessionId)
       this.sessionFrameworks.delete(sessionId)
     }
@@ -4933,6 +5220,7 @@ class AcpRuntime {
     const reviewerBridgeScoped = this.unregisterReviewerBridgeSession(session.sessionId)
     this.sessionMcpServerNames.delete(session.sessionId)
     this.codexMcpToolIdentities.delete(session.sessionId)
+    this.claudeCodeMcpToolInputs.delete(session.sessionId)
     this.clearOpenCodePermissionToolContext(session.sessionId)
     this.sessionFrameworks.delete(session.sessionId)
     this.reviewerRejectedToolCalls.delete(session.sessionId)

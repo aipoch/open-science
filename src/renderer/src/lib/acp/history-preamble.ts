@@ -4,11 +4,16 @@ import {
   MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
   type AcpMessageImage
 } from '../../../../shared/acp'
-import { MAX_COMPOSER_ATTACHMENTS, type UploadedAttachment } from '../../../../shared/uploads'
+import {
+  MAX_COMPOSER_ATTACHMENTS,
+  toRuntimeUploadedAttachment,
+  type UploadedAttachment
+} from '../../../../shared/uploads'
 export { buildHistoryPreamble } from '../../../../shared/history-preamble'
 
 export const buildHistoryReplayMedia = (
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  projectId?: string
 ): { attachments: UploadedAttachment[]; images: AcpMessageImage[] } => {
   const attachments: UploadedAttachment[] = []
   const images: AcpMessageImage[] = []
@@ -19,7 +24,7 @@ export const buildHistoryReplayMedia = (
     for (let index = (message.uploads?.length ?? 0) - 1; index >= 0; index -= 1) {
       const upload = message.uploads?.[index]
       if (upload?.mimeType?.startsWith('image/') && attachments.length < MAX_COMPOSER_ATTACHMENTS) {
-        attachments.unshift(upload)
+        attachments.unshift(toRuntimeUploadedAttachment(upload, projectId))
       }
     }
     for (let index = (message.images?.length ?? 0) - 1; index >= 0; index -= 1) {

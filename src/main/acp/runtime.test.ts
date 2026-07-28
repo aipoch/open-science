@@ -22,16 +22,22 @@ import { AgentMcpHttpHost } from './mcp-http-host'
 import { SkillRegistry } from '../skills/registry'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
 import { ArtifactRepository } from '../artifacts/repository'
+import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import type { ArtifactRunClaim } from '../artifacts/run-registry'
+import { createPngBytes, createPngInlineSource } from '../artifacts/artifact-test-fixtures'
 import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
 import {
   ACTIVITY_GROUP_MCP_SERVER_NAME,
   BEGIN_ACTIVITY_GROUP_TOOL_NAME
 } from '../activity-groups/mcp-server'
 import type { UploadedAttachment } from '../../shared/uploads'
+import { projectConversationMessage } from '../../shared/conversation-graph'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import { MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES } from '../uploads/attachment-media'
 import { ConversationSkillImporter, SkillImportApprovalBroker } from '../skills/conversation-import'
+import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import {
   beginMigration,
   clearMigrationPending,
@@ -351,6 +357,7 @@ const createModes = (
 })
 
 let temporaryRoot: string | undefined
+const temporaryDisconnections: Array<() => Promise<void>> = []
 
 const createTemporaryRoot = async (): Promise<string> => {
   temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-runtime-artifacts-'))
@@ -422,6 +429,7 @@ const startPermissionProbeAgent = (
       tool: string
       arguments?: Record<string, unknown>
     }
+    announceToolCall?: boolean
     sparseCodexMcpApproval?: boolean
     modes?: SessionModeState
     permissionOptions?: Array<{
@@ -456,6 +464,20 @@ const startPermissionProbeAgent = (
       return {}
     })
     .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+      if (options.announceToolCall) {
+        await ctx.client.notify(acp.methods.client.session.update, {
+          sessionId: ctx.params.sessionId,
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: options.toolCallId,
+            title: options.toolTitle,
+            kind: options.toolKind ?? 'other',
+            status: 'pending',
+            ...(options.toolRawInput === undefined ? {} : { rawInput: options.toolRawInput })
+          }
+        })
+      }
+
       if (options.codexMcpIdentity) {
         await ctx.client.notify(acp.methods.client.session.update, {
           sessionId: ctx.params.sessionId,
@@ -531,6 +553,13 @@ const contextUsageMap = (runtime: AcpRuntime): Map<string, { used: number; size:
 const sessionInlineImageBytesMap = (runtime: AcpRuntime): Map<string, number> =>
   (runtime as unknown as { sessionInlineImageBytes: Map<string, number> }).sessionInlineImageBytes
 
+const resolveArtifactRunClaim = (runtime: AcpRuntime, claimId: string): ArtifactRunClaim =>
+  (
+    runtime as unknown as {
+      artifactRunRegistry: { resolve: (id: string) => ArtifactRunClaim }
+    }
+  ).artifactRunRegistry.resolve(claimId)
+
 const handleSessionUpdate = (runtime: AcpRuntime, notification: SessionNotification): void =>
   (
     runtime as unknown as {
@@ -595,6 +624,7 @@ const auditedIsMcp = (toolCallId: string): boolean | undefined => {
 }
 
 afterEach(async () => {
+  await Promise.allSettled(temporaryDisconnections.splice(0).map((disconnect) => disconnect()))
   if (temporaryRoot) {
     await rm(temporaryRoot, { recursive: true, force: true })
     temporaryRoot = undefined
@@ -1655,6 +1685,63 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  it('registers finalized current-turn Upload Versions with the trusted Notebook bridge', async () => {
+    const root = await createTemporaryRoot()
+    const uploadRepository = new UploadRepository(root)
+    const [staged] = await stageUploadFixtures(uploadRepository, {
+      files: [{ name: 'groups.csv', mimeType: 'text/csv', content: 'group\nA\n' }]
+    })
+    const finalize = uploadRepository.finalizePendingSessionUploads.bind(uploadRepository)
+    vi.spyOn(uploadRepository, 'finalizePendingSessionUploads').mockImplementation(
+      async (...args) =>
+        (await finalize(...args)).map((attachment) => ({
+          ...attachment,
+          versionId: 'upload-version-1',
+          versionNumber: 1,
+          checksum: 'a'.repeat(64),
+          createdAt: '2026-07-27T10:00:00.000Z'
+        }))
+    )
+    const registerTurnInputs = vi.fn(async () => undefined)
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      uploads: { repository: uploadRepository },
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository: new ArtifactRepository(root)
+      },
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:1/notebook', token: 'nb' }),
+        registerTurnInputs
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'analyze groups',
+      provenanceContext: { promptMessageId: 'message-user-1' },
+      attachments: [staged]
+    })
+
+    expect(registerTurnInputs).toHaveBeenCalledWith({
+      projectId: 'default-project',
+      appSessionId: 'remote-session-1',
+      promptMessageId: 'message-user-1',
+      uploads: [expect.objectContaining({ id: staged.id, versionId: 'upload-version-1' })],
+      references: []
+    })
+  })
+
   it('sends an oversized text upload as a bounded preview + resource_link, never the full contents', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
@@ -2029,7 +2116,8 @@ describe('ACP runtime session management', () => {
     })
 
     expect(opencodeMcpToolInputsMap(runtime).get(session.sessionId)?.get('retitled-call')).toEqual({
-      title: 'open-science-notebook_notebook_execute'
+      title: 'open-science-notebook_notebook_execute',
+      providerToolName: 'open-science-notebook_notebook_execute'
     })
   })
 
@@ -2369,6 +2457,75 @@ describe('ACP runtime session management', () => {
     await Promise.all([promptA, promptB])
   })
 
+  it('publishes app-side artifact writes as durable Provenance Versions', async () => {
+    const root = await createTemporaryRoot()
+    const artifactRepository = new ArtifactRepository(root)
+    const process = new FakeAgentProcess()
+    const promptGate = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: () => promptGate.promise
+    })
+    const version = {
+      id: 'version-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1',
+      versionNumber: 1,
+      checksum: 'a'.repeat(64),
+      createdAt: '2026-07-28T00:00:00.000Z',
+      projectName: 'project-1',
+      sessionId: 'remote-session-1',
+      runId: 'artifact-run-1',
+      name: 'aspirin.mol',
+      path: join(root, 'immutable-content'),
+      fileUrl: 'file:///immutable-content',
+      mimeType: 'chemical/x-mdl-molfile',
+      size: 3,
+      mtimeMs: 1
+    }
+    const versions: (typeof version)[] = []
+    const provenance = {
+      writeAppGeneratedVersion: vi.fn(async () => {
+        versions.push(version)
+        return version
+      }),
+      listRunVersions: vi.fn(async () => versions)
+    }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/unused',
+        repository: artifactRepository,
+        provenance
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'preview aspirin' })
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+
+    const artifact = await runtime.writeArtifactForCurrentRun(session.sessionId, {
+      filename: 'aspirin.mol',
+      content: 'mol',
+      mimeType: 'chemical/x-mdl-molfile'
+    })
+
+    expect(artifact).toMatchObject({ id: 'version-1', versionId: 'version-1' })
+    expect(provenance.writeAppGeneratedVersion).toHaveBeenCalledOnce()
+    promptGate.resolve()
+    await prompt
+    expect(runtime.getSnapshot().events).toContainEqual(
+      expect.objectContaining({
+        kind: 'artifact',
+        artifacts: [expect.objectContaining({ versionId: 'version-1' })]
+      })
+    )
+  })
+
   it('appends referenced artifacts as content blocks by file type', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
@@ -2392,11 +2549,7 @@ describe('ACP runtime session management', () => {
       runId: 'run-1',
       filename: 'chart.png',
       mimeType: 'image/png',
-      source: {
-        kind: 'inline',
-        content: Buffer.from('png-bytes').toString('base64'),
-        encoding: 'base64'
-      }
+      source: createPngInlineSource('runtime referenced image')
     })
 
     // A referenced binary output has no rich representation, so it falls through to a resource link.
@@ -2500,7 +2653,7 @@ describe('ACP runtime session management', () => {
     expect(receivedPrompts[0][2]).toMatchObject({
       type: 'image',
       mimeType: 'image/png',
-      data: Buffer.from('png-bytes').toString('base64'),
+      data: createPngBytes('runtime referenced image').toString('base64'),
       uri: expect.stringContaining('chart.png')
     })
     // Referenced binary artifact -> resource link.
@@ -2572,7 +2725,7 @@ describe('ACP runtime session management', () => {
       uploadRepository.resolveSessionUploadPath(session.sessionId, {
         path: otherSessionUpload.path
       })
-    ).rejects.toThrow(/different session/)
+    ).rejects.toThrow(/different (?:project or )?session/)
     await runtime.sendPrompt({
       sessionId: session.sessionId,
       text: 'compare these packages',
@@ -2610,8 +2763,8 @@ describe('ACP runtime session management', () => {
 
   it('allows a cross-session Skill upload only while the user explicitly references it', async () => {
     const root = await realpath(await createTemporaryRoot())
-    const uploads = new UploadRepository(root)
-    const [staged] = await stageUploadFixtures(uploads, {
+    const legacyUploads = new UploadRepository(root)
+    const [staged] = await stageUploadFixtures(legacyUploads, {
       files: [
         {
           name: 'paper-finder.skill',
@@ -2620,7 +2773,18 @@ describe('ACP runtime session management', () => {
         }
       ]
     })
-    const [attachment] = await uploads.finalizePendingSessionUploads('owning-session', [staged])
+    const [attachment] = await legacyUploads.finalizePendingSessionUploads('owning-session', [
+      staged
+    ])
+    const client = createProjectDbClient(root)
+    temporaryDisconnections.push(() => client.$disconnect())
+    await ensureProjectSchema(client)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'owning-session' }
+    })
+    const uploads = new UploadRepository(root, {
+      getClient: () => Promise.resolve(client)
+    })
     const approvalBroker = new SkillImportApprovalBroker({
       generateId: () => 'approval-1',
       broadcast: vi.fn()
@@ -2691,8 +2855,8 @@ describe('ACP runtime session management', () => {
           endpoint: 'http://127.0.0.1:4567',
           token: 'secret-token'
         }),
-        authorizeReferencedUploads: (sessionId, paths) =>
-          importer.authorizeReferencedUploads(sessionId, paths)
+        authorizeReferencedUploads: (projectId, sessionId, paths) =>
+          importer.authorizeReferencedUploads(projectId, sessionId, paths)
       },
       callbacks: {
         onPromptStarted: (sessionId, turnToken) => {
@@ -2706,7 +2870,10 @@ describe('ACP runtime session management', () => {
       }
     })
 
-    const session = await runtime.createSession({ cwd: '/workspace' })
+    // Legacy uploads live under `default-project` even when the Session is now opened from a real
+    // Project. The explicit `@` selection grants cross-Session access only after the persisted
+    // Session-to-Project binding proves the source belongs to the same Project.
+    const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
     await runtime.sendPrompt({
       sessionId: session.sessionId,
       text: 'import @Paper Finder',
@@ -2739,7 +2906,7 @@ describe('ACP runtime session management', () => {
         turnToken: 'retry-turn',
         attachmentUri: advertisedAttachmentUri
       })
-    ).rejects.toThrow('different session')
+    ).rejects.toThrow(/different (?:project or )?session/)
   })
 
   it('resolves a bare-filename artifact write against the final-session notebook dir despite the alias', async () => {
@@ -2753,7 +2920,8 @@ describe('ACP runtime session management', () => {
     // The kernel's real cwd for this session, keyed by the FINAL id (not the notebook alias).
     const notebookDataDir = join(root, 'notebooks', 'default-project', finalSessionId, 'data')
     await mkdir(notebookDataDir, { recursive: true })
-    await writeFile(join(notebookDataDir, 'sine.png'), 'PNGDATA', 'utf8')
+    const sourcePng = createPngBytes('runtime notebook image')
+    await writeFile(join(notebookDataDir, 'sine.png'), sourcePng)
 
     let writtenPath: string | undefined
     let capturedContext: Record<string, unknown> | undefined
@@ -2818,7 +2986,79 @@ describe('ACP runtime session management', () => {
     expect(capturedContext?.notebookDataDir).not.toContain('notebook-session-')
     // And the bare-filename write actually copied the kernel file into pending artifacts.
     expect(writtenPath).toBeDefined()
-    await expect(readFile(writtenPath as string, 'utf8')).resolves.toBe('PNGDATA')
+    await expect(readFile(writtenPath as string)).resolves.toEqual(sourcePng)
+  })
+
+  it('writes a run-scoped Artifact RPC capability into the handoff and revokes it after the turn', async () => {
+    const root = await createTemporaryRoot()
+    const artifactRepository = new ArtifactRepository(root)
+    const issuedBindings: unknown[] = []
+    const revokedTokens: string[] = []
+    let capturedContext: Record<string, unknown> | undefined
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: async () => {
+        const projectDir = join(root, 'artifacts', 'default-project')
+        const [artifactSessionId] = await readdir(projectDir)
+        const currentRunFile = join(projectDir, artifactSessionId, '.pending', 'current-run.json')
+        capturedContext = JSON.parse(await readFile(currentRunFile, 'utf8')) as Record<
+          string,
+          unknown
+        >
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository: artifactRepository,
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'global' }),
+        issueRpcCapability: (binding) => {
+          issuedBindings.push(binding)
+          return 'run-capability-1'
+        },
+        revokeRpcCapability: (token) => revokedTokens.push(token)
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'plot a sine wave',
+      provenanceContext: {
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'agent-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'message-user-1'
+      }
+    })
+
+    expect(capturedContext).toMatchObject({
+      artifactRunId: expect.stringMatching(/^artifact-run-/u),
+      appSessionId: session.sessionId,
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'message-user-1',
+      rpcCapabilityToken: 'run-capability-1'
+    })
+    expect(issuedBindings).toEqual([
+      expect.objectContaining({
+        projectId: 'default-project',
+        appSessionId: session.sessionId,
+        artifactRunId: capturedContext?.artifactRunId,
+        rootFrameId: 'root-frame-1',
+        allowedMethods: ['artifactCreateVersion', 'artifactReplayVersion']
+      })
+    ])
+    expect(revokedTokens).toEqual(['run-capability-1'])
   })
 
   it('gives opencode the stdio artifact MCP server + tool guidance (it accepts stdio like Claude)', async () => {
@@ -2851,6 +3091,9 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.newSessions[0]._meta).toBeUndefined()
     expect(fakeAgent.prompts[0].text).toContain('hello opencode')
     expect(fakeAgent.prompts[0].text).toContain('write_artifact_file')
+    expect(fakeAgent.prompts[0].text).toContain('producerRunId')
+    expect(fakeAgent.prompts[0].text).toContain('Only claim a generated file is available after')
+    expect(fakeAgent.prompts[0].text).not.toContain('Pass only the filename')
     expect(fakeAgent.prompts[0].text).not.toContain('<open_science_skill_privacy_instructions>')
   })
 
@@ -3907,7 +4150,7 @@ describe('ACP runtime session management', () => {
     ])
   })
 
-  it('restores permission-first OpenCode inputs for non-notebook MCP tools', async () => {
+  it('auto-allows the app-owned Artifact save without emitting a renderer permission', async () => {
     const process = new FakeAgentProcess()
     const permissionRequests: AcpPermissionRequest[] = []
 
@@ -3995,11 +4238,55 @@ describe('ACP runtime session management', () => {
 
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'write artifact' })
 
-    expect(permissionRequests).toHaveLength(1)
-    expect(permissionRequests[0]).toMatchObject({
-      title: 'open-science-artifacts_write_artifact_file',
-      isMcp: true,
-      rawInput: { path: 'results/report.md', content: '# Results' }
+    expect(permissionRequests).toHaveLength(0)
+  })
+
+  it('auto-allows a Claude Code Artifact save identified by its qualified MCP title', async () => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: AcpPermissionRequest[] = []
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'claude-artifact-session',
+      toolCallId: 'call_00_artifact_save',
+      toolTitle: 'mcp__open-science-artifacts__write_artifact_file',
+      toolKind: 'other',
+      toolRawInput: { localPath: 'sin.png', filename: 'sin.png', mimeType: 'image/png' },
+      announceToolCall: true,
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const root = await createTemporaryRoot()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework,
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository: new ArtifactRepository(root)
+      },
+      callbacks: {
+        onPermissionRequest: (request) => {
+          permissionRequests.push(request)
+          runtime.respondToPermission({ requestId: request.requestId, cancelled: true })
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'save sin.png' })
+
+    expect(permissionRequests).toHaveLength(0)
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
   })
 
@@ -7218,13 +7505,19 @@ describe('ACP runtime session management', () => {
       kind: string
       sessionId?: string
       runId?: string
+      promptMessageId?: string
       artifactClaimId?: string
       artifactCount?: number
     }> = []
     let currentRunFile = ''
     const fakeAgent = startFakeAgent(process, ['remote-session-1'], {
       onPrompt: async ({ sessionId }) => {
-        const context = JSON.parse(await readFile(currentRunFile, 'utf8')) as { runId: string }
+        const context = JSON.parse(await readFile(currentRunFile, 'utf8')) as {
+          artifactRunId: string
+          agentName?: string
+        }
+
+        expect(context.agentName).toBeTruthy()
 
         await repository.writePendingFile({
           projectName: 'default-project',
@@ -7232,7 +7525,7 @@ describe('ACP runtime session management', () => {
             fakeAgent.newSessions[0].mcpServers[0],
             'OPEN_SCIENCE_ARTIFACT_SESSION_ID'
           ),
-          runId: context.runId,
+          runId: context.artifactRunId,
           filename: 'result.txt',
           source: { kind: 'inline', content: 'artifact content', encoding: 'utf8' }
         })
@@ -7258,6 +7551,7 @@ describe('ACP runtime session management', () => {
               kind: event.kind,
               sessionId: event.sessionId,
               runId: event.runId,
+              promptMessageId: event.promptMessageId,
               artifactClaimId: event.artifactClaimId,
               artifactCount: event.artifacts?.length
             })
@@ -7278,10 +7572,214 @@ describe('ACP runtime session management', () => {
         kind: 'artifact',
         sessionId: 'remote-session-1',
         runId: expect.stringMatching(/^artifact-run-/),
+        promptMessageId: expect.stringMatching(/^prompt-artifact-run-/),
         artifactClaimId: expect.stringMatching(/^artifact-claim-/),
         artifactCount: 1
       }
     ])
+  })
+
+  it('finalizes an Artifact after a restored branch supplies ancestor-only provenance context', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const client = createProjectDbClient(storageRoot)
+    temporaryDisconnections.push(() => client.$disconnect())
+    await ensureProjectSchema(client)
+    const repository = new ArtifactRepository(storageRoot)
+    const durableSessionAuthority: { current?: PersistedChatSession } = {}
+    const provenance = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository: repository,
+      loadSession: async () => durableSessionAuthority.current
+    })
+    const process = new FakeAgentProcess()
+    let artifactClaimId: string | undefined
+    let writeError: unknown
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: async ({ sessionId }) => {
+        try {
+          await runtime.writeArtifactForCurrentRun(sessionId, {
+            filename: 'sin.txt',
+            content: 'restored-session-image',
+            mimeType: 'text/plain'
+          })
+        } catch (error) {
+          writeError = error
+        }
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        configRoot: storageRoot,
+        dataRoot: storageRoot,
+        projectName: 'project-1',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository,
+        provenance
+      },
+      callbacks: {
+        onEvent: (event) => {
+          if (event.kind === 'artifact') artifactClaimId = event.artifactClaimId
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'draw sin again',
+      provenanceContext: {
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'agent-frame-1',
+        messageBranchId: 'branch-current',
+        // Restored conversation graphs describe ancestors separately from the active branch leaf.
+        messageBranchAncestry: ['branch-parent'],
+        messageAncestry: ['message-parent', 'prompt-current'],
+        runtimeSegmentId: 'runtime-segment-restored',
+        promptMessageId: 'prompt-current'
+      }
+    })
+
+    if (writeError) throw writeError
+    expect(artifactClaimId).toBeTruthy()
+    const claim = resolveArtifactRunClaim(runtime, artifactClaimId!)
+    const createdAt = Date.now()
+    const conversationGraph = {
+      schemaVersion: 1 as const,
+      rootFrameId: 'root-frame-1',
+      activeFrameId: 'agent-frame-1',
+      frames: [
+        {
+          id: 'root-frame-1',
+          originBindingState: 'root' as const,
+          kind: 'root' as const,
+          status: 'completed' as const,
+          activeBranchId: 'root-branch',
+          createdAt,
+          completedAt: createdAt
+        },
+        {
+          id: 'agent-frame-1',
+          parentFrameId: 'root-frame-1',
+          originMessageId: 'message-parent',
+          originBindingState: 'validated' as const,
+          kind: 'compatibility' as const,
+          status: 'completed' as const,
+          activeBranchId: 'branch-current',
+          createdAt,
+          completedAt: createdAt
+        }
+      ],
+      branches: [
+        {
+          id: 'root-branch',
+          agentFrameId: 'root-frame-1',
+          createdAt,
+          updatedAt: createdAt
+        },
+        {
+          id: 'branch-parent',
+          agentFrameId: 'agent-frame-1',
+          headMessageId: 'message-parent',
+          createdAt,
+          updatedAt: createdAt
+        },
+        {
+          id: 'branch-current',
+          agentFrameId: 'agent-frame-1',
+          parentBranchId: 'branch-parent',
+          forkMessageId: 'message-parent',
+          headMessageId: 'assistant-current',
+          createdAt,
+          updatedAt: createdAt
+        }
+      ],
+      messages: [
+        {
+          id: 'message-parent',
+          role: 'user' as const,
+          content: 'previous prompt',
+          status: 'complete' as const,
+          eventIds: [],
+          createdAt,
+          updatedAt: createdAt,
+          agentFrameId: 'agent-frame-1',
+          introducedOnBranchId: 'branch-parent',
+          revisionRootMessageId: 'message-parent',
+          runtimeSegmentId: 'runtime-segment-restored'
+        },
+        {
+          id: 'prompt-current',
+          role: 'user' as const,
+          content: 'draw sin again',
+          status: 'complete' as const,
+          eventIds: [],
+          createdAt: createdAt + 1,
+          updatedAt: createdAt + 1,
+          agentFrameId: 'agent-frame-1',
+          introducedOnBranchId: 'branch-current',
+          parentMessageId: 'message-parent',
+          revisionRootMessageId: 'prompt-current',
+          runtimeSegmentId: 'runtime-segment-restored'
+        },
+        {
+          id: 'assistant-current',
+          role: 'agent' as const,
+          content: 'saved sin.txt',
+          status: 'complete' as const,
+          eventIds: [],
+          createdAt: createdAt + 2,
+          updatedAt: createdAt + 2,
+          agentFrameId: 'agent-frame-1',
+          introducedOnBranchId: 'branch-current',
+          parentMessageId: 'prompt-current',
+          runtimeSegmentId: 'runtime-segment-restored'
+        }
+      ],
+      activities: [],
+      activityGroups: [],
+      runtimeSegments: [
+        {
+          id: 'runtime-segment-restored',
+          agentFrameId: 'agent-frame-1',
+          frameworkId: 'claude-code' as const,
+          startedAt: createdAt
+        }
+      ]
+    }
+    durableSessionAuthority.current = {
+      id: session.sessionId,
+      projectId: 'project-1',
+      title: 'Restored session',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: conversationGraph.messages.map(projectConversationMessage),
+      conversationGraph,
+      createdAt,
+      updatedAt: createdAt + 2
+    }
+    const finalized = await provenance.finalizeRun({
+      projectId: claim.projectName,
+      appSessionId: claim.sessionId,
+      artifactRunId: claim.runId,
+      rootFrameId: claim.rootFrameId!,
+      agentFrameId: claim.agentFrameId!,
+      messageBranchId: claim.messageBranchId!,
+      messageBranchAncestry: claim.messageBranchAncestry,
+      // The finalize IPC appends the now-known assistant message id to the prompt-time ancestry.
+      messageAncestry: [...(claim.messageAncestry ?? []), 'assistant-current'],
+      runtimeSegmentId: claim.runtimeSegmentId!,
+      promptMessageId: claim.promptMessageId!,
+      messageId: 'assistant-current'
+    })
+
+    expect(finalized).toEqual([expect.objectContaining({ name: 'sin.txt' })])
+    await expect(
+      client.artifactVersion.findFirstOrThrow({ where: { artifactRunId: claim.runId } })
+    ).resolves.toMatchObject({ state: 'finalized', messageId: 'assistant-current' })
   })
 
   it('emits an artifact event for pending files even when the prompt fails', async () => {
@@ -7292,13 +7790,16 @@ describe('ACP runtime session management', () => {
       kind: string
       sessionId?: string
       runId?: string
+      promptMessageId?: string
       artifactClaimId?: string
       artifactCount?: number
     }> = []
     let currentRunFile = ''
     const fakeAgent = startFakeAgent(process, ['remote-session-1'], {
       onPrompt: async () => {
-        const context = JSON.parse(await readFile(currentRunFile, 'utf8')) as { runId: string }
+        const context = JSON.parse(await readFile(currentRunFile, 'utf8')) as {
+          artifactRunId: string
+        }
 
         await repository.writePendingFile({
           projectName: 'default-project',
@@ -7306,7 +7807,7 @@ describe('ACP runtime session management', () => {
             fakeAgent.newSessions[0].mcpServers[0],
             'OPEN_SCIENCE_ARTIFACT_SESSION_ID'
           ),
-          runId: context.runId,
+          runId: context.artifactRunId,
           filename: 'result.txt',
           source: { kind: 'inline', content: 'artifact content', encoding: 'utf8' }
         })
@@ -7334,6 +7835,7 @@ describe('ACP runtime session management', () => {
               kind: event.kind,
               sessionId: event.sessionId,
               runId: event.runId,
+              promptMessageId: event.promptMessageId,
               artifactClaimId: event.artifactClaimId,
               artifactCount: event.artifacts?.length
             })
@@ -7356,6 +7858,7 @@ describe('ACP runtime session management', () => {
         kind: 'artifact',
         sessionId: 'remote-session-1',
         runId: expect.stringMatching(/^artifact-run-/),
+        promptMessageId: expect.stringMatching(/^prompt-artifact-run-/),
         artifactClaimId: expect.stringMatching(/^artifact-claim-/),
         artifactCount: 1
       }
@@ -7367,6 +7870,7 @@ describe('ACP runtime session management', () => {
     const blockedStorageRoot = join(storageRoot, 'storage-file')
     const process = new FakeAgentProcess()
     const events: Array<{ kind: string; text?: string }> = []
+    const revokedTokens: string[] = []
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
@@ -7376,7 +7880,10 @@ describe('ACP runtime session management', () => {
         dataRoot: blockedStorageRoot,
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
-        mcpCommand: '/usr/bin/electron'
+        mcpCommand: '/usr/bin/electron',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'global' }),
+        issueRpcCapability: () => 'activation-capability',
+        revokeRpcCapability: (token) => revokedTokens.push(token)
       },
       callbacks: {
         onEvent: (event) => events.push({ kind: event.kind, text: event.text })
@@ -7391,6 +7898,7 @@ describe('ACP runtime session management', () => {
     ).rejects.toThrow()
 
     expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
+    expect(revokedTokens).toEqual(['activation-capability'])
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

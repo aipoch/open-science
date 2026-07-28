@@ -29,7 +29,9 @@ const assertSaveManagedFileRequest = (request: SaveManagedFileRequest): void => 
   if (
     typeof request !== 'object' ||
     request === null ||
-    (request.source !== 'artifact' && request.source !== 'upload') ||
+    (request.source !== 'artifact' &&
+      request.source !== 'upload' &&
+      request.source !== 'notebook-input') ||
     typeof request.path !== 'string' ||
     request.path.trim().length === 0 ||
     typeof request.suggestedName !== 'string'

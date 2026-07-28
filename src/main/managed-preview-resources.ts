@@ -55,7 +55,10 @@ const inferMimeType = (filePath: string, fallback?: string): string =>
   'application/octet-stream'
 
 type ManagedPreviewResourcesOptions = {
-  resolvePath: (source: ManagedPreviewSource, request: { path: string }) => Promise<string>
+  resolvePath: (
+    source: ManagedPreviewSource,
+    request: AcquireManagedPreviewRequest
+  ) => Promise<string>
   createId?: () => string
 }
 
@@ -124,7 +127,7 @@ class ManagedPreviewResources {
 
   async inspect(request: AcquireManagedPreviewRequest): Promise<{ size: number; version: number }> {
     // Resolve through the managed repository so metadata checks never accept an arbitrary path.
-    const filePath = await this.options.resolvePath(request.source, { path: request.path })
+    const filePath = await this.options.resolvePath(request.source, request)
     const fileStat = await stat(filePath)
     if (!fileStat.isFile()) throw new Error('Managed preview path is not a file.')
 
@@ -137,7 +140,7 @@ class ManagedPreviewResources {
     options?: AcquireManagedPreviewOptions
   ): Promise<ManagedPreviewResource> {
     // Resolve through the managed repository before minting an owner-scoped capability URL.
-    const filePath = await this.options.resolvePath(request.source, { path: request.path })
+    const filePath = await this.options.resolvePath(request.source, request)
     const fileStat = await stat(filePath)
 
     if (!fileStat.isFile()) {

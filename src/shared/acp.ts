@@ -147,6 +147,7 @@ export type AcpRuntimeEvent = {
   terminalExitCode?: number | null
   // Artifact events use these ids to bridge runtime-owned runs to renderer-owned messages.
   runId?: string
+  promptMessageId?: string
   artifactSessionId?: string
   artifactClaimId?: string
   artifacts?: ArtifactFile[]
@@ -279,6 +280,18 @@ export type AcpSetPermissionProfileRequest = {
 export type AcpPromptRequest = {
   sessionId: string
   text: string
+  // Immutable conversation-graph binding for Artifact Provenance. Older callers may omit it; the
+  // runtime supplies a root-frame/root-branch compatibility binding during the Session JSON v2
+  // rollout.
+  provenanceContext?: {
+    promptMessageId: string
+    rootFrameId?: string
+    agentFrameId?: string
+    messageBranchId?: string
+    messageBranchAncestry?: string[]
+    messageAncestry?: string[]
+    runtimeSegmentId?: string
+  }
   attachments?: UploadedAttachment[]
   // Skills the user explicitly picked in the composer; the runtime force-loads and nudges them.
   forcedSkillIds?: string[]

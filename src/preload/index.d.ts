@@ -24,6 +24,15 @@ import type {
   ReconcilePendingArtifactsRequest
 } from '../shared/artifacts'
 import type {
+  ArtifactLineageProvenance,
+  ArtifactVersionExecutionProvenance,
+  ArtifactVersionMessagesProvenance,
+  ArtifactVersionProvenance,
+  ArtifactVersionReviewProvenance,
+  GetArtifactLineageRequest,
+  GetArtifactVersionProvenanceRequest
+} from '../shared/artifact-provenance'
+import type {
   SaveBlobFileRequest,
   SaveBlobFileResult,
   SaveManagedFileRequest,
@@ -199,6 +208,8 @@ import type {
   ReviewWithChecks,
   ReviewRunRequest,
   ReviewRunResult,
+  ReviewSessionRequest,
+  ReviewSuppressionEvent,
   ReviewUpdateEvent
 } from '../shared/reviewer'
 import type {
@@ -448,6 +459,19 @@ interface OpenScienceAPI {
     reconcilePendingArtifacts(request: ReconcilePendingArtifactsRequest): Promise<ArtifactFile[]>
     openFile(request: OpenArtifactFileRequest): Promise<void>
     readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
+    getLineage(request: GetArtifactLineageRequest): Promise<ArtifactLineageProvenance>
+    getVersionProvenance(
+      request: GetArtifactVersionProvenanceRequest
+    ): Promise<ArtifactVersionProvenance>
+    getVersionExecution(
+      request: GetArtifactVersionProvenanceRequest
+    ): Promise<ArtifactVersionExecutionProvenance>
+    getVersionMessages(
+      request: GetArtifactVersionProvenanceRequest
+    ): Promise<ArtifactVersionMessagesProvenance>
+    getVersionReview(
+      request: GetArtifactVersionProvenanceRequest
+    ): Promise<ArtifactVersionReviewProvenance>
   }
   uploads: {
     // Desktop-only path fast path; omitted by the Web capability map.
@@ -472,6 +496,7 @@ interface OpenScienceAPI {
   }
   notebook: {
     state(request: NotebookSessionRequest): Promise<NotebookSessionState>
+    readInputPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
     getReference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
     beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<{
       sessionId: string
@@ -572,19 +597,17 @@ interface OpenScienceAPI {
     // Trigger a background review for the given turn. Fire-and-forget; updates come via onUpdated.
     run(request: ReviewRunRequest): Promise<ReviewRunResult>
     // Load persisted reviews for a session (called at workspace startup).
-    getForSession(sessionId: string): Promise<ReviewWithChecks[]>
+    getForSession(request: ReviewSessionRequest): Promise<ReviewWithChecks[]>
     // Subscribe to review lifecycle/findings updates pushed from the main process.
     onUpdated(listener: AcpListener<ReviewUpdateEvent>): RemoveListener
     // Subscribe to loop-guard events: suppress (or, when clear=true, un-suppress) the next
     // auto-review for the given session.
-    onSuppressNextAutoReview(
-      listener: AcpListener<{ sessionId: string; clear?: boolean }>
-    ): RemoveListener
+    onSuppressNextAutoReview(listener: AcpListener<ReviewSuppressionEvent>): RemoveListener
     // Fix loop lock: fired when the loop starts (lock composer) / ends or is aborted (unlock).
-    onFixLoopStart(listener: AcpListener<{ sessionId: string }>): RemoveListener
-    onFixLoopEnd(listener: AcpListener<{ sessionId: string }>): RemoveListener
+    onFixLoopStart(listener: AcpListener<ReviewSessionRequest>): RemoveListener
+    onFixLoopEnd(listener: AcpListener<ReviewSessionRequest>): RemoveListener
     // Sends an abort request to stop the running fix loop for a session.
-    abortFixLoop(sessionId: string): Promise<void>
+    abortFixLoop(request: ReviewSessionRequest): Promise<void>
   }
   window: {
     // Closes the focused window (the Cmd+W / Ctrl+W fallback when no preview panel is open).

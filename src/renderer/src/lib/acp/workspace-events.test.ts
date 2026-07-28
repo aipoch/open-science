@@ -12,7 +12,8 @@ import {
   assembleReviewRunRequest,
   syncWorkspacePermissionState,
   suppressNextAutoReview,
-  clearSuppressNextAutoReview
+  clearSuppressNextAutoReview,
+  resetDeferredArtifactEventsForTests
 } from './workspace-events'
 
 // Creates a runtime event with stable defaults for store adapter tests.
@@ -56,6 +57,7 @@ describe('workspace runtime events', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
+    resetDeferredArtifactEventsForTests()
     useSessionStore.setState(createInitialSessionState())
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useSessionStore.getState().appendUserMessage({
@@ -626,6 +628,7 @@ describe('workspace runtime events', () => {
   })
 
   it('attaches artifact events to the current message and finalizes their file paths', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
     const finalizedArtifact = createArtifactFile({
       id: 'transport-session-1:message-1:result.txt',
       sessionId: 'transport-session-1',
@@ -636,17 +639,29 @@ describe('workspace runtime events', () => {
         'file:///Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/result.txt'
     })
     const finalizeRunArtifacts = vi.fn().mockResolvedValue([finalizedArtifact])
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-event-1',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        text: 'Saved the result.'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-artifact', kind: 'stop' }))
 
     const wasApplied = await applyWorkspaceRuntimeEvent(
       createEvent({
         id: 'artifact-event-1',
         kind: 'artifact',
         runId: 'run-1',
+        promptMessageId,
         artifactSessionId: 'artifact-session-1',
         artifactClaimId: 'claim-1',
         artifacts: [createArtifactFile()]
       }),
-      { finalizeRunArtifacts }
+      { finalizeRunArtifacts, saveSession }
     )
 
     const session = useSessionStore.getState().sessions[0]
@@ -657,9 +672,17 @@ describe('workspace runtime events', () => {
       claimId: 'claim-1',
       messageId: message.id
     })
+    expect(saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'transport-session-1',
+        conversationGraph: expect.objectContaining({
+          messages: expect.arrayContaining([expect.objectContaining({ id: message.id })])
+        })
+      })
+    )
     expect(message).toMatchObject({
       role: 'agent',
-      content: '',
+      content: 'Saved the result.',
       artifactIds: ['transport-session-1:message-1:result.txt']
     })
     expect(session.artifacts).toEqual([
@@ -668,6 +691,180 @@ describe('workspace runtime events', () => {
         path: expect.stringContaining('/transport-session-1/message-1/result.txt')
       })
     ])
+  })
+
+  it('attaches a post-stop artifact event to the completed response for its prompt', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-event-1',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        text: 'Saved the plot.'
+      })
+    )
+    const responseMessageId = useSessionStore.getState().sessions[0].messages[1].id
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+
+    const operationOrder: string[] = []
+    const saveSession = vi.fn().mockImplementation(async () => {
+      operationOrder.push('save')
+    })
+    const finalizeRunArtifacts = vi.fn().mockImplementation(async () => {
+      operationOrder.push('finalize')
+      return [
+        createArtifactFile({
+          id: `transport-session-1:${responseMessageId}:result.txt`,
+          sessionId: 'transport-session-1',
+          messageId: responseMessageId,
+          runId: undefined
+        })
+      ]
+    })
+    const artifactEvent = createEvent({
+      id: 'artifact-event-after-stop',
+      kind: 'artifact',
+      runId: 'artifact-run-1',
+      promptMessageId,
+      artifactSessionId: 'artifact-session-1',
+      artifactClaimId: 'claim-1',
+      artifacts: [createArtifactFile({ runId: 'artifact-run-1' })]
+    })
+
+    await applyWorkspaceRuntimeEvent(artifactEvent, { finalizeRunArtifacts, saveSession })
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(finalizeRunArtifacts).toHaveBeenCalledWith({
+      claimId: 'claim-1',
+      messageId: responseMessageId
+    })
+    expect(operationOrder).toEqual(['save', 'finalize'])
+    expect(session.messages).toHaveLength(2)
+    expect(session.messages[1].artifactIds).toEqual([
+      `transport-session-1:${responseMessageId}:result.txt`
+    ])
+  })
+
+  it('waits for stop before binding an artifact to the terminal response for its prompt', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-event-before-artifact',
+        role: 'assistant',
+        messageId: 'assistant-message-before-artifact',
+        text: 'Now let me save it as an artifact:'
+      })
+    )
+    const intermediateMessageId = useSessionStore.getState().sessions[0].messages[1].id
+    const finalizeRunArtifacts = vi.fn().mockResolvedValue([
+      createArtifactFile({
+        id: 'transport-session-1:terminal-message:result.txt',
+        sessionId: 'transport-session-1',
+        messageId: 'terminal-message',
+        runId: undefined
+      })
+    ])
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-event-before-stop',
+        kind: 'artifact',
+        runId: 'artifact-run-before-stop',
+        promptMessageId,
+        artifactSessionId: 'artifact-session-1',
+        artifactClaimId: 'claim-before-stop',
+        artifacts: [createArtifactFile({ runId: 'artifact-run-before-stop' })]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+
+    expect(finalizeRunArtifacts).not.toHaveBeenCalled()
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-event-after-artifact',
+        role: 'assistant',
+        messageId: 'assistant-message-after-artifact',
+        text: 'The chart is complete.'
+      })
+    )
+    const terminalMessageId = useSessionStore.getState().sessions[0].messages[2].id
+    finalizeRunArtifacts.mockResolvedValue([
+      createArtifactFile({
+        id: `transport-session-1:${terminalMessageId}:result.txt`,
+        sessionId: 'transport-session-1',
+        messageId: terminalMessageId,
+        runId: undefined
+      })
+    ])
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-after-artifact', kind: 'stop' }), {
+      finalizeRunArtifacts,
+      saveSession
+    })
+
+    expect(finalizeRunArtifacts).toHaveBeenCalledWith({
+      claimId: 'claim-before-stop',
+      messageId: terminalMessageId
+    })
+    expect(finalizeRunArtifacts).not.toHaveBeenCalledWith({
+      claimId: 'claim-before-stop',
+      messageId: intermediateMessageId
+    })
+  })
+
+  it('re-saves the latest durable graph once when finalization observes an ownership race', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-event-ownership-race',
+        role: 'assistant',
+        messageId: 'assistant-message-ownership-race',
+        text: 'Saved the plot.'
+      })
+    )
+    const responseMessageId = useSessionStore.getState().sessions[0].messages[1].id
+    const operationOrder: string[] = []
+    const saveSession = vi.fn().mockImplementation(async () => {
+      operationOrder.push('save')
+    })
+    const finalizedArtifact = createArtifactFile({
+      id: `transport-session-1:${responseMessageId}:result.txt`,
+      sessionId: 'transport-session-1',
+      messageId: responseMessageId,
+      runId: undefined
+    })
+    const finalizeRunArtifacts = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        operationOrder.push('finalize')
+        throw new Error('Artifact finalization message is not a Branch descendant of its prompt.')
+      })
+      .mockImplementationOnce(async () => {
+        operationOrder.push('finalize')
+        return [finalizedArtifact]
+      })
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-race', kind: 'stop' }))
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-event-ownership-race',
+        kind: 'artifact',
+        runId: 'artifact-run-ownership-race',
+        promptMessageId,
+        artifactSessionId: 'artifact-session-1',
+        artifactClaimId: 'claim-ownership-race',
+        artifacts: [createArtifactFile({ runId: 'artifact-run-ownership-race' })]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+
+    expect(operationOrder).toEqual(['save', 'finalize', 'save', 'finalize'])
+    expect(finalizeRunArtifacts).toHaveBeenCalledTimes(2)
+    expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
   })
 
   it('auto-opens a generated molecule artifact in the preview panel', async () => {
@@ -682,6 +879,9 @@ describe('workspace runtime events', () => {
         'file:///Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/aspirin.mol'
     })
     const finalizeRunArtifacts = vi.fn().mockResolvedValue([finalizedArtifact])
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-molecule', kind: 'stop' }))
 
     await applyWorkspaceRuntimeEvent(
       createEvent({
@@ -692,7 +892,7 @@ describe('workspace runtime events', () => {
         artifactClaimId: 'claim-1',
         artifacts: [createArtifactFile({ name: 'aspirin.mol' })]
       }),
-      { finalizeRunArtifacts }
+      { finalizeRunArtifacts, saveSession }
     )
 
     const preview = usePreviewWorkbenchStore.getState()
@@ -720,6 +920,9 @@ describe('workspace runtime events', () => {
         'file:///Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/result.txt'
     })
     const finalizeRunArtifacts = vi.fn().mockResolvedValue([finalizedArtifact])
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-non-molecule', kind: 'stop' }))
 
     await applyWorkspaceRuntimeEvent(
       createEvent({
@@ -730,7 +933,7 @@ describe('workspace runtime events', () => {
         artifactClaimId: 'claim-1',
         artifacts: [createArtifactFile()]
       }),
-      { finalizeRunArtifacts }
+      { finalizeRunArtifacts, saveSession }
     )
 
     expect(usePreviewWorkbenchStore.getState()).toMatchObject({
@@ -1068,6 +1271,7 @@ describe('workspace runtime events', () => {
       .fn()
       .mockRejectedValueOnce(new Error('move failed'))
       .mockResolvedValueOnce([finalizedArtifact])
+    const saveSession = vi.fn().mockResolvedValue(undefined)
     const artifactEvent = createEvent({
       id: 'artifact-event-1',
       kind: 'artifact',
@@ -1077,8 +1281,10 @@ describe('workspace runtime events', () => {
       artifacts: [createArtifactFile()]
     })
 
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-failure', kind: 'stop' }))
+
     await expect(
-      applyWorkspaceRuntimeEvent(artifactEvent, { finalizeRunArtifacts })
+      applyWorkspaceRuntimeEvent(artifactEvent, { finalizeRunArtifacts, saveSession })
     ).rejects.toThrow('move failed')
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
@@ -1086,7 +1292,7 @@ describe('workspace runtime events', () => {
       error: expect.stringContaining('Generated file finalization failed')
     })
 
-    await applyWorkspaceRuntimeEvent(artifactEvent, { finalizeRunArtifacts })
+    await applyWorkspaceRuntimeEvent(artifactEvent, { finalizeRunArtifacts, saveSession })
 
     const session = useSessionStore.getState().sessions[0]
 

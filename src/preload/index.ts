@@ -26,6 +26,15 @@ import type {
   ReconcilePendingArtifactsRequest
 } from '../shared/artifacts'
 import type {
+  ArtifactLineageProvenance,
+  ArtifactVersionExecutionProvenance,
+  ArtifactVersionMessagesProvenance,
+  ArtifactVersionProvenance,
+  ArtifactVersionReviewProvenance,
+  GetArtifactLineageRequest,
+  GetArtifactVersionProvenanceRequest
+} from '../shared/artifact-provenance'
+import type {
   SaveBlobFileRequest,
   SaveBlobFileResult,
   SaveManagedFileRequest,
@@ -208,6 +217,8 @@ import type {
   ReviewWithChecks,
   ReviewRunRequest,
   ReviewRunResult,
+  ReviewSessionRequest,
+  ReviewSuppressionEvent,
   ReviewUpdateEvent
 } from '../shared/reviewer'
 import { REVIEWER_IPC } from '../shared/reviewer'
@@ -499,6 +510,19 @@ type OpenScienceAPI = {
     openFile: (request: OpenArtifactFileRequest) => Promise<void>
     // Reads a bounded text preview from managed generated files.
     readPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
+    getLineage: (request: GetArtifactLineageRequest) => Promise<ArtifactLineageProvenance>
+    getVersionProvenance: (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ArtifactVersionProvenance>
+    getVersionExecution: (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ArtifactVersionExecutionProvenance>
+    getVersionMessages: (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ArtifactVersionMessagesProvenance>
+    getVersionReview: (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ArtifactVersionReviewProvenance>
   }
   uploads: {
     // Desktop-only path fast path. A null result means this File has no native path.
@@ -523,6 +547,7 @@ type OpenScienceAPI = {
   }
   notebook: {
     state: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
+    readInputPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
     // Resolves an existing notebook entry for a session without creating one, or null when absent.
     getReference: (request: NotebookSessionRequest) => Promise<NotebookSessionReference | null>
     beginCodeCell: (request: BeginNotebookCodeCellRequest) => Promise<{
@@ -627,16 +652,14 @@ type OpenScienceAPI = {
   }
   reviewer: {
     run: (request: ReviewRunRequest) => Promise<ReviewRunResult>
-    getForSession: (sessionId: string) => Promise<ReviewWithChecks[]>
+    getForSession: (request: ReviewSessionRequest) => Promise<ReviewWithChecks[]>
     onUpdated: (listener: AcpListener<ReviewUpdateEvent>) => RemoveListener
-    onSuppressNextAutoReview: (
-      listener: AcpListener<{ sessionId: string; clear?: boolean }>
-    ) => RemoveListener
+    onSuppressNextAutoReview: (listener: AcpListener<ReviewSuppressionEvent>) => RemoveListener
     // Fix loop lock events.
-    onFixLoopStart: (listener: AcpListener<{ sessionId: string }>) => RemoveListener
-    onFixLoopEnd: (listener: AcpListener<{ sessionId: string }>) => RemoveListener
+    onFixLoopStart: (listener: AcpListener<ReviewSessionRequest>) => RemoveListener
+    onFixLoopEnd: (listener: AcpListener<ReviewSessionRequest>) => RemoveListener
     // Sends an abort request to stop the running fix loop for a session.
-    abortFixLoop: (sessionId: string) => Promise<void>
+    abortFixLoop: (request: ReviewSessionRequest) => Promise<void>
   }
   window: {
     // Closes the focused window (the Cmd+W / Ctrl+W fallback when no preview panel is open).
@@ -1055,7 +1078,29 @@ const api: OpenScienceAPI = {
     openFile: (request) => ipcRenderer.invoke('artifacts:open-file', request) as Promise<void>,
     // Keep preview reads on the same managed-file trust path as opening files.
     readPreview: (request) =>
-      ipcRenderer.invoke('artifacts:read-preview', request) as Promise<ArtifactPreviewResult>
+      ipcRenderer.invoke('artifacts:read-preview', request) as Promise<ArtifactPreviewResult>,
+    getLineage: (request) =>
+      ipcRenderer.invoke('artifacts:get-lineage', request) as Promise<ArtifactLineageProvenance>,
+    getVersionProvenance: (request) =>
+      ipcRenderer.invoke(
+        'artifacts:get-version-provenance',
+        request
+      ) as Promise<ArtifactVersionProvenance>,
+    getVersionExecution: (request) =>
+      ipcRenderer.invoke(
+        'artifacts:get-version-execution',
+        request
+      ) as Promise<ArtifactVersionExecutionProvenance>,
+    getVersionMessages: (request) =>
+      ipcRenderer.invoke(
+        'artifacts:get-version-messages',
+        request
+      ) as Promise<ArtifactVersionMessagesProvenance>,
+    getVersionReview: (request) =>
+      ipcRenderer.invoke(
+        'artifacts:get-version-review',
+        request
+      ) as Promise<ArtifactVersionReviewProvenance>
   },
   uploads: {
     // Upload IPC remains behind the preload bridge so renderer code never receives raw fs access.
@@ -1093,6 +1138,8 @@ const api: OpenScienceAPI = {
     // Notebook commands stay behind typed IPC so renderer code never talks to local RPC directly.
     state: (request) =>
       ipcRenderer.invoke('notebook:state', request) as Promise<NotebookSessionState>,
+    readInputPreview: (request) =>
+      ipcRenderer.invoke('notebook:read-input-preview', request) as Promise<ArtifactPreviewResult>,
     getReference: (request) =>
       ipcRenderer.invoke('notebook:reference', request) as Promise<NotebookSessionReference | null>,
     beginCodeCell: (request) =>
@@ -1208,19 +1255,19 @@ const api: OpenScienceAPI = {
   reviewer: {
     run: (request: ReviewRunRequest) =>
       ipcRenderer.invoke(REVIEWER_IPC.RUN, request) as Promise<ReviewRunResult>,
-    getForSession: (sessionId: string) =>
-      ipcRenderer.invoke(REVIEWER_IPC.GET_FOR_SESSION, sessionId) as Promise<ReviewWithChecks[]>,
+    getForSession: (request: ReviewSessionRequest) =>
+      ipcRenderer.invoke(REVIEWER_IPC.GET_FOR_SESSION, request) as Promise<ReviewWithChecks[]>,
     onUpdated: (listener) => onIpcMessage(REVIEWER_IPC.UPDATED, listener),
-    onSuppressNextAutoReview: (listener: AcpListener<{ sessionId: string; clear?: boolean }>) =>
+    onSuppressNextAutoReview: (listener: AcpListener<ReviewSuppressionEvent>) =>
       onIpcMessage(REVIEWER_IPC.SUPPRESS_NEXT_AUTO_REVIEW, listener),
     // Fix loop lock: fired when the loop starts (lock composer) / ends or is aborted (unlock).
-    onFixLoopStart: (listener: AcpListener<{ sessionId: string }>) =>
+    onFixLoopStart: (listener: AcpListener<ReviewSessionRequest>) =>
       onIpcMessage(REVIEWER_IPC.FIX_LOOP_START, listener),
-    onFixLoopEnd: (listener: AcpListener<{ sessionId: string }>) =>
+    onFixLoopEnd: (listener: AcpListener<ReviewSessionRequest>) =>
       onIpcMessage(REVIEWER_IPC.FIX_LOOP_END, listener),
     // Sends an abort request to the main process to stop the running fix loop for a session.
-    abortFixLoop: (sessionId: string) =>
-      ipcRenderer.invoke(REVIEWER_IPC.ABORT_FIX_LOOP, sessionId) as Promise<void>
+    abortFixLoop: (request: ReviewSessionRequest) =>
+      ipcRenderer.invoke(REVIEWER_IPC.ABORT_FIX_LOOP, request) as Promise<void>
   },
   window: {
     close: () => ipcRenderer.invoke(WINDOW_CLOSE_CHANNEL) as Promise<void>,

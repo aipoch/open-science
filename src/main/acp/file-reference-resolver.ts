@@ -6,6 +6,7 @@ import type { ArtifactRepository } from '../artifacts/repository'
 import type { UploadRepository } from '../uploads/repository'
 
 export type FileReferenceContext = {
+  projectId: string
   sessionId: string
 }
 
@@ -63,19 +64,23 @@ export const createManagedFileReferenceResolver = (dependencies: {
   if (dependencies.uploads) {
     adapters.push({
       source: 'upload',
-      resolve: async ({ sessionId }, reference) => {
+      resolve: async ({ projectId, sessionId }, reference) => {
         if (reference.source !== 'upload') throw new Error('Invalid upload reference.')
         let absolutePath: string
         try {
-          absolutePath = await dependencies.uploads!.resolveSessionUploadPath(sessionId, {
-            path: reference.path
-          })
+          absolutePath = await dependencies.uploads!.resolveSessionUploadPath(
+            sessionId,
+            { path: reference.path },
+            projectId
+          )
         } catch {
-          // A turn-scoped `@` selection may intentionally refer to a managed upload from an older
-          // session in the same project. It still has to pass canonical managed-root validation.
-          absolutePath = await dependencies.uploads!.resolveManagedUploadPath({
-            path: reference.path
-          })
+          // A turn-scoped `@` selection is an explicit user capability and may intentionally refer
+          // to a managed upload from another Session. Project ownership remains an app-issued
+          // boundary: native Versions and trusted legacy mappings must still belong to this Project.
+          absolutePath = await dependencies.uploads!.resolveManagedUploadPath(
+            { path: reference.path },
+            { projectId }
+          )
         }
         return {
           absolutePath,

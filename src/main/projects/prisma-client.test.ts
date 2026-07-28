@@ -1,7 +1,8 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { Prisma, type PrismaClient } from '@prisma/client'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ProjectRepository } from './repository'
 import {
@@ -29,6 +30,44 @@ afterEach(async () => {
 })
 
 describe('project prisma client (integration)', () => {
+  it('covers every Prisma scalar field in the runtime SQLite schema', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-schema-parity-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await ensureProjectSchema(client)
+
+    for (const model of Prisma.dmmf.datamodel.models) {
+      const tableName = model.dbName ?? model.name
+      const columns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+        `PRAGMA table_info("${tableName.replaceAll('"', '""')}")`
+      )
+      const runtimeColumns = new Set(columns.map((column) => column.name))
+      const missingColumns = model.fields
+        .filter((field) => field.kind === 'scalar')
+        .map((field) => field.dbName ?? field.name)
+        .filter((fieldName) => !runtimeColumns.has(fieldName))
+
+      expect(missingColumns, `${tableName} runtime DDL is missing Prisma columns`).toEqual([])
+    }
+  })
+
+  it('does not hide additive migration failures when the requested column remains absent', async () => {
+    const migrationFailure = new Error('simulated SQLite disk I/O failure')
+    const client = {
+      $executeRawUnsafe: vi.fn(async (ddl: string) => {
+        if (ddl.includes('ALTER TABLE "Finding" ADD COLUMN "status"')) {
+          throw migrationFailure
+        }
+        return 0
+      }),
+      $queryRawUnsafe: vi.fn(async () => [])
+    } as unknown as PrismaClient
+
+    await expect(ensureProjectSchema(client)).rejects.toBe(migrationFailure)
+  })
+
   it('releases and recreates the shared client for exclusive migration validation', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-client-drain-'))
     disconnect = disconnectProjectDbClient
