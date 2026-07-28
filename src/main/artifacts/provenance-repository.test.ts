@@ -1433,7 +1433,7 @@ describe('artifact provenance repository', () => {
     ).resolves.toMatchObject({ versionId: version.versionId })
   })
 
-  it('uses exact observed ownership and never trusts an unobserved inline producer', async () => {
+  it('uses exact observed ownership and scope-validates an inline producer declaration', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-producer-mismatch-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
@@ -1609,15 +1609,54 @@ describe('artifact provenance repository', () => {
       writeOperationId: 'write-inline-producer-declaration',
       writeRequestChecksum: 'd'.repeat(64),
       ...graph,
+      notebookSessionId: 'session-1',
       producerRunId: 'notebook-run-owner',
+      sourceKind: 'inline',
       filename: 'inline.png',
       contentType: 'image/png'
     })
     const inlineRow = await client.artifactVersion.findUniqueOrThrow({
       where: { id: inline.versionId }
     })
-    expect(inlineRow).toMatchObject({ producerRunId: null, producerRunIndex: null })
+    expect(inlineRow).toMatchObject({
+      producerRunId: 'notebook-run-owner',
+      producerRunIndex: 0
+    })
     expect(JSON.parse(inlineRow.evidenceJson)).toMatchObject({
+      producer: {
+        state: 'available',
+        producer_run_id: 'notebook-run-owner',
+        association_method: 'agent-declared-and-session-validated'
+      },
+      execution_status: { state: 'available' }
+    })
+
+    await compatibilityRepository.writePendingFile({
+      projectName: 'project-1',
+      sessionId: 'artifact-session-1',
+      runId: 'artifact-run-1',
+      filename: 'unobserved-local.png',
+      source: createPngInlineSource('unobserved local bytes')
+    })
+    const unobservedLocal = await repository.createVersion({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      writeOperationId: 'write-unobserved-local-producer',
+      writeRequestChecksum: 'c'.repeat(64),
+      ...graph,
+      notebookSessionId: 'session-1',
+      producerRunId: 'notebook-run-owner',
+      sourceKind: 'localPath',
+      filename: 'unobserved-local.png',
+      contentType: 'image/png'
+    })
+    const unobservedLocalRow = await client.artifactVersion.findUniqueOrThrow({
+      where: { id: unobservedLocal.versionId }
+    })
+    expect(unobservedLocalRow).toMatchObject({ producerRunId: null, producerRunIndex: null })
+    expect(JSON.parse(unobservedLocalRow.evidenceJson)).toMatchObject({
       producer: { state: 'unavailable', reason: 'producer-source-unverifiable' },
       execution_status: { state: 'unavailable', reason: 'producer-source-unverifiable' }
     })

@@ -497,6 +497,7 @@ describe('artifact MCP server', () => {
       messageAncestry: ['message-user-parent', 'message-user-1'],
       producerRunId: 'notebook-run-17',
       notebookSessionId: 'session-1',
+      sourceKind: 'inline',
       filename: 'sin.png',
       contentType: 'image/png'
     })
@@ -688,5 +689,6 @@ describe('artifact MCP server', () => {
       sizeBytes: sourceStat.size,
       mtimeMs: sourceStat.mtimeMs
     })
+    expect(requests[1]?.params.sourceKind).toBe('localPath')
   })
 })

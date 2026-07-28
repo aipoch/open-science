@@ -162,6 +162,7 @@ export type WriteAppGeneratedArtifactVersionRequest = Omit<
   | 'writeRequestChecksum'
   | 'notebookSessionId'
   | 'producerRunId'
+  | 'sourceKind'
   | 'sourceFileObservation'
   | 'filename'
   | 'contentType'
@@ -1002,6 +1003,7 @@ class ArtifactProvenanceRepository {
             contentType: request.contentType ?? null,
             filename: request.filename,
             producerRunId: null,
+            sourceKind: 'inline',
             sourceFileObservation: null
           })
         )
@@ -1010,7 +1012,8 @@ class ArtifactProvenanceRepository {
           {
             ...versionRequest,
             writeOperationId,
-            writeRequestChecksum
+            writeRequestChecksum,
+            sourceKind: 'inline'
           },
           async (version) =>
             bindVersionRouting(
@@ -1616,10 +1619,14 @@ class ArtifactProvenanceRepository {
     createdAt: Date,
     artifactChecksum: string
   ): Promise<ProducerCapture> {
-    // An Agent-supplied run id without an app-side source observation is not evidence. Preserve the
-    // Artifact Version and downgrade only its producer fields, even if the Agent also omitted or
-    // fabricated notebook context.
-    if (request.producerRunId && !request.sourceFileObservation) {
+    // Local files require an app-side observation before an Agent-declared run may become evidence.
+    // Inline bytes have no file observation, so they retain the declared run only after the durable
+    // Notebook Session and graph-scope checks below succeed.
+    if (
+      request.producerRunId &&
+      !request.sourceFileObservation &&
+      request.sourceKind !== 'inline'
+    ) {
       return { state: 'unavailable', reason: 'producer-source-unverifiable' }
     }
     if (request.producerRunId && !request.notebookSessionId) {

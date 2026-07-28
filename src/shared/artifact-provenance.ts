@@ -1,4 +1,4 @@
-import type { ArtifactFile, ArtifactSourceFileObservation } from './artifacts'
+import type { ArtifactFile, ArtifactSourceFileObservation, ArtifactWriteSource } from './artifacts'
 import type {
   NotebookInputAssociation,
   NotebookKernelKind,
@@ -32,6 +32,9 @@ export type CreateArtifactVersionRequest = {
   agentName?: string
   notebookSessionId?: string
   producerRunId?: string
+  // App-owned adapter classification of the imported source. Legacy or unclassified requests stay
+  // fail-closed when producer attribution would otherwise depend on the absence of a file observation.
+  sourceKind?: ArtifactWriteSource['kind']
   // Untrusted adapter observation hint for a local source file. Main re-observes the path under the
   // durable Notebook roots and verifies its bytes before it may support producer attribution.
   sourceFileObservation?: ArtifactSourceFileObservation

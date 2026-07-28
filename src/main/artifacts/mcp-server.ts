@@ -398,6 +398,7 @@ const writeArtifactFileForCurrentRun = async (
             contentType: input.mimeType ?? null,
             filename: input.filename,
             producerRunId: input.producerRunId ?? null,
+            sourceKind: source.kind,
             sourceFileObservation: sourceFileObservation ?? null
           })
         )
@@ -420,6 +421,7 @@ const writeArtifactFileForCurrentRun = async (
         agentName: context.agentName,
         notebookSessionId: context.notebookSessionId,
         producerRunId: input.producerRunId,
+        sourceKind: source.kind,
         sourceFileObservation,
         filename: input.filename,
         contentType: input.mimeType
