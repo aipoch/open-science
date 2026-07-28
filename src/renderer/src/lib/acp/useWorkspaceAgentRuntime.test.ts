@@ -2805,6 +2805,65 @@ describe('resendEditedWorkspaceMessage', () => {
     expect(session?.status).toBe('error')
     expect(session?.error).toContain('image replay')
   })
+
+  it('replays earlier uploaded images with their Project-scoped Version locator after an edit', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            {
+              ...createMessage('user-1', 'user', 'first prompt', baseTime),
+              uploads: [
+                createAttachment({
+                  id: 'upload-1',
+                  sessionId: 'source-session',
+                  versionId: 'upload-version-1',
+                  versionNumber: 1,
+                  name: 'photo.png',
+                  originalName: 'photo.png',
+                  mimeType: 'image/png'
+                })
+              ]
+            },
+            createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
+            createMessage('user-2', 'user', 'second prompt', baseTime + 200)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 200
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    const resent = await resendEditedWorkspaceMessage(
+      runtime,
+      { sessionId: 'session-1', messageId: 'user-2', text: 'second prompt, edited' },
+      true
+    )
+    await flushRuntimeTasks()
+
+    expect(resent).toBe(true)
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toEqual([
+      expect.objectContaining({
+        id: 'upload-1',
+        path: 'upload-version:project-1/source-session/upload-version-1'
+      })
+    ])
+  })
 })
 
 describe('edit resend reply streaming', () => {

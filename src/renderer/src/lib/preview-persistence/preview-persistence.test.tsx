@@ -169,12 +169,36 @@ describe('preview persistence projections', () => {
   it('round-trips file version metadata used by preview resource identity', () => {
     usePreviewWorkbenchStore.setState({
       panelState: 'open',
-      items: [createStoredFileItem({ size: 4096, mtimeMs: 1710000001000 })]
+      items: [
+        createStoredFileItem({
+          size: 4096,
+          mtimeMs: 1710000001000,
+          artifactId: 'artifact-1',
+          selectedVersionId: 'artifact-version-2',
+          versionNumber: 2,
+          originSession: {
+            state: 'deleted',
+            title: 'Original analysis',
+            deletedAt: '2026-07-28T12:00:00.000Z'
+          }
+        })
+      ]
     })
 
     const restored = toRestoredSlice(toPersistedPreviewState(usePreviewWorkbenchStore.getState()))
 
-    expect(restored.items?.[0]).toMatchObject({ size: 4096, mtimeMs: 1710000001000 })
+    expect(restored.items?.[0]).toMatchObject({
+      size: 4096,
+      mtimeMs: 1710000001000,
+      artifactId: 'artifact-1',
+      selectedVersionId: 'artifact-version-2',
+      versionNumber: 2,
+      originSession: {
+        state: 'deleted',
+        title: 'Original analysis',
+        deletedAt: '2026-07-28T12:00:00.000Z'
+      }
+    })
   })
 
   it('re-evaluates persisted formats against current preview support', () => {

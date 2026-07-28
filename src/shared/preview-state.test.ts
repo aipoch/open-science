@@ -99,10 +99,51 @@ describe('normalizePersistedPreviewState item sanitization', () => {
 
   it('preserves finite file version metadata', () => {
     const state = normalizePersistedPreviewState({
-      items: [{ ...validItem, size: 4096, mtimeMs: 1710000001000 }]
+      items: [
+        {
+          ...validItem,
+          size: 4096,
+          mtimeMs: 1710000001000,
+          artifactId: 'artifact-1',
+          selectedVersionId: 'artifact-version-2',
+          versionNumber: 2,
+          originSession: {
+            state: 'deleted',
+            title: 'Original analysis',
+            deletedAt: '2026-07-28T12:00:00.000Z'
+          }
+        }
+      ]
     })
 
-    expect(state.items[0]).toMatchObject({ size: 4096, mtimeMs: 1710000001000 })
+    expect(state.items[0]).toMatchObject({
+      size: 4096,
+      mtimeMs: 1710000001000,
+      artifactId: 'artifact-1',
+      selectedVersionId: 'artifact-version-2',
+      versionNumber: 2,
+      originSession: {
+        state: 'deleted',
+        title: 'Original analysis',
+        deletedAt: '2026-07-28T12:00:00.000Z'
+      }
+    })
+  })
+
+  it('drops malformed provenance metadata without dropping the preview item', () => {
+    const state = normalizePersistedPreviewState({
+      items: [
+        {
+          ...validItem,
+          artifactId: 42,
+          selectedVersionId: {},
+          versionNumber: 0,
+          originSession: { state: 'unknown', title: 'Untrusted title' }
+        }
+      ]
+    })
+
+    expect(state.items).toEqual([validItem])
   })
 
   it('ignores non-string field values, falling back to defaults or dropping the item', () => {

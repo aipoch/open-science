@@ -1078,7 +1078,10 @@ const resendEditedWorkspaceMessage = async (
   // Validate replay compatibility before the Branch switch: a kept history with images — whether
   // agent-emitted blocks or user uploads — cannot be replayed on a model without image input, and
   // discovering that after the truncation would leave the later turns dropped with no prompt dispatched.
-  const replayMedia = buildHistoryReplayMedia(session.messages.slice(0, cutIndex))
+  const replayMedia = buildHistoryReplayMedia(
+    session.messages.slice(0, cutIndex),
+    session.projectId
+  )
 
   if (
     supportsImageInput === false &&

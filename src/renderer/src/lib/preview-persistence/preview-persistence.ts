@@ -35,7 +35,11 @@ const toPersistedPreviewState = (state: PreviewStoreState): PersistedPreviewStat
       name: item.name,
       ...(item.mimeType ? { mimeType: item.mimeType } : {}),
       ...(item.size !== undefined ? { size: item.size } : {}),
-      ...(item.mtimeMs !== undefined ? { mtimeMs: item.mtimeMs } : {})
+      ...(item.mtimeMs !== undefined ? { mtimeMs: item.mtimeMs } : {}),
+      ...(item.artifactId ? { artifactId: item.artifactId } : {}),
+      ...(item.selectedVersionId ? { selectedVersionId: item.selectedVersionId } : {}),
+      ...(item.versionNumber !== undefined ? { versionNumber: item.versionNumber } : {}),
+      ...(item.originSession ? { originSession: item.originSession } : {})
     }))
 })
 
@@ -83,7 +87,11 @@ const toRestoredSlice = (
         ...(upload?.size !== undefined || item.size !== undefined
           ? { size: upload?.size ?? item.size }
           : {}),
-        ...(item.mtimeMs !== undefined ? { mtimeMs: item.mtimeMs } : {})
+        ...(item.mtimeMs !== undefined ? { mtimeMs: item.mtimeMs } : {}),
+        ...(item.artifactId ? { artifactId: item.artifactId } : {}),
+        ...(item.selectedVersionId ? { selectedVersionId: item.selectedVersionId } : {}),
+        ...(item.versionNumber !== undefined ? { versionNumber: item.versionNumber } : {}),
+        ...(item.originSession ? { originSession: item.originSession } : {})
       }
     })
   }
