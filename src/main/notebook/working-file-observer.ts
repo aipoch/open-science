@@ -61,6 +61,8 @@ const settleWatcherEvents = (): Promise<void> =>
 const waitForWatcherReady = (): Promise<void> =>
   new Promise((resolveReady) => setTimeout(resolveReady, WATCHER_READY_MS))
 
+type SnapshotEntry = NotebookWorkingFile & { ctimeMs: number }
+
 const resolveChangedFile = async (
   dataRoot: string,
   logicalDataRoot: string,
@@ -91,7 +93,27 @@ const resolveChangedFile = async (
   }
 }
 
-type SnapshotEntry = NotebookWorkingFile & { ctimeMs: number }
+const diffSnapshots = (
+  before: ReadonlyMap<string, SnapshotEntry>,
+  after: ReadonlyMap<string, SnapshotEntry>
+): NotebookWorkingFile[] =>
+  Array.from(after.values())
+    .filter((file) => {
+      const previous = before.get(file.path)
+      return (
+        !previous ||
+        previous.size !== file.size ||
+        previous.mtimeMs !== file.mtimeMs ||
+        previous.ctimeMs !== file.ctimeMs
+      )
+    })
+    .map((file) => ({
+      path: file.path,
+      relativePath: file.relativePath,
+      kind: file.kind,
+      size: file.size,
+      mtimeMs: file.mtimeMs
+    }))
 
 const captureFallbackSnapshot = async (
   dataRoot: string,
@@ -160,23 +182,7 @@ const startFallbackObservation = async (
       unregister()
       if (active.conflicted || !before || !after) return []
 
-      return Array.from(after.values())
-        .filter((file) => {
-          const previous = before.get(file.path)
-          return (
-            !previous ||
-            previous.size !== file.size ||
-            previous.mtimeMs !== file.mtimeMs ||
-            previous.ctimeMs !== file.ctimeMs
-          )
-        })
-        .map((file) => ({
-          path: file.path,
-          relativePath: file.relativePath,
-          kind: file.kind,
-          size: file.size,
-          mtimeMs: file.mtimeMs
-        }))
+      return diffSnapshots(before, after)
     }
   }
 }
@@ -260,14 +266,14 @@ const startWorkingFileObservation = async (
 
         if (active.conflicted || invalid) return []
         try {
-          const files = await Promise.all(
+          const candidates = await Promise.all(
             Array.from(changedPaths)
               .sort((left, right) => left.localeCompare(right))
               .map((candidatePath) =>
                 resolveChangedFile(dataRoot, logicalDataRoot, logicalSessionRoot, candidatePath)
               )
           )
-          return files
+          const changedFiles = candidates
             .filter((file): file is SnapshotEntry => file !== undefined)
             .filter((file) => {
               const previous = before.get(file.path)
@@ -285,6 +291,13 @@ const startWorkingFileObservation = async (
               size: file.size,
               mtimeMs: file.mtimeMs
             }))
+          if (changedFiles.length > 0) return changedFiles
+
+          // macOS can deliver recursive watcher events after the bounded settle window. A full diff
+          // is reserved for the empty/no-op event path so correctness does not impose two tree scans
+          // on normal runs.
+          const after = await captureFallbackSnapshot(dataRoot, logicalDataRoot, logicalSessionRoot)
+          return after ? diffSnapshots(before, after) : []
         } catch {
           return []
         }

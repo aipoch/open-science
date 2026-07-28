@@ -20,6 +20,7 @@ import {
   createPreviewFileItemFromMention,
   createPreviewFileItemFromUpload
 } from './preview-file-item'
+import { createPreviewRequestScope } from './previews/preview-file-reader'
 import type { JobSummary } from '../../../../shared/compute'
 import { CompletedJobCard } from '@/components/CompletedJobCard'
 import { JobDetailModal } from '@/components/JobDetailModal'
@@ -329,8 +330,12 @@ const WorkspaceMessageScroller = ({
 
     try {
       await read({
-        ...(currentProjectId ? { projectId: currentProjectId } : {}),
-        sessionId: currentSessionId,
+        ...createPreviewRequestScope({
+          projectId: currentProjectId,
+          sessionId: currentSessionId,
+          source: part.source,
+          path: part.path
+        }),
         path: part.path,
         maxBytes: 1,
         encoding: 'utf8'

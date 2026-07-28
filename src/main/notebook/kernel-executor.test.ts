@@ -256,6 +256,31 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     await expect(observation.finish()).resolves.toEqual([])
   })
 
+  it('falls back to a final snapshot when the watcher misses a file event', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-working-file-missed-event-'))
+    const sessionRoot = join(cwdDir, 'nb')
+    const dataRoot = join(sessionRoot, 'data')
+    await mkdir(dataRoot, { recursive: true })
+    const watcher = {
+      close: vi.fn(),
+      on: vi.fn().mockReturnThis()
+    }
+    const observation = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot },
+      { watchDirectory: (() => watcher) as never }
+    )
+
+    await writeFile(join(dataRoot, 'generated.csv'), 'x,y\n1,2\n')
+
+    await expect(observation.finish()).resolves.toEqual([
+      expect.objectContaining({
+        path: resolve(dataRoot, 'generated.csv'),
+        relativePath: 'data/generated.csv',
+        size: 8
+      })
+    ])
+  })
+
   it('runs a cell, echoes stdout, and reports the working directory', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-exec-')
     const executor = makeExecutor()

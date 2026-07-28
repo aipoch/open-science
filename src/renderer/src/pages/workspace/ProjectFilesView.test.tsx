@@ -1932,6 +1932,7 @@ describe('ProjectFilesView', () => {
       await Promise.resolve()
     })
 
+    await vi.waitFor(() => expect(projectFilesChangedListener).toBeTypeOf('function'))
     const { useSessionStore } = await import('@/stores/session-store')
     await act(async () => {
       useSessionStore.getState().replaceMessageUploads({
@@ -2015,6 +2016,7 @@ describe('ProjectFilesView', () => {
     })
     expect(container.textContent).toContain('legacy_column')
 
+    await vi.waitFor(() => expect(projectFilesChangedListener).toBeTypeOf('function'))
     const { useSessionStore } = await import('@/stores/session-store')
     await act(async () => {
       useSessionStore.getState().replaceMessageUploads({
