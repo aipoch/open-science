@@ -1,9 +1,11 @@
 import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { createUploadVersionReference } from '../../shared/uploads'
+import type { ArtifactRepository } from '../artifacts/repository'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
@@ -137,6 +139,33 @@ describe('managed file reference resolver', () => {
         }
       )
     ).rejects.toThrow(/different project/i)
+  })
+
+  it('rejects an explicitly referenced Artifact Version from another Project', async () => {
+    const resolveVersionContent = vi.fn()
+    const resolver = createManagedFileReferenceResolver({
+      artifacts: {} as ArtifactRepository,
+      artifactVersions: { resolveVersionContent }
+    })
+
+    await expect(
+      resolver.resolve(
+        { projectId: 'project-b', sessionId: 'target-session' },
+        {
+          id: 'artifact-version-1',
+          name: 'private.csv',
+          path: createArtifactVersionLocator({
+            projectId: 'project-a',
+            appSessionId: 'source-session',
+            artifactId: 'artifact-1',
+            versionId: 'artifact-version-1'
+          }),
+          source: 'artifact',
+          mimeType: 'text/csv'
+        }
+      )
+    ).rejects.toThrow(/different project/i)
+    expect(resolveVersionContent).not.toHaveBeenCalled()
   })
 
   it('leaves linked folders unavailable until a capability-validating adapter is registered', async () => {

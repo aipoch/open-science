@@ -26,6 +26,7 @@ import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository
 import type { ArtifactRunClaim } from '../artifacts/run-registry'
 import { createPngBytes, createPngInlineSource } from '../artifacts/artifact-test-fixtures'
 import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
+import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import {
   ACTIVITY_GROUP_MCP_SERVER_NAME,
   BEGIN_ACTIVITY_GROUP_TOOL_NAME
@@ -2671,6 +2672,82 @@ describe('ACP runtime session management', () => {
       text: expect.stringMatching(
         /<attached_local_archive>[\s\S]*generated\.skill[\s\S]*"skillImportEligible":false/
       )
+    })
+  })
+
+  it('resolves a version-backed artifact mention before sending the prompt', async () => {
+    const root = await createTemporaryRoot()
+    const artifactRepository = new ArtifactRepository(root)
+    const immutablePath = join(root, 'provenance', 'artifact-version-1', 'content')
+    await mkdir(join(root, 'provenance', 'artifact-version-1'), { recursive: true })
+    await writeFile(immutablePath, 'version-backed artifact')
+
+    const process = new FakeAgentProcess()
+    const receivedPrompts: ContentBlock[][] = []
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: ({ prompt }) => {
+        receivedPrompts.push(prompt)
+      }
+    })
+    const resolveVersionContent = vi.fn(async () => ({
+      path: immutablePath,
+      filename: 'report.txt',
+      contentType: 'text/plain'
+    }))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/unused',
+        repository: artifactRepository,
+        provenance: {
+          listRunVersions: vi.fn(async () => []),
+          writeAppGeneratedVersion: vi.fn(),
+          resolveVersionContent
+        }
+      }
+    })
+
+    const session = await runtime.createSession({
+      cwd: '/workspace',
+      projectName: 'project-1'
+    })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'inspect this artifact',
+      referencedArtifacts: [
+        {
+          id: 'artifact-version-1',
+          name: 'report.txt',
+          path: createArtifactVersionLocator({
+            projectId: 'project-1',
+            appSessionId: 'source-session',
+            artifactId: 'artifact-1',
+            versionId: 'artifact-version-1'
+          }),
+          source: 'artifact',
+          mimeType: 'text/plain'
+        }
+      ]
+    })
+
+    expect(resolveVersionContent).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      appSessionId: 'source-session',
+      artifactId: 'artifact-1',
+      versionId: 'artifact-version-1'
+    })
+    expect(receivedPrompts[0][1]).toMatchObject({
+      type: 'resource',
+      resource: {
+        mimeType: 'text/plain',
+        text: 'version-backed artifact',
+        uri: expect.stringContaining('content')
+      }
     })
   })
 

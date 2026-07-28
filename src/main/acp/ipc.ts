@@ -47,7 +47,8 @@ type AcpIpcArtifacts = {
   provenanceRepository?: Pick<
     ArtifactProvenanceRepository,
     'listRunVersions' | 'writeAppGeneratedVersion'
-  >
+  > &
+    Partial<Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>>
 }
 
 type AcpIpcOptions = AcpIpcArtifacts & {

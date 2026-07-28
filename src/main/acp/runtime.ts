@@ -245,7 +245,13 @@ type AcpRuntimeArtifactOptions = {
   provenance?: Pick<
     import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
     'listRunVersions' | 'writeAppGeneratedVersion'
-  >
+  > &
+    Partial<
+      Pick<
+        import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
+        'resolveVersionContent'
+      >
+    >
 }
 
 type AcpRuntimeUploadOptions = {
@@ -845,7 +851,8 @@ class AcpRuntime {
     this.uploadRepository = options.uploads?.repository
     this.fileReferenceResolver = createManagedFileReferenceResolver({
       uploads: this.uploadRepository,
-      artifacts: this.artifactRepository
+      artifacts: this.artifactRepository,
+      artifactVersions: options.artifacts?.provenance
     })
     this.permissionBroker = new AcpPermissionBroker((request) => {
       // Relabel to the app-facing id when this session was adopted onto a replaced agent.

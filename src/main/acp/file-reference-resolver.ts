@@ -2,7 +2,9 @@ import { stat } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 
 import type { FileReference } from '../../shared/artifacts'
+import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
 import type { ArtifactRepository } from '../artifacts/repository'
+import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import type { UploadRepository } from '../uploads/repository'
 
 export type FileReferenceContext = {
@@ -58,6 +60,7 @@ export class FileReferenceResolver {
 export const createManagedFileReferenceResolver = (dependencies: {
   uploads?: UploadRepository
   artifacts?: ArtifactRepository
+  artifactVersions?: Partial<Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>>
 }): FileReferenceResolver => {
   const adapters: FileReferenceAdapter[] = []
 
@@ -95,8 +98,25 @@ export const createManagedFileReferenceResolver = (dependencies: {
   if (dependencies.artifacts) {
     adapters.push({
       source: 'artifact',
-      resolve: async (_context, reference) => {
+      resolve: async ({ projectId }, reference) => {
         if (reference.source !== 'artifact') throw new Error('Invalid artifact reference.')
+        const versionIdentity = parseArtifactVersionLocator(reference.path)
+        if (versionIdentity) {
+          if (versionIdentity.projectId !== projectId) {
+            throw new Error('Artifact Version belongs to a different project.')
+          }
+          if (!dependencies.artifactVersions?.resolveVersionContent) {
+            throw new Error('Artifact Provenance is not configured.')
+          }
+          const resolved =
+            await dependencies.artifactVersions.resolveVersionContent(versionIdentity)
+          return {
+            absolutePath: resolved.path,
+            name: resolved.filename,
+            mimeType: resolved.contentType ?? reference.mimeType,
+            allowSkillImportReference: false
+          }
+        }
         return {
           absolutePath: await dependencies.artifacts!.resolveManagedFilePath({
             path: reference.path
