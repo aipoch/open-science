@@ -260,31 +260,32 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
             className="items-center gap-2 px-2 py-1.5"
           >
             {/* The leading icon stays a generic model glyph; the provider identity lives in the
-                two-line summary instead. */}
+                right-hand two-line summary instead. */}
             <Cpu className="size-4 shrink-0 text-text-200" strokeWidth={2} aria-hidden="true" />
             <span className="min-w-0 flex-1">
-              {current ? (
-                <>
-                  {/* Provider line: small bold caption with the provider's own icon; the model
-                      name gets the primary line below it. */}
-                  <span className="flex items-center gap-1 text-[11px] font-semibold leading-4 text-text-300">
-                    <ProviderKindIcon
-                      kindKey={providerKindKey(current.providerType, current.vendorId)}
-                      className="size-3 shrink-0"
-                    />
-                    <span className="min-w-0 truncate">{current.providerName}</span>
-                  </span>
-                  <span className="block truncate text-[13px] font-medium leading-5">
-                    {optionLabel(current)}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span className="block text-[13px] font-medium leading-5">Model</span>
-                  <span className="block text-[11px] leading-4 text-text-300">Select</span>
-                </>
-              )}
+              <span className="block text-[13px] font-medium leading-5">Model</span>
+              <span className="block text-[11px] leading-4 text-text-300">
+                Provider and model for this chat
+              </span>
             </span>
+            {/* The current pick echoes on the right (where the capsule used to sit): small bold
+                provider line with its own icon over the model name. */}
+            {current ? (
+              <span className="flex max-w-[10rem] shrink-0 flex-col items-end text-right">
+                <span className="flex max-w-full items-center gap-1 text-[11px] font-semibold leading-4 text-text-300">
+                  <ProviderKindIcon
+                    kindKey={providerKindKey(current.providerType, current.vendorId)}
+                    className="size-3 shrink-0"
+                  />
+                  <span className="min-w-0 truncate">{current.providerName}</span>
+                </span>
+                <span className="block max-w-full truncate text-[13px] font-medium leading-5">
+                  {optionLabel(current)}
+                </span>
+              </span>
+            ) : (
+              <span className="shrink-0 text-[11px] text-text-300">Select</span>
+            )}
             <ChevronRight
               className="size-3.5 shrink-0 opacity-60"
               strokeWidth={2}
