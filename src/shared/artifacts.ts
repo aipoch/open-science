@@ -11,6 +11,14 @@ export type ArtifactFile = {
   mimeType?: string
   size: number
   mtimeMs: number
+  // Native Provenance Versions use id === versionId. These fields are absent on compatibility files.
+  artifactId?: string
+  versionId?: string
+  versionNumber?: number
+  checksum?: string
+  createdAt?: string
+  producerRunId?: string
+  environment?: string
 }
 
 // A user-picked reference to an existing file (upload or generated output) inserted via the
@@ -51,6 +59,14 @@ export type ArtifactWriteSource =
       path: string
     }
 
+// Trusted metadata captured by the app while importing an unchanged local source file. It remains
+// internal to the main-process persistence path and is never accepted from the model tool schema.
+export type ArtifactSourceFileObservation = {
+  path: string
+  sizeBytes: number
+  mtimeMs: number
+}
+
 // Default logical project bucket used until the app exposes user-selected project names.
 export const DEFAULT_ARTIFACT_PROJECT_NAME = 'default-project'
 
@@ -78,6 +94,8 @@ export type OpenArtifactFileRequest = {
 // Renderer request for a bounded text preview of one managed artifact.
 export type ReadArtifactPreviewRequest = {
   path: string
+  projectId?: string
+  sessionId?: string
   maxBytes?: number
   encoding?: 'utf8' | 'base64'
   offset?: number
@@ -99,6 +117,13 @@ export type MovePendingRunArtifactsRequest = {
   sourceSessionId?: string
   runId: string
   messageId: string
+  provenanceContext?: {
+    rootFrameId: string
+    agentFrameId: string
+    messageBranchId: string
+    runtimeSegmentId: string
+    promptMessageId: string
+  }
 }
 
 // Repository request for files written during a run before the renderer finalizes them.

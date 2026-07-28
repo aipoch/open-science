@@ -65,6 +65,58 @@ describe('message part persistence', () => {
   })
 })
 
+describe('upload message persistence', () => {
+  it('keeps immutable Version identity while removing absolute legacy paths', () => {
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Uploads',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Analyze this',
+          uploads: [
+            {
+              id: 'upload-1',
+              versionId: 'upload-version-1',
+              versionNumber: 1,
+              createdAt: '2026-07-27T12:00:00.000Z',
+              sessionId: 'session-1',
+              name: 'input.csv',
+              originalName: 'input.csv',
+              path: '/Users/private/input.csv',
+              size: 12,
+              checksum: 'a'.repeat(64)
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    })
+
+    expect(restored?.messages[0].uploads).toEqual([
+      {
+        id: 'upload-1',
+        versionId: 'upload-version-1',
+        versionNumber: 1,
+        createdAt: '2026-07-27T12:00:00.000Z',
+        sessionId: 'session-1',
+        name: 'input.csv',
+        originalName: 'input.csv',
+        size: 12,
+        sha256: 'a'.repeat(64)
+      }
+    ])
+    expect(JSON.stringify(restored)).not.toContain('/Users/private/input.csv')
+  })
+})
+
 describe('message image persistence', () => {
   it('keeps only bounded raster images with recomputed byte metadata', () => {
     const images = sanitizeMessageImages([

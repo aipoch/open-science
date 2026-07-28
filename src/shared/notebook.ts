@@ -16,6 +16,14 @@ export type NotebookRunInputKind = 'cell' | 'terminal'
 export type NotebookRunStatus =
   'queued' | 'running' | 'completed' | 'failed' | 'timeout' | 'interrupted' | 'cancelled'
 
+export type NotebookRunProvenanceContext = {
+  rootFrameId: string
+  agentFrameId: string
+  messageBranchId: string
+  runtimeSegmentId: string
+  promptMessageId: string
+}
+
 // Languages a notebook kernel can run in this phase; each runs as a persistent exec-loop process
 // (no ipykernel/IRkernel involved).
 export type NotebookLanguage = 'python' | 'r'
@@ -23,6 +31,190 @@ export type NotebookLanguage = 'python' | 'r'
 // Identifies which kernel produced a run: python/r are analysis cells, repl/bash are
 // control-plane/shell.
 export type NotebookKernelKind = 'python' | 'r' | 'repl' | 'bash'
+
+export type NotebookEnvironmentPackage = {
+  name: string
+  version?: string
+  versionStatus: 'known' | 'unavailable'
+  ecosystem: 'python' | 'r' | 'native' | 'unknown'
+  evidenceSources: Array<
+    | 'python-importlib-metadata'
+    | 'python-kernel-modules'
+    | 'r-installed-packages'
+    | 'r-session-info'
+  >
+  loadedState?: 'attached' | 'loaded' | 'installed-only' | 'unknown'
+  libraryRank?: number
+  libraryScope?: 'environment' | 'user' | 'system' | 'unknown'
+  builtForRuntime?: string
+  priority?: 'base' | 'recommended' | 'other'
+}
+
+export type NotebookPackageInstaller =
+  | 'conda'
+  | 'pip'
+  | 'uv'
+  | 'poetry'
+  | 'r-install-packages'
+  | 'renv'
+  | 'pak'
+  | 'biocmanager'
+  | 'unknown'
+
+export type NotebookPackageInstallerAttempt = {
+  groupOrdinal: number
+  installer: NotebookPackageInstaller
+  packages: string[]
+  status: 'succeeded' | 'failed' | 'skipped'
+  mutationRisk: 'none' | 'possible' | 'confirmed' | 'unknown'
+  reason?:
+    | 'package-not-found'
+    | 'solver-failed'
+    | 'installer-unavailable'
+    | 'permission'
+    | 'network'
+    | 'authentication'
+    | 'tls-policy'
+    | 'validation'
+    | 'cancelled'
+    | 'process-unconfirmed'
+    | 'recovery-blocked'
+    | 'unknown'
+}
+
+export type NotebookInventoryRefreshAttempt = {
+  attempt: number
+  trigger: 'terminal' | 'recovery'
+  timestamp: string
+  result: 'published' | 'unchanged' | 'failed'
+  error?: string
+}
+
+export type NotebookEnvironmentPackageChange = {
+  name: string
+  ecosystem: NotebookEnvironmentPackage['ecosystem']
+  relationship: 'requested' | 'dependency' | 'unattributed'
+  change: 'installed' | 'updated' | 'removed' | 'unchanged' | 'observed'
+  beforeVersion?: string
+  afterVersion?: string
+  libraryRank?: number
+  libraryScope?: NotebookEnvironmentPackage['libraryScope']
+}
+
+export type NotebookEnvironmentOperation = {
+  operationId: string
+  timestamp: string
+  operation: 'create' | 'install' | 'uninstall' | 'update'
+  packages: string[]
+  result: 'success' | 'failure'
+  attempts: NotebookPackageInstallerAttempt[]
+  fallbackUsed: boolean
+  inventoryRefresh: 'published' | 'unchanged' | 'failed'
+  inventoryRefreshAttempts: NotebookInventoryRefreshAttempt[]
+  packageChanges?: NotebookEnvironmentPackageChange[]
+}
+
+export type NotebookEnvironmentManifest = {
+  schemaVersion: 1
+  captureKind: 'completed-run'
+  capturedAt: string
+  installedInventory: {
+    capturedAt: string
+    source: 'full-scan' | 'cache-reused'
+    validation: 'full-scan' | 'best-effort'
+  }
+  kernelKind: NotebookLanguage
+  environmentName: string
+  runtimeSource: 'managed' | 'external'
+  runtimeVersion?: string
+  platform: string
+  architecture: string
+  inventorySources: Array<'kernel-native' | 'interpreter-native' | 'operation-log'>
+  packages: NotebookEnvironmentPackage[]
+  operationLog?: NotebookEnvironmentOperation[]
+  complete: boolean
+  captureStatus: 'complete' | 'partial'
+  warnings?: string[]
+}
+
+export type NotebookRunEnvironmentCapture =
+  | {
+      state: 'available' | 'partial'
+      manifestChecksum: string
+      warnings?: string[]
+    }
+  | {
+      state: 'unavailable'
+      reason:
+        | 'environment-not-supported'
+        | 'environment-capture-failed'
+        | 'environment-manifest-publication-failed'
+        | 'legacy-environment-reference-unavailable'
+    }
+
+export type NotebookLiveEnvironmentOverlay = {
+  runtimeVersion?: string
+  packages: NotebookEnvironmentPackage[]
+  warnings?: string[]
+}
+
+export type NotebookInputAssociation = 'turn-attached' | 'resolver-accessed'
+
+// Path-independent immutable input identity captured from the trusted main-process registry. The
+// storage key is persisted only in run.json/evidence; summaries returned to agents and renderers omit
+// it and resolve previews through main-process IPC.
+export type NotebookRunInputFile = {
+  inputFileVersionId: string
+  sourceKind: 'upload-version' | 'artifact-version'
+  sourceFileId: string
+  sourceVersionNumber?: number
+  sourceCreatedAt?: string
+  sourceProjectId: string
+  sourceSessionId: string
+  filename: string
+  contentType?: string
+  sizeBytes: number
+  checksum: string
+  storageKey: string
+  association: NotebookInputAssociation
+}
+
+export type NotebookInputFileSummary = Omit<NotebookRunInputFile, 'storageKey'>
+
+export type NotebookInputPreviewIdentity = {
+  projectId: string
+  sourceKind: NotebookRunInputFile['sourceKind']
+  inputFileVersionId: string
+}
+
+const NOTEBOOK_INPUT_PREVIEW_PREFIX = 'notebook-input:'
+
+export const createNotebookInputPreviewKey = (identity: NotebookInputPreviewIdentity): string =>
+  `${NOTEBOOK_INPUT_PREVIEW_PREFIX}${encodeURIComponent(
+    JSON.stringify([identity.projectId, identity.sourceKind, identity.inputFileVersionId])
+  )}`
+
+export const parseNotebookInputPreviewKey = (key: string): NotebookInputPreviewIdentity => {
+  if (!key.startsWith(NOTEBOOK_INPUT_PREVIEW_PREFIX)) {
+    throw new Error('Invalid Notebook input preview key.')
+  }
+  const parsed = JSON.parse(
+    decodeURIComponent(key.slice(NOTEBOOK_INPUT_PREVIEW_PREFIX.length))
+  ) as unknown
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length !== 3 ||
+    parsed.some((value) => typeof value !== 'string') ||
+    (parsed[1] !== 'upload-version' && parsed[1] !== 'artifact-version')
+  ) {
+    throw new Error('Invalid Notebook input preview key.')
+  }
+  return {
+    projectId: parsed[0] as string,
+    sourceKind: parsed[1],
+    inputFileVersionId: parsed[2] as string
+  }
+}
 
 // Classifies files that are created inside the notebook session workspace.
 export type NotebookWorkingFileKind =
@@ -111,9 +303,23 @@ export type NotebookRunRecord = {
   outputs: NotebookOutput[]
   artifacts: ArtifactFile[]
   workingFiles: NotebookWorkingFile[]
+  // New native runs persist the exact registered input Versions. Optional keeps legacy run.json
+  // documents readable; repository normalization supplies an empty array for old records.
+  inputFiles?: NotebookRunInputFile[]
   truncated?: boolean
   // Named env that produced this run (python/r only; omitted for repl/bash).
   environment?: string
+  // Immutable completed-run environment evidence. The cache that helped build it is never referenced.
+  environmentCapture?: NotebookRunEnvironmentCapture
+  environmentManifest?: NotebookEnvironmentManifest
+  environmentManifestChecksum?: string
+  // Trusted turn/Branch attribution injected by the main-process RPC bridge. Legacy and user-run
+  // records may omit it; a supplied Artifact producer must match all five fields.
+  rootFrameId?: string
+  agentFrameId?: string
+  messageBranchId?: string
+  runtimeSegmentId?: string
+  promptMessageId?: string
   // Why a run ended non-normally. Set to 'app-terminated' when a stale 'running' run is reconciled to
   // 'interrupted' on the next startup (the process died mid-run). Absent for normal completions.
   interruptionReason?: 'app-terminated'
@@ -209,7 +415,8 @@ export type NotebookAvailableEvent = NotebookSessionReference
 export type NotebookChangedEvent = NotebookSessionReference
 
 // Extends a run record with workspace roots so the agent can decide what to do next.
-export type NotebookRunSummary = NotebookRunRecord & {
+export type NotebookRunSummary = Omit<NotebookRunRecord, 'inputFiles'> & {
+  inputFiles: NotebookInputFileSummary[]
   notebookSessionRoot: string
   dataRoot: string
   runtimeRoot: string
@@ -222,6 +429,10 @@ export type NotebookSessionRequest = {
   projectName?: string
   sessionId: string
   workspaceCwd: string
+  provenanceContext?: NotebookRunProvenanceContext
+  // Injected only by the authenticated local RPC bridge after resolving the active turn registry.
+  // Renderer IPC strips this field before calling the runtime service.
+  registeredInputFiles?: NotebookRunInputFile[]
 }
 
 // Resolves the data kernel ('python' or 'r') that owns a given tab. For python/r tabs the

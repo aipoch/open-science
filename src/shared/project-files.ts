@@ -1,11 +1,19 @@
 export type ProjectFileSource = 'artifact' | 'upload'
 
+export type ProjectFileOriginSession = {
+  state: 'active' | 'deleting' | 'deleted'
+  title?: string
+  deletedAt?: string
+}
+
 // Renderer-facing metadata projection. File bytes remain on disk and are read lazily through the
 // existing source-specific preview IPC only after this DTO has been paged into the Files view.
 export type ProjectFileItem = {
   id: string
   source: ProjectFileSource
   sourceFileId: string
+  sourceVersionId?: string
+  checksum?: string
   projectId: string
   sessionId: string
   messageId?: string
@@ -15,13 +23,16 @@ export type ProjectFileItem = {
   size: number
   mtimeMs?: number
   sortAtMs: number
+  originSession?: ProjectFileOriginSession
 }
 
 export type ListProjectFilesRequest = {
   projectId: string
   // Uploads and each session's artifacts are deliberately separate collections with independent
-  // cursors; flattening them would break uploads-first and session-grouped rendering.
-  collection: { kind: 'uploads' } | { kind: 'sessionArtifacts'; sessionId: string }
+  // cursors for the Files page. The flat `all` collection is reserved for cross-session file pickers
+  // that need one canonical Project Files read model rather than reconstructing Session metadata.
+  collection:
+    { kind: 'all' } | { kind: 'uploads' } | { kind: 'sessionArtifacts'; sessionId: string }
   cursor?: string
   limit: number
 }
@@ -41,6 +52,7 @@ export type ListArtifactGroupsRequest = {
 export type ArtifactGroupItem = {
   sessionId: string
   artifactCount: number
+  originSession?: ProjectFileOriginSession
 }
 
 export type ArtifactGroupPage = {

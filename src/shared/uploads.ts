@@ -57,23 +57,133 @@ export type UploadTransferStatus = UploadTransferProgress
 
 export type UploadedAttachment = {
   id: string
+  // Native durable uploads expose one stable file identity plus one immutable byte Version.
+  // These stay optional while legacy Session JSON records are upgraded on their next finalize.
+  versionId?: string
+  versionNumber?: number
   sessionId: string
   name: string
   originalName: string
   path: string
   mimeType?: string
   size: number
+  checksum?: string
+  createdAt?: string
 }
+
+// Path-free projection stored on a Message. Native finalization always supplies the immutable
+// Version fields; they remain optional in the reader type only so legacy Session JSON can be
+// loaded and lazily upgraded without preserving its historical absolute path.
+export type PersistedUploadedAttachment = {
+  id: string
+  versionId?: string
+  versionNumber?: number
+  createdAt?: string
+  sessionId: string
+  name: string
+  originalName: string
+  mimeType?: string
+  size: number
+  sha256?: string
+  // Reader-only legacy fields. The Session sanitizer deliberately never emits either field, so
+  // every newly written Session JSON remains path-free and uses sha256 as its checksum name.
+  path?: string
+  checksum?: string
+}
+
+export const toPersistedUploadedAttachment = (
+  attachment: UploadedAttachment
+): PersistedUploadedAttachment => ({
+  id: attachment.id,
+  ...(attachment.versionId ? { versionId: attachment.versionId } : {}),
+  ...(attachment.versionNumber ? { versionNumber: attachment.versionNumber } : {}),
+  ...(attachment.createdAt ? { createdAt: attachment.createdAt } : {}),
+  sessionId: attachment.sessionId,
+  name: attachment.name,
+  originalName: attachment.originalName,
+  ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
+  size: attachment.size,
+  ...(attachment.checksum ? { sha256: attachment.checksum } : {})
+})
+
+const UPLOAD_VERSION_REFERENCE_PREFIX = 'upload-version:'
+
+export type UploadVersionReference = {
+  versionId: string
+  projectId?: string
+  sessionId?: string
+}
+
+export const createUploadVersionReference = (
+  versionId: string,
+  scope?: { projectId: string; sessionId: string }
+): string =>
+  scope
+    ? `${UPLOAD_VERSION_REFERENCE_PREFIX}${encodeURIComponent(scope.projectId)}/${encodeURIComponent(scope.sessionId)}/${encodeURIComponent(versionId)}`
+    : `${UPLOAD_VERSION_REFERENCE_PREFIX}${versionId}`
+
+export const parseUploadVersionReference = (value: string): UploadVersionReference | undefined => {
+  if (!value.startsWith(UPLOAD_VERSION_REFERENCE_PREFIX)) return undefined
+  const body = value.slice(UPLOAD_VERSION_REFERENCE_PREFIX.length)
+  if (!body) return undefined
+  const segments = body.split('/')
+  if (segments.length === 1) return { versionId: segments[0] }
+  if (segments.length !== 3 || segments.some((segment) => !segment)) return undefined
+  try {
+    return {
+      projectId: decodeURIComponent(segments[0]),
+      sessionId: decodeURIComponent(segments[1]),
+      versionId: decodeURIComponent(segments[2])
+    }
+  } catch {
+    return undefined
+  }
+}
+
+export const getUploadedAttachmentPath = (
+  attachment: Pick<PersistedUploadedAttachment, 'path' | 'versionId' | 'sessionId'>,
+  projectId?: string
+): string => {
+  if (attachment.versionId) {
+    return createUploadVersionReference(
+      attachment.versionId,
+      projectId ? { projectId, sessionId: attachment.sessionId } : undefined
+    )
+  }
+  if (attachment.path) return attachment.path
+  throw new Error('Upload attachment has no immutable Version identity or legacy path.')
+}
+
+export const toRuntimeUploadedAttachment = (
+  attachment: PersistedUploadedAttachment,
+  projectId?: string
+): UploadedAttachment => ({
+  id: attachment.id,
+  ...(attachment.versionId ? { versionId: attachment.versionId } : {}),
+  ...(attachment.versionNumber ? { versionNumber: attachment.versionNumber } : {}),
+  ...(attachment.createdAt ? { createdAt: attachment.createdAt } : {}),
+  sessionId: attachment.sessionId,
+  name: attachment.name,
+  originalName: attachment.originalName,
+  path: getUploadedAttachmentPath(attachment, projectId),
+  ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
+  size: attachment.size,
+  ...(attachment.sha256 || attachment.checksum
+    ? { checksum: attachment.sha256 ?? attachment.checksum }
+    : {})
+})
 
 export type DeleteUploadRequest = {
   path: string
 }
 
 export type FinalizeUploadSessionRequest = {
+  projectId?: string
   sessionId: string
   attachments: UploadedAttachment[]
 }
 
 // Chooses the user-facing name while tolerating older records that only have the safe filename.
-export const getUploadedAttachmentName = (attachment: UploadedAttachment): string =>
-  attachment.originalName || attachment.name
+export const getUploadedAttachmentName = (
+  attachment: Pick<UploadedAttachment, 'originalName' | 'name'>
+): string => attachment.originalName || attachment.name

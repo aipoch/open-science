@@ -60,6 +60,8 @@ model Review {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   findings      Finding[]
+  causedDispositions ReviewFindingDisposition[]
+  scopeSnapshot       ReviewScopeSnapshot?
 }
 
 // A unified check row — replaces both the old warn/fail-only Finding and the pass-only ReviewCheck
@@ -75,9 +77,11 @@ model Finding {
   evidence          String  @default("")
   locator           String  @default("{}")
   artifactVersionId String?
+  artifactBindingState String @default("legacy_unverified")
   sortIndex         Int     @default(0)
   reflagCount       Int     @default(0)
   review            Review  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  dispositions      ReviewFindingDisposition[]
 }
 
 model ProjectDeletionIntent {
@@ -89,6 +93,8 @@ model ManagedFile {
   seq               Int       @id @default(autoincrement())
   source            String
   sourceFileId      String
+  sourceVersionId   String?
+  checksum          String?
   projectId         String
   sessionId         String
   messageId         String?
@@ -124,6 +130,214 @@ model ManagedFileSessionSync {
 
   @@id([projectId, sessionId])
   @@index([projectId, deletedAt, groupSortAtMs, sessionId])
+}
+
+// Narrow origin lifecycle retained after a live Session JSON is deleted. This is not a second
+// editable Session model; it exists only to preserve managed-file ownership and deletion state.
+model FileOriginSession {
+  projectId             String
+  sessionId             String
+  titleSnapshot         String?
+  state                 String            @default("active")
+  deletedAt             DateTime?
+  deletionOperationId   String?
+  retainedReviewIdsJson String?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  lineages              ArtifactLineage[]
+  uploads               UploadFile[]
+  messageSnapshots      ArtifactMessageSnapshot[]
+  sourceInputs          ArtifactVersionInput[]
+
+  @@id([projectId, sessionId])
+  @@index([projectId, state])
+}
+
+// Stable identity for same-named generated Artifact saves inside one Project Session.
+model ArtifactLineage {
+  id                 String            @id
+  projectId          String
+  sessionId          String
+  normalizedFilename String
+  filename           String
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  versions           ArtifactVersion[]
+  originSession      FileOriginSession @relation(fields: [projectId, sessionId], references: [projectId, sessionId], onDelete: Restrict)
+
+  @@unique([projectId, sessionId, normalizedFilename])
+  @@index([projectId, sessionId])
+}
+
+model UploadFile {
+  id               String            @id
+  projectId        String
+  sessionId        String
+  filename         String
+  originalFilename String
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  versions         UploadVersion[]
+  originSession    FileOriginSession @relation(fields: [projectId, sessionId], references: [projectId, sessionId], onDelete: Restrict)
+
+  @@index([projectId, sessionId])
+}
+
+model UploadVersion {
+  id                String                 @id
+  uploadFileId      String
+  versionNumber     Int
+  state             String                 @default("staging")
+  contentStorageKey String
+  filename          String
+  originalFilename  String
+  contentType       String?
+  sizeBytes         BigInt
+  checksum          String
+  createdAt         DateTime?
+  registeredAt      DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  uploadFile        UploadFile             @relation(fields: [uploadFileId], references: [id], onDelete: Cascade)
+  sourceInputs      ArtifactVersionInput[] @relation("UploadVersionSourceInputs")
+
+  @@unique([uploadFileId, versionNumber])
+  @@index([uploadFileId, state, registeredAt])
+}
+
+model ArtifactMessageSnapshot {
+  id                String            @id
+  projectId         String
+  sessionId         String
+  rootFrameId       String
+  agentFrameId      String
+  messageBranchId   String
+  terminalMessageId String
+  state             String            @default("staging")
+  storageKey        String
+  checksum          String            @default("")
+  messageCount      Int
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  versions          ArtifactVersion[]
+  originSession     FileOriginSession @relation(fields: [projectId, sessionId], references: [projectId, sessionId], onDelete: Restrict)
+
+  @@unique([projectId, sessionId, agentFrameId, messageBranchId, terminalMessageId])
+  @@index([projectId, sessionId, state])
+}
+
+// One immutable generated Artifact save event. Evidence/content fields become immutable once the
+// staging row is published; finalize only advances state and message ownership.
+model ArtifactVersion {
+  id                             String          @id
+  artifactId                     String
+  versionNumber                  Int
+  artifactRunId                  String
+  writeOperationId               String?         @unique
+  writeRequestChecksum           String?
+  rootFrameId                    String
+  agentFrameId                   String
+  messageBranchId                String
+  runtimeSegmentId               String
+  promptMessageId                String
+  notebookSessionId              String?
+  producerRunId                  String?
+  producerRunIndex               Int?
+  messageId                      String?
+  messageSnapshotId              String?
+  state                          String          @default("staging")
+  contentStorageKey              String
+  evidenceStorageKey             String
+  contentType                    String?
+  sizeBytes                      BigInt
+  checksum                       String
+  evidenceJson                   String
+  evidenceChecksum               String
+  evidenceSchemaVersion          Int             @default(1)
+  executionSnapshotJson          String?
+  executionSnapshotChecksum      String?
+  executionSnapshotStorageKey    String?
+  executionSnapshotSchemaVersion Int?
+  createdAt                      DateTime        @default(now())
+  updatedAt                      DateTime        @updatedAt
+  artifact                       ArtifactLineage @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  messageSnapshot                ArtifactMessageSnapshot? @relation(fields: [messageSnapshotId], references: [id], onDelete: SetNull)
+  inputs                         ArtifactVersionInput[] @relation("ProducedArtifactInputs")
+  sourceInputs                   ArtifactVersionInput[] @relation("ArtifactVersionSourceInputs")
+
+  @@unique([artifactId, versionNumber])
+  @@index([artifactId, createdAt])
+  @@index([artifactRunId, state])
+  @@index([rootFrameId, agentFrameId, messageBranchId, promptMessageId])
+  @@index([messageId])
+  @@index([messageSnapshotId])
+}
+
+model ArtifactVersionInput {
+  id                      String            @id
+  artifactVersionId       String
+  ordinal                 Int
+  inputFileVersionId      String
+  sourceKind              String
+  sourceFileId            String
+  sourceArtifactVersionId String?
+  sourceUploadVersionId   String?
+  sourceVersionNumber     Int?
+  sourceCreatedAt         DateTime?
+  sourceProjectId         String
+  sourceSessionId         String
+  filename                String
+  contentType             String?
+  sizeBytes               BigInt
+  checksum                String
+  storageKey              String
+  strongestAssociation    String
+  artifactVersion         ArtifactVersion  @relation("ProducedArtifactInputs", fields: [artifactVersionId], references: [id], onDelete: Cascade)
+  sourceArtifactVersion   ArtifactVersion? @relation("ArtifactVersionSourceInputs", fields: [sourceArtifactVersionId], references: [id], onDelete: Restrict)
+  sourceUploadVersion     UploadVersion?   @relation("UploadVersionSourceInputs", fields: [sourceUploadVersionId], references: [id], onDelete: Restrict)
+  sourceOrigin            FileOriginSession @relation(fields: [sourceProjectId, sourceSessionId], references: [projectId, sessionId], onDelete: Restrict)
+
+  @@unique([artifactVersionId, sourceKind, inputFileVersionId])
+  @@unique([artifactVersionId, ordinal])
+  @@index([sourceKind, inputFileVersionId])
+  @@index([sourceArtifactVersionId])
+  @@index([sourceUploadVersionId])
+  @@index([sourceProjectId, sourceSessionId])
+}
+
+model ReviewFindingDisposition {
+  id                        String   @id
+  sourceFindingId           String
+  causeReviewId             String?
+  sequence                  Int
+  trigger                   String
+  outcome                   String
+  note                      String?
+  assessedArtifactVersionId String?
+  createdAt                 DateTime @default(now())
+  sourceFinding             Finding  @relation(fields: [sourceFindingId], references: [id], onDelete: Cascade)
+  causeReview               Review?  @relation(fields: [causeReviewId], references: [id], onDelete: Restrict)
+
+  @@unique([sourceFindingId, sequence])
+  @@index([causeReviewId, createdAt])
+  @@index([assessedArtifactVersionId])
+}
+
+model ReviewScopeSnapshot {
+  id                 String   @id
+  projectId          String
+  sessionId          String
+  reviewId           String   @unique
+  scopeTurnMessageId String
+  state              String   @default("staging")
+  snapshotJson       String
+  checksum           String
+  storageKey         String
+  schemaVersion      Int      @default(1)
+  blockCount         Int
+  createdAt          DateTime @default(now())
+  review             Review   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, sessionId, state])
 }
 
 // A remote compute job submitted via host.compute.create(id).submit_job(). Phase 3a (issue 01 of

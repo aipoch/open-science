@@ -43,6 +43,10 @@ export type ScopeBlock = {
 // The audited window: the ordered blocks of exactly one turn plus the artifact version ids it produced.
 export type TurnScope = {
   turnMessageId: string
+  // Present for graph-native Sessions. These anchors pin the review to one Agent Frame and its
+  // active Message Branch; legacy persisted reviews omit them and remain readable.
+  agentFrameId?: string
+  messageBranchId?: string
   blocks: ScopeBlock[]
   artifactVersionIds: string[]
 }
@@ -69,6 +73,27 @@ export type CheckStatus = 'pass' | 'warn' | 'fail'
 // How far a warn/fail check has been addressed (meaningful only for warn/fail checks).
 export type FindingResolution = 'open' | 'resolved' | 'unaddressed'
 
+// Whether an Artifact Version reference was verified against the immutable Review scope when the
+// finding was accepted. Rows predating provenance support remain distinguishable from validated
+// references instead of being silently upgraded during reads.
+export type ArtifactBindingState = 'scope_validated' | 'legacy_unverified'
+
+export type ReviewFindingDispositionTrigger =
+  'review_submission' | 'loop_terminated' | 'correction_failed' | 'aborted'
+export type ReviewFindingDispositionOutcome = 'still_open' | 'resolved' | 'unaddressed'
+
+export type ReviewFindingDisposition = {
+  id: string
+  sourceFindingId: string
+  causeReviewId?: string
+  sequence: number
+  trigger: ReviewFindingDispositionTrigger
+  outcome: ReviewFindingDispositionOutcome
+  note?: string
+  assessedArtifactVersionId?: string
+  createdAt: number
+}
+
 // Pins a check's claim to one block of the audited turn.
 export type FindingBlockRef = {
   messageId?: string
@@ -94,6 +119,9 @@ export type ReviewCheck = {
   evidence: string
   locator?: FindingLocator // required in practice for warn/fail; optional for pass
   artifactVersionId?: string
+  // Optional only for in-memory compatibility with pre-provenance callers; persisted rows always
+  // materialize one of the two states.
+  artifactBindingState?: ArtifactBindingState
   resolution: FindingResolution
   sortIndex: number
   reflagCount: number
@@ -128,6 +156,44 @@ export type Review = {
 // Note: `checks` is the unified list (replaces both old `findings` and `checks` JSON blob).
 export type ReviewWithChecks = Review & { checks: ReviewCheck[] }
 
+// The exact, sanitized blocks exposed to one reviewer run. This is copied into SQLite and an
+// immutable sidecar so a later transcript edit or session deletion cannot rewrite audit evidence.
+export type ReviewScopeSnapshotBlock = {
+  blockIndex: number
+  id: string
+  kind: 'message' | 'activity'
+  sourceId: string
+  contentHash: string
+  payload: Record<string, unknown>
+}
+
+export type ReviewScopeSnapshotAvailability =
+  | { state: 'available'; blocks: ReviewScopeSnapshotBlock[] }
+  | { state: 'unavailable'; reason: 'legacy' | 'pending' | 'corrupt' }
+
+export type ReviewWithProvenanceEvidence = ReviewWithChecks & {
+  scopeSnapshot: ReviewScopeSnapshotAvailability
+}
+
+export type ArtifactReviewHistoryEvent =
+  | {
+      kind: 'review'
+      review: ReviewWithProvenanceEvidence
+      directlyAssessesSelectedVersion: boolean
+    }
+  | { kind: 'disposition'; disposition: ReviewFindingDisposition }
+
+export type ArtifactVersionReviewProjection = {
+  binding: 'version' | 'legacy-turn'
+  selectedVersionId: string
+  currentDirectAssessment?: ReviewWithProvenanceEvidence
+  latestChainReview: ReviewWithProvenanceEvidence
+  selectedVersionChecks: ReviewCheck[]
+  turnLevelChecks: ReviewCheck[]
+  selectedVersionDispositions: ReviewFindingDisposition[]
+  history: ArtifactReviewHistoryEvent[]
+}
+
 /**
  * @deprecated Use ReviewWithChecks
  */
@@ -144,6 +210,7 @@ export type CreateReviewInput = {
   outcome?: ReviewOutcome | null
   reviewerLog?: ReviewerLogEntry[]
   errorMessage?: string
+  scopeSnapshot?: ReviewScopeSnapshotBlock[]
 }
 
 // Patch applied by updateReview; every field is optional so callers touch only what changed.
@@ -204,6 +271,13 @@ export type ReviewRunOrigin = 'auto' | 'manual'
 export type ReviewUpdateEvent = {
   review: ReviewWithChecks
 }
+
+export type ReviewSessionRequest = {
+  projectId: string
+  appSessionId: string
+}
+
+export type ReviewSuppressionEvent = ReviewSessionRequest & { clear?: boolean }
 
 // Why a review did not start (set on ReviewRunResult when started is false). The auto-review caller
 // uses this to decide whether a retry could help:
