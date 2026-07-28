@@ -398,6 +398,39 @@ describe('ComposerModelPicker', () => {
     expect(trigger?.textContent).not.toContain('OpenAI')
   })
 
+  it('keeps the effort suffix fully visible and ellipsizes only the model name on the trigger', () => {
+    // Long model names must not swallow the effort suffix: the model span truncates, the suffix
+    // span is shrink-protected and never wraps.
+    useSettingsStore.setState({
+      providers: [
+        provider({
+          id: 'off',
+          type: 'official',
+          vendorId: 'openai',
+          name: 'OpenAI',
+          models: ['gpt-5.2-with-a-very-long-model-name', 'gpt-5.5']
+        })
+      ],
+      activeProviderId: 'off',
+      activeModel: 'gpt-5.2-with-a-very-long-model-name',
+      reasoningEffort: 'high'
+    })
+    render()
+
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger).not.toBeNull()
+    expect(trigger?.textContent).toContain('· High')
+    const suffix = Array.from(trigger!.querySelectorAll('span')).find(
+      (el) => el.textContent?.trim() === '· High'
+    )
+    expect(suffix?.className).toContain('shrink-0')
+    expect(suffix?.className).not.toContain('truncate')
+    const modelName = Array.from(trigger!.querySelectorAll('span')).find(
+      (el) => el.textContent === 'gpt-5.2-with-a-very-long-model-name'
+    )
+    expect(modelName?.className).toContain('truncate')
+  })
+
   it('shows no effort suffix on the trigger when the effort intent is default', () => {
     useSettingsStore.setState({
       providers: [

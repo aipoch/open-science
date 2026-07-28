@@ -185,16 +185,22 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                   className="size-4"
                 />
               ) : null}
-              <span className="truncate">
+              <span className="flex min-w-0 items-center">
                 {current ? (
                   <>
-                    <span className="font-medium text-text-100">{optionLabel(current)}</span>
+                    {/* The model name alone ellipsizes under the trigger's max width; the effort
+                        suffix is the newer signal and stays fully visible. */}
+                    <span className="truncate font-medium text-text-100">
+                      {optionLabel(current)}
+                    </span>
                     {effortSuffixLabel ? (
-                      <span className="ml-1.5 text-text-300">· {effortSuffixLabel}</span>
+                      <span className="ml-1.5 shrink-0 whitespace-nowrap text-text-300">
+                        · {effortSuffixLabel}
+                      </span>
                     ) : null}
                   </>
                 ) : (
-                  'Select model'
+                  <span className="truncate">Select model</span>
                 )}
               </span>
             </>
