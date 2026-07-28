@@ -273,26 +273,35 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                 a soft rounded-lg corner rather than the single-line pill's rounded-full; long
                 names ellipsize against the max width. */}
             {current ? (
-              <span className="flex max-w-[12rem] shrink-0 flex-col items-end rounded-lg bg-bg-200 px-2 py-1 text-right">
-                <span className="flex max-w-full items-center gap-1 text-[11px] font-semibold leading-4 text-text-300">
-                  <ProviderKindIcon
-                    kindKey={providerKindKey(current.providerType, current.vendorId)}
-                    className="size-3 shrink-0"
-                  />
-                  <span className="min-w-0 truncate">{current.providerName}</span>
+              <span className="flex shrink-0 items-center gap-1.5 rounded-lg bg-bg-200 px-2 py-1">
+                <span className="flex max-w-[12rem] flex-col items-end text-right">
+                  <span className="flex max-w-full items-center gap-1 text-[11px] font-semibold leading-4 text-text-300">
+                    <ProviderKindIcon
+                      kindKey={providerKindKey(current.providerType, current.vendorId)}
+                      className="size-3 shrink-0"
+                    />
+                    <span className="min-w-0 truncate">{current.providerName}</span>
+                  </span>
+                  <span className="block max-w-full truncate text-[13px] font-medium leading-5">
+                    {optionLabel(current)}
+                  </span>
                 </span>
-                <span className="block max-w-full truncate text-[13px] font-medium leading-5">
-                  {optionLabel(current)}
-                </span>
+                <ChevronRight
+                  className="size-3.5 shrink-0 opacity-60"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
               </span>
             ) : (
-              <span className="shrink-0 text-[11px] text-text-300">Select</span>
+              <>
+                <span className="shrink-0 text-[11px] text-text-300">Select</span>
+                <ChevronRight
+                  className="size-3.5 shrink-0 opacity-60"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
+              </>
             )}
-            <ChevronRight
-              className="size-3.5 shrink-0 opacity-60"
-              strokeWidth={2}
-              aria-hidden="true"
-            />
           </DropdownMenuSubTrigger>
           {/* The full grouped catalog (compatibility rows included) lives one level down so the
               first level stays a summary; behavior per item is unchanged from the flat menu. */}
