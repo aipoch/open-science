@@ -564,14 +564,11 @@ describe('ProjectFilesView', () => {
     expect(
       container.querySelector('[aria-label="Preview generated file result.txt"]')
     ).not.toBeNull()
-    expect(
-      container.querySelector<HTMLInputElement>('[aria-label="Search project files"]')?.className
-    ).not.toContain('focus-visible:ring-0')
     expect(getOverview).toHaveBeenCalledTimes(overviewCalls)
     expect(listFiles).toHaveBeenCalledTimes(fileCalls)
   })
 
-  it('uses a strong selected state, standard focus treatment, and view tooltips', async () => {
+  it('uses the requested search, list-row, and view-mode interaction styling', async () => {
     await renderView([
       createSession({
         artifacts: [
@@ -584,9 +581,15 @@ describe('ProjectFilesView', () => {
         ]
       })
     ])
+    const search = container.querySelector<HTMLInputElement>('[aria-label="Search project files"]')
     const gridControl = container.querySelector<HTMLButtonElement>('[aria-label="Grid view"]')
     const listControl = container.querySelector<HTMLButtonElement>('[aria-label="List view"]')
 
+    expect(search?.className).toContain('h-[30px]')
+    expect(search?.className).toContain('border-0')
+    expect(search?.className).not.toContain('h-8')
+    expect(search?.className).not.toContain('h-7')
+    expect(search?.className).not.toContain('focus-visible:ring-0')
     expect(gridControl?.getAttribute('aria-checked')).toBe('true')
     expect(listControl?.getAttribute('aria-checked')).toBe('false')
     expect(gridControl?.className).toContain('aria-checked:bg-bg-400')
@@ -607,8 +610,108 @@ describe('ProjectFilesView', () => {
     )?.parentElement
     expect(listRow?.className).toContain('h-9')
     expect(listRow?.className).toContain('rounded-md')
-    expect(listRow?.className).toContain('hover:bg-accent')
-    expect(listRow?.className).not.toContain('bg-bg-100')
+    expect(listRow?.className).toContain('hover:bg-bg-200')
+    expect(listRow?.className).not.toContain('hover:bg-accent')
+    expect(listRow?.className).not.toContain('hover:text-accent-foreground')
+  })
+
+  it('removes the divider only from the first visible file group', async () => {
+    await renderView([
+      createSession({
+        id: 'session-a',
+        title: 'First generated group',
+        artifacts: [
+          {
+            id: 'artifact-a',
+            kind: 'managed-file',
+            path: '/workspace/a.txt',
+            name: 'a.txt'
+          }
+        ]
+      }),
+      createSession({
+        id: 'session-b',
+        title: 'Second generated group',
+        artifacts: [
+          {
+            id: 'artifact-b',
+            kind: 'managed-file',
+            path: '/workspace/b.txt',
+            name: 'b.txt'
+          }
+        ]
+      })
+    ])
+
+    const sectionHeaders = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-testid="project-file-section-header"]')
+    )
+
+    expect(sectionHeaders).toHaveLength(2)
+    expect(sectionHeaders[0]?.className).not.toContain('border-t')
+    expect(sectionHeaders[1]?.className).toContain('border-t')
+  })
+
+  it('replaces compact list metadata with the row action on hover', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1710007202000)
+    await renderView([
+      createSession({
+        artifacts: [
+          {
+            id: 'artifact-meta',
+            kind: 'managed-file',
+            path: '/workspace/result.txt',
+            name: 'result.txt',
+            size: 4096,
+            mtimeMs: 1710000002000
+          }
+        ]
+      })
+    ])
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="List view"]')?.click()
+    })
+
+    const previewButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Preview generated file result.txt"]'
+    )
+    const metadata = previewButton?.querySelector('[data-testid="project-file-list-meta"]')
+    const downloadWrapper = container
+      .querySelector<HTMLButtonElement>('[aria-label="Download result.txt"]')
+      ?.closest('[data-testid="download-tooltip-trigger"]')
+
+    expect(metadata?.textContent).toBe('4 KB·2 hours ago')
+    expect(metadata?.className).toContain('group-hover:invisible')
+    expect(metadata?.className).not.toContain('w-16')
+    expect(metadata?.className).not.toContain('w-20')
+    expect(downloadWrapper?.className).toContain('absolute')
+    expect(downloadWrapper?.className).toContain('right-2')
+  })
+
+  it('uses a dark neutral clear button with a light neutral hover surface', async () => {
+    await renderView([])
+
+    const search = container.querySelector<HTMLInputElement>('[aria-label="Search project files"]')
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+
+    expect(container.querySelector('[aria-label="Clear file search"]')).toBeNull()
+    await act(async () => {
+      setter?.call(search, 'result')
+      search?.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    const clearButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Clear file search"]'
+    )
+    expect(search?.className).toContain('[&::-webkit-search-cancel-button]:hidden')
+    expect(clearButton?.className).toContain('text-text-100')
+    expect(clearButton?.className).toContain('hover:bg-bg-200')
+    expect(clearButton?.className).not.toContain('hover:text-text-000')
+
+    await act(async () => clearButton?.click())
+    expect(search?.value).toBe('')
+    expect(container.querySelector('[aria-label="Clear file search"]')).toBeNull()
   })
 
   it('does not read thumbnail bytes for files updated while list view is active', async () => {

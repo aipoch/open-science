@@ -8,7 +8,8 @@ import {
   Paperclip,
   Plus,
   Search,
-  Server
+  Server,
+  X
 } from 'lucide-react'
 import { ToggleGroup } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -376,17 +377,23 @@ const SectionHeader = ({
   title,
   countLabel,
   isCollapsed,
+  hideTopBorder = false,
   onToggle
 }: {
   id: string
   title: string
   countLabel: string
   isCollapsed: boolean
+  hideTopBorder?: boolean
   onToggle: (id: string) => void
 }): React.JSX.Element => (
   <button
     type="button"
-    className="flex w-full min-w-0 items-center gap-1.5 border-t border-border-300/40 px-4 py-2 text-left text-sm text-text-000 hover:bg-bg-100"
+    data-testid="project-file-section-header"
+    className={cn(
+      'flex w-full min-w-0 items-center gap-1.5 px-4 py-2 text-left text-sm text-text-000 hover:bg-bg-100',
+      !hideTopBorder && 'border-t border-border-300/40'
+    )}
     aria-expanded={!isCollapsed}
     onClick={() => onToggle(id)}
   >
@@ -571,7 +578,7 @@ const FileListRow = ({
   const relativeTimeLabel = formatRelativeFileTime(file.mtimeMs ?? file.sortAtMs)
 
   return (
-    <div className="group flex h-9 min-w-0 items-center rounded-md hover:bg-accent hover:text-accent-foreground focus-within:ring-3 focus-within:ring-ring/50 focus-within:ring-inset">
+    <div className="group relative flex h-9 min-w-0 items-center rounded-md hover:bg-bg-200 focus-within:ring-3 focus-within:ring-ring/50 focus-within:ring-inset">
       <button
         ref={setRowElement}
         type="button"
@@ -596,14 +603,14 @@ const FileListRow = ({
             {FILE_MISSING_TAG}
           </span>
         ) : null}
-        {sizeLabel ? (
-          <span className="hidden w-16 shrink-0 text-right text-[10px] tabular-nums text-text-300 sm:block">
-            {sizeLabel}
-          </span>
-        ) : null}
-        {relativeTimeLabel ? (
-          <span className="hidden w-20 shrink-0 text-right text-[10px] text-text-300 md:block">
-            {relativeTimeLabel}
+        {sizeLabel || relativeTimeLabel ? (
+          <span
+            data-testid="project-file-list-meta"
+            className="hidden shrink-0 items-center gap-1 text-[10px] tabular-nums text-text-300 group-hover:invisible sm:flex"
+          >
+            {sizeLabel ? <span>{sizeLabel}</span> : null}
+            {sizeLabel && relativeTimeLabel ? <span aria-hidden="true">·</span> : null}
+            {relativeTimeLabel ? <span>{relativeTimeLabel}</span> : null}
           </span>
         ) : null}
       </button>
@@ -613,7 +620,7 @@ const FileListRow = ({
         suggestedName={file.name}
         disabled={missing}
         revealOnParentHover
-        wrapperClassName="mr-2 shrink-0"
+        wrapperClassName="absolute right-2 top-1/2 z-10 -translate-y-1/2"
       />
     </div>
   )
@@ -816,6 +823,7 @@ const ProjectArtifactGroupSection = ({
   loadMode,
   manualVisibleItemLimit,
   isCollapsed,
+  hideTopBorder,
   onToggle,
   loadMore,
   onManualLoadMore,
@@ -829,6 +837,7 @@ const ProjectArtifactGroupSection = ({
   loadMode: FilePageLoadMode
   manualVisibleItemLimit: number
   isCollapsed: boolean
+  hideTopBorder: boolean
   onToggle: (id: string) => void
   loadMore: (sessionId: string) => Promise<void>
   onManualLoadMore: () => void
@@ -859,6 +868,7 @@ const ProjectArtifactGroupSection = ({
         title={title}
         countLabel={formatFileCount(group.artifactCount)}
         isCollapsed={isCollapsed}
+        hideTopBorder={hideTopBorder}
         onToggle={onToggle}
       />
       {!isCollapsed ? (
@@ -1275,6 +1285,9 @@ const ProjectFilesViewContent = ({
     : isUploadsFilter
       ? Boolean(index.uploads.error)
       : Boolean(selectedSessionPage?.error)
+  const showsUploadsSection =
+    (isAllFilter || isUploadsFilter) &&
+    (index.uploads.totalCount > 0 || Boolean(index.uploads.error))
 
   return (
     <div data-testid="files-view" className="flex h-full min-h-0 w-full flex-col bg-bg-10">
@@ -1340,9 +1353,20 @@ const ProjectFilesViewContent = ({
             placeholder="Search artifacts..."
             value={searchQuery}
             maxLength={256}
-            className="h-7 bg-transparent pl-8 shadow-none"
+            className="h-[30px] border-0 bg-transparent pl-8 pr-8 shadow-none [&::-webkit-search-cancel-button]:hidden"
             onChange={(event) => setSearchQuery(event.target.value)}
           />
+          {searchQuery ? (
+            <button
+              type="button"
+              aria-label="Clear file search"
+              className="absolute right-1 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-text-100 outline-none transition-colors hover:bg-bg-200 focus-visible:ring-2 focus-visible:ring-ring/50"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => setSearchQuery('')}
+            >
+              <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
+            </button>
+          ) : null}
         </div>
         <div className="shrink-0 text-[11px] tabular-nums text-text-300">
           {formatFileCount(visibleFileCount)}
@@ -1385,14 +1409,14 @@ const ProjectFilesViewContent = ({
           </div>
         ) : null}
 
-        {(isAllFilter || isUploadsFilter) &&
-        (index.uploads.totalCount > 0 || Boolean(index.uploads.error)) ? (
+        {showsUploadsSection ? (
           <section>
             <SectionHeader
               id="uploads"
               title="Your uploads"
               countLabel={`${index.uploads.totalCount}`}
               isCollapsed={uploadsCollapsed}
+              hideTopBorder
               onToggle={toggleSection}
             />
             {!uploadsCollapsed ? (
@@ -1444,7 +1468,7 @@ const ProjectFilesViewContent = ({
                 Generated files
               </div>
             ) : null}
-            {visibleArtifactGroups.map((group) => (
+            {visibleArtifactGroups.map((group, groupIndex) => (
               <ProjectArtifactGroupSection
                 key={group.sessionId}
                 group={group}
@@ -1455,6 +1479,7 @@ const ProjectFilesViewContent = ({
                   allVisibleItemLimits[`session:${group.sessionId}`] ?? FILE_PAGE_SIZE
                 }
                 isCollapsed={collapsedSectionIds.has(`session:${group.sessionId}`)}
+                hideTopBorder={!showsUploadsSection && groupIndex === 0}
                 onToggle={toggleSection}
                 loadMore={index.loadMoreArtifacts}
                 onManualLoadMore={() => {
