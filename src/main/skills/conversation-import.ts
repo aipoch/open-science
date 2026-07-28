@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
-import { basename, extname } from 'node:path'
+import { extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type {
@@ -146,7 +146,7 @@ class SkillImportApprovalBroker {
 }
 
 type ConversationSkillImporterOptions = {
-  uploads: Pick<UploadRepository, 'resolveManagedUploadPath' | 'resolveSessionUploadPath'>
+  uploads: Pick<UploadRepository, 'resolveManagedUpload' | 'resolveSessionUpload'>
   createCancellationGuard: (
     sessionId: string,
     turnToken: string,
@@ -224,18 +224,28 @@ const validateSelections = (
 // Owns the complete conversation import transaction behind one agent-facing request: attachment
 // ownership, bounded preview, user confirmation, selection validation, import, and reload signal.
 class ConversationSkillImporter {
-  private readonly referencedUploadGrants = new Map<string, { paths: ReadonlySet<string> }>()
+  private readonly referencedUploadGrants = new Map<
+    string,
+    { projectId: string; paths: ReadonlySet<string> }
+  >()
 
   constructor(private readonly options: ConversationSkillImporterOptions) {}
 
   // Grants one active turn access to uploads the user explicitly selected through `@`. Returning an
   // identity-scoped disposer prevents a stale turn from revoking a newer turn's grant for the same
   // conversation during context-reset recovery.
-  async authorizeReferencedUploads(sessionId: string, paths: string[]): Promise<() => void> {
-    const managedPaths = await Promise.all(
-      paths.map((path) => this.options.uploads.resolveManagedUploadPath({ path }))
+  async authorizeReferencedUploads(
+    projectId: string,
+    sessionId: string,
+    paths: string[]
+  ): Promise<() => void> {
+    const managedUploads = await Promise.all(
+      paths.map((path) => this.options.uploads.resolveManagedUpload({ path }))
     )
-    const grant = { paths: new Set(managedPaths) }
+    const grant = {
+      projectId,
+      paths: new Set(managedUploads.map((upload) => upload.path))
+    }
     this.referencedUploadGrants.set(sessionId, grant)
 
     return () => {
@@ -253,13 +263,17 @@ class ConversationSkillImporter {
     )
     if (cancellation.isCancelled()) return { status: 'cancelled', skills: [] }
     const requestedPath = attachmentPathFromUri(request.attachmentUri)
-    const managedPath = await this.options.uploads.resolveManagedUploadPath({ path: requestedPath })
-    const filePath = this.referencedUploadGrants.get(request.sessionId)?.paths.has(managedPath)
-      ? managedPath
-      : await this.options.uploads.resolveSessionUploadPath(request.sessionId, {
-          path: requestedPath
-        })
-    const attachmentName = basename(filePath)
+    const grant = this.referencedUploadGrants.get(request.sessionId)
+    const managedUpload = await this.options.uploads.resolveManagedUpload({ path: requestedPath })
+    const resolvedUpload = grant?.paths.has(managedUpload.path)
+      ? managedUpload
+      : await this.options.uploads.resolveSessionUpload(
+          request.sessionId,
+          { path: requestedPath },
+          grant?.projectId
+        )
+    const filePath = resolvedUpload.path
+    const attachmentName = resolvedUpload.name
     if (!['.zip', '.skill'].includes(extname(attachmentName).toLowerCase())) {
       throw new Error('Skill import only accepts an attached .zip or .skill bundle.')
     }

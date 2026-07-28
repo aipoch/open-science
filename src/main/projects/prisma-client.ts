@@ -69,6 +69,7 @@ const FINDING_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "Finding" (
     "evidence" TEXT NOT NULL DEFAULT '',
     "locator" TEXT NOT NULL DEFAULT '{}',
     "artifactVersionId" TEXT,
+    "artifactBindingState" TEXT NOT NULL DEFAULT 'legacy_unverified',
     "sortIndex" INTEGER NOT NULL DEFAULT 0,
     "reflagCount" INTEGER NOT NULL DEFAULT 0,
     CONSTRAINT "Finding_reviewId_fkey" FOREIGN KEY ("reviewId") REFERENCES "Review" ("id") ON DELETE CASCADE ON UPDATE CASCADE
@@ -78,6 +79,7 @@ const FINDING_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "Finding" (
 // predate issue 15). Idempotent — the catch swallows the duplicate-column error from SQLite (which
 // does not support IF NOT EXISTS on ALTER TABLE ADD COLUMN).
 const FINDING_ADD_REFLAG_COUNT_DDL = `ALTER TABLE "Finding" ADD COLUMN "reflagCount" INTEGER NOT NULL DEFAULT 0`
+const FINDING_ADD_ARTIFACT_BINDING_STATE_DDL = `ALTER TABLE "Finding" ADD COLUMN "artifactBindingState" TEXT NOT NULL DEFAULT 'legacy_unverified'`
 
 // Runtime DDL remains idempotent for existing installations that do not run a separate migration
 // command. Prisma models provide typed access after these tables and indexes have been ensured.
@@ -92,6 +94,8 @@ const MANAGED_FILE_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ManagedFile" (
     "seq" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     "source" TEXT NOT NULL,
     "sourceFileId" TEXT NOT NULL,
+    "sourceVersionId" TEXT,
+    "checksum" TEXT,
     "projectId" TEXT NOT NULL,
     "sessionId" TEXT NOT NULL,
     "messageId" TEXT,
@@ -106,6 +110,9 @@ const MANAGED_FILE_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ManagedFile" (
     "deletedAt" DATETIME,
     "deleteOperationId" TEXT
 );`
+
+const MANAGED_FILE_ADD_SOURCE_VERSION_ID_DDL = `ALTER TABLE "ManagedFile" ADD COLUMN "sourceVersionId" TEXT`
+const MANAGED_FILE_ADD_CHECKSUM_DDL = `ALTER TABLE "ManagedFile" ADD COLUMN "checksum" TEXT`
 
 // One ledger row per session provides the filesRevision fast path, materialized source counts, and the
 // independent ordering key used by artifact-group pagination.
@@ -132,6 +139,200 @@ const MANAGED_FILE_INDEX_DDLS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS "ManagedFile_projectId_source_sourceFileId_key" ON "ManagedFile"("projectId", "source", "sourceFileId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "ManagedFile_projectId_source_storageKey_key" ON "ManagedFile"("projectId", "source", "storageKey");`,
   `CREATE INDEX IF NOT EXISTS "ManagedFileSessionSync_projectId_deletedAt_groupSortAtMs_sessionId_idx" ON "ManagedFileSessionSync"("projectId", "deletedAt", "groupSortAtMs", "sessionId");`
+]
+
+// Artifact Provenance starts with a narrow retained origin, one stable filename lineage, and its
+// immutable save Versions. Runtime DDL mirrors Prisma's SQLite migration output so packaged installs
+// can add the tables without shipping the migrate engine.
+const FILE_ORIGIN_SESSION_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "FileOriginSession" (
+    "projectId" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "titleSnapshot" TEXT,
+    "state" TEXT NOT NULL DEFAULT 'active',
+    "deletedAt" DATETIME,
+    "deletionOperationId" TEXT,
+    "retainedReviewIdsJson" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    PRIMARY KEY ("projectId", "sessionId")
+);`
+
+const ARTIFACT_LINEAGE_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ArtifactLineage" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "projectId" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "normalizedFilename" TEXT NOT NULL,
+    "filename" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ArtifactLineage_projectId_sessionId_fkey" FOREIGN KEY ("projectId", "sessionId") REFERENCES "FileOriginSession" ("projectId", "sessionId") ON DELETE RESTRICT ON UPDATE CASCADE
+);`
+
+const UPLOAD_FILE_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "UploadFile" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "projectId" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "filename" TEXT NOT NULL,
+    "originalFilename" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "UploadFile_projectId_sessionId_fkey" FOREIGN KEY ("projectId", "sessionId") REFERENCES "FileOriginSession" ("projectId", "sessionId") ON DELETE RESTRICT ON UPDATE CASCADE
+);`
+
+const UPLOAD_VERSION_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "UploadVersion" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "uploadFileId" TEXT NOT NULL,
+    "versionNumber" INTEGER NOT NULL,
+    "state" TEXT NOT NULL DEFAULT 'staging',
+    "contentStorageKey" TEXT NOT NULL,
+    "filename" TEXT NOT NULL,
+    "originalFilename" TEXT NOT NULL,
+    "contentType" TEXT,
+    "sizeBytes" BIGINT NOT NULL,
+    "checksum" TEXT NOT NULL,
+    "createdAt" DATETIME,
+    "registeredAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "UploadVersion_uploadFileId_fkey" FOREIGN KEY ("uploadFileId") REFERENCES "UploadFile" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`
+
+const ARTIFACT_MESSAGE_SNAPSHOT_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ArtifactMessageSnapshot" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "projectId" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "rootFrameId" TEXT NOT NULL,
+    "agentFrameId" TEXT NOT NULL,
+    "messageBranchId" TEXT NOT NULL,
+    "terminalMessageId" TEXT NOT NULL,
+    "state" TEXT NOT NULL DEFAULT 'staging',
+    "storageKey" TEXT NOT NULL,
+    "checksum" TEXT NOT NULL DEFAULT '',
+    "messageCount" INTEGER NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ArtifactMessageSnapshot_projectId_sessionId_fkey" FOREIGN KEY ("projectId", "sessionId") REFERENCES "FileOriginSession" ("projectId", "sessionId") ON DELETE RESTRICT ON UPDATE CASCADE
+);`
+
+const ARTIFACT_MESSAGE_SNAPSHOT_ADD_CHECKSUM_DDL = `ALTER TABLE "ArtifactMessageSnapshot" ADD COLUMN "checksum" TEXT NOT NULL DEFAULT '';`
+
+const ARTIFACT_VERSION_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ArtifactVersion" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "artifactId" TEXT NOT NULL,
+    "versionNumber" INTEGER NOT NULL,
+    "artifactRunId" TEXT NOT NULL,
+    "writeOperationId" TEXT,
+    "writeRequestChecksum" TEXT,
+    "rootFrameId" TEXT NOT NULL,
+    "agentFrameId" TEXT NOT NULL,
+    "messageBranchId" TEXT NOT NULL,
+    "runtimeSegmentId" TEXT NOT NULL,
+    "promptMessageId" TEXT NOT NULL,
+    "notebookSessionId" TEXT,
+    "producerRunId" TEXT,
+    "producerRunIndex" INTEGER,
+    "messageId" TEXT,
+    "messageSnapshotId" TEXT,
+    "state" TEXT NOT NULL DEFAULT 'staging',
+    "contentStorageKey" TEXT NOT NULL,
+    "evidenceStorageKey" TEXT NOT NULL,
+    "contentType" TEXT,
+    "sizeBytes" BIGINT NOT NULL,
+    "checksum" TEXT NOT NULL,
+    "evidenceJson" TEXT NOT NULL,
+    "evidenceChecksum" TEXT NOT NULL,
+    "evidenceSchemaVersion" INTEGER NOT NULL DEFAULT 1,
+    "executionSnapshotJson" TEXT,
+    "executionSnapshotChecksum" TEXT,
+    "executionSnapshotStorageKey" TEXT,
+    "executionSnapshotSchemaVersion" INTEGER,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ArtifactVersion_artifactId_fkey" FOREIGN KEY ("artifactId") REFERENCES "ArtifactLineage" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "ArtifactVersion_messageSnapshotId_fkey" FOREIGN KEY ("messageSnapshotId") REFERENCES "ArtifactMessageSnapshot" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);`
+
+const ARTIFACT_VERSION_INPUT_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ArtifactVersionInput" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "artifactVersionId" TEXT NOT NULL,
+    "ordinal" INTEGER NOT NULL,
+    "inputFileVersionId" TEXT NOT NULL,
+    "sourceKind" TEXT NOT NULL,
+    "sourceFileId" TEXT NOT NULL,
+    "sourceArtifactVersionId" TEXT,
+    "sourceUploadVersionId" TEXT,
+    "sourceVersionNumber" INTEGER,
+    "sourceCreatedAt" DATETIME,
+    "sourceProjectId" TEXT NOT NULL,
+    "sourceSessionId" TEXT NOT NULL,
+    "filename" TEXT NOT NULL,
+    "contentType" TEXT,
+    "sizeBytes" BIGINT NOT NULL,
+    "checksum" TEXT NOT NULL,
+    "storageKey" TEXT NOT NULL,
+    "strongestAssociation" TEXT NOT NULL,
+    CONSTRAINT "ArtifactVersionInput_artifactVersionId_fkey" FOREIGN KEY ("artifactVersionId") REFERENCES "ArtifactVersion" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "ArtifactVersionInput_sourceArtifactVersionId_fkey" FOREIGN KEY ("sourceArtifactVersionId") REFERENCES "ArtifactVersion" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "ArtifactVersionInput_sourceUploadVersionId_fkey" FOREIGN KEY ("sourceUploadVersionId") REFERENCES "UploadVersion" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "ArtifactVersionInput_sourceProjectId_sourceSessionId_fkey" FOREIGN KEY ("sourceProjectId", "sourceSessionId") REFERENCES "FileOriginSession" ("projectId", "sessionId") ON DELETE RESTRICT ON UPDATE CASCADE
+);`
+
+const REVIEW_FINDING_DISPOSITION_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ReviewFindingDisposition" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "sourceFindingId" TEXT NOT NULL,
+    "causeReviewId" TEXT,
+    "sequence" INTEGER NOT NULL,
+    "trigger" TEXT NOT NULL,
+    "outcome" TEXT NOT NULL,
+    "note" TEXT,
+    "assessedArtifactVersionId" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "ReviewFindingDisposition_sourceFindingId_fkey" FOREIGN KEY ("sourceFindingId") REFERENCES "Finding" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "ReviewFindingDisposition_causeReviewId_fkey" FOREIGN KEY ("causeReviewId") REFERENCES "Review" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);`
+
+const REVIEW_SCOPE_SNAPSHOT_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ReviewScopeSnapshot" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "projectId" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "reviewId" TEXT NOT NULL,
+    "scopeTurnMessageId" TEXT NOT NULL,
+    "state" TEXT NOT NULL DEFAULT 'staging',
+    "snapshotJson" TEXT NOT NULL,
+    "checksum" TEXT NOT NULL,
+    "storageKey" TEXT NOT NULL,
+    "schemaVersion" INTEGER NOT NULL DEFAULT 1,
+    "blockCount" INTEGER NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "ReviewScopeSnapshot_reviewId_fkey" FOREIGN KEY ("reviewId") REFERENCES "Review" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`
+
+const ARTIFACT_PROVENANCE_INDEX_DDLS = [
+  `CREATE INDEX IF NOT EXISTS "FileOriginSession_projectId_state_idx" ON "FileOriginSession"("projectId", "state");`,
+  `CREATE INDEX IF NOT EXISTS "ArtifactLineage_projectId_sessionId_idx" ON "ArtifactLineage"("projectId", "sessionId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ArtifactLineage_projectId_sessionId_normalizedFilename_key" ON "ArtifactLineage"("projectId", "sessionId", "normalizedFilename");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ArtifactVersion_writeOperationId_key" ON "ArtifactVersion"("writeOperationId");`,
+  `CREATE INDEX IF NOT EXISTS "ArtifactVersion_artifactId_createdAt_idx" ON "ArtifactVersion"("artifactId", "createdAt");`,
+  `CREATE INDEX IF NOT EXISTS "ArtifactVersion_artifactRunId_state_idx" ON "ArtifactVersion"("artifactRunId", "state");`,
+  `CREATE INDEX IF NOT EXISTS "ArtifactVersion_rootFrameId_agentFrameId_messageBranchId_promptMessageId_idx" ON "ArtifactVersion"("rootFrameId", "agentFrameId", "messageBranchId", "promptMessageId");`,
+  `CREATE INDEX IF NOT EXISTS "ArtifactVersion_messageId_idx" ON "ArtifactVersion"("messageId");`,
+  `CREATE INDEX IF NOT EXISTS "ArtifactVersion_messageSnapshotId_idx" ON "ArtifactVersion"("messageSnapshotId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ArtifactVersion_artifactId_versionNumber_key" ON "ArtifactVersion"("artifactId", "versionNumber");`,
+  `CREATE INDEX IF NOT EXISTS "UploadFile_projectId_sessionId_idx" ON "UploadFile"("projectId", "sessionId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "UploadVersion_uploadFileId_versionNumber_key" ON "UploadVersion"("uploadFileId", "versionNumber");`,
+  `CREATE INDEX IF NOT EXISTS "UploadVersion_uploadFileId_state_registeredAt_idx" ON "UploadVersion"("uploadFileId", "state", "registeredAt");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ArtifactMessageSnapshot_projectId_sessionId_agentFrameId_messageBranchId_terminalMessageId_key" ON "ArtifactMessageSnapshot"("projectId", "sessionId", "agentFrameId", "messageBranchId", "terminalMessageId");`,
+  `CREATE INDEX IF NOT EXISTS "ArtifactMessageSnapshot_projectId_sessionId_state_idx" ON "ArtifactMessageSnapshot"("projectId", "sessionId", "state");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ArtifactVersionInput_artifactVersionId_sourceKind_inputFileVersionId_key" ON "ArtifactVersionInput"("artifactVersionId", "sourceKind", "inputFileVersionId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ArtifactVersionInput_artifactVersionId_ordinal_key" ON "ArtifactVersionInput"("artifactVersionId", "ordinal");`,
+  `CREATE INDEX IF NOT EXISTS "ArtifactVersionInput_sourceKind_inputFileVersionId_idx" ON "ArtifactVersionInput"("sourceKind", "inputFileVersionId");`,
+  `CREATE INDEX IF NOT EXISTS "ArtifactVersionInput_sourceArtifactVersionId_idx" ON "ArtifactVersionInput"("sourceArtifactVersionId");`,
+  `CREATE INDEX IF NOT EXISTS "ArtifactVersionInput_sourceUploadVersionId_idx" ON "ArtifactVersionInput"("sourceUploadVersionId");`,
+  `CREATE INDEX IF NOT EXISTS "ArtifactVersionInput_sourceProjectId_sourceSessionId_idx" ON "ArtifactVersionInput"("sourceProjectId", "sourceSessionId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ReviewFindingDisposition_sourceFindingId_sequence_key" ON "ReviewFindingDisposition"("sourceFindingId", "sequence");`,
+  `CREATE INDEX IF NOT EXISTS "ReviewFindingDisposition_causeReviewId_createdAt_idx" ON "ReviewFindingDisposition"("causeReviewId", "createdAt");`,
+  `CREATE INDEX IF NOT EXISTS "ReviewFindingDisposition_assessedArtifactVersionId_idx" ON "ReviewFindingDisposition"("assessedArtifactVersionId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ReviewScopeSnapshot_reviewId_key" ON "ReviewScopeSnapshot"("reviewId");`,
+  `CREATE INDEX IF NOT EXISTS "ReviewScopeSnapshot_projectId_sessionId_state_idx" ON "ReviewScopeSnapshot"("projectId", "sessionId", "state");`
 ]
 
 // Compute settings: one row per registered SSH compute host (Compute tab, issue 01). Pure-additive
@@ -248,12 +449,30 @@ const ensureProjectSchema = async (client: PrismaClient): Promise<void> => {
   // Migration guard: add reflagCount to Finding for DBs created before issue 15.
   // Catch ignores the error when the column already exists (no IF NOT EXISTS in SQLite ALTER TABLE).
   await client.$executeRawUnsafe(FINDING_ADD_REFLAG_COUNT_DDL).catch(() => undefined)
+  await client.$executeRawUnsafe(FINDING_ADD_ARTIFACT_BINDING_STATE_DDL).catch(() => undefined)
 
   await client.$executeRawUnsafe(PROJECT_DELETION_INTENT_TABLE_DDL)
   await client.$executeRawUnsafe(MANAGED_FILE_TABLE_DDL)
+  await client.$executeRawUnsafe(MANAGED_FILE_ADD_SOURCE_VERSION_ID_DDL).catch(() => undefined)
+  await client.$executeRawUnsafe(MANAGED_FILE_ADD_CHECKSUM_DDL).catch(() => undefined)
   await client.$executeRawUnsafe(MANAGED_FILE_SESSION_SYNC_TABLE_DDL)
 
   for (const ddl of MANAGED_FILE_INDEX_DDLS) {
+    await client.$executeRawUnsafe(ddl)
+  }
+
+  await client.$executeRawUnsafe(FILE_ORIGIN_SESSION_TABLE_DDL)
+  await client.$executeRawUnsafe(ARTIFACT_LINEAGE_TABLE_DDL)
+  await client.$executeRawUnsafe(UPLOAD_FILE_TABLE_DDL)
+  await client.$executeRawUnsafe(UPLOAD_VERSION_TABLE_DDL)
+  await client.$executeRawUnsafe(ARTIFACT_MESSAGE_SNAPSHOT_TABLE_DDL)
+  await client.$executeRawUnsafe(ARTIFACT_MESSAGE_SNAPSHOT_ADD_CHECKSUM_DDL).catch(() => undefined)
+  await client.$executeRawUnsafe(ARTIFACT_VERSION_TABLE_DDL)
+  await client.$executeRawUnsafe(ARTIFACT_VERSION_INPUT_TABLE_DDL)
+  await client.$executeRawUnsafe(REVIEW_FINDING_DISPOSITION_TABLE_DDL)
+  await client.$executeRawUnsafe(REVIEW_SCOPE_SNAPSHOT_TABLE_DDL)
+
+  for (const ddl of ARTIFACT_PROVENANCE_INDEX_DDLS) {
     await client.$executeRawUnsafe(ddl)
   }
 
@@ -319,4 +538,15 @@ const getProjectDbClient = (storageRoot: string): Promise<PrismaClient> => {
   return clientPromise
 }
 
-export { createProjectDbClient, ensureProjectSchema, getProjectDbClient }
+// Releases the process-wide authority-store connection before operations that require an exclusive
+// SQLite checkpoint. The next repository read lazily creates a fresh client.
+const disconnectProjectDbClient = async (): Promise<void> => {
+  const pending = clientPromise
+  if (!pending) return
+
+  clientPromise = undefined
+  const client = await pending.catch(() => undefined)
+  await client?.$disconnect()
+}
+
+export { createProjectDbClient, disconnectProjectDbClient, ensureProjectSchema, getProjectDbClient }

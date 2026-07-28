@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -81,6 +81,15 @@ describe('migration-marker read/write/remove', () => {
     expect(await readMigrationMarker(root)).toBeNull()
   })
 
+  it('returns null when migrated paths escape the staged data root', async () => {
+    await writeFile(
+      join(root, MIGRATION_MARKER_FILENAME),
+      JSON.stringify(sampleMarker({ migratedDirs: ['artifacts', '../outside'] }))
+    )
+
+    expect(await readMigrationMarker(root)).toBeNull()
+  })
+
   it('removeMigrationMarker is idempotent (no throw when absent)', async () => {
     await expect(removeMigrationMarker(root)).resolves.toBeUndefined()
     await writeMigrationMarker(root, sampleMarker())
@@ -128,4 +137,37 @@ describe('scanInventory', () => {
       totalBytes: 0
     })
   })
+
+  it('includes a top-level SQLite file in the verified inventory', async () => {
+    await writeFile(join(root, 'open-science.db'), 'database bytes')
+
+    expect(await scanInventory(root, ['open-science.db'])).toMatchObject({
+      dirs: ['open-science.db'],
+      fileCount: 1,
+      totalBytes: 'database bytes'.length
+    })
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'inventories relative symlinks used by the Conda package cache',
+    async () => {
+      const packageRoot = join(root, 'runtime', 'pkgs', 'ca-certificates', 'ssl')
+      await mkdir(packageRoot, { recursive: true })
+      await writeFile(join(packageRoot, 'cacert.pem'), 'certificate bytes')
+      await symlink('cacert.pem', join(packageRoot, 'cert.pem'))
+
+      const inventory = await scanInventory(root, [join('runtime', 'pkgs')])
+      expect(inventory).toMatchObject({
+        dirs: [join('runtime', 'pkgs')],
+        fileCount: 2,
+        totalBytes: 'certificate bytes'.length + Buffer.byteLength('cacert.pem')
+      })
+
+      await rm(join(packageRoot, 'cert.pem'))
+      await symlink('badcrt.pem', join(packageRoot, 'cert.pem'))
+      expect((await scanInventory(root, [join('runtime', 'pkgs')])).digest).not.toBe(
+        inventory.digest
+      )
+    }
+  )
 })

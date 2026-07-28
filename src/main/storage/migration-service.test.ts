@@ -18,6 +18,8 @@ import {
   DATA_ROOT_DIRS,
   discardStagedCopy,
   MIGRATED_DIRS,
+  PROJECT_DATABASE_FILE,
+  RUNTIME_PROVENANCE_DIR,
   runDataRootMigration,
   validateNewDataRoot
 } from './migration-service'
@@ -459,6 +461,9 @@ describe('runDataRootMigration (copy phase)', () => {
     deps.notebook.shutdownAll.mockImplementation(async () => {
       order.push('shutdownAll')
     })
+    const disconnectProjectDb = vi.fn(async () => {
+      order.push('disconnectProjectDb')
+    })
     const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => {
       order.push('copyAndVerify')
       return { ok: true }
@@ -466,19 +471,25 @@ describe('runDataRootMigration (copy phase)', () => {
 
     const target = dataRootFor(emptyParent)
     const result = await runDataRootMigration(
-      { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook, copyAndVerify },
+      {
+        currentDataRoot,
+        runtime: deps.runtime,
+        notebook: deps.notebook,
+        disconnectProjectDb,
+        copyAndVerify
+      },
       emptyParent,
       runOpts()
     )
 
     expect(result).toEqual({ ok: true })
     // Copy phase commits nothing: interrupt -> copy, and that's it. No setDataRoot, no delete.
-    expect(order).toEqual(['disconnect', 'shutdownAll', 'copyAndVerify'])
+    expect(order).toEqual(['disconnect', 'shutdownAll', 'disconnectProjectDb', 'copyAndVerify'])
     expect(copyAndVerify).toHaveBeenCalledWith(
       expect.objectContaining({
         from: currentDataRoot,
         to: target,
-        dirs: [...MIGRATED_DIRS]
+        dirs: [...MIGRATED_DIRS, RUNTIME_PROVENANCE_DIR]
       })
     )
     // runtime/ is excluded from the moved set (non-relocatable; rebuilt on demand).
@@ -537,6 +548,33 @@ describe('runDataRootMigration (copy phase)', () => {
 
     expect(result).toEqual({ ok: false, error: 'x' })
     expect(deps.setDataRoot).not.toHaveBeenCalled()
+  })
+
+  it('refuses to stage a migration when the frozen source has unresolved provenance state', async () => {
+    const deps = fakeDeps()
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
+    const validateProvenanceState = vi.fn(async () => {
+      throw new Error('unfinished Environment operation')
+    })
+
+    const result = await runDataRootMigration(
+      {
+        currentDataRoot,
+        runtime: deps.runtime,
+        notebook: deps.notebook,
+        copyAndVerify,
+        validateProvenanceState
+      },
+      emptyParent,
+      runOpts()
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Could not verify provenance data: unfinished Environment operation'
+    })
+    expect(validateProvenanceState).toHaveBeenCalledWith(currentDataRoot)
+    expect(copyAndVerify).not.toHaveBeenCalled()
   })
 
   it("stamps a 'copying' marker before the copy and promotes it to 'verified' on success", async () => {
@@ -632,6 +670,23 @@ describe('runDataRootMigration (copy phase)', () => {
 })
 
 describe('commitDataRootSwitch (commit phase)', () => {
+  it('keeps the fixed config-root SQLite authority out of the relocatable data set', async () => {
+    const deps = fakeDeps()
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
+
+    await runDataRootMigration(
+      { ...deps, currentDataRoot, copyAndVerify, validateProvenanceState: async () => undefined },
+      emptyParent,
+      runOpts()
+    )
+
+    expect(copyAndVerify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dirs: expect.not.arrayContaining([PROJECT_DATABASE_FILE])
+      })
+    )
+  })
+
   it('persists the new root then deletes the old dirs, in that order, and removes the marker', async () => {
     const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
     const order: string[] = []
@@ -948,7 +1003,9 @@ describe('runtime preservation + old-runtime cleanup', () => {
     expect(exportRuntimeLocks).toHaveBeenCalledWith(currentDataRoot, target)
     // The (relocatable) pkgs cache is copied alongside the user data so envs rebuild offline there.
     expect(copyAndVerify).toHaveBeenCalledWith(
-      expect.objectContaining({ dirs: [...MIGRATED_DIRS, join('runtime', 'pkgs')] })
+      expect.objectContaining({
+        dirs: [...MIGRATED_DIRS, RUNTIME_PROVENANCE_DIR, join('runtime', 'pkgs')]
+      })
     )
   })
 
@@ -970,7 +1027,9 @@ describe('runtime preservation + old-runtime cleanup', () => {
     )
 
     expect(copyAndVerify).toHaveBeenCalledWith(
-      expect.objectContaining({ dirs: [...MIGRATED_DIRS] })
+      expect.objectContaining({
+        dirs: [...MIGRATED_DIRS, RUNTIME_PROVENANCE_DIR]
+      })
     )
   })
 
@@ -995,7 +1054,9 @@ describe('runtime preservation + old-runtime cleanup', () => {
 
     expect(result).toEqual({ ok: true })
     expect(copyAndVerify).toHaveBeenCalledWith(
-      expect.objectContaining({ dirs: [...MIGRATED_DIRS] })
+      expect.objectContaining({
+        dirs: [...MIGRATED_DIRS, RUNTIME_PROVENANCE_DIR]
+      })
     )
   })
 

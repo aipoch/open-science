@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ReviewRepository } from '../reviewer/repository'
@@ -25,11 +25,13 @@ import {
   registerSessionPersistenceIpcHandlers,
   type SessionPersistenceBackend
 } from './ipc'
+import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 
 beforeEach(() => {
   ipcHandlers.clear()
   broadcastLifecycleEvent.mockClear()
 })
+afterEach(() => clearMigrationPending())
 
 const createSession = (): PersistedChatSession => ({
   id: 'session-1',
@@ -80,8 +82,8 @@ describe('session persistence IPC handlers', () => {
 
     await handlers.deleteSession({ projectId: 'project-a', sessionId: 'session-1' })
     expect(repository.deleteSession).toHaveBeenCalledWith('project-a', 'session-1')
-    // Cascade: review cleanup is attempted after the session delete commits.
-    expect(reviewRepository.deleteReviewsForSession).toHaveBeenCalledWith('session-1')
+    // Reviews are retained for Artifact Provenance after the session transcript is deleted.
+    expect(reviewRepository.deleteReviewsForSession).not.toHaveBeenCalled()
 
     await handlers.saveManifest({ lastProjectId: 'project-a', lastSessionId: 'session-1' })
     expect(repository.saveManifest).toHaveBeenCalledWith({
@@ -110,7 +112,7 @@ describe('session persistence IPC handlers', () => {
     ).resolves.toBeUndefined()
   })
 
-  it('deletes session review rows only after the authoritative session deletion succeeds', async () => {
+  it('retains session review rows after the authoritative session deletion succeeds', async () => {
     const order: string[] = []
     const repository = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
@@ -129,7 +131,7 @@ describe('session persistence IPC handlers', () => {
 
     await handlers.deleteSession({ projectId: 'project-a', sessionId: 'session-1' })
 
-    expect(order).toEqual(['session', 'reviews'])
+    expect(order).toEqual(['session'])
   })
 
   it('registers each persistence channel and forwards renderer requests', async () => {
@@ -164,7 +166,7 @@ describe('session persistence IPC handlers', () => {
 
     expect(repository.saveSession).toHaveBeenCalledWith(session)
     expect(repository.deleteSession).toHaveBeenCalledWith('project-a', 'session-1')
-    expect(reviewRepository.deleteReviewsForSession).toHaveBeenCalledWith('session-1')
+    expect(reviewRepository.deleteReviewsForSession).not.toHaveBeenCalled()
     expect(repository.saveManifest).toHaveBeenCalledWith(manifestRequest)
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:created', {
       session,
@@ -175,5 +177,25 @@ describe('session persistence IPC handlers', () => {
       originClientId: 'web:browser-1'
     })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:deleted', deleteRequest)
+  })
+
+  it('rejects session persistence while a data-root migration is pending', async () => {
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      saveSession: vi.fn().mockResolvedValue(false),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+      deleteProjectSessions: vi.fn().mockResolvedValue(undefined),
+      saveManifest: vi.fn().mockResolvedValue(undefined)
+    }
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository())
+    beginMigration()
+
+    await expect(
+      ipcHandlers.get('sessions:delete-session')?.(undefined, {
+        projectId: 'project-a',
+        sessionId: 'session-1'
+      })
+    ).rejects.toThrow(/moving your data/i)
+    expect(repository.deleteSession).not.toHaveBeenCalled()
   })
 })

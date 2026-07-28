@@ -84,6 +84,165 @@ describe('SessionPersistenceCoordinator', () => {
     expect(repository.saveSession).toHaveBeenCalledOnce()
   })
 
+  it('retains native Project files and completes the origin tombstone after JSON deletion', async () => {
+    const session = createSession({ title: 'Retained analysis' })
+    const repository = createSessionRepository({
+      loadSession: vi.fn().mockResolvedValue(session)
+    })
+    const fileIndex = createFileIndex()
+    const onFilesChanged = vi.fn()
+    const provenance = {
+      captureFinalizedMessages: vi.fn().mockResolvedValue(undefined),
+      reconcileSessionDeletions: vi.fn().mockResolvedValue(undefined),
+      prepareSessionDeletion: vi.fn().mockResolvedValue({
+        kind: 'retained' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operationId: 'origin-delete-1'
+      }),
+      completeSessionDeletion: vi.fn().mockResolvedValue(undefined),
+      abortSessionDeletion: vi.fn().mockResolvedValue(undefined)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      onFilesChanged,
+      provenance
+    )
+
+    await coordinator.deleteSession('project-1', 'session-1')
+
+    expect(provenance.prepareSessionDeletion).toHaveBeenCalledWith(session)
+    expect(fileIndex.softDeleteSession).not.toHaveBeenCalled()
+    expect(repository.deleteSession).toHaveBeenCalledWith('project-1', 'session-1')
+    expect(provenance.completeSessionDeletion).toHaveBeenCalledWith({
+      kind: 'retained',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operationId: 'origin-delete-1'
+    })
+    expect(onFilesChanged).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      sources: ['artifact', 'upload'],
+      kind: 'upsert'
+    })
+  })
+
+  it('upgrades and persists a legacy upload before deleting its Session', async () => {
+    const order: string[] = []
+    const legacySession = createSession({
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'legacy upload',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'upload-1',
+              sessionId: 'session-1',
+              name: 'data.csv',
+              originalName: 'data.csv',
+              path: '/legacy/data.csv',
+              size: 4
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    const upgradedSession = structuredClone(legacySession)
+    upgradedSession.messages[0].uploads = [
+      {
+        id: 'upload-1',
+        versionId: 'upload-version-1',
+        versionNumber: 1,
+        sessionId: 'session-1',
+        name: 'data.csv',
+        originalName: 'data.csv',
+        size: 4,
+        sha256: 'a'.repeat(64)
+      }
+    ]
+    const repository = createSessionRepository({
+      loadSession: vi.fn().mockResolvedValue(legacySession),
+      saveSession: vi.fn(async () => {
+        order.push('save-upgraded')
+      }),
+      deleteSession: vi.fn(async () => {
+        order.push('delete-json')
+      })
+    })
+    const uploads = {
+      upgradeLegacySessionUploads: vi.fn(async () => {
+        order.push('upgrade')
+        return upgradedSession
+      })
+    }
+    const provenance = {
+      captureFinalizedMessages: vi.fn().mockResolvedValue(undefined),
+      reconcileSessionDeletions: vi.fn().mockResolvedValue(undefined),
+      prepareSessionDeletion: vi.fn(async () => {
+        order.push('prepare-delete')
+        return {
+          kind: 'ordinary' as const,
+          projectId: 'project-1',
+          sessionId: 'session-1'
+        }
+      }),
+      completeSessionDeletion: vi.fn().mockResolvedValue(undefined),
+      abortSessionDeletion: vi.fn().mockResolvedValue(undefined)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      provenance,
+      uploads
+    )
+
+    await coordinator.deleteSession('project-1', 'session-1')
+
+    expect(order).toEqual(['upgrade', 'save-upgraded', 'prepare-delete', 'delete-json'])
+    expect(provenance.prepareSessionDeletion).toHaveBeenCalledWith(upgradedSession)
+  })
+
+  it('aborts a retained origin tombstone when JSON deletion fails', async () => {
+    const session = createSession()
+    const repository = createSessionRepository({
+      loadSession: vi.fn().mockResolvedValue(session),
+      deleteSession: vi.fn().mockRejectedValueOnce(new Error('disk locked'))
+    })
+    const fileIndex = createFileIndex()
+    const receipt = {
+      kind: 'retained' as const,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operationId: 'origin-delete-1'
+    }
+    const provenance = {
+      captureFinalizedMessages: vi.fn().mockResolvedValue(undefined),
+      reconcileSessionDeletions: vi.fn().mockResolvedValue(undefined),
+      prepareSessionDeletion: vi.fn().mockResolvedValue(receipt),
+      completeSessionDeletion: vi.fn().mockResolvedValue(undefined),
+      abortSessionDeletion: vi.fn().mockResolvedValue(undefined)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      provenance
+    )
+
+    await expect(coordinator.deleteSession('project-1', 'session-1')).rejects.toThrow('disk locked')
+
+    expect(provenance.abortSessionDeletion).toHaveBeenCalledWith(receipt)
+    expect(fileIndex.restoreSession).not.toHaveBeenCalled()
+  })
+
   it('marks the index incomplete when deletion compensation cannot restore DB visibility', async () => {
     const repository = createSessionRepository({
       deleteSession: vi.fn().mockRejectedValueOnce(new Error('disk locked'))
@@ -109,9 +268,18 @@ describe('SessionPersistenceCoordinator', () => {
       loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
     })
     const fileIndex = createFileIndex()
-    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+    const artifactStorage = { reconcileSession: vi.fn().mockResolvedValue(undefined) }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      undefined,
+      artifactStorage
+    )
 
     await expect(coordinator.loadAll()).resolves.toBe(result)
+    expect(artifactStorage.reconcileSession).toHaveBeenCalledWith('project-1', 'session-1', session)
     expect(fileIndex.syncSession).toHaveBeenCalledWith(session)
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([session])
   })
@@ -416,6 +584,7 @@ const createSessionRepository = (
     result: { sessions: [], manifest: { version: 1 } },
     isComplete: true
   }),
+  loadSession: vi.fn().mockResolvedValue(undefined),
   saveSession: vi.fn().mockResolvedValue(undefined),
   deleteSession: vi.fn().mockResolvedValue(undefined),
   deleteProjectSessions: vi.fn().mockResolvedValue(undefined),

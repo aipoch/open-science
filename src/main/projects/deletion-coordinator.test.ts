@@ -1,6 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ProjectDeletionCoordinator, type ProjectDeletionRepository } from './deletion-coordinator'
+import { beginMigration, clearMigrationPending } from '../storage/migration-state'
+
+afterEach(() => clearMigrationPending())
 
 const project = {
   id: 'project-1',
@@ -12,12 +15,32 @@ const project = {
 }
 
 describe('ProjectDeletionCoordinator', () => {
+  it('rejects deletion recovery while a data-root migration is pending', async () => {
+    const projects = createProjects()
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      { deleteProjectSessions: vi.fn().mockResolvedValue(undefined) },
+      { delete: vi.fn().mockResolvedValue(undefined) }
+    )
+    beginMigration()
+
+    await expect(coordinator.recoverPendingDeletions()).rejects.toThrow(/moving your data/i)
+    expect(projects.listDeletionIntents).not.toHaveBeenCalled()
+  })
+
   it('deletes the project row, sessions, index, and preview state', async () => {
     const projects = createProjects()
     const sessions = { deleteProjectSessions: vi.fn().mockResolvedValue(undefined) }
     const preview = { delete: vi.fn().mockResolvedValue(undefined) }
     const reviews = { deleteReviewsForProject: vi.fn().mockResolvedValue(undefined) }
-    const coordinator = new ProjectDeletionCoordinator(projects, sessions, preview, reviews)
+    const provenance = { deleteProjectProvenance: vi.fn().mockResolvedValue(undefined) }
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      sessions,
+      preview,
+      reviews,
+      provenance
+    )
 
     await coordinator.deleteProject('project-1')
 
@@ -27,6 +50,7 @@ describe('ProjectDeletionCoordinator', () => {
     expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-1')
     expect(preview.delete).toHaveBeenCalledWith('project-1')
     expect(reviews.deleteReviewsForProject).toHaveBeenCalledWith('project-1')
+    expect(provenance.deleteProjectProvenance).toHaveBeenCalledWith('project-1')
   })
 
   it('keeps the project row and clears intent when session and index cleanup fails', async () => {
@@ -85,12 +109,17 @@ describe('ProjectDeletionCoordinator', () => {
         deleteReviewsForProject: vi.fn(async () => {
           order.push('reviews')
         })
+      },
+      {
+        deleteProjectProvenance: vi.fn(async () => {
+          order.push('provenance')
+        })
       }
     )
 
     await coordinator.deleteProject('project-1')
 
-    expect(order).toEqual(['project', 'preview', 'reviews', 'intent'])
+    expect(order).toEqual(['project', 'preview', 'reviews', 'provenance', 'intent'])
   })
 
   it('reuses a successful recovery gate for later operations', async () => {

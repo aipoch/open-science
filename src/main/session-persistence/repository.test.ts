@@ -56,8 +56,15 @@ describe('session persistence repository (per-session files)', () => {
     await repository.saveSession(session)
 
     const filePath = join(storageRoot!, 'sessions', 'project-a', 'session-1.json')
-    const raw = JSON.parse(await readFile(filePath, 'utf8')) as { version: number }
-    expect(raw.version).toBe(1)
+    const raw = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+      session: PersistedChatSession
+    }
+    expect(raw.version).toBe(2)
+    expect(raw.session.conversationGraph).toMatchObject({
+      schemaVersion: 1,
+      rootFrameId: 'root-frame-session-1'
+    })
 
     const { sessions } = await repository.loadAll()
     expect(sessions).toHaveLength(1)
@@ -100,6 +107,56 @@ describe('session persistence repository (per-session files)', () => {
     expect(refreshed?.title).toBe('After correction')
     expect(refreshed?.messages.at(-1)?.id).toBe('message-2')
     await expect(repository.loadSession('project-a', 'missing')).resolves.toBeUndefined()
+  })
+
+  it('never writes finalized upload absolute paths into Session JSON', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const session = createSession()
+    session.messages[0].uploads = [
+      {
+        id: 'upload-1',
+        versionId: 'upload-version-1',
+        versionNumber: 1,
+        sessionId: 'session-1',
+        name: 'input.csv',
+        originalName: 'input.csv',
+        path: '/Users/private/uploads/input.csv',
+        size: 12,
+        checksum: 'a'.repeat(64)
+      }
+    ]
+
+    await repository.saveSession(session)
+
+    const filePath = join(storageRoot!, 'sessions', 'project-a', 'session-1.json')
+    const serialized = await readFile(filePath, 'utf8')
+    expect(serialized).not.toContain('/Users/private/uploads/input.csv')
+    expect(JSON.parse(serialized).session.messages[0].uploads[0]).toMatchObject({
+      id: 'upload-1',
+      versionId: 'upload-version-1',
+      versionNumber: 1,
+      sha256: 'a'.repeat(64)
+    })
+  })
+
+  it('refuses to erase a legacy upload path before it has an immutable Version', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const session = createSession()
+    session.messages[0].uploads = [
+      {
+        id: 'legacy-upload-1',
+        sessionId: 'session-1',
+        name: 'input.csv',
+        originalName: 'input.csv',
+        path: '/Users/private/uploads/input.csv',
+        size: 12
+      }
+    ]
+
+    await expect(repository.saveSession(session)).rejects.toThrow(/upgraded.*Version/i)
+    await expect(
+      readFile(join(storageRoot!, 'sessions', 'project-a', 'session-1.json'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('sanitizes embedded message images before writing session JSON', async () => {

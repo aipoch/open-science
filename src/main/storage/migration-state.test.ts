@@ -111,6 +111,26 @@ describe('migration-state', () => {
     expect(drained).toBe(true)
   })
 
+  it('allows a drained writer to enter nested protected repositories after the gate rises', async () => {
+    let continueOuter: (() => void) | undefined
+    const outerStarted = new Promise<void>((resolve) => {
+      continueOuter = resolve
+    })
+    let entered = false
+    const operation = withDataRootWrite(async () => {
+      await outerStarted
+      await withDataRootWrite(async () => {
+        entered = true
+      })
+    })
+    beginMigration()
+
+    continueOuter?.()
+    await operation
+
+    expect(entered).toBe(true)
+  })
+
   it('keeps a logical writer active across calls until its idempotent release', async () => {
     const release = acquireDataRootWriter()
     beginMigration()

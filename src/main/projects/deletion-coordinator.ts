@@ -1,4 +1,5 @@
 import type { Project } from '../../shared/projects'
+import { withDataRootWrite } from '../storage/migration-state'
 
 type ProjectDeletionRepository = {
   get(id: string): Promise<Project | null>
@@ -20,6 +21,10 @@ type ProjectReviewDeletion = {
   deleteReviewsForProject(projectId: string): Promise<void>
 }
 
+type ProjectProvenanceDeletion = {
+  deleteProjectProvenance(projectId: string): Promise<void>
+}
+
 // Persists deletion intent so a crash cannot strand an absent project with active session data. The
 // same sticky recovery gate is shared by project CRUD, session persistence, and Files queries.
 class ProjectDeletionCoordinator {
@@ -31,23 +36,26 @@ class ProjectDeletionCoordinator {
     private readonly projects: ProjectDeletionRepository,
     private readonly sessions: ProjectSessionDeletion,
     private readonly preview: PreviewDeletion,
-    private readonly reviews?: ProjectReviewDeletion
+    private readonly reviews?: ProjectReviewDeletion,
+    private readonly provenance?: ProjectProvenanceDeletion
   ) {}
 
   // Enqueues before yielding so two callers in the same event-loop turn cannot publish competing
   // recovery promises. The queue tail swallows failures only to keep later recovery work runnable.
   deleteProject(projectId: string): Promise<void> {
-    const deletion = this.operationQueue.then(async () => {
-      await this.recoverPendingDeletionsNow()
-      this.isRecoveryComplete = false
-      try {
-        await this.runDeletion(projectId)
-        this.isRecoveryComplete = true
-      } catch (error) {
+    const deletion = this.operationQueue.then(() =>
+      withDataRootWrite(async () => {
+        await this.recoverPendingDeletionsNow()
         this.isRecoveryComplete = false
-        throw error
-      }
-    })
+        try {
+          await this.runDeletion(projectId)
+          this.isRecoveryComplete = true
+        } catch (error) {
+          this.isRecoveryComplete = false
+          throw error
+        }
+      })
+    )
     this.operationQueue = deletion.catch(() => undefined)
     return deletion
   }
@@ -56,7 +64,7 @@ class ProjectDeletionCoordinator {
   // Newly requested deletions enqueue synchronously, so later callers cannot bypass active work.
   async recoverPendingDeletions(): Promise<void> {
     await this.operationQueue
-    return this.recoverPendingDeletionsNow()
+    return withDataRootWrite(() => this.recoverPendingDeletionsNow())
   }
 
   // Deduplicates concurrent intent scans. Completion remains sticky until queued deletion work starts,
@@ -116,6 +124,11 @@ class ProjectDeletionCoordinator {
     // deletion and crash recovery remove the same orphan rows without risking review loss on failure.
     await this.reviews?.deleteReviewsForProject(projectId).catch(() => undefined)
 
+    // Session deletion retains provenance, but Project deletion is terminal. This tail is replayed
+    // from the durable intent after a crash, so both SQLite rows and immutable bytes are eventually
+    // removed even if the Project row is already gone.
+    await this.provenance?.deleteProjectProvenance(projectId)
+
     // Keep the intent until all derived cleanup has been attempted so a crash replays the full tail.
     await this.projects.deleteDeletionIntent(projectId)
   }
@@ -126,5 +139,6 @@ export type {
   PreviewDeletion,
   ProjectDeletionRepository,
   ProjectReviewDeletion,
+  ProjectProvenanceDeletion,
   ProjectSessionDeletion
 }

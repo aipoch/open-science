@@ -9,11 +9,13 @@ import {
   symlink,
   writeFile
 } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { ArtifactWriteSource } from '../../shared/artifacts'
+import { createPngBytes, createPngInlineSource } from './artifact-test-fixtures'
 import {
   ArtifactRepository,
   getArtifactCurrentRunFilePath,
@@ -35,6 +37,9 @@ const createInlineSource = (
   content,
   encoding
 })
+
+const sha256 = (content: string | Buffer): string =>
+  createHash('sha256').update(content).digest('hex')
 
 afterEach(async () => {
   if (storageRoot) {
@@ -94,7 +99,8 @@ describe('artifact repository', () => {
     const allowedRoot = join(root, 'notebook-session')
     const sourcePath = join(allowedRoot, 'plot.png')
     await mkdir(allowedRoot, { recursive: true })
-    await writeFile(sourcePath, Buffer.from([1, 2, 3]))
+    const png = createPngBytes([1, 2, 3])
+    await writeFile(sourcePath, png)
 
     const repository = new ArtifactRepository(root)
     const artifact = await repository.writePendingFile(
@@ -109,8 +115,31 @@ describe('artifact repository', () => {
       { allowedImportRoots: [allowedRoot] }
     )
 
-    await expect(readFile(artifact.path)).resolves.toEqual(Buffer.from([1, 2, 3]))
-    await expect(readFile(sourcePath)).resolves.toEqual(Buffer.from([1, 2, 3]))
+    await expect(readFile(artifact.path)).resolves.toEqual(png)
+    await expect(readFile(sourcePath)).resolves.toEqual(png)
+  })
+
+  it('rejects a declared MIME type that conflicts with the source signature', async () => {
+    const root = await createStorageRoot()
+    const allowedRoot = join(root, 'notebook-session')
+    const sourcePath = join(allowedRoot, 'plot.png')
+    await mkdir(allowedRoot, { recursive: true })
+    await writeFile(sourcePath, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]))
+
+    const repository = new ArtifactRepository(root)
+    await expect(
+      repository.writePendingFile(
+        {
+          projectName: 'default-project',
+          sessionId: 'session-1',
+          runId: 'run-1',
+          filename: 'plot.png',
+          mimeType: 'image/png',
+          source: { kind: 'localPath', path: sourcePath }
+        },
+        { allowedImportRoots: [allowedRoot] }
+      )
+    ).rejects.toThrow(/declared MIME type image\/png.*image\/jpeg/i)
   })
 
   it('resolves a relative local source path against the notebook data dir base', async () => {
@@ -119,7 +148,8 @@ describe('artifact repository', () => {
     const root = await createStorageRoot()
     const dataDir = join(root, 'notebook-session', 'data')
     await mkdir(dataDir, { recursive: true })
-    await writeFile(join(dataDir, 'plot.png'), Buffer.from([9, 8, 7]))
+    const png = createPngBytes([9, 8, 7])
+    await writeFile(join(dataDir, 'plot.png'), png)
 
     const repository = new ArtifactRepository(root)
     const artifact = await repository.writePendingFile(
@@ -133,7 +163,7 @@ describe('artifact repository', () => {
       { allowedImportRoots: [dataDir], relativeBaseDirs: [dataDir] }
     )
 
-    await expect(readFile(artifact.path)).resolves.toEqual(Buffer.from([9, 8, 7]))
+    await expect(readFile(artifact.path)).resolves.toEqual(png)
   })
 
   it('still honors an absolute local source path when a relative base is set', async () => {
@@ -142,7 +172,8 @@ describe('artifact repository', () => {
     const dataDir = join(root, 'notebook-session', 'data')
     const sourcePath = join(dataDir, 'chart.png')
     await mkdir(dataDir, { recursive: true })
-    await writeFile(sourcePath, Buffer.from([4, 5, 6]))
+    const png = createPngBytes([4, 5, 6])
+    await writeFile(sourcePath, png)
 
     const repository = new ArtifactRepository(root)
     const artifact = await repository.writePendingFile(
@@ -156,7 +187,7 @@ describe('artifact repository', () => {
       { allowedImportRoots: [dataDir], relativeBaseDirs: [dataDir] }
     )
 
-    await expect(readFile(artifact.path)).resolves.toEqual(Buffer.from([4, 5, 6]))
+    await expect(readFile(artifact.path)).resolves.toEqual(png)
   })
 
   it('falls back to the next relative base dir when the file is not under the first', async () => {
@@ -168,7 +199,8 @@ describe('artifact repository', () => {
     const workspace = join(root, 'workspace')
     await mkdir(dataDir, { recursive: true })
     await mkdir(workspace, { recursive: true })
-    await writeFile(join(workspace, 'plot.png'), Buffer.from([1, 1, 1]))
+    const png = createPngBytes([1, 1, 1])
+    await writeFile(join(workspace, 'plot.png'), png)
 
     const repository = new ArtifactRepository(root)
     const artifact = await repository.writePendingFile(
@@ -182,7 +214,7 @@ describe('artifact repository', () => {
       { allowedImportRoots: [dataDir, workspace], relativeBaseDirs: [dataDir, workspace] }
     )
 
-    await expect(readFile(artifact.path)).resolves.toEqual(Buffer.from([1, 1, 1]))
+    await expect(readFile(artifact.path)).resolves.toEqual(png)
   })
 
   it('prefers the first relative base dir when the file exists under several', async () => {
@@ -193,8 +225,9 @@ describe('artifact repository', () => {
     const workspace = join(root, 'workspace')
     await mkdir(dataDir, { recursive: true })
     await mkdir(workspace, { recursive: true })
-    await writeFile(join(dataDir, 'plot.png'), Buffer.from([9, 9, 9]))
-    await writeFile(join(workspace, 'plot.png'), Buffer.from([2, 2, 2]))
+    const preferredPng = createPngBytes([9, 9, 9])
+    await writeFile(join(dataDir, 'plot.png'), preferredPng)
+    await writeFile(join(workspace, 'plot.png'), createPngBytes([2, 2, 2]))
 
     const repository = new ArtifactRepository(root)
     const artifact = await repository.writePendingFile(
@@ -208,7 +241,7 @@ describe('artifact repository', () => {
       { allowedImportRoots: [dataDir, workspace], relativeBaseDirs: [dataDir, workspace] }
     )
 
-    await expect(readFile(artifact.path)).resolves.toEqual(Buffer.from([9, 9, 9]))
+    await expect(readFile(artifact.path)).resolves.toEqual(preferredPng)
   })
 
   it('rejects a relative local source path when no relative base dir is set', async () => {
@@ -381,6 +414,61 @@ describe('artifact repository', () => {
     ).resolves.not.toContain('run-1')
   })
 
+  it('does not move files until the durable run marker directory barrier succeeds', async () => {
+    const root = await createStorageRoot()
+    const syncedFiles: string[] = []
+    const syncedDirectories: string[] = []
+    let directorySyncAttempts = 0
+    const repository = new ArtifactRepository(root, {
+      syncFile: async (path) => {
+        syncedFiles.push(path)
+      },
+      syncDirectory: async (path) => {
+        syncedDirectories.push(path)
+        directorySyncAttempts += 1
+        if (directorySyncAttempts === 1) throw new Error('marker directory barrier failed')
+      }
+    })
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      filename: 'report.xml',
+      source: createInlineSource('<report />')
+    })
+    const finalPath = join(
+      root,
+      'artifacts',
+      'default-project',
+      'session-1',
+      'message-1',
+      'report.xml'
+    )
+
+    await expect(
+      repository.finalizeRunArtifacts({
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        messageId: 'message-1'
+      })
+    ).rejects.toThrow(/marker directory barrier failed/)
+    await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+
+    await expect(
+      repository.finalizeRunArtifacts({
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        messageId: 'message-1'
+      })
+    ).resolves.toHaveLength(1)
+    expect(directorySyncAttempts).toBe(3)
+    expect(syncedFiles.some((path) => path.endsWith('.tmp'))).toBe(true)
+    expect(syncedDirectories.some((path) => path.endsWith('session-1'))).toBe(true)
+    expect(syncedDirectories.some((path) => path.endsWith('.runs'))).toBe(true)
+  })
+
   it('recovers a finalized file when a preview still references its old pending path', async () => {
     // Root cause of the transient "Failed to read artifact preview ENOENT": the renderer keeps the
     // `.pending/<run>/` path while finalizeRunArtifacts moves the file into the message directory.
@@ -392,7 +480,7 @@ describe('artifact repository', () => {
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'plot.png',
-      source: createInlineSource('img-bytes')
+      source: createPngInlineSource('img-bytes')
     })
     const pendingPath = join(
       root,
@@ -819,6 +907,179 @@ describe('artifact repository', () => {
     })
   })
 
+  it('rejects a conflicting Version route for existing pending bytes', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    const content = 'immutable pending bytes'
+    const pending = await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'storage-session-1',
+      runId: 'artifact-run-1',
+      filename: 'result.txt',
+      mimeType: 'text/plain',
+      source: createInlineSource(content)
+    })
+    const checksum = sha256(content)
+
+    await repository.ensurePendingVersionRouting({
+      projectName: 'default-project',
+      sessionId: 'storage-session-1',
+      runId: 'artifact-run-1',
+      filename: 'result.txt',
+      sourcePath: pending.path,
+      routing: {
+        artifactId: 'artifact-1',
+        versionId: 'version-1',
+        versionNumber: 1,
+        artifactRunId: 'artifact-run-1',
+        checksum,
+        mimeType: 'text/plain'
+      }
+    })
+
+    await expect(
+      repository.ensurePendingVersionRouting({
+        projectName: 'default-project',
+        sessionId: 'storage-session-1',
+        runId: 'artifact-run-1',
+        filename: 'result.txt',
+        sourcePath: pending.path,
+        routing: {
+          artifactId: 'artifact-1',
+          versionId: 'version-2',
+          versionNumber: 2,
+          artifactRunId: 'artifact-run-1',
+          checksum,
+          mimeType: 'text/plain'
+        }
+      })
+    ).rejects.toThrow('Artifact pending routing conflicts with an existing Version.')
+
+    await expect(
+      repository.findPendingVersionRouting({
+        projectName: 'default-project',
+        artifactId: 'artifact-1',
+        versionId: 'version-1'
+      })
+    ).resolves.toMatchObject({
+      storageSessionId: 'storage-session-1',
+      artifactRunId: 'artifact-run-1',
+      versionNumber: 1,
+      checksum
+    })
+  })
+
+  it('preserves a published Version route when the caller fails after binding it', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    const request = {
+      projectName: 'default-project',
+      sessionId: 'storage-session-1',
+      runId: 'artifact-run-1',
+      filename: 'result.txt',
+      mimeType: 'text/plain',
+      source: createInlineSource('new immutable bytes')
+    }
+    await repository.writePendingFile({ ...request, source: createInlineSource('old bytes') })
+
+    await expect(
+      repository.withPendingFileTransaction(request, {}, async (artifact, _observation, bind) => {
+        await bind(
+          {
+            artifactId: 'artifact-1',
+            versionId: 'version-1',
+            versionNumber: 1,
+            artifactRunId: 'artifact-run-1',
+            checksum: sha256('new immutable bytes'),
+            mimeType: 'text/plain'
+          },
+          artifact.path
+        )
+        throw new Error('sqlite pending transition failed')
+      })
+    ).rejects.toThrow('sqlite pending transition failed')
+
+    const route = await repository.findPendingVersionRouting({
+      projectName: 'default-project',
+      artifactId: 'artifact-1',
+      versionId: 'version-1'
+    })
+    expect(route).toMatchObject({
+      storageSessionId: 'storage-session-1',
+      artifactRunId: 'artifact-run-1',
+      checksum: sha256('new immutable bytes')
+    })
+    await expect(readFile(route!.path, 'utf8')).resolves.toBe('new immutable bytes')
+  })
+
+  it('fails closed when the same Version route appears in multiple storage sessions', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    const content = 'duplicate route bytes'
+    const checksum = sha256(content)
+
+    for (const sessionId of ['storage-session-1', 'storage-session-2']) {
+      const pending = await repository.writePendingFile({
+        projectName: 'default-project',
+        sessionId,
+        runId: 'artifact-run-1',
+        filename: 'result.txt',
+        source: createInlineSource(content)
+      })
+      await repository.ensurePendingVersionRouting({
+        projectName: 'default-project',
+        sessionId,
+        runId: 'artifact-run-1',
+        filename: 'result.txt',
+        sourcePath: pending.path,
+        routing: {
+          artifactId: 'artifact-1',
+          versionId: 'version-1',
+          versionNumber: 1,
+          artifactRunId: 'artifact-run-1',
+          checksum
+        }
+      })
+    }
+
+    await expect(
+      repository.findPendingVersionRouting({
+        projectName: 'default-project',
+        artifactId: 'artifact-1',
+        versionId: 'version-1'
+      })
+    ).rejects.toThrow('Artifact pending routing is ambiguous across compatibility storage.')
+  })
+
+  it('keeps legacy MIME-only metadata readable without inventing Version identity', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'legacy-session',
+      runId: 'legacy-run',
+      filename: 'legacy.svg',
+      mimeType: 'image/svg+xml',
+      source: createInlineSource('<svg />')
+    })
+
+    const [legacy] = await repository.listPendingRunFiles({
+      projectName: 'default-project',
+      sessionId: 'legacy-session',
+      runId: 'legacy-run'
+    })
+
+    expect(legacy).toMatchObject({
+      name: 'legacy.svg',
+      mimeType: 'image/svg+xml'
+    })
+    expect(legacy.artifactId).toBeUndefined()
+    expect(legacy.versionId).toBeUndefined()
+    expect(legacy.versionNumber).toBeUndefined()
+    expect(legacy.checksum).toBeUndefined()
+  })
+
   it('lists finalized message files in stable filename order', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
@@ -996,7 +1257,7 @@ describe('artifact repository', () => {
       runId: 'run-7',
       filename: 'chart.png',
       mimeType: 'image/png',
-      source: createInlineSource('png')
+      source: createPngInlineSource('png')
     })
     expect(pending.path).toContain('.pending')
 
@@ -1011,7 +1272,7 @@ describe('artifact repository', () => {
     expect(finalized[0].path).toBe(
       join(root, 'artifacts', 'default-project', 'app-session-1', 'message-9', 'chart.png')
     )
-    await expect(readFile(finalized[0].path, 'utf8')).resolves.toBe('png')
+    await expect(readFile(finalized[0].path)).resolves.toEqual(createPngBytes('png'))
 
     // Idempotent: replaying the reconcile (e.g. a second startup) returns the same finalized file.
     const replayed = await repository.reconcilePendingArtifactPaths({
@@ -1060,7 +1321,7 @@ describe('artifact repository', () => {
         sessionId: session,
         runId: 'run-1',
         filename: 'plot.png',
-        source: createInlineSource(`${project}/${session} bytes`)
+        source: createPngInlineSource(`${project}/${session} bytes`)
       })
 
     it('resolves a file inside the declaring session subtree', async () => {

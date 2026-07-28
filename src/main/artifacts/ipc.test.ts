@@ -1,9 +1,11 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import type { ArtifactFile, ArtifactWriteSource } from '../../shared/artifacts'
+import { createPngBytes, createPngInlineSource } from './artifact-test-fixtures'
 import { ArtifactRepository } from './repository'
 import {
   createArtifactHandlers,
@@ -155,6 +157,134 @@ describe('artifact IPC handlers', () => {
     expect(repository.listMessageFiles).toHaveBeenCalledTimes(1)
   })
 
+  it('finalizes compatibility files and provenance inside the shared Session mutation', async () => {
+    const finalizedArtifact = createFinalizedArtifact()
+    const callOrder: string[] = []
+    const repository = {
+      finalizeRunArtifacts: vi.fn(async () => {
+        callOrder.push('compatibility')
+        return [finalizedArtifact]
+      })
+    } as unknown as ArtifactRepository
+    const provenance = {
+      validateFinalizationOwnership: vi.fn(async () => {
+        callOrder.push('preflight')
+      }),
+      finalizeRun: vi.fn(async () => {
+        callOrder.push('sqlite')
+        return [finalizedArtifact]
+      })
+    }
+    const mutationScopes: Array<{ projectId: string; sessionId: string }> = []
+    const withSessionMutation = async <Result>(
+      projectId: string,
+      sessionId: string,
+      mutation: () => Promise<Result>
+    ): Promise<Result> => {
+      mutationScopes.push({ projectId, sessionId })
+      return mutation()
+    }
+    const registry = new ArtifactRunRegistry()
+    const claimId = registry.register({
+      projectName: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      messageBranchAncestry: ['branch-parent', 'branch-1'],
+      messageAncestry: ['prompt-1', 'message-1'],
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'prompt-1'
+    })
+    const handlers = createArtifactHandlers(repository, registry, {
+      provenance: provenance as never,
+      withSessionMutation
+    })
+
+    await handlers.finalizeRunArtifacts({ claimId, messageId: 'message-1' })
+
+    expect(mutationScopes).toEqual([{ projectId: 'default-project', sessionId: 'session-1' }])
+    expect(callOrder).toEqual(['preflight', 'compatibility', 'sqlite'])
+    expect(provenance.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: 'message-1',
+        promptMessageId: 'prompt-1'
+      })
+    )
+    expect(provenance.finalizeRun).not.toHaveBeenCalledWith(
+      expect.objectContaining({ messageAncestry: expect.anything() })
+    )
+  })
+
+  it('does not move compatibility files when durable provenance ownership is rejected', async () => {
+    const repository = {
+      finalizeRunArtifacts: vi.fn()
+    } as unknown as ArtifactRepository
+    const provenance = {
+      validateFinalizationOwnership: vi
+        .fn()
+        .mockRejectedValue(new Error('durable Session graph rejected message')),
+      finalizeRun: vi.fn()
+    }
+    const registry = new ArtifactRunRegistry()
+    const claimId = registry.register({
+      projectName: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'prompt-1'
+    })
+    const handlers = createArtifactHandlers(repository, registry, {
+      provenance: provenance as never
+    })
+
+    await expect(
+      handlers.finalizeRunArtifacts({ claimId, messageId: 'message-forged' })
+    ).rejects.toThrow(/durable Session graph/i)
+    expect(repository.finalizeRunArtifacts).not.toHaveBeenCalled()
+    expect(provenance.finalizeRun).not.toHaveBeenCalled()
+    expect(registry.resolve(claimId).finalizedMessageId).toBeUndefined()
+  })
+
+  it('leaves a recoverable compatibility marker when SQLite finalization fails', async () => {
+    const finalizedArtifact = createFinalizedArtifact()
+    const repository = {
+      finalizeRunArtifacts: vi.fn().mockResolvedValue([finalizedArtifact])
+    } as unknown as ArtifactRepository
+    const provenance = {
+      validateFinalizationOwnership: vi.fn().mockResolvedValue(undefined),
+      finalizeRun: vi.fn().mockRejectedValue(new Error('SQLite unavailable'))
+    }
+    const registry = new ArtifactRunRegistry()
+    const claimId = registry.register({
+      projectName: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'prompt-1'
+    })
+    const handlers = createArtifactHandlers(repository, registry, {
+      provenance: provenance as never
+    })
+
+    await expect(
+      handlers.finalizeRunArtifacts({ claimId, messageId: 'message-1' })
+    ).rejects.toThrow(/SQLite unavailable/)
+    expect(repository.finalizeRunArtifacts).toHaveBeenCalledOnce()
+    expect(provenance.finalizeRun).toHaveBeenCalledOnce()
+    expect(registry.resolve(claimId).finalizedMessageId).toBeUndefined()
+  })
+
   it('keeps migration drain pending until an artifact finalization already in progress finishes', async () => {
     let releaseFinalize: (() => void) | undefined
     const repository = {
@@ -236,16 +366,16 @@ describe('artifact IPC handlers', () => {
       sessionId: 'artifact-session-1',
       runId: 'run-1',
       filename: 'pixel.png',
-      source: createInlineSource(Buffer.from('png-bytes').toString('base64'), 'base64'),
+      source: createPngInlineSource('png-bytes'),
       mimeType: 'image/png'
     })
 
     await expect(
       handlers.readPreview({ path: artifact.path, maxBytes: 1024, encoding: 'base64' })
     ).resolves.toEqual({
-      content: Buffer.from('png-bytes').toString('base64'),
+      content: createPngBytes('png-bytes').toString('base64'),
       encoding: 'base64',
-      size: 9,
+      size: createPngBytes('png-bytes').length,
       truncated: false
     })
   })
@@ -389,11 +519,15 @@ describe('artifact IPC handler registration', () => {
   it('registers every renderer-visible artifact channel exactly once', () => {
     registerArtifactIpcHandlers()
 
-    // All five channels must be registered (artifacts:finalize-run, list-project-files,
-    // reconcile-pending, open-file, read-preview). Anything missing here is invisible to the
-    // renderer — a regression we want to catch.
+    // Every command and Provenance query must be registered. Anything missing here is invisible to
+    // the renderer — a regression we want to catch.
     expect([...ipcHandlers.keys()].sort()).toEqual([
       'artifacts:finalize-run',
+      'artifacts:get-lineage',
+      'artifacts:get-version-execution',
+      'artifacts:get-version-messages',
+      'artifacts:get-version-provenance',
+      'artifacts:get-version-review',
       'artifacts:list-project-files',
       'artifacts:open-file',
       'artifacts:read-preview',
@@ -483,6 +617,38 @@ describe('artifact IPC handler registration', () => {
       path: '/managed/inside.txt',
       maxBytes: 16
     })
+  })
+
+  it('resolves native Version preview locators through Provenance instead of filesystem paths', async () => {
+    const root = await createStorageRoot()
+    const contentPath = join(root, 'immutable-content')
+    await writeFile(contentPath, 'version bytes')
+    const readManagedFilePreview = vi.fn()
+    const resolveVersionContent = vi.fn().mockResolvedValue({
+      path: contentPath,
+      filename: 'result.txt',
+      contentType: 'text/plain'
+    })
+    const handlers = createArtifactHandlers(
+      { readManagedFilePreview } as unknown as ArtifactRepository,
+      new ArtifactRunRegistry(),
+      { provenance: { resolveVersionContent } } as never
+    )
+    const identity = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-2'
+    }
+
+    await expect(
+      handlers.readPreview({
+        path: createArtifactVersionLocator(identity),
+        maxBytes: 64
+      })
+    ).resolves.toMatchObject({ content: 'version bytes', size: 13, truncated: false })
+    expect(resolveVersionContent).toHaveBeenCalledWith(identity)
+    expect(readManagedFilePreview).not.toHaveBeenCalled()
   })
 
   it('threads a live getActiveArtifactRunIds closure into list-project-files', async () => {

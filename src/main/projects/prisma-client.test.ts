@@ -4,7 +4,12 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { ProjectRepository } from './repository'
-import { createProjectDbClient, ensureProjectSchema } from './prisma-client'
+import {
+  createProjectDbClient,
+  disconnectProjectDbClient,
+  ensureProjectSchema,
+  getProjectDbClient
+} from './prisma-client'
 import { ReviewRepository } from '../reviewer/repository'
 
 // Proves the runtime CREATE TABLE IF NOT EXISTS DDL is byte-compatible with the generated Prisma client
@@ -24,6 +29,126 @@ afterEach(async () => {
 })
 
 describe('project prisma client (integration)', () => {
+  it('releases and recreates the shared client for exclusive migration validation', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-client-drain-'))
+    disconnect = disconnectProjectDbClient
+
+    const first = await getProjectDbClient(storageRoot)
+    await disconnectProjectDbClient()
+    const second = await getProjectDbClient(storageRoot)
+
+    expect(second).not.toBe(first)
+    await expect(second.$queryRawUnsafe('PRAGMA integrity_check')).resolves.toBeDefined()
+  })
+
+  it('round-trips artifact lineage versions and enforces their session-scoped ordering keys', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-provenance-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await ensureProjectSchema(client)
+
+    const provenanceTables = await client.$queryRawUnsafe<Array<{ name: string }>>(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('FileOriginSession', 'ArtifactLineage', 'ArtifactVersion', 'ArtifactVersionInput', 'ArtifactMessageSnapshot', 'UploadFile', 'UploadVersion', 'ReviewFindingDisposition', 'ReviewScopeSnapshot') ORDER BY name`
+    )
+    expect(provenanceTables.map((table) => table.name)).toEqual([
+      'ArtifactLineage',
+      'ArtifactMessageSnapshot',
+      'ArtifactVersion',
+      'ArtifactVersionInput',
+      'FileOriginSession',
+      'ReviewFindingDisposition',
+      'ReviewScopeSnapshot',
+      'UploadFile',
+      'UploadVersion'
+    ])
+    const findingColumns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+      `PRAGMA table_info('Finding')`
+    )
+    const managedFileColumns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+      `PRAGMA table_info('ManagedFile')`
+    )
+    const messageSnapshotColumns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+      `PRAGMA table_info('ArtifactMessageSnapshot')`
+    )
+    expect(findingColumns.map((column) => column.name)).toContain('artifactBindingState')
+    expect(managedFileColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(['sourceVersionId', 'checksum'])
+    )
+    expect(messageSnapshotColumns.map((column) => column.name)).toContain('checksum')
+
+    await client.fileOriginSession.create({
+      data: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        titleSnapshot: 'Sine analysis'
+      }
+    })
+    await client.artifactLineage.create({
+      data: {
+        id: 'artifact-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        normalizedFilename: 'sin.png',
+        filename: 'sin.png'
+      }
+    })
+
+    const version = await client.artifactVersion.create({
+      data: {
+        id: 'version-1',
+        artifactId: 'artifact-1',
+        versionNumber: 1,
+        artifactRunId: 'artifact-run-1',
+        writeOperationId: 'write-1',
+        writeRequestChecksum: 'a'.repeat(64),
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'agent-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-segment-1',
+        promptMessageId: 'prompt-1',
+        state: 'pending',
+        contentStorageKey:
+          'artifacts/project-1/session-1/.provenance/artifact-1/versions/version-1/content',
+        evidenceStorageKey:
+          'artifacts/project-1/session-1/.provenance/artifact-1/versions/version-1/evidence.json',
+        contentType: 'image/png',
+        sizeBytes: 3n,
+        checksum: 'b'.repeat(64),
+        evidenceJson: '{"schema_version":1}',
+        evidenceChecksum: 'c'.repeat(64)
+      }
+    })
+
+    expect(version.versionNumber).toBe(1)
+    expect(version.state).toBe('pending')
+
+    await expect(
+      client.artifactLineage.create({
+        data: {
+          id: 'artifact-2',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          normalizedFilename: 'sin.png',
+          filename: 'Sin.png'
+        }
+      })
+    ).rejects.toThrow()
+
+    await expect(
+      client.artifactVersion.create({
+        data: {
+          ...version,
+          id: 'version-2',
+          writeOperationId: 'write-2'
+        }
+      })
+    ).rejects.toThrow()
+
+    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+  })
+
   it('ensures the schema (no seed) and round-trips CRUD', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-projects-'))
 

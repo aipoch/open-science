@@ -6,12 +6,15 @@ import type {
   SaveSessionManifestRequest
 } from '../../shared/session-persistence'
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
+import { materializeSessionConversationGraph } from '../../shared/session-persistence'
+import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
 
 type SessionMutationRepository = {
   loadAllWithDiagnostics(): Promise<{
     result: LoadAllSessionsResult
     isComplete: boolean
   }>
+  loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
   saveSession(session: PersistedChatSession): Promise<void>
   deleteSession(projectId: string, sessionId: string): Promise<void>
   deleteProjectSessions(projectId: string): Promise<void>
@@ -35,6 +38,31 @@ type SessionFileIndex = {
   markReconciliationIncomplete(): void
 }
 
+type SessionProvenancePersistence = {
+  captureFinalizedMessages(session: PersistedChatSession): Promise<void>
+  reconcileSessionDeletions(activeSessions: PersistedChatSession[]): Promise<void>
+  prepareSessionDeletion(session: PersistedChatSession): Promise<SessionDeletionReceipt>
+  completeSessionDeletion(receipt: SessionDeletionReceipt): Promise<void>
+  abortSessionDeletion(receipt: SessionDeletionReceipt): Promise<void>
+}
+
+type SessionUploadPersistence = {
+  upgradeLegacySessionUploads(session: PersistedChatSession): Promise<PersistedChatSession>
+}
+
+type ArtifactStorageReconciler = {
+  reconcileSession(
+    projectId: string,
+    sessionId: string,
+    durableSession: PersistedChatSession
+  ): Promise<unknown>
+}
+
+const hasLegacySessionUpload = (session: PersistedChatSession): boolean =>
+  [...session.messages, ...(session.conversationGraph?.messages ?? [])].some((message) =>
+    message.uploads?.some((upload) => !upload.versionId)
+  )
+
 // Serializes authoritative session JSON and derived file-index mutations through one queue. This is
 // the consistency boundary that prevents a late save from racing or reviving a durable deletion.
 class SessionPersistenceCoordinator {
@@ -45,7 +73,10 @@ class SessionPersistenceCoordinator {
   constructor(
     private readonly repository: SessionMutationRepository,
     private readonly fileIndex: SessionFileIndex,
-    private readonly onFilesChanged?: (event: ProjectFilesChangedEvent) => void
+    private readonly onFilesChanged?: (event: ProjectFilesChangedEvent) => void,
+    private readonly provenance?: SessionProvenancePersistence,
+    private readonly uploads?: SessionUploadPersistence,
+    private readonly artifactStorage?: ArtifactStorageReconciler
   ) {}
 
   /**
@@ -64,6 +95,10 @@ class SessionPersistenceCoordinator {
       }
 
       try {
+        await this.provenance?.reconcileSessionDeletions(scan.result.sessions)
+        for (const session of scan.result.sessions) {
+          await this.artifactStorage?.reconcileSession(session.projectId, session.id, session)
+        }
         // Reconciliation restores active owners left soft-deleted by an interrupted delete before any
         // scan-order-dependent sync can offer their canonical rows to another session.
         await this.fileIndex.reconcileActiveSessions(scan.result.sessions)
@@ -92,10 +127,15 @@ class SessionPersistenceCoordinator {
         throw new Error('Cannot save a session that has been deleted.')
       }
 
-      await this.repository.saveSession(session)
+      const materializedSession = materializeSessionConversationGraph(session)
+      const durableSession = this.uploads
+        ? await this.uploads.upgradeLegacySessionUploads(materializedSession)
+        : materializedSession
+      await this.repository.saveSession(durableSession)
+      await this.provenance?.captureFinalizedMessages(durableSession)
       let changedSources: ProjectFileSource[]
       try {
-        changedSources = await this.fileIndex.syncSession(session)
+        changedSources = await this.fileIndex.syncSession(durableSession)
       } catch (error) {
         // The JSON is already durable. Tell open Files views to surface the incomplete projection,
         // then preserve the rejection so the normal persistence retry path remains active.
@@ -114,6 +154,24 @@ class SessionPersistenceCoordinator {
           kind: 'upsert'
         })
       }
+    })
+  }
+
+  // Joins late Session-owned side effects (for example Upload finalization) to the same ordering
+  // boundary as JSON save and deletion. The mutation is rejected after a Session/Project tombstone.
+  runSessionMutation<Result>(
+    projectId: string,
+    sessionId: string,
+    mutation: () => Promise<Result>
+  ): Promise<Result> {
+    return this.enqueue(async () => {
+      if (this.deletedProjects.has(projectId)) {
+        throw new Error('Cannot mutate a session whose project has been deleted.')
+      }
+      if (this.deletedSessions.has(sessionKey(projectId, sessionId))) {
+        throw new Error('Cannot mutate a session that has been deleted.')
+      }
+      return mutation()
     })
   }
 
@@ -228,13 +286,38 @@ class SessionPersistenceCoordinator {
       const key = sessionKey(projectId, sessionId)
       this.deletedSessions.add(key)
       let token: ManagedFileSoftDeleteToken | undefined
+      let receipt: SessionDeletionReceipt = { kind: 'ordinary', projectId, sessionId }
+      let jsonDeleted = false
 
       try {
-        token = await this.fileIndex.softDeleteSession(projectId, sessionId)
+        let session = await this.repository.loadSession(projectId, sessionId)
+        if (session && this.uploads && hasLegacySessionUpload(session)) {
+          session = await this.uploads.upgradeLegacySessionUploads(session)
+          // Persist the immutable identity before tombstoning. If deletion is interrupted, startup
+          // reconciliation can now retain the Upload Version without relying on a legacy path.
+          await this.repository.saveSession(session)
+        }
+        if (session && this.provenance) {
+          receipt = await this.provenance.prepareSessionDeletion(session)
+        }
+        if (receipt.kind === 'ordinary') {
+          token = await this.fileIndex.softDeleteSession(projectId, sessionId)
+        }
         await this.repository.deleteSession(projectId, sessionId)
+        jsonDeleted = true
+        await this.provenance?.completeSessionDeletion(receipt)
       } catch (error) {
         try {
-          if (token) await this.fileIndex.restoreSession(projectId, sessionId, token)
+          if (!jsonDeleted) {
+            if (receipt.kind === 'retained') {
+              await this.provenance?.abortSessionDeletion(receipt)
+            }
+            if (token) await this.fileIndex.restoreSession(projectId, sessionId, token)
+          } else {
+            // A missing JSON file plus a deleting origin is an intentional recovery state. Startup
+            // reconciliation completes it; reverting to active would expose a dead navigation target.
+            this.fileIndex.markReconciliationIncomplete()
+          }
         } catch (restoreError) {
           this.fileIndex.markReconciliationIncomplete()
           throw restoreError
@@ -283,7 +366,7 @@ class SessionPersistenceCoordinator {
         projectId,
         sessionId,
         sources: ['artifact', 'upload'],
-        kind: 'delete'
+        kind: receipt.kind === 'retained' ? 'upsert' : 'delete'
       })
     })
   }
@@ -313,4 +396,4 @@ class SessionPersistenceCoordinator {
 const sessionKey = (projectId: string, sessionId: string): string => `${projectId}:${sessionId}`
 
 export { SessionPersistenceCoordinator }
-export type { SessionFileIndex, SessionMutationRepository }
+export type { SessionFileIndex, SessionMutationRepository, SessionProvenancePersistence }

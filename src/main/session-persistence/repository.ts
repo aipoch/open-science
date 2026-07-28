@@ -6,6 +6,7 @@ import {
   createSessionFile,
   normalizeSessionFile,
   sanitizeSessionMessageImages,
+  sanitizeSessionUploadedAttachments,
   normalizeSessionManifest,
   type LoadAllSessionsResult,
   type PersistedChatSession,
@@ -181,8 +182,19 @@ class SessionRepository {
 
   // Writes through a unique temp file, then atomically replaces the target session file.
   private async writeSession(session: PersistedChatSession): Promise<void> {
+    const messages = [...session.messages, ...(session.conversationGraph?.messages ?? [])]
+    const legacyUpload = messages
+      .flatMap((message) => message.uploads ?? [])
+      .find((upload) => !upload.versionId)
+    if (legacyUpload) {
+      throw new Error(
+        `Session upload must be upgraded to an immutable Version before persistence: ${legacyUpload.id}`
+      )
+    }
     const filePath = this.sessionFilePath(session.projectId, session.id)
-    const sanitizedSession = sanitizeSessionMessageImages(session)
+    const sanitizedSession = sanitizeSessionUploadedAttachments(
+      sanitizeSessionMessageImages(session)
+    )
 
     await mkdir(this.projectDir(session.projectId), { recursive: true })
     await this.atomicWrite(filePath, createSessionFile(encodeSessionDataPaths(sanitizedSession)))
@@ -265,7 +277,9 @@ class SessionRepository {
     }
 
     try {
-      const session = normalizeSessionFile(JSON.parse(raw) as unknown)
+      const session = normalizeSessionFile(JSON.parse(raw) as unknown, {
+        preserveLegacyUploadPaths: true
+      })
       if (!session) return { isComplete: await this.tryBackupInvalidFile(filePath) }
 
       return { session: decodeSessionDataPaths({ ...session, projectId }), isComplete: true }

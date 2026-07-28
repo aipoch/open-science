@@ -11,16 +11,28 @@ import type {
   UploadTransferStatus,
   UploadedAttachment
 } from '../../shared/uploads'
-import { resolveDataRoot } from '../storage-root'
+import { getProjectDbClient } from '../projects/prisma-client'
+import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import { acquireDataRootWriter, withDataRootWrite } from '../storage/migration-state'
 import { UploadRepository } from './repository'
 
 // Uploads are data-class: they follow the configurable data root (defaults to the config root).
 const createDefaultUploadRepository = (): UploadRepository =>
-  new UploadRepository(resolveDataRoot())
+  new UploadRepository(resolveDataRoot(), {
+    getClient: () => getProjectDbClient(resolveStorageRoot())
+  })
 
 // Registers the small upload IPC surface used by the renderer composer and preview panel.
-const registerUploadIpcHandlers = (repository = createDefaultUploadRepository()): void => {
+const registerUploadIpcHandlers = (
+  repository = createDefaultUploadRepository(),
+  options: {
+    withSessionMutation?: <Result>(
+      projectId: string,
+      sessionId: string,
+      mutation: () => Promise<Result>
+    ) => Promise<Result>
+  } = {}
+): void => {
   // A chunk transfer spans several IPC calls but is one logical write. Holding the writer lease from
   // begin through finish/abort makes data-root migration wait across the gaps between chunks.
   type UploadOwner = {
@@ -288,9 +300,17 @@ const registerUploadIpcHandlers = (repository = createDefaultUploadRepository())
     withDataRootWrite(() => repository.deleteUpload(request))
   )
   ipcMain.handle('uploads:finalize-session', (_event, request: FinalizeUploadSessionRequest) =>
-    withDataRootWrite(() =>
-      repository.finalizePendingSessionUploads(request.sessionId, request.attachments)
-    )
+    withDataRootWrite(() => {
+      const finalize = (): Promise<UploadedAttachment[]> =>
+        repository.finalizePendingSessionUploads(
+          request.sessionId,
+          request.attachments,
+          request.projectId
+        )
+      return options.withSessionMutation && request.projectId
+        ? options.withSessionMutation(request.projectId, request.sessionId, finalize)
+        : finalize()
+    })
   )
   ipcMain.handle('uploads:read-preview', (_event, request: ReadArtifactPreviewRequest) =>
     repository.readManagedUploadPreview(request)

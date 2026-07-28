@@ -3,7 +3,12 @@ import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 
-import { dataRootForPicked, isPathInsideOrEqual, samePath } from '../storage-root'
+import {
+  dataRootForPicked,
+  isPathInsideOrEqual,
+  resolveConfigRoot,
+  samePath
+} from '../storage-root'
 import {
   copyAndVerify,
   deleteSources,
@@ -23,6 +28,8 @@ import { waitForDataRootWriters } from './migration-state'
 import { DEFAULT_MAX_ENV_RELATIVE_PATH, PACK_PATH_BUDGET_FILE } from '../notebook/bundle-manifest'
 import { windowsDefaultEnvPrefixReserve } from '../notebook/runtime-paths'
 import { RELOCATABLE_DATA_DIRS } from './data-directories'
+import { validateProvenanceMigrationState } from './provenance-migration-validation'
+import { disconnectProjectDbClient } from '../projects/prisma-client'
 
 export { DATA_ROOT_DIRS } from './data-directories'
 
@@ -267,6 +274,14 @@ export type MigrationOutcome =
 // relocatable inert data — copied so the envs can be rebuilt offline at the new root from their
 // exported locks. Nested path is intentional: copyAndVerify mirrors `from/<dir>` → `to/<dir>`.
 const RUNTIME_PKGS_DIR = join('runtime', 'pkgs')
+export const RUNTIME_PROVENANCE_DIR = join('runtime', 'provenance')
+// The SQLite authority stays under the fixed config root. Keep the filename exported for migration
+// validation/tests, but never put it in the relocatable data-root copy/delete set.
+export const PROJECT_DATABASE_FILE = 'open-science.db'
+const BASE_MIGRATION_DIRS = [...MIGRATED_DIRS, RUNTIME_PROVENANCE_DIR]
+
+const defaultValidateProvenanceState = (dataRoot: string): Promise<void> =>
+  validateProvenanceMigrationState(dataRoot, resolveConfigRoot())
 
 type MigrationInventory = NonNullable<MigrationMarker['inventory']>
 
@@ -283,6 +298,9 @@ type MigrationCopyDeps = {
   // Return ignored (awaited only), so kept as Promise<unknown> — mirrors runtime.disconnect above and
   // stays compatible with both the real service (now returns { reaped }) and void test fakes.
   notebook: { shutdownAll: () => Promise<unknown> }
+  // Releases the shared SQLite authority connection before migration validation opens its dedicated
+  // checkpoint client. Injectable so ordering remains testable without module-level state.
+  disconnectProjectDb?: () => Promise<void>
   // Exports each conda env under the old runtime to an @EXPLICIT lock at the new root (offline
   // reconstruction bundle). Returns the env names preserved; [] when nothing could be exported.
   // Injectable/optional so tests and non-notebook contexts skip it. Best-effort (must not throw).
@@ -296,6 +314,7 @@ type MigrationCopyDeps = {
     onProgress: (p: MigrationProgress) => void
     forceCopy?: boolean
   }) => Promise<MigrationResult>
+  validateProvenanceState?: (root: string) => Promise<void>
 }
 
 type MigrationCommitDeps = {
@@ -310,6 +329,7 @@ type MigrationCommitDeps = {
     dirs: string[],
     onProgress?: (p: MigrationProgress) => void
   ) => Promise<{ deleted: string[]; failed: { dir: string; error: string }[] }>
+  validateProvenanceState?: (root: string) => Promise<void>
 }
 
 // PHASE 1 (copy): validate the move parent -> interrupt running writers -> copy+verify the migrated
@@ -359,6 +379,7 @@ export const runDataRootMigration = async (
   try {
     await deps.runtime.disconnect()
     await deps.notebook.shutdownAll()
+    await (deps.disconnectProjectDb ?? disconnectProjectDbClient)()
     await waitForDataRootWriters()
   } catch (err) {
     console.error('[migration-service] failed to pause writers; aborting migration', err)
@@ -366,6 +387,17 @@ export const runDataRootMigration = async (
     return {
       ok: false,
       error: 'Could not pause running work to copy your data safely. Please try again in a moment.'
+    }
+  }
+
+  const validateProvenanceState = deps.validateProvenanceState ?? defaultValidateProvenanceState
+  try {
+    await validateProvenanceState(deps.currentDataRoot)
+  } catch (error) {
+    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    return {
+      ok: false,
+      error: `Could not verify provenance data: ${error instanceof Error ? error.message : String(error)}`
     }
   }
 
@@ -382,7 +414,7 @@ export const runDataRootMigration = async (
     }
   }
   const migrateDirs =
-    preservedEnvs.length > 0 ? [...MIGRATED_DIRS, RUNTIME_PKGS_DIR] : [...MIGRATED_DIRS]
+    preservedEnvs.length > 0 ? [...BASE_MIGRATION_DIRS, RUNTIME_PKGS_DIR] : [...BASE_MIGRATION_DIRS]
 
   const doCopyAndVerify = deps.copyAndVerify ?? copyAndVerify
   let result: MigrationResult
@@ -415,10 +447,20 @@ export const runDataRootMigration = async (
     return { ok: false, error: 'migration cancelled', cancelled: true }
   }
 
+  try {
+    await validateProvenanceState(target)
+  } catch (error) {
+    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    return {
+      ok: false,
+      error: `Could not verify provenance data: ${error instanceof Error ? error.message : String(error)}`
+    }
+  }
+
   // Record what was staged and promote the marker to 'verified' — the only state the commit gate accepts.
   let inventory
   try {
-    inventory = await scanInventory(target, [...MIGRATED_DIRS])
+    inventory = await scanInventory(target, migrateDirs)
   } catch (err) {
     console.error('[migration-service] failed to inventory staged copy', err)
     await rm(target, { recursive: true, force: true }).catch(() => undefined)
@@ -429,7 +471,12 @@ export const runDataRootMigration = async (
     return { ok: false, error: 'migration cancelled', cancelled: true }
   }
   try {
-    await writeMigrationMarker(target, { ...marker, status: 'verified', inventory })
+    await writeMigrationMarker(target, {
+      ...marker,
+      status: 'verified',
+      migratedDirs: migrateDirs,
+      inventory
+    })
     runOpts.onVerified?.({ token: marker.token, target })
   } catch (err) {
     console.error('[migration-service] failed to finalize staged copy', err)
@@ -473,11 +520,21 @@ export const commitDataRootSwitch = async (
     return { ok: false, error: 'The staged copy has no verified inventory.' }
   }
 
+  const migratedDirs = marker.migratedDirs ?? [...MIGRATED_DIRS]
+  const requiredPaths = [RUNTIME_PROVENANCE_DIR].filter((path) =>
+    existsSync(join(deps.currentDataRoot, path))
+  )
+  if (requiredPaths.some((path) => !migratedDirs.includes(path))) {
+    return {
+      ok: false,
+      error: 'The staged copy does not include all required provenance data. Run the move again.'
+    }
+  }
   let inventories: [MigrationInventory, MigrationInventory]
   try {
     inventories = await Promise.all([
-      scanInventory(deps.currentDataRoot, [...MIGRATED_DIRS]),
-      scanInventory(target, [...MIGRATED_DIRS])
+      scanInventory(deps.currentDataRoot, migratedDirs),
+      scanInventory(target, migratedDirs)
     ])
   } catch (err) {
     console.error('[migration-service] failed to recheck staged copy inventory', err)
@@ -489,6 +546,20 @@ export const commitDataRootSwitch = async (
     !sameInventory(marker.inventory, targetInventory)
   ) {
     return { ok: false, error: 'The staged copy changed after verification. Run the move again.' }
+  }
+
+  const validateProvenanceState = deps.validateProvenanceState ?? defaultValidateProvenanceState
+  try {
+    // Both roots are checked against the same fixed config-root SQLite authority. Run them in
+    // sequence so two FULL WAL checkpoints cannot contend with each other and manufacture a busy
+    // failure while the application is otherwise quiescent.
+    await validateProvenanceState(deps.currentDataRoot)
+    await validateProvenanceState(target)
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Could not verify provenance data: ${error instanceof Error ? error.message : String(error)}`
+    }
   }
 
   try {
@@ -522,7 +593,7 @@ export const commitDataRootSwitch = async (
   const newRuntime = join(target, 'runtime')
   const runtimePreserved =
     existsSync(join(newRuntime, 'envs.lock')) && existsSync(join(newRuntime, 'pkgs'))
-  const dirsToDelete = runtimePreserved ? [...MIGRATED_DIRS, 'runtime'] : [...MIGRATED_DIRS]
+  const dirsToDelete = runtimePreserved ? [...MIGRATED_DIRS, 'runtime'] : migratedDirs
 
   const doDeleteSources = deps.deleteSources ?? deleteSources
   const deleteResult = await doDeleteSources(deps.currentDataRoot, dirsToDelete)

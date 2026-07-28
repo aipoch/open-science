@@ -154,6 +154,37 @@ describe('default upload repository', () => {
     expect(repository.finishTransfer).toHaveBeenCalledOnce()
   })
 
+  it('finalizes Upload Versions inside the shared Session mutation boundary', async () => {
+    const repository = {
+      finalizePendingSessionUploads: vi.fn(async () => ['finalized'])
+    } as unknown as UploadRepository
+    const order: string[] = []
+    const mutationScopes: Array<{ projectId: string; sessionId: string }> = []
+    const withSessionMutation = async <Result>(
+      projectId: string,
+      sessionId: string,
+      mutation: () => Promise<Result>
+    ): Promise<Result> => {
+      mutationScopes.push({ projectId, sessionId })
+      order.push('lock')
+      const result = await mutation()
+      order.push('unlock')
+      return result
+    }
+    registerUploadIpcHandlers(repository, { withSessionMutation })
+    const finalize = ipcHandlers.get('uploads:finalize-session')!
+
+    await expect(
+      finalize(createIpcEvent().event, {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        attachments: []
+      })
+    ).resolves.toEqual(['finalized'])
+    expect(mutationScopes).toEqual([{ projectId: 'project-1', sessionId: 'session-1' }])
+    expect(order).toEqual(['lock', 'unlock'])
+  })
+
   it('waits for begin before aborting and releases the transfer during migration', async () => {
     let finishBegin: (() => void) | undefined
     const repository = {

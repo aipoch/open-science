@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -157,12 +158,107 @@ describe('ManagedFileIndexRepository', () => {
       ])
     )
 
+    const allFiles = await repository.listFiles({
+      projectId: PROJECT_ID,
+      collection: { kind: 'all' },
+      limit: 24
+    })
+    expect(allFiles.totalCount).toBe(3)
+    expect(allFiles.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: 'upload', sourceFileId: 'upload-1' }),
+        expect.objectContaining({ source: 'artifact', sourceFileId: 'artifact-linked' }),
+        expect.objectContaining({ source: 'artifact', sourceFileId: 'artifact-orphan' })
+      ])
+    )
+
     await expect(
       repository.listArtifactGroups({ projectId: PROJECT_ID, limit: 10 })
     ).resolves.toEqual({
       items: [{ sessionId: SESSION_ID, artifactCount: 2 }],
       totalCount: 1,
       nextCursor: undefined
+    })
+  })
+
+  it('exposes immutable uploads as project-and-session-scoped Version references', async () => {
+    const uploadPath = join(
+      storageRoot,
+      'uploads',
+      PROJECT_ID,
+      SESSION_ID,
+      'upload-1',
+      'versions',
+      'upload-version-1',
+      'content'
+    )
+    const content = 'a,b\n1,2'
+    await writeManagedFile(uploadPath, content)
+    await client.fileOriginSession.create({
+      data: { projectId: PROJECT_ID, sessionId: SESSION_ID }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-1',
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        filename: 'input.csv',
+        originalFilename: 'samples.csv',
+        versions: {
+          create: {
+            id: 'upload-version-1',
+            versionNumber: 1,
+            state: 'ready',
+            contentStorageKey: relative(storageRoot, uploadPath).split('/').join('/'),
+            filename: 'input.csv',
+            originalFilename: 'samples.csv',
+            contentType: 'text/csv',
+            sizeBytes: BigInt(Buffer.byteLength(content)),
+            checksum: createHash('sha256').update(content).digest('hex')
+          }
+        }
+      }
+    })
+
+    await repository.syncSession(
+      createSession({
+        messages: [
+          {
+            id: 'message-user',
+            role: 'user',
+            content: 'Analyze',
+            status: 'complete',
+            eventIds: [],
+            uploads: [
+              {
+                id: 'upload-1',
+                versionId: 'upload-version-1',
+                versionNumber: 1,
+                sessionId: SESSION_ID,
+                name: 'input.csv',
+                originalName: 'samples.csv',
+                size: Buffer.byteLength(content)
+              }
+            ],
+            createdAt: 1_710_000_000_100,
+            updatedAt: 1_710_000_000_200
+          }
+        ]
+      })
+    )
+
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'uploads' },
+        limit: 24
+      })
+    ).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          path: `upload-version:${PROJECT_ID}/${SESSION_ID}/upload-version-1`
+        })
+      ]
     })
   })
 
@@ -786,6 +882,47 @@ describe('ManagedFileIndexRepository', () => {
     ).rejects.toThrow(/cursor.*collection/i)
   })
 
+  it('paginates the flat picker collection and binds its cursor to that collection', async () => {
+    const artifacts = await Promise.all(
+      ['a', 'b', 'c'].map(async (id) => {
+        const path = join(
+          storageRoot,
+          'artifacts',
+          'default-project',
+          SESSION_ID,
+          'message-1',
+          `${id}.txt`
+        )
+        await writeManagedFile(path, id)
+        return { id, kind: 'managed-file' as const, path, name: `${id}.txt`, mtimeMs: 100 }
+      })
+    )
+    await repository.syncSession(createSession({ artifacts }))
+
+    const first = await repository.listFiles({
+      projectId: PROJECT_ID,
+      collection: { kind: 'all' },
+      limit: 2
+    })
+    const second = await repository.listFiles({
+      projectId: PROJECT_ID,
+      collection: { kind: 'all' },
+      cursor: first.nextCursor,
+      limit: 2
+    })
+
+    expect(first.nextCursor).toBeDefined()
+    expect(new Set([...first.items, ...second.items].map((file) => file.id)).size).toBe(3)
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
+        cursor: first.nextCursor,
+        limit: 2
+      })
+    ).rejects.toThrow(/cursor.*collection/i)
+  })
+
   it('paginates artifact session groups with a separate cursor', async () => {
     for (const sessionId of ['session-a', 'session-b']) {
       const path = join(
@@ -952,6 +1089,126 @@ describe('ManagedFileIndexRepository', () => {
     await repository.reconcileActiveSessions([])
 
     await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({ totalCount: 0 })
+  })
+
+  it('keeps native Artifact projections visible after the origin Session is deleted', async () => {
+    const artifactPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'result.txt'
+    )
+    await writeManagedFile(artifactPath, 'result')
+    await repository.syncSession(
+      createSession({
+        title: 'Retained analysis',
+        artifacts: [
+          {
+            id: 'artifact-version-1',
+            artifactId: 'artifact-lineage-1',
+            versionId: 'artifact-version-1',
+            versionNumber: 1,
+            kind: 'managed-file',
+            path: artifactPath,
+            name: 'result.txt',
+            sha256: 'a'.repeat(64)
+          }
+        ]
+      })
+    )
+    await client.fileOriginSession.create({
+      data: {
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        titleSnapshot: 'Retained analysis',
+        state: 'deleted',
+        deletedAt: new Date('2026-07-27T12:00:00.000Z')
+      }
+    })
+    await client.artifactLineage.create({
+      data: {
+        id: 'artifact-lineage-1',
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        normalizedFilename: 'result.txt',
+        filename: 'result.txt'
+      }
+    })
+    await client.artifactVersion.create({
+      data: {
+        id: 'artifact-version-1',
+        artifactId: 'artifact-lineage-1',
+        versionNumber: 1,
+        artifactRunId: 'artifact-run-1',
+        writeOperationId: 'write-1',
+        writeRequestChecksum: 'b'.repeat(64),
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'agent-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-segment-1',
+        promptMessageId: 'prompt-1',
+        messageId: 'message-1',
+        state: 'finalized',
+        contentStorageKey: relative(storageRoot, artifactPath),
+        evidenceStorageKey:
+          'artifacts/project-a/session-a/.provenance/artifact-lineage-1/versions/artifact-version-1/evidence.json',
+        contentType: 'text/plain',
+        sizeBytes: 6n,
+        checksum: 'a'.repeat(64),
+        evidenceJson: '{"schema_version":1}',
+        evidenceChecksum: 'c'.repeat(64)
+      }
+    })
+    // Session JSON is gone and the derived row is accidentally lost. SQLite Version authority must
+    // be sufficient to recreate Project Files without reconstructing identity from a filename/path.
+    await client.managedFile.deleteMany({ where: { projectId: PROJECT_ID } })
+
+    await repository.reconcileActiveSessions([])
+
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      totalCount: 1,
+      artifactCount: 1,
+      artifactGroupCount: 1
+    })
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
+        limit: 20
+      })
+    ).resolves.toMatchObject({
+      items: [
+        {
+          sourceFileId: 'artifact-lineage-1',
+          sourceVersionId: 'artifact-version-1',
+          checksum: 'a'.repeat(64),
+          path: 'artifact-version:project-a/session-a/artifact-lineage-1/artifact-version-1',
+          originSession: {
+            state: 'deleted',
+            title: 'Retained analysis',
+            deletedAt: '2026-07-27T12:00:00.000Z'
+          }
+        }
+      ],
+      totalCount: 1
+    })
+    await expect(
+      repository.listArtifactGroups({ projectId: PROJECT_ID, limit: 20 })
+    ).resolves.toMatchObject({
+      items: [
+        {
+          sessionId: SESSION_ID,
+          artifactCount: 1,
+          originSession: {
+            state: 'deleted',
+            title: 'Retained analysis',
+            deletedAt: '2026-07-27T12:00:00.000Z'
+          }
+        }
+      ]
+    })
   })
 
   it('reports an incomplete index until failed startup reconciliation succeeds', async () => {

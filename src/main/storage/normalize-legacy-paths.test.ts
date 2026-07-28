@@ -9,6 +9,7 @@ vi.mock('electron', () => ({
 }))
 
 import type { NotebookRunDocument } from '../../shared/notebook'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import { NOTEBOOKS_DIR, NOTEBOOK_RUN_FILE } from '../../shared/notebook'
 import { NotebookRunRepository } from '../notebook/repository'
 import { PreviewStateRepository } from '../projects/preview-repository'
@@ -18,10 +19,17 @@ import { SessionRepository } from '../session-persistence/repository'
 import { initDataRoot } from '../storage-root'
 import { normalizeLegacyDataPaths } from './normalize-legacy-paths'
 
+const sessionUploads = {
+  upgradeLegacySessionUploads: vi.fn(
+    async (session: PersistedChatSession): Promise<PersistedChatSession> => session
+  )
+}
+
 let configRoot: string | undefined
 let disconnect: (() => Promise<void>) | undefined
 
 afterEach(async () => {
+  sessionUploads.upgradeLegacySessionUploads.mockClear()
   initDataRoot(undefined)
   await disconnect?.()
   disconnect = undefined
@@ -150,10 +158,12 @@ describe('normalizeLegacyDataPaths (integration)', () => {
 
     await normalizeLegacyDataPaths({
       sessionRepository,
+      sessionUploads,
       previewStateRepository,
       projectRepository,
       dataRoot
     })
+    expect(sessionUploads.upgradeLegacySessionUploads).toHaveBeenCalled()
 
     // Session file on disk now uses $DATA and no longer contains the raw data-root prefix.
     const sessionRawAfterFirstPass = await readFile(join(sessionDir, 'session-1.json'), 'utf8')
@@ -208,6 +218,7 @@ describe('normalizeLegacyDataPaths (integration)', () => {
     // --- Idempotency: running the pass again must not double-encode ($DATA/$DATA). ---
     await normalizeLegacyDataPaths({
       sessionRepository,
+      sessionUploads,
       previewStateRepository,
       projectRepository,
       dataRoot
@@ -245,6 +256,7 @@ describe('normalizeLegacyDataPaths (integration)', () => {
     await expect(
       normalizeLegacyDataPaths({
         sessionRepository,
+        sessionUploads,
         previewStateRepository,
         projectRepository,
         dataRoot: configRoot
