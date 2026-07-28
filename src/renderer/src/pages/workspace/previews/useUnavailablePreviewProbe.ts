@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
-import { getPreviewFileReader } from './preview-file-reader'
+import { createPreviewRequestScope, getPreviewFileReader } from './preview-file-reader'
 import { isUnavailableFileError } from './preview-errors'
 
 type UnavailableProbeResult = {
@@ -13,14 +13,18 @@ type UnavailableProbeResult = {
 // Probes one managed path only while its card is near the viewport and caches the result per path.
 const useUnavailablePreviewProbe = ({
   enabled,
+  projectId,
+  sessionId,
   path,
   source
 }: {
   enabled: boolean
+  projectId?: string
+  sessionId?: string
   path: string
   source: PreviewFileSource
 }): boolean => {
-  const requestKey = JSON.stringify([source, path])
+  const requestKey = JSON.stringify([projectId ?? null, sessionId ?? null, source, path])
   const [result, setResult] = useState<UnavailableProbeResult | null>(null)
   const hasCurrentResult = result?.requestKey === requestKey
 
@@ -31,7 +35,12 @@ const useUnavailablePreviewProbe = ({
     const readPreview = getPreviewFileReader(source)
 
     // One byte verifies path availability without retaining file content in the card.
-    void readPreview({ path, maxBytes: 1, encoding: 'base64' }).then(
+    void readPreview({
+      ...createPreviewRequestScope({ projectId, sessionId, source, path }),
+      path,
+      maxBytes: 1,
+      encoding: 'base64'
+    }).then(
       () => {
         if (!canceled) setResult({ requestKey, unavailable: false })
       },
@@ -45,7 +54,7 @@ const useUnavailablePreviewProbe = ({
     return () => {
       canceled = true
     }
-  }, [enabled, hasCurrentResult, path, requestKey, source])
+  }, [enabled, hasCurrentResult, path, projectId, requestKey, sessionId, source])
 
   return hasCurrentResult ? result.unavailable : false
 }

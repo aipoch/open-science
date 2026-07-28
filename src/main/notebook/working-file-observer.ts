@@ -66,7 +66,7 @@ const resolveChangedFile = async (
   logicalDataRoot: string,
   logicalSessionRoot: string,
   candidatePath: string
-): Promise<NotebookWorkingFile | undefined> => {
+): Promise<SnapshotEntry | undefined> => {
   try {
     const linkMetadata = await lstat(candidatePath)
     if (linkMetadata.isSymbolicLink()) return undefined
@@ -82,7 +82,8 @@ const resolveChangedFile = async (
       relativePath: toPortableNotebookRelativePath(relative(logicalSessionRoot, logicalPath)),
       kind: 'other',
       size: metadata.size,
-      mtimeMs: metadata.mtimeMs
+      mtimeMs: metadata.mtimeMs,
+      ctimeMs: metadata.ctimeMs
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
@@ -242,6 +243,11 @@ const startWorkingFileObservation = async (
     // Recursive watchers can replay pre-existing paths while their initial scan settles. Execution
     // has not started yet, so those events cannot prove this run created or changed the files.
     changedPaths.clear()
+    const before = await captureFallbackSnapshot(dataRoot, logicalDataRoot, logicalSessionRoot)
+    if (!before) {
+      watcher.close()
+      return unavailableObservation()
+    }
     const unregister = registerObservation(dataRoot, active)
 
     return {
@@ -261,7 +267,24 @@ const startWorkingFileObservation = async (
                 resolveChangedFile(dataRoot, logicalDataRoot, logicalSessionRoot, candidatePath)
               )
           )
-          return files.filter((file): file is NotebookWorkingFile => file !== undefined)
+          return files
+            .filter((file): file is SnapshotEntry => file !== undefined)
+            .filter((file) => {
+              const previous = before.get(file.path)
+              return (
+                !previous ||
+                previous.size !== file.size ||
+                previous.mtimeMs !== file.mtimeMs ||
+                previous.ctimeMs !== file.ctimeMs
+              )
+            })
+            .map((file) => ({
+              path: file.path,
+              relativePath: file.relativePath,
+              kind: file.kind,
+              size: file.size,
+              mtimeMs: file.mtimeMs
+            }))
         } catch {
           return []
         }

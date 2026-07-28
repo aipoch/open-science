@@ -449,6 +449,8 @@ const FileTile = ({
   previewArtifact,
   preview,
   source,
+  projectId,
+  sessionId,
   size,
   timestamp,
   previewLabel,
@@ -458,6 +460,8 @@ const FileTile = ({
   previewArtifact: MessageArtifact
   preview?: ArtifactPreviewResult
   source: 'artifact' | 'upload'
+  projectId: string
+  sessionId: string
   size?: number
   timestamp?: number
   previewLabel: string
@@ -468,6 +472,8 @@ const FileTile = ({
   const [setTileElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
   const missing = useUnavailablePreviewProbe({
     enabled: isNearViewport,
+    projectId,
+    sessionId,
     path: previewArtifact.path,
     source
   })
@@ -489,7 +495,13 @@ const FileTile = ({
             missing && 'opacity-40'
           )}
         >
-          <ArtifactPreview artifact={previewArtifact} preview={preview} source={source} />
+          <ArtifactPreview
+            artifact={previewArtifact}
+            preview={preview}
+            source={source}
+            projectId={projectId}
+            sessionId={sessionId}
+          />
           {missing ? (
             <span className="absolute left-1.5 top-1.5 rounded bg-text-000/75 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
               {FILE_MISSING_TAG}
@@ -734,6 +746,8 @@ const ProjectArtifactGroupSection = ({
                     previewArtifact={artifact}
                     preview={previewById.get(file.id)}
                     source="artifact"
+                    projectId={file.projectId}
+                    sessionId={file.sessionId}
                     size={file.size}
                     timestamp={file.mtimeMs}
                     previewLabel={`Preview generated file ${file.name}`}
@@ -1061,6 +1075,7 @@ const ProjectFilesViewContent = ({
     setDialogItem(
       createPreviewFileItem({
         id: file.id,
+        projectId: activeProjectId,
         sessionId: file.sessionId,
         path: file.path,
         name: file.name,
@@ -1168,6 +1183,8 @@ const ProjectFilesViewContent = ({
                         previewArtifact={createProjectFilePreviewArtifact(file)}
                         preview={currentFilePreviewById.get(file.id)}
                         source="upload"
+                        projectId={file.projectId}
+                        sessionId={file.sessionId}
                         size={file.size}
                         timestamp={file.mtimeMs ?? file.sortAtMs}
                         previewLabel={`Preview uploaded file ${file.name}`}

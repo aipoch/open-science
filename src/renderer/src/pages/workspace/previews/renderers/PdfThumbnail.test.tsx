@@ -101,6 +101,8 @@ describe('PdfThumbnail', () => {
           path="/uploads/session-1/report.pdf"
           name="report.pdf"
           source="upload"
+          projectId="project-1"
+          sessionId="session-1"
           size={4096}
           mtimeMs={1}
         />
@@ -110,7 +112,9 @@ describe('PdfThumbnail', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'upload',
-      path: '/uploads/session-1/report.pdf'
+      path: '/uploads/session-1/report.pdf',
+      projectId: 'project-1',
+      sessionId: 'session-1'
     })
     expect(createManagedPdfLoadingTask).toHaveBeenCalledWith(
       expect.objectContaining({ size: 40 * 1024 * 1024 })

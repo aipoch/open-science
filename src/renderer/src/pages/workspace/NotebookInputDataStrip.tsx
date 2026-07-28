@@ -67,6 +67,7 @@ const NotebookInputDataStrip = ({
                 // Reuse the owning file's stable workbench identity. Selecting another immutable
                 // Version refreshes the same Artifact/Upload tab instead of opening a duplicate.
                 id: previewIdForNotebookInput(input),
+                projectId: input.sourceProjectId,
                 sessionId: input.sourceSessionId,
                 path: createNotebookInputPreviewKey({
                   projectId: input.sourceProjectId,

@@ -387,6 +387,26 @@ describe('preview workbench store', () => {
     expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
   })
 
+  it('adds the active project scope to file tabs when callers omit it', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-a')
+    store.upsertAndActivateItem({
+      id: 'upload:upload-a',
+      sessionId: 'session-a',
+      type: 'file',
+      source: 'upload',
+      title: 'a.csv',
+      path: 'upload-version:version-a',
+      format: 'csv',
+      name: 'a.csv'
+    })
+
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      projectId: 'project-a',
+      sessionId: 'session-a'
+    })
+  })
+
   it('seeds a project slice from restored persistence on first activation', () => {
     usePreviewWorkbenchStore.getState().activateProject('project-a', {
       panelState: 'open',
@@ -408,7 +428,13 @@ describe('preview workbench store', () => {
       activeProjectId: 'project-a',
       panelState: 'open',
       activeItemId: 'file:session-1:/workspace/project/report.md',
-      items: [{ id: 'file:session-1:/workspace/project/report.md', createdAt: Date.now() }]
+      items: [
+        {
+          id: 'file:session-1:/workspace/project/report.md',
+          projectId: 'project-a',
+          createdAt: Date.now()
+        }
+      ]
     })
   })
 

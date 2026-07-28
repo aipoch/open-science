@@ -27,6 +27,7 @@ export const PROJECT_FILES_PREVIEW_ID = 'tool:project:files'
 
 type PreviewItemBase = {
   id: string
+  projectId?: string
   sessionId: string
   title: string
 }
@@ -118,6 +119,11 @@ const createEmptyPreviewSlice = (): PreviewSlice => ({
   openRequestVersion: 0
 })
 
+// Preview capabilities are project-scoped. Persisted tabs created before project scope was stored
+// are repaired from the owning workbench slice, and callers cannot accidentally omit that scope.
+const withProjectScope = (item: PreviewItem, projectId: string | undefined): PreviewItem =>
+  item.type === 'file' && !item.projectId && projectId ? { ...item, projectId } : item
+
 // Normalizes incoming preview items so callers never persist or manage timestamps themselves.
 const createStoredPreviewItem = (
   item: PreviewItem,
@@ -133,8 +139,10 @@ const createStoredPreviewItem = (
 }
 
 // Rebuilds a project's live slice from its persisted durable subset, repairing a dangling active tab.
-const restoredToSlice = (restored: RestoredPreviewSlice): PreviewSlice => {
-  const items = (restored.items ?? []).map((item) => createStoredPreviewItem(item))
+const restoredToSlice = (restored: RestoredPreviewSlice, projectId: string): PreviewSlice => {
+  const items = (restored.items ?? []).map((item) =>
+    createStoredPreviewItem(withProjectScope(item, projectId))
+  )
   const activeItemId = items.some((item) => item.id === restored.activeItemId)
     ? restored.activeItemId
     : items[0]?.id
@@ -239,7 +247,8 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
       }
 
       const targetSlice =
-        byProject[projectId] ?? (restored ? restoredToSlice(restored) : createEmptyPreviewSlice())
+        byProject[projectId] ??
+        (restored ? restoredToSlice(restored, projectId) : createEmptyPreviewSlice())
 
       // The active slice lives at top level, never duplicated in the stash.
       delete byProject[projectId]
@@ -281,19 +290,20 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
   // Inserts a preview item or refreshes the existing tab without changing focus.
   upsertItem: (item) => {
     set((state) => {
-      const existingIndex = state.items.findIndex((previewItem) => previewItem.id === item.id)
+      const scopedItem = withProjectScope(item, state.activeProjectId)
+      const existingIndex = state.items.findIndex((previewItem) => previewItem.id === scopedItem.id)
 
       // New items append to the horizontal preview list in discovery order.
       if (existingIndex === -1) {
         return {
-          items: [...state.items, createStoredPreviewItem(item)]
+          items: [...state.items, createStoredPreviewItem(scopedItem)]
         }
       }
 
       // Existing items keep their original position and creation time.
       return {
         items: state.items.map((previewItem, index) =>
-          index === existingIndex ? createStoredPreviewItem(item, previewItem) : previewItem
+          index === existingIndex ? createStoredPreviewItem(scopedItem, previewItem) : previewItem
         )
       }
     })

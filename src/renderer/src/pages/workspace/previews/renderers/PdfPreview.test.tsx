@@ -60,7 +60,13 @@ describe('PdfPreviewContent', () => {
   it('renders through the managed range resource and releases it on unmount', async () => {
     await act(async () => {
       root.render(
-        <PdfPreviewContent path="/workspace/report.pdf" name="report.pdf" source="artifact" />
+        <PdfPreviewContent
+          path="artifact-version:version-1"
+          name="report.pdf"
+          source="artifact"
+          projectId="project-1"
+          sessionId="session-1"
+        />
       )
     })
     await act(async () => {
@@ -69,7 +75,9 @@ describe('PdfPreviewContent', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/workspace/report.pdf'
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      path: 'artifact-version:version-1'
     })
     expect(createManagedPdfLoadingTask).toHaveBeenCalledWith(
       expect.objectContaining({ size: 80 * 1024 * 1024 })

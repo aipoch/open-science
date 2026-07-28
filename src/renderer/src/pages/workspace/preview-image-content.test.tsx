@@ -145,7 +145,9 @@ describe('PreviewImageContent', () => {
       root.render(
         <PreviewImageContent
           source="upload"
-          path="/Users/example/.open-science/uploads/default-project/session-1/photo.png"
+          projectId="project-1"
+          sessionId="session-1"
+          path="upload-version:upload-version-1"
           name="photo.png"
         />
       )
@@ -153,7 +155,9 @@ describe('PreviewImageContent', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'upload',
-      path: '/Users/example/.open-science/uploads/default-project/session-1/photo.png'
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      path: 'upload-version:upload-version-1'
     })
     expect(container.querySelector('img')?.getAttribute('src')).toBe(
       'open-science-preview://resource-1/photo.png'

@@ -10,6 +10,7 @@ import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { isUnavailableFileError } from '../preview-errors'
 import { createPreviewResourceKey } from '../preview-resource-key'
+import { createPreviewRequestScope } from '../preview-file-reader'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useNearViewport } from '../useNearViewport'
 
@@ -261,6 +262,8 @@ export const PdfPreviewContent = ({
   path,
   name,
   source = 'artifact',
+  projectId,
+  sessionId,
   mimeType,
   size,
   mtimeMs
@@ -268,11 +271,21 @@ export const PdfPreviewContent = ({
   path: string
   name: string
   source?: PreviewFileSource
+  projectId?: string
+  sessionId?: string
   mimeType?: string
   size?: number
   mtimeMs?: number
 }): React.JSX.Element => {
-  const requestKey = createPreviewResourceKey({ source, path, mimeType, size, mtimeMs })
+  const requestKey = createPreviewResourceKey({
+    projectId,
+    sessionId,
+    source,
+    path,
+    mimeType,
+    size,
+    mtimeMs
+  })
   const [documentState, setDocumentState] = useState<DocumentState | null>(null)
   const [zoom, setZoom] = useState(1)
   // The PreviewPanel path remounts on a file switch, but the Files-tab dialog updates item in place
@@ -385,6 +398,7 @@ export const PdfPreviewContent = ({
         const resource = await window.api.previewResources.acquire({
           source,
           path,
+          ...createPreviewRequestScope({ projectId, sessionId, source, path }),
           ...(mimeType ? { mimeType } : {})
         })
         resourceId = resource.id
@@ -412,7 +426,7 @@ export const PdfPreviewContent = ({
       canceled = true
       if (resourceId) void dispose()
     }
-  }, [mimeType, path, requestKey, source])
+  }, [mimeType, path, projectId, requestKey, sessionId, source])
 
   const currentDocumentState = documentState?.requestKey === requestKey ? documentState : null
   const hasError = currentDocumentState?.status === 'error'
@@ -491,6 +505,8 @@ export const PdfPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
     path={item.path}
     name={item.name}
     source={item.source}
+    projectId={item.projectId}
+    sessionId={item.sessionId}
     mimeType={item.mimeType}
     size={item.size}
     mtimeMs={item.mtimeMs}

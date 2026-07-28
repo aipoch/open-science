@@ -21,6 +21,7 @@ type ManagedArtifactMentionPart = Exclude<ArtifactMentionPart, { source: 'linked
 // Builds the common preview workbench file item for generated artifacts and user uploads.
 export const createPreviewFileItem = ({
   id,
+  projectId,
   sessionId,
   path,
   name,
@@ -34,6 +35,7 @@ export const createPreviewFileItem = ({
   originSession
 }: {
   id: string
+  projectId?: string
   sessionId: string
   path: string
   name: string
@@ -48,6 +50,7 @@ export const createPreviewFileItem = ({
 }): PreviewFileItem => {
   const item: PreviewFileItem = {
     id,
+    ...(projectId ? { projectId } : {}),
     sessionId,
     title: name,
     type: 'file',
@@ -90,6 +93,7 @@ export const createPreviewFileItemFromArtifact = (
 
   return createPreviewFileItem({
     id: artifact.artifactId ?? artifact.id,
+    projectId,
     sessionId,
     path: nativeVersionPath,
     name: artifactName,
@@ -114,6 +118,7 @@ export const createPreviewFileItemForArtifactVersion = ({
   projectId: string
 }): PreviewFileItem => ({
   ...item,
+  projectId,
   selectedVersionId: version.versionId,
   versionNumber: version.versionNumber,
   path: createArtifactVersionLocator({
@@ -147,6 +152,7 @@ export const createPreviewFileItemFromUpload = (
 
   return createPreviewFileItem({
     id: `upload:${attachment.id}`,
+    projectId,
     sessionId,
     source: 'upload',
     path: getUploadedAttachmentPath(attachment, projectId),
@@ -159,10 +165,12 @@ export const createPreviewFileItemFromUpload = (
 // Converts a sent-message artifact mention into the same preview shape used by its source panel.
 export const createPreviewFileItemFromMention = (
   part: ManagedArtifactMentionPart,
-  sessionId: string
+  sessionId: string,
+  projectId?: string
 ): PreviewFileItem =>
   createPreviewFileItem({
     id: part.id,
+    projectId,
     sessionId,
     path: part.path,
     name: part.name,

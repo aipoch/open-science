@@ -328,7 +328,13 @@ const WorkspaceMessageScroller = ({
       part.source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
 
     try {
-      await read({ path: part.path, maxBytes: 1, encoding: 'utf8' })
+      await read({
+        ...(currentProjectId ? { projectId: currentProjectId } : {}),
+        sessionId: currentSessionId,
+        path: part.path,
+        maxBytes: 1,
+        encoding: 'utf8'
+      })
     } catch {
       showMentionNotice(`"${part.name}" is no longer available.`)
       return
@@ -336,7 +342,9 @@ const WorkspaceMessageScroller = ({
 
     usePreviewWorkbenchStore
       .getState()
-      .upsertAndActivateItem(createPreviewFileItemFromMention(part, currentSessionId))
+      .upsertAndActivateItem(
+        createPreviewFileItemFromMention(part, currentSessionId, currentProjectId)
+      )
   }
 
   // Opens Settings on a skill mention's detail, warning instead when the skill no longer exists.
