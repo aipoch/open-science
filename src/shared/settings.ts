@@ -322,10 +322,10 @@ const REASONING_EFFORTS: readonly ReasoningEffort[] = [
 export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
   typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
 
-// The selectable app-icon look. 'light' is the current dotted mark (shipped default); 'dark' is the
-// original Open Science icon from the first release. Both are built-in assets; the choice is applied
-// at runtime to the app window icon (all platforms) and the macOS Dock (the static installed icon in
-// Finder/Explorer/taskbar is baked into the build and never changes).
+// The selectable app-icon look. 'light' is the shipped default; 'dark' is its matching dark variant.
+// Both are built-in assets; the choice is applied at runtime to the app window icon (all platforms)
+// and the macOS Dock (the static installed icon in Finder/Explorer/taskbar is baked into the build and
+// never changes).
 export type AppIconVariant = 'light' | 'dark'
 
 export const DEFAULT_APP_ICON_VARIANT: AppIconVariant = 'light'
@@ -345,8 +345,8 @@ export type AppIconVariantInfo = {
 
 // The ordered icon variants shown in Settings. The default (light) leads.
 export const APP_ICON_VARIANT_INFOS: readonly AppIconVariantInfo[] = [
-  { id: 'light', label: 'Light', description: 'The current light dotted mark.' },
-  { id: 'dark', label: 'Dark', description: 'The original Open Science icon.' }
+  { id: 'light', label: 'Light', description: 'The light Open Science logo.' },
+  { id: 'dark', label: 'Dark', description: 'The dark Open Science logo.' }
 ]
 
 // Renderer-facing descriptor for one selectable agent framework (built from the main registry).

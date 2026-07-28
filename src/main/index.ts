@@ -72,9 +72,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     import('./app-startup')
   ])
 
-  // The bundled asset path for each selectable icon variant (light = current shipped default, dark =
-  // the original Open Science icon). Resolved once here and reused by the icon controller and the
-  // Settings preview builder.
+  // The bundled asset path for each selectable icon variant (light = shipped default, dark = matching
+  // dark variant). Resolved once here and reused by the icon controller and Settings preview builder.
   const iconVariantPaths = { light: icon, dark: iconDark }
 
   // Ordered startup: the single-instance lock is acquired FIRST (UI path only — the MCP stdio server
@@ -244,6 +243,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           const headlessWeb = ctx.webMode.headless && webPort !== undefined
           return ctx.createAppTray({
             iconPath: icon,
+            templateIconPath: iconDark,
             ...handlers,
             ...(headlessWeb
               ? {
