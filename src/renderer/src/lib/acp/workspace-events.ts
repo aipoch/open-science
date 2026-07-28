@@ -2,7 +2,7 @@ import type { AcpRuntimeEvent, AcpPermissionRequest } from '../../../../shared/a
 import type { ArtifactFile, FinalizeRunArtifactsRequest } from '../../../../shared/artifacts'
 import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../shared/reviewer'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
-import { createPreviewFileItem } from '../../pages/workspace/preview-file-item'
+import { createPreviewFileItemFromArtifact } from '../../pages/workspace/preview-file-item'
 import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
@@ -193,20 +193,20 @@ const finalizeArtifactEvent = async (
 // (charts, tables, …) still wait for an explicit click. Fires only on live-run artifact events.
 const openMoleculePreviews = (sessionId: string, artifacts: ArtifactFile[]): void => {
   const workbench = usePreviewWorkbenchStore.getState()
+  const projectId = useSessionStore
+    .getState()
+    .sessions.find((session) => session.id === sessionId)?.projectId
 
   for (const artifact of artifacts) {
     const format = getPreviewFormatForFile({ name: artifact.name, mimeType: artifact.mimeType })
     if (format !== 'molecule') continue
 
-    workbench.upsertAndActivateItem(
-      createPreviewFileItem({
-        id: artifact.id,
-        sessionId,
-        path: artifact.path,
-        name: artifact.name,
-        mimeType: artifact.mimeType
-      })
+    const item = createPreviewFileItemFromArtifact(
+      artifact,
+      sessionId,
+      projectId || artifact.projectName
     )
+    if (item) workbench.upsertAndActivateItem(item)
   }
 }
 

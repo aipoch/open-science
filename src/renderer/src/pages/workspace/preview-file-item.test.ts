@@ -202,6 +202,26 @@ describe('preview file item helpers', () => {
     })
   })
 
+  it('preserves native Artifact Version identity from a cross-session mention locator', () => {
+    expect(
+      createPreviewFileItemFromMention(
+        createMentionPart({
+          id: 'artifact-lineage-2',
+          versionId: 'artifact-version-4',
+          path: 'artifact-version:project-1/source-session/artifact-lineage-2/artifact-version-4'
+        }),
+        'current-session',
+        'project-1'
+      )
+    ).toMatchObject({
+      id: 'artifact-lineage-2',
+      projectId: 'project-1',
+      sessionId: 'source-session',
+      artifactId: 'artifact-lineage-2',
+      selectedVersionId: 'artifact-version-4'
+    })
+  })
+
   it('preserves the mention id and marks upload-sourced mentions as uploads', () => {
     const item = createPreviewFileItemFromMention(
       createMentionPart({

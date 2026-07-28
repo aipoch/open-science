@@ -869,7 +869,10 @@ describe('workspace runtime events', () => {
 
   it('auto-opens a generated molecule artifact in the preview panel', async () => {
     const finalizedArtifact = createArtifactFile({
-      id: 'transport-session-1:message-1:aspirin.mol',
+      id: 'artifact-version-2',
+      artifactId: 'artifact-lineage-1',
+      versionId: 'artifact-version-2',
+      versionNumber: 2,
       sessionId: 'transport-session-1',
       messageId: 'message-1',
       runId: undefined,
@@ -898,10 +901,14 @@ describe('workspace runtime events', () => {
     const preview = usePreviewWorkbenchStore.getState()
 
     expect(preview.panelState).toBe('open')
-    expect(preview.activeItemId).toBe('transport-session-1:message-1:aspirin.mol')
+    expect(preview.activeItemId).toBe('artifact-lineage-1')
     expect(preview.items).toEqual([
       expect.objectContaining({
-        id: 'transport-session-1:message-1:aspirin.mol',
+        id: 'artifact-lineage-1',
+        artifactId: 'artifact-lineage-1',
+        selectedVersionId: 'artifact-version-2',
+        versionNumber: 2,
+        path: 'artifact-version:default-project/transport-session-1/artifact-lineage-1/artifact-version-2',
         type: 'file',
         format: 'molecule',
         name: 'aspirin.mol'

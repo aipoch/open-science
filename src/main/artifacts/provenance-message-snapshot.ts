@@ -573,7 +573,7 @@ class ProvenanceMessageSnapshotRepository {
       messageBranchId: version.messageBranchId,
       terminalMessageId: version.messageId
     }
-    let snapshot = await client.artifactMessageSnapshot.findUnique({
+    const snapshot = await client.artifactMessageSnapshot.findUnique({
       where: {
         projectId_sessionId_agentFrameId_messageBranchId_terminalMessageId: unique
       }
@@ -613,7 +613,7 @@ class ProvenanceMessageSnapshotRepository {
     const serialized = `${JSON.stringify(payload, null, 2)}\n`
     const checksum = sha256(serialized)
     if (!snapshot) {
-      snapshot = await client.artifactMessageSnapshot.create({
+      await client.artifactMessageSnapshot.create({
         data: {
           id: snapshotId,
           ...unique,

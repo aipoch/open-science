@@ -1,8 +1,10 @@
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
 import type { ChatSession } from '@/stores/session-store'
+import type { ArtifactFile } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
 import {
   createArtifactVersionLocator,
+  parseArtifactVersionLocator,
   type ArtifactLineageProvenance,
   type ArtifactVersionDescriptor
 } from '../../../../shared/artifact-provenance'
@@ -74,13 +76,13 @@ export const createPreviewFileItem = ({
 
 // Converts app-managed generated files into preview tabs and ignores unmanaged artifacts.
 export const createPreviewFileItemFromArtifact = (
-  artifact: MessageArtifact,
+  artifact: MessageArtifact | ArtifactFile,
   sessionId: string,
   projectId?: string
 ): PreviewFileItem | undefined => {
-  if (artifact.kind !== 'managed-file') return undefined
+  if ('kind' in artifact && artifact.kind !== 'managed-file') return undefined
 
-  const artifactName = getArtifactName(artifact)
+  const artifactName = 'kind' in artifact ? getArtifactName(artifact) : artifact.name
   const nativeVersionPath =
     projectId && artifact.artifactId && artifact.versionId
       ? createArtifactVersionLocator({
@@ -167,13 +169,24 @@ export const createPreviewFileItemFromMention = (
   part: ManagedArtifactMentionPart,
   sessionId: string,
   projectId?: string
-): PreviewFileItem =>
-  createPreviewFileItem({
-    id: part.id,
-    projectId,
-    sessionId,
+): PreviewFileItem => {
+  const identity = part.source === 'artifact' ? parseArtifactVersionLocator(part.path) : undefined
+  const artifactId =
+    part.source === 'artifact'
+      ? (identity?.artifactId ?? (part.versionId ? part.id : undefined))
+      : undefined
+  const selectedVersionId =
+    part.source === 'artifact' ? (identity?.versionId ?? part.versionId) : undefined
+
+  return createPreviewFileItem({
+    id: artifactId ?? part.id,
+    projectId: identity?.projectId ?? projectId,
+    sessionId: identity?.appSessionId ?? sessionId,
     path: part.path,
     name: part.name,
     mimeType: part.mimeType,
-    source: part.source === 'upload' ? 'upload' : undefined
+    source: part.source === 'upload' ? 'upload' : undefined,
+    artifactId,
+    selectedVersionId
   })
+}

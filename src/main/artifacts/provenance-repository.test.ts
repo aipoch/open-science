@@ -1843,7 +1843,7 @@ describe('artifact provenance repository', () => {
       filename: 'sin.png'
     } as const
 
-    for (const [index, content] of ['first', 'second'].entries()) {
+    for (const [index, content] of ['first', 'second', 'interrupted'].entries()) {
       await compatibilityRepository.writePendingFile({
         projectName: common.projectId,
         sessionId: common.artifactStorageSessionId,
@@ -1857,6 +1857,13 @@ describe('artifact provenance repository', () => {
         writeRequestChecksum: String(index + 1).repeat(64)
       })
     }
+    const interrupted = await client.artifactVersion.findFirstOrThrow({
+      where: { artifactRunId: common.artifactRunId, versionNumber: 3 }
+    })
+    await client.artifactVersion.update({
+      where: { id: interrupted.id },
+      data: { state: 'staging' }
+    })
 
     const finalizeRequest = {
       projectId: common.projectId,
@@ -1881,6 +1888,9 @@ describe('artifact provenance repository', () => {
         where: { state: 'finalized', messageId: 'message-1' }
       })
     ).toBe(2)
+    await expect(
+      client.artifactVersion.findUniqueOrThrow({ where: { id: interrupted.id } })
+    ).resolves.toMatchObject({ state: 'staging', messageId: null })
 
     await expect(
       repository.finalizeRun({ ...finalizeRequest, messageId: 'message-2' })
@@ -2056,6 +2066,96 @@ describe('artifact provenance repository', () => {
     await expect(
       client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
     ).resolves.toMatchObject({ state: 'finalized', messageId: 'message-1' })
+  })
+
+  it('withholds saved Review conclusions when an active source Session cannot be loaded', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-active-review-unavailable-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const compatibilityRepository = new ArtifactRepository(storageRoot)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository,
+      loadSession: async () => {
+        throw new Error('Session JSON is temporarily unreadable.')
+      }
+    })
+    const common = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1',
+      filename: 'sin.png'
+    } as const
+    await compatibilityRepository.writePendingFile({
+      projectName: common.projectId,
+      sessionId: common.artifactStorageSessionId,
+      runId: common.artifactRunId,
+      filename: common.filename,
+      source: createPngInlineSource('reviewed bytes')
+    })
+    const version = await repository.createVersion({
+      ...common,
+      writeOperationId: 'write-1',
+      writeRequestChecksum: 'a'.repeat(64)
+    })
+    await client.review.create({
+      data: {
+        id: 'review-1',
+        projectId: common.projectId,
+        sessionId: common.appSessionId,
+        turnMessageId: common.promptMessageId,
+        scope: JSON.stringify({
+          turnMessageId: common.promptMessageId,
+          blocks: [],
+          artifactVersionIds: [version.versionId]
+        }),
+        lifecycle: 'complete',
+        outcome: 'pass',
+        reviewerLog: '[]'
+      }
+    })
+
+    await expect(
+      repository.getVersionReview({
+        projectId: common.projectId,
+        appSessionId: common.appSessionId,
+        artifactId: version.artifactId,
+        versionId: version.versionId
+      })
+    ).resolves.toEqual({
+      review: { state: 'unavailable', reason: 'source-session-unavailable' }
+    })
+
+    await client.fileOriginSession.update({
+      where: {
+        projectId_sessionId: {
+          projectId: common.projectId,
+          sessionId: common.appSessionId
+        }
+      },
+      data: { state: 'deleted', deletedAt: new Date() }
+    })
+    await expect(
+      repository.getVersionReview({
+        projectId: common.projectId,
+        appSessionId: common.appSessionId,
+        artifactId: version.artifactId,
+        versionId: version.versionId
+      })
+    ).resolves.toMatchObject({
+      review: {
+        state: 'available',
+        value: { currentDirectAssessment: { id: 'review-1', outcome: 'pass' } }
+      }
+    })
   })
 
   it('serializes concurrent Unicode case-folded writes into one monotonic lineage', async () => {
@@ -2621,5 +2721,58 @@ describe('artifact provenance repository', () => {
     await expect(client.artifactLineage.count({ where: { projectId: 'project-2' } })).resolves.toBe(
       1
     )
+  })
+
+  it('retains Upload authority when Project byte deletion must be retried', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-upload-delete-retry-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository: new ArtifactRepository(storageRoot)
+    })
+    const contentStorageKey =
+      'uploads/project-1/session-1/upload-1/versions/upload-version-1/content'
+    const contentPath = join(storageRoot, ...contentStorageKey.split('/'))
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename: 'input.csv',
+        originalFilename: 'input.csv',
+        versions: {
+          create: {
+            id: 'upload-version-1',
+            versionNumber: 1,
+            state: 'ready',
+            contentStorageKey,
+            filename: 'input.csv',
+            originalFilename: 'input.csv',
+            contentType: 'text/csv',
+            sizeBytes: BigInt(1),
+            checksum: 'a'.repeat(64)
+          }
+        }
+      }
+    })
+    await mkdir(contentPath, { recursive: true })
+
+    await expect(repository.deleteProjectProvenance('project-1')).rejects.toThrow()
+    await expect(client.uploadFile.count({ where: { projectId: 'project-1' } })).resolves.toBe(1)
+    await expect(
+      client.fileOriginSession.count({ where: { projectId: 'project-1' } })
+    ).resolves.toBe(1)
+
+    await rm(contentPath, { recursive: true, force: true })
+    await mkdir(dirname(contentPath), { recursive: true })
+    await writeFile(contentPath, 'x')
+    await repository.deleteProjectProvenance('project-1')
+    await expect(client.uploadFile.count({ where: { projectId: 'project-1' } })).resolves.toBe(0)
   })
 })

@@ -532,6 +532,19 @@ describe('ArtifactProvenancePanel', () => {
     expect(reviewerCardSpy).toHaveBeenCalledWith(expect.objectContaining({ defaultExpanded: true }))
   })
 
+  it('does not present a saved Review as current when its active source Session is unavailable', async () => {
+    getVersionReview.mockResolvedValue({
+      review: { state: 'unavailable', reason: 'source-session-unavailable' }
+    })
+
+    await clickTab('Review')
+    await flush()
+
+    expect(container.textContent).toContain('Review unavailable')
+    expect(container.textContent).toContain('saved review cannot be verified as current')
+    expect(container.querySelector('[data-testid="reviewer-card"]')).toBeNull()
+  })
+
   it('shows a three-column relevant-package table and retains access to the full inventory', async () => {
     await clickTab('Environment')
 

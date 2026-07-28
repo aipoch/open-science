@@ -408,7 +408,10 @@ export type ArtifactVersionProvenance = {
         state: 'available'
         value: ArtifactVersionReviewProjection
       }
-    | { state: 'unavailable'; reason: 'not-loaded' | 'not-triggered' }
+    | {
+        state: 'unavailable'
+        reason: 'not-loaded' | 'not-triggered' | 'source-session-unavailable'
+      }
 }
 
 export type ArtifactVersionCoreProvenance = Pick<

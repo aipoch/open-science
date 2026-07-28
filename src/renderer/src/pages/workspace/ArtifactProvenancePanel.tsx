@@ -562,6 +562,8 @@ const ArtifactProvenancePanel = ({
   )
   const reviewProjection =
     provenance?.review.state === 'available' ? provenance.review.value : undefined
+  const reviewUnavailableReason =
+    provenance?.review.state === 'unavailable' ? provenance.review.reason : undefined
   const reviewAssessment = reviewProjection
     ? (reviewProjection.currentDirectAssessment ?? reviewProjection.latestChainReview)
     : undefined
@@ -1087,13 +1089,21 @@ const ArtifactProvenancePanel = ({
             <section className="flex gap-3 p-5">
               <Circle className="mt-0.5 size-4 text-text-300" aria-hidden="true" />
               <div>
-                <h3 className="text-sm font-semibold text-text-000">No review for this version</h3>
+                <h3 className="text-sm font-semibold text-text-000">
+                  {reviewUnavailableReason === 'source-session-unavailable'
+                    ? 'Review unavailable'
+                    : 'No review for this version'}
+                </h3>
                 <p className="mt-1 text-sm text-text-300">
-                  {lineage?.originSession.state === 'deleted'
-                    ? 'The source session was deleted before an applicable review was captured.'
-                    : 'This version was generated without an applicable reviewer audit.'}
+                  {reviewUnavailableReason === 'source-session-unavailable'
+                    ? 'The active source session could not be loaded, so its saved review cannot be verified as current.'
+                    : lineage?.originSession.state === 'deleted'
+                      ? 'The source session was deleted before an applicable review was captured.'
+                      : 'This version was generated without an applicable reviewer audit.'}
                 </p>
-                <p className="mt-3 text-xs text-text-300">Model · not triggered</p>
+                {reviewUnavailableReason !== 'source-session-unavailable' ? (
+                  <p className="mt-3 text-xs text-text-300">Model · not triggered</p>
+                ) : null}
               </div>
             </section>
           )

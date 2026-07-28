@@ -2036,6 +2036,7 @@ class ArtifactProvenanceRepository {
           messageBranchId,
           runtimeSegmentId,
           promptMessageId,
+          state: { in: ['pending', 'finalized'] },
           artifact: { is: { projectId, sessionId: appSessionId } }
         },
         include: { artifact: true },
@@ -2059,7 +2060,10 @@ class ArtifactProvenanceRepository {
       })
 
       return transaction.artifactVersion.findMany({
-        where: { id: { in: matching.map((version) => version.id) } },
+        where: {
+          id: { in: matching.map((version) => version.id) },
+          state: 'finalized'
+        },
         include: { artifact: true },
         orderBy: [{ artifactId: 'asc' }, { versionNumber: 'asc' }]
       })
@@ -2946,16 +2950,30 @@ class ArtifactProvenanceRepository {
       // Active Sessions are re-resolved before their verdict is projected so edits cannot make an old
       // pass look current. Deleted origins intentionally keep their frozen historical verdict: there is
       // no live conversation to recompute and Provenance never offers a re-run from this surface.
-      const session = this.options.loadSession
-        ? await this.options
-            .loadSession(projectId, version.artifact.sessionId)
-            .catch(() => undefined)
-        : undefined
-      const resolvedReviews: ReviewWithProvenanceEvidence[] = session
-        ? (await flagStaleReviews(provenanceReviews, session, this.options.storageRoot)).map(
-            (review, index) => ({ ...provenanceReviews[index]!, stale: review.stale })
-          )
-        : provenanceReviews
+      const origin = await client.fileOriginSession.findUnique({
+        where: {
+          projectId_sessionId: { projectId, sessionId: version.artifact.sessionId }
+        },
+        select: { state: true }
+      })
+      let sourceSessionUnavailable = false
+      let resolvedReviews = provenanceReviews
+      if (this.options.loadSession && origin?.state === 'active') {
+        const session = await this.options
+          .loadSession(projectId, version.artifact.sessionId)
+          .catch(() => undefined)
+        if (
+          !session ||
+          session.projectId !== projectId ||
+          session.id !== version.artifact.sessionId
+        ) {
+          sourceSessionUnavailable = provenanceReviews.length > 0
+        } else {
+          resolvedReviews = (
+            await flagStaleReviews(provenanceReviews, session, this.options.storageRoot)
+          ).map((review, index) => ({ ...provenanceReviews[index]!, stale: review.stale }))
+        }
+      }
       const findingIds = resolvedReviews.flatMap((candidate) =>
         candidate.checks.map((check) => check.id)
       )
@@ -2966,23 +2984,27 @@ class ArtifactProvenanceRepository {
               orderBy: [{ createdAt: 'asc' }, { sequence: 'asc' }, { id: 'asc' }]
             })
           : []
-      const projection = selectReviewChainForArtifactVersion({
-        selectedVersionId: versionId,
-        versionMessageId: version.messageId ?? undefined,
-        reviews: resolvedReviews,
-        dispositions: dispositionRows.map((disposition) => ({
-          id: disposition.id,
-          sourceFindingId: disposition.sourceFindingId,
-          causeReviewId: disposition.causeReviewId ?? undefined,
-          sequence: disposition.sequence,
-          trigger: disposition.trigger as ReviewFindingDispositionTrigger,
-          outcome: disposition.outcome as ReviewFindingDispositionOutcome,
-          note: disposition.note ?? undefined,
-          assessedArtifactVersionId: disposition.assessedArtifactVersionId ?? undefined,
-          createdAt: disposition.createdAt.getTime()
-        }))
-      })
-      if (projection) review = { state: 'available', value: projection }
+      if (sourceSessionUnavailable) {
+        review = { state: 'unavailable', reason: 'source-session-unavailable' }
+      } else {
+        const projection = selectReviewChainForArtifactVersion({
+          selectedVersionId: versionId,
+          versionMessageId: version.messageId ?? undefined,
+          reviews: resolvedReviews,
+          dispositions: dispositionRows.map((disposition) => ({
+            id: disposition.id,
+            sourceFindingId: disposition.sourceFindingId,
+            causeReviewId: disposition.causeReviewId ?? undefined,
+            sequence: disposition.sequence,
+            trigger: disposition.trigger as ReviewFindingDispositionTrigger,
+            outcome: disposition.outcome as ReviewFindingDispositionOutcome,
+            note: disposition.note ?? undefined,
+            assessedArtifactVersionId: disposition.assessedArtifactVersionId ?? undefined,
+            createdAt: disposition.createdAt.getTime()
+          }))
+        })
+        if (projection) review = { state: 'available', value: projection }
+      }
     }
 
     return {
@@ -3093,6 +3115,14 @@ class ArtifactProvenanceRepository {
       select: { contentStorageKey: true }
     })
 
+    // Delete managed Upload bytes while their authority rows still make the operation replayable.
+    // Any failure leaves the Project deletion intent and storage keys available for a later retry.
+    for (const version of uploadVersions) {
+      await rm(resolveStorageKey(this.options.storageRoot, version.contentStorageKey), {
+        force: true
+      })
+    }
+
     await client.$transaction(async (tx) => {
       await tx.artifactVersionInput.deleteMany({
         where: {
@@ -3108,11 +3138,6 @@ class ArtifactProvenanceRepository {
       await tx.fileOriginSession.deleteMany({ where: { projectId } })
     })
 
-    for (const version of uploadVersions) {
-      await rm(resolveStorageKey(this.options.storageRoot, version.contentStorageKey), {
-        force: true
-      }).catch(() => undefined)
-    }
     await rm(resolveStorageKey(this.options.storageRoot, storageKey('artifacts', projectId)), {
       recursive: true,
       force: true

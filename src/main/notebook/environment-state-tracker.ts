@@ -455,7 +455,7 @@ class EnvironmentStateTracker {
           }
           warnings.push(`Installed package inventory unavailable: ${describeError(error)}`)
         }
-      } else if (!cache.stateFingerprint && fingerprint) {
+      } else if (!cache.stateFingerprint) {
         cache.stateFingerprint = fingerprint
         await this.writeBinding(target, cache)
       }
