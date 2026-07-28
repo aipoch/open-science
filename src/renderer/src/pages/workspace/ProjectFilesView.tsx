@@ -89,6 +89,20 @@ const ProjectFilesFilterIcon = ({
 
 const COLLAPSED_SESSION_OPTION_COUNT = 5
 
+const getCollapsedSessionOptions = (
+  options: ProjectFilesFilterOption[],
+  selectedOptionId: string
+): ProjectFilesFilterOption[] => {
+  const firstOptions = options.slice(0, COLLAPSED_SESSION_OPTION_COUNT)
+  const selectedOption = options.find((option) => option.id === selectedOptionId)
+  if (!selectedOption || firstOptions.some((option) => option.id === selectedOptionId)) {
+    return firstOptions
+  }
+
+  // Keep the active radio item discoverable without exceeding the five-row collapsed menu.
+  return [...firstOptions.slice(0, COLLAPSED_SESSION_OPTION_COUNT - 1), selectedOption]
+}
+
 type ProjectFilePreviewTarget = {
   id: string
   path: string
@@ -597,7 +611,7 @@ const FileListRow = ({
   const relativeTimeLabel = formatRelativeFileTime(file.mtimeMs ?? file.sortAtMs)
 
   return (
-    <div className="group relative flex h-9 min-w-0 items-center rounded-md hover:bg-bg-200 focus-within:ring-3 focus-within:ring-ring/50 focus-within:ring-inset">
+    <div className="group relative flex h-9 min-w-0 items-center rounded-md text-text-000 transition-colors duration-150 hover:bg-accent hover:text-accent-foreground focus-within:ring-3 focus-within:ring-ring/50 focus-within:ring-inset motion-reduce:transition-none">
       <button
         ref={setRowElement}
         type="button"
@@ -609,12 +623,7 @@ const FileListRow = ({
         <span className="flex size-7 shrink-0 items-center justify-center rounded bg-bg-200 text-text-300">
           <File className="size-4" strokeWidth={1.7} aria-hidden="true" />
         </span>
-        <span
-          className={cn(
-            'min-w-0 flex-1 truncate text-[12px] text-text-000',
-            missing && 'opacity-50'
-          )}
-        >
+        <span className={cn('min-w-0 flex-1 truncate text-[12px]', missing && 'opacity-50')}>
           {file.name}
         </span>
         {missing ? (
@@ -726,8 +735,11 @@ const ProjectFilesFilterMenu = ({
   options,
   selectedOptionId,
   onSelect,
+  showAllSessions,
+  onShowAllSessionsChange,
   sessionOptionCount,
   canLoadMoreOptions,
+  optionsLoadError,
   onLoadMoreOptions,
   onBrowseRemoteHost
 }: {
@@ -735,19 +747,21 @@ const ProjectFilesFilterMenu = ({
   options: ProjectFilesFilterOption[]
   selectedOptionId: string
   onSelect: (optionId: string) => void
+  showAllSessions: boolean
+  onShowAllSessionsChange: (showAll: boolean) => void
   sessionOptionCount: number
   canLoadMoreOptions: boolean
+  optionsLoadError?: string
   onLoadMoreOptions: () => void
   onBrowseRemoteHost: (providerId: string) => void
 }): React.JSX.Element => {
   const hosts = useComputeStore((state) => state.hosts)
   const openSettingsToCompute = useSettingsStore((state) => state.openSettingsToCompute)
-  const [showAllSessions, setShowAllSessions] = useState(false)
   const fixedOptions = options.filter((option) => option.kind !== 'session')
   const sessionOptions = options.filter((option) => option.kind === 'session')
   const visibleSessionOptions = showAllSessions
     ? sessionOptions
-    : sessionOptions.slice(0, COLLAPSED_SESSION_OPTION_COUNT)
+    : getCollapsedSessionOptions(sessionOptions, selectedOptionId)
   const showSessionOptionsToggle = sessionOptionCount > COLLAPSED_SESSION_OPTION_COUNT
   const selectedOptionKind = options.find((option) => option.id === selectedOptionId)?.kind ?? 'all'
 
@@ -796,13 +810,25 @@ const ProjectFilesFilterMenu = ({
               onSelect={onSelect}
             />
           ))}
+          {showAllSessions && optionsLoadError ? (
+            <DropdownMenuItem
+              data-testid="session-options-retry"
+              className="min-h-7 py-1 text-[11px] text-muted-foreground"
+              onSelect={(event) => {
+                event.preventDefault()
+                onLoadMoreOptions()
+              }}
+            >
+              Retry loading sessions
+            </DropdownMenuItem>
+          ) : null}
           {showSessionOptionsToggle ? (
             <DropdownMenuItem
               data-testid="session-options-toggle"
               className="min-h-7 py-1 text-[11px] text-muted-foreground"
               onSelect={(event) => {
                 event.preventDefault()
-                setShowAllSessions((current) => !current)
+                onShowAllSessionsChange(!showAllSessions)
               }}
             >
               {showAllSessions ? 'Show fewer' : `Show all ${sessionOptionCount} sessions`}
@@ -962,6 +988,7 @@ const ProjectFilesViewContent = ({
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const [viewMode, setViewMode] = useState<ProjectFilesViewMode>('grid')
+  const [showAllSessionOptions, setShowAllSessionOptions] = useState(false)
   // Files-tab previews are transient dialog state; opening a file must not create a workbench tab.
   const [dialogItem, setDialogItem] = useState<PreviewFileItem | undefined>(undefined)
 
@@ -1008,6 +1035,12 @@ const ProjectFilesViewContent = ({
   }, [searchQuery])
 
   const catalogIndex = useProjectFilesIndex(activeProjectId, handleIndexChanged)
+  const sessionOptionsIndex = useProjectFilesIndex(
+    showAllSessionOptions ? activeProjectId : undefined,
+    undefined,
+    undefined,
+    { kind: 'artifactGroups' }
+  )
   const isSearchActive = debouncedSearchQuery.length > 0
   const sessionTitleById = useMemo(
     () =>
@@ -1023,6 +1056,17 @@ const ProjectFilesViewContent = ({
       sessionTitleById.get(sessionId) ?? `Session ${sessionId.slice(0, 8)}`,
     [sessionTitleById]
   )
+  const filterGroupItems = useMemo(() => {
+    const groupsBySession = new Map(
+      catalogIndex.groups.items.map((group) => [group.sessionId, group] as const)
+    )
+    if (showAllSessionOptions) {
+      for (const group of sessionOptionsIndex.groups.items) {
+        groupsBySession.set(group.sessionId, group)
+      }
+    }
+    return [...groupsBySession.values()]
+  }, [catalogIndex.groups.items, sessionOptionsIndex.groups.items, showAllSessionOptions])
   const filterOptions = useMemo<ProjectFilesFilterOption[]>(() => {
     const options: ProjectFilesFilterOption[] = [
       {
@@ -1037,7 +1081,7 @@ const ProjectFilesViewContent = ({
         count: catalogIndex.overview.uploadCount,
         kind: 'uploads'
       },
-      ...catalogIndex.groups.items.map((group) => ({
+      ...filterGroupItems.map((group) => ({
         id: `session:${group.sessionId}`,
         label: getSessionTitle(group.sessionId),
         count: group.artifactCount,
@@ -1063,8 +1107,8 @@ const ProjectFilesViewContent = ({
   }, [
     getSessionTitle,
     catalogIndex.artifactsBySession,
-    catalogIndex.groups.items,
     catalogIndex.overview,
+    filterGroupItems,
     selectedSessionFallback
   ])
   const selectedSessionId = selectedFilterId.startsWith('session:')
@@ -1340,13 +1384,16 @@ const ProjectFilesViewContent = ({
           options={filterOptions}
           selectedOptionId={effectiveFilterId}
           onSelect={selectFilter}
+          showAllSessions={showAllSessionOptions}
+          onShowAllSessionsChange={setShowAllSessionOptions}
           sessionOptionCount={catalogIndex.overview.artifactGroupCount}
           canLoadMoreOptions={
-            Boolean(catalogIndex.groups.nextCursor) &&
-            !catalogIndex.groups.isLoading &&
-            !catalogIndex.groups.error
+            Boolean(sessionOptionsIndex.groups.nextCursor) &&
+            !sessionOptionsIndex.groups.isLoading &&
+            !sessionOptionsIndex.groups.error
           }
-          onLoadMoreOptions={() => void catalogIndex.loadMoreGroups()}
+          optionsLoadError={sessionOptionsIndex.groups.error}
+          onLoadMoreOptions={() => void sessionOptionsIndex.loadMoreGroups()}
           onBrowseRemoteHost={(providerId) => setBrowseProviderId(providerId)}
         />
         <TooltipProvider delayDuration={200}>
@@ -1364,7 +1411,7 @@ const ProjectFilesViewContent = ({
                 <ToggleGroup.Item
                   value="grid"
                   aria-label="Grid view"
-                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
+                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-accent aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-accent"
                 >
                   <LayoutGrid className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
                 </ToggleGroup.Item>
@@ -1376,7 +1423,7 @@ const ProjectFilesViewContent = ({
                 <ToggleGroup.Item
                   value="list"
                   aria-label="List view"
-                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
+                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-accent aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-accent"
                 >
                   <List className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
                 </ToggleGroup.Item>
@@ -1403,15 +1450,24 @@ const ProjectFilesViewContent = ({
             onChange={(event) => setSearchQuery(event.target.value)}
           />
           {searchQuery ? (
-            <button
-              type="button"
-              aria-label="Clear file search"
-              className="absolute right-1 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-text-100 outline-none transition-colors hover:bg-bg-200 focus-visible:ring-2 focus-visible:ring-ring/50"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => setSearchQuery('')}
-            >
-              <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
-            </button>
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="Clear file search"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 text-text-100 hover:bg-bg-200 hover:text-text-100"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Clear search</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           ) : null}
         </div>
         <div className="shrink-0 text-[11px] tabular-nums text-text-300">

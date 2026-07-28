@@ -1,4 +1,4 @@
-import { ImageOff, Shrink, ZoomIn, ZoomOut } from 'lucide-react'
+import { ImageOff, Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
 import { useState } from 'react'
 import { TransformComponent, TransformWrapper, useControls } from 'react-zoom-pan-pinch'
 
@@ -21,7 +21,7 @@ const ImageZoomControls = ({ reduceMotion }: { reduceMotion: boolean }): React.J
     { label: 'Zoom out', icon: ZoomOut, onClick: () => zoomOut() },
     {
       label: 'Reset zoom',
-      icon: Shrink,
+      icon: Maximize2,
       onClick: () => resetTransform(reduceMotion ? 0 : undefined)
     }
   ]

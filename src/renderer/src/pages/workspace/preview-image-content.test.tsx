@@ -223,9 +223,7 @@ describe('PreviewImageContent', () => {
 
     expect(container.querySelector('[aria-label="Zoom in"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Zoom out"]')).not.toBeNull()
-    const resetZoomButton = container.querySelector('[aria-label="Reset zoom"]')
-    expect(resetZoomButton).not.toBeNull()
-    expect(resetZoomButton?.querySelector('.lucide-shrink')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Reset zoom"]')).not.toBeNull()
   })
 
   it('scales the transformed content when zooming in', async () => {

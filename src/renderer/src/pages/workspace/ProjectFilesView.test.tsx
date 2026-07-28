@@ -592,10 +592,11 @@ describe('ProjectFilesView', () => {
     expect(search?.className).not.toContain('focus-visible:ring-0')
     expect(gridControl?.getAttribute('aria-checked')).toBe('true')
     expect(listControl?.getAttribute('aria-checked')).toBe('false')
-    expect(gridControl?.className).toContain('aria-checked:bg-bg-400')
-    expect(gridControl?.className).toContain('aria-checked:hover:bg-bg-400')
+    expect(gridControl?.className).toContain('aria-checked:bg-accent')
+    expect(gridControl?.className).toContain('aria-checked:hover:bg-accent')
     expect(gridControl?.className).toContain('aria-checked:shadow-sm')
-    expect(listControl?.className).toContain('aria-checked:bg-bg-400')
+    expect(listControl?.className).toContain('aria-checked:bg-accent')
+    expect(gridControl?.className).not.toContain('aria-checked:bg-bg-400')
 
     await act(async () => gridControl?.focus())
     expect(document.body.textContent).toContain('Grid view')
@@ -610,9 +611,9 @@ describe('ProjectFilesView', () => {
     )?.parentElement
     expect(listRow?.className).toContain('h-9')
     expect(listRow?.className).toContain('rounded-md')
-    expect(listRow?.className).toContain('hover:bg-bg-200')
-    expect(listRow?.className).not.toContain('hover:bg-accent')
-    expect(listRow?.className).not.toContain('hover:text-accent-foreground')
+    expect(listRow?.className).toContain('hover:bg-accent')
+    expect(listRow?.className).toContain('hover:text-accent-foreground')
+    expect(listRow?.className).not.toContain('hover:bg-bg-200')
   })
 
   it('removes the divider only from the first visible file group', async () => {
@@ -705,9 +706,17 @@ describe('ProjectFilesView', () => {
       '[aria-label="Clear file search"]'
     )
     expect(search?.className).toContain('[&::-webkit-search-cancel-button]:hidden')
+    expect(clearButton?.getAttribute('data-slot')).toBe('button')
+    expect(clearButton?.getAttribute('data-variant')).toBe('ghost')
+    expect(clearButton?.getAttribute('data-size')).toBe('icon-xs')
     expect(clearButton?.className).toContain('text-text-100')
     expect(clearButton?.className).toContain('hover:bg-bg-200')
     expect(clearButton?.className).not.toContain('hover:text-text-000')
+    expect(clearButton?.className).toContain('focus-visible:ring-3')
+    expect(clearButton?.className).not.toContain('focus-visible:ring-2')
+
+    await act(async () => clearButton?.focus())
+    expect(document.body.textContent).toContain('Clear search')
 
     await act(async () => clearButton?.click())
     expect(search?.value).toBe('')
@@ -1464,6 +1473,10 @@ describe('ProjectFilesView', () => {
     expect(document.body.querySelector('[data-testid="session-options-toggle"]')?.textContent).toBe(
       'Show all 12 sessions'
     )
+    const fileRequestCount = vi.mocked(window.api.projectFiles.listFiles).mock.calls.length
+    const thumbnailReadCount = vi
+      .mocked(window.api.artifacts.readPreview)
+      .mock.calls.filter(([request]) => request.maxBytes !== 1).length
 
     await act(async () => {
       document.body
@@ -1475,6 +1488,144 @@ describe('ProjectFilesView', () => {
 
     expect(document.body.querySelectorAll('[data-filter-id^="session:"]')).toHaveLength(12)
     expect(document.body.querySelector('[data-filter-id="session:session-12"]')).not.toBeNull()
+    expect(window.api.projectFiles.listFiles).toHaveBeenCalledTimes(fileRequestCount)
+    expect(
+      vi
+        .mocked(window.api.artifacts.readPreview)
+        .mock.calls.filter(([request]) => request.maxBytes !== 1)
+    ).toHaveLength(thumbnailReadCount)
+  })
+
+  it('offers a retry when loading every session option fails', async () => {
+    const sessions = Array.from({ length: 12 }, (_, index) =>
+      createSession({
+        id: `session-${index + 1}`,
+        title: `Session ${index + 1}`,
+        artifacts: [
+          {
+            id: `artifact-${index + 1}`,
+            kind: 'managed-file',
+            path: `/workspace/file-${index + 1}.txt`,
+            name: `file-${index + 1}.txt`
+          }
+        ]
+      })
+    )
+    await renderView(sessions)
+
+    let continuationAttempts = 0
+    vi.mocked(window.api.projectFiles.listArtifactGroups).mockImplementation(async (request) => {
+      if (!request.cursor) {
+        return {
+          items: sessions.slice(0, 10).map((session) => ({
+            sessionId: session.id,
+            artifactCount: 1
+          })),
+          nextCursor: 'page-2',
+          totalCount: 12
+        }
+      }
+      continuationAttempts += 1
+      if (continuationAttempts === 1) throw new Error('database busy')
+      return {
+        items: sessions.slice(10).map((session) => ({
+          sessionId: session.id,
+          artifactCount: 1
+        })),
+        totalCount: 12
+      }
+    })
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sources: ['artifact'],
+        kind: 'reset'
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLElement>('[data-testid="session-options-toggle"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const retry = document.body.querySelector<HTMLElement>('[data-testid="session-options-retry"]')
+    expect(retry?.textContent).toBe('Retry loading sessions')
+
+    await act(async () => {
+      retry?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(continuationAttempts).toBe(2)
+    expect(document.body.querySelectorAll('[data-filter-id^="session:"]')).toHaveLength(12)
+  })
+
+  it('keeps the selected session visible after Show fewer', async () => {
+    const sessions = Array.from({ length: 9 }, (_, index) =>
+      createSession({
+        id: `session-${index + 1}`,
+        title: `Session ${index + 1}`,
+        artifacts: [
+          {
+            id: `artifact-${index + 1}`,
+            kind: 'managed-file',
+            path: `/workspace/file-${index + 1}.txt`,
+            name: `file-${index + 1}.txt`
+          }
+        ]
+      })
+    )
+    await renderView(sessions)
+
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLElement>('[data-testid="session-options-toggle"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLElement>(
+          '[data-slot="dropdown-menu-content"][data-state="open"] [data-filter-id="session:session-9"]'
+        )
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const filterButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Filter project files"]'
+    )
+    if (filterButton?.getAttribute('aria-expanded') !== 'true') {
+      await act(async () => {
+        clickDropdownTrigger(filterButton)
+      })
+    }
+    await act(async () => {
+      document.body
+        .querySelector<HTMLElement>(
+          '[data-slot="dropdown-menu-content"][data-state="open"] [data-testid="session-options-toggle"]'
+        )
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const openMenu = document.body.querySelector(
+      '[data-slot="dropdown-menu-content"][data-state="open"]'
+    )
+    expect(openMenu?.querySelectorAll('[data-filter-id^="session:"]')).toHaveLength(5)
+    expect(
+      openMenu?.querySelector('[data-filter-id="session:session-9"]')?.getAttribute('aria-checked')
+    ).toBe('true')
   })
 
   it('keeps filtered content and trigger icon synchronized with the selected category', async () => {

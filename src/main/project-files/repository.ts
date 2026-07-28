@@ -639,7 +639,7 @@ class ManagedFileIndexRepository {
           AND "source" = ${source}
           AND "deletedAt" IS NULL
           ${sessionPredicate}
-          AND instr(lower("displayName"), lower(${search.filenameContains})) > 0
+          AND ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}
           ${cursorPredicate}
         ORDER BY "sortAtMs" DESC, "seq" DESC
         LIMIT ${limit + 1}
@@ -829,6 +829,14 @@ const normalizeSearch = (search: unknown): NormalizedSearch | undefined => {
 const foldAsciiCase = (value: string): string =>
   value.replace(/[A-Z]/g, (character) => character.toLowerCase())
 
+// Every search query shares the same SQLite ASCII-folding behavior while selecting its own column
+// alias. Keeping the predicate in one fragment prevents counts and pages from drifting apart.
+const filenameContainsPredicate = (
+  displayNameColumn: Prisma.Sql,
+  search: NormalizedSearch
+): Prisma.Sql =>
+  Prisma.sql`instr(lower(${displayNameColumn}), lower(${search.filenameContains})) > 0`
+
 const requireIdentifier = (value: string, field: string): void => {
   if (!value.trim()) throw new Error(`Project files ${field} is required.`)
 }
@@ -855,7 +863,7 @@ const getMatchingOverviewCounts = async (
       AND sync."deletedAt" IS NULL
     WHERE file."projectId" = ${projectId}
       AND file."deletedAt" IS NULL
-      AND instr(lower(file."displayName"), lower(${search.filenameContains})) > 0
+      AND ${filenameContainsPredicate(Prisma.sql`file."displayName"`, search)}
   `)
   const counts = rows[0]
 
@@ -884,7 +892,7 @@ const countMatchingFiles = async (
       AND "deletedAt" IS NULL
       ${sourcePredicate}
       ${sessionPredicate}
-      AND instr(lower("displayName"), lower(${search.filenameContains})) > 0
+      AND ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}
   `)
   return toSafeCount(rows[0]?.count ?? 0n, 'search result count')
 }
@@ -903,7 +911,7 @@ const countMatchingArtifactGroups = async (
       AND sync."deletedAt" IS NULL
       AND file."source" = 'artifact'
       AND file."deletedAt" IS NULL
-      AND instr(lower(file."displayName"), lower(${search.filenameContains})) > 0
+      AND ${filenameContainsPredicate(Prisma.sql`file."displayName"`, search)}
   `)
   return toSafeCount(rows[0]?.count ?? 0n, 'artifact group count')
 }
@@ -931,7 +939,7 @@ const listMatchingArtifactGroups = async (
         AND sync."deletedAt" IS NULL
         AND file."source" = 'artifact'
         AND file."deletedAt" IS NULL
-        AND instr(lower(file."displayName"), lower(${search.filenameContains})) > 0
+        AND ${filenameContainsPredicate(Prisma.sql`file."displayName"`, search)}
         ${cursorPredicate}
       GROUP BY sync."sessionId", sync."groupSortAtMs"
       ORDER BY sync."groupSortAtMs" DESC, sync."sessionId" DESC

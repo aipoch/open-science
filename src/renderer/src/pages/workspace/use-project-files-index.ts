@@ -40,7 +40,10 @@ type ProjectFilesIndexState = {
 }
 
 type ProjectFilesIndexScope =
-  { kind: 'all' } | { kind: 'uploads' } | { kind: 'sessionArtifacts'; sessionId: string }
+  | { kind: 'all' }
+  | { kind: 'uploads' }
+  | { kind: 'artifactGroups' }
+  | { kind: 'sessionArtifacts'; sessionId: string }
 
 type IndexRepairState = {
   projectId?: string
@@ -251,7 +254,10 @@ const useProjectFilesIndex = (
       ...emptyPage(),
       isLoading: Boolean(projectId) && (scopeKind === 'all' || scopeKind === 'uploads')
     })
-    setGroups({ ...emptyPage(), isLoading: Boolean(projectId) && scopeKind === 'all' })
+    setGroups({
+      ...emptyPage(),
+      isLoading: Boolean(projectId) && (scopeKind === 'all' || scopeKind === 'artifactGroups')
+    })
     setArtifactsBySession(
       projectId && scopeKind === 'sessionArtifacts' && scopeSessionId
         ? { [scopeSessionId]: { ...emptyPage(), isLoading: true } }
@@ -277,6 +283,34 @@ const useProjectFilesIndex = (
         setUploads,
         setGroups
       })
+      return
+    }
+
+    if (scopeKind === 'artifactGroups') {
+      // The filter menu owns this cursor independently so expanding it never advances the content
+      // view or causes newly discovered sessions to load their file pages and thumbnails.
+      void requestLimiterRef
+        .current(() =>
+          generation === generationRef.current && groupsRequest === groupsRequestRef.current
+            ? window.api.projectFiles.listArtifactGroups({
+                projectId,
+                ...withFilenameSearch(filenameContains),
+                limit: GROUP_PAGE_SIZE
+              })
+            : Promise.reject(new Error('Stale project files request.'))
+        )
+        .then((page) => {
+          if (generation !== generationRef.current || groupsRequest !== groupsRequestRef.current) {
+            return
+          }
+          setGroups({ ...page, isLoading: false, isLoaded: true, failedCursor: undefined })
+        })
+        .catch((error: unknown) => {
+          if (generation !== generationRef.current || groupsRequest !== groupsRequestRef.current) {
+            return
+          }
+          setGroups({ ...emptyPage(), isLoaded: true, error: getErrorMessage(error) })
+        })
       return
     }
 
@@ -396,7 +430,7 @@ const useProjectFilesIndex = (
           })
       }
 
-      if (event.sources.includes('upload') && scopeKind !== 'sessionArtifacts') {
+      if (event.sources.includes('upload') && (scopeKind === 'all' || scopeKind === 'uploads')) {
         // Upload mutations replace the first page and cursor. Appending here would retain deleted rows
         // or preserve an order captured before the mutation.
         const uploadsRequest = ++uploadsRequestRef.current
@@ -440,7 +474,7 @@ const useProjectFilesIndex = (
       if (event.sources.includes('artifact') && event.sessionId) {
         // The group list shares the same DB projection. Invalidate any page captured before this
         // session mutation, then rebuild its first page and cursor from the updated projection.
-        if (scopeKind === 'all') {
+        if (scopeKind === 'all' || scopeKind === 'artifactGroups') {
           const groupsRequest = ++groupsRequestRef.current
           const groupsRequestKey = `${generation}:${groupsRequest}:first`
           loadingGroupsRef.current = groupsRequestKey
@@ -500,6 +534,7 @@ const useProjectFilesIndex = (
         const sessionId = event.sessionId
         if (
           scopeKind === 'uploads' ||
+          scopeKind === 'artifactGroups' ||
           (scopeKind === 'sessionArtifacts' && scopeSessionId !== sessionId)
         ) {
           return
