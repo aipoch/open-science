@@ -26,7 +26,8 @@ import type { ReviewRepository } from './repository'
 import { resolveTurnScopeWithArtifactDigests } from './artifact-digest'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { ReviewerMcpServer } from './mcp-server'
-import { ReviewerHostServer } from './host-sdk'
+import { ReviewerHostServer, type ArtifactVersionContentResolver } from './host-sdk'
+import { buildReviewScopeSnapshot } from './scope-snapshot'
 import { REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND } from './rubric'
 import { injectAuditorMessage } from './correction'
 import { buildHistoryPreamble } from '../../shared/history-preamble'
@@ -36,6 +37,13 @@ const log = createLogger('reviewer:orchestrator')
 type SessionProvider = (
   sessionId: string
 ) => PersistedChatSession | undefined | Promise<PersistedChatSession | undefined>
+
+type ReviewMutationRunner = <Result>(mutation: () => Promise<Result>) => Promise<Result>
+
+const runReviewMutation = <Result>(
+  runner: ReviewMutationRunner | undefined,
+  mutation: () => Promise<Result>
+): Promise<Result> => (runner ? runner(mutation) : mutation())
 
 export type RunReviewOptions = {
   sessionId: string
@@ -57,10 +65,16 @@ export type RunReviewOptions = {
   getSession: SessionProvider
   // Repository for persisting review rows + checks.
   reviewRepository: ReviewRepository
+  // Joins every durable Review write to the Session deletion/save ordering boundary without holding
+  // the lock while the remote reviewer model is running.
+  runSessionMutation?: ReviewMutationRunner
   // The ACP runtime that owns the agent connection (used to spawn the reviewer session).
   acpRuntime: ReviewerAcpRuntime
   // Storage root for artifact reads (used by the scope-bounded evidence reader).
   artifactStorageRoot: string
+  // Native Version resolver for current provenance rows. Tests and legacy callers may omit it and
+  // retain the old session-path lookup.
+  artifactVersionContentResolver?: ArtifactVersionContentResolver
   // The model/provider tag to record on the Review row.
   model?: string
   // Called when the review lifecycle changes, so the IPC layer can broadcast updates.
@@ -367,8 +381,10 @@ type FixLoopOptions = {
   mainSessionId: string
   getSession: SessionProvider
   reviewRepository: ReviewRepository
+  runSessionMutation?: ReviewMutationRunner
   acpRuntime: ReviewerAcpRuntime
   artifactStorageRoot: string
+  artifactVersionContentResolver?: ArtifactVersionContentResolver
   model: string
   onReviewUpdate?: (review: ReviewWithChecks) => void
   onCorrectionPrompt?: (text: string) => void
@@ -431,8 +447,10 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
     mainSessionId,
     getSession,
     reviewRepository,
+    runSessionMutation,
     acpRuntime,
     artifactStorageRoot,
+    artifactVersionContentResolver,
     model,
     onReviewUpdate,
     onCorrectionPrompt,
@@ -445,14 +463,36 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
   } = options
 
   let openChecks = [...options.openChecks]
-  const markOpenChecksUnaddressed = async (): Promise<void> => {
-    for (const openCheck of openChecks) {
-      await reviewRepository.updateFindingResolution(
-        openCheck.reviewId,
-        openCheck.id,
-        'unaddressed'
-      )
+  const commitDispositionBatch = async (
+    inputs: Parameters<ReviewRepository['commitFindingDispositions']>[0]
+  ): Promise<void> => {
+    if (inputs.length === 0) return
+    await runReviewMutation(runSessionMutation, () =>
+      reviewRepository.commitFindingDispositions(inputs)
+    )
+
+    // Finding/disposition writes change the original Review card without creating a new Review row.
+    // Push each mutated row after commit so open Reviewer and Provenance surfaces reload immediately.
+    const mutatedReviewIds = new Set(inputs.map((input) => input.reviewId))
+    const reviews = await reviewRepository.getReviewsForProjectSession(projectId, sessionId)
+    for (const review of reviews) {
+      if (mutatedReviewIds.has(review.id)) onReviewUpdate?.(review)
     }
+  }
+  const markOpenChecksUnaddressed = async (
+    trigger: 'loop_terminated' | 'correction_failed' | 'aborted',
+    note: string
+  ): Promise<void> => {
+    await commitDispositionBatch(
+      openChecks.map((openCheck) => ({
+        reviewId: openCheck.reviewId,
+        sourceFindingId: openCheck.id,
+        trigger,
+        outcome: 'unaddressed',
+        note,
+        assessedArtifactVersionId: openCheck.artifactVersionId
+      }))
+    )
   }
 
   for (let round = 0; round < maxRounds; round++) {
@@ -461,6 +501,7 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
     // Abort check: if the user cancelled during the loop, exit without further [Auditor] injections.
     if (abortSignal?.aborted) {
       log.info('fix loop: aborted by user', { sessionId, round, openCount: openChecks.length })
+      await markOpenChecksUnaddressed('aborted', 'The fix loop was aborted by the user.')
       return
     }
 
@@ -475,12 +516,12 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
         round,
         error: error instanceof Error ? error.message : String(error)
       })
-      await markOpenChecksUnaddressed()
+      await markOpenChecksUnaddressed('correction_failed', 'Could not load the durable session.')
       return
     }
     if (!sessionBefore) {
       log.warn('fix loop: durable session disappeared before correction', { sessionId, round })
-      await markOpenChecksUnaddressed()
+      await markOpenChecksUnaddressed('correction_failed', 'The durable session disappeared.')
       return
     }
     const messagesBefore = sessionBefore.messages
@@ -508,7 +549,7 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
         round,
         openCount: openChecks.length
       })
-      await markOpenChecksUnaddressed()
+      await markOpenChecksUnaddressed('correction_failed', 'The correction prompt failed.')
       return
     }
 
@@ -531,7 +572,10 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
         round,
         error: error instanceof Error ? error.message : String(error)
       })
-      await markOpenChecksUnaddressed()
+      await markOpenChecksUnaddressed(
+        'correction_failed',
+        'Could not reload the durable correction turn.'
+      )
       return
     }
     if (!correctionState) {
@@ -540,6 +584,7 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
           sessionId,
           round
         })
+        await markOpenChecksUnaddressed('aborted', 'The fix loop was aborted by the user.')
         return
       }
       log.warn('correction turn did not reach durable session storage; refusing stale re-review', {
@@ -547,7 +592,10 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
         round,
         timeoutMs: sessionRefreshTimeoutMs
       })
-      await markOpenChecksUnaddressed()
+      await markOpenChecksUnaddressed(
+        'correction_failed',
+        'The correction turn did not reach durable storage.'
+      )
       return
     }
 
@@ -564,8 +612,10 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
       projectId,
       getSession,
       reviewRepository,
+      runSessionMutation,
       acpRuntime,
       artifactStorageRoot,
+      artifactVersionContentResolver,
       model,
       onReviewUpdate,
       reviewerTimeoutMs,
@@ -587,7 +637,7 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
         round,
         openCount: openChecks.length
       })
-      await markOpenChecksUnaddressed()
+      await markOpenChecksUnaddressed('correction_failed', 'The scoped re-review failed.')
       return
     }
 
@@ -610,7 +660,6 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
         })
         stillOpenChecks.push(openCheck)
       } else if (disposition.status === 'warn' || disposition.status === 'fail') {
-        await reviewRepository.incrementReflagCount(openCheck.reviewId, openCheck.id)
         log.info('fix loop: finding re-flagged', {
           sessionId,
           round,
@@ -618,7 +667,6 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
         })
         stillOpenChecks.push(openCheck)
       } else {
-        await reviewRepository.updateFindingResolution(openCheck.reviewId, openCheck.id, 'resolved')
         log.info('fix loop: finding resolved', { sessionId, round, findingId: openCheck.id })
       }
     }
@@ -664,7 +712,10 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
       maxRounds,
       remaining: openChecks.length
     })
-    await markOpenChecksUnaddressed()
+    await markOpenChecksUnaddressed(
+      'loop_terminated',
+      `Fix loop reached its ${maxRounds}-round cap.`
+    )
   }
 }
 
@@ -678,8 +729,10 @@ const runScopedReview = async (options: {
   projectId: string
   getSession: SessionProvider
   reviewRepository: ReviewRepository
+  runSessionMutation?: ReviewMutationRunner
   acpRuntime: ReviewerAcpRuntime
   artifactStorageRoot: string
+  artifactVersionContentResolver?: ArtifactVersionContentResolver
   model: string
   onReviewUpdate?: (review: ReviewWithChecks) => void
   reviewerTimeoutMs: number
@@ -694,8 +747,10 @@ const runScopedReview = async (options: {
     projectId,
     getSession,
     reviewRepository,
+    runSessionMutation,
     acpRuntime,
     artifactStorageRoot,
+    artifactVersionContentResolver,
     model,
     onReviewUpdate,
     reviewerTimeoutMs,
@@ -710,15 +765,17 @@ const runScopedReview = async (options: {
 
   if (!session) {
     log.warn('session not found for scoped re-review', { sessionId })
-    const errorReview = await reviewRepository.createReview({
-      projectId,
-      sessionId,
-      turnMessageId: originalTurnMessageId,
-      scope: { turnMessageId: originalTurnMessageId, blocks: [], artifactVersionIds: [] },
-      lifecycle: 'error',
-      errorMessage: `Session ${sessionId} not found during re-review`,
-      model
-    })
+    const errorReview = await runReviewMutation(runSessionMutation, () =>
+      reviewRepository.createReview({
+        projectId,
+        sessionId,
+        turnMessageId: originalTurnMessageId,
+        scope: { turnMessageId: originalTurnMessageId, blocks: [], artifactVersionIds: [] },
+        lifecycle: 'error',
+        errorMessage: `Session ${sessionId} not found during re-review`,
+        model
+      })
+    )
     return { review: { ...errorReview, checks: [] }, submittedChecks: [] }
   }
 
@@ -731,14 +788,18 @@ const runScopedReview = async (options: {
 
   // Create a new Review row sharing the originalTurnMessageId (not the correction turn's id),
   // so all iterations are grouped under the same original turn.
-  let review = await reviewRepository.createReview({
-    projectId,
-    sessionId,
-    turnMessageId: originalTurnMessageId,
-    scope,
-    lifecycle: 'running',
-    model
-  })
+  const scopeSnapshot = buildReviewScopeSnapshot(session, scope)
+  let review = await runReviewMutation(runSessionMutation, () =>
+    reviewRepository.createReview({
+      projectId,
+      sessionId,
+      turnMessageId: originalTurnMessageId,
+      scope,
+      lifecycle: 'running',
+      model,
+      scopeSnapshot
+    })
+  )
 
   const initialWithChecks: ReviewWithChecks = { ...review, checks: [] }
   onReviewUpdate?.(initialWithChecks)
@@ -755,7 +816,13 @@ const runScopedReview = async (options: {
   const capturedLog: ReviewerLogEntry[] = []
 
   try {
-    const evidence = new ReviewerHostServer(session, scope, artifactStorageRoot)
+    const evidence = new ReviewerHostServer(
+      session,
+      scope,
+      artifactStorageRoot,
+      artifactVersionContentResolver,
+      scopeSnapshot
+    )
 
     mcpServer = new ReviewerMcpServer(
       scope,
@@ -795,11 +862,13 @@ const runScopedReview = async (options: {
     const errorMsg = error instanceof Error ? error.message : String(error)
     log.error('scoped re-review session failed', { reviewId: review.id, error: errorMsg })
 
-    review = await reviewRepository.updateReview(review.id, {
-      lifecycle: 'error',
-      errorMessage: errorMsg,
-      reviewerLog: capturedLog
-    })
+    review = await runReviewMutation(runSessionMutation, () =>
+      reviewRepository.updateReview(review.id, {
+        lifecycle: 'error',
+        errorMessage: errorMsg,
+        reviewerLog: capturedLog
+      })
+    )
     const errorWithChecks: ReviewWithChecks = { ...review, checks: [] }
     onReviewUpdate?.(errorWithChecks)
     return { review: errorWithChecks, submittedChecks: [] }
@@ -815,11 +884,13 @@ const runScopedReview = async (options: {
 
   if (reviewerBridgeScoped === false) {
     log.error('scoped re-review bridge isolation failed', { reviewId: review.id })
-    review = await reviewRepository.updateReview(review.id, {
-      lifecycle: 'error',
-      errorMessage: REVIEWER_BRIDGE_SCOPE_ERROR,
-      reviewerLog: capturedLog
-    })
+    review = await runReviewMutation(runSessionMutation, () =>
+      reviewRepository.updateReview(review.id, {
+        lifecycle: 'error',
+        errorMessage: REVIEWER_BRIDGE_SCOPE_ERROR,
+        reviewerLog: capturedLog
+      })
+    )
     const errorWithChecks: ReviewWithChecks = { ...review, checks: [] }
     onReviewUpdate?.(errorWithChecks)
     return { review: errorWithChecks, submittedChecks: [] }
@@ -828,58 +899,64 @@ const runScopedReview = async (options: {
   if (!checksSubmitted) {
     const errorMessage = incompleteReviewMessage(rejectedToolCalls)
     log.error('scoped re-review protocol incomplete', { reviewId: review.id, error: errorMessage })
-    review = await reviewRepository.updateReview(review.id, {
-      lifecycle: 'error',
-      errorMessage,
-      reviewerLog: capturedLog
-    })
+    review = await runReviewMutation(runSessionMutation, () =>
+      reviewRepository.updateReview(review.id, {
+        lifecycle: 'error',
+        errorMessage,
+        reviewerLog: capturedLog
+      })
+    )
     const errorWithChecks: ReviewWithChecks = { ...review, checks: [] }
     onReviewUpdate?.(errorWithChecks)
     return { review: errorWithChecks, submittedChecks: [] }
   }
 
-  // Persist checks and complete the review.
+  // Persist new Findings, tracked dispositions, and Review completion in one transaction.
+  let finalReview: ReviewWithChecks
   try {
-    await reviewRepository.addChecks(review.id, checksReceived)
-
     const hasWarnOrFailCheck = checksReceived.some(
       (c) => c.status === 'warn' || c.status === 'fail'
     )
     const outcome: ReviewOutcome = hasWarnOrFailCheck ? 'flagged' : 'pass'
-    review = await reviewRepository.updateReview(review.id, {
-      lifecycle: 'complete',
-      outcome,
-      reviewerLog: capturedLog
-    })
+    finalReview = await runReviewMutation(runSessionMutation, () =>
+      reviewRepository.commitScopedSubmission({
+        reviewId: review.id,
+        checks: checksReceived,
+        expectedSourceFindingIds: trackedChecks.map((check) => check.id),
+        outcome,
+        reviewerLog: capturedLog
+      })
+    )
+    review = finalReview
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error)
     log.error('scoped re-review persistence failed', { reviewId: review.id, error: errorMsg })
-    review = await reviewRepository.updateReview(review.id, {
-      lifecycle: 'error',
-      errorMessage: errorMsg,
-      reviewerLog: capturedLog
-    })
+    review = await runReviewMutation(runSessionMutation, () =>
+      reviewRepository.updateReview(review.id, {
+        lifecycle: 'error',
+        errorMessage: errorMsg,
+        reviewerLog: capturedLog
+      })
+    )
     const errorWithChecks: ReviewWithChecks = { ...review, checks: [] }
     onReviewUpdate?.(errorWithChecks)
     return { review: errorWithChecks, submittedChecks: [] }
   }
 
-  // Load the final review with checks.
-  const allReviews = await reviewRepository.getReviewsForSession(sessionId)
-  const finalReview = allReviews.find((r) => r.id === review.id) ?? {
-    ...review,
-    checks: checksReceived.map((c, i): ReviewCheck => ({
-      id: `check-${i}`,
-      reviewId: review.id,
-      status: c.status,
-      resolution: 'open',
-      claim: c.claim,
-      evidence: c.evidence,
-      locator: c.locator,
-      artifactVersionId: c.artifactVersionId,
-      sortIndex: c.sortIndex ?? i,
-      reflagCount: 0
-    }))
+  // Tracked dispositions mutate their source Review cards. Push those rows only after the atomic
+  // scoped submission commits, then push the completed assessment Review.
+  const trackedById = new Map(trackedChecks.map((check) => [check.id, check]))
+  const mutatedSourceReviewIds = new Set(
+    checksReceived.flatMap((check) => {
+      const source = check.sourceFindingId ? trackedById.get(check.sourceFindingId) : undefined
+      return source ? [source.reviewId] : []
+    })
+  )
+  if (mutatedSourceReviewIds.size > 0) {
+    const allReviews = await reviewRepository.getReviewsForProjectSession(projectId, sessionId)
+    for (const sourceReview of allReviews) {
+      if (mutatedSourceReviewIds.has(sourceReview.id)) onReviewUpdate?.(sourceReview)
+    }
   }
 
   onReviewUpdate?.(finalReview)
@@ -900,8 +977,10 @@ const runReviewWithSession = async (
     projectId,
     getSession,
     reviewRepository,
+    runSessionMutation,
     acpRuntime,
     artifactStorageRoot,
+    artifactVersionContentResolver,
     model = '',
     onReviewUpdate,
     onStarted,
@@ -925,14 +1004,18 @@ const runReviewWithSession = async (
   )
 
   // Step 2: create the Review row (lifecycle='running') immediately so the renderer shows a spinner.
-  let review = await reviewRepository.createReview({
-    projectId,
-    sessionId,
-    turnMessageId,
-    scope,
-    lifecycle: 'running',
-    model
-  })
+  const scopeSnapshot = buildReviewScopeSnapshot(session, scope)
+  let review = await runReviewMutation(runSessionMutation, () =>
+    reviewRepository.createReview({
+      projectId,
+      sessionId,
+      turnMessageId,
+      scope,
+      lifecycle: 'running',
+      model,
+      scopeSnapshot
+    })
+  )
 
   const initialWithFindings: ReviewWithChecks = { ...review, checks: [] }
   onReviewUpdate?.(initialWithFindings)
@@ -955,7 +1038,13 @@ const runReviewWithSession = async (
   try {
     // Evidence reads and submission share one authenticated MCP server. The evidence object enforces
     // turn/artifact scope server-side; no host token or Bash bootstrap is exposed to the model.
-    const evidence = new ReviewerHostServer(session, scope, artifactStorageRoot)
+    const evidence = new ReviewerHostServer(
+      session,
+      scope,
+      artifactStorageRoot,
+      artifactVersionContentResolver,
+      scopeSnapshot
+    )
 
     mcpServer = new ReviewerMcpServer(
       scope,
@@ -1008,11 +1097,13 @@ const runReviewWithSession = async (
     const errorMsg = error instanceof Error ? error.message : String(error)
     log.error('reviewer session failed', { reviewId: review.id, error: errorMsg })
 
-    review = await reviewRepository.updateReview(review.id, {
-      lifecycle: 'error',
-      errorMessage: errorMsg,
-      reviewerLog: capturedLog
-    })
+    review = await runReviewMutation(runSessionMutation, () =>
+      reviewRepository.updateReview(review.id, {
+        lifecycle: 'error',
+        errorMessage: errorMsg,
+        reviewerLog: capturedLog
+      })
+    )
     const errorWithFindings: ReviewWithChecks = { ...review, checks: [] }
     onReviewUpdate?.(errorWithFindings)
 
@@ -1031,11 +1122,13 @@ const runReviewWithSession = async (
 
   if (reviewerBridgeScoped === false) {
     log.error('reviewer bridge isolation failed', { reviewId: review.id })
-    review = await reviewRepository.updateReview(review.id, {
-      lifecycle: 'error',
-      errorMessage: REVIEWER_BRIDGE_SCOPE_ERROR,
-      reviewerLog: capturedLog
-    })
+    review = await runReviewMutation(runSessionMutation, () =>
+      reviewRepository.updateReview(review.id, {
+        lifecycle: 'error',
+        errorMessage: REVIEWER_BRIDGE_SCOPE_ERROR,
+        reviewerLog: capturedLog
+      })
+    )
     const errorWithFindings: ReviewWithChecks = { ...review, checks: [] }
     onReviewUpdate?.(errorWithFindings)
     return errorWithFindings
@@ -1044,11 +1137,13 @@ const runReviewWithSession = async (
   if (!checksSubmitted) {
     const errorMessage = incompleteReviewMessage(rejectedToolCalls)
     log.error('review protocol incomplete', { reviewId: review.id, error: errorMessage })
-    review = await reviewRepository.updateReview(review.id, {
-      lifecycle: 'error',
-      errorMessage,
-      reviewerLog: capturedLog
-    })
+    review = await runReviewMutation(runSessionMutation, () =>
+      reviewRepository.updateReview(review.id, {
+        lifecycle: 'error',
+        errorMessage,
+        reviewerLog: capturedLog
+      })
+    )
     const errorWithFindings: ReviewWithChecks = { ...review, checks: [] }
     onReviewUpdate?.(errorWithFindings)
     return errorWithFindings
@@ -1056,18 +1151,22 @@ const runReviewWithSession = async (
 
   // Step 4: persist checks and set lifecycle='complete'.
   // outcome = flagged iff at least one check is warn or fail; otherwise pass.
+  let finalReview: ReviewWithChecks
   try {
-    await reviewRepository.addChecks(review.id, checksReceived)
-
     const hasWarnOrFailCheck = checksReceived.some(
       (c) => c.status === 'warn' || c.status === 'fail'
     )
     const outcome: ReviewOutcome = hasWarnOrFailCheck ? 'flagged' : 'pass'
-    review = await reviewRepository.updateReview(review.id, {
-      lifecycle: 'complete',
-      outcome,
-      reviewerLog: capturedLog
-    })
+    finalReview = await runReviewMutation(runSessionMutation, () =>
+      reviewRepository.commitScopedSubmission({
+        reviewId: review.id,
+        checks: checksReceived,
+        expectedSourceFindingIds: [],
+        outcome,
+        reviewerLog: capturedLog
+      })
+    )
+    review = finalReview
 
     log.info('review complete', {
       reviewId: review.id,
@@ -1078,31 +1177,15 @@ const runReviewWithSession = async (
     const errorMsg = error instanceof Error ? error.message : String(error)
     log.error('review persistence failed', { reviewId: review.id, error: errorMsg })
 
-    review = await reviewRepository.updateReview(review.id, {
-      lifecycle: 'error',
-      errorMessage: errorMsg
-    })
+    review = await runReviewMutation(runSessionMutation, () =>
+      reviewRepository.updateReview(review.id, {
+        lifecycle: 'error',
+        errorMessage: errorMsg
+      })
+    )
     const errorWithFindings: ReviewWithChecks = { ...review, checks: [] }
     onReviewUpdate?.(errorWithFindings)
     return errorWithFindings
-  }
-
-  // Load the final review + checks to return.
-  const allReviews = await reviewRepository.getReviewsForSession(sessionId)
-  const finalReview = allReviews.find((r) => r.id === review.id) ?? {
-    ...review,
-    checks: checksReceived.map((c, i): ReviewCheck => ({
-      id: `check-${i}`,
-      reviewId: review.id,
-      status: c.status,
-      resolution: 'open',
-      claim: c.claim,
-      evidence: c.evidence,
-      locator: c.locator,
-      artifactVersionId: c.artifactVersionId,
-      sortIndex: c.sortIndex ?? i,
-      reflagCount: 0
-    }))
   }
 
   // Step 5: Phase 3 fix loop. If there are warn/fail checks and a main session is provided,
@@ -1120,8 +1203,10 @@ const runReviewWithSession = async (
         mainSessionId,
         getSession,
         reviewRepository,
+        runSessionMutation,
         acpRuntime,
         artifactStorageRoot,
+        artifactVersionContentResolver,
         model,
         onReviewUpdate,
         onCorrectionPrompt,
@@ -1137,7 +1222,7 @@ const runReviewWithSession = async (
     }
 
     // Reload checks after the fix loop so the returned object reflects final resolutions.
-    const reloadedReviews = await reviewRepository.getReviewsForSession(sessionId)
+    const reloadedReviews = await reviewRepository.getReviewsForProjectSession(projectId, sessionId)
     const reloadedReview = reloadedReviews.find((r) => r.id === review.id)
     if (reloadedReview) {
       onReviewUpdate?.(reloadedReview)
@@ -1156,6 +1241,7 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
     projectId,
     getSession,
     reviewRepository,
+    runSessionMutation,
     acpRuntime,
     onReviewUpdate,
     mainSessionId,
@@ -1167,15 +1253,17 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
   const session = await getSession(sessionId)
   if (!session) {
     log.warn('session not found for review', { sessionId })
-    const errorReview = await reviewRepository.createReview({
-      projectId,
-      sessionId,
-      turnMessageId,
-      scope: { turnMessageId, blocks: [], artifactVersionIds: [] },
-      lifecycle: 'error',
-      errorMessage: `Session ${sessionId} not found`,
-      model
-    })
+    const errorReview = await runReviewMutation(runSessionMutation, () =>
+      reviewRepository.createReview({
+        projectId,
+        sessionId,
+        turnMessageId,
+        scope: { turnMessageId, blocks: [], artifactVersionIds: [] },
+        lifecycle: 'error',
+        errorMessage: `Session ${sessionId} not found`,
+        model
+      })
+    )
     const withFindings: ReviewWithChecks = { ...errorReview, checks: [] }
     onReviewUpdate?.(withFindings)
     return withFindings
@@ -1253,6 +1341,6 @@ export const buildReviewerPrompt = (
     'They expose only this audited scope. Do not use Bash, filesystem, network, or other tools.',
     '',
     'After reading the turn data, apply the rubric, then call submit_findings once with your findings.',
-    'Call submit_findings with an empty array if you find no issues.'
+    'Call submit_findings with at least one explicit pass check if you find no issues; an empty array is invalid.'
   ].join('\n')
 }

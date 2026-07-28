@@ -23,6 +23,7 @@ import { ReviewRepository } from './repository'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import { runReview } from './orchestrator'
 import { ReviewerHostServer } from './host-sdk'
+import { callSubmitFindingsAfterReadingEvidence as callSubmitFindings } from './reviewer-mcp-test-client'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 
 // Re-use the same FakeAgentProcess pattern from runtime.test.ts.
@@ -166,7 +167,17 @@ const startFakeReviewerAgent = (
             reviewerMcp.headers
               ?.find((h: { name: string; value: string }) => h.name === 'authorization')
               ?.value?.replace('Bearer ', '') ?? ''
-          await callSubmitFindings(reviewerMcp.url, token, options.checksToSubmit ?? [])
+          await callSubmitFindings(
+            reviewerMcp.url,
+            token,
+            options.checksToSubmit ?? [
+              {
+                status: 'pass',
+                claim: 'The audited turn is supported',
+                evidence: 'The frozen turn was read and no contradiction was found.'
+              }
+            ]
+          )
         }
       }
 
@@ -194,112 +205,6 @@ const startFakeReviewerAgent = (
     )
 
   return { newSessions, prompts, closedSessions }
-}
-
-// Calls the submit_findings tool via the reviewer HTTP MCP server.
-// This simulates what the reviewer agent would do after reading the turn.
-//
-// The MCP Streamable HTTP transport requires clients to advertise that they accept both
-// application/json and text/event-stream; responses come back as SSE, so we parse the
-// `data:` line out of the event stream.
-const MCP_ACCEPT = 'application/json, text/event-stream'
-
-const parseMcpSseBody = (body: string): { result?: unknown; error?: { message?: string } } => {
-  // An SSE payload is `event: message\ndata: {json}\n\n`. Fall back to raw JSON.
-  const dataLine = body.split('\n').find((line) => line.startsWith('data:'))
-  const json = dataLine ? dataLine.slice('data:'.length).trim() : body.trim()
-  return json ? (JSON.parse(json) as { result?: unknown; error?: { message?: string } }) : {}
-}
-
-const callSubmitFindings = async (
-  mcpBaseUrl: string,
-  token: string,
-  // v3: checks[] only — reasoning removed from submit_findings (captured from stream instead)
-  checks: Array<{
-    status: 'pass' | 'warn' | 'fail'
-    claim: string
-    evidence: string
-    locator?: {
-      blockRef: { messageId?: string; activityId?: string; blockIndex: number }
-      contentHash: string
-    }
-  }>
-): Promise<void> => {
-  // MCP initialize handshake.
-  const initResponse = await fetch(mcpBaseUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: MCP_ACCEPT,
-      authorization: `Bearer ${token}`
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: { name: 'test-client', version: '1.0' }
-      }
-    })
-  })
-
-  if (!initResponse.ok) {
-    throw new Error(`MCP initialize failed: ${initResponse.status}`)
-  }
-
-  const initJson = parseMcpSseBody(await initResponse.text())
-  const sessionId = initResponse.headers.get('mcp-session-id')
-
-  if (!sessionId || !initJson.result) {
-    throw new Error('MCP initialize did not return a session id')
-  }
-
-  // Send initialized notification.
-  await fetch(mcpBaseUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: MCP_ACCEPT,
-      authorization: `Bearer ${token}`,
-      'mcp-session-id': sessionId
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      method: 'notifications/initialized',
-      params: {}
-    })
-  })
-
-  // Call submit_findings.
-  const toolResponse = await fetch(mcpBaseUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: MCP_ACCEPT,
-      authorization: `Bearer ${token}`,
-      'mcp-session-id': sessionId
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 2,
-      method: 'tools/call',
-      params: {
-        name: 'submit_findings',
-        arguments: { checks }
-      }
-    })
-  })
-
-  if (!toolResponse.ok) {
-    throw new Error(`submit_findings call failed: ${toolResponse.status}`)
-  }
-
-  const toolJson = parseMcpSseBody(await toolResponse.text())
-  if (toolJson.error) {
-    throw new Error(`submit_findings returned an error: ${toolJson.error.message ?? 'unknown'}`)
-  }
 }
 
 let temporaryRoot: string | undefined
@@ -574,6 +479,7 @@ describe('reviewer orchestrator', () => {
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const updateEvents: string[] = []
+    let mutationCount = 0
 
     const review = await runReview({
       sessionId: 'missing-session',
@@ -581,6 +487,10 @@ describe('reviewer orchestrator', () => {
       projectId: 'project-1',
       getSession: () => undefined, // session not found
       reviewRepository: repository,
+      runSessionMutation: async (mutation) => {
+        mutationCount += 1
+        return mutation()
+      },
       acpRuntime: runtime,
       artifactStorageRoot: temporaryRoot!,
       onReviewUpdate: (r) => updateEvents.push(r.lifecycle)
@@ -588,6 +498,7 @@ describe('reviewer orchestrator', () => {
 
     expect(review.lifecycle).toBe('error')
     expect(review.errorMessage).toContain('missing-session')
+    expect(mutationCount).toBe(1)
     // ACP session was never spawned.
 
     await client.$disconnect()
@@ -878,8 +789,7 @@ describe('reviewer recomputation + scope isolation', () => {
         locator: {
           blockRef: { messageId: 'msg-2', blockIndex: 1 },
           contentHash: 'abc123'
-        },
-        artifactVersionId: 'csv-1'
+        }
       }
     ]
 
@@ -916,7 +826,7 @@ describe('reviewer recomputation + scope isolation', () => {
     const check = review.checks[0]!
     expect(check.evidence).toContain('Agent stated 42')
     expect(check.evidence).toContain('rowCount=33')
-    expect(check.artifactVersionId).toBe('csv-1')
+    expect(check.artifactVersionId).toBeUndefined()
 
     // No notebook run files should have been created in the storage root by the reviewer.
     // The main notebook runtime was never touched by the reviewer session.

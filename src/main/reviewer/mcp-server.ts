@@ -5,7 +5,7 @@
 //
 // v2 (issue 12): submit_findings now accepts a single `checks[]` array with status pass|warn|fail.
 // The old `findings[]` + `summary` + `checks[]` split is gone. `summary` is rejected.
-// A pass check without a locator is accepted; a warn/fail check should have a locator.
+// A pass check without a locator is accepted; a warn/fail check requires a locator.
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
@@ -44,16 +44,7 @@ const checkLocatorSchema = z.object({
   contentHash: z.string().describe('The contentHash of the block this check points at')
 })
 
-// Zod schema for one unified check submitted by the reviewer.
-// status: pass = verified and ok; warn = minor issue; fail = serious issue.
-// locator is optional — pass checks may omit it; warn/fail checks should include it.
-const checkSchema = z.object({
-  status: z
-    .enum(['pass', 'warn', 'fail'])
-    .describe(
-      'pass = verified and ok; warn = minor issue that does not invalidate the result; ' +
-        'fail = serious issue that requires correction. No inconclusive — use warn when uncertain.'
-    ),
+const checkFields = {
   claim: z.string().min(1).describe('The specific claim or thing being checked'),
   evidence: z
     .string()
@@ -71,16 +62,30 @@ const checkSchema = z.object({
       'Stable id of an original finding being re-evaluated. Required for every tracked finding ' +
         'during a fix-loop re-review; never invent or rewrite this id.'
     ),
-  locator: checkLocatorSchema
-    .optional()
-    .describe(
-      'Block-level locator for the claim being checked. Required for warn/fail; optional for pass.'
-    ),
   artifactVersionId: z
     .string()
     .optional()
     .describe('If this check relates to an artifact, its version id')
-})
+}
+
+// The status controls the locator contract at the schema seam: pass may summarize a verified area,
+// while warn/fail must identify the exact frozen block whose claim is being challenged.
+const checkSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('pass').describe('Verified and supported by the audited evidence.'),
+    ...checkFields,
+    locator: checkLocatorSchema
+      .optional()
+      .describe('Optional block-level locator for a passing verification.')
+  }),
+  z.object({
+    status: z.enum(['warn', 'fail']).describe('A warning or failure that requires exact location.'),
+    ...checkFields,
+    locator: checkLocatorSchema.describe(
+      'Required block-level locator for the claim being warned or failed.'
+    )
+  })
+])
 
 // The top-level submit_findings input schema.
 // v2: a single `checks[]` replaces the old findings[]+summary+checks[] split.
@@ -90,23 +95,65 @@ export const submitFindingsInputSchema = z
   .object({
     checks: z
       .array(checkSchema)
+      .min(1, 'Submit at least one explicit pass, warn, or fail check.')
       .describe(
-        'All checks you ran, each with status pass|warn|fail, claim, evidence, and optional locator. ' +
-          'Pass an empty array if you ran no checks (treat as pass).'
+        'All checks you ran, each with status pass|warn|fail, claim, and evidence. ' +
+          'A locator is required for warn/fail and optional for pass. ' +
+          'A completed review requires at least one explicit check; an empty array is never a pass.'
       )
   })
   .strict() // Reject unknown fields including the old `summary`, old `findings`, and old `reasoning`
 
 export type SubmitFindingsInput = z.infer<typeof submitFindingsInputSchema>
 
+export type ReviewerEvidenceAccessLedger = {
+  turnRead: boolean
+  allExecutionLogsRead: boolean
+  executionLogActivityIds: ReadonlySet<string>
+  artifactVersionIds: ReadonlySet<string>
+}
+
+export const validateReviewerEvidenceAccess = (
+  checks: SubmitFindingsInput['checks'],
+  scope: TurnScope,
+  access: ReviewerEvidenceAccessLedger
+): void => {
+  if (!access.turnRead) {
+    throw new Error('Reviewer must read the frozen turn before submitting checks.')
+  }
+
+  for (const check of checks) {
+    if (check.locator) {
+      const block = assertBlockInScope(
+        scope.blocks.find((entry) => entry.blockIndex === check.locator?.blockRef.blockIndex),
+        String(check.locator.blockRef.blockIndex)
+      )
+      if (
+        block.kind === 'activity' &&
+        !access.allExecutionLogsRead &&
+        !access.executionLogActivityIds.has(block.sourceId)
+      ) {
+        throw new Error(
+          `Execution log for activity ${block.sourceId} was not read before submitting its check.`
+        )
+      }
+    }
+    if (check.artifactVersionId && !access.artifactVersionIds.has(check.artifactVersionId)) {
+      throw new Error(
+        `Artifact Version ${check.artifactVersionId} was not read before submitting its check.`
+      )
+    }
+  }
+}
+
 // The reviewer-supplied report (v3: no reasoning — captured from action stream instead).
 export type SubmitFindingsReport = Record<string, never>
 
 // Maps model-submitted checks onto the turn scope, enforcing the single-sourcing contract
 // (design.md:114): for checks that carry a locator, the model supplies only blockIndex as the
-// pointer; the block is resolved from scope.blocks, out-of-scope indices are rejected, and the
-// locator's blockRef id (messageId / activityId) AND contentHash are both back-filled from the scope
-// block — never trusted from model input. Pass checks without a locator are accepted as-is.
+// pointer; the block is resolved from scope.blocks, out-of-scope indices are rejected, its identity
+// is reconstructed from the frozen scope, and the supplied contentHash must match that frozen block.
+// Pass checks without a locator are accepted as-is.
 export const mapChecksToScope = (
   checks: SubmitFindingsInput['checks'],
   scope: TurnScope
@@ -130,6 +177,11 @@ export const mapChecksToScope = (
       scope.blocks.find((b) => b.blockIndex === blockIndex),
       String(blockIndex)
     )
+    if (c.locator.contentHash !== block.contentHash) {
+      throw new Error(
+        `Locator content hash does not match frozen block ${blockIndex}: ${c.locator.contentHash}`
+      )
+    }
 
     // Reconstruct the blockRef id from the block itself so a hallucinated/stale id can't be stored.
     const blockRef =
@@ -168,6 +220,12 @@ export class ReviewerMcpServer {
   private _endpoint: string | undefined
   private readonly transports = new Map<string, StreamableHTTPServerTransport>()
   private readonly trackedFindingIds: ReadonlySet<string>
+  private readonly evidenceAccess = {
+    turnRead: false,
+    allExecutionLogsRead: false,
+    executionLogActivityIds: new Set<string>(),
+    artifactVersionIds: new Set<string>()
+  }
   private findingsSubmissionState: 'idle' | 'submitting' | 'submitted' = 'idle'
 
   constructor(
@@ -240,9 +298,11 @@ export class ReviewerMcpServer {
             'enforces the turn scope; no other conversation data is available.',
           inputSchema: {}
         },
-        async () => ({
-          content: [{ type: 'text', text: JSON.stringify(evidence.readTurn()) }]
-        })
+        async () => {
+          const turn = evidence.readTurn()
+          this.evidenceAccess.turnRead = true
+          return { content: [{ type: 'text', text: JSON.stringify(turn) }] }
+        }
       )
 
       server.registerTool(
@@ -258,11 +318,14 @@ export class ReviewerMcpServer {
         },
         async ({ activityId }) => {
           try {
+            const executionLog = evidence.queryExecutionLog(activityId)
+            if (activityId) this.evidenceAccess.executionLogActivityIds.add(activityId)
+            else this.evidenceAccess.allExecutionLogsRead = true
             return {
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify(evidence.queryExecutionLog(activityId))
+                  text: JSON.stringify(executionLog)
                 }
               ]
             }
@@ -283,8 +346,10 @@ export class ReviewerMcpServer {
         },
         async ({ id }) => {
           try {
+            const artifact = await evidence.readArtifact(id)
+            this.evidenceAccess.artifactVersionIds.add(id)
             return {
-              content: [{ type: 'text', text: JSON.stringify(await evidence.readArtifact(id)) }]
+              content: [{ type: 'text', text: JSON.stringify(artifact) }]
             }
           } catch (error) {
             return this.toolError(error)
@@ -299,12 +364,15 @@ export class ReviewerMcpServer {
         title: 'Submit review checks',
         description:
           'Submit your structured review checks. Call this exactly once, then stop. ' +
-          'Pass an empty checks array if you ran no checks. ' +
-          'Each check has status (pass/warn/fail), claim, evidence, and optional locator. ' +
+          'Submit at least one explicit check; an empty checks array is invalid. ' +
+          'Each check has status (pass/warn/fail), claim, and evidence; locator is required for ' +
+          'warn/fail and optional for pass. ' +
           'Do NOT include a reasoning or summary field — they are no longer accepted.',
         inputSchema: submitFindingsInputSchema.shape
       },
       async (input) => {
+        // Keep the idle check and the transition to `submitting` free of awaits. JavaScript's
+        // run-to-completion semantics then make this a single-writer gate for concurrent tool calls.
         if (this.findingsSubmissionState !== 'idle') {
           return {
             content: [
@@ -329,7 +397,18 @@ export class ReviewerMcpServer {
 
         log.info('submit_findings received', { count: parsed.checks.length })
 
-        const trackingError = this.validateTrackedDispositions(parsed.checks)
+        // sourceFindingId is a correction-loop protocol field. Some reviewers still invent one on
+        // an initial review; discard it there so a valid assessment is not lost to a non-semantic
+        // tracking mistake. Re-reviews remain strict because their tracked ids are authoritative.
+        const trackedChecks =
+          this.trackedFindingIds.size === 0
+            ? parsed.checks.map((check) => {
+                const sanitized = { ...check }
+                delete sanitized.sourceFindingId
+                return sanitized
+              })
+            : parsed.checks
+        const trackingError = this.validateTrackedDispositions(trackedChecks)
         if (trackingError) {
           log.warn('submit_findings tracking validation failed', { error: trackingError })
           return {
@@ -338,11 +417,22 @@ export class ReviewerMcpServer {
           }
         }
 
-        // Back-fill each locator's contentHash from its scope block and reject out-of-scope
-        // locators (design.md:114 single-sourcing contract). A bad locator is a validation error.
+        try {
+          validateReviewerEvidenceAccess(trackedChecks, this.scope, this.evidenceAccess)
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          log.warn('submit_findings evidence access validation failed', { error: message })
+          return {
+            content: [{ type: 'text', text: `Validation error: ${message}` }],
+            isError: true
+          }
+        }
+
+        // Reconstruct each locator identity from its scope block, verify the supplied frozen hash,
+        // and reject out-of-scope locators. A bad locator is a validation error.
         let newChecks: NewCheck[]
         try {
-          newChecks = mapChecksToScope(parsed.checks, this.scope)
+          newChecks = mapChecksToScope(trackedChecks, this.scope)
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
           log.warn('submit_findings locator out of scope', { error: message })

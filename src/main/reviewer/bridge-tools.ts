@@ -40,7 +40,7 @@ export const REVIEWER_BRIDGE_NAMESPACED_TOOLS: ResponsesBridgeNamespacedTool[] =
     namespace: REVIEWER_BRIDGE_TOOL_NAMESPACE,
     name: REVIEWER_MCP_TOOLS.submitFindings,
     description:
-      'Submit structured review checks exactly once, then stop. Pass an empty checks array if no issues were found.',
+      'Submit at least one structured pass, warn, or fail check exactly once, then stop. An empty checks array is invalid.',
     parameters: z.toJSONSchema(submitFindingsInputSchema, {
       target: 'draft-7'
     }) as ResponsesBridgeNamespacedTool['parameters']

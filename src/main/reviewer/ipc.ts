@@ -8,7 +8,9 @@ import type {
   ReviewWithChecks,
   ReviewRunRequest,
   ReviewRunResult,
-  ReviewUpdateEvent
+  ReviewUpdateEvent,
+  ReviewSessionRequest,
+  ReviewSuppressionEvent
 } from '../../shared/reviewer'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { REVIEWER_IPC } from '../../shared/reviewer'
@@ -21,6 +23,8 @@ import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { SessionRepository } from '../session-persistence/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import { acquireDataRootWriter } from '../storage/migration-state'
 
 const log = createLogger('reviewer:ipc')
 
@@ -34,28 +38,38 @@ const broadcastReviewUpdate = (event: ReviewUpdateEvent): void => {
 // turn's stop does not spawn a second review run (Phase 1 single-round invariant). When clear=true
 // it instead cancels a pending suppression — used when the correction turn failed to send, so the
 // one-shot flag doesn't leak into the session's next real turn.
-const broadcastSuppressNextAutoReview = (sessionId: string, clear = false): void => {
-  broadcastToRenderers(REVIEWER_IPC.SUPPRESS_NEXT_AUTO_REVIEW, { sessionId, clear })
+const broadcastSuppressNextAutoReview = (
+  projectId: string,
+  appSessionId: string,
+  clear = false
+): void => {
+  const event: ReviewSuppressionEvent = { projectId, appSessionId, clear }
+  broadcastToRenderers(REVIEWER_IPC.SUPPRESS_NEXT_AUTO_REVIEW, event)
 }
 
 // Broadcasts a fix-loop-start event: the renderer reacts by setting fixLoopActive=true on the
 // session and disabling the composer send button for the duration of the loop.
-const broadcastFixLoopStart = (sessionId: string): void => {
-  broadcastToRenderers(REVIEWER_IPC.FIX_LOOP_START, { sessionId })
+const broadcastFixLoopStart = (projectId: string, appSessionId: string): void => {
+  const event: ReviewSessionRequest = { projectId, appSessionId }
+  broadcastToRenderers(REVIEWER_IPC.FIX_LOOP_START, event)
 }
 
 // Broadcasts a fix-loop-end event: the renderer reacts by clearing fixLoopActive on the session
 // and re-enabling the composer send button.
-const broadcastFixLoopEnd = (sessionId: string): void => {
-  broadcastToRenderers(REVIEWER_IPC.FIX_LOOP_END, { sessionId })
+const broadcastFixLoopEnd = (projectId: string, appSessionId: string): void => {
+  const event: ReviewSessionRequest = { projectId, appSessionId }
+  broadcastToRenderers(REVIEWER_IPC.FIX_LOOP_END, event)
 }
 
 // Creates the shared ReviewRepository backed by the production SQLite client. The injected
 // storageRoot (when provided) MUST be respected — registerReviewerIpcHandlers threads its
 // options.storageRoot through here so reviewers can be wired against a non-default config root
 // (e.g. a relocated user data dir).
-const createDefaultReviewRepository = (storageRoot: string): ReviewRepository => {
-  return new ReviewRepository(() => getProjectDbClient(storageRoot))
+const createDefaultReviewRepository = (
+  storageRoot: string,
+  snapshotStorageRoot?: string
+): ReviewRepository => {
+  return new ReviewRepository(() => getProjectDbClient(storageRoot), { snapshotStorageRoot })
 }
 
 type ReviewerIpcOptions = {
@@ -65,6 +79,12 @@ type ReviewerIpcOptions = {
   storageRoot?: string
   // Optional override for the data root (artifacts) (for testing).
   dataRoot?: string
+  artifactProvenanceRepository?: Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>
+  withSessionMutation?: <Result>(
+    projectId: string,
+    sessionId: string,
+    mutation: () => Promise<Result>
+  ) => Promise<Result>
 }
 
 // Registers the reviewer IPC handlers on the Electron main process. Returns a function that can
@@ -76,16 +96,23 @@ const registerReviewerIpcHandlers = (
 } => {
   const storageRoot = options.storageRoot ?? resolveStorageRoot()
   const dataRoot = options.dataRoot ?? resolveDataRoot()
-  const reviewRepository = createDefaultReviewRepository(storageRoot)
+  const reviewRepository = createDefaultReviewRepository(storageRoot, dataRoot)
   const sessionRepository = new SessionRepository(storageRoot)
-
+  const artifactProvenanceRepository =
+    options.artifactProvenanceRepository ??
+    new ArtifactProvenanceRepository({
+      storageRoot: dataRoot,
+      getClient: () => getProjectDbClient(storageRoot),
+      loadSession: (projectId, appSessionId) =>
+        sessionRepository.loadSession(projectId, appSessionId)
+    })
   // Per-session AbortControllers for active fix loops. Keyed by the main session id (not the
   // reviewer session id). Entries are created when a fix loop starts and deleted when it ends.
   const fixLoopAbortControllers = new Map<string, AbortController>()
 
   // Guards against concurrent reviews of the same turn — e.g. a double-clicked "Re-run review" or two
-  // stale cards fired at once. Keyed by `${sessionId}:${turnMessageId}` (the grouping turn), cleared
-  // when the run settles. The renderer also disables its button, but this is the authoritative guard.
+  // stale cards fired at once. Project is part of the key because Session ids are not globally owned.
+  // The renderer also disables its button, but this is the authoritative guard.
   const inFlightReviewKeys = new Set<string>()
 
   // reviewer:run — trigger a review for a completed turn. Fire-and-forget: the renderer does
@@ -95,12 +122,14 @@ const registerReviewerIpcHandlers = (
   // reviewer:get-for-session — load persisted reviews for a session at startup, flagging any whose
   // audited turn has since changed (e.g. an artifact was edited after the review completed) so the UI
   // does not present a stale verdict as current.
-  ipcMain.handle(REVIEWER_IPC.GET_FOR_SESSION, async (_event, sessionId: string) => {
-    const reviews = await reviewRepository.getReviewsForSession(sessionId)
+  ipcMain.handle(REVIEWER_IPC.GET_FOR_SESSION, async (_event, request: ReviewSessionRequest) => {
+    const reviews = await reviewRepository.getReviewsForProjectSession(
+      request.projectId,
+      request.appSessionId
+    )
     let session: PersistedChatSession | undefined
     try {
-      const { sessions } = await sessionRepository.loadAll()
-      session = sessions.find((candidate) => candidate.id === sessionId)
+      session = await sessionRepository.loadSession(request.projectId, request.appSessionId)
     } catch {
       return reviews
     }
@@ -109,13 +138,14 @@ const registerReviewerIpcHandlers = (
 
   // reviewer:abort-fix-loop — renderer requests that the active fix loop for a session be aborted.
   // This is triggered when the user presses the cancel button during a fix loop.
-  ipcMain.handle(REVIEWER_IPC.ABORT_FIX_LOOP, (_event, sessionId: string) => {
-    const controller = fixLoopAbortControllers.get(sessionId)
+  ipcMain.handle(REVIEWER_IPC.ABORT_FIX_LOOP, (_event, request: ReviewSessionRequest) => {
+    const key = `${request.projectId}\0${request.appSessionId}`
+    const controller = fixLoopAbortControllers.get(key)
     if (controller) {
-      log.info('fix loop abort requested', { sessionId })
+      log.info('fix loop abort requested', request)
       controller.abort()
     } else {
-      log.warn('abort-fix-loop: no active fix loop found for session', { sessionId })
+      log.warn('abort-fix-loop: no active fix loop found for session', request)
     }
   })
 
@@ -130,7 +160,7 @@ const registerReviewerIpcHandlers = (
     // Reserve the turn SYNCHRONOUSLY (before any await) so a double-click / multiple stale cards can't
     // both pass the guard before the key is set. Released on the start-failure paths and, on success,
     // in the background run's finally.
-    const inFlightKey = `${sessionId}:${turnMessageId}`
+    const inFlightKey = `${projectId}\0${sessionId}\0${turnMessageId}`
     if (inFlightReviewKeys.has(inFlightKey)) {
       log.info('review skipped: already in flight for this turn', { sessionId, turnMessageId })
       // The turn IS being handled by the in-flight run — this is NOT a retry candidate. Retrying
@@ -148,7 +178,7 @@ const registerReviewerIpcHandlers = (
     // stale/error Re-run) set origin='manual' and skip this so the user can force a fresh review.
     if (request.origin === 'auto') {
       try {
-        const existing = await reviewRepository.getReviewsForSession(sessionId)
+        const existing = await reviewRepository.getReviewsForProjectSession(projectId, sessionId)
         if (existing.some((review) => review.turnMessageId === turnMessageId)) {
           inFlightReviewKeys.delete(inFlightKey)
           log.info('auto review skipped: turn already has a review', { sessionId, turnMessageId })
@@ -208,6 +238,17 @@ const registerReviewerIpcHandlers = (
 
     log.info('review triggered', { sessionId, turnMessageId })
 
+    let releaseDataRootWriter: (() => void) | undefined
+    try {
+      // The review can publish immutable scope snapshots after `triggerReview` has already returned
+      // started:true. Hold a migration writer lease until the background review/fix loop actually
+      // settles, so storage cutover cannot race that late sidecar write.
+      releaseDataRootWriter = acquireDataRootWriter()
+    } catch {
+      inFlightReviewKeys.delete(inFlightKey)
+      return { started: false, reason: 'run-failed' }
+    }
+
     // Resolve `started` only once the running Review row has actually been created and pushed
     // (runReview's onStarted). If runReview fails BEFORE that (scope resolution or the DB insert), it
     // settles without onStarted → started:false, so the caller (Re-run) stays retriable. The full
@@ -224,6 +265,7 @@ const registerReviewerIpcHandlers = (
       // before runReview starts so the abort-fix-loop handler can find it immediately.
       const abortController = new AbortController()
       const effectiveMainSessionId = mainSessionId ?? sessionId
+      const effectiveMainSessionKey = `${projectId}\0${effectiveMainSessionId}`
 
       void runReview({
         sessionId,
@@ -236,9 +278,14 @@ const registerReviewerIpcHandlers = (
         // the newly persisted [Auditor] and agent messages instead of the review-start snapshot.
         getSession: loadCurrentSession,
         reviewRepository,
+        runSessionMutation: options.withSessionMutation
+          ? (mutation) => options.withSessionMutation!(projectId, sessionId, mutation)
+          : undefined,
         acpRuntime: options.acpRuntime,
         // Artifacts live under the relocatable data root; DB/sessions stay on the config root.
         artifactStorageRoot: dataRoot,
+        artifactVersionContentResolver: (request) =>
+          artifactProvenanceRepository.resolveVersionContent(request),
         onStarted: () => settle({ started: true }),
         onReviewUpdate: (review: ReviewWithChecks) => {
           broadcastReviewUpdate({ review })
@@ -247,24 +294,24 @@ const registerReviewerIpcHandlers = (
         // session so the [Auditor] correction turn's stop event does not re-trigger a review.
         onCorrectionPrompt: () => {
           if (mainSessionId) {
-            broadcastSuppressNextAutoReview(mainSessionId)
+            broadcastSuppressNextAutoReview(projectId, mainSessionId)
           }
         },
         // If the correction turn fails to send, its stop never arrives — clear the suppression so
         // the session's next real turn still gets auto-reviewed.
         onCorrectionFailed: () => {
           if (mainSessionId) {
-            broadcastSuppressNextAutoReview(mainSessionId, true)
+            broadcastSuppressNextAutoReview(projectId, mainSessionId, true)
           }
         },
         // Broadcast fix-loop lifecycle events and register/deregister the abort controller.
         onFixLoopStart: () => {
-          fixLoopAbortControllers.set(effectiveMainSessionId, abortController)
-          broadcastFixLoopStart(effectiveMainSessionId)
+          fixLoopAbortControllers.set(effectiveMainSessionKey, abortController)
+          broadcastFixLoopStart(projectId, effectiveMainSessionId)
         },
         onFixLoopEnd: () => {
-          fixLoopAbortControllers.delete(effectiveMainSessionId)
-          broadcastFixLoopEnd(effectiveMainSessionId)
+          fixLoopAbortControllers.delete(effectiveMainSessionKey)
+          broadcastFixLoopEnd(projectId, effectiveMainSessionId)
         },
         fixLoopAbortSignal: abortController.signal
       })
@@ -282,6 +329,7 @@ const registerReviewerIpcHandlers = (
           // genuine pre-push failure (scope/insert), not a persistence race, so it is not auto-retried.
           settle({ started: false, reason: 'run-failed' })
           inFlightReviewKeys.delete(inFlightKey)
+          releaseDataRootWriter?.()
         })
     })
   }

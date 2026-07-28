@@ -5,6 +5,7 @@ import type {
   PersistedChatSession,
   PersistedToolActivity
 } from '../../shared/session-persistence'
+import { createLinearConversationGraph } from '../../shared/conversation-graph'
 import { isTurnScopeStale, resolveTurnScope } from './scope'
 
 // Builds a persisted message with sensible defaults; callers override only what a case cares about.
@@ -60,6 +61,74 @@ const buildSession = (): PersistedChatSession => ({
   updatedAt: 2001
 })
 
+const buildBranchedSession = (): PersistedChatSession => {
+  const session = buildSession()
+  const graph = createLinearConversationGraph({
+    sessionId: session.id,
+    messages: session.messages,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt
+  })
+  const frame = graph.frames[0]
+  const originalBranch = graph.branches[0]
+  const runtimeSegment = graph.runtimeSegments[0]
+  const editedBranchId = 'message-branch-edited'
+  const editedUser = message('u2-edited', 'user', 2000, { content: 'edited user turn' })
+  const editedAgent = message('a2-edited', 'agent', 2002, { content: 'edited agent answer' })
+
+  frame.activeBranchId = editedBranchId
+  graph.branches.push({
+    id: editedBranchId,
+    agentFrameId: frame.id,
+    parentBranchId: originalBranch.id,
+    forkMessageId: 'a1',
+    supersededMessageId: 'u2',
+    headMessageId: editedAgent.id,
+    createdAt: 2000,
+    updatedAt: 2002
+  })
+  graph.messages.push(
+    {
+      ...editedUser,
+      agentFrameId: frame.id,
+      introducedOnBranchId: editedBranchId,
+      parentMessageId: 'a1',
+      revisionRootMessageId: 'u2',
+      supersedesMessageId: 'u2',
+      runtimeSegmentId: runtimeSegment.id
+    },
+    {
+      ...editedAgent,
+      agentFrameId: frame.id,
+      introducedOnBranchId: editedBranchId,
+      parentMessageId: editedUser.id,
+      runtimeSegmentId: runtimeSegment.id
+    }
+  )
+  graph.activities.push(
+    {
+      ...activity('old-branch-activity', 2001, 1),
+      agentFrameId: frame.id,
+      messageBranchId: originalBranch.id,
+      promptMessageId: 'u2',
+      runtimeSegmentId: runtimeSegment.id
+    },
+    {
+      ...activity('edited-branch-activity', 2001, 1),
+      agentFrameId: frame.id,
+      messageBranchId: editedBranchId,
+      promptMessageId: editedUser.id,
+      runtimeSegmentId: runtimeSegment.id
+    }
+  )
+
+  // Deliberately leave the flat compatibility projection on the original Branch. Review scope must
+  // use the graph authority so a delayed persistence projection cannot leak sibling evidence.
+  session.conversationGraph = graph
+  session.activities = [activity('old-branch-activity', 2001, 1)]
+  return session
+}
+
 describe('resolveTurnScope', () => {
   it('returns only the target turn as ordered, interleaved blocks', () => {
     const scope = resolveTurnScope(buildSession(), 'a1')
@@ -96,9 +165,46 @@ describe('resolveTurnScope', () => {
     expect(scope.blocks.some((block) => block.sourceId === 'act1')).toBe(false)
   })
 
+  it('resolves the active Branch from the conversation graph instead of the flat projection', () => {
+    const scope = resolveTurnScope(buildBranchedSession(), 'a2-edited')
+
+    expect(scope).toMatchObject({
+      turnMessageId: 'a2-edited',
+      agentFrameId: 'root-frame-session-1',
+      messageBranchId: 'message-branch-edited'
+    })
+    expect(scope.blocks.map((block) => block.sourceId)).toEqual([
+      'u2-edited',
+      'edited-branch-activity',
+      'a2-edited'
+    ])
+    expect(scope.blocks.some((block) => block.sourceId === 'old-branch-activity')).toBe(false)
+    expect(scope.blocks.some((block) => block.sourceId === 'u2')).toBe(false)
+  })
+
   it('collects artifact version ids produced in the turn', () => {
     expect(resolveTurnScope(buildSession(), 'a1').artifactVersionIds).toEqual(['art-1'])
     expect(resolveTurnScope(buildSession(), 'a2').artifactVersionIds).toEqual([])
+  })
+
+  it('excludes Upload Version ids duplicated into legacy artifact references', () => {
+    const session = buildSession()
+    const agentMessage = session.messages.find((candidate) => candidate.id === 'a1')!
+    agentMessage.artifactIds = ['art-1', 'upload-version-1']
+    agentMessage.uploads = [
+      {
+        id: 'upload-file-1',
+        versionId: 'upload-version-1',
+        versionNumber: 1,
+        sessionId: session.id,
+        name: 'input.csv',
+        originalName: 'input.csv',
+        mimeType: 'text/csv',
+        size: 12
+      }
+    ]
+
+    expect(resolveTurnScope(session, 'a1').artifactVersionIds).toEqual(['art-1'])
   })
 
   it('produces stable content hashes across repeated calls', () => {

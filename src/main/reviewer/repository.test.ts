@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -35,7 +35,9 @@ const createRepository = async (): Promise<ReviewRepository> => {
   await ensureProjectSchema(client)
   const boundClient = client
 
-  return new ReviewRepository(() => Promise.resolve(boundClient))
+  return new ReviewRepository(() => Promise.resolve(boundClient), {
+    snapshotStorageRoot: storageRoot
+  })
 }
 
 const scope = (turnMessageId: string): TurnScope => ({
@@ -119,9 +121,461 @@ describe('review repository (integration)', () => {
     expect(stored.checks[0]!.status).toBe('fail')
     expect(stored.checks[0]!.resolution).toBe('open')
     expect(stored.checks[0]!.artifactVersionId).toBe('art-1')
+    expect(stored.checks[0]!.artifactBindingState).toBe('scope_validated')
+    expect(stored.checks[1]!.artifactBindingState).toBe('legacy_unverified')
     // pass check has no locator
     expect(stored.checks[2]!.status).toBe('pass')
     expect(stored.checks[2]!.locator).toBeUndefined()
+  })
+
+  it('retains an error Review row when its frozen scope snapshot cannot be published', async () => {
+    await createRepository()
+    const invalidSnapshotRoot = join(storageRoot!, 'not-a-directory')
+    await writeFile(invalidSnapshotRoot, 'occupied', 'utf8')
+    const repository = new ReviewRepository(() => Promise.resolve(client!), {
+      snapshotStorageRoot: invalidSnapshotRoot
+    })
+
+    await expect(
+      repository.createReview({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        turnMessageId: 'a1',
+        scope: scope('a1'),
+        scopeSnapshot: []
+      })
+    ).rejects.toThrow()
+
+    const [stored] = await repository.getReviewsForProjectSession('project-1', 'session-1')
+    expect(stored).toMatchObject({ lifecycle: 'error', outcome: null })
+    expect(stored.errorMessage).toBeTruthy()
+  })
+
+  it('keeps equal Session ids isolated by Project for production reads', async () => {
+    const repository = await createRepository()
+    await repository.createReview({
+      projectId: 'project-a',
+      sessionId: 'shared-session',
+      turnMessageId: 'turn-a',
+      scope: scope('turn-a')
+    })
+    await repository.createReview({
+      projectId: 'project-b',
+      sessionId: 'shared-session',
+      turnMessageId: 'turn-b',
+      scope: scope('turn-b')
+    })
+
+    await expect(
+      repository.getReviewsForProjectSession('project-a', 'shared-session')
+    ).resolves.toMatchObject([{ projectId: 'project-a', turnMessageId: 'turn-a' }])
+    await expect(
+      repository.getReviewsForProjectSession('project-b', 'shared-session')
+    ).resolves.toMatchObject([{ projectId: 'project-b', turnMessageId: 'turn-b' }])
+  })
+
+  it('writes the exact review scope projection to SQLite and an immutable sidecar', async () => {
+    const repository = await createRepository()
+    const review = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a1',
+      scope: {
+        ...scope('a1'),
+        agentFrameId: 'frame-1',
+        messageBranchId: 'branch-2'
+      },
+      scopeSnapshot: [
+        {
+          blockIndex: 0,
+          id: 'message:a1',
+          kind: 'message',
+          sourceId: 'a1',
+          contentHash: 'hash-1',
+          payload: { role: 'agent', content: 'Produced sin.png' }
+        }
+      ]
+    })
+
+    const snapshot = await client!.reviewScopeSnapshot.findUniqueOrThrow({
+      where: { reviewId: review.id }
+    })
+    expect(snapshot.state).toBe('ready')
+    expect(snapshot.blockCount).toBe(1)
+    expect(snapshot.schemaVersion).toBe(2)
+    expect(JSON.parse(snapshot.snapshotJson)).toMatchObject({
+      schemaVersion: 2,
+      agentFrameId: 'frame-1',
+      messageBranchId: 'branch-2'
+    })
+    expect(await readFile(join(storageRoot!, ...snapshot.storageKey.split('/')), 'utf8')).toBe(
+      snapshot.snapshotJson
+    )
+  })
+
+  it('rejects an Artifact Version reference outside the immutable review scope', async () => {
+    const repository = await createRepository()
+    const review = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+
+    await expect(
+      repository.addChecks(review.id, [
+        {
+          status: 'fail',
+          claim: 'wrong artifact',
+          evidence: 'out of scope',
+          artifactVersionId: 'art-outside-scope'
+        }
+      ])
+    ).rejects.toThrow('is not in Review')
+    expect(await repository.countFindings()).toBe(0)
+  })
+
+  it('appends immutable fix-loop dispositions in sequence', async () => {
+    const repository = await createRepository()
+    const review = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    await repository.addChecks(review.id, checks())
+    const [stored] = await repository.getReviewsForSession('session-1')
+    const finding = stored.checks[0]!
+
+    await repository.appendFindingDisposition({
+      eventId: 'disposition-1',
+      sourceFindingId: finding.id,
+      causeReviewId: review.id,
+      trigger: 'review_submission',
+      outcome: 'still_open',
+      assessedArtifactVersionId: 'art-1'
+    })
+    await repository.appendFindingDisposition({
+      eventId: 'disposition-2',
+      sourceFindingId: finding.id,
+      causeReviewId: review.id,
+      trigger: 'review_submission',
+      outcome: 'resolved'
+    })
+    await repository.appendFindingDisposition({
+      eventId: 'disposition-1',
+      sourceFindingId: finding.id,
+      causeReviewId: review.id,
+      trigger: 'review_submission',
+      outcome: 'still_open',
+      assessedArtifactVersionId: 'art-1'
+    })
+
+    const dispositions = await repository.getFindingDispositions(finding.id)
+    expect(dispositions.map(({ sequence, outcome }) => ({ sequence, outcome }))).toEqual([
+      { sequence: 1, outcome: 'still_open' },
+      { sequence: 2, outcome: 'resolved' }
+    ])
+  })
+
+  it('rolls back every finding disposition when one item in the submission is invalid', async () => {
+    const repository = await createRepository()
+    const review = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    await repository.addChecks(review.id, checks())
+    const [stored] = await repository.getReviewsForSession('session-1')
+    const validFinding = stored.checks[0]!
+
+    await expect(
+      repository.commitFindingDispositions([
+        {
+          reviewId: review.id,
+          sourceFindingId: validFinding.id,
+          trigger: 'review_submission',
+          outcome: 'resolved'
+        },
+        {
+          reviewId: review.id,
+          sourceFindingId: 'missing-finding',
+          trigger: 'review_submission',
+          outcome: 'resolved'
+        }
+      ])
+    ).rejects.toThrow('missing-finding')
+
+    const [afterFailure] = await repository.getReviewsForSession('session-1')
+    expect(afterFailure.checks[0]).toMatchObject({ resolution: 'open', reflagCount: 0 })
+    await expect(repository.getFindingDispositions(validFinding.id)).resolves.toEqual([])
+  })
+
+  it('commits tracked dispositions and newly discovered Findings as one scoped submission', async () => {
+    const repository = await createRepository()
+    const sourceReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    await repository.addChecks(sourceReview.id, [checks()[0]!])
+    const [storedSource] = await repository.getReviewsForProjectSession('project-1', 'session-1')
+    const sourceFinding = storedSource.checks[0]!
+    const assessmentReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+
+    const committed = await repository.commitScopedSubmission({
+      reviewId: assessmentReview.id,
+      checks: [
+        {
+          status: 'pass',
+          claim: 'original issue fixed',
+          evidence: 'the corrected output matches',
+          sourceFindingId: sourceFinding.id,
+          artifactVersionId: 'art-1',
+          sortIndex: 0
+        },
+        {
+          status: 'warn',
+          claim: 'new issue',
+          evidence: 'new evidence',
+          sortIndex: 1
+        }
+      ],
+      expectedSourceFindingIds: [sourceFinding.id],
+      outcome: 'flagged',
+      reviewerLog: [{ kind: 'message', text: 'reviewed' }]
+    })
+
+    expect(committed).toMatchObject({ lifecycle: 'complete', outcome: 'flagged' })
+    expect(committed.checks).toHaveLength(1)
+    expect(committed.checks[0]).toMatchObject({ claim: 'new issue', status: 'warn' })
+    const reviews = await repository.getReviewsForProjectSession('project-1', 'session-1')
+    expect(reviews.find((review) => review.id === sourceReview.id)?.checks[0]).toMatchObject({
+      resolution: 'resolved',
+      reflagCount: 0
+    })
+    await expect(repository.getFindingDispositions(sourceFinding.id)).resolves.toMatchObject([
+      {
+        sourceFindingId: sourceFinding.id,
+        causeReviewId: assessmentReview.id,
+        outcome: 'resolved'
+      }
+    ])
+
+    const staleAssessment = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    await expect(
+      repository.commitScopedSubmission({
+        reviewId: staleAssessment.id,
+        checks: [
+          {
+            status: 'warn',
+            claim: 'stale assessment',
+            evidence: 'must not reopen a resolved Finding',
+            sourceFindingId: sourceFinding.id
+          }
+        ],
+        expectedSourceFindingIds: [sourceFinding.id],
+        outcome: 'flagged'
+      })
+    ).rejects.toThrow(/Tracked Finding is unavailable/i)
+  })
+
+  it('rolls back a scoped submission when any tracked disposition is invalid', async () => {
+    const repository = await createRepository()
+    const assessmentReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a2',
+      scope: scope('a2')
+    })
+
+    await expect(
+      repository.commitScopedSubmission({
+        reviewId: assessmentReview.id,
+        checks: [
+          {
+            status: 'warn',
+            claim: 'new issue',
+            evidence: 'new evidence',
+            sortIndex: 0
+          },
+          {
+            status: 'pass',
+            claim: 'fixed',
+            evidence: 'fixed evidence',
+            sourceFindingId: 'missing-finding',
+            sortIndex: 1
+          }
+        ],
+        expectedSourceFindingIds: ['missing-finding'],
+        outcome: 'flagged'
+      })
+    ).rejects.toThrow(/missing-finding/)
+
+    const [afterFailure] = await repository.getReviewsForProjectSession('project-1', 'session-1')
+    expect(afterFailure).toMatchObject({ lifecycle: 'running', outcome: null, checks: [] })
+  })
+
+  it('rejects incomplete tracked sets and Findings from another Review turn chain', async () => {
+    const repository = await createRepository()
+    const sourceReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    await repository.addChecks(sourceReview.id, checks().slice(0, 2))
+    const source = (await repository.getReviewsForProjectSession('project-1', 'session-1')).find(
+      (review) => review.id === sourceReview.id
+    )!
+    const assessmentReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+
+    await expect(
+      repository.commitScopedSubmission({
+        reviewId: assessmentReview.id,
+        checks: [
+          {
+            status: 'pass',
+            claim: 'first issue fixed',
+            evidence: 'verified',
+            sourceFindingId: source.checks[0]!.id
+          }
+        ],
+        expectedSourceFindingIds: source.checks.map((check) => check.id),
+        outcome: 'pass'
+      })
+    ).rejects.toThrow(/exact expected tracked Finding set/i)
+
+    const otherTurnReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a2',
+      scope: scope('a2')
+    })
+    await repository.addChecks(otherTurnReview.id, [checks()[0]!])
+    const otherTurn = (await repository.getReviewsForProjectSession('project-1', 'session-1')).find(
+      (review) => review.id === otherTurnReview.id
+    )!
+    const crossTurnAssessment = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+
+    await expect(
+      repository.commitScopedSubmission({
+        reviewId: crossTurnAssessment.id,
+        checks: [
+          {
+            status: 'pass',
+            claim: 'wrong turn issue',
+            evidence: 'wrong chain',
+            sourceFindingId: otherTurn.checks[0]!.id
+          }
+        ],
+        expectedSourceFindingIds: [otherTurn.checks[0]!.id],
+        outcome: 'pass'
+      })
+    ).rejects.toThrow(/another Review turn chain/i)
+
+    await repository.updateFindingResolutions(otherTurnReview.id, 'unaddressed')
+    const terminalAssessment = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a2',
+      scope: scope('a2')
+    })
+    await expect(
+      repository.commitScopedSubmission({
+        reviewId: terminalAssessment.id,
+        checks: [
+          {
+            status: 'pass',
+            claim: 'terminal Finding',
+            evidence: 'must not reassess unaddressed Finding',
+            sourceFindingId: otherTurn.checks[0]!.id
+          }
+        ],
+        expectedSourceFindingIds: [otherTurn.checks[0]!.id],
+        outcome: 'pass'
+      })
+    ).rejects.toThrow(/Tracked Finding is unavailable/i)
+  })
+
+  it('reuses an exact disposition event and validates its assessed Version against Review scope', async () => {
+    const repository = await createRepository()
+    const sourceReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    await repository.addChecks(sourceReview.id, checks())
+    const [stored] = await repository.getReviewsForSession('session-1')
+    const finding = stored.checks[0]!
+    const causeReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a2',
+      scope: scope('a2')
+    })
+    const input = {
+      eventId: 'disposition-event-1',
+      reviewId: sourceReview.id,
+      sourceFindingId: finding.id,
+      causeReviewId: causeReview.id,
+      trigger: 'review_submission' as const,
+      outcome: 'still_open' as const,
+      assessedArtifactVersionId: 'art-1'
+    }
+
+    const [first] = await repository.commitFindingDispositions([input])
+    const [retry] = await repository.commitFindingDispositions([input])
+
+    expect(retry).toEqual(first)
+    await expect(repository.getFindingDispositions(finding.id)).resolves.toHaveLength(1)
+    const afterRetry = await repository.getReviewsForProjectSession('project-1', 'session-1')
+    expect(afterRetry.find((review) => review.id === sourceReview.id)?.checks[0]).toMatchObject({
+      resolution: 'open',
+      reflagCount: 1
+    })
+    await expect(
+      repository.commitFindingDispositions([{ ...input, outcome: 'resolved' }])
+    ).rejects.toThrow(/reused with different data/u)
+
+    const outsideScope = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'a3',
+      scope: { ...scope('a3'), artifactVersionIds: [] }
+    })
+    await expect(
+      repository.commitFindingDispositions([
+        {
+          ...input,
+          eventId: 'disposition-event-2',
+          causeReviewId: outsideScope.id
+        }
+      ])
+    ).rejects.toThrow(/outside Review scope/u)
   })
 
   it('updates a review lifecycle and outcome', async () => {

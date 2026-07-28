@@ -46,4 +46,11 @@ describe('buildReviewerPrompt — isolated evidence access', () => {
     expect(prompt).toContain('finding-stable-1')
     expect(prompt).toContain('exactly once')
   })
+
+  it('requires an explicit pass instead of accepting an empty submission', () => {
+    const prompt = buildReviewerPrompt(scope)
+
+    expect(prompt).toContain('at least one explicit pass check')
+    expect(prompt).toContain('an empty array is invalid')
+  })
 })

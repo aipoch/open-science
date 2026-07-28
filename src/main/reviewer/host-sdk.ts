@@ -9,8 +9,9 @@ import { extname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 import { getProjectArtifactDir } from '../artifacts/repository'
-import type { PersistedChatSession, PersistedToolActivity } from '../../shared/session-persistence'
-import type { TurnScope, ScopeBlock } from '../../shared/reviewer'
+import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { ReviewScopeSnapshotBlock, TurnScope, ScopeBlock } from '../../shared/reviewer'
+import { buildReviewScopeSnapshot as buildPersistedScopeSnapshot } from './scope-snapshot'
 
 // One readable block as returned by host.read_turn().
 export type OrderedBlock = {
@@ -65,6 +66,11 @@ export type RawArtifactContent = {
 // Artifact content as returned by host.read_artifact(id): column-addressable for CSV/TSV, raw otherwise.
 export type ArtifactContent = TabularArtifactContent | RawArtifactContent
 
+export type ArtifactVersionContentResolver = (request: {
+  projectId: string
+  versionId: string
+}) => Promise<{ path: string; filename: string; contentType?: string }>
+
 // The complete set of RPC methods the host exposes. Single-sourced so the unknown-method error can
 // tell a guessing reviewer exactly what IS available (it likes to try e.g. `list_artifacts`).
 export const SUPPORTED_HOST_METHODS = ['read_turn', 'query_execution_log', 'read_artifact'] as const
@@ -72,14 +78,18 @@ export const SUPPORTED_HOST_METHODS = ['read_turn', 'query_execution_log', 'read
 // Scope-enforcing evidence reader with a legacy authenticated HTTP adapter.
 export class ReviewerHostServer {
   private server: Server
+  private readonly frozenScopeSnapshot: ReviewScopeSnapshotBlock[]
   readonly token: string
   private _endpoint: string | undefined
 
   constructor(
     private readonly session: PersistedChatSession,
     private readonly scope: TurnScope,
-    private readonly artifactStorageRoot: string
+    private readonly artifactStorageRoot: string,
+    private readonly resolveArtifactVersion?: ArtifactVersionContentResolver,
+    frozenScopeSnapshot?: ReviewScopeSnapshotBlock[]
   ) {
+    this.frozenScopeSnapshot = frozenScopeSnapshot ?? buildPersistedScopeSnapshot(session, scope)
     this.token = randomUUID()
     this.server = createServer((req, res) => {
       void this.handleRequest(req, res).catch((error) => {
@@ -168,52 +178,21 @@ export class ReviewerHostServer {
 
   // Returns the ordered blocks for this turn with their content and metadata.
   readTurn(): OrderedBlock[] {
-    const messageMap = new Map(this.session.messages.map((m) => [m.id, m]))
-    const activityMap = new Map((this.session.activities ?? []).map((a) => [a.id, a]))
-
-    return this.scope.blocks.map((block): OrderedBlock => {
-      if (block.kind === 'message') {
-        const msg = messageMap.get(block.sourceId)
-
-        return {
-          blockIndex: block.blockIndex,
-          id: block.id,
-          kind: 'message',
-          sourceId: block.sourceId,
-          contentHash: block.contentHash,
-          role: msg?.role,
-          content: msg?.content,
-          artifactIds: msg?.artifactIds
-        }
-      } else {
-        const activity = activityMap.get(block.sourceId)
-
-        return {
-          blockIndex: block.blockIndex,
-          id: block.id,
-          kind: 'activity',
-          sourceId: block.sourceId,
-          contentHash: block.contentHash,
-          title: activity?.title,
-          status: activity?.status,
-          toolKind: activity?.toolKind,
-          ...(activity ? activityIoFields(activity) : {})
-        }
-      }
-    })
+    return this.frozenScopeSnapshot.map(
+      ({ payload, ...block }) => ({ ...block, ...payload }) as OrderedBlock
+    )
   }
 
   // Returns execution records for this turn's activities, optionally filtered to one activity.
   queryExecutionLog(activityId?: string): ExecRecord[] {
     const activityIds = new Set(
-      this.scope.blocks.filter((b) => b.kind === 'activity').map((b) => b.sourceId)
+      this.scope.blocks.filter((block) => block.kind === 'activity').map((block) => block.sourceId)
     )
-    const activities: PersistedToolActivity[] = (this.session.activities ?? []).filter((a) =>
-      activityIds.has(a.id)
-    )
-
+    const activities = this.readTurn().filter((block) => block.kind === 'activity')
     const target =
-      activityId !== undefined ? activities.filter((a) => a.id === activityId) : activities
+      activityId !== undefined
+        ? activities.filter((activity) => activity.sourceId === activityId)
+        : activities
 
     // Out-of-scope id: reject rather than silently returning empty.
     if (activityId !== undefined && target.length === 0) {
@@ -223,11 +202,14 @@ export class ReviewerHostServer {
       )
     }
 
-    return target.map((a) => ({
-      activityId: a.id,
-      title: a.title,
-      status: a.status,
-      ...activityIoFields(a)
+    return target.map((activity) => ({
+      activityId: activity.sourceId,
+      title: activity.title ?? '',
+      status: activity.status ?? '',
+      rawInput: activity.rawInput,
+      rawOutput: activity.rawOutput,
+      terminalOutput: activity.terminalOutput,
+      terminalExitCode: activity.terminalExitCode
     }))
   }
 
@@ -249,7 +231,12 @@ export class ReviewerHostServer {
     // Read the artifact from managed storage. A read failure (missing/unreadable file) MUST surface
     // as an error, not degrade to empty content — otherwise the reviewer cannot distinguish "could
     // not read" from "the file is genuinely empty", which produces false "empty artifact" findings.
-    const artifactPath = resolveArtifactPath(this.artifactStorageRoot, this.session.projectId, id)
+    const resolvedVersion = this.resolveArtifactVersion
+      ? await this.resolveArtifactVersion({ projectId: this.session.projectId, versionId: id })
+      : undefined
+    const artifactPath =
+      resolvedVersion?.path ??
+      resolveArtifactPath(this.artifactStorageRoot, this.session.projectId, id)
 
     let bytes: Buffer
     try {
@@ -267,11 +254,10 @@ export class ReviewerHostServer {
       const text = bytes.toString('utf8')
 
       // Determine if this artifact is a tabular format (CSV/TSV) by mimeType or path extension.
-      if (isTabularArtifact(artifactMeta?.mimeType, artifactMeta?.path)) {
-        const parsed = parseTabular(
-          text,
-          detectDelimiter(artifactMeta?.mimeType, artifactMeta?.path)
-        )
+      const contentType = resolvedVersion?.contentType ?? artifactMeta?.mimeType
+      const filename = resolvedVersion?.filename ?? artifactMeta?.path
+      if (isTabularArtifact(contentType, filename)) {
+        const parsed = parseTabular(text, detectDelimiter(contentType, filename))
         return { id, kind: 'tabular', columns: parsed.columns, rowCount: parsed.rowCount }
       }
 
@@ -291,48 +277,6 @@ const readBody = (req: IncomingMessage): Promise<string> =>
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
     req.on('error', reject)
   })
-
-// The I/O fields exposed to the reviewer for one tool activity. Non-MCP tools (e.g. Bash) populate
-// rawInput/rawOutput/terminalOutput directly; MCP tools (notebook_execute, write_artifact_file) leave
-// those empty and record their payload in toolContent instead. To keep the reviewer from being blind
-// to what a tool actually did, we surface the toolContent text under rawOutput when rawOutput is
-// absent — otherwise the reviewer cannot verify a claim against the tool's real output.
-const activityIoFields = (
-  activity: PersistedToolActivity
-): Pick<ExecRecord, 'rawInput' | 'rawOutput' | 'terminalOutput' | 'terminalExitCode'> => {
-  const toolContentText =
-    activity.rawOutput === undefined ? extractToolContentText(activity.toolContent) : undefined
-
-  return {
-    rawInput: activity.rawInput,
-    rawOutput: activity.rawOutput ?? toolContentText,
-    terminalOutput: activity.terminalOutput,
-    terminalExitCode: activity.terminalExitCode
-  }
-}
-
-// Pulls the readable text out of an ACP-style toolContent array. Each block is loosely typed; we
-// tolerate blocks without text (returning undefined when nothing readable is present). Handles both
-// `{ content: { text } }` and flat `{ text }` shapes.
-const extractToolContentText = (toolContent: unknown[] | undefined): string | undefined => {
-  if (!Array.isArray(toolContent)) return undefined
-
-  const texts: string[] = []
-  for (const block of toolContent) {
-    if (typeof block !== 'object' || block === null) continue
-    const record = block as Record<string, unknown>
-
-    const nested =
-      typeof record.content === 'object' && record.content !== null
-        ? (record.content as Record<string, unknown>).text
-        : undefined
-
-    if (typeof nested === 'string') texts.push(nested)
-    else if (typeof record.text === 'string') texts.push(record.text)
-  }
-
-  return texts.length > 0 ? texts.join('\n') : undefined
-}
 
 // Heuristic to distinguish text from binary artifact content.
 const isLikelyText = (bytes: Buffer): boolean => {

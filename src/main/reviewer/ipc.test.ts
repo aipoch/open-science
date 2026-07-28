@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ReviewRunRequest } from '../../shared/reviewer'
 import { REVIEWER_IPC } from '../../shared/reviewer'
@@ -42,6 +42,7 @@ vi.mock('./repository', () => ({
       reviewRepositoryThunks.push(thunk)
     }
     getReviewsForSession = getReviewsForSession
+    getReviewsForProjectSession = getReviewsForSession
   }
 }))
 
@@ -89,6 +90,7 @@ vi.mock('./stale-reviews', () => ({
 }))
 
 const { registerReviewerIpcHandlers } = await import('./ipc')
+const { beginMigration, clearMigrationPending } = await import('../storage/migration-state')
 
 const acpRuntime = {} as AcpRuntime
 
@@ -118,6 +120,8 @@ beforeEach(() => {
   // Default: no prior review for the turn, so the auto-idempotency check lets the run proceed.
   getReviewsForSession.mockResolvedValue([])
 })
+
+afterEach(() => clearMigrationPending())
 
 describe('reviewer IPC handlers', () => {
   it('runs reviews with artifacts rooted at the data root, not the config root', async () => {
@@ -305,6 +309,16 @@ describe('reviewer IPC handlers', () => {
     await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
   })
 
+  it('does not start a Review sidecar writer while data-root migration is pending', async () => {
+    registerReviewerIpcHandlers({ acpRuntime })
+    beginMigration()
+
+    const result = await handlers.get(REVIEWER_IPC.RUN)?.({}, createRequest())
+
+    expect(result).toEqual({ started: false, reason: 'run-failed' })
+    expect(runReview).not.toHaveBeenCalled()
+  })
+
   it('refuses an auto review for a turn that already has a review (atomic idempotency)', async () => {
     // The cross-renderer TOCTOU: even if the caller's local store looked empty, main is the single
     // serialization point — a review already exists for this turn, so an auto request is a duplicate.
@@ -378,9 +392,15 @@ describe('reviewer IPC handlers', () => {
       const getHandler = handlers.get(REVIEWER_IPC.GET_FOR_SESSION)
       expect(getHandler).toBeDefined()
 
-      const result = await getHandler?.({}, 'session-1')
+      const result = await getHandler?.(
+        {},
+        {
+          projectId: 'project-1',
+          appSessionId: 'session-1'
+        }
+      )
 
-      expect(getReviewsForSession).toHaveBeenCalledWith('session-1')
+      expect(getReviewsForSession).toHaveBeenCalledWith('project-1', 'session-1')
       expect(flagStaleReviews).toHaveBeenCalledWith(
         reviews,
         expect.objectContaining({ id: 'session-1' }),
@@ -396,9 +416,16 @@ describe('reviewer IPC handlers', () => {
       registerReviewerIpcHandlers({ acpRuntime })
 
       const getHandler = handlers.get(REVIEWER_IPC.GET_FOR_SESSION)
-      const result = await getHandler?.({}, 'missing-session')
+      sessionLoadOne.mockResolvedValueOnce(undefined)
+      const result = await getHandler?.(
+        {},
+        {
+          projectId: 'project-1',
+          appSessionId: 'missing-session'
+        }
+      )
 
-      expect(sessionLoadAll).toHaveBeenCalled()
+      expect(sessionLoadOne).toHaveBeenCalledWith('project-1', 'missing-session')
       // flagStaleReviews is fail-open: a missing session means staleness was not computed, so the
       // reviews pass through without modification.
       expect(flagStaleReviews).toHaveBeenCalledWith(reviews, undefined, DATA_ROOT)
@@ -408,11 +435,17 @@ describe('reviewer IPC handlers', () => {
     it('returns reviews unflagged when the session load throws', async () => {
       const reviews = [{ id: 'review-1', turnMessageId: 'message-1' }]
       getReviewsForSession.mockResolvedValue(reviews)
-      sessionLoadAll.mockRejectedValueOnce(new Error('session store unavailable'))
+      sessionLoadOne.mockRejectedValueOnce(new Error('session store unavailable'))
       registerReviewerIpcHandlers({ acpRuntime })
 
       const getHandler = handlers.get(REVIEWER_IPC.GET_FOR_SESSION)
-      const result = await getHandler?.({}, 'session-1')
+      const result = await getHandler?.(
+        {},
+        {
+          projectId: 'project-1',
+          appSessionId: 'session-1'
+        }
+      )
 
       expect(result).toBe(reviews)
       // Fail-open: a load failure must not hide stale findings by leaving the detector un-runnable.
@@ -428,7 +461,9 @@ describe('reviewer IPC handlers', () => {
       expect(abortHandler).toBeDefined()
 
       // No throw + no return value — the renderer awaits only to confirm Electron processed it.
-      expect(abortHandler?.({}, 'session-without-loop')).toBeUndefined()
+      expect(
+        abortHandler?.({}, { projectId: 'project-1', appSessionId: 'session-without-loop' })
+      ).toBeUndefined()
     })
 
     it('aborts the active fix loop controller when one is registered by the orchestrator', async () => {
@@ -462,13 +497,14 @@ describe('reviewer IPC handlers', () => {
       captured.fixLoopAbortSignal?.addEventListener('abort', abortEvent)
 
       const abortHandler = handlers.get(REVIEWER_IPC.ABORT_FIX_LOOP)
-      expect(abortHandler?.({}, 'session-1')).toBeUndefined()
+      const abortRequest = { projectId: 'project-1', appSessionId: 'session-1' }
+      expect(abortHandler?.({}, abortRequest)).toBeUndefined()
       expect(abortEvent).toHaveBeenCalledTimes(1)
 
       // The fix-loop-end callback deregisters the controller so a second abort is a no-op
       // (matches the warn-log path above).
       captured.onFixLoopEnd?.()
-      const second = abortHandler?.({}, 'session-1')
+      const second = abortHandler?.({}, abortRequest)
       expect(abortEvent).toHaveBeenCalledTimes(1)
       expect(second).toBeUndefined()
 
@@ -540,7 +576,8 @@ describe('reviewer IPC handlers', () => {
       latest.onCorrectionPrompt?.()
 
       expect(broadcastToRenderers).toHaveBeenCalledWith(REVIEWER_IPC.SUPPRESS_NEXT_AUTO_REVIEW, {
-        sessionId: 'main-session-1',
+        projectId: 'project-1',
+        appSessionId: 'main-session-1',
         clear: false
       })
       expect(captured.onCorrectionPrompt).toBeDefined() // run-1 captured too, but unused here
@@ -567,7 +604,8 @@ describe('reviewer IPC handlers', () => {
       latest.onCorrectionFailed?.()
 
       expect(broadcastToRenderers).toHaveBeenCalledWith(REVIEWER_IPC.SUPPRESS_NEXT_AUTO_REVIEW, {
-        sessionId: 'main-session-1',
+        projectId: 'project-1',
+        appSessionId: 'main-session-1',
         clear: true
       })
       await expect(promise).resolves.toEqual({ started: true })
@@ -582,12 +620,14 @@ describe('reviewer IPC handlers', () => {
 
       captured.onFixLoopStart?.()
       expect(broadcastToRenderers).toHaveBeenCalledWith(REVIEWER_IPC.FIX_LOOP_START, {
-        sessionId: 'session-1'
+        projectId: 'project-1',
+        appSessionId: 'session-1'
       })
 
       captured.onFixLoopEnd?.()
       expect(broadcastToRenderers).toHaveBeenCalledWith(REVIEWER_IPC.FIX_LOOP_END, {
-        sessionId: 'session-1'
+        projectId: 'project-1',
+        appSessionId: 'session-1'
       })
 
       await expect(promise).resolves.toEqual({ started: true })
@@ -614,10 +654,12 @@ describe('reviewer IPC handlers', () => {
       latest.onFixLoopEnd?.()
 
       expect(broadcastToRenderers).toHaveBeenCalledWith(REVIEWER_IPC.FIX_LOOP_START, {
-        sessionId: 'main-session-9'
+        projectId: 'project-1',
+        appSessionId: 'main-session-9'
       })
       expect(broadcastToRenderers).toHaveBeenCalledWith(REVIEWER_IPC.FIX_LOOP_END, {
-        sessionId: 'main-session-9'
+        projectId: 'project-1',
+        appSessionId: 'main-session-9'
       })
       await expect(promise).resolves.toEqual({ started: true })
     })

@@ -125,9 +125,12 @@ describe('review store', () => {
     const getForSession = vi.fn().mockResolvedValue(persisted)
     vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
 
-    await useReviewStore.getState().loadReviewsForSession('session-1')
+    await useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
 
-    expect(getForSession).toHaveBeenCalledWith('session-1')
+    expect(getForSession).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      appSessionId: 'session-1'
+    })
     expect(
       useReviewStore
         .getState()
@@ -142,7 +145,7 @@ describe('review store', () => {
     vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
 
     await expect(
-      useReviewStore.getState().loadReviewsForSession('session-1')
+      useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
     ).resolves.toBeUndefined()
     expect(useReviewStore.getState().getReviewsForSession('session-1')).toEqual([])
     vi.unstubAllGlobals()
@@ -171,7 +174,7 @@ describe('review store', () => {
     const getForSession = vi.fn().mockResolvedValue(staleSnapshot)
     vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
 
-    await useReviewStore.getState().loadReviewsForSession('session-1')
+    await useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
 
     const stored = useReviewStore.getState().getReviewsForSession('session-1')
     // Finding data is NOT reverted (still resolved), but the freshly-computed stale flag is applied.
@@ -192,7 +195,7 @@ describe('review store', () => {
     const getForSession = vi.fn().mockResolvedValue(staleSnapshot)
     vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
 
-    await useReviewStore.getState().loadReviewsForSession('session-1')
+    await useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
 
     // The newer pushed review (updatedAt 2000, complete) survives the merge.
     const stored = useReviewStore.getState().getReviewsForSession('session-1')
@@ -226,7 +229,7 @@ describe('review store', () => {
     const getForSession = vi.fn().mockResolvedValue(newerButUncomputed)
     vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
 
-    await useReviewStore.getState().loadReviewsForSession('session-1')
+    await useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
 
     const stored = useReviewStore.getState().getReviewsForSession('session-1')
     expect(stored[0]?.updatedAt).toBe(2_000)
@@ -245,7 +248,7 @@ describe('review store', () => {
     const getForSession = vi.fn().mockResolvedValue(recomputedNotStale)
     vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
 
-    await useReviewStore.getState().loadReviewsForSession('session-1')
+    await useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
 
     const stored = useReviewStore.getState().getReviewsForSession('session-1')
     expect(stored[0]?.stale).toBe(false)
@@ -261,8 +264,8 @@ describe('review store', () => {
     )
     vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
 
-    const first = useReviewStore.getState().loadReviewsForSession('session-1')
-    const second = useReviewStore.getState().loadReviewsForSession('session-1')
+    const first = useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
+    const second = useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
 
     resolveLoad?.([makeReview({ id: 'r' })])
     await Promise.all([first, second])

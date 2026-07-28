@@ -6,19 +6,23 @@ import { create } from 'zustand'
 import type { ReviewWithChecks, ReviewUpdateEvent } from '../../../shared/reviewer'
 
 type ReviewStoreData = {
-  // Map from sessionId to that session's reviews (newest first).
+  // Map from projectId + sessionId to that session's reviews (newest first).
   reviewsBySession: Record<string, ReviewWithChecks[]>
 }
 
 type ReviewStore = ReviewStoreData & {
   // Load existing reviews for a session from the DB at startup.
-  loadReviewsForSession: (sessionId: string) => Promise<void>
+  loadReviewsForSession: (sessionId: string, projectId?: string) => Promise<void>
   // Handle a push event from the main process (lifecycle/checks updated).
   handleReviewUpdate: (event: ReviewUpdateEvent) => void
   // Returns the reviews for a session, newest-first.
-  getReviewsForSession: (sessionId: string) => ReviewWithChecks[]
+  getReviewsForSession: (sessionId: string, projectId?: string) => ReviewWithChecks[]
   // Returns the most recent review for a given turn (by turnMessageId), if any.
-  getReviewForTurn: (sessionId: string, turnMessageId: string) => ReviewWithChecks | undefined
+  getReviewForTurn: (
+    sessionId: string,
+    turnMessageId: string,
+    projectId?: string
+  ) => ReviewWithChecks | undefined
 }
 
 // Inserts or replaces a review in the list by id, keeping the list in createdAt desc order. `stale` is
@@ -75,43 +79,58 @@ export const createInitialReviewState = (): ReviewStoreData => ({
 // Session ids with a load in flight, so repeated focus events don't launch overlapping loads. Kept
 // outside the store (transient control state, not rendered) and cleared in loadReviewsForSession.
 const loadsInFlight = new Set<string>()
+const reviewSessionKey = (projectId: string, sessionId: string): string =>
+  `${projectId}\0${sessionId}`
 
 export const useReviewStore = create<ReviewStore>((set, get) => ({
   ...createInitialReviewState(),
 
-  loadReviewsForSession: async (sessionId: string) => {
+  loadReviewsForSession: async (sessionId: string, projectId = '') => {
     // Dedup concurrent loads for the same session: focus can fire repeatedly, and each load runs slow
     // scope hashing in main — overlapping loads would amplify that and race each other back.
-    if (loadsInFlight.has(sessionId)) return
-    loadsInFlight.add(sessionId)
+    const key = reviewSessionKey(projectId, sessionId)
+    if (loadsInFlight.has(key)) return
+    loadsInFlight.add(key)
     try {
-      const reviews = (await window.api.reviewer.getForSession(sessionId)) as ReviewWithChecks[]
+      const reviews = (await window.api.reviewer.getForSession({
+        projectId,
+        appSessionId: sessionId
+      })) as ReviewWithChecks[]
       // Merge (not replace): a slow load must not overwrite a newer review a push delivered meanwhile.
       set((state) => ({
         reviewsBySession: {
           ...state.reviewsBySession,
-          [sessionId]: mergeLoadedReviews(state.reviewsBySession[sessionId] ?? [], reviews)
+          [key]: mergeLoadedReviews(state.reviewsBySession[key] ?? [], reviews)
         }
       }))
     } catch {
       // Silently ignore load errors — the card will just not appear until next push event.
     } finally {
-      loadsInFlight.delete(sessionId)
+      loadsInFlight.delete(key)
     }
   },
 
   handleReviewUpdate: (event: ReviewUpdateEvent) => {
     const { review } = event
+    const key = reviewSessionKey(review.projectId, review.sessionId)
     set((state) => ({
       reviewsBySession: {
         ...state.reviewsBySession,
-        [review.sessionId]: upsertReview(state.reviewsBySession[review.sessionId] ?? [], review)
+        [key]: upsertReview(state.reviewsBySession[key] ?? [], review)
       }
     }))
   },
 
-  getReviewsForSession: (sessionId: string) => get().reviewsBySession[sessionId] ?? [],
+  getReviewsForSession: (sessionId: string, projectId?: string) =>
+    projectId !== undefined
+      ? (get().reviewsBySession[reviewSessionKey(projectId, sessionId)] ?? [])
+      : Object.values(get().reviewsBySession)
+          .flat()
+          .filter((review) => review.sessionId === sessionId)
+          .sort((left, right) => right.createdAt - left.createdAt),
 
-  getReviewForTurn: (sessionId: string, turnMessageId: string) =>
-    (get().reviewsBySession[sessionId] ?? []).find((r) => r.turnMessageId === turnMessageId)
+  getReviewForTurn: (sessionId: string, turnMessageId: string, projectId?: string) =>
+    get()
+      .getReviewsForSession(sessionId, projectId)
+      .find((review) => review.turnMessageId === turnMessageId)
 }))

@@ -117,11 +117,48 @@ afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true })
 })
 
+describe('host.read_turn — frozen evidence', () => {
+  it('does not rebuild reviewer evidence from a Session mutated after construction', () => {
+    const session = makeSession()
+    server = new ReviewerHostServer(session, makeScope(), tmpDir)
+    const before = server.readTurn()
+
+    session.messages[0]!.content = 'changed while the reviewer was running'
+
+    expect(server.readTurn()).toEqual(before)
+    expect(server.readTurn()[0]).toMatchObject({ content: 'Run the analysis' })
+  })
+})
+
 // ---------------------------------------------------------------------------
 // read_artifact: tabular (CSV)
 // ---------------------------------------------------------------------------
 
 describe('host.read_artifact — tabular CSV', () => {
+  it('resolves native Artifact Versions through SQLite authority instead of a legacy id path', async () => {
+    const nativeVersionId = 'native-version-1'
+    const nativePath = join(tmpDir, 'immutable', 'content')
+    await mkdir(join(tmpDir, 'immutable'), { recursive: true })
+    await writeFile(nativePath, 'sample,value\na,1\nb,2\n')
+    const resolverCalls: unknown[] = []
+    server = new ReviewerHostServer(
+      makeSession({ artifacts: [] }),
+      makeScope([nativeVersionId]),
+      tmpDir,
+      async (request) => {
+        resolverCalls.push(request)
+        return { path: nativePath, filename: 'native.csv', contentType: 'text/csv' }
+      }
+    )
+
+    await expect(server.readArtifact(nativeVersionId)).resolves.toMatchObject({
+      id: nativeVersionId,
+      kind: 'tabular',
+      rowCount: 2
+    })
+    expect(resolverCalls).toEqual([{ projectId: PROJECT, versionId: nativeVersionId }])
+  })
+
   it('returns kind=tabular with column-addressable structure for a simple CSV', async () => {
     await writeArtifact(tmpDir, V1, 'name,value,unit\nalpha,1,mg\nbeta,2,mg\ngamma,3,mg\n')
 

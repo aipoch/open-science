@@ -19,6 +19,8 @@ import type { ReviewWithChecks, ReviewCheck, GoToTranscriptIntent } from '../../
 type ReviewerCardProps = {
   review: ReviewWithChecks
   className?: string
+  // Embedded detail surfaces can start expanded while the transcript keeps its compact default.
+  defaultExpanded?: boolean
   // Called when the user clicks "Go to transcript" on any item card.
   onGoToTranscript?: (intent: GoToTranscriptIntent) => void
   // Called when the user asks to re-run a stale review (its turn changed after it ran). Resolves to
@@ -163,10 +165,11 @@ const CheckCard = ({
 export const ReviewerCard = ({
   review,
   className,
+  defaultExpanded = false,
   onGoToTranscript,
   onRerun
 }: ReviewerCardProps): React.JSX.Element => {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(defaultExpanded)
   // Latches on the first Re-run click so the button can't fire twice. Reset whenever the review updates
   // (a fresh review row arrived, or its lifecycle/timestamp changed) so a later re-stale review can be
   // re-run again. setState-during-render pattern, matching the composer popup's query reset.

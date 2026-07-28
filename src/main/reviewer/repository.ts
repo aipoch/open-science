@@ -1,3 +1,7 @@
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, relative, resolve, sep } from 'node:path'
+
 import type { Finding as PrismaFinding, PrismaClient, Review as PrismaReview } from '@prisma/client'
 
 import type {
@@ -8,6 +12,9 @@ import type {
   NewCheck,
   Review,
   ReviewCheck,
+  ReviewFindingDisposition,
+  ReviewFindingDispositionOutcome,
+  ReviewFindingDispositionTrigger,
   ReviewerLogEntry,
   ReviewLifecycle,
   ReviewOutcome,
@@ -22,10 +29,59 @@ type FindingSeverity = CheckStatus
 // Only the review/finding delegates are needed; typing to this subset keeps the repository unit-testable
 // with a lightweight mock instead of a real (engine-backed) PrismaClient.
 // $executeRaw is also included for the incrementReflagCount atomic update (issue 15).
-type ReviewClient = Pick<PrismaClient, 'review' | 'finding' | '$executeRaw' | '$transaction'>
+type ReviewClient = Pick<
+  PrismaClient,
+  | 'review'
+  | 'finding'
+  | 'reviewFindingDisposition'
+  | 'reviewScopeSnapshot'
+  | '$executeRaw'
+  | '$transaction'
+>
 
 // Resolves the Prisma client on demand so a failed initialization is not held forever (see projects/repository.ts).
 type ReviewClientProvider = () => Promise<ReviewClient>
+
+type ReviewRepositoryOptions = {
+  snapshotStorageRoot?: string
+  createId?: () => string
+  now?: () => Date
+}
+
+type CommitFindingDispositionInput = {
+  eventId?: string
+  reviewId: string
+  sourceFindingId: string
+  causeReviewId?: string
+  trigger: ReviewFindingDispositionTrigger
+  outcome: ReviewFindingDispositionOutcome
+  note?: string
+  assessedArtifactVersionId?: string
+}
+
+const stableJson = (value: unknown): string => {
+  const canonicalize = (entry: unknown): unknown => {
+    if (Array.isArray(entry)) return entry.map(canonicalize)
+    if (typeof entry !== 'object' || entry === null) return entry
+    return Object.fromEntries(
+      Object.entries(entry as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, canonicalize(nested)])
+    )
+  }
+  return JSON.stringify(canonicalize(value))
+}
+
+const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
+
+const resolveSnapshotStorageKey = (root: string, key: string): string => {
+  const candidate = resolve(root, ...key.split('/'))
+  const fromRoot = relative(resolve(root), candidate)
+  if (!fromRoot || fromRoot === '..' || fromRoot.startsWith(`..${sep}`)) {
+    throw new Error('Invalid Review scope snapshot storage key.')
+  }
+  return candidate
+}
 
 // Bumps a Review's updatedAt within the caller's transaction. Prisma's @updatedAt tracks writes to the
 // Review row, not to child Finding rows, so a finding-only mutation (resolution/reflag) would otherwise
@@ -100,17 +156,44 @@ const toCheck = (row: PrismaFinding): ReviewCheck => {
     evidence: row.evidence,
     locator: hasLocator ? (locatorRaw as FindingLocator) : undefined,
     artifactVersionId: row.artifactVersionId ?? undefined,
+    artifactBindingState:
+      row.artifactBindingState === 'scope_validated' ? 'scope_validated' : 'legacy_unverified',
     sortIndex: row.sortIndex,
     // Default to 0 for rows written before the reflagCount column was added (issue 15 migration guard).
     reflagCount: row.reflagCount ?? 0
   }
 }
 
+const toFindingDisposition = (row: {
+  id: string
+  sourceFindingId: string
+  causeReviewId: string | null
+  sequence: number
+  trigger: string
+  outcome: string
+  note: string | null
+  assessedArtifactVersionId: string | null
+  createdAt: Date
+}): ReviewFindingDisposition => ({
+  id: row.id,
+  sourceFindingId: row.sourceFindingId,
+  causeReviewId: row.causeReviewId ?? undefined,
+  sequence: row.sequence,
+  trigger: row.trigger as ReviewFindingDispositionTrigger,
+  outcome: row.outcome as ReviewFindingDispositionOutcome,
+  note: row.note ?? undefined,
+  assessedArtifactVersionId: row.assessedArtifactVersionId ?? undefined,
+  createdAt: row.createdAt.getTime()
+})
+
 // Owns Review/check reads/writes. The client is resolved lazily per call so schema-ensure failures can
 // recover (see projects/repository.ts). Reviews live in SQLite while the transcript stays in session JSON;
 // cross-store cleanup is done here by deleting review rows (and their checks) by session/project id.
 class ReviewRepository {
-  constructor(private readonly getClient: ReviewClientProvider) {}
+  constructor(
+    private readonly getClient: ReviewClientProvider,
+    private readonly options: ReviewRepositoryOptions = {}
+  ) {}
 
   // Inserts a new review, defaulting a fresh audit to the 'running' lifecycle with no outcome yet.
   async createReview(input: CreateReviewInput): Promise<Review> {
@@ -129,7 +212,92 @@ class ReviewRepository {
       }
     })
 
+    if (input.scopeSnapshot && this.options.snapshotStorageRoot) {
+      try {
+        await this.persistScopeSnapshot(toReview(row), input.scopeSnapshot)
+      } catch (error) {
+        await client.review
+          .update({
+            where: { id: row.id },
+            data: {
+              lifecycle: 'error',
+              outcome: null,
+              errorMessage: error instanceof Error ? error.message : String(error)
+            }
+          })
+          .catch(() => undefined)
+        throw error
+      }
+    }
+
     return toReview(row)
+  }
+
+  private async persistScopeSnapshot(
+    review: Review,
+    blocks: NonNullable<CreateReviewInput['scopeSnapshot']>
+  ): Promise<void> {
+    const root = this.options.snapshotStorageRoot
+    if (!root) throw new Error('Review scope snapshot storage is not configured.')
+
+    const client = await this.getClient()
+    const snapshotId = (this.options.createId ?? randomUUID)()
+    const createdAt = (this.options.now ?? (() => new Date()))()
+    const sessionSegment = encodeURIComponent(review.sessionId)
+    const projectSegment = encodeURIComponent(review.projectId)
+    const storageKey = [
+      'artifacts',
+      projectSegment,
+      sessionSegment,
+      '.provenance',
+      'review-scope-snapshots',
+      `${snapshotId}.json`
+    ].join('/')
+    const snapshotJson = stableJson({
+      schemaVersion: 2,
+      snapshotId,
+      reviewId: review.id,
+      projectId: review.projectId,
+      sessionId: review.sessionId,
+      scope: review.scope,
+      agentFrameId: review.scope.agentFrameId,
+      messageBranchId: review.scope.messageBranchId,
+      blocks,
+      createdAt: createdAt.toISOString()
+    })
+    const checksum = sha256(snapshotJson)
+    const targetPath = resolveSnapshotStorageKey(root, storageKey)
+    const tempPath = `${targetPath}.${snapshotId}.tmp`
+
+    await client.reviewScopeSnapshot.create({
+      data: {
+        id: snapshotId,
+        projectId: review.projectId,
+        sessionId: review.sessionId,
+        reviewId: review.id,
+        scopeTurnMessageId: review.scope.turnMessageId,
+        state: 'staging',
+        snapshotJson,
+        checksum,
+        storageKey,
+        schemaVersion: 2,
+        blockCount: blocks.length,
+        createdAt
+      }
+    })
+
+    try {
+      await mkdir(dirname(targetPath), { recursive: true })
+      await writeFile(tempPath, snapshotJson, { encoding: 'utf8', flag: 'wx' })
+      await rename(tempPath, targetPath)
+      await client.reviewScopeSnapshot.update({
+        where: { reviewId: review.id },
+        data: { state: 'ready' }
+      })
+    } catch (error) {
+      await rm(tempPath, { force: true }).catch(() => undefined)
+      throw error
+    }
   }
 
   // Patches only the provided fields so a caller can flip lifecycle/outcome without resupplying the rest.
@@ -156,6 +324,19 @@ class ReviewRepository {
     const client = await this.getClient()
 
     await client.$transaction(async (tx) => {
+      const review = await tx.review.findUnique({ where: { id: reviewId } })
+      if (!review) throw new Error(`Review not found: ${reviewId}`)
+      const scope = parseJson<TurnScope>(review.scope, EMPTY_SCOPE(review.turnMessageId))
+      for (const check of checks) {
+        if (
+          check.artifactVersionId &&
+          !scope.artifactVersionIds.includes(check.artifactVersionId)
+        ) {
+          throw new Error(
+            `Artifact Version ${check.artifactVersionId} is not in Review ${reviewId} scope.`
+          )
+        }
+      }
       await tx.finding.createMany({
         data: checks.map((check, index) => ({
           reviewId,
@@ -165,11 +346,174 @@ class ReviewRepository {
           evidence: check.evidence,
           locator: JSON.stringify(check.locator ?? {}),
           artifactVersionId: check.artifactVersionId ?? null,
+          artifactBindingState: check.artifactVersionId ? 'scope_validated' : 'legacy_unverified',
           sortIndex: check.sortIndex ?? index
         }))
       })
       await touchReview(tx, reviewId)
     })
+  }
+
+  // Commits one scoped re-review submission behind a single interface. Tracked sourceFindingId
+  // entries are immutable assessments of existing Findings, never new Finding rows; untracked checks
+  // are newly discovered Findings. Review completion and every materialized disposition commit in the
+  // same SQLite transaction, so a malformed item cannot leave a partially applied audit result.
+  async commitScopedSubmission(input: {
+    reviewId: string
+    checks: NewCheck[]
+    expectedSourceFindingIds: string[]
+    outcome: ReviewOutcome
+    reviewerLog?: ReviewerLogEntry[]
+  }): Promise<ReviewWithChecks> {
+    if (input.checks.length === 0) {
+      throw new Error('A completed Review submission requires at least one explicit check.')
+    }
+    const trackedFindingIds = input.checks.flatMap((check) =>
+      check.sourceFindingId ? [check.sourceFindingId] : []
+    )
+    const expectedFindingIds = input.expectedSourceFindingIds
+    if (new Set(expectedFindingIds).size !== expectedFindingIds.length) {
+      throw new Error('Expected tracked Finding ids must be unique.')
+    }
+    if (new Set(trackedFindingIds).size !== trackedFindingIds.length) {
+      throw new Error('A tracked Finding may only be assessed once in a Review submission.')
+    }
+    const expectedSet = new Set(expectedFindingIds)
+    const submittedSet = new Set(trackedFindingIds)
+    if (
+      expectedSet.size !== submittedSet.size ||
+      [...expectedSet].some((findingId) => !submittedSet.has(findingId))
+    ) {
+      throw new Error('Review submission must assess the exact expected tracked Finding set.')
+    }
+
+    const client = await this.getClient()
+    const ownership = await client.$transaction(async (tx) => {
+      const assessmentReview = await tx.review.findUnique({ where: { id: input.reviewId } })
+      if (!assessmentReview) throw new Error(`Review not found: ${input.reviewId}`)
+      if (assessmentReview.lifecycle !== 'running') {
+        throw new Error(`Review submission is already terminal: ${input.reviewId}`)
+      }
+      const assessmentScope = parseJson<TurnScope>(
+        assessmentReview.scope,
+        EMPTY_SCOPE(assessmentReview.turnMessageId)
+      )
+      for (const check of input.checks) {
+        if (
+          check.artifactVersionId &&
+          !assessmentScope.artifactVersionIds.includes(check.artifactVersionId)
+        ) {
+          throw new Error(
+            `Artifact Version ${check.artifactVersionId} is not in Review ${input.reviewId} scope.`
+          )
+        }
+      }
+
+      const newChecks = input.checks.filter((check) => !check.sourceFindingId)
+      if (newChecks.length > 0) {
+        await tx.finding.createMany({
+          data: newChecks.map((check, index) => ({
+            reviewId: input.reviewId,
+            status: check.status,
+            resolution: check.resolution ?? 'open',
+            claim: check.claim,
+            evidence: check.evidence,
+            locator: JSON.stringify(check.locator ?? {}),
+            artifactVersionId: check.artifactVersionId ?? null,
+            artifactBindingState: check.artifactVersionId ? 'scope_validated' : 'legacy_unverified',
+            sortIndex: check.sortIndex ?? index
+          }))
+        })
+      }
+
+      const touchedSourceReviewIds = new Set<string>()
+      for (const check of input.checks) {
+        if (!check.sourceFindingId) continue
+        const finding = await tx.finding.findUnique({ where: { id: check.sourceFindingId } })
+        if (
+          !finding ||
+          (finding.status !== 'warn' && finding.status !== 'fail') ||
+          finding.resolution !== 'open'
+        ) {
+          throw new Error(`Tracked Finding is unavailable: ${check.sourceFindingId}`)
+        }
+        const sourceReview = await tx.review.findUnique({ where: { id: finding.reviewId } })
+        if (
+          !sourceReview ||
+          sourceReview.projectId !== assessmentReview.projectId ||
+          sourceReview.sessionId !== assessmentReview.sessionId ||
+          sourceReview.turnMessageId !== assessmentReview.turnMessageId
+        ) {
+          throw new Error('Tracked Finding belongs to another Review turn chain.')
+        }
+        const dispositionOutcome: ReviewFindingDispositionOutcome =
+          check.status === 'pass' ? 'resolved' : 'still_open'
+        const eventId = `review-disposition-${sha256(
+          stableJson({
+            sourceFindingId: finding.id,
+            causeReviewId: assessmentReview.id,
+            trigger: 'review_submission'
+          })
+        )}`
+        const existing = await tx.reviewFindingDisposition.findUnique({ where: { id: eventId } })
+        if (existing) {
+          if (
+            existing.sourceFindingId !== finding.id ||
+            existing.causeReviewId !== assessmentReview.id ||
+            existing.trigger !== 'review_submission' ||
+            existing.outcome !== dispositionOutcome ||
+            existing.assessedArtifactVersionId !== (check.artifactVersionId ?? null)
+          ) {
+            throw new Error(`Finding disposition event was reused with different data: ${eventId}`)
+          }
+          continue
+        }
+        await tx.finding.update({
+          where: { id: finding.id },
+          data:
+            dispositionOutcome === 'still_open'
+              ? { resolution: 'open', reflagCount: { increment: 1 } }
+              : { resolution: 'resolved' }
+        })
+        const latest = await tx.reviewFindingDisposition.findFirst({
+          where: { sourceFindingId: finding.id },
+          orderBy: { sequence: 'desc' },
+          select: { sequence: true }
+        })
+        await tx.reviewFindingDisposition.create({
+          data: {
+            id: eventId,
+            sourceFindingId: finding.id,
+            causeReviewId: assessmentReview.id,
+            sequence: (latest?.sequence ?? 0) + 1,
+            trigger: 'review_submission',
+            outcome: dispositionOutcome,
+            assessedArtifactVersionId: check.artifactVersionId ?? null
+          }
+        })
+        touchedSourceReviewIds.add(sourceReview.id)
+      }
+
+      for (const sourceReviewId of touchedSourceReviewIds) {
+        await touchReview(tx, sourceReviewId)
+      }
+      await tx.review.update({
+        where: { id: assessmentReview.id },
+        data: {
+          lifecycle: 'complete',
+          outcome: input.outcome,
+          errorMessage: null,
+          reviewerLog: JSON.stringify(input.reviewerLog ?? [])
+        }
+      })
+      return { projectId: assessmentReview.projectId, sessionId: assessmentReview.sessionId }
+    })
+
+    const committed = (
+      await this.getReviews({ projectId: ownership.projectId, sessionId: ownership.sessionId })
+    ).find((review) => review.id === input.reviewId)
+    if (!committed) throw new Error(`Committed Review not found: ${input.reviewId}`)
+    return committed
   }
 
   /**
@@ -181,9 +525,23 @@ class ReviewRepository {
 
   // Returns a session's reviews (newest first) each with its checks in display order.
   async getReviewsForSession(sessionId: string): Promise<ReviewWithChecks[]> {
+    return this.getReviews({ sessionId })
+  }
+
+  async getReviewsForProjectSession(
+    projectId: string,
+    sessionId: string
+  ): Promise<ReviewWithChecks[]> {
+    return this.getReviews({ projectId, sessionId })
+  }
+
+  private async getReviews(where: {
+    projectId?: string
+    sessionId: string
+  }): Promise<ReviewWithChecks[]> {
     const client = await this.getClient()
     const rows = await client.review.findMany({
-      where: { sessionId },
+      where,
       orderBy: { createdAt: 'desc' }
     })
 
@@ -271,6 +629,201 @@ class ReviewRepository {
     })
   }
 
+  // Appends a fix-loop assessment without rewriting the original warning. sequence is allocated
+  // inside the transaction so concurrent updates cannot produce two entries for the same position.
+  async appendFindingDisposition(input: {
+    eventId: string
+    sourceFindingId: string
+    causeReviewId?: string
+    trigger: ReviewFindingDispositionTrigger
+    outcome: ReviewFindingDispositionOutcome
+    note?: string
+    assessedArtifactVersionId?: string
+  }): Promise<ReviewFindingDisposition> {
+    const client = await this.getClient()
+    const row = await client.$transaction(async (tx) => {
+      const existing = await tx.reviewFindingDisposition.findUnique({
+        where: { id: input.eventId }
+      })
+      if (existing) {
+        if (
+          existing.sourceFindingId !== input.sourceFindingId ||
+          existing.causeReviewId !== (input.causeReviewId ?? null) ||
+          existing.trigger !== input.trigger ||
+          existing.outcome !== input.outcome ||
+          existing.note !== (input.note ?? null) ||
+          existing.assessedArtifactVersionId !== (input.assessedArtifactVersionId ?? null)
+        ) {
+          throw new Error(
+            `Finding disposition event was reused with different data: ${input.eventId}`
+          )
+        }
+        return existing
+      }
+      const latest = await tx.reviewFindingDisposition.findFirst({
+        where: { sourceFindingId: input.sourceFindingId },
+        orderBy: { sequence: 'desc' },
+        select: { sequence: true }
+      })
+      return tx.reviewFindingDisposition.create({
+        data: {
+          id: input.eventId,
+          sourceFindingId: input.sourceFindingId,
+          causeReviewId: input.causeReviewId ?? null,
+          sequence: (latest?.sequence ?? 0) + 1,
+          trigger: input.trigger,
+          outcome: input.outcome,
+          note: input.note ?? null,
+          assessedArtifactVersionId: input.assessedArtifactVersionId ?? null
+        }
+      })
+    })
+    return {
+      id: row.id,
+      sourceFindingId: row.sourceFindingId,
+      causeReviewId: row.causeReviewId ?? undefined,
+      sequence: row.sequence,
+      trigger: row.trigger as ReviewFindingDispositionTrigger,
+      outcome: row.outcome as ReviewFindingDispositionOutcome,
+      note: row.note ?? undefined,
+      assessedArtifactVersionId: row.assessedArtifactVersionId ?? undefined,
+      createdAt: row.createdAt.getTime()
+    }
+  }
+
+  // Applies the fix-loop materialized state and appends its immutable audit event in one SQLite
+  // transaction. Callers never update Finding.resolution/reflagCount separately from the event.
+  async commitFindingDisposition(input: {
+    reviewId: string
+    sourceFindingId: string
+    causeReviewId?: string
+    trigger: ReviewFindingDispositionTrigger
+    outcome: ReviewFindingDispositionOutcome
+    note?: string
+    assessedArtifactVersionId?: string
+  }): Promise<ReviewFindingDisposition> {
+    const [disposition] = await this.commitFindingDispositions([input])
+    if (!disposition) throw new Error('Finding disposition was not committed.')
+    return disposition
+  }
+
+  // Applies one re-review submission as a single unit. A malformed disposition must not leave the
+  // earlier findings in the same submission resolved while later ones remain untouched.
+  async commitFindingDispositions(
+    inputs: CommitFindingDispositionInput[]
+  ): Promise<ReviewFindingDisposition[]> {
+    if (inputs.length === 0) return []
+    const sourceFindingIds = new Set(inputs.map((input) => input.sourceFindingId))
+    if (sourceFindingIds.size !== inputs.length) {
+      throw new Error('A finding may only have one disposition in a single Review submission.')
+    }
+
+    const client = await this.getClient()
+    const rows = await client.$transaction(async (tx) => {
+      const dispositions: Array<Parameters<typeof toFindingDisposition>[0]> = []
+      const reviewIds = new Set<string>()
+      for (const input of inputs) {
+        const finding = await tx.finding.findFirst({
+          where: { id: input.sourceFindingId, reviewId: input.reviewId }
+        })
+        if (!finding || (finding.status !== 'warn' && finding.status !== 'fail')) {
+          throw new Error(
+            `Finding ${input.sourceFindingId} does not belong to review ${input.reviewId}.`
+          )
+        }
+        const sourceReview = await tx.review.findUnique({ where: { id: input.reviewId } })
+        if (!sourceReview) throw new Error(`Review not found: ${input.reviewId}`)
+        const assessmentReview = input.causeReviewId
+          ? await tx.review.findUnique({ where: { id: input.causeReviewId } })
+          : sourceReview
+        if (
+          !assessmentReview ||
+          assessmentReview.projectId !== sourceReview.projectId ||
+          assessmentReview.sessionId !== sourceReview.sessionId
+        ) {
+          throw new Error('Finding disposition Review belongs to another Project or Session.')
+        }
+        if (input.assessedArtifactVersionId) {
+          const assessmentScope = parseJson<TurnScope>(
+            assessmentReview.scope,
+            EMPTY_SCOPE(assessmentReview.turnMessageId)
+          )
+          if (!assessmentScope.artifactVersionIds.includes(input.assessedArtifactVersionId)) {
+            throw new Error(
+              `Assessed Artifact Version is outside Review scope: ${input.assessedArtifactVersionId}`
+            )
+          }
+        }
+        const eventId =
+          input.eventId ??
+          `review-disposition-${sha256(
+            stableJson({
+              reviewId: input.reviewId,
+              sourceFindingId: input.sourceFindingId,
+              causeReviewId: input.causeReviewId ?? null,
+              trigger: input.trigger
+            })
+          )}`
+        const existing = await tx.reviewFindingDisposition.findUnique({
+          where: { id: eventId }
+        })
+        if (existing) {
+          if (
+            existing.sourceFindingId !== finding.id ||
+            existing.causeReviewId !== (input.causeReviewId ?? null) ||
+            existing.trigger !== input.trigger ||
+            existing.outcome !== input.outcome ||
+            existing.note !== (input.note ?? null) ||
+            existing.assessedArtifactVersionId !== (input.assessedArtifactVersionId ?? null)
+          ) {
+            throw new Error(`Finding disposition event was reused with different data: ${eventId}`)
+          }
+          dispositions.push(existing)
+          continue
+        }
+        await tx.finding.update({
+          where: { id: finding.id },
+          data:
+            input.outcome === 'still_open'
+              ? { resolution: 'open', reflagCount: { increment: 1 } }
+              : { resolution: input.outcome }
+        })
+        const latest = await tx.reviewFindingDisposition.findFirst({
+          where: { sourceFindingId: finding.id },
+          orderBy: { sequence: 'desc' },
+          select: { sequence: true }
+        })
+        dispositions.push(
+          await tx.reviewFindingDisposition.create({
+            data: {
+              id: eventId,
+              sourceFindingId: finding.id,
+              causeReviewId: input.causeReviewId ?? null,
+              sequence: (latest?.sequence ?? 0) + 1,
+              trigger: input.trigger,
+              outcome: input.outcome,
+              note: input.note ?? null,
+              assessedArtifactVersionId: input.assessedArtifactVersionId ?? null
+            }
+          })
+        )
+        reviewIds.add(input.reviewId)
+      }
+      for (const reviewId of reviewIds) await touchReview(tx, reviewId)
+      return dispositions
+    })
+    return rows.map(toFindingDisposition)
+  }
+
+  async getFindingDispositions(sourceFindingId: string): Promise<ReviewFindingDisposition[]> {
+    const client = await this.getClient()
+    const rows = await client.reviewFindingDisposition.findMany({
+      where: { sourceFindingId },
+      orderBy: { sequence: 'asc' }
+    })
+    return rows.map(toFindingDisposition)
+  }
+
   // Test/diagnostic helper: total check rows, used to assert no orphans survive a cascade delete.
   async countFindings(): Promise<number> {
     const client = await this.getClient()
@@ -296,7 +849,7 @@ class ReviewRepository {
 }
 
 export { ReviewRepository, toCheck, toReview }
-export type { ReviewClient, ReviewClientProvider, FindingSeverity }
+export type { ReviewClient, ReviewClientProvider, ReviewRepositoryOptions, FindingSeverity }
 
 // Legacy exports kept for callers that still reference toFinding.
 export const toFinding = toCheck
