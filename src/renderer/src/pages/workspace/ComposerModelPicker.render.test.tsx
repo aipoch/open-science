@@ -134,6 +134,11 @@ const radioItems = (): HTMLElement[] =>
 const subTriggers = (): HTMLElement[] =>
   Array.from(document.querySelectorAll<HTMLElement>('[data-slot="dropdown-menu-sub-trigger"]'))
 
+// The Model row's visible text is the current pick (provider + model), not a fixed label, so
+// tests locate it via its stable test id.
+const modelRowTrigger = (): HTMLElement | undefined =>
+  subTriggers().find((el) => el.getAttribute('data-testid') === 'model-row')
+
 describe('ComposerModelPicker', () => {
   it('renders nothing when there is a single selectable option', () => {
     useSettingsStore.setState({ providers: [provider({ id: 'p1', models: ['only'] })] })
@@ -183,7 +188,7 @@ describe('ComposerModelPicker', () => {
     expect(trigger).not.toBeNull()
     await openMenu(trigger!)
     // The catalog itself lives in the Model submenu; open it before asserting on its rows.
-    const modelRow = subTriggers().find((el) => el.textContent?.includes('Model'))
+    const modelRow = modelRowTrigger()
     expect(modelRow, 'expected the "Model" subtrigger').toBeDefined()
     await openSubmenu(modelRow!)
     expect(document.body.textContent).toContain('ds2')
@@ -233,7 +238,7 @@ describe('ComposerModelPicker', () => {
 
     // 2. With no active provider there is no effort row, so roving focus lands on the "Model"
     // subtrigger first; ArrowDown/ArrowUp step between it and the first-level "Open Settings".
-    const modelRow = subTriggers().find((el) => el.textContent?.includes('Model'))
+    const modelRow = modelRowTrigger()
     expect(modelRow, 'expected the "Model" subtrigger').toBeDefined()
     expect(
       document.activeElement,
@@ -444,7 +449,7 @@ describe('ComposerModelPicker', () => {
       subTriggers().find((el) => el.textContent?.includes('Reasoning effort')),
       'expected no "Reasoning effort" subtrigger for an unsupported model'
     ).toBeUndefined()
-    expect(subTriggers().some((el) => el.textContent?.includes('Model'))).toBe(true)
+    expect(modelRowTrigger(), 'expected the "Model" subtrigger to remain').toBeDefined()
   })
 
   it('lists the profile effort levels in the effort submenu and applies the picked intent', async () => {
@@ -502,7 +507,7 @@ describe('ComposerModelPicker', () => {
     expect(setReasoningEffort).toHaveBeenCalledWith(highOption?.intent)
   })
 
-  it('summarizes the current model and provider in the Model row capsule', async () => {
+  it('summarizes the current pick in the Model row as provider line over model name', async () => {
     useSettingsStore.setState({
       providers: [
         provider({
@@ -522,9 +527,13 @@ describe('ComposerModelPicker', () => {
     expect(trigger).not.toBeNull()
     await openMenu(trigger!)
 
-    const modelRow = subTriggers().find((el) => el.textContent?.includes('Model'))
+    // Two-line summary: the small bold provider line (with the provider's icon) sits above the
+    // model name — no `model · provider` capsule anymore.
+    const modelRow = modelRowTrigger()
     expect(modelRow, 'expected the "Model" subtrigger').toBeDefined()
-    expect(modelRow?.textContent).toContain('gpt-5.2 · OpenAI')
+    expect(modelRow?.textContent).toContain('OpenAI')
+    expect(modelRow?.textContent).toContain('gpt-5.2')
+    expect(modelRow?.textContent).not.toContain('·')
   })
 
   it('adapts the effort submenu to the standard-5 profile and echoes the current effort in the row capsule', async () => {
@@ -598,7 +607,7 @@ describe('ComposerModelPicker', () => {
     expect(trigger).not.toBeNull()
     await openMenu(trigger!)
 
-    const modelRow = subTriggers().find((el) => el.textContent?.includes('Model'))
+    const modelRow = modelRowTrigger()
     expect(modelRow, 'expected the "Model" subtrigger').toBeDefined()
     await openSubmenu(modelRow!)
 

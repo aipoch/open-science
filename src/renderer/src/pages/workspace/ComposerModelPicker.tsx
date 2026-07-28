@@ -161,14 +161,6 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
     (option) => option.providerId === activeProviderId && option.model === activeKeyModel
   )
 
-  // The Model row's capsule summarizes the current pick: model + provider, the provider alone when
-  // the option carries no concrete model, or a bare "Select" prompt when nothing is active.
-  const modelCapsuleLabel = current
-    ? current.model
-      ? `${current.model} · ${current.providerName}`
-      : current.providerName
-    : 'Select'
-
   // Group options by provider so official vendors show their catalog under one heading.
   const groups = providers
     .map((provider) => ({
@@ -263,29 +255,41 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
           </DropdownMenuSub>
         ) : null}
         <DropdownMenuSub>
-          <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
-            {current ? (
-              <ProviderKindIcon
-                kindKey={providerKindKey(current.providerType, current.vendorId)}
-                className="size-4 shrink-0 text-text-200"
-              />
-            ) : (
-              <Cpu className="size-4 shrink-0 text-text-200" strokeWidth={2} aria-hidden="true" />
-            )}
+          <DropdownMenuSubTrigger
+            data-testid="model-row"
+            className="items-center gap-2 px-2 py-1.5"
+          >
+            {/* The leading icon stays a generic model glyph; the provider identity lives in the
+                two-line summary instead. */}
+            <Cpu className="size-4 shrink-0 text-text-200" strokeWidth={2} aria-hidden="true" />
             <span className="min-w-0 flex-1">
-              <span className="block text-[13px] font-medium leading-5">Model</span>
-              <span className="block text-[11px] leading-4 text-text-300">
-                Provider and model for this chat
-              </span>
+              {current ? (
+                <>
+                  {/* Provider line: small bold caption with the provider's own icon; the model
+                      name gets the primary line below it. */}
+                  <span className="flex items-center gap-1 text-[11px] font-semibold leading-4 text-text-300">
+                    <ProviderKindIcon
+                      kindKey={providerKindKey(current.providerType, current.vendorId)}
+                      className="size-3 shrink-0"
+                    />
+                    <span className="min-w-0 truncate">{current.providerName}</span>
+                  </span>
+                  <span className="block truncate text-[13px] font-medium leading-5">
+                    {optionLabel(current)}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="block text-[13px] font-medium leading-5">Model</span>
+                  <span className="block text-[11px] leading-4 text-text-300">Select</span>
+                </>
+              )}
             </span>
-            <span className="flex max-w-[10rem] shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-bg-200 px-2 py-0.5 text-[11px] font-medium leading-4 text-text-100">
-              <span className="min-w-0 truncate">{modelCapsuleLabel}</span>
-              <ChevronRight
-                className="size-3 shrink-0 opacity-60"
-                strokeWidth={2}
-                aria-hidden="true"
-              />
-            </span>
+            <ChevronRight
+              className="size-3.5 shrink-0 opacity-60"
+              strokeWidth={2}
+              aria-hidden="true"
+            />
           </DropdownMenuSubTrigger>
           {/* The full grouped catalog (compatibility rows included) lives one level down so the
               first level stays a summary; behavior per item is unchanged from the flat menu. */}
