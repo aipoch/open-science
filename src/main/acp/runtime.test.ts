@@ -1686,20 +1686,23 @@ describe('ACP runtime session management', () => {
     )
   })
 
-  it('registers finalized current-turn Upload Versions with the trusted Notebook bridge', async () => {
+  it('registers every finalized prompt Upload Version with the trusted Notebook bridge', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
-    const [staged] = await stageUploadFixtures(uploadRepository, {
-      files: [{ name: 'groups.csv', mimeType: 'text/csv', content: 'group\nA\n' }]
+    const [historyUpload, currentUpload] = await stageUploadFixtures(uploadRepository, {
+      files: [
+        { name: 'history.csv', mimeType: 'text/csv', content: 'group\nA\n' },
+        { name: 'current.csv', mimeType: 'text/csv', content: 'group\nB\n' }
+      ]
     })
     const finalize = uploadRepository.finalizePendingSessionUploads.bind(uploadRepository)
     vi.spyOn(uploadRepository, 'finalizePendingSessionUploads').mockImplementation(
       async (...args) =>
-        (await finalize(...args)).map((attachment) => ({
+        (await finalize(...args)).map((attachment, index) => ({
           ...attachment,
-          versionId: 'upload-version-1',
+          versionId: `upload-version-${index + 1}`,
           versionNumber: 1,
-          checksum: 'a'.repeat(64),
+          checksum: String(index + 1).repeat(64),
           createdAt: '2026-07-27T10:00:00.000Z'
         }))
     )
@@ -1731,14 +1734,18 @@ describe('ACP runtime session management', () => {
       sessionId: session.sessionId,
       text: 'analyze groups',
       provenanceContext: { promptMessageId: 'message-user-1' },
-      attachments: [staged]
+      historyAttachments: [historyUpload],
+      attachments: [currentUpload]
     })
 
     expect(registerTurnInputs).toHaveBeenCalledWith({
       projectId: 'default-project',
       appSessionId: 'remote-session-1',
       promptMessageId: 'message-user-1',
-      uploads: [expect.objectContaining({ id: staged.id, versionId: 'upload-version-1' })],
+      uploads: [
+        expect.objectContaining({ id: historyUpload.id, versionId: 'upload-version-1' }),
+        expect.objectContaining({ id: currentUpload.id, versionId: 'upload-version-2' })
+      ],
       references: []
     })
   })

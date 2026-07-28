@@ -3088,8 +3088,7 @@ class AcpRuntime {
   ): Promise<string | ContentBlock[]> {
     const attachments = [...(request.historyAttachments ?? []), ...(request.attachments ?? [])]
     const referencedArtifacts = request.referencedArtifacts ?? []
-    const currentUploadIds = new Set((request.attachments ?? []).map((attachment) => attachment.id))
-    let finalizedCurrentUploads: UploadedAttachment[] = []
+    let finalizedPromptUploads: UploadedAttachment[] = []
 
     if (
       attachments.length === 0 &&
@@ -3135,9 +3134,7 @@ class AcpRuntime {
         attachments,
         this.resolveSessionProjectName(sessionId)
       )
-      finalizedCurrentUploads = finalizedAttachments.filter((attachment) =>
-        currentUploadIds.has(attachment.id)
-      )
+      finalizedPromptUploads = finalizedAttachments
 
       // Keep the user's text first, then append files in the same order they were added. A file may
       // expand to several blocks (an oversized text file becomes a preview notice + a resource link);
@@ -3163,7 +3160,7 @@ class AcpRuntime {
 
     if (
       this.notebookOptions?.registerTurnInputs &&
-      (finalizedCurrentUploads.length > 0 || referencedArtifacts.length > 0)
+      (finalizedPromptUploads.length > 0 || referencedArtifacts.length > 0)
     ) {
       await this.notebookOptions.registerTurnInputs({
         projectId: this.resolveSessionProjectName(sessionId),
@@ -3172,7 +3169,7 @@ class AcpRuntime {
           request.provenanceContext?.promptMessageId ??
           this.activeArtifactRuns.get(sessionId)?.promptMessageId ??
           `prompt-unbound-${sessionId}`,
-        uploads: finalizedCurrentUploads,
+        uploads: finalizedPromptUploads,
         references: referencedArtifacts
       })
     }

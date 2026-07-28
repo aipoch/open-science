@@ -9,6 +9,10 @@ import {
 } from './sqlite-schema-migrations'
 
 const PROJECT_DB_FILE = 'open-science.db'
+// SQLite PRAGMAs are connection-scoped. The runtime constraint migration disables foreign keys
+// before entering its rebuild transaction, so this client must keep both operations on one physical
+// connection. A single writer also avoids unnecessary SQLITE_BUSY contention for the local Project DB.
+const PROJECT_DB_CONNECTION_LIMIT = 1
 
 // Exact DDL Prisma generates for the Project model (verified via `prisma migrate diff`). Applying it as
 // CREATE TABLE IF NOT EXISTS lets a packaged app create its schema without shipping the migrate engine,
@@ -488,7 +492,11 @@ const COMPUTE_JOB_STATUS_INDEX_DDL = `CREATE INDEX IF NOT EXISTS "ComputeJob_sta
 const createProjectDbClient = (storageRoot: string): PrismaClient => {
   const dbPath = join(storageRoot, PROJECT_DB_FILE).replace(/\\/g, '/')
 
-  return new PrismaClient({ datasources: { db: { url: `file:${dbPath}` } } })
+  return new PrismaClient({
+    datasources: {
+      db: { url: `file:${dbPath}?connection_limit=${PROJECT_DB_CONNECTION_LIMIT}` }
+    }
+  })
 }
 
 type SqliteTableColumn = { name: string }

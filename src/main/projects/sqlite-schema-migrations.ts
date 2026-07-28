@@ -144,6 +144,8 @@ const ensureSqliteCheckConstraints = async (
   }
   if (pending.length === 0) return
 
+  // createProjectDbClient deliberately uses connection_limit=1. That invariant keeps this
+  // connection-scoped PRAGMA on the same physical SQLite connection as the transaction below.
   const foreignKeysWereEnabled = (await readForeignKeyState(client)) === 1
   if (foreignKeysWereEnabled) {
     await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
