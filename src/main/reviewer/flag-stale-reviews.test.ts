@@ -135,6 +135,19 @@ describe('flagStaleReviews', () => {
     expect(result.stale).toBeUndefined()
   })
 
+  it('fails closed when active-session Artifact evidence cannot be recomputed', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'flag-stale-unavailable-'))
+    const session = buildSession()
+    await writeArtifact(storageRoot, 'a,b\n1,2\n')
+    const scope = await resolveTurnScopeWithArtifactDigests(session, 'a1', storageRoot)
+    const review = buildReview(scope)
+    await rm(join(storageRoot, 'artifacts'), { recursive: true, force: true })
+
+    const [result] = await flagStaleReviews([review], session, storageRoot)
+
+    expect(result.stale).toBe(true)
+  })
+
   it('recomputes against scope.turnMessageId, so a fix-loop review is not falsely stale', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'flag-stale-'))
     const session = buildSession()

@@ -219,7 +219,23 @@ describe('session store', () => {
 
     useSessionStore.getState().removeMessage('transport-session-1', pending?.messageId ?? '')
 
-    expect(useSessionStore.getState().sessions[0].filesRevision).toBe(2)
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.filesRevision).toBe(2)
+    expect(session.messages.some((message) => message.id === pending?.messageId)).toBe(false)
+    expect(
+      toPersistedSession(session).messages.some((message) => message.id === pending?.messageId)
+    ).toBe(false)
+    expect(
+      session.conversationGraph?.messages.some((message) => message.id === pending?.messageId)
+    ).toBe(true)
+    expect(session.conversationGraph?.branches).toHaveLength(2)
+    const activeFrame = session.conversationGraph?.frames.find(
+      (frame) => frame.id === session.conversationGraph?.activeFrameId
+    )
+    const activeBranch = session.conversationGraph?.branches.find(
+      (branch) => branch.id === activeFrame?.activeBranchId
+    )
+    expect(activeBranch?.headMessageId).toBeUndefined()
   })
 
   it('binds a pending session to the runtime session id without rewriting the prompt', () => {

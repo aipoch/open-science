@@ -64,6 +64,9 @@ import {
 import { resolveMessageBranchPath } from '../../shared/conversation-graph'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+// Reconciliation can also run from a read path while an active writer is between copying bytes and
+// inserting its staging row. Only rowless directories older than a full hour are proven abandoned.
+const ORPHAN_STAGING_GRACE_MS = 60 * 60 * 1_000
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const VERSION_ALLOCATION_MAX_ATTEMPTS = 3
 
@@ -791,8 +794,8 @@ const environmentEvidence = (
   kernel_kind: manifest.kernelKind,
   runtime_source: manifest.runtimeSource,
   ...(manifest.runtimeVersion ? { runtime_version: manifest.runtimeVersion } : {}),
-  platform: manifest.platform,
-  architecture: manifest.architecture,
+  ...(manifest.platform ? { platform: manifest.platform } : {}),
+  ...(manifest.architecture ? { architecture: manifest.architecture } : {}),
   packages: manifest.packages.map(environmentPackageEvidence),
   ...(manifest.kernelKind === 'python' && manifest.runtimeVersion
     ? { python_version: manifest.runtimeVersion }
@@ -2110,7 +2113,8 @@ class ArtifactProvenanceRepository {
   async reconcileSession(
     projectIdInput: string,
     appSessionIdInput: string,
-    durableSession?: PersistedChatSession
+    durableSession?: PersistedChatSession,
+    options?: { removeOrphanStaging?: boolean }
   ): Promise<ArtifactStorageReconciliationResult> {
     const projectId = assertSafeSegment(projectIdInput, 'project id')
     const appSessionId = assertSafeSegment(appSessionIdInput, 'app session id')
@@ -2187,6 +2191,53 @@ class ArtifactProvenanceRepository {
           where: { id: version.id, state: 'staging' }
         })
         if (deleted.count === 1) result.quarantinedVersionIds.push(version.id)
+      }
+    }
+
+    if (options?.removeOrphanStaging) {
+      // A process can exit after copying immutable bytes but before inserting the staging authority
+      // row. Only startup reconciliation may remove those rowless temporary copies: read-triggered
+      // reconciliation can overlap an active writer and therefore remains non-destructive.
+      const stagingVersionsRoot = join(provenanceRoot, '.staging', 'versions')
+      const orphanCandidates = await readdir(stagingVersionsRoot, { withFileTypes: true }).catch(
+        (error: unknown) => {
+          if (
+            typeof error === 'object' &&
+            error !== null &&
+            'code' in error &&
+            (error as { code?: unknown }).code === 'ENOENT'
+          ) {
+            return []
+          }
+          throw error
+        }
+      )
+      for (const candidate of orphanCandidates) {
+        if (!candidate.isDirectory() || !SAFE_SEGMENT_PATTERN.test(candidate.name)) continue
+        const authority = await client.artifactVersion.findUnique({
+          where: { id: candidate.name },
+          select: { id: true }
+        })
+        if (authority) continue
+        const candidatePath = join(stagingVersionsRoot, candidate.name)
+        const candidateStat = await stat(candidatePath).catch((error: unknown) => {
+          if (
+            typeof error === 'object' &&
+            error !== null &&
+            'code' in error &&
+            (error as { code?: unknown }).code === 'ENOENT'
+          ) {
+            return undefined
+          }
+          throw error
+        })
+        if (
+          !candidateStat ||
+          this.now().getTime() - candidateStat.mtimeMs < ORPHAN_STAGING_GRACE_MS
+        ) {
+          continue
+        }
+        await rm(candidatePath, { recursive: true, force: true })
       }
     }
 
@@ -2970,7 +3021,12 @@ class ArtifactProvenanceRepository {
           sourceSessionUnavailable = provenanceReviews.length > 0
         } else {
           resolvedReviews = (
-            await flagStaleReviews(provenanceReviews, session, this.options.storageRoot)
+            await flagStaleReviews(
+              provenanceReviews,
+              session,
+              this.options.storageRoot,
+              (request) => this.resolveVersionContent(request)
+            )
           ).map((review, index) => ({ ...provenanceReviews[index]!, stale: review.stale }))
         }
       }
@@ -3072,7 +3128,7 @@ class ArtifactProvenanceRepository {
     versionId: string
     appSessionId?: string
     artifactId?: string
-  }): Promise<{ path: string; filename: string; contentType?: string }> {
+  }): Promise<{ path: string; filename: string; contentType?: string; checksum?: string }> {
     const projectId = assertSafeSegment(request.projectId, 'project id')
     const versionId = assertSafeSegment(request.versionId, 'version id')
     const appSessionId = request.appSessionId
@@ -3101,7 +3157,8 @@ class ArtifactProvenanceRepository {
     return {
       path,
       filename: version.artifact.filename,
-      contentType: version.contentType ?? undefined
+      contentType: version.contentType ?? undefined,
+      checksum: version.checksum
     }
   }
 

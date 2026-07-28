@@ -26,6 +26,8 @@ describe('EnvironmentStateTracker', () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-state-'))
     const inspectInstalled = vi.fn().mockResolvedValue({
       runtimeVersion: '3.13.2',
+      platform: 'linux',
+      architecture: 'aarch64',
       packages: [
         {
           name: 'numpy',
@@ -78,6 +80,7 @@ describe('EnvironmentStateTracker', () => {
       installedInventory: { validation: 'best-effort' }
     })
     expect(second.manifest.warnings).toContain('inventory-cache-best-effort')
+    expect(first.manifest).toMatchObject({ platform: 'linux', architecture: 'aarch64' })
     expect(second.manifest.packages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: 'numpy', loadedState: 'installed-only' }),

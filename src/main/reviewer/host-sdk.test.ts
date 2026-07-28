@@ -159,6 +159,26 @@ describe('host.read_artifact — tabular CSV', () => {
     expect(resolverCalls).toEqual([{ projectId: PROJECT, versionId: nativeVersionId }])
   })
 
+  it('rejects native Artifact bytes that no longer match the authority checksum', async () => {
+    const nativeVersionId = 'native-version-checksum-mismatch'
+    const nativePath = join(tmpDir, 'immutable-mismatch', 'content')
+    await mkdir(join(tmpDir, 'immutable-mismatch'), { recursive: true })
+    await writeFile(nativePath, 'tampered bytes')
+    server = new ReviewerHostServer(
+      makeSession({ artifacts: [] }),
+      makeScope([nativeVersionId]),
+      tmpDir,
+      async () => ({
+        path: nativePath,
+        filename: 'native.txt',
+        contentType: 'text/plain',
+        checksum: '0'.repeat(64)
+      })
+    )
+
+    await expect(server.readArtifact(nativeVersionId)).rejects.toThrow(/checksum mismatch/i)
+  })
+
   it('returns kind=tabular with column-addressable structure for a simple CSV', async () => {
     await writeArtifact(tmpDir, V1, 'name,value,unit\nalpha,1,mg\nbeta,2,mg\ngamma,3,mg\n')
 

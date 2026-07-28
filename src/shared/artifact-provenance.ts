@@ -196,8 +196,8 @@ export type ArtifactVersionEnvironmentEvidence = {
   kernel_kind: 'python' | 'r'
   runtime_source: 'managed' | 'external'
   runtime_version?: string
-  platform: string
-  architecture: string
+  platform?: string
+  architecture?: string
   packages: Array<{
     name: string
     version?: string

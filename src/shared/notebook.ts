@@ -127,8 +127,8 @@ export type NotebookEnvironmentManifest = {
   environmentName: string
   runtimeSource: 'managed' | 'external'
   runtimeVersion?: string
-  platform: string
-  architecture: string
+  platform?: string
+  architecture?: string
   inventorySources: Array<'kernel-native' | 'interpreter-native' | 'operation-log'>
   packages: NotebookEnvironmentPackage[]
   operationLog?: NotebookEnvironmentOperation[]

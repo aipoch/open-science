@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  utimes,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -28,6 +38,97 @@ afterEach(async () => {
 })
 
 describe('artifact provenance repository', () => {
+  it('removes a stale orphaned staging directory that has no SQLite lifecycle row', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-orphan-staging-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    const orphanVersionId = 'orphan-version-1'
+    const stagingDirectory = join(
+      storageRoot,
+      'artifacts',
+      'project-1',
+      'session-1',
+      '.provenance',
+      '.staging',
+      'versions',
+      orphanVersionId
+    )
+    await mkdir(stagingDirectory, { recursive: true })
+    await writeFile(join(stagingDirectory, 'content'), 'orphaned bytes')
+    const staleTime = new Date(Date.now() - 2 * 60 * 60 * 1_000)
+    await utimes(stagingDirectory, staleTime, staleTime)
+
+    await expect(
+      repository.reconcileSession('project-1', 'session-1', undefined, {
+        removeOrphanStaging: true
+      })
+    ).resolves.toEqual({ recoveredVersionIds: [], quarantinedVersionIds: [] })
+    await expect(stat(stagingDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('leaves a fresh rowless staging directory for an in-flight writer', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-live-staging-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    const stagingDirectory = join(
+      storageRoot,
+      'artifacts',
+      'project-1',
+      'session-1',
+      '.provenance',
+      '.staging',
+      'versions',
+      'in-flight-version'
+    )
+    await mkdir(stagingDirectory, { recursive: true })
+    await writeFile(join(stagingDirectory, 'content'), 'still copying')
+
+    await repository.reconcileSession('project-1', 'session-1', undefined, {
+      removeOrphanStaging: true
+    })
+
+    await expect(stat(stagingDirectory)).resolves.toBeDefined()
+  })
+
+  it('never removes rowless staging during read-triggered reconciliation', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-read-reconcile-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    const stagingDirectory = join(
+      storageRoot,
+      'artifacts',
+      'project-1',
+      'session-1',
+      '.provenance',
+      '.staging',
+      'versions',
+      'old-but-active-version'
+    )
+    await mkdir(stagingDirectory, { recursive: true })
+    await writeFile(join(stagingDirectory, 'content'), 'long-running copy')
+    const staleTime = new Date(Date.now() - 2 * 60 * 60 * 1_000)
+    await utimes(stagingDirectory, staleTime, staleTime)
+
+    await repository.reconcileSession('project-1', 'session-1')
+
+    await expect(stat(stagingDirectory)).resolves.toBeDefined()
+  })
+
   it('keeps immutable bytes while same-session same-name saves advance one lineage', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-versions-'))
     const client = createProjectDbClient(storageRoot)

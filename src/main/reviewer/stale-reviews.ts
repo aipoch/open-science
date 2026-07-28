@@ -4,15 +4,18 @@
 import type { ReviewWithChecks } from '../../shared/reviewer'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { resolveTurnScopeWithArtifactDigests } from './artifact-digest'
+import type { ArtifactVersionContentResolver } from './host-sdk'
 import { isTurnScopeStale } from './scope'
 
 // Marks each completed review whose audited turn no longer matches its current scope (e.g. an artifact
-// was edited after the review ran). Fail-open: a missing session or a recompute error leaves reviews
-// unflagged rather than hiding a real verdict. Running/error reviews have no verdict to invalidate.
+// was edited after the review ran). A deleted Session has no live evidence to recompute; a failure while
+// reading an active Session's evidence instead fails closed as stale. Running/error reviews have no
+// verdict to invalidate.
 export const flagStaleReviews = async (
   reviews: ReviewWithChecks[],
   session: PersistedChatSession | undefined,
-  artifactStorageRoot: string
+  artifactStorageRoot: string,
+  resolveArtifactVersion?: ArtifactVersionContentResolver
 ): Promise<ReviewWithChecks[]> => {
   if (reviews.length === 0 || !session) return reviews
   const currentSession = session
@@ -22,20 +25,19 @@ export const flagStaleReviews = async (
   // file descriptors on a session with a long review history (then fail-open, hiding staleness).
   const flagged: ReviewWithChecks[] = []
   for (const review of reviews) {
-    flagged.push(await flagOne(review, currentSession, artifactStorageRoot))
+    flagged.push(await flagOne(review, currentSession, artifactStorageRoot, resolveArtifactVersion))
   }
   return flagged
 }
 
 // Recomputes one review's scope and returns it with a DEFINITIVE stale flag (true/false) on success.
-// On failure — or for a non-complete review that has no verdict to invalidate — it leaves `stale`
-// untouched (typically undefined), which the renderer merge treats as "not computed" and therefore
-// must NOT use to clear an existing outdated flag. This is why success always sets an explicit boolean:
-// only an explicit value distinguishes "computed not-stale" from "couldn't compute".
+// A non-complete review has no verdict to invalidate. A completed review that cannot be recomputed is
+// explicitly stale: continuing to present its old verdict as current would be a false audit claim.
 const flagOne = async (
   review: ReviewWithChecks,
   session: PersistedChatSession,
-  artifactStorageRoot: string
+  artifactStorageRoot: string,
+  resolveArtifactVersion?: ArtifactVersionContentResolver
 ): Promise<ReviewWithChecks> => {
   if (review.lifecycle !== 'complete') return review
   try {
@@ -45,10 +47,11 @@ const flagOne = async (
     const current = await resolveTurnScopeWithArtifactDigests(
       session,
       review.scope.turnMessageId,
-      artifactStorageRoot
+      artifactStorageRoot,
+      resolveArtifactVersion
     )
     return { ...review, stale: isTurnScopeStale(review.scope, current) }
   } catch {
-    return review
+    return { ...review, stale: true }
   }
 }

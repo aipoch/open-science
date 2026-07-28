@@ -404,7 +404,8 @@ describe('reviewer IPC handlers', () => {
       expect(flagStaleReviews).toHaveBeenCalledWith(
         reviews,
         expect.objectContaining({ id: 'session-1' }),
-        DATA_ROOT
+        DATA_ROOT,
+        expect.any(Function)
       )
       expect(result).toEqual(flagged)
     })
@@ -428,7 +429,12 @@ describe('reviewer IPC handlers', () => {
       expect(sessionLoadOne).toHaveBeenCalledWith('project-1', 'missing-session')
       // flagStaleReviews is fail-open: a missing session means staleness was not computed, so the
       // reviews pass through without modification.
-      expect(flagStaleReviews).toHaveBeenCalledWith(reviews, undefined, DATA_ROOT)
+      expect(flagStaleReviews).toHaveBeenCalledWith(
+        reviews,
+        undefined,
+        DATA_ROOT,
+        expect.any(Function)
+      )
       expect(result).toBe(reviews)
     })
 

@@ -133,7 +133,9 @@ const registerReviewerIpcHandlers = (
     } catch {
       return reviews
     }
-    return flagStaleReviews(reviews, session, dataRoot)
+    return flagStaleReviews(reviews, session, dataRoot, (versionRequest) =>
+      artifactProvenanceRepository.resolveVersionContent(versionRequest)
+    )
   })
 
   // reviewer:abort-fix-loop — renderer requests that the active fix loop for a session be aborted.

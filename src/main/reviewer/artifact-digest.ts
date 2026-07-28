@@ -5,6 +5,7 @@ import { pipeline } from 'node:stream/promises'
 
 import type { TurnScope } from '../../shared/reviewer'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { ArtifactVersionContentResolver } from './host-sdk'
 import { resolveArtifactPath } from './host-sdk'
 import { resolveTurnScope } from './scope'
 
@@ -39,7 +40,8 @@ const computeArtifactDigest = async (path: string): Promise<string | undefined> 
 export const resolveTurnScopeWithArtifactDigests = async (
   session: PersistedChatSession,
   turnMessageId: string,
-  artifactStorageRoot: string
+  artifactStorageRoot: string,
+  resolveArtifactVersion?: ArtifactVersionContentResolver
 ): Promise<TurnScope> => {
   const structural = resolveTurnScope(session, turnMessageId)
   const digests = new Map<string, string>()
@@ -48,15 +50,27 @@ export const resolveTurnScopeWithArtifactDigests = async (
   for (let start = 0; start < ids.length; start += DIGEST_CONCURRENCY) {
     await Promise.all(
       ids.slice(start, start + DIGEST_CONCURRENCY).map(async (id) => {
-        let path: string
+        let resolved: Awaited<ReturnType<ArtifactVersionContentResolver>> | undefined
+        let resolutionError: unknown
         try {
-          path = resolveArtifactPath(artifactStorageRoot, session.projectId, id)
-        } catch {
-          return
+          resolved = resolveArtifactVersion
+            ? await resolveArtifactVersion({ projectId: session.projectId, versionId: id })
+            : undefined
+        } catch (error) {
+          resolutionError = error
         }
 
+        const path =
+          resolved?.path ?? resolveArtifactPath(artifactStorageRoot, session.projectId, id)
         const digest = await computeArtifactDigest(path)
-        if (digest !== undefined) digests.set(id, digest)
+        if (digest === undefined) {
+          if (resolutionError) throw resolutionError
+          throw new Error(`Artifact content is unavailable while freezing Review scope: ${id}`)
+        }
+        if (resolved?.checksum && digest !== `sha256:${resolved.checksum}`) {
+          throw new Error(`Artifact Version checksum changed while freezing Review scope: ${id}`)
+        }
+        digests.set(id, digest)
       })
     )
   }

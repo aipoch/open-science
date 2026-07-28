@@ -783,7 +783,8 @@ const runScopedReview = async (options: {
   const scope = await resolveTurnScopeWithArtifactDigests(
     session,
     turnMessageId,
-    artifactStorageRoot
+    artifactStorageRoot,
+    artifactVersionContentResolver
   )
 
   // Create a new Review row sharing the originalTurnMessageId (not the correction turn's id),
@@ -1000,7 +1001,8 @@ const runReviewWithSession = async (
   const scope = await resolveTurnScopeWithArtifactDigests(
     session,
     scopeTurnMessageId ?? turnMessageId,
-    artifactStorageRoot
+    artifactStorageRoot,
+    artifactVersionContentResolver
   )
 
   // Step 2: create the Review row (lifecycle='running') immediately so the renderer shows a spinner.

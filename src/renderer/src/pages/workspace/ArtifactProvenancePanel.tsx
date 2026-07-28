@@ -118,6 +118,17 @@ const packageKey = (value: string): string =>
 const packageNameFromSpec = (value: string): string | undefined =>
   value.trim().match(/^[A-Za-z0-9_.-]+/u)?.[0]
 
+const environmentWarningLabel = (warning: string): string => {
+  switch (warning) {
+    case 'inventory-cache-best-effort':
+      return 'Inventory cache was reused without a full validation.'
+    case 'environment-changed-during-run':
+      return 'The Environment changed while the producer run was executing.'
+    default:
+      return warning
+  }
+}
+
 const packageChangeLabel = (change: Record<string, unknown>): string => {
   const name = asString(change.name) ?? 'unknown package'
   const before = asString(change.before_version)
@@ -524,6 +535,9 @@ const ArtifactProvenancePanel = ({
         .map(asRecord)
         .filter((operation): operation is Record<string, unknown> => operation !== undefined)
     : []
+  const environmentWarnings = Array.isArray(environment?.warnings)
+    ? environment.warnings.filter((warning): warning is string => typeof warning === 'string')
+    : []
   const requestedPackageKeys = new Set(
     environmentOperations.flatMap((operation) =>
       Array.isArray(operation.packages)
@@ -897,6 +911,19 @@ const ArtifactProvenancePanel = ({
                     {environmentPackages.length} packages
                   </dd>
                 </dl>
+                {environmentWarnings.length > 0 ? (
+                  <div
+                    role="status"
+                    className="rounded-md border border-warning-100/50 bg-warning-100/10 px-3 py-2 text-xs text-text-200"
+                  >
+                    <p className="font-medium text-text-100">Partial capture details</p>
+                    <ul className="mt-1 list-disc space-y-1 pl-4">
+                      {environmentWarnings.map((warning) => (
+                        <li key={warning}>{environmentWarningLabel(warning)}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
                 <div className="overflow-hidden rounded-md border border-border-300/60">
                   <table className="w-full table-fixed text-left text-xs">
                     <thead className="bg-bg-100 text-text-300">

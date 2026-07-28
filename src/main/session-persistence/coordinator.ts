@@ -54,7 +54,8 @@ type ArtifactStorageReconciler = {
   reconcileSession(
     projectId: string,
     sessionId: string,
-    durableSession: PersistedChatSession
+    durableSession: PersistedChatSession,
+    options?: { removeOrphanStaging?: boolean }
   ): Promise<unknown>
 }
 
@@ -97,13 +98,19 @@ class SessionPersistenceCoordinator {
       try {
         await this.provenance?.reconcileSessionDeletions(scan.result.sessions)
         for (const session of scan.result.sessions) {
-          await this.artifactStorage?.reconcileSession(session.projectId, session.id, session)
+          await this.artifactStorage?.reconcileSession(session.projectId, session.id, session, {
+            // Startup runs before an Agent or Notebook writer can enter the Session. Destructive
+            // cleanup is forbidden on later read-triggered reconciliation paths.
+            removeOrphanStaging: true
+          })
         }
         // Reconciliation restores active owners left soft-deleted by an interrupted delete before any
         // scan-order-dependent sync can offer their canonical rows to another session.
         await this.fileIndex.reconcileActiveSessions(scan.result.sessions)
-      } catch {
-        // The repository records the global incomplete marker; keep chat hydration available.
+      } catch (error) {
+        this.fileIndex.markReconciliationIncomplete()
+        console.error('[session-persistence] startup reconciliation failed', error)
+        // Keep chat hydration available while Files remains explicitly incomplete and retryable.
         return scan.result
       }
 

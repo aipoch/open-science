@@ -1617,16 +1617,30 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     set((state) => ({
       sessions: state.sessions.map((session) => {
         if (session.id !== sessionId) return session
-        const removedMessage = session.messages.find((message) => message.id === messageId)
-        if (!removedMessage) return session
-        const hasFiles =
-          (removedMessage.uploads?.length ?? 0) > 0 || (removedMessage.artifactIds?.length ?? 0) > 0
+        const cutIndex = session.messages.findIndex((message) => message.id === messageId)
+        if (cutIndex < 0) return session
+        const removedMessages = session.messages.slice(cutIndex)
+        const hasFiles = removedMessages.some(
+          (message) => (message.uploads?.length ?? 0) > 0 || (message.artifactIds?.length ?? 0) > 0
+        )
+        const now = Date.now()
+        const currentGraph = synchronizeSessionGraph(session, session.messages, now)
+        // Interrupted turns are immutable evidence once recorded. Fork before the unanswered prompt
+        // so retrying it cannot resurrect the old bubble, while the abandoned Branch remains available
+        // to provenance and revision history instead of being destructively rewritten.
+        const conversationGraph = forkEditedConversationMessage(
+          currentGraph,
+          messageId,
+          createConversationBranchId(),
+          now
+        )
 
         return {
           ...session,
-          messages: session.messages.filter((message) => message.id !== messageId),
+          messages: session.messages.slice(0, cutIndex),
+          conversationGraph,
           filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
-          updatedAt: Date.now()
+          updatedAt: now
         }
       })
     }))

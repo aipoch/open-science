@@ -6,7 +6,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 import { getProjectArtifactDir } from '../artifacts/repository'
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -69,7 +69,7 @@ export type ArtifactContent = TabularArtifactContent | RawArtifactContent
 export type ArtifactVersionContentResolver = (request: {
   projectId: string
   versionId: string
-}) => Promise<{ path: string; filename: string; contentType?: string }>
+}) => Promise<{ path: string; filename: string; contentType?: string; checksum?: string }>
 
 // The complete set of RPC methods the host exposes. Single-sourced so the unknown-method error can
 // tell a guessing reviewer exactly what IS available (it likes to try e.g. `list_artifacts`).
@@ -246,6 +246,12 @@ export class ReviewerHostServer {
         `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
           `${error instanceof Error ? error.message : String(error)}`
       )
+    }
+    if (
+      resolvedVersion?.checksum &&
+      createHash('sha256').update(bytes).digest('hex') !== resolvedVersion.checksum
+    ) {
+      throw new Error(`Artifact Version checksum mismatch while reading ${JSON.stringify(id)}.`)
     }
 
     const isText = isLikelyText(bytes)

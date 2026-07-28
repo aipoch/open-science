@@ -279,7 +279,14 @@ describe('SessionPersistenceCoordinator', () => {
     )
 
     await expect(coordinator.loadAll()).resolves.toBe(result)
-    expect(artifactStorage.reconcileSession).toHaveBeenCalledWith('project-1', 'session-1', session)
+    expect(artifactStorage.reconcileSession).toHaveBeenCalledWith(
+      'project-1',
+      'session-1',
+      session,
+      {
+        removeOrphanStaging: true
+      }
+    )
     expect(fileIndex.syncSession).toHaveBeenCalledWith(session)
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([session])
   })
@@ -356,6 +363,33 @@ describe('SessionPersistenceCoordinator', () => {
     const markReconciliationIncomplete = vi.fn()
     const fileIndex = createFileIndex({ markReconciliationIncomplete })
     const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+
+    await expect(coordinator.loadAll()).resolves.toBe(result)
+    expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+    expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
+  })
+
+  it('marks reconciliation incomplete when startup Provenance recovery fails', async () => {
+    const session = createSession()
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const markReconciliationIncomplete = vi.fn()
+    const fileIndex = createFileIndex({ markReconciliationIncomplete })
+    const provenance = {
+      captureFinalizedMessages: vi.fn(),
+      reconcileSessionDeletions: vi.fn().mockRejectedValue(new Error('recovery failed')),
+      prepareSessionDeletion: vi.fn(),
+      completeSessionDeletion: vi.fn(),
+      abortSessionDeletion: vi.fn()
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      provenance
+    )
 
     await expect(coordinator.loadAll()).resolves.toBe(result)
     expect(markReconciliationIncomplete).toHaveBeenCalledOnce()

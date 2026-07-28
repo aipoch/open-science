@@ -195,7 +195,8 @@ const provenance = (): ArtifactVersionProvenance => ({
       kernel_kind: 'python',
       platform: 'darwin',
       architecture: 'arm64',
-      capture_status: 'complete',
+      capture_status: 'partial',
+      warnings: ['inventory-cache-best-effort', 'Live Kernel package state unavailable.'],
       packages: [
         {
           name: 'numpy',
@@ -555,6 +556,8 @@ describe('ArtifactProvenancePanel', () => {
     expect(container.textContent).not.toContain('libzlib')
     expect(container.textContent).toContain('Show all 2 packages')
     expect(container.textContent).toContain('Operations')
+    expect(container.textContent).toContain('Inventory cache was reused without a full validation')
+    expect(container.textContent).toContain('Live Kernel package state unavailable.')
     expect(container.textContent).toContain('create')
     expect(container.textContent).toContain('numpy 2.4.6')
     expect(container.textContent).toContain('Other observed changes')

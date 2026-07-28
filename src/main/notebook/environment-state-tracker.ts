@@ -29,6 +29,8 @@ type EnvironmentCaptureTarget = {
 
 type InstalledEnvironmentInventory = {
   runtimeVersion?: string
+  platform?: string
+  architecture?: string
   packages: NotebookEnvironmentPackage[]
 }
 
@@ -252,7 +254,7 @@ const mergePackages = (
 
 const PYTHON_INVENTORY_SCRIPT = [
   'import importlib.metadata as metadata, platform, sys',
-  'print("RUNTIME\\t" + platform.python_version())',
+  'print("RUNTIME\\t" + platform.python_version() + "\\t" + sys.platform + "\\t" + platform.machine())',
   'rows = []',
   'for dist in metadata.distributions():',
   '    name = (dist.metadata.get("Name") or "").replace("\\t", " ").replace("\\n", " ").strip()',
@@ -263,7 +265,9 @@ const PYTHON_INVENTORY_SCRIPT = [
 ].join('\n')
 
 const R_INVENTORY_SCRIPT = [
-  'cat("RUNTIME\\t", paste(R.version$major, R.version$minor, sep="."), "\\n", sep="")',
+  'runtimeSystem <- tolower(Sys.info()[["sysname"]])',
+  'runtimePlatform <- if (runtimeSystem == "windows") "win32" else runtimeSystem',
+  'cat("RUNTIME\\t", paste(R.version$major, R.version$minor, sep="."), "\\t", runtimePlatform, "\\t", Sys.info()[["machine"]], "\\n", sep="")',
   'ip <- installed.packages()',
   'libraryPaths <- normalizePath(.libPaths(), winslash="/", mustWork=FALSE)',
   'runtimeHome <- normalizePath(R.home(), winslash="/", mustWork=FALSE)',
@@ -325,12 +329,16 @@ const parseInventory = (
   stdout: string
 ): InstalledEnvironmentInventory => {
   let runtimeVersion: string | undefined
+  let runtimePlatform: string | undefined
+  let runtimeArchitecture: string | undefined
   const packages: NotebookEnvironmentPackage[] = []
   for (const line of stdout.split(/\r?\n/u)) {
     const [kind, nameOrVersion, version, priority, built, libraryRankValue, libraryScope] =
       line.split('\t')
     if (kind === 'RUNTIME') {
       runtimeVersion = nameOrVersion || undefined
+      runtimePlatform = version || undefined
+      runtimeArchitecture = priority || undefined
       continue
     }
     if (kind !== 'PACKAGE' || !nameOrVersion) continue
@@ -358,7 +366,12 @@ const parseInventory = (
           : {})
     })
   }
-  return { runtimeVersion, packages: sortPackages(packages) }
+  return {
+    runtimeVersion,
+    platform: runtimePlatform,
+    architecture: runtimeArchitecture,
+    packages: sortPackages(packages)
+  }
 }
 
 const inspectInstalledDefault = async (
@@ -539,8 +552,8 @@ class EnvironmentStateTracker {
         environmentName: target.environmentName,
         runtimeSource: target.runtimeSource,
         runtimeVersion: live?.runtimeVersion ?? inventory?.runtimeVersion,
-        platform: process.platform,
-        architecture: process.arch,
+        ...(inventory?.platform ? { platform: inventory.platform } : {}),
+        ...(inventory?.architecture ? { architecture: inventory.architecture } : {}),
         inventorySources: [
           ...(live ? (['kernel-native'] as const) : []),
           ...(inventory ? (['interpreter-native'] as const) : []),
@@ -735,6 +748,8 @@ class EnvironmentStateTracker {
       schemaVersion: 1,
       capturedAt: this.now().toISOString(),
       runtimeVersion: inspected.runtimeVersion,
+      platform: inspected.platform,
+      architecture: inspected.architecture,
       packages: sortPackages(inspected.packages)
     }
     const serialized = `${JSON.stringify(inventory, null, 2)}\n`
@@ -765,8 +780,8 @@ class EnvironmentStateTracker {
       kernelKind: target.language,
       runtimeSource: target.runtimeSource,
       runtimeVersion: inventory.runtimeVersion,
-      platform: process.platform,
-      architecture: process.arch,
+      ...(inventory.platform ? { platform: inventory.platform } : {}),
+      ...(inventory.architecture ? { architecture: inventory.architecture } : {}),
       installedInventory: {
         capturedAt: inventory.capturedAt,
         source: 'full-scan',
