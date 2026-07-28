@@ -1477,7 +1477,7 @@ describe('ProjectFilesView', () => {
     expect(document.body.querySelector('[data-filter-id="session:session-12"]')).not.toBeNull()
   })
 
-  it('filters to uploads or a single session from the menu', async () => {
+  it('keeps filtered content and trigger icon synchronized with the selected category', async () => {
     await renderView([
       createSession({
         id: 'session-a',
@@ -1518,15 +1518,16 @@ describe('ProjectFilesView', () => {
       })
     ])
 
+    const filterButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Filter project files"]'
+    )
     const openFilterMenu = async (): Promise<void> => {
-      const filterButton = container.querySelector<HTMLButtonElement>(
-        '[aria-label="Filter project files"]'
-      )
-
       await act(async () => {
         clickDropdownTrigger(filterButton)
       })
     }
+
+    expect(filterButton?.querySelector('.lucide-boxes')).not.toBeNull()
 
     await openFilterMenu()
     await act(async () => {
@@ -1536,6 +1537,7 @@ describe('ProjectFilesView', () => {
     })
 
     expect(container.textContent).toContain('user upload.png')
+    expect(filterButton?.querySelector('.lucide-paperclip')).not.toBeNull()
     expect(container.textContent).not.toContain('a.png')
     expect(container.textContent).not.toContain('Session B')
 
@@ -1547,6 +1549,7 @@ describe('ProjectFilesView', () => {
     })
 
     expect(container.textContent).toContain('Session B')
+    expect(filterButton?.querySelector('.lucide-folder')).not.toBeNull()
     expect(container.textContent).toContain('b.png')
     expect(container.textContent).not.toContain('Your uploads')
     expect(container.textContent).not.toContain('a.png')

@@ -71,6 +71,22 @@ type ProjectFilesFilterOption = {
   kind: 'all' | 'uploads' | 'session'
 }
 
+const ProjectFilesFilterIcon = ({
+  kind,
+  className
+}: {
+  kind: ProjectFilesFilterOption['kind']
+  className: string
+}): React.JSX.Element => {
+  if (kind === 'uploads') {
+    return <Paperclip className={className} strokeWidth={1.8} aria-hidden="true" />
+  }
+  if (kind === 'session') {
+    return <Folder className={className} strokeWidth={1.8} aria-hidden="true" />
+  }
+  return <Boxes className={className} strokeWidth={1.8} aria-hidden="true" />
+}
+
 const COLLAPSED_SESSION_OPTION_COUNT = 5
 
 type ProjectFilePreviewTarget = {
@@ -687,8 +703,6 @@ const FilterMenuItem = ({
   isSelected: boolean
   onSelect: (optionId: string) => void
 }): React.JSX.Element => {
-  const Icon = option.kind === 'uploads' ? Paperclip : option.kind === 'session' ? Folder : Boxes
-
   return (
     <DropdownMenuItem
       role="menuitemradio"
@@ -697,7 +711,7 @@ const FilterMenuItem = ({
       className="gap-2"
       onSelect={() => onSelect(option.id)}
     >
-      <Icon className="size-4 shrink-0 text-text-300" strokeWidth={1.8} aria-hidden="true" />
+      <ProjectFilesFilterIcon kind={option.kind} className="size-4 shrink-0 text-text-300" />
       <span className="min-w-0 flex-1 truncate">{option.label}</span>
       {isSelected ? (
         <Check className="size-4 shrink-0 text-primary" strokeWidth={2} aria-hidden="true" />
@@ -735,6 +749,7 @@ const ProjectFilesFilterMenu = ({
     ? sessionOptions
     : sessionOptions.slice(0, COLLAPSED_SESSION_OPTION_COUNT)
   const showSessionOptionsToggle = sessionOptionCount > COLLAPSED_SESSION_OPTION_COUNT
+  const selectedOptionKind = options.find((option) => option.id === selectedOptionId)?.kind ?? 'all'
 
   useEffect(() => {
     // Expanded menus consume one existing cursor page per render until every session is available.
@@ -750,7 +765,10 @@ const ProjectFilesFilterMenu = ({
           className="max-w-[220px] gap-1.5"
           aria-label="Filter project files"
         >
-          <File className="size-3.5 shrink-0 text-text-300" strokeWidth={1.8} aria-hidden="true" />
+          <ProjectFilesFilterIcon
+            kind={selectedOptionKind}
+            className="size-3.5 shrink-0 text-text-300"
+          />
           <span className="min-w-0 truncate">{label}</span>
           <ChevronDown
             className="size-3.5 shrink-0 text-text-300"
