@@ -210,7 +210,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
       {/* Two-level menu: the first level is two summary rows (effort, model) whose actual choices
           live in their submenus. This keeps the long provider catalog out of the top level, which
           now reads as a compact overview instead of a scrolling list. */}
-      <DropdownMenuContent side="top" align="end" sideOffset={8} className="w-72 p-1">
+      <DropdownMenuContent side="top" align="end" sideOffset={8} className="w-84 p-1">
         {showEffortRow ? (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
@@ -268,10 +268,12 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                 Provider and model for this chat
               </span>
             </span>
-            {/* The current pick echoes on the right (where the capsule used to sit): small bold
-                provider line with its own icon over the model name. */}
+            {/* The current pick echoes on the right inside a capsule: small bold provider line
+                with its own icon over the model name. The capsule is two lines tall, so it uses
+                a soft rounded-lg corner rather than the single-line pill's rounded-full; long
+                names ellipsize against the max width. */}
             {current ? (
-              <span className="flex max-w-[10rem] shrink-0 flex-col items-end text-right">
+              <span className="flex max-w-[12rem] shrink-0 flex-col items-end rounded-lg bg-bg-200 px-2 py-1 text-right">
                 <span className="flex max-w-full items-center gap-1 text-[11px] font-semibold leading-4 text-text-300">
                   <ProviderKindIcon
                     kindKey={providerKindKey(current.providerType, current.vendorId)}
