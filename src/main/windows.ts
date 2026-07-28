@@ -9,7 +9,8 @@ import {
 } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
-import icon from '../../resources/icon.png?asset'
+import iconPng from '../../resources/icon.png?asset'
+import iconWindows from '../../resources/icon-light.ico?asset'
 import { isAllowedExternalNavigation, isAllowedFrameNavigation } from './navigation-policy'
 import { createFindOverlayManager, type FindOverlayDeps } from './find-overlay'
 import { registerFindOverlayOwner } from './find-overlay-registry'
@@ -29,6 +30,7 @@ import {
 
 const rendererEntry = join(__dirname, '../renderer/index.html')
 const preloadEntry = join(__dirname, '../preload/index.js')
+const icon = process.platform === 'win32' ? iconWindows : iconPng
 // The find overlay is a static page (no bundler entry) shipped under resources/, so it resolves the
 // same way in dev (project root) and packaged (asar root) via app.getAppPath().
 const findOverlayEntry = join(app.getAppPath(), 'resources/find-overlay/index.html')

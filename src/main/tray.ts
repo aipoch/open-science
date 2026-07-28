@@ -5,14 +5,21 @@ import { createLogger } from './logger'
 const logger = createLogger('tray')
 
 // macOS menu-bar icons should be monochrome "template" images: black pixels on a transparent background
-// that the system tints to match the light/dark menu bar. The dedicated source has light dots on a dark
-// container, so brightness becomes template alpha while the source alpha keeps padded pixels invisible.
-// Returns undefined on any failure so the caller can fall back to the full-color icon.
+// that the system tints to match the light/dark menu bar. A prepared 16px/32px source is used directly;
+// the legacy full-color conversion remains as a fallback when no dedicated asset is supplied.
 const TEMPLATE_ICON_SIZE = 18
-const createMacTemplateIcon = (iconPath: string): NativeImage | undefined => {
+const createMacTemplateIcon = (
+  iconPath: string,
+  preparedTemplate: boolean
+): NativeImage | undefined => {
   try {
     const source = nativeImage.createFromPath(iconPath)
     if (source.isEmpty()) return undefined
+
+    if (preparedTemplate) {
+      source.setTemplateImage(true)
+      return source
+    }
 
     const { width, height } = source.getSize()
     if (!width || !height) return undefined
@@ -63,7 +70,10 @@ const createAppTray = (opts: {
     // the full-color icon. An empty image is tolerated so the tray still appears with a blank glyph.
     const icon =
       process.platform === 'darwin'
-        ? (createMacTemplateIcon(opts.templateIconPath ?? opts.iconPath) ??
+        ? (createMacTemplateIcon(
+            opts.templateIconPath ?? opts.iconPath,
+            Boolean(opts.templateIconPath)
+          ) ??
           nativeImage.createFromPath(opts.iconPath))
         : nativeImage.createFromPath(opts.iconPath)
     const tray = new Tray(icon)
