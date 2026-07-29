@@ -10,21 +10,20 @@
 [![Follow on X](https://img.shields.io/badge/Follow%20on%20X-%40aipoch__ai-212529?style=for-the-badge&logo=x&logoColor=white)](https://x.com/aipoch_ai)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-AIPOCH-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/company/pochai)
 
-**An open-source, model-agnostic AI workbench for scientific discovery.** Open Science is a local desktop application for researchers. Create a project, describe a task in plain language, and let the agent read files, run code, search the web, call scientific data connectors, and return reports, tables, figures, and an inspectable activity history in one workspace.
+**Open Science is an open-source, local-first, model-agnostic AI research workbench for scientific discovery.** Built for researchers, it runs on your own computer (macOS, Windows, Linux). Create a project, describe a task in plain language, and let the AI agent read files, run Python and R code, search the web, call scientific data connectors, and return reproducible reports, tables, figures, and an inspectable activity history in one workspace.
 
 > ⭐ **Star the repo:** If this project has been helpful, we'd greatly appreciate a star on GitHub. Starring the repository encourages continued development. It only takes a second, but it has a meaningful impact on the project.
 
-> 💡 **Open Science v0.7.3 released.** A polish and reach release on top of v0.7.2: native context compaction for long sessions, a dark-mode theme, a whole-window find bar, large-file streaming uploads, a Grok (xAI) provider, and framework-aware custom-gateway defaults.
+> 💡 **[Open Science v0.7.3 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated July 2026)_. A polish and reach release on top of v0.7.2: native context compaction for long sessions, a dark-mode theme, a whole-window find bar, large-file streaming uploads, a Grok (xAI) provider, and framework-aware custom-gateway defaults. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for full details.
 
 <p align="center">
- <img width="1920" height="1140" alt="img_v3_0213r_31a1e21f-0ec2-4957-a150-62811a9899dg" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />
+ <img width="1920" height="1140" alt="Open Science open-source AI research workbench desktop app workspace showing an agent session with generated artifacts" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />
 </p>
 
 ## Table of Contents
 
 - [Quick Start](#-quick-start)
 - [Product Tour](#product-tour)
-- [Frequently Asked Questions](#frequently-asked-questions)
 - [Why Open Science](#why-open-science)
 - [Vision](#vision)
 - [Design Principles](#design-principles)
@@ -37,6 +36,7 @@
 - [Roadmap](#roadmap)
 - [Relationship to the aipoch Ecosystem](#relationship-to-the-aipoch-ecosystem)
 - [What This Is Not](#what-this-is-not)
+- [Frequently Asked Questions](#frequently-asked-questions)
 - [Get Involved](#get-involved)
 - [License](#license)
 - [Star History](#star-history)
@@ -92,6 +92,8 @@ Want to develop the app instead? Skip to [Building From Source](#building-from-s
 
 ## Product Tour
 
+Open Science organizes research into projects and sessions so that every result stays linked to the code, files, and tool activity that produced it. The sections below walk through the workspace, previews, scientific skills, and data connectors.
+
 ### One workspace from task to artifacts
 
 Projects keep related sessions, uploads, generated files, and preview state together. The conversation records the agent's answer and the commands, file reads, edits, searches, and connector calls that produced it. Generated reports, figures, and tables remain attached to the session and are also collected in the project file library. Use `Cmd/Ctrl+F` to search the whole workspace — transcripts, notebook output, and rendered pages — through an overlay that stays independent of the page being searched.
@@ -144,7 +146,7 @@ Open Science is an independent product built from scratch. It is not a proxy, un
 
 ## Vision
 
-<img width="1920" height="1140" alt="img_v3_0213r_d24336b6-c484-4e8e-be32-30f8b705772g" src="https://github.com/user-attachments/assets/5e3eea29-61b2-49b8-ac16-e4d9b43a4693" />
+<img width="1920" height="1140" alt="Open Science vision: an open, traceable AI research loop connecting literature, data, computation, artifacts, and review" src="https://github.com/user-attachments/assets/5e3eea29-61b2-49b8-ac16-e4d9b43a4693" />
 
 Our goal is to make the AI research workbench a piece of open infrastructure rather than a rented product surface. A student with a laptop, a lab using a regional model provider, and an institution running its own gateway should be able to use the same research workspace while keeping control of their models, tools, and data boundaries.
 
@@ -182,6 +184,8 @@ This section describes durable product capabilities rather than a version-specif
 
 ## Model Providers
 
+Open Science is model-agnostic: connect it to major cloud LLM providers, a custom gateway, or reuse an existing Claude or Codex subscription. There are four ways to connect a model:
+
 | Provider mode                | How it works                                                                                      |
 | ---------------------------- | ------------------------------------------------------------------------------------------------- |
 | **Built-in cloud providers** | Choose from the provider list shown by the installed app and authenticate with the requested key. |
@@ -195,7 +199,7 @@ instead.
 
 Built-in cloud vendors currently include OpenAI, Anthropic, Grok (xAI), DeepSeek, Zhipu AI (GLM) with a dedicated GLM Coding Plan endpoint, Kimi (Moonshot), MiniMax, StepFun with a dedicated Step Plan subscription endpoint, Xiaomi MIMO, SenseNova, Volcengine Ark, and the OpenRouter aggregation gateway, among others; some are region-specific.
 
-Provider vendors, available models, and regional endpoints can evolve independently of this README. Treat the provider picker and connection test in the installed app as the source of truth. Unless the app states otherwise, a Custom Gateway must expose an Anthropic-compatible messages endpoint.
+Provider vendors, available models, and regional endpoints can evolve independently of this README. Treat the provider picker and connection test in the installed app as the source of truth.
 
 ## Data, Permissions, and Trust
 
@@ -325,13 +329,13 @@ If Windows shows an unknown-publisher warning, verify the downloaded asset and c
 
 ## Roadmap
 
-<img width="1920" height="1140" alt="img_v3_0213r_7f01ae14-1e00-4fdc-b380-e415296405fg" src="https://github.com/user-attachments/assets/476c1b07-cb8e-4da0-80e3-46413710407b" />
+<img width="1920" height="1140" alt="Open Science product roadmap and capability status overview" src="https://github.com/user-attachments/assets/476c1b07-cb8e-4da0-80e3-46413710407b" />
 
 The product roadmap and capability status are maintained in [ROADMAP.md](ROADMAP.md). This README intentionally does not duplicate the moving list of priorities or release targets.
 
 ## Relationship to the aipoch Ecosystem
 
-<img width="1920" height="1140" alt="img_v3_0213r_9ff330e9-4036-4254-9f1a-8ce66656615g" src="https://github.com/user-attachments/assets/0ab847b1-1b7d-43f4-8c11-480a578e6c7d" />
+<img width="1920" height="1140" alt="How Open Science fits the aipoch ecosystem as the desktop orchestration layer for open scientific AI workflows" src="https://github.com/user-attachments/assets/0ab847b1-1b7d-43f4-8c11-480a578e6c7d" />
 
 Open Science is developed by [aipoch](https://github.com/aipoch) as the desktop orchestration layer for open scientific AI workflows.
 

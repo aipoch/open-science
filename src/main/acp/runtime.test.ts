@@ -430,6 +430,8 @@ const startPermissionProbeAgent = (
       tool: string
       arguments?: Record<string, unknown>
     }
+    codexMcpMarker?: boolean
+    codexMcpTitle?: string
     announceToolCall?: boolean
     sparseCodexMcpApproval?: boolean
     modes?: SessionModeState
@@ -486,14 +488,16 @@ const startPermissionProbeAgent = (
             sessionUpdate: 'tool_call',
             toolCallId: options.toolCallId,
             kind: 'execute',
-            title: `mcp.${options.codexMcpIdentity.server}.${options.codexMcpIdentity.tool}`,
+            title:
+              options.codexMcpTitle ??
+              `mcp.${options.codexMcpIdentity.server}.${options.codexMcpIdentity.tool}`,
             status: 'pending',
             rawInput: {
               server: options.codexMcpIdentity.server,
               tool: options.codexMcpIdentity.tool,
               arguments: options.codexMcpIdentity.arguments ?? {}
             },
-            _meta: { is_mcp_tool_call: true }
+            ...(options.codexMcpMarker === false ? {} : { _meta: { is_mcp_tool_call: true } })
           }
         })
       }
@@ -4323,6 +4327,120 @@ describe('ACP runtime session management', () => {
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'write artifact' })
 
     expect(permissionRequests).toHaveLength(0)
+  })
+
+  it('auto-allows a Codex Artifact save restored from its sparse MCP approval', async () => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: AcpPermissionRequest[] = []
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'codex-artifact-session',
+      toolCallId: 'codex-artifact-1',
+      toolTitle: 'unused-by-sparse-codex-approval',
+      sparseCodexMcpApproval: true,
+      codexMcpIdentity: {
+        server: 'open-science-artifacts',
+        tool: 'write_artifact_file',
+        arguments: {
+          filename: 'results.md',
+          mimeType: 'text/markdown',
+          content: '# Results'
+        }
+      },
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const root = await createTemporaryRoot()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository: new ArtifactRepository(root)
+      },
+      callbacks: {
+        onPermissionRequest: (request) => {
+          permissionRequests.push(request)
+          runtime.respondToPermission({ requestId: request.requestId, cancelled: true })
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'save results.md' })
+
+    expect(permissionRequests).toHaveLength(0)
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+  })
+
+  it.each([
+    { name: 'without the Codex MCP marker', codexMcpMarker: false },
+    {
+      name: 'with a mismatched qualified title',
+      codexMcpTitle: 'mcp.open-science-artifacts.unrelated_tool'
+    }
+  ])('does not auto-allow a Codex Artifact save $name', async (probeOptions) => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: AcpPermissionRequest[] = []
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'untrusted-codex-artifact-session',
+      toolCallId: 'untrusted-codex-artifact-1',
+      toolTitle: 'unused-by-sparse-codex-approval',
+      sparseCodexMcpApproval: true,
+      codexMcpIdentity: {
+        server: 'open-science-artifacts',
+        tool: 'write_artifact_file'
+      },
+      ...probeOptions,
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const root = await createTemporaryRoot()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository: new ArtifactRepository(root)
+      },
+      callbacks: {
+        onPermissionRequest: (request) => {
+          permissionRequests.push(request)
+          runtime.respondToPermission({ requestId: request.requestId, cancelled: true })
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'save results.md' })
+
+    expect(permissionRequests).toHaveLength(1)
+    expect(permissionResponse).toEqual({ outcome: { outcome: 'cancelled' } })
   })
 
   it('auto-allows a Claude Code Artifact save identified by its qualified MCP title', async () => {

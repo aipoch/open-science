@@ -205,6 +205,15 @@ describe('permission policy', () => {
 
     expect(
       resolveAutomaticPermission(
+        createPermissionRequest('other', undefined, {
+          providerToolName: 'write_artifact_file'
+        }),
+        { profile: 'ask', mcpServerNames: ['open-science-artifacts'] }
+      )
+    ).toBeUndefined()
+
+    expect(
+      resolveAutomaticPermission(
         createPermissionRequest('other', undefined, { title: 'write_artifact_file' }),
         { profile: 'ask', mcpServerNames: ['open-science-artifacts'] }
       )
