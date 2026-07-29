@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { ArtifactFile, ReconcilePendingArtifactsRequest } from '../../../../shared/artifacts'
 import type {
@@ -80,7 +80,27 @@ type SessionStoreSnapshot = {
   selectedSessionId: string | undefined
 }
 
-// Keeps persistence failures visible to developers without blocking the chat UI.
+type SessionPersistenceState = {
+  isReady: boolean
+  loadError: string | undefined
+  loadWarning: string | undefined
+  writeError: string | undefined
+  retryLoad: () => void
+  retryWrites: () => void
+}
+
+type StoreSaverOptions = {
+  forceTargets?: ReadonlySet<string>
+}
+
+type StoreSaverObserver = {
+  onFailure?: (target: string, error: unknown) => void
+  onSuccess?: (target: string) => void
+}
+
+type StoreSaver = (state: SessionStoreSnapshot, options?: StoreSaverOptions) => Promise<unknown>
+
+// Retains full diagnostics in the console while the hook exposes renderer-safe recovery state.
 const reportPersistenceError = (error: unknown): void => {
   console.warn('Session persistence failed', error)
 }
@@ -89,11 +109,12 @@ const reportPersistenceError = (error: unknown): void => {
 const loadPersistedSessions = async (
   api: SessionPersistenceApi,
   shouldHydrate: () => boolean = () => true
-): Promise<void> => {
-  const { sessions, manifest } = await api.loadAll()
-  if (!shouldHydrate()) return
+): Promise<LoadAllSessionsResult | undefined> => {
+  const result = await api.loadAll()
+  if (!shouldHydrate()) return undefined
 
-  useSessionStore.getState().hydrateSessions(sessions, manifest)
+  useSessionStore.getState().hydrateSessions(result.sessions, result.manifest)
+  return result
 }
 
 // Indexes sessions by id for reference-equality diffing between store snapshots.
@@ -114,8 +135,9 @@ const hasStagedUploads = (session: ChatSession): boolean =>
 // and updates the manifest when selection moves. Explicit deletion owns its durable coordinator call.
 const createStoreSaver = (
   api: SessionPersistenceApi,
-  initial: SessionStoreSnapshot = useSessionStore.getState()
-): ((state: SessionStoreSnapshot) => Promise<unknown>) => {
+  initial: SessionStoreSnapshot = useSessionStore.getState(),
+  observer: StoreSaverObserver = {}
+): StoreSaver => {
   let previousSessions = initial.sessions
   let previousSelection = initial.selectedSessionId
   let queue: Promise<unknown> = Promise.resolve()
@@ -127,11 +149,11 @@ const createStoreSaver = (
     return queue
   }
 
-  return (state) => {
+  return (state, options) => {
     const nextSessions = state.sessions
     const previousById = indexById(previousSessions)
     const nextById = indexById(nextSessions)
-    const tasks: Array<() => Promise<unknown>> = []
+    const tasks: Array<{ target: string; run: () => Promise<unknown> }> = []
 
     // Persist new or mutated sessions; pending sessions never touch disk until they bind a real id. A
     // session without a projectId cannot map to a sessions/<projectId>/ path (the main repository rejects
@@ -139,9 +161,12 @@ const createStoreSaver = (
     for (const session of nextSessions) {
       if (session.isPending || !session.projectId) continue
 
+      const target = `session:${session.id}`
+      const isForced = options?.forceTargets?.has(target) === true
+
       if (
-        previousById.get(session.id) !== session &&
-        !isExternallyHydratedSession(session) &&
+        (previousById.get(session.id) !== session || isForced) &&
+        (isForced || !isExternallyHydratedSession(session)) &&
         !hasStagedUploads(session) &&
         // A terminal graph-integrity failure keeps the renderer responsive, but the flat projection
         // is no longer proven to match the immutable Branch graph. Preserve the last durable copy.
@@ -149,66 +174,168 @@ const createStoreSaver = (
       ) {
         const persisted = toPersistedSession(session)
 
-        tasks.push(async () => {
-          const durableSession = await api.saveSession(persisted)
-          useSessionStore.getState().applyDurableSessionProjection({
-            source: session,
-            session: durableSession
-          })
+        tasks.push({
+          target,
+          run: async () => {
+            const durableSession = await api.saveSession(persisted)
+            useSessionStore.getState().applyDurableSessionProjection({
+              source: session,
+              session: durableSession
+            })
+          }
         })
       }
     }
 
     // Track the last-open selection, ignoring transient pending selections.
-    if (state.selectedSessionId !== previousSelection) {
+    if (
+      state.selectedSessionId !== previousSelection ||
+      options?.forceTargets?.has('manifest') === true
+    ) {
       const selectedSession = state.selectedSessionId
         ? nextById.get(state.selectedSessionId)
         : undefined
 
       if (!selectedSession?.isPending) {
-        tasks.push(() =>
-          api.saveManifest({
-            lastSessionId: state.selectedSessionId,
-            lastProjectId: selectedSession?.projectId
-          })
-        )
+        tasks.push({
+          target: 'manifest',
+          run: () =>
+            api.saveManifest({
+              lastSessionId: state.selectedSessionId,
+              lastProjectId: selectedSession?.projectId
+            })
+        })
       }
     }
 
     previousSessions = nextSessions
     previousSelection = state.selectedSessionId
 
-    let lastTask: Promise<unknown> = Promise.resolve()
+    const scheduledTasks = tasks.map(({ target, run }) =>
+      enqueue(async () => {
+        try {
+          const result = await run()
+          observer.onSuccess?.(target)
+          return result
+        } catch (error) {
+          observer.onFailure?.(target, error)
+          throw error
+        }
+      })
+    )
 
-    for (const task of tasks) {
-      lastTask = enqueue(task)
-    }
-
-    return lastTask
+    return Promise.all(scheduledTasks).then(() => undefined)
   }
 }
 
-// Starts session persistence and returns readiness so the workspace can gate early input.
-const useSessionPersistence = (): boolean => {
+// Starts session persistence and returns health/recovery state so App can gate input and surface failures.
+const useSessionPersistence = (): SessionPersistenceState => {
   const [isReady, setIsReady] = useState(false)
+  const [loadError, setLoadError] = useState<string | undefined>(undefined)
+  const [loadWarning, setLoadWarning] = useState<string | undefined>(undefined)
+  const [writeError, setWriteError] = useState<string | undefined>(undefined)
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const failedWriteTargets = useRef(new Set<string>())
+  const saverRef = useRef<StoreSaver | undefined>(undefined)
+  const retryLoad = useCallback(() => {
+    setIsReady(false)
+    setLoadError(undefined)
+    setLoadWarning(undefined)
+    setWriteError(undefined)
+    setLoadAttempt((attempt) => attempt + 1)
+  }, [])
+  const retryWrites = useCallback(() => {
+    const saver = saverRef.current
+    if (!saver || failedWriteTargets.current.size === 0) return
+
+    const state = useSessionStore.getState()
+    const activeSessionTargets = new Set(state.sessions.map((session) => `session:${session.id}`))
+    for (const target of failedWriteTargets.current) {
+      if (target.startsWith('session:') && !activeSessionTargets.has(target)) {
+        failedWriteTargets.current.delete(target)
+      }
+    }
+    if (failedWriteTargets.current.size === 0) {
+      setWriteError(undefined)
+      return
+    }
+
+    void saver(state, {
+      forceTargets: new Set(failedWriteTargets.current)
+    }).catch(reportPersistenceError)
+  }, [])
 
   useEffect(() => {
     let isMounted = true
     let unsubscribe: (() => void) | undefined
+    let activeSaver: StoreSaver | undefined
+    saverRef.current = undefined
+    failedWriteTargets.current.clear()
 
     // Loads before subscribing so the initial empty store cannot overwrite disk state.
     const startPersistence = async (): Promise<void> => {
       try {
-        await loadPersistedSessions(window.api.sessions, () => isMounted)
+        const result = await loadPersistedSessions(window.api.sessions, () => isMounted)
+        if (!result || !isMounted) return
+
+        if (result.diagnostics?.isComplete === false) {
+          setLoadError(
+            result.diagnostics.failure === 'manifest-unreadable'
+              ? 'Conversation selection data could not be read. Retry before creating or saving conversations.'
+              : result.diagnostics.failure === 'startup-reconciliation-failed'
+                ? 'Saved conversations loaded, but storage recovery could not finish. Retry before creating or saving conversations.'
+                : 'Some saved conversations could not be read. Retry before creating or saving conversations.'
+          )
+          return
+        }
+
+        const loadWarnings = result.diagnostics?.warnings ?? []
+        if (loadWarnings.length > 0) {
+          const manifestWasRecovered = loadWarnings.some(
+            (warning) => warning.kind === 'manifest-corrupt'
+          )
+          const sessionWarningCount = loadWarnings.filter(
+            (warning) => warning.kind !== 'manifest-corrupt'
+          ).length
+          const warningMessages = [
+            manifestWasRecovered
+              ? 'Conversation selection data was damaged and moved aside.'
+              : undefined,
+            sessionWarningCount > 0
+              ? `${sessionWarningCount} saved conversation file${sessionWarningCount === 1 ? ' was' : 's were'} damaged and moved aside.`
+              : undefined,
+            'The remaining conversations were loaded.'
+          ]
+          setLoadWarning(warningMessages.filter(Boolean).join(' '))
+        }
       } catch (error) {
         reportPersistenceError(error)
+        if (isMounted) {
+          setLoadError(
+            error instanceof Error ? error.message : 'Saved conversations could not be loaded.'
+          )
+        }
+        return
       }
-
-      if (!isMounted) return
 
       setIsReady(true)
       // Snapshot the hydrated state as the diff baseline so hydration itself is not re-saved.
-      const save = createStoreSaver(window.api.sessions)
+      const save = createStoreSaver(window.api.sessions, useSessionStore.getState(), {
+        onFailure: (target, error) => {
+          if (!isMounted) return
+          failedWriteTargets.current.add(target)
+          setWriteError(
+            error instanceof Error ? error.message : 'Conversation changes could not be saved.'
+          )
+        },
+        onSuccess: (target) => {
+          if (!isMounted) return
+          failedWriteTargets.current.delete(target)
+          if (failedWriteTargets.current.size === 0) setWriteError(undefined)
+        }
+      })
+      activeSaver = save
+      saverRef.current = save
 
       unsubscribe = useSessionStore.subscribe((state) => {
         void save(state).catch(reportPersistenceError)
@@ -224,12 +351,13 @@ const useSessionPersistence = (): boolean => {
 
     return () => {
       isMounted = false
+      if (saverRef.current === activeSaver) saverRef.current = undefined
       unsubscribe?.()
     }
-  }, [])
+  }, [loadAttempt])
 
-  return isReady
+  return { isReady, loadError, loadWarning, writeError, retryLoad, retryWrites }
 }
 
 export { createStoreSaver, loadPersistedSessions, reconcilePendingArtifacts, useSessionPersistence }
-export type { ArtifactReconcileApi, SessionPersistenceApi }
+export type { ArtifactReconcileApi, SessionPersistenceApi, SessionPersistenceState }

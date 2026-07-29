@@ -5,7 +5,9 @@ import type {
   LoadAllSessionsResult,
   PersistedArtifact,
   PersistedChatSession,
-  SaveSessionManifestRequest
+  SaveSessionManifestRequest,
+  SessionLoadFailure,
+  SessionLoadWarning
 } from '../../shared/session-persistence'
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
 import type { ProjectSessionDeletionState } from './repository'
@@ -24,6 +26,8 @@ type SessionMutationRepository = {
   loadAllWithDiagnostics(): Promise<{
     result: LoadAllSessionsResult
     isComplete: boolean
+    warnings?: SessionLoadWarning[]
+    failure?: SessionLoadFailure
   }>
   loadProjectWithDiagnostics(projectId: string): Promise<{
     sessions: PersistedChatSession[]
@@ -242,6 +246,11 @@ class SessionPersistenceCoordinator {
       const mayRunDestructiveStartupCleanup = this.destructiveStartupWindowOpen
       this.destructiveStartupWindowOpen = false
       const scan = await this.repository.loadAllWithDiagnostics()
+      scan.result.diagnostics = {
+        isComplete: scan.isComplete,
+        warnings: scan.warnings ?? [],
+        failure: scan.failure
+      }
       let result = scan.result
       let sessions = scan.result.sessions
 
@@ -330,6 +339,11 @@ class SessionPersistenceCoordinator {
         this.fileIndex.markReconciliationIncomplete()
         console.error('[session-persistence] startup reconciliation failed', error)
         // Keep chat hydration available while Files remains explicitly incomplete and retryable.
+        result.diagnostics = {
+          isComplete: false,
+          warnings: scan.warnings ?? [],
+          failure: 'startup-reconciliation-failed'
+        }
         return result
       }
 

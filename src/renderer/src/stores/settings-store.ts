@@ -86,6 +86,9 @@ type RuntimeInstallState = {
 
 type SettingsStoreData = {
   isLoaded: boolean
+  isLoading: boolean
+  loadError: string | undefined
+  settingsLoadGeneration: number
   claude: ClaudeInfo
   activeProviderId: string | undefined
   claudeSubscriptionProviderId: ClaudeSubscriptionProviderId | undefined
@@ -157,7 +160,7 @@ type SettingsStoreData = {
 }
 
 type SettingsStore = SettingsStoreData & {
-  load: () => Promise<void>
+  load: () => Promise<boolean>
   refreshPreflight: () => Promise<Preflight>
   checkEnvironment: (options?: { force?: boolean }) => Promise<EnvironmentCheckResult | undefined>
   detectClaude: () => Promise<ClaudeDetectResult>
@@ -328,6 +331,9 @@ const createInitialPreflight = (): Preflight => ({
 
 export const createInitialSettingsState = (): SettingsStoreData => ({
   isLoaded: false,
+  isLoading: false,
+  loadError: undefined,
+  settingsLoadGeneration: 0,
   claude: {},
   activeProviderId: undefined,
   claudeSubscriptionProviderId: undefined,
@@ -581,20 +587,38 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   // Loads settings, preflight, and encryption availability in one startup pass.
   load: async () => {
-    const [snapshot, preflight, encryptionAvailable, npmAvailable] = await Promise.all([
-      window.api.settings.getSettings(),
-      window.api.settings.getPreflight(),
-      window.api.settings.isEncryptionAvailable(),
-      window.api.settings.isNpmAvailable()
-    ])
+    const generation = get().settingsLoadGeneration + 1
+    set({ settingsLoadGeneration: generation, isLoading: true, loadError: undefined })
 
-    set({
-      ...applySnapshot(snapshot),
-      preflight,
-      encryptionAvailable,
-      npmAvailable,
-      isLoaded: true
-    })
+    try {
+      const [snapshot, preflight, encryptionAvailable, npmAvailable] = await Promise.all([
+        window.api.settings.getSettings(),
+        window.api.settings.getPreflight(),
+        window.api.settings.isEncryptionAvailable(),
+        window.api.settings.isNpmAvailable()
+      ])
+
+      if (get().settingsLoadGeneration !== generation) return false
+
+      set({
+        ...applySnapshot(snapshot),
+        preflight,
+        encryptionAvailable,
+        npmAvailable,
+        isLoaded: true,
+        isLoading: false,
+        loadError: undefined
+      })
+      return true
+    } catch (error) {
+      if (get().settingsLoadGeneration !== generation) return false
+
+      set({
+        isLoading: false,
+        loadError: error instanceof Error ? error.message : 'Settings could not be loaded.'
+      })
+      return false
+    }
   },
 
   // Re-checks the two startup gates without reloading the whole snapshot.

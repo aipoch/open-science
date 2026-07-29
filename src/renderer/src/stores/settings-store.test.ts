@@ -745,6 +745,57 @@ describe('settings store: onboarding completion', () => {
   })
 })
 
+describe('settings store: startup loading', () => {
+  it('keeps startup blocked after an IPC failure and recovers on retry', async () => {
+    api.getPreflight.mockRejectedValueOnce(new Error('settings IPC unavailable'))
+
+    await expect(useSettingsStore.getState().load()).resolves.toBe(false)
+    expect(useSettingsStore.getState()).toMatchObject({
+      isLoaded: false,
+      isLoading: false,
+      loadError: 'settings IPC unavailable'
+    })
+
+    await expect(useSettingsStore.getState().load()).resolves.toBe(true)
+    expect(useSettingsStore.getState()).toMatchObject({
+      isLoaded: true,
+      isLoading: false,
+      loadError: undefined
+    })
+  })
+
+  it('keeps the newest retry result when an older load finishes later', async () => {
+    let resolveFirst: ((value: SettingsSnapshot) => void) | undefined
+    let resolveSecond: ((value: SettingsSnapshot) => void) | undefined
+    api.getSettings
+      .mockReturnValueOnce(
+        new Promise<SettingsSnapshot>((resolve) => {
+          resolveFirst = resolve
+        })
+      )
+      .mockReturnValueOnce(
+        new Promise<SettingsSnapshot>((resolve) => {
+          resolveSecond = resolve
+        })
+      )
+
+    const first = useSettingsStore.getState().load()
+    const second = useSettingsStore.getState().load()
+
+    resolveSecond?.({ ...snapshot([]), onboardingCompletedAt: 222 })
+    await second
+    resolveFirst?.({ ...snapshot([]), onboardingCompletedAt: 111 })
+    await first
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      onboardingCompletedAt: 222,
+      isLoaded: true,
+      isLoading: false,
+      loadError: undefined
+    })
+  })
+})
+
 describe('settings store: provider/model selection', () => {
   it('passes the chosen model to the IPC and caches activeModel', async () => {
     api.setActiveProvider.mockResolvedValue({

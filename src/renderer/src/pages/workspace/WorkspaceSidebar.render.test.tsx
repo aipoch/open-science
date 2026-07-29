@@ -28,6 +28,7 @@ const renderSidebar = async (sessions: ChatSession[]): Promise<string> => {
       sessions={sessions}
       activeSessionId={sessions[0]?.id}
       canCreateConversation
+      canModifyConversationMetadata
       onGoHome={vi.fn()}
       onNewConversation={vi.fn()}
       isFilesOpen={false}
@@ -109,6 +110,7 @@ describe('WorkspaceSidebar accessible render', () => {
       sessions,
       activeSessionId: sessions[0].id,
       canCreateConversation: true,
+      canModifyConversationMetadata: true,
       onGoHome: vi.fn(),
       onNewConversation: vi.fn(),
       isFilesOpen: false,
@@ -151,6 +153,7 @@ describe('WorkspaceSidebar accessible render', () => {
       sessions: [createSession({ id: 'session-a', title: 'Notebook review' })],
       activeSessionId: 'session-a',
       canCreateConversation: true,
+      canModifyConversationMetadata: true,
       onGoHome: vi.fn(),
       onNewConversation: vi.fn(),
       isFilesOpen: true,
@@ -188,6 +191,7 @@ describe('WorkspaceSidebar accessible render', () => {
       sessions,
       activeSessionId: sessions[0].id,
       canCreateConversation: true,
+      canModifyConversationMetadata: true,
       onGoHome: vi.fn(),
       onNewConversation: vi.fn(),
       isFilesOpen: false,
@@ -234,6 +238,7 @@ describe('WorkspaceSidebar accessible render', () => {
       sessions,
       activeSessionId: sessions[0].id,
       canCreateConversation: true,
+      canModifyConversationMetadata: true,
       onGoHome: vi.fn(),
       onNewConversation: vi.fn(),
       isFilesOpen: false,
@@ -258,5 +263,33 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(unpinItem?.props.onSelect).toBeTypeOf('function')
     ;(unpinItem?.props.onSelect as () => void)()
     expect(onTogglePin).toHaveBeenCalledWith(sessions[1])
+  })
+
+  it('disables metadata mutations while session persistence is recovering', async () => {
+    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const session = createSession({ id: 'session-a', title: 'Notebook review' })
+    const tree = WorkspaceSidebar({
+      projectName: 'Example project',
+      sessions: [session],
+      activeSessionId: session.id,
+      canCreateConversation: false,
+      canModifyConversationMetadata: false,
+      onGoHome: vi.fn(),
+      onNewConversation: vi.fn(),
+      isFilesOpen: false,
+      onOpenFiles: vi.fn(),
+      onOpenSession: vi.fn(),
+      onRenameSession: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onTogglePin: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onOpenSettings: vi.fn()
+    })
+    const elements = collectElements(tree)
+    const pinItem = elements.find((element) => getTextContent(element).trim() === 'Pin')
+    const renameItem = elements.find((element) => getTextContent(element).trim() === 'Rename…')
+
+    expect(pinItem?.props.disabled).toBe(true)
+    expect(renameItem?.props.disabled).toBe(true)
   })
 })

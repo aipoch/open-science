@@ -742,7 +742,8 @@ describe('SessionPersistenceCoordinator', () => {
     await expect(coordinator.loadAll()).resolves.toBe(incomplete.result)
     await expect(coordinator.loadAll()).resolves.toEqual({
       sessions: [upgradedSession],
-      manifest: complete.result.manifest
+      manifest: complete.result.manifest,
+      diagnostics: { isComplete: true, warnings: [] }
     })
 
     expect(uploads.upgradeLegacySessionUploads).toHaveBeenCalledOnce()
@@ -1317,14 +1318,23 @@ describe('SessionPersistenceCoordinator', () => {
   it('marks the index incomplete when the sessions scan is partial', async () => {
     const session = createSession()
     const result = { sessions: [session], manifest: { version: 1 as const } }
+    const warnings = [
+      {
+        kind: 'unreadable' as const,
+        projectId: 'project-1',
+        fileName: 'session-2.json',
+        recovered: false
+      }
+    ]
     const repository = createSessionRepository({
-      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: false })
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: false, warnings })
     })
     const markReconciliationIncomplete = vi.fn()
     const fileIndex = createFileIndex({ markReconciliationIncomplete })
     const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
 
     await expect(coordinator.loadAll()).resolves.toBe(result)
+    expect(result).toMatchObject({ diagnostics: { isComplete: false, warnings } })
     expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
     expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
   })
@@ -1352,6 +1362,12 @@ describe('SessionPersistenceCoordinator', () => {
     )
 
     await expect(coordinator.loadAll()).resolves.toBe(result)
+    expect(result).toMatchObject({
+      diagnostics: {
+        isComplete: false,
+        failure: 'startup-reconciliation-failed'
+      }
+    })
     expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
     expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
   })

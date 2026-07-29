@@ -6,6 +6,7 @@ import { CloseConfirmModal } from '@/components/CloseConfirmModal'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
 import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { LifecycleToast } from '@/components/LifecycleToast'
+import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { UpdateDialog } from '@/components/UpdateDialog'
 import { HomePage } from '@/pages/home/HomePage'
 import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
@@ -30,7 +31,8 @@ import { useUpdateStore } from '@/stores/update-store'
 
 const App = (): React.JSX.Element | null => {
   // Persistence is started once at the top so sessions stay loaded for both Home and Workspace.
-  const isSessionPersistenceReady = useSessionPersistence()
+  const sessionPersistence = useSessionPersistence()
+  const isSessionPersistenceReady = sessionPersistence.isReady
   const lifecycleSync = useLifecycleSync({ isSessionPersistenceReady })
   useDeepLinkNavigation(isSessionPersistenceReady)
   const view = useNavigationStore((state) => state.view)
@@ -39,6 +41,8 @@ const App = (): React.JSX.Element | null => {
   useWindowFindAppearanceSync()
   const loadProjects = useProjectStore((state) => state.loadProjects)
   const isSettingsLoaded = useSettingsStore((state) => state.isLoaded)
+  const isSettingsLoading = useSettingsStore((state) => state.isLoading)
+  const settingsLoadError = useSettingsStore((state) => state.loadError)
   const onboardingCompletedAt = useSettingsStore((state) => state.onboardingCompletedAt)
   const loadSettings = useSettingsStore((state) => state.load)
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
@@ -60,6 +64,10 @@ const App = (): React.JSX.Element | null => {
   const [legacyMove, setLegacyMove] = useState<
     { currentDataRoot: string; defaultParent: string } | undefined
   >(undefined)
+
+  const retrySettingsInitialization = useCallback(async (): Promise<void> => {
+    if (await loadSettings()) await checkEnvironment()
+  }, [checkEnvironment, loadSettings])
 
   // Load app info and subscribe to update-status broadcasts once at startup.
   useEffect(() => {
@@ -154,8 +162,8 @@ const App = (): React.JSX.Element | null => {
   // only launch check that would surface a Home repair action.
   useEffect(() => {
     let active = true
-    void loadSettings().then(() => {
-      if (active) void checkEnvironment()
+    void loadSettings().then((loaded) => {
+      if (active && loaded) void checkEnvironment()
     })
 
     return () => {
@@ -166,7 +174,38 @@ const App = (): React.JSX.Element | null => {
   // Settings carry the persisted first-run marker. No environment result is awaited here: existing
   // users proceed directly to Home while the launch check runs in the background.
   if (!isSettingsLoaded) {
-    return null
+    if (settingsLoadError) {
+      return (
+        <main
+          role="alert"
+          className="flex h-screen items-center justify-center bg-bg-10 p-6 text-text-100"
+        >
+          <div className="w-full max-w-md rounded-xl border border-border-200 bg-bg-100 p-5 shadow-dialog">
+            <h1 className="text-base font-semibold text-text-000">Settings could not be loaded</h1>
+            <p className="mt-2 break-words text-sm text-text-300">{settingsLoadError}</p>
+            <button
+              type="button"
+              data-testid="settings-startup-retry"
+              disabled={isSettingsLoading}
+              onClick={() => void retrySettingsInitialization()}
+              className="mt-4 rounded-lg border border-border-200 px-3 py-1.5 text-sm font-medium text-text-000 hover:bg-bg-200 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSettingsLoading ? 'Retrying…' : 'Retry'}
+            </button>
+          </div>
+        </main>
+      )
+    }
+
+    return (
+      <main
+        data-testid="settings-startup-loading"
+        role="status"
+        className="flex h-screen items-center justify-center bg-bg-10 text-sm text-text-300"
+      >
+        Loading settings…
+      </main>
+    )
   }
 
   if (
@@ -180,6 +219,25 @@ const App = (): React.JSX.Element | null => {
   return (
     <>
       <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} />
+      {sessionPersistence.loadError ? (
+        <SessionPersistenceAlert
+          title="Saved conversations could not be loaded"
+          message={sessionPersistence.loadError}
+          onRetry={sessionPersistence.retryLoad}
+        />
+      ) : sessionPersistence.writeError ? (
+        <SessionPersistenceAlert
+          title="Conversation storage needs attention"
+          message={`${sessionPersistence.writeError} Open Science could not confirm that the latest changes were fully saved. Retry before closing the app.`}
+          onRetry={sessionPersistence.retryWrites}
+        />
+      ) : sessionPersistence.loadWarning ? (
+        <SessionPersistenceAlert
+          title="Saved conversation data was damaged"
+          message={sessionPersistence.loadWarning}
+          variant="warning"
+        />
+      ) : null}
       {view === 'home' ? (
         <HomePage />
       ) : (

@@ -318,6 +318,17 @@ describe('session persistence repository (per-session files)', () => {
 
     expect(scan.result.sessions).toEqual([])
     expect(scan.isComplete).toBe(true)
+    expect(scan.warnings).toEqual([
+      {
+        kind: 'corrupt',
+        projectId: 'project-a',
+        fileName: 'broken.json',
+        recovered: true
+      }
+    ])
+
+    const nextScan = await repository.loadAllWithDiagnostics()
+    expect(nextScan.warnings).toEqual(scan.warnings)
   })
 
   it('keeps a terminal Project scan incomplete while a quarantined Session preserves authority', async () => {
@@ -384,6 +395,14 @@ describe('session persistence repository (per-session files)', () => {
 
     expect(scan.result.sessions).toEqual([])
     expect(scan.isComplete).toBe(false)
+    expect(scan.warnings).toEqual([
+      {
+        kind: 'unreadable',
+        projectId: session.projectId,
+        fileName: `${session.id}.json`,
+        recovered: false
+      }
+    ])
     await expect(
       readFile(join(root, 'sessions', session.projectId, `${session.id}.json`), 'utf8')
     ).resolves.toContain(session.id)
@@ -683,6 +702,34 @@ describe('session persistence repository (per-session files)', () => {
 
     await expect(repository.loadAll()).resolves.toMatchObject({
       manifest: { version: 1, lastProjectId: 'project-a', lastSessionId: 'session-1' }
+    })
+  })
+
+  it('isolates a corrupt manifest and reports the recovered selection data', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
+    await mkdir(join(root, 'sessions'), { recursive: true })
+    await writeFile(join(root, 'sessions', 'manifest.json'), '{broken json', 'utf8')
+
+    await expect(repository.loadAllWithDiagnostics()).resolves.toMatchObject({
+      result: { sessions: [], manifest: { version: 1 } },
+      isComplete: true,
+      warnings: [
+        {
+          kind: 'manifest-corrupt',
+          fileName: 'manifest.json',
+          recovered: true
+        }
+      ]
+    })
+    expect(await readdir(join(root, 'sessions'))).toContainEqual(
+      expect.stringMatching(/^manifest\.json\.invalid-/)
+    )
+
+    await expect(repository.loadAllWithDiagnostics()).resolves.toMatchObject({
+      result: { sessions: [], manifest: { version: 1 } },
+      isComplete: true,
+      warnings: []
     })
   })
 

@@ -1185,10 +1185,33 @@ export const normalizeSessionManifest = (value: unknown): PersistedSessionManife
   return manifest
 }
 
+// Renderer-safe diagnostics for durable Session files omitted during startup hydration.
+export type SessionLoadWarning =
+  | {
+      kind: 'corrupt' | 'unreadable'
+      projectId: string
+      fileName: string
+      recovered: boolean
+    }
+  | {
+      kind: 'manifest-corrupt'
+      fileName: string
+      recovered: boolean
+    }
+
+export type SessionLoadFailure = 'manifest-unreadable' | 'startup-reconciliation-failed'
+
+export type SessionLoadDiagnostics = {
+  isComplete: boolean
+  warnings: SessionLoadWarning[]
+  failure?: SessionLoadFailure
+}
+
 // IPC payloads for the per-session persistence surface.
 export type LoadAllSessionsResult = {
   sessions: PersistedChatSession[]
   manifest: PersistedSessionManifest
+  diagnostics?: SessionLoadDiagnostics
 }
 
 export type DeleteSessionRequest = {

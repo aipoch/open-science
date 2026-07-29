@@ -1,5 +1,5 @@
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 import {
   createEmptySessionManifest,
@@ -10,7 +10,9 @@ import {
   type LoadAllSessionsResult,
   type PersistedChatSession,
   type PersistedSessionManifest,
-  type SaveSessionManifestRequest
+  type SaveSessionManifestRequest,
+  type SessionLoadFailure,
+  type SessionLoadWarning
 } from '../../shared/session-persistence'
 import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
 
@@ -25,6 +27,8 @@ type SessionLoadDiagnostics = {
   // False means at least one directory or session file could not be read or safely quarantined.
   // Callers may hydrate the returned sessions but must not reconcile absent index rows as deletions.
   isComplete: boolean
+  warnings: SessionLoadWarning[]
+  failure?: SessionLoadFailure
 }
 
 type SessionLoadDiagnostic =
@@ -176,10 +180,15 @@ class SessionRepository {
   // Reports whether the live sessions tree was fully scanned so DB reconciliation never acts on a
   // partial read. Project recovery owns tombstone cleanup before ordinary hydration is allowed.
   async loadAllWithDiagnostics(): Promise<SessionLoadDiagnostics> {
-    const { sessions, isComplete } = await this.readAllSessions()
-    const manifest = await this.readManifest()
+    const { sessions, isComplete, warnings } = await this.readAllSessions()
+    const manifestRead = await this.readManifest()
 
-    return { result: { sessions, manifest }, isComplete }
+    return {
+      result: { sessions, manifest: manifestRead.manifest },
+      isComplete: isComplete && manifestRead.isComplete,
+      warnings: manifestRead.warning ? [...warnings, manifestRead.warning] : warnings,
+      failure: manifestRead.isComplete ? undefined : 'manifest-unreadable'
+    }
   }
 
   // Project deletion needs a complete view of only its target authority. An unrelated unreadable
@@ -436,13 +445,41 @@ class SessionRepository {
     }
   }
 
-  private async readManifest(): Promise<PersistedSessionManifest> {
+  private async readManifest(): Promise<{
+    manifest: PersistedSessionManifest
+    isComplete: boolean
+    warning?: SessionLoadWarning
+  }> {
+    let raw: string
     try {
-      const raw = await readFile(this.manifestPath, 'utf8')
+      raw = await readFile(this.manifestPath, 'utf8')
+    } catch (error) {
+      return {
+        manifest: createEmptySessionManifest(),
+        isComplete: isMissingFileError(error)
+      }
+    }
 
-      return normalizeSessionManifest(JSON.parse(raw) as unknown)
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        throw new Error('Invalid Session manifest')
+      }
+      return {
+        manifest: normalizeSessionManifest(parsed),
+        isComplete: true
+      }
     } catch {
-      return createEmptySessionManifest()
+      const wasQuarantined = await this.tryBackupInvalidFile(this.manifestPath)
+      return {
+        manifest: createEmptySessionManifest(),
+        isComplete: wasQuarantined,
+        warning: {
+          kind: 'manifest-corrupt',
+          fileName: MANIFEST_FILE,
+          recovered: wasQuarantined
+        }
+      }
     }
   }
 
@@ -451,23 +488,28 @@ class SessionRepository {
   private async readAllSessions(): Promise<{
     sessions: PersistedChatSession[]
     isComplete: boolean
+    warnings: SessionLoadWarning[]
   }> {
     const projectDirectories = await this.listDirectoryNames(this.sessionsDir)
     const sessions: PersistedChatSession[] = []
+    const warnings: SessionLoadWarning[] = []
     let isComplete = projectDirectories.isComplete
 
     for (const projectId of projectDirectories.names) {
-      const project = await this.readProjectSessions(projectId)
+      const project = await this.readProjectSessions(projectId, { warnings })
       sessions.push(...project.sessions)
       isComplete &&= project.isComplete
     }
 
-    return { sessions, isComplete }
+    return { sessions, isComplete, warnings }
   }
 
   private async readProjectSessions(
     projectIdValue: string,
-    options: { quarantinedIsIncomplete?: boolean } = {}
+    options: {
+      quarantinedIsIncomplete?: boolean
+      warnings?: SessionLoadWarning[]
+    } = {}
   ): Promise<ProjectSessionLoadDiagnostics> {
     const projectId = assertSafeSegment(projectIdValue)
     return this.readProjectSessionsAtDirectory(
@@ -480,11 +522,15 @@ class SessionRepository {
   private async readProjectSessionsAtDirectory(
     projectId: string,
     projectDir: string,
-    options: { quarantinedIsIncomplete?: boolean } = {}
+    options: {
+      quarantinedIsIncomplete?: boolean
+      warnings?: SessionLoadWarning[]
+    } = {}
   ): Promise<ProjectSessionLoadDiagnostics> {
     const sessionFiles = await this.listSessionFileNames(projectDir)
     const sessions: PersistedChatSession[] = []
     const activeQuarantines = new Set(sessionFiles.quarantinedPrimaryFileNames)
+    const warnedFiles = new Set<string>()
     let isComplete = sessionFiles.isComplete
 
     for (const fileName of sessionFiles.names) {
@@ -492,6 +538,10 @@ class SessionRepository {
       const read = await this.readSessionFile(join(projectDir, fileName), projectId)
       isComplete &&= read.isComplete
       if (options.quarantinedIsIncomplete && read.wasQuarantined) isComplete = false
+      if (read.warning) {
+        options.warnings?.push(read.warning)
+        warnedFiles.add(read.warning.fileName)
+      }
       if (read.session) {
         // A current primary that successfully normalizes supersedes retained historical backups for
         // the same file. Keep the backups, but do not let them permanently block terminal mutation.
@@ -500,6 +550,16 @@ class SessionRepository {
       }
     }
     if (options.quarantinedIsIncomplete && activeQuarantines.size > 0) isComplete = false
+    for (const fileName of activeQuarantines) {
+      if (!warnedFiles.has(fileName)) {
+        options.warnings?.push({
+          kind: 'corrupt',
+          projectId,
+          fileName,
+          recovered: true
+        })
+      }
+    }
 
     return { sessions, isComplete }
   }
@@ -511,13 +571,22 @@ class SessionRepository {
     session?: PersistedChatSession
     isComplete: boolean
     wasQuarantined?: boolean
+    warning?: SessionLoadWarning
   }> {
     let raw: string
     try {
       raw = await this.dependencies.readSessionFile(filePath)
     } catch (error) {
       if (isMissingFileError(error)) return { isComplete: true }
-      return { isComplete: false }
+      return {
+        isComplete: false,
+        warning: {
+          kind: 'unreadable',
+          projectId,
+          fileName: basename(filePath),
+          recovered: false
+        }
+      }
     }
 
     try {
@@ -526,13 +595,31 @@ class SessionRepository {
       })
       if (!session) {
         const wasQuarantined = await this.tryBackupInvalidFile(filePath)
-        return { isComplete: wasQuarantined, wasQuarantined }
+        return {
+          isComplete: wasQuarantined,
+          wasQuarantined,
+          warning: {
+            kind: 'corrupt',
+            projectId,
+            fileName: basename(filePath),
+            recovered: wasQuarantined
+          }
+        }
       }
 
       return { session: decodeSessionDataPaths({ ...session, projectId }), isComplete: true }
     } catch {
       const wasQuarantined = await this.tryBackupInvalidFile(filePath)
-      return { isComplete: wasQuarantined, wasQuarantined }
+      return {
+        isComplete: wasQuarantined,
+        wasQuarantined,
+        warning: {
+          kind: 'corrupt',
+          projectId,
+          fileName: basename(filePath),
+          recovered: wasQuarantined
+        }
+      }
     }
   }
 

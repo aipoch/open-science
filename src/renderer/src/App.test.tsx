@@ -10,11 +10,13 @@ const mocks = vi.hoisted(() => {
   return {
     settings: {
       isLoaded: false,
+      isLoading: false,
+      loadError: undefined as string | undefined,
       onboardingCompletedAt: undefined as number | undefined,
       isSettingsOpen: false,
       isSettingsLoaded: true,
       enqueueApproval: vi.fn(),
-      load: vi.fn().mockResolvedValue(undefined),
+      load: vi.fn().mockResolvedValue(true),
       checkEnvironment: vi.fn().mockResolvedValue(undefined),
       closeSettings: vi.fn()
     },
@@ -37,7 +39,14 @@ const mocks = vi.hoisted(() => {
       }),
       takePendingOpenSession: vi.fn().mockResolvedValue(null)
     },
-    sessionPersistenceReady: true,
+    sessionPersistence: {
+      isReady: true,
+      loadError: undefined as string | undefined,
+      loadWarning: undefined as string | undefined,
+      writeError: undefined as string | undefined,
+      retryLoad: vi.fn(),
+      retryWrites: vi.fn()
+    },
     startupView: 'home' as 'home' | 'onboarding',
     getInfo: vi.fn(),
     syncWindowFindAppearance: vi.fn()
@@ -45,7 +54,7 @@ const mocks = vi.hoisted(() => {
 })
 
 vi.mock('@/lib/session-persistence/session-persistence', () => ({
-  useSessionPersistence: () => mocks.sessionPersistenceReady
+  useSessionPersistence: () => mocks.sessionPersistence
 }))
 vi.mock('@/lib/deep-link', () => ({
   useDeepLinkNavigation: mocks.deepLinkNavigation
@@ -157,15 +166,22 @@ describe('App startup routing', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     mocks.settings.isLoaded = false
+    mocks.settings.isLoading = false
+    mocks.settings.loadError = undefined
     mocks.settings.onboardingCompletedAt = undefined
     mocks.settings.isSettingsOpen = false
-    mocks.settings.load.mockReset().mockResolvedValue(undefined)
+    mocks.settings.load.mockReset().mockResolvedValue(true)
     mocks.settings.checkEnvironment.mockReset().mockResolvedValue(undefined)
     mocks.skillImport.enqueue.mockClear()
     mocks.skillImport.dismiss.mockClear()
     mocks.navigation.view = 'home'
     mocks.startupView = 'home'
-    mocks.sessionPersistenceReady = true
+    mocks.sessionPersistence.isReady = true
+    mocks.sessionPersistence.loadError = undefined
+    mocks.sessionPersistence.loadWarning = undefined
+    mocks.sessionPersistence.writeError = undefined
+    mocks.sessionPersistence.retryLoad.mockClear()
+    mocks.sessionPersistence.retryWrites.mockClear()
     mocks.deepLinkNavigation.mockClear()
     mocks.syncWindowFindAppearance.mockClear()
     mocks.getInfo.mockResolvedValue({
@@ -205,15 +221,37 @@ describe('App startup routing', () => {
     await act(async () => root.render(<App />))
   }
 
-  it('keeps the shell blank until settings have loaded', async () => {
+  it('shows startup progress until settings have loaded', async () => {
     await render()
 
-    expect(container.innerHTML).toBe('')
+    expect(container.querySelector('[data-testid="settings-startup-loading"]')).not.toBeNull()
+    expect(container.textContent).toContain('Loading settings')
     expect(mocks.syncWindowFindAppearance).toHaveBeenCalledTimes(1)
   })
 
+  it('shows a settings load error and retries the complete initialization', async () => {
+    mocks.settings.loadError = 'settings IPC unavailable'
+    mocks.settings.load.mockReset().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+
+    await render()
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'settings IPC unavailable'
+    )
+    expect(mocks.settings.checkEnvironment).not.toHaveBeenCalled()
+
+    const retry = container.querySelector<HTMLButtonElement>(
+      '[data-testid="settings-startup-retry"]'
+    )
+    expect(retry).not.toBeNull()
+    await act(async () => retry?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+
+    expect(mocks.settings.load).toHaveBeenCalledTimes(2)
+    expect(mocks.settings.checkEnvironment).toHaveBeenCalledOnce()
+  })
+
   it('passes session persistence readiness to deep-link navigation', async () => {
-    mocks.sessionPersistenceReady = false
+    mocks.sessionPersistence.isReady = false
 
     await render()
 
@@ -246,6 +284,48 @@ describe('App startup routing', () => {
     expect(mocks.getInfo).toHaveBeenCalled()
   })
 
+  it('surfaces a session load failure with a retry action', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isReady = false
+    mocks.sessionPersistence.loadError = 'sessions directory unavailable'
+
+    await render()
+
+    const alert = container.querySelector('[data-testid="session-persistence-alert"]')
+    expect(alert?.textContent).toContain('sessions directory unavailable')
+
+    container.querySelector<HTMLButtonElement>('[data-testid="session-persistence-retry"]')?.click()
+    expect(mocks.sessionPersistence.retryLoad).toHaveBeenCalledOnce()
+  })
+
+  it('warns that in-memory conversation changes are not durable and retries them', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.writeError = 'disk full'
+
+    await render()
+
+    const alert = container.querySelector('[data-testid="session-persistence-alert"]')
+    expect(alert?.textContent).toContain('Conversation storage needs attention')
+    expect(alert?.textContent).toContain('disk full')
+
+    container.querySelector<HTMLButtonElement>('[data-testid="session-persistence-retry"]')?.click()
+    expect(mocks.sessionPersistence.retryWrites).toHaveBeenCalledOnce()
+  })
+
+  it('reports quarantined corrupt conversation files without blocking healthy sessions', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.loadWarning =
+      '1 saved conversation file was damaged and moved aside. The remaining conversations were loaded.'
+
+    await render()
+
+    const alert = container.querySelector('[data-testid="session-persistence-alert"]')
+    expect(alert?.textContent).toContain('Saved conversation data was damaged')
+    expect(alert?.textContent).toContain('damaged and moved aside')
+    expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
+    expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
+  })
+
   it('recovers pending Skill import approvals after the renderer starts', async () => {
     const pending = {
       id: 'approval-recovered',
@@ -269,10 +349,10 @@ describe('App startup routing', () => {
   })
 
   it('waits for persisted settings before checking the selected agent environment', async () => {
-    let resolveSettings: (() => void) | undefined
+    let resolveSettings: ((loaded: boolean) => void) | undefined
     mocks.settings.load.mockImplementation(
       () =>
-        new Promise<void>((resolve) => {
+        new Promise<boolean>((resolve) => {
           resolveSettings = resolve
         })
     )
@@ -282,7 +362,7 @@ describe('App startup routing', () => {
     expect(mocks.settings.load).toHaveBeenCalledOnce()
     expect(mocks.settings.checkEnvironment).not.toHaveBeenCalled()
 
-    await act(async () => resolveSettings?.())
+    await act(async () => resolveSettings?.(true))
 
     expect(mocks.settings.checkEnvironment).toHaveBeenCalledOnce()
   })
@@ -307,7 +387,7 @@ describe('App startup routing', () => {
 
   it('opens the notification-target conversation once session persistence is ready', async () => {
     mocks.settings.isLoaded = true
-    mocks.sessionPersistenceReady = false
+    mocks.sessionPersistence.isReady = false
     mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-9' })
 
     await render()
@@ -316,7 +396,7 @@ describe('App startup routing', () => {
     expect(mocks.openSessionById).not.toHaveBeenCalled()
 
     // Hydration completes: the target is pulled and the conversation opens.
-    mocks.sessionPersistenceReady = true
+    mocks.sessionPersistence.isReady = true
     await act(async () => root.render(<App />))
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0))

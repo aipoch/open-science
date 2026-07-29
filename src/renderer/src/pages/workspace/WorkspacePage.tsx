@@ -940,6 +940,8 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
 
   // Opens the rename dialog with the current title prefilled.
   const openRenameDialog = (session: ChatSession): void => {
+    if (!isSessionPersistenceReady) return
+
     setSessionToRename(session)
     setRenameDraft(session.title)
   }
@@ -954,7 +956,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const confirmRenameSession = (event: React.FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
 
-    if (!sessionToRename || renameDraft.trim().length === 0) return
+    if (!isSessionPersistenceReady || !sessionToRename || renameDraft.trim().length === 0) return
 
     renameSession(sessionToRename.id, renameDraft)
     closeRenameDialog()
@@ -1138,6 +1140,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
           sessions={sessions}
           activeSessionId={selectedSessionId}
           canCreateConversation={isSessionPersistenceReady}
+          canModifyConversationMetadata={isSessionPersistenceReady}
           onGoHome={goHome}
           onNewConversation={openNewConversation}
           isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
@@ -1145,7 +1148,9 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
           onOpenSession={openSession}
           onRenameSession={openRenameDialog}
           onViewNotebook={setSessionToViewNotebook}
-          onTogglePin={(session) => togglePinned(session.id)}
+          onTogglePin={(session) => {
+            if (isSessionPersistenceReady) togglePinned(session.id)
+          }}
           onDeleteSession={setSessionToDelete}
           onOpenSettings={openSettings}
         />

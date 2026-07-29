@@ -568,6 +568,25 @@ describe('renderer session persistence bridge', () => {
     secondSave.resolve(saveSession.mock.calls[1][0])
     await flushMicrotasks()
   })
+
+  it('reports an earlier failed write even when a later queued write succeeds', async () => {
+    const api = createApi({
+      saveSession: vi.fn().mockRejectedValue(new Error('disk full')),
+      saveManifest: vi.fn().mockResolvedValue(undefined)
+    })
+    const save = createStoreSaver(api)
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Persist me',
+      cwd: '/workspace/project',
+      projectId: 'project-a'
+    })
+
+    await expect(save(useSessionStore.getState())).rejects.toThrow('disk full')
+    expect(api.saveSession).toHaveBeenCalledOnce()
+    expect(api.saveManifest).toHaveBeenCalledOnce()
+  })
 })
 
 type Deferred<T> = {
@@ -585,6 +604,7 @@ const createDeferred = <T>(): Deferred<T> => {
 }
 
 const flushMicrotasks = async (): Promise<void> => {
+  await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
 }

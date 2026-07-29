@@ -27,6 +27,7 @@ type WorkspaceSidebarProps = {
   sessions: ChatSession[]
   activeSessionId: string | undefined
   canCreateConversation: boolean
+  canModifyConversationMetadata: boolean
   onGoHome: () => void
   onNewConversation: () => void
   isFilesOpen: boolean
@@ -73,6 +74,7 @@ const WorkspaceSidebar = ({
   sessions,
   activeSessionId,
   canCreateConversation,
+  canModifyConversationMetadata,
   onGoHome,
   onNewConversation,
   isFilesOpen,
@@ -228,6 +230,7 @@ const WorkspaceSidebar = ({
                             {/* Pin / Unpin toggles the conversation into or out of the pinned section. */}
                             <DropdownMenuItem
                               className="gap-2"
+                              disabled={!canModifyConversationMetadata}
                               onSelect={() => onTogglePin(session)}
                             >
                               <span className={sessionMenuIconClassName}>
@@ -241,6 +244,7 @@ const WorkspaceSidebar = ({
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               className="gap-2"
+                              disabled={!canModifyConversationMetadata}
                               onSelect={() => onRenameSession(session)}
                             >
                               <span className={sessionMenuIconClassName}>
