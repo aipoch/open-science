@@ -491,6 +491,32 @@ describe('ReviewerCard — pass expand (pass check cards)', () => {
     expect(container.textContent).toContain(evidence)
   })
 
+  it('wraps long unbroken claim and evidence strings inside the check card', async () => {
+    const claim = `Claim ${'a'.repeat(96)}`
+    const evidence = `Checksum ${'0a248e260ca8609723a892eb0ba71c743ea742336a35'.repeat(2)}`
+    const review = makeReview({
+      outcome: 'pass',
+      checks: [makeCheck({ status: 'pass', claim, evidence, locator: undefined })]
+    })
+    await act(async () => {
+      root.render(<ReviewerCard review={review} defaultExpanded />)
+    })
+
+    const card = container.querySelector('[data-testid="reviewer-check-card"]')
+    const title = Array.from(card?.querySelectorAll('span') ?? []).find(
+      (element) => element.textContent === claim
+    )
+    const body = Array.from(card?.querySelectorAll('p') ?? []).find(
+      (element) => element.textContent === evidence
+    )
+
+    expect(title?.className).toContain('min-w-0')
+    expect(title?.className).toContain('break-words')
+    expect(title?.className).toContain('[overflow-wrap:anywhere]')
+    expect(body?.className).toContain('break-words')
+    expect(body?.className).toContain('[overflow-wrap:anywhere]')
+  })
+
   it('renders the claim as the check card title', async () => {
     const claim = 'No tool calls claimed'
     const review = makeReview({

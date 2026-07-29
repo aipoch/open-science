@@ -83,7 +83,9 @@ const ItemCard = ({
       >
         {badgeText}
       </span>
-      <span className="flex-1 text-xs font-semibold leading-snug text-text-000">{title}</span>
+      <span className="min-w-0 flex-1 break-words text-xs font-semibold leading-snug text-text-000 [overflow-wrap:anywhere]">
+        {title}
+      </span>
       {/* Re-flag marker: shown when this claim was re-flagged in the fix loop. */}
       {reflagCount != null && reflagCount > 0 && (
         <span
@@ -96,7 +98,11 @@ const ItemCard = ({
     </div>
 
     {/* Body — evidence for all check types */}
-    {body ? <p className="mt-2 text-xs leading-relaxed text-text-300">{body}</p> : null}
+    {body ? (
+      <p className="mt-2 break-words text-xs leading-relaxed text-text-300 [overflow-wrap:anywhere]">
+        {body}
+      </p>
+    ) : null}
 
     {/* Footer row: model pill (left) + Go to transcript button (right) */}
     <div className="mt-3 flex items-center justify-between gap-2">
