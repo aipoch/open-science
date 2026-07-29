@@ -2260,6 +2260,7 @@ describe('notebook runtime service', () => {
         ]
       })
       const installPackagesImpl = vi.fn()
+      const provisionPython = vi.fn(async () => undefined)
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
@@ -2279,6 +2280,10 @@ describe('notebook runtime service', () => {
           shutdown: async () => ({ reaped: true })
         }),
         installPackagesImpl
+      })
+      service.setDefaultEnvProvisioner({
+        provisionPython,
+        provisionR: vi.fn(async () => undefined)
       })
 
       const result = await service.inspectPackages({
@@ -2302,6 +2307,10 @@ describe('notebook runtime service', () => {
           runtimeSource: 'managed'
         }),
         ['numpy']
+      )
+      expect(provisionPython).toHaveBeenCalledOnce()
+      expect(provisionPython.mock.invocationCallOrder[0]).toBeLessThan(
+        inspectPackages.mock.invocationCallOrder[0]
       )
       expect(installPackagesImpl).not.toHaveBeenCalled()
     })

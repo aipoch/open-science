@@ -2380,6 +2380,11 @@ class NotebookRuntimeService {
       )
     }
 
+    // Match notebook execution's first-use behavior: materialize an unbound/default managed runtime
+    // before its interpreter is invoked for metadata. Named environments are a no-op here, and an
+    // external binding has already been rejected above.
+    await this.ensureDefaultEnvReady(request.language, envName, runtimeRoot, session.sessionId)
+
     const target = this.environmentCaptureTarget(
       request.language,
       envName,
