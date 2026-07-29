@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
@@ -74,6 +74,38 @@ describe('session persistence repository (per-session files)', () => {
       title: 'Saved conversation',
       messages: [{ content: 'Summarize this file' }]
     })
+  })
+
+  it('retries a transient Windows file-replacement denial without losing the Session save', async () => {
+    const renameFile = vi
+      .fn<(source: string, destination: string) => Promise<void>>()
+      .mockRejectedValueOnce(Object.assign(new Error('operation not permitted'), { code: 'EPERM' }))
+      .mockImplementation((source, destination) => rename(source, destination))
+    const wait = vi.fn(async () => undefined)
+    const repository = new SessionRepository(await createStorageRoot(), { renameFile, wait })
+
+    await expect(repository.saveSession(createSession())).resolves.toBeUndefined()
+
+    expect(renameFile).toHaveBeenCalledTimes(2)
+    expect(wait).toHaveBeenCalledTimes(1)
+    await expect(
+      readFile(join(storageRoot!, 'sessions', 'project-a', 'session-1.json'), 'utf8')
+    ).resolves.toContain('Saved conversation')
+  })
+
+  it('fails closed and removes the temporary Session file after persistent replacement denial', async () => {
+    const failure = Object.assign(new Error('operation not permitted'), { code: 'EPERM' })
+    const renameFile = vi.fn(async () => Promise.reject(failure))
+    const wait = vi.fn(async () => undefined)
+    const repository = new SessionRepository(await createStorageRoot(), { renameFile, wait })
+
+    await expect(repository.saveSession(createSession())).rejects.toBe(failure)
+
+    expect(renameFile).toHaveBeenCalledTimes(6)
+    expect(wait).toHaveBeenCalledTimes(5)
+    await expect(readdir(join(storageRoot!, 'sessions', 'project-a'))).resolves.not.toEqual(
+      expect.arrayContaining([expect.stringContaining('.tmp')])
+    )
   })
 
   it('loads one session directly so callers can refresh durable state between turns', async () => {
