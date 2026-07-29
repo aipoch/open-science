@@ -41,6 +41,8 @@ import { createConversationItems } from './workspace-conversation-items'
 import { groupConversationItems } from './workspace-tool-activity-groups'
 
 type ProvenanceTab = 'code' | 'execution' | 'messages' | 'environment' | 'review'
+type DeferredProvenanceTab = Extract<ProvenanceTab, 'execution' | 'messages' | 'review'>
+type DeferredSectionResult = { state: 'loaded' } | { state: 'error'; message: string }
 
 type ArtifactProvenancePanelProps = {
   item: PreviewFileItem
@@ -380,6 +382,9 @@ const ArtifactProvenancePanel = ({
     error?: string
   }>()
   const [activeTab, setActiveTab] = useState<ProvenanceTab>('code')
+  const [deferredSectionResults, setDeferredSectionResults] = useState<
+    Record<string, DeferredSectionResult>
+  >({})
   const [reviewRevision, setReviewRevision] = useState(0)
   const [showAllPackagesKey, setShowAllPackagesKey] = useState<string>()
   const [exportingNotebook, setExportingNotebook] = useState(false)
@@ -467,6 +472,23 @@ const ArtifactProvenancePanel = ({
   }, [item.artifactId, item.sessionId, projectId, provenanceKey, selectedVersionId])
 
   const reviewReloadKey = activeTab === 'review' ? reviewRevision : 0
+  const deferredTab = (
+    activeTab === 'execution' || activeTab === 'messages' || activeTab === 'review'
+      ? activeTab
+      : undefined
+  ) as DeferredProvenanceTab | undefined
+  const deferredSectionKey = deferredTab
+    ? `${provenanceKey}:${deferredTab}:${deferredTab === 'review' ? reviewReloadKey : 0}`
+    : undefined
+  const deferredSectionResult = deferredSectionKey
+    ? deferredSectionResults[deferredSectionKey]
+    : undefined
+  const deferredSectionState = deferredSectionResult?.state
+  const deferredTabLabel = deferredTab
+    ? tabs.find((tab) => tab.id === deferredTab)?.label
+    : undefined
+  const deferredSectionLoading = Boolean(deferredSectionKey && deferredSectionState === undefined)
+  const deferredSectionReady = !deferredSectionKey || deferredSectionState === 'loaded'
   const hasLoadedProvenance =
     provenanceResult?.key === provenanceKey && Boolean(provenanceResult.value)
   useEffect(() => {
@@ -480,6 +502,7 @@ const ArtifactProvenancePanel = ({
       artifactId: item.artifactId,
       versionId: selectedVersionId
     }
+    if (deferredSectionState !== undefined) return
     const load =
       activeTab === 'execution'
         ? window.api.artifacts.getVersionExecution(request)
@@ -489,6 +512,7 @@ const ArtifactProvenancePanel = ({
             ? window.api.artifacts.getVersionReview(request)
             : undefined
     if (!load) return
+    const sectionKey = `${provenanceKey}:${activeTab}:${activeTab === 'review' ? reviewReloadKey : 0}`
     void load
       .then((section) => {
         if (!active) return
@@ -497,13 +521,19 @@ const ArtifactProvenancePanel = ({
             ? { key: provenanceKey, value: { ...current.value, ...section } }
             : current
         )
+        setDeferredSectionResults((current) => ({
+          ...current,
+          [sectionKey]: { state: 'loaded' }
+        }))
       })
       .catch((failure: unknown) => {
         if (!active) return
-        setProvenanceResult((current) => ({
-          key: provenanceKey,
-          value: current?.key === provenanceKey ? current.value : undefined,
-          error: failure instanceof Error ? failure.message : String(failure)
+        setDeferredSectionResults((current) => ({
+          ...current,
+          [sectionKey]: {
+            state: 'error',
+            message: failure instanceof Error ? failure.message : String(failure)
+          }
         }))
       })
     return () => {
@@ -511,6 +541,7 @@ const ArtifactProvenancePanel = ({
     }
   }, [
     activeTab,
+    deferredSectionState,
     item.artifactId,
     item.sessionId,
     hasLoadedProvenance,
@@ -788,6 +819,18 @@ const ArtifactProvenancePanel = ({
             <LoaderCircle className="size-4 animate-spin" aria-label="Loading Provenance" />
           </div>
         ) : null}
+        {provenance && deferredTabLabel && deferredSectionLoading ? (
+          <div
+            className="flex h-full items-center justify-center gap-2 text-sm text-text-300"
+            aria-label={`Loading ${deferredTabLabel}`}
+          >
+            <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+            Loading {deferredTabLabel}
+          </div>
+        ) : null}
+        {provenance && deferredSectionResult?.state === 'error' ? (
+          <p className="p-5 text-sm text-danger-000">{deferredSectionResult.message}</p>
+        ) : null}
         {provenance && activeTab === 'code' ? (
           <section className="space-y-3 p-4">
             {provenance.contentStatus.state === 'unavailable' ? (
@@ -839,7 +882,7 @@ const ArtifactProvenancePanel = ({
             {codeActionError ? <p className="text-xs text-danger-000">{codeActionError}</p> : null}
           </section>
         ) : null}
-        {provenance && activeTab === 'execution' ? (
+        {provenance && activeTab === 'execution' && deferredSectionReady ? (
           executionRuns.length > 0 ? (
             <div>
               {executionTruncation ? (
@@ -880,7 +923,7 @@ const ArtifactProvenancePanel = ({
             </p>
           )
         ) : null}
-        {provenance && activeTab === 'messages' ? (
+        {provenance && activeTab === 'messages' && deferredSectionReady ? (
           provenance.messages.state === 'available' ? (
             <ProvenanceMessagesTimeline
               key={provenanceKey}
@@ -1107,7 +1150,7 @@ const ArtifactProvenancePanel = ({
             )}
           </section>
         ) : null}
-        {provenance && activeTab === 'review' ? (
+        {provenance && activeTab === 'review' && deferredSectionReady ? (
           reviewForCard ? (
             <section className="p-4">
               <ReviewerCard

@@ -828,6 +828,120 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('acknowledges stop without finalizing deferred evidence after graph synchronization fails', async () => {
+    const finalizeRunArtifacts = vi.fn()
+    const saveSession = vi.fn()
+    const reviewerRun = vi.fn().mockResolvedValue({ started: true })
+    vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+    useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-before-invalid-stop',
+        role: 'assistant',
+        messageId: 'assistant-before-invalid-stop',
+        text: 'Terminal response'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-before-invalid-stop',
+        kind: 'artifact',
+        runId: 'artifact-run-invalid-graph',
+        artifactClaimId: 'claim-invalid-graph',
+        artifacts: [createArtifactFile({ runId: 'artifact-run-invalid-graph' })]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'transport-session-1' && session.conversationGraph
+          ? {
+              ...session,
+              conversationGraph: {
+                ...session.conversationGraph,
+                activeFrameId: 'missing-active-frame'
+              }
+            }
+          : session
+      )
+    }))
+
+    await expect(
+      applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-invalid-graph', kind: 'stop' }), {
+        finalizeRunArtifacts,
+        saveSession
+      })
+    ).resolves.toBe(true)
+
+    expect(finalizeRunArtifacts).not.toHaveBeenCalled()
+    expect(saveSession).not.toHaveBeenCalled()
+    expect(reviewerRun).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      conversationGraphSyncBlocked: true
+    })
+    vi.unstubAllGlobals()
+  })
+
+  it('discards deferred evidence when an error terminal event cannot synchronize its graph', async () => {
+    const finalizeRunArtifacts = vi.fn().mockResolvedValue([])
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-before-invalid-error',
+        kind: 'artifact',
+        runId: 'artifact-run-invalid-error',
+        artifactClaimId: 'claim-invalid-error',
+        artifacts: [createArtifactFile({ runId: 'artifact-run-invalid-error' })]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+
+    const validGraph = useSessionStore.getState().sessions[0].conversationGraph
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'transport-session-1' && session.conversationGraph
+          ? {
+              ...session,
+              conversationGraph: {
+                ...session.conversationGraph,
+                activeFrameId: 'missing-active-frame'
+              }
+            }
+          : session
+      )
+    }))
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'error-invalid-graph', kind: 'error', text: 'Provider failed' })
+    )
+
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'transport-session-1'
+          ? {
+              ...session,
+              status: 'running',
+              activeRun: { promptMessageId: session.messages[0].id, startedAt: Date.now() },
+              conversationGraph: validGraph,
+              conversationGraphSyncBlocked: undefined
+            }
+          : session
+      )
+    }))
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'stop-after-invalid-error', kind: 'stop' }),
+      {
+        finalizeRunArtifacts,
+        saveSession
+      }
+    )
+
+    expect(finalizeRunArtifacts).not.toHaveBeenCalled()
+    expect(saveSession).not.toHaveBeenCalled()
+  })
+
   it('re-saves the latest durable graph once when finalization observes an ownership race', async () => {
     const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
     await applyWorkspaceRuntimeEvent(

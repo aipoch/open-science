@@ -463,6 +463,88 @@ describe('ArtifactProvenancePanel', () => {
     expect(getVersionReview).not.toHaveBeenCalled()
   })
 
+  it('does not present Review absence while the lazy section is loading', async () => {
+    let resolveReview!: (value: { review: ArtifactVersionProvenance['review'] }) => void
+    getVersionReview.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveReview = resolve
+        })
+    )
+
+    await clickTab('Review')
+
+    expect(container.textContent).toContain('Loading Review')
+    expect(container.textContent).not.toContain('No review for this version')
+    expect(container.textContent).not.toContain('Model · not triggered')
+
+    await act(async () => resolveReview({ review: provenance().review }))
+
+    expect(container.querySelector('[data-testid="reviewer-card"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('Loading Review')
+  })
+
+  it('waits for the lazy Execution response before presenting unavailable evidence', async () => {
+    let resolveExecution!: (value: { execution: ArtifactVersionProvenance['execution'] }) => void
+    getVersionExecution.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveExecution = resolve
+        })
+    )
+
+    await clickTab('Execution Log')
+
+    expect(container.textContent).toContain('Loading Execution Log')
+    expect(container.textContent).not.toContain(
+      'Unable to determine the producer execution for this version'
+    )
+
+    await act(async () => resolveExecution({ execution: undefined }))
+
+    expect(container.textContent).toContain(
+      'Unable to determine the producer execution for this version'
+    )
+    expect(container.textContent).not.toContain('Loading Execution Log')
+  })
+
+  it('does not present Message snapshot absence while the lazy section is loading', async () => {
+    let resolveMessages!: (value: { messages: ArtifactVersionProvenance['messages'] }) => void
+    getVersionMessages.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveMessages = resolve
+        })
+    )
+
+    await clickTab('Messages')
+
+    expect(container.textContent).toContain('Loading Messages')
+    expect(container.textContent).not.toContain('immutable message snapshot is not available')
+
+    await act(async () => resolveMessages({ messages: provenance().messages }))
+
+    expect(container.querySelector('[data-testid="workspace-message"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('Loading Messages')
+  })
+
+  it('reuses a loaded lazy section when switching away and back', async () => {
+    await clickTab('Messages')
+    await flush()
+    expect(getVersionMessages).toHaveBeenCalledOnce()
+
+    await clickTab('Execution Log')
+    await flush()
+    expect(getVersionExecution).toHaveBeenCalledOnce()
+
+    await clickTab('Messages')
+    await flush()
+
+    expect(getVersionMessages).toHaveBeenCalledOnce()
+    expect(container.querySelector('[data-testid="workspace-message"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('Loading Messages')
+  })
+
   it('renders producer inputs in Code and opens the exact immutable input Version', async () => {
     expect(container.querySelector('[aria-label="Inputs"]')?.textContent).toContain('groups.csv')
     expect(container.querySelector('[aria-label="Inputs"]')?.textContent).toContain('v3')
@@ -653,6 +735,11 @@ describe('ArtifactProvenancePanel', () => {
 
     expect(container.textContent).toContain('execution snapshot unavailable')
     expect(getVersionExecution).toHaveBeenCalledOnce()
+
+    await clickTab('Code')
+
+    expect(container.textContent).toContain('Executed producer block')
+    expect(container.textContent).not.toContain('execution snapshot unavailable')
   })
 
   it('keeps the Execution Log visible and reports notebook download failures', async () => {

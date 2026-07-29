@@ -105,6 +105,9 @@ export type ChatSession = Omit<
   // outside this store. The workspace projects those operation gates here so direct store callers
   // cannot bypass disabled revision controls.
   branchSwitchBlocked?: boolean
+  // Transient: terminal graph synchronization failed, so the in-memory run is settled as an explicit
+  // error while persistence keeps the last valid durable graph. Restarting restores that safe copy.
+  conversationGraphSyncBlocked?: boolean
 }
 
 type SessionStoreData = {
@@ -263,6 +266,8 @@ let timelineSequence = 0
 let conversationBranchSequence = 0
 let runtimeSegmentSequence = 0
 const ARTIFACT_ERROR_PREFIX = 'Generated file finalization failed'
+const CONVERSATION_GRAPH_SYNC_ERROR =
+  'Conversation history could not be finalized safely. Restart the app to restore the last saved conversation state, then report this issue.'
 const externallyHydratedSessions = new WeakSet<ChatSession>()
 
 // Builds the empty in-memory state used by the app and isolated tests.
@@ -280,6 +285,12 @@ const stripTransientMessageState = (message: ChatMessage): PersistedChatMessage 
 }
 
 const stripTransientSessionState = (session: ChatSession): PersistedChatSession => {
+  if (session.conversationGraphSyncBlocked) {
+    throw new Error(
+      'Session persistence is blocked after conversation graph synchronization failed.'
+    )
+  }
+
   const {
     activities,
     activityGroups,
@@ -290,6 +301,7 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
     agentStatus,
     branchContextResetRequired,
     branchSwitchBlocked,
+    conversationGraphSyncBlocked,
     messages,
     ...persistedSession
   } = session
@@ -301,6 +313,7 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
   void agentStatus
   void branchContextResetRequired
   void branchSwitchBlocked
+  void conversationGraphSyncBlocked
 
   // Persist a bounded projection of tool activities so the transcript survives restarts.
   const persistedActivities = activities
@@ -405,6 +418,41 @@ const synchronizeSessionGraph = (
     .map(sanitizeActivityGroup)
     .filter((group): group is PersistedActivityGroup => Boolean(group))
   return synchronizeActiveConversationActivities(withMessages, persistedActivities, persistedGroups)
+}
+
+const settleConversationGraphSyncFailure = (
+  session: ChatSession,
+  input: {
+    messages: ChatMessage[]
+    activities?: ToolActivity[]
+    activityGroups?: PersistedActivityGroup[]
+    now: number
+    cause: unknown
+    runError?: string
+  }
+): ChatSession => {
+  console.error('[session-store] conversation graph synchronization failed', {
+    sessionId: session.id,
+    cause: input.cause
+  })
+
+  return {
+    ...session,
+    status: 'error',
+    activeRun: undefined,
+    agentStatus: undefined,
+    compacting: undefined,
+    error: input.runError
+      ? `${input.runError}\n\n${CONVERSATION_GRAPH_SYNC_ERROR}`
+      : CONVERSATION_GRAPH_SYNC_ERROR,
+    errorReportable: true,
+    messages: input.messages,
+    activities: input.activities,
+    activityGroups: input.activityGroups,
+    conversationGraph: session.conversationGraph,
+    conversationGraphSyncBlocked: true,
+    updatedAt: input.now
+  }
 }
 
 const completeOpenActivityGroups = (
@@ -1418,11 +1466,22 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         // Streaming updates intentionally stay in the lightweight flat projection. Before Branch
         // navigation is re-enabled, publish the terminal response and its activities into the durable
         // graph even when Artifact finalization returned an unchanged immutable descriptor.
-        const conversationGraph = synchronizeSessionGraph(
-          { ...session, messages, activities, activityGroups },
-          messages,
-          now
-        )
+        let conversationGraph: NonNullable<PersistedChatSession['conversationGraph']>
+        try {
+          conversationGraph = synchronizeSessionGraph(
+            { ...session, messages, activities, activityGroups },
+            messages,
+            now
+          )
+        } catch (cause) {
+          return settleConversationGraphSyncFailure(session, {
+            messages,
+            activities,
+            activityGroups,
+            now,
+            cause
+          })
+        }
 
         return {
           ...session,
@@ -1436,6 +1495,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           activities,
           activityGroups,
           conversationGraph,
+          conversationGraphSyncBlocked: undefined,
           updatedAt: now
         }
       })
@@ -1461,11 +1521,23 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         const messages = failStreamingMessages(session.messages)
         const activities = failOpenActivities(session.activities)
         const activityGroups = completeOpenActivityGroups(session.activityGroups, now)
-        const conversationGraph = synchronizeSessionGraph(
-          { ...session, messages, activities, activityGroups },
-          messages,
-          now
-        )
+        let conversationGraph: NonNullable<PersistedChatSession['conversationGraph']>
+        try {
+          conversationGraph = synchronizeSessionGraph(
+            { ...session, messages, activities, activityGroups },
+            messages,
+            now
+          )
+        } catch (cause) {
+          return settleConversationGraphSyncFailure(session, {
+            messages,
+            activities,
+            activityGroups,
+            now,
+            cause,
+            runError: message
+          })
+        }
 
         return {
           ...session,
@@ -1479,6 +1551,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           activities,
           activityGroups,
           conversationGraph,
+          conversationGraphSyncBlocked: undefined,
           updatedAt: now
         }
       })

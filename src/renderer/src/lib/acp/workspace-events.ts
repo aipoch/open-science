@@ -369,6 +369,16 @@ const applyWorkspaceRuntimeEvent = async (
     activityGroupToolCallIdsBySession.delete(event.sessionId)
     store.finishRun(event.sessionId)
 
+    const terminalSession = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === event.sessionId)
+    if (terminalSession?.conversationGraphSyncBlocked) {
+      // The run is visibly settled as an integrity error, but its terminal Message is not proven to
+      // belong to the active Branch. Acknowledge the stop without publishing Artifact or Review data.
+      deferredArtifactEventsBySession.delete(event.sessionId)
+      return true
+    }
+
     const deferredArtifact = deferredArtifactEventsBySession.get(event.sessionId)
     if (deferredArtifact) {
       await finalizeArtifactEvent(deferredArtifact.event, deferredArtifact.dependencies)
@@ -410,6 +420,7 @@ const applyWorkspaceRuntimeEvent = async (
     event.artifacts.length > 0
   ) {
     const session = store.sessions.find((candidate) => candidate.id === event.sessionId)
+    if (session?.conversationGraphSyncBlocked) return true
     if (session?.activeRun) {
       deferredArtifactEventsBySession.set(event.sessionId, { event, dependencies })
       return true
@@ -449,6 +460,12 @@ const applyWorkspaceRuntimeEvent = async (
     store.failRun(event.sessionId, getEventErrorText(event), {
       reportable: event.providerError ? false : undefined
     })
+    const failedSession = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === event.sessionId)
+    if (failedSession?.conversationGraphSyncBlocked) {
+      deferredArtifactEventsBySession.delete(event.sessionId)
+    }
     return true
   }
 

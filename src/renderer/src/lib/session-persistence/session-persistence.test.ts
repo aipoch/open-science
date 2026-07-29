@@ -182,6 +182,31 @@ describe('renderer session persistence bridge', () => {
     expect(api.saveSession).not.toHaveBeenCalled()
   })
 
+  it('does not overwrite the last durable graph after terminal graph synchronization fails', async () => {
+    const api = createApi()
+    useSessionStore
+      .getState()
+      .hydrateSessions([createPersistedSession({ id: 'session-1', projectId: 'project-a' })])
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-1'
+          ? {
+              ...session,
+              status: 'error',
+              error: 'Conversation history could not be finalized safely.',
+              conversationGraphSyncBlocked: true
+            }
+          : session
+      )
+    }))
+
+    await save(useSessionStore.getState())
+
+    expect(api.saveSession).not.toHaveBeenCalled()
+  })
+
   it('waits for staged uploads to acquire an immutable Version before saving the Session', async () => {
     const api = createApi()
     const save = createStoreSaver(api)

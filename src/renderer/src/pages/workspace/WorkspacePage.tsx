@@ -322,6 +322,9 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     activeSession?.status !== 'waiting-permission' &&
     !activeSessionHasRuntimeInteraction &&
     !activeSession?.fixLoopActive &&
+    // A graph-integrity failure keeps only the in-memory terminal projection. Require restart before
+    // another prompt can mutate or persist this Session over its last valid durable Branch graph.
+    !activeSession?.conversationGraphSyncBlocked &&
     // Auto-recovery drops the session to idle while it resets context and replays the transcript; block
     // sends in that window so a manual prompt can't race the recovery resend into the same session.
     !activeSession?.compacting
@@ -335,6 +338,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     !activeSessionHasRuntimeInteraction &&
     !isReviewing &&
     !activeSession?.fixLoopActive &&
+    !activeSession?.conversationGraphSyncBlocked &&
     !activeSession?.compacting &&
     !sessionDeletionInProgressIds.has(activeSession?.id ?? '')
   useEffect(() => {

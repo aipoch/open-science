@@ -1962,6 +1962,75 @@ describe('truncateSessionFromMessage', () => {
     })
   })
 
+  it('settles a completed run as an explicit error when its graph projection is inconsistent', () => {
+    seedSession()
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    const branched = useSessionStore.getState().sessions[0]
+    const originalGraph = branched.conversationGraph
+    expect(originalGraph).toBeDefined()
+
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-1'
+          ? {
+              ...session,
+              status: 'running',
+              activeRun: { promptMessageId: 'user-2', startedAt: baseTime + 400 },
+              messages: [...session.messages, createMessage('user-2', 'user', baseTime + 200)]
+            }
+          : session
+      )
+    }))
+
+    expect(() => useSessionStore.getState().finishRun('session-1')).not.toThrow()
+
+    const settled = useSessionStore.getState().sessions[0]
+    expect(settled).toMatchObject({
+      status: 'error',
+      activeRun: undefined,
+      errorReportable: true,
+      conversationGraphSyncBlocked: true
+    })
+    expect(settled.error).toContain('Conversation history could not be finalized')
+    expect(settled.conversationGraph).toBe(originalGraph)
+    expect(() => toPersistedSession(settled)).toThrow(
+      'Session persistence is blocked after conversation graph synchronization failed.'
+    )
+  })
+
+  it('preserves the run failure context when graph synchronization also fails', () => {
+    seedSession()
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    const branched = useSessionStore.getState().sessions[0]
+    const originalGraph = branched.conversationGraph
+
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-1'
+          ? {
+              ...session,
+              status: 'running',
+              activeRun: { promptMessageId: 'user-2', startedAt: baseTime + 400 },
+              messages: [...session.messages, createMessage('user-2', 'user', baseTime + 200)]
+            }
+          : session
+      )
+    }))
+
+    expect(() => useSessionStore.getState().failRun('session-1', 'Provider failed')).not.toThrow()
+
+    const settled = useSessionStore.getState().sessions[0]
+    expect(settled).toMatchObject({
+      status: 'error',
+      activeRun: undefined,
+      errorReportable: true,
+      conversationGraphSyncBlocked: true
+    })
+    expect(settled.error).toContain('Provider failed')
+    expect(settled.error).toContain('Conversation history could not be finalized')
+    expect(settled.conversationGraph).toBe(originalGraph)
+  })
+
   it('retains a failed edited Branch response when switched away and back', () => {
     seedSession()
     useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')

@@ -142,7 +142,10 @@ const createStoreSaver = (
       if (
         previousById.get(session.id) !== session &&
         !isExternallyHydratedSession(session) &&
-        !hasStagedUploads(session)
+        !hasStagedUploads(session) &&
+        // A terminal graph-integrity failure keeps the renderer responsive, but the flat projection
+        // is no longer proven to match the immutable Branch graph. Preserve the last durable copy.
+        !session.conversationGraphSyncBlocked
       ) {
         const persisted = toPersistedSession(session)
 

@@ -25,6 +25,7 @@ import { type ComposerDoc } from './composer/composer-doc'
 let conversationProps: {
   draftDoc: ComposerDoc
   canSendMessage: boolean
+  canEditMessage: boolean
   canCompactContext: boolean
   compactContextDisabledReason?: string
   onDraftDocChange: (doc: ComposerDoc) => void
@@ -202,6 +203,25 @@ describe('WorkspacePage send gate while compacting', () => {
       root.render(<WorkspacePage isSessionPersistenceReady={true} />)
     })
     expect(conversationProps.canSendMessage).toBe(true)
+  })
+
+  it('blocks new prompts after terminal conversation graph synchronization fails', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        status: 'error',
+        error: 'Conversation history could not be finalized safely.',
+        conversationGraphSyncBlocked: true
+      }))
+    }))
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('do not overwrite the durable graph'))
+    })
+
+    expect(conversationProps.canSendMessage).toBe(false)
+    expect(conversationProps.canEditMessage).toBe(false)
   })
 
   it('allows manual compaction only for an idle session, not an unresolved error', async () => {
