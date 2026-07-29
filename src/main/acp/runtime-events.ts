@@ -348,4 +348,10 @@ const toAcpRuntimeEvent = (
   }
 }
 
-export { extractProviderToolName, extractTerminalMeta, extractToolFailureText, toAcpRuntimeEvent }
+export {
+  extractProviderToolName,
+  extractTerminalMeta,
+  extractToolFailureText,
+  isNativeSkillToolUpdate,
+  toAcpRuntimeEvent
+}

@@ -9,7 +9,7 @@ import { useEffect, useId, useRef, useState, type FocusEvent } from 'react'
 
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import type { AcpContextUsage } from '../../../../shared/acp'
+import type { AcpContextUsage, AcpContextUsageCategoryKey } from '../../../../shared/acp'
 
 type ComposerContextUsageProps = {
   // Latest usage for the active session, or undefined when the framework never reported any.
@@ -22,6 +22,22 @@ type ComposerContextUsageProps = {
 
 const COMPACT_ACTION_THRESHOLD_PERCENT = 30
 
+const CATEGORY_PRESENTATION: Record<AcpContextUsageCategoryKey, { label: string; color: string }> =
+  {
+    system: { label: 'System prompt', color: 'bg-emerald-500' },
+    tools: { label: 'Tools and agents', color: 'bg-amber-400' },
+    messages: { label: 'Messages', color: 'bg-violet-500' },
+    mcp: { label: 'Connectors and MCP', color: 'bg-cyan-400' },
+    skills: { label: 'Skills', color: 'bg-blue-500' },
+    other: { label: 'Agent/framework overhead', color: 'bg-slate-400' }
+  }
+
+const TOKENIZER_LABELS = {
+  anthropic: 'Anthropic tokenizer',
+  o200k_base: 'o200k_base',
+  cl100k_base: 'cl100k_base'
+} as const
+
 // Compact token count: 1_000_000 -> "1M", 24_890 -> "25k", 512 -> "512".
 const formatTokens = (tokens: number): string => {
   if (tokens >= 1_000_000) {
@@ -30,6 +46,15 @@ const formatTokens = (tokens: number): string => {
   }
   if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}k`
   return String(Math.round(tokens))
+}
+
+const formatDetailedTokens = (tokens: number): string => {
+  const absolute = Math.abs(tokens)
+  if (absolute < 1_000) return String(Math.round(tokens))
+  const divisor = absolute >= 1_000_000 ? 1_000_000 : 1_000
+  const suffix = divisor === 1_000_000 ? 'M' : 'k'
+  const value = tokens / divisor
+  return `${Math.abs(value) >= 100 || Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}${suffix}`
 }
 
 const ComposerContextUsage = ({
@@ -85,6 +110,11 @@ const ComposerContextUsage = ({
     compacting || (usagePercent !== undefined && usagePercent >= COMPACT_ACTION_THRESHOLD_PERCENT)
   const compactUnavailable = !canCompact || !onCompact
   const compactHint = !compacting && compactUnavailable ? compactDisabledReason : undefined
+  const breakdown = contextUsage.breakdown
+  const categories = breakdown?.categories.filter((category) => category.tokens > 0) ?? []
+  const categoryTotal = categories.reduce((sum, category) => sum + category.tokens, 0)
+  const visualUsed = Math.max(used, categoryTotal)
+  const visualPercent = size > 0 ? Math.min(100, (visualUsed / size) * 100) : 100
 
   const compactButton = (
     <button
@@ -137,7 +167,7 @@ const ComposerContextUsage = ({
         ref={contentRef}
         id={contentId}
         side="top"
-        className="max-w-64"
+        className="w-80 max-w-[calc(100vw-2rem)]"
         onPointerEnter={keepOpen}
         onPointerLeave={scheduleClose}
         onFocusCapture={keepOpen}
@@ -146,12 +176,75 @@ const ComposerContextUsage = ({
           if (openedFromPointerRef.current) event.preventDefault()
         }}
       >
-        <div className="space-y-1 text-[12px]">
-          <div className="font-medium">Context window</div>
+        <div className="space-y-3 text-[12px]">
           <div>
-            {formatTokens(used)} / {formatTokens(size)} tokens
-            {percent !== undefined ? ` (${percent}%)` : ''}
+            <div className="font-medium">Context window</div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <span className="text-xl font-semibold tabular-nums">
+                {usagePercent !== undefined ? `${usagePercent.toFixed(1)}%` : formatTokens(used)}
+              </span>
+              <span className="text-muted-foreground tabular-nums">
+                Agent used {formatDetailedTokens(used)} / {formatDetailedTokens(size)}
+              </span>
+            </div>
           </div>
+          {breakdown ? (
+            <>
+              <div
+                className="flex h-2 overflow-hidden rounded-full bg-bg-200"
+                aria-label={`Estimated category occupancy: ${formatDetailedTokens(visualUsed)} of ${formatDetailedTokens(size)} tokens`}
+              >
+                {categories.map((category) => {
+                  const presentation = CATEGORY_PRESENTATION[category.key]
+                  const width =
+                    categoryTotal > 0 ? (category.tokens / categoryTotal) * visualPercent : 0
+                  return (
+                    <span
+                      key={category.key}
+                      className={`${presentation.color} h-full border-r border-bg-000/80 last:border-r-0`}
+                      style={{ width: `${width}%` }}
+                      title={`${presentation.label}: ${formatDetailedTokens(category.tokens)}`}
+                    />
+                  )
+                })}
+              </div>
+              <div className="space-y-1.5">
+                {categories.map((category) => {
+                  const presentation = CATEGORY_PRESENTATION[category.key]
+                  return (
+                    <div key={category.key} className="flex items-center justify-between gap-3">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className={`${presentation.color} size-2 shrink-0 rounded-full`} />
+                        <span className="truncate">{presentation.label}</span>
+                      </span>
+                      <span className="shrink-0 tabular-nums text-muted-foreground">
+                        {category.estimated ? '~' : ''}
+                        {formatDetailedTokens(category.tokens)}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+              <div className="border-t border-border pt-2 text-[11px] leading-relaxed text-muted-foreground">
+                <div>
+                  Local estimate {formatDetailedTokens(breakdown.estimatedTokens)} · Agent{' '}
+                  {formatDetailedTokens(used)} · Δ {breakdown.difference > 0 ? '+' : ''}
+                  {formatDetailedTokens(breakdown.difference)}
+                </div>
+                <div>
+                  {breakdown.status === 'preflight' ? 'Preflight' : 'Reconciled'}
+                  {breakdown.tokenizer ? ` · ${TOKENIZER_LABELS[breakdown.tokenizer]}` : ''}
+                  {breakdown.model ? ` · ${breakdown.model}` : ''}
+                </div>
+                <div>Agent total is authoritative; category values are local estimates.</div>
+              </div>
+            </>
+          ) : (
+            <div>
+              {formatTokens(used)} / {formatTokens(size)} tokens
+              {percent !== undefined ? ` (${percent}%)` : ''}
+            </div>
+          )}
           {showCompactAction ? (
             <div className="flex pt-1">
               {compactHint ? (

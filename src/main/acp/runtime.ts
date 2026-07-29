@@ -122,6 +122,7 @@ import type { ResponsesBridgeSkillCandidate } from '../settings/responses-bridge
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
 import { CodexSkillActivityProjector } from './codex-skill-activity'
+import { ContextUsageTracker } from './context-usage-tracker'
 import {
   createManagedFileReferenceResolver,
   type FileReferenceResolver
@@ -192,6 +193,7 @@ type AcpRuntimeOptions = {
   // Per-session cumulative inlined-image budget in base64 bytes. Defaults to MAX_SESSION_INLINE_IMAGE_BYTES;
   // injectable so tests can drive the degrade-to-file path with small fixtures.
   inlineImageBudgetBytes?: number
+  contextUsageTracker?: ContextUsageTracker
 }
 
 // Turn-scoped skill force-load hooks, wired from the settings service. Optional so tests that construct
@@ -660,6 +662,7 @@ class AcpRuntime {
   // Latest context-window usage per app session, from ACP usage_update. Consumed by getSnapshot;
   // entries appear once the active framework emits a usable context count.
   private contextUsageBySession = new Map<string, AcpContextUsage>()
+  private readonly contextUsageTracker: ContextUsageTracker
   private agentProcess: ChildProcessWithoutNullStreams | undefined
   // Latched by shutdown() on app quit. A connect can be mid-spawn (resolveSpawnConfig is async) when
   // quit fires, so this lets the post-spawn path kill a child that was created after killAgentProcess ran.
@@ -848,6 +851,7 @@ class AcpRuntime {
     this.resumeTimeoutMs = options.resumeTimeoutMs ?? 30_000
     this.cancelTimeoutMs = options.cancelTimeoutMs ?? 5_000
     this.inlineImageBudgetBytes = options.inlineImageBudgetBytes ?? MAX_SESSION_INLINE_IMAGE_BYTES
+    this.contextUsageTracker = options.contextUsageTracker ?? new ContextUsageTracker()
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle))
     this.artifactOptions = options.artifacts
@@ -1590,6 +1594,7 @@ class AcpRuntime {
     // A context reset creates a new agent-side conversation under the same app id. Do not carry the
     // previous context size into the fresh conversation before its first usage_update arrives.
     this.contextUsageBySession.delete(request.sessionId)
+    this.contextUsageTracker.deleteSession(request.sessionId)
 
     // Release the failed turn's in-flight lock now. Its own `finally` clears it too, but that runs only
     // after async artifact cleanup, so the recovery resend that follows this reset would otherwise race
@@ -1710,6 +1715,9 @@ class AcpRuntime {
           // object and remains available to the context meter and auto-compaction threshold.
           if (this.contextUsageBySession.get(appSessionId) === contextUsageBeforeCompaction) {
             this.contextUsageBySession.delete(appSessionId)
+          } else {
+            this.contextUsageTracker.resetSession(appSessionId, this.contextUsageEstimateInput())
+            this.refreshEstimatedContextUsage(appSessionId, 'reconciled')
           }
           this.sessionInlineImageBytes.delete(appSessionId)
           this.pushEvent({
@@ -2016,6 +2024,7 @@ class AcpRuntime {
     this.connection?.close()
     this.connection = undefined
     this.killAgentProcess()
+    this.contextUsageTracker.clear()
     void this.closeMcpHttpHost()
     void this.releaseResponsesBridgeLease()
   }
@@ -2085,6 +2094,7 @@ class AcpRuntime {
     // replacement generation repopulate usage after reconnect/resume.
     if (this.contextUsageBySession.size > 0) {
       this.contextUsageBySession.clear()
+      this.contextUsageTracker.clear()
       this.emitState()
     }
 
@@ -2243,6 +2253,7 @@ class AcpRuntime {
       // including when a later session.dispose throws. A reconnect may resume the native context or
       // replay history into a fresh one; only that generation's own usage_update can repopulate it.
       this.contextUsageBySession.clear()
+      this.contextUsageTracker.clear()
 
       for (const session of this.sessions.values()) {
         session.dispose()
@@ -2641,6 +2652,13 @@ class AcpRuntime {
         codexSkillInputs
       )
 
+      await this.recordPromptContextEstimate(
+        request.sessionId,
+        promptContent,
+        promptPrefix,
+        codexSkillInputs
+      )
+
       emitUserMessage()
       skillActivityInputs = codexSkillInputs
       if (skillActivityInputs.length > 0) {
@@ -2950,6 +2968,7 @@ class AcpRuntime {
     this.sessionFrameworks.delete(request.sessionId)
     this.sessionBackendIds.delete(request.sessionId)
     this.contextUsageBySession.delete(request.sessionId)
+    this.contextUsageTracker.deleteSession(request.sessionId)
     this.permissionProfiles.delete(request.sessionId)
     this.artifactSessionIds.delete(request.sessionId)
     this.notebookRoutingIds.delete(request.sessionId)
@@ -4820,8 +4839,70 @@ class AcpRuntime {
     const used = usage.inputTokens + (usage.cachedReadTokens ?? 0)
     if (!Number.isFinite(used) || used < 0 || current.used === used) return
 
-    this.contextUsageBySession.set(sessionId, { used, size: current.size })
+    this.contextUsageBySession.set(sessionId, {
+      used,
+      size: current.size,
+      breakdown: this.contextUsageTracker.compare(sessionId, used, 'reconciled')
+    })
     this.emitState()
+  }
+
+  private contextUsageEstimateInput(): {
+    frameworkId: AgentFrameworkId
+    model?: string
+    persistentSystemPrompt?: readonly string[]
+  } {
+    return {
+      frameworkId: this.framework.id,
+      ...(this.pendingSessionModel ? { model: this.pendingSessionModel } : {}),
+      ...(this.framework.id === 'claude-code'
+        ? { persistentSystemPrompt: this.getSystemPromptAppends() }
+        : {})
+    }
+  }
+
+  private ensureContextUsageTracking(sessionId: string): void {
+    if (!this.sessions.has(sessionId)) return
+    this.contextUsageTracker.beginSession(sessionId, this.contextUsageEstimateInput())
+  }
+
+  private refreshEstimatedContextUsage(
+    sessionId: string,
+    status: NonNullable<AcpContextUsage['breakdown']>['status']
+  ): boolean {
+    const current = this.contextUsageBySession.get(sessionId)
+    if (!current) return false
+
+    const breakdown = this.contextUsageTracker.compare(sessionId, current.used, status)
+    if (!breakdown) return false
+    this.contextUsageBySession.set(sessionId, { ...current, breakdown })
+    return true
+  }
+
+  private async recordPromptContextEstimate(
+    sessionId: string,
+    promptContent: string | ContentBlock[],
+    promptPrefix: string | undefined,
+    codexSkillInputs: ReadonlyArray<{ name: string; path: string }>
+  ): Promise<void> {
+    this.ensureContextUsageTracking(sessionId)
+    this.contextUsageTracker.appendText(sessionId, 'system', promptPrefix ?? '')
+    this.contextUsageTracker.appendPromptContent(sessionId, promptContent, promptPrefix)
+
+    await Promise.all(
+      codexSkillInputs.map(async ({ path }) => {
+        try {
+          this.contextUsageTracker.appendText(sessionId, 'skills', await readFile(path, 'utf8'))
+        } catch (error) {
+          log.warn('context estimate could not read Codex Skill input', {
+            sessionId,
+            ...errorLogFields(error)
+          })
+        }
+      })
+    )
+
+    if (this.refreshEstimatedContextUsage(sessionId, 'preflight')) this.emitState()
   }
 
   // Normalizes low-level session notifications into runtime/workspace events.
@@ -4836,6 +4917,25 @@ class AcpRuntime {
       appSessionId && appSessionId !== notification.sessionId
         ? { ...notification, sessionId: appSessionId }
         : notification
+
+    this.ensureContextUsageTracking(routed.sessionId)
+    if (
+      routed.update.sessionUpdate === 'tool_call' ||
+      routed.update.sessionUpdate === 'tool_call_update'
+    ) {
+      const mcpServerNames = this.sessionMcpServerNames.get(routed.sessionId) ?? []
+      const providerToolName = extractProviderToolName(routed.update)
+      const isMcp =
+        isMcpToolName(routed.update.title, mcpServerNames) ||
+        isMcpToolName(providerToolName, mcpServerNames)
+      this.contextUsageTracker.observeSessionUpdate(
+        routed.sessionId,
+        routed,
+        isMcp ? 'mcp' : 'tools'
+      )
+    } else {
+      this.contextUsageTracker.observeSessionUpdate(routed.sessionId, routed)
+    }
 
     if (routed.update.sessionUpdate === 'current_mode_update') {
       const profileState = this.permissionProfiles.get(routed.sessionId)
@@ -4858,15 +4958,23 @@ class AcpRuntime {
       // must stay hidden until disconnect replaces the agent-context generation.
       if (this.pendingProviderReconnect) return
 
+      const breakdown = this.contextUsageTracker.compare(
+        routed.sessionId,
+        event.contextUsage.used,
+        'reconciled'
+      )
       this.contextUsageBySession.set(routed.sessionId, {
         ...event.contextUsage,
-        size: this.selectedModelContextWindow ?? event.contextUsage.size
+        size: this.selectedModelContextWindow ?? event.contextUsage.size,
+        ...(breakdown ? { breakdown } : {})
       })
       this.emitState()
       return
     }
 
     if (!visible) return
+
+    this.refreshEstimatedContextUsage(routed.sessionId, 'preflight')
 
     // Tool results (e.g. WebFetch's claude.ai domain-safety preflight, a failed Bash command) stream as
     // tool_call_update content, which the session-update log omits — so a tool that runs and fails leaves
@@ -5001,6 +5109,7 @@ class AcpRuntime {
     this.clearAllOpenCodePermissionToolContext()
     this.sessionProjectNames.clear()
     this.contextUsageBySession.clear()
+    this.contextUsageTracker.clear()
     this.artifactSessionIds.clear()
     this.notebookRoutingIds.clear()
     this.skillImportRoutingIds.clear()

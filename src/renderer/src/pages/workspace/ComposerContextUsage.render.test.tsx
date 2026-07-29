@@ -61,6 +61,53 @@ describe('ComposerContextUsage', () => {
     )
   })
 
+  it('shows locally estimated categories reconciled against the Agent total', async () => {
+    act(() =>
+      root.render(
+        <ComposerContextUsage
+          contextUsage={{
+            used: 29_500,
+            size: 168_000,
+            breakdown: {
+              source: 'estimated',
+              tokenizer: 'o200k_base',
+              model: 'gpt-5.6-sol',
+              estimatedTokens: 29_405,
+              difference: 95,
+              status: 'reconciled',
+              categories: [
+                { key: 'system', tokens: 7_200, estimated: true },
+                { key: 'tools', tokens: 19_000, estimated: true },
+                { key: 'messages', tokens: 2_105, estimated: true },
+                { key: 'skills', tokens: 1_100, estimated: true },
+                { key: 'other', tokens: 95, estimated: false }
+              ]
+            }
+          }}
+        />
+      )
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Context used: 18%"]')
+    await act(async () => {
+      trigger?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('17.6%')
+    expect(document.body.textContent).toContain('System prompt')
+    expect(document.body.textContent).toContain('Tools and agents')
+    expect(document.body.textContent).toContain('Messages')
+    expect(document.body.textContent).toContain('Skills')
+    expect(document.body.textContent).toContain('Agent/framework overhead')
+    expect(document.body.textContent).toContain('Local estimate 29.4k · Agent 29.5k · Δ +95')
+    expect(document.body.textContent).toContain('Reconciled · o200k_base · gpt-5.6-sol')
+    expect(document.body.textContent).toContain('Agent total is authoritative')
+    expect(
+      document.body.querySelector('[aria-label^="Estimated category occupancy"]')
+    ).not.toBeNull()
+  })
+
   it('keeps the compact action hidden until context usage reaches thirty percent', async () => {
     act(() =>
       root.render(

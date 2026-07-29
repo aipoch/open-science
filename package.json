@@ -41,6 +41,7 @@
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.60.0",
     "@agentclientprotocol/sdk": "^1.2.1",
+    "@anthropic-ai/tokenizer": "^0.0.4",
     "@bokuweb/zstd-wasm": "^0.0.27",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
@@ -49,6 +50,7 @@
     "@prisma/client": "^6.19.3",
     "@radix-ui/react-focus-scope": "^1.1.11",
     "electron-updater": "^6.3.9",
+    "js-tiktoken": "^1.0.21",
     "js-yaml": "^4.1.0",
     "openchemlib": "^9.24.0",
     "pdfjs-dist": "5.4.624",

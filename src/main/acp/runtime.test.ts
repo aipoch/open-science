@@ -2008,7 +2008,7 @@ describe('ACP runtime session management', () => {
       { sessionId: 'remote-session-1', text: 'analyze the results' },
       { sessionId: 'remote-session-1', text: '/compact' }
     ])
-    expect(runtime.getSnapshot().contextUsageBySession[session.sessionId]).toEqual({
+    expect(runtime.getSnapshot().contextUsageBySession[session.sessionId]).toMatchObject({
       used: 24_000,
       size: 200_000
     })
@@ -6425,11 +6425,20 @@ describe('ACP runtime session management', () => {
     finishPrompt.resolve()
     await prompt
 
-    expect(usageWhileGenerating).toEqual({
+    expect(usageWhileGenerating).toMatchObject({
       s1: { used: 15, size: 128000 }
     })
-    expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+    expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
       s1: { used: 15, size: 128000 }
+    })
+    expect(usageWhileGenerating.s1.breakdown).toMatchObject({
+      source: 'estimated',
+      tokenizer: 'o200k_base',
+      status: 'reconciled',
+      categories: expect.arrayContaining([
+        expect.objectContaining({ key: 'system', estimated: true }),
+        expect.objectContaining({ key: 'messages', estimated: true })
+      ])
     })
   })
 
@@ -6465,7 +6474,7 @@ describe('ACP runtime session management', () => {
         update: { sessionUpdate: 'usage_update', used: 15, size: adapterWindow }
       })
 
-      expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+      expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
         s1: { used: 15, size: 1_000_000 }
       })
     }
@@ -6517,20 +6526,20 @@ describe('ACP runtime session management', () => {
     await runtime.createSession({ cwd: '/workspace' })
     const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
     await firstUsageSent.promise
-    expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+    expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
       s1: { used: 15, size: 200000 }
     })
 
     sendSecondUsage.resolve()
     await secondUsageSent.promise
-    expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+    expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
       s1: { used: 24, size: 200000 }
     })
 
     finishPrompt.resolve()
     await prompt
 
-    expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+    expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
       s1: { used: 24, size: 200000 }
     })
   })
@@ -6569,14 +6578,14 @@ describe('ACP runtime session management', () => {
     await runtime.createSession({ cwd: '/workspace' })
     const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
     await usageSent.promise
-    expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+    expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
       s1: { used: 18, size: 128000 }
     })
 
     finishPrompt.resolve()
     await prompt
 
-    expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+    expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
       s1: { used: 15, size: 128000 }
     })
   })
@@ -6597,7 +6606,7 @@ describe('ACP runtime session management', () => {
       update: { sessionUpdate: 'usage_update', used: 15, size: 128000 }
     })
 
-    expect(runtime.getSnapshot().contextUsageBySession).toEqual({
+    expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
       s1: { used: 15, size: 128000 }
     })
   })
