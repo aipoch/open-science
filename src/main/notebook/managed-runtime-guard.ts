@@ -78,7 +78,7 @@ const RUNTIME_WRITE_RULES: Record<NotebookExecutionSurface, RegExp> = {
     /\b(?:New-Item|Remove-Item|Set-Content|Add-Content|Clear-Content|Out-File|Copy-Item|Move-Item|Rename-Item)\b/iu,
   python:
     /\b(?:open|Path\s*\([^)]*\)\s*\.(?:write_[A-Za-z0-9_]+|touch|mkdir|rename|replace|unlink)|os\.(?:remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|chmod|chown)|shutil\.(?:copy|copy2|copytree|move|rmtree))\s*\(/iu,
-  r: /\b(?:unlink|file\.remove|file\.rename|file\.create|dir\.create|writeLines|writeBin|save|saveRDS)\s*\(/iu,
+  r: /\b(?:unlink|file\.remove|file\.rename|file\.link|file\.symlink|file\.create|dir\.create|writeLines|writeBin|save|saveRDS)\s*\(/iu,
   repl: /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|rm|rmSync|unlink|unlinkSync|rename|renameSync|mkdir|mkdirSync|mkdtemp|mkdtempSync|copyFile|copyFileSync)\s*\(/iu
 }
 
@@ -404,7 +404,7 @@ const runtimeWriteTargets = (
   }
 
   if (surface === 'r') {
-    if (/\bfile\.rename\b/u.test(op)) return args.slice(0, 2)
+    if (/\bfile\.(?:rename|link|symlink)\b/u.test(op)) return args.slice(0, 2)
     if (/\b(?:writelines|writebin)\b/u.test(op)) {
       const target = namedOrPositionalArgument(args, 'con', 1)
       return target ? [target] : []

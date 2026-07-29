@@ -179,7 +179,7 @@ assert_runtime_process_allowed <- function(command, args = character()) {
       "\\b(open|write_text|write_bytes|writeFile|writeFileSync|mkdtemp|mkdtempSync)\\s*\\(|",
       "\\b(os|shutil)\\.(remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|",
       "chmod|chown|copy|copy2|copytree|move|rmtree)\\s*\\(|",
-      "\\b(unlink|file\\.remove|file\\.rename|file\\.create|dir\\.create|writeLines|",
+      "\\b(unlink|file\\.remove|file\\.rename|file\\.link|file\\.symlink|file\\.create|dir\\.create|writeLines|",
       "writeBin|save|saveRDS)\\s*\\(|",
       "\\b(New-Item|Remove-Item|Set-Content|Add-Content|Clear-Content|Out-File)\\b"
     ),
@@ -201,6 +201,17 @@ runtime_argument <- function(args, name, position) {
   if (length(args) >= position) args[[position]] else NULL
 }
 
+runtime_symlink_source <- function(source, destination) {
+  if (
+    is.character(source) && length(source) == 1L && nzchar(source) &&
+      is.character(destination) && length(destination) == 1L && nzchar(destination) &&
+      !grepl("^(?:[/\\\\]|[A-Za-z]:[/\\\\])", source, perl = TRUE)
+  ) {
+    return(file.path(dirname(destination), source))
+  }
+  source
+}
+
 make_runtime_write_guard <- function(binding_name) {
   original <- get(binding_name, envir = baseenv(), inherits = FALSE)
   force(original)
@@ -215,6 +226,17 @@ make_runtime_write_guard <- function(binding_name) {
       file.remove = args,
       file.rename = list(
         runtime_argument(args, "from", 1L),
+        runtime_argument(args, "to", 2L)
+      ),
+      file.link = list(
+        runtime_argument(args, "from", 1L),
+        runtime_argument(args, "to", 2L)
+      ),
+      file.symlink = list(
+        runtime_symlink_source(
+          runtime_argument(args, "from", 1L),
+          runtime_argument(args, "to", 2L)
+        ),
         runtime_argument(args, "to", 2L)
       ),
       file.create = args,
@@ -286,6 +308,7 @@ for (helper in c(
   "assert_runtime_write_allowed",
   "assert_runtime_process_allowed",
   "runtime_argument",
+  "runtime_symlink_source",
   "make_runtime_write_guard"
 )) {
   helper_fn <- get(helper, envir = .GlobalEnv, inherits = FALSE)
@@ -302,7 +325,8 @@ if (nzchar(runtime_value)) {
   runtime_write_policy_env$managed_runtime_source <- chartr("\\", "/", source_root)
 }
 runtime_write_bindings <- c(
-  "writeLines", "writeBin", "unlink", "file.remove", "file.rename", "file.create",
+  "writeLines", "writeBin", "unlink", "file.remove", "file.rename", "file.link",
+  "file.symlink", "file.create",
   "dir.create", "saveRDS", "save", "cat", "file", "gzfile", "bzfile", "xzfile",
   "open", "sink", "system", "system2"
 )
@@ -322,6 +346,7 @@ rm(
   assert_runtime_write_allowed,
   assert_runtime_process_allowed,
   runtime_argument,
+  runtime_symlink_source,
   make_runtime_write_guard,
   runtime_value,
   source_root,

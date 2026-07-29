@@ -72,7 +72,7 @@ for (const method of ['exec', 'execSync']) {
   const original = childProcess[method]
   childProcess[method] = function guardedExec(command, ...args) {
     assertPackageCommandAllowed(command)
-    assertRuntimeProcessCommandAllowed(command)
+    assertRuntimeProcessCommandAllowed(command, [], true)
     return original.call(this, command, ...args)
   }
 }
@@ -148,17 +148,408 @@ const assertRuntimeWriteAllowed = (...values) => {
   }
 }
 const runtimeWriteCommand =
-  /(?:\b(?:rm|mv|cp|install|mkdir|touch|truncate|chmod|chown|ln|tee|sed|perl|dd)\b|\b(?:open|write_text|write_bytes|writeFile|writeFileSync|mkdtemp|mkdtempSync)\s*\(|\b(?:os|shutil)\.(?:remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|chmod|chown|copy|copy2|copytree|move|rmtree)\s*\(|\b(?:unlink|file\.remove|file\.rename|file\.create|dir\.create|writeLines|writeBin|save|saveRDS)\s*\(|\b(?:New-Item|Remove-Item|Set-Content|Add-Content|Clear-Content|Out-File)\b|\[IO\.File\]::(?:WriteAllText|AppendAllText|WriteAllBytes|Create|Delete)\s*\()/isu
-const assertRuntimeProcessCommandAllowed = (command, args = []) => {
-  if (!managedRuntimeRoot) return
-  const text = commandText(command, args)
-  const comparable = comparableGuardPath(text.replaceAll('\\', '/'))
+  /(?:\b(?:rm|mv|cp|install|mkdir|touch|truncate|chmod|chown|ln|tee|sed|perl|dd)\b|\b(?:open|write_text|write_bytes|writeFile|writeFileSync|mkdtemp|mkdtempSync)\s*\(|\b(?:os|shutil)\.(?:remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|chmod|chown|copy|copy2|copytree|move|rmtree)\s*\(|\b(?:unlink|file\.remove|file\.rename|file\.link|file\.symlink|file\.create|dir\.create|writeLines|writeBin|save|saveRDS)\s*\(|\b(?:New-Item|Remove-Item|Set-Content|Add-Content|Clear-Content|Out-File)\b|\[IO\.File\]::(?:WriteAllText|AppendAllText|WriteAllBytes|Create|Delete)\s*\()/isu
+// Child commands are assembled after the main-process source policy runs, so this loop must classify
+// their resolved argv itself. Mirror the main policy's endpoint semantics: copying OUT is read-only,
+// moves/links protect both endpoints, and writes are rejected only when their target reaches the
+// runtime. The broad regex remains a fail-closed fallback for interpreter payloads not parsed here.
+const runtimeTextReferencesManagedRuntime = (text) => {
+  const comparable = comparableGuardPath(
+    String(text)
+      .replaceAll('\\', '/')
+      .replace(/\/{2,}/gu, '/')
+  )
   const roots = [managedRuntimeRoot, runtimeRootValue]
     .filter((value) => typeof value === 'string' && value.length > 0)
-    .map((value) => comparableGuardPath(value.replaceAll('\\', '/')))
-  const referencesRuntime =
-    text.includes('OPEN_SCIENCE_RUNTIME_DIR') || roots.some((root) => comparable.includes(root))
-  if (referencesRuntime && runtimeWriteCommand.test(text)) {
+    .map((value) => comparableGuardPath(value.replaceAll('\\', '/').replace(/\/{2,}/gu, '/')))
+  return (
+    String(text).includes('OPEN_SCIENCE_RUNTIME_DIR') ||
+    roots.some((root) => comparable.includes(root))
+  )
+}
+const runtimeTargetIsManaged = (value) => {
+  if (!managedRuntimeRoot || value === undefined || value === null) return false
+  const text = String(value).trim()
+  if (runtimeTextReferencesManagedRuntime(text)) return true
+  const unquoted = text.replace(/^(?:(["'`]))([\s\S]*)\1$/u, '$2')
+  const resolved = canonicalGuardPath(unquoted)
+  if (!resolved) return false
+  const candidate = comparableGuardPath(resolved)
+  const root = comparableGuardPath(managedRuntimeRoot)
+  return candidate === root || candidate.startsWith(root + path.sep)
+}
+const commandName = (value) =>
+  path.basename(String(value ?? '').replace(/^["']|["']$/gu, '')).toLowerCase()
+const unquoteShellWord = (value) =>
+  String(value)
+    .replace(/^(["'`])([\s\S]*)\1$/u, '$2')
+    .replace(/\\([\\"'`])/gu, '$1')
+const shellWords = (command) =>
+  String(command).match(/(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|[^\s])+/gu) ?? []
+const shellCommandSegments = (source) => {
+  const segments = []
+  let start = 0
+  let quote
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index]
+    if (char === '\\') {
+      index += 1
+      continue
+    }
+    if (quote) {
+      if (char === quote) quote = undefined
+      continue
+    }
+    if (char === "'" || char === '"' || char === '`') {
+      quote = char
+      continue
+    }
+    if (!/[;\r\n|&]/u.test(char)) continue
+    segments.push(source.slice(start, index))
+    start = index + 1
+  }
+  segments.push(source.slice(start))
+  return segments
+}
+const shellRedirectionTargets = (command) => {
+  const targets = []
+  let quote
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index]
+    if (char === '\\') {
+      index += 1
+      continue
+    }
+    if (quote) {
+      if (char === quote) quote = undefined
+      continue
+    }
+    if (char === "'" || char === '"') {
+      quote = char
+      continue
+    }
+    if (char !== '>' || command[index + 1] === '&') continue
+    if (command[index + 1] === '>') index += 1
+    while (/\s/u.test(command[index + 1] ?? '')) index += 1
+    if (command[index + 1] === '|') index += 1
+    const start = index + 1
+    const targetQuote = command[start]
+    if (targetQuote === "'" || targetQuote === '"') {
+      let end = start + 1
+      while (end < command.length && command[end] !== targetQuote) {
+        if (command[end] === '\\') end += 1
+        end += 1
+      }
+      targets.push(command.slice(start, Math.min(end + 1, command.length)))
+      index = end
+      continue
+    }
+    let end = start
+    while (end < command.length && !/[\s;&|]/u.test(command[end])) end += 1
+    const target = command.slice(start, end)
+    if (target && !/^&?\d+$/u.test(target)) targets.push(target)
+    index = end - 1
+  }
+  return targets
+}
+const writeTargetsForWords = (words, redirections = []) => {
+  const commandIndex = words.findIndex((word) =>
+    /^(?:rm|mv|cp|install|mkdir|touch|truncate|chmod|chown|ln|tee|sed|perl|dd)(?:\.exe)?$/iu.test(
+      commandName(word)
+    )
+  )
+  if (commandIndex < 0) return redirections
+  const executable = commandName(words[commandIndex])
+  const args = words.slice(commandIndex + 1).map(String)
+  const targetDirectory = args
+    .find((arg) => /^--target-directory=/iu.test(arg))
+    ?.split(/=(.*)/su)[1]
+  const shortTargetIndex = args.findIndex((arg) => arg === '-t')
+  if (targetDirectory) return [...redirections, targetDirectory]
+  if (shortTargetIndex >= 0 && args[shortTargetIndex + 1]) {
+    return [...redirections, args[shortTargetIndex + 1]]
+  }
+  if (/^dd(?:\.exe)?$/iu.test(executable)) {
+    return [
+      ...redirections,
+      ...args.filter((arg) => /^of=/iu.test(arg)).map((arg) => arg.slice(arg.indexOf('=') + 1))
+    ]
+  }
+  const positional = args.filter((arg) => !arg.startsWith('-'))
+  if (/^ln(?:\.exe)?$/iu.test(executable)) return [...redirections, ...positional]
+  if (/^(?:cp|install)(?:\.exe)?$/iu.test(executable)) {
+    return [...redirections, ...positional.slice(-1)]
+  }
+  if (/^mv(?:\.exe)?$/iu.test(executable)) return [...redirections, ...positional]
+  if (/^(?:chmod|chown)(?:\.exe)?$/iu.test(executable)) {
+    return [...redirections, ...positional.slice(1)]
+  }
+  if (/^(?:sed|perl)(?:\.exe)?$/iu.test(executable)) {
+    return args.some((arg) => /^-.*i/u.test(arg))
+      ? [...redirections, ...positional.slice(-1)]
+      : redirections
+  }
+  return [...redirections, ...positional]
+}
+const powerShellWriteTargets = (command) => {
+  const redirections = shellRedirectionTargets(command)
+  const words = shellWords(command)
+  const commandIndex = words[0] === '&' ? 1 : 0
+  const executable = commandName(words[commandIndex])
+  const args = words.slice(commandIndex + 1).map(String)
+  const positional = args.filter((arg) => !arg.startsWith('-'))
+  const pathFlag = args.findIndex((arg) => /^-(?:literal)?path$|^-filepath$/iu.test(arg))
+  const explicitPath = pathFlag >= 0 ? args[pathFlag + 1] : undefined
+  if (/^(?:copy-item|copy|cp|cpi)$/u.test(executable)) {
+    return [...redirections, ...positional.slice(-1)]
+  }
+  if (/^(?:move-item|move|mv|mi|rename-item|rename|ren|rni)$/u.test(executable)) {
+    return [...redirections, ...positional]
+  }
+  if (/^(?:new-item|ni|mkdir|md|remove-item|ri|rm|del|erase|rmdir|rd)$/u.test(executable)) {
+    return [...redirections, ...args]
+  }
+  if (executable === 'mklink') {
+    return [...redirections, ...args.filter((arg) => !/^\/[dhj]$/iu.test(arg))]
+  }
+  if (/^(?:set-content|sc|add-content|ac|clear-content|clc|out-file)$/u.test(executable)) {
+    return [...redirections, ...(explicitPath ? [explicitPath] : positional.slice(0, 1))]
+  }
+  return redirections
+}
+const matchingCall = (source, matchIndex) => {
+  const open = source.indexOf('(', matchIndex)
+  if (open < 0) return undefined
+  let depth = 0
+  let quote
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index]
+    if (quote) {
+      if (char === '\\') index += 1
+      else if (char === quote) quote = undefined
+      continue
+    }
+    if (char === "'" || char === '"' || char === '`') quote = char
+    else if (char === '(') depth += 1
+    else if (char === ')' && --depth === 0) return source.slice(matchIndex, index + 1)
+  }
+  return undefined
+}
+const callArguments = (call) => {
+  const open = call.indexOf('(')
+  if (open < 0) return []
+  const args = []
+  let start = open + 1
+  let depth = 0
+  let quote
+  for (let index = start; index < call.length; index += 1) {
+    const char = call[index]
+    if (quote) {
+      if (char === '\\') index += 1
+      else if (char === quote) quote = undefined
+      continue
+    }
+    if (char === "'" || char === '"' || char === '`') quote = char
+    else if (char === '(' || char === '[' || char === '{') depth += 1
+    else if (char === ')' || char === ']' || char === '}') {
+      if (char === ')' && depth === 0) {
+        const tail = call.slice(start, index).trim()
+        if (tail || args.length > 0) args.push(tail)
+        return args
+      }
+      depth -= 1
+    } else if (char === ',' && depth === 0) {
+      args.push(call.slice(start, index).trim())
+      start = index + 1
+    }
+  }
+  return args
+}
+const maskJavascriptQuotedAndCommentText = (source) => {
+  const chars = [...source]
+  let index = 0
+  while (index < chars.length) {
+    if (chars[index] === '/' && chars[index + 1] === '/') {
+      chars[index++] = ' '
+      chars[index++] = ' '
+      while (index < chars.length && chars[index] !== '\n') chars[index++] = ' '
+      continue
+    }
+    if (chars[index] === '/' && chars[index + 1] === '*') {
+      chars[index++] = ' '
+      chars[index++] = ' '
+      while (index < chars.length) {
+        if (chars[index] === '*' && chars[index + 1] === '/') {
+          chars[index++] = ' '
+          chars[index++] = ' '
+          break
+        }
+        if (chars[index] !== '\n') chars[index] = ' '
+        index += 1
+      }
+      continue
+    }
+    const quote = chars[index]
+    if (quote !== "'" && quote !== '"' && quote !== '`') {
+      index += 1
+      continue
+    }
+    chars[index++] = ' '
+    while (index < chars.length) {
+      if (chars[index] === '\\') {
+        chars[index++] = ' '
+        if (index < chars.length) chars[index++] = ' '
+        continue
+      }
+      if (chars[index] === quote) {
+        chars[index++] = ' '
+        break
+      }
+      if (chars[index] !== '\n') chars[index] = ' '
+      index += 1
+    }
+  }
+  return chars.join('')
+}
+const staticLiteralTarget = (target) => /^(?:(["'`]))[\s\S]*\1$/u.test(String(target).trim())
+const staticShellTarget = (target) => {
+  const value = String(target)
+    .trim()
+    .replace(/^(?:(["']))([\s\S]*)\1$/u, '$2')
+  return value.length > 0 && !/[$%`<>&;|()\r\n]/u.test(value)
+}
+const powerShellSourceWritesRuntime = (source) => {
+  const referencesRuntime = runtimeTextReferencesManagedRuntime(source)
+  for (const segment of shellCommandSegments(String(source))) {
+    const targets = powerShellWriteTargets(segment)
+    if (targets.some(runtimeTargetIsManaged)) return true
+    if (referencesRuntime && targets.some((target) => !staticShellTarget(target))) return true
+  }
+  const dotNetWrites =
+    /\[(?:System\.)?IO\.(?:File|Directory)\]::(?:WriteAllText|AppendAllText|WriteAllBytes|Create|CreateText|AppendText|Move|Replace|Delete|CreateDirectory)\s*\(/giu
+  for (let match = dotNetWrites.exec(source); match; match = dotNetWrites.exec(source)) {
+    const call = matchingCall(source, match.index)
+    const target = call ? callArguments(call)[0] : undefined
+    if (target && runtimeTargetIsManaged(target)) return true
+    if (target && referencesRuntime && !staticLiteralTarget(target)) return true
+  }
+  return false
+}
+const javascriptSourceWritesRuntime = (source) => {
+  const masked = maskJavascriptQuotedAndCommentText(source)
+  const operations =
+    /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|rm|rmSync|rmdir|rmdirSync|unlink|unlinkSync|rename|renameSync|mkdir|mkdirSync|mkdtemp|mkdtempSync|truncate|truncateSync|chmod|chmodSync|chown|chownSync|copyFile|copyFileSync|cp|cpSync|link|linkSync|symlink|symlinkSync|open|openSync|createWriteStream)\s*\(/gu
+  const referencesRuntime = runtimeTextReferencesManagedRuntime(source)
+  for (let match = operations.exec(masked); match; match = operations.exec(masked)) {
+    const call = matchingCall(source, match.index)
+    if (!call) continue
+    const args = callArguments(call)
+    const operation = match[0].slice(0, match[0].indexOf('(')).toLowerCase()
+    const targets = /^(?:copyfile|copyfilesync|cp|cpsync)$/u.test(operation)
+      ? args.slice(1, 2)
+      : /^(?:rename|renamesync|link|linksync|symlink|symlinksync)$/u.test(operation)
+        ? args.slice(0, 2)
+        : /^(?:open|opensync)$/u.test(operation) &&
+            args[1] &&
+            /^(?:["'])r[bt]?(?:["'])$/u.test(args[1].trim())
+          ? []
+          : args.slice(0, 1)
+    if (targets.some(runtimeTargetIsManaged)) return true
+    if (referencesRuntime && targets.some((target) => !staticLiteralTarget(target))) return true
+  }
+  return false
+}
+const shellSourceWritesRuntime = (source) => {
+  const referencesRuntime = runtimeTextReferencesManagedRuntime(source)
+  for (const segment of shellCommandSegments(String(source))) {
+    const words = shellWords(segment)
+    const targets = writeTargetsForWords(words, shellRedirectionTargets(segment))
+    if (targets.some(runtimeTargetIsManaged)) return true
+    if (referencesRuntime && targets.some((target) => !staticShellTarget(target))) return true
+    const executable = commandName(words[0])
+    const inlineFlag = words.findIndex((word) => /^(?:-e|--eval)$/u.test(word))
+    if (
+      (/^(?:node|nodejs)(?:\.exe)?$/u.test(executable) || words[0] === process.execPath) &&
+      inlineFlag >= 0 &&
+      javascriptSourceWritesRuntime(unquoteShellWord(words[inlineFlag + 1] ?? ''))
+    ) {
+      return true
+    }
+    const shellFlag = words.findIndex((word) => /^-c$/u.test(word))
+    if (
+      /^(?:bash|sh|zsh)(?:\.exe)?$/u.test(executable) &&
+      shellFlag >= 0 &&
+      shellSourceWritesRuntime(unquoteShellWord(words[shellFlag + 1] ?? ''))
+    ) {
+      return true
+    }
+    const powerShellFlag = words.findIndex((word) => /^-command$/iu.test(word))
+    if (
+      /^(?:powershell|pwsh)(?:\.exe)?$/u.test(executable) &&
+      powerShellFlag >= 0 &&
+      powerShellSourceWritesRuntime(unquoteShellWord(words[powerShellFlag + 1] ?? ''))
+    ) {
+      return true
+    }
+    const cmdFlag = words.findIndex((word) => /^\/c$/iu.test(word))
+    if (
+      /^cmd(?:\.exe)?$/u.test(executable) &&
+      cmdFlag >= 0 &&
+      powerShellSourceWritesRuntime(
+        words
+          .slice(cmdFlag + 1)
+          .map(unquoteShellWord)
+          .join(' ')
+      )
+    ) {
+      return true
+    }
+    if (
+      /^(?:python|python3|py|r|rscript)(?:\.exe)?$/u.test(executable) &&
+      runtimeTextReferencesManagedRuntime(segment) &&
+      runtimeWriteCommand.test(segment)
+    ) {
+      return true
+    }
+  }
+  return false
+}
+const runtimeProcessCommandWritesRuntime = (command, args, shellCommand) => {
+  if (shellCommand) return shellSourceWritesRuntime(String(command))
+  const argv = Array.isArray(args) ? args.map(String) : []
+  const executable = commandName(command)
+  const shellFlag = argv.findIndex((word) => /^-c$/u.test(word))
+  if (/^(?:bash|sh|zsh)(?:\.exe)?$/u.test(executable) && shellFlag >= 0) {
+    return shellSourceWritesRuntime(argv[shellFlag + 1] ?? '')
+  }
+  const powerShellFlag = argv.findIndex((word) => /^-command$/iu.test(word))
+  if (/^(?:powershell|pwsh)(?:\.exe)?$/u.test(executable) && powerShellFlag >= 0) {
+    return powerShellSourceWritesRuntime(argv[powerShellFlag + 1] ?? '')
+  }
+  const encodedPowerShellFlag = argv.findIndex((word) => /^-encodedcommand$/iu.test(word))
+  if (/^(?:powershell|pwsh)(?:\.exe)?$/u.test(executable) && encodedPowerShellFlag >= 0) {
+    const source = Buffer.from(argv[encodedPowerShellFlag + 1] ?? '', 'base64').toString('utf16le')
+    return powerShellSourceWritesRuntime(source)
+  }
+  const cmdFlag = argv.findIndex((word) => /^\/c$/iu.test(word))
+  if (/^cmd(?:\.exe)?$/u.test(executable) && cmdFlag >= 0) {
+    return powerShellSourceWritesRuntime(argv.slice(cmdFlag + 1).join(' '))
+  }
+  const inlineFlag = argv.findIndex((word) => /^(?:-e|--eval)$/u.test(word))
+  if (
+    (/^(?:node|nodejs)(?:\.exe)?$/u.test(executable) || command === process.execPath) &&
+    inlineFlag >= 0
+  ) {
+    return javascriptSourceWritesRuntime(argv[inlineFlag + 1] ?? '')
+  }
+  const directTargets = writeTargetsForWords([command, ...argv])
+  if (directTargets.length > 0) return directTargets.some(runtimeTargetIsManaged)
+  const text = commandText(command, argv)
+  return runtimeTextReferencesManagedRuntime(text) && runtimeWriteCommand.test(text)
+}
+const assertRuntimeProcessCommandAllowed = (command, args = [], shellCommand = false) => {
+  if (!managedRuntimeRoot) return
+  if (runtimeProcessCommandWritesRuntime(command, args, shellCommand)) {
     throw new Error(
       'Managed runtime files are read-only in control REPL child processes; use manage_packages for changes.'
     )
@@ -212,20 +603,32 @@ for (const method of ['rename', 'renameSync']) {
     return original.call(this, source, destination, ...args)
   }
 }
-for (const method of [
-  'copyFile',
-  'copyFileSync',
-  'cp',
-  'cpSync',
-  'link',
-  'linkSync',
-  'symlink',
-  'symlinkSync'
-]) {
+for (const method of ['copyFile', 'copyFileSync', 'cp', 'cpSync']) {
   const original = fs[method]
   if (typeof original !== 'function') continue
   fs[method] = function guardedFsCopy(source, destination, ...args) {
     assertRuntimeWriteAllowed(destination)
+    return original.call(this, source, destination, ...args)
+  }
+}
+for (const method of ['link', 'linkSync']) {
+  const original = fs[method]
+  if (typeof original !== 'function') continue
+  fs[method] = function guardedFsLink(source, destination, ...args) {
+    assertRuntimeWriteAllowed(source, destination)
+    return original.call(this, source, destination, ...args)
+  }
+}
+const symbolicLinkSourcePath = (source, destination) => {
+  if (typeof source !== 'string' || path.isAbsolute(source)) return source
+  const resolvedDestination = canonicalGuardPath(destination)
+  return resolvedDestination ? path.resolve(path.dirname(resolvedDestination), source) : source
+}
+for (const method of ['symlink', 'symlinkSync']) {
+  const original = fs[method]
+  if (typeof original !== 'function') continue
+  fs[method] = function guardedFsSymlink(source, destination, ...args) {
+    assertRuntimeWriteAllowed(symbolicLinkSourcePath(source, destination), destination)
     return original.call(this, source, destination, ...args)
   }
 }
@@ -269,11 +672,27 @@ for (const method of ['rename']) {
     return original.call(this, source, destination, ...args)
   }
 }
-for (const method of ['copyFile', 'cp', 'link', 'symlink']) {
+for (const method of ['copyFile', 'cp']) {
   const original = fsPromises[method]
   if (typeof original !== 'function') continue
   fsPromises[method] = function guardedPromiseCopy(source, destination, ...args) {
     assertRuntimeWriteAllowed(destination)
+    return original.call(this, source, destination, ...args)
+  }
+}
+for (const method of ['link']) {
+  const original = fsPromises[method]
+  if (typeof original !== 'function') continue
+  fsPromises[method] = function guardedPromiseLink(source, destination, ...args) {
+    assertRuntimeWriteAllowed(source, destination)
+    return original.call(this, source, destination, ...args)
+  }
+}
+for (const method of ['symlink']) {
+  const original = fsPromises[method]
+  if (typeof original !== 'function') continue
+  fsPromises[method] = function guardedPromiseSymlink(source, destination, ...args) {
+    assertRuntimeWriteAllowed(symbolicLinkSourcePath(source, destination), destination)
     return original.call(this, source, destination, ...args)
   }
 }

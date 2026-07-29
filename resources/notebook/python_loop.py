@@ -105,8 +105,6 @@ def _protected_paths_audit(event, args):
         resolved = _guard_path(target)
     except (TypeError, ValueError):
         return
-    if os.path.basename(resolved).casefold() == "pyvenv.cfg":
-        _blocked_environment_mutation()
     mode = args[1] if len(args) > 1 else None
     flags = args[2] if len(args) > 2 else 0
     write_open = (
@@ -115,6 +113,8 @@ def _protected_paths_audit(event, args):
         isinstance(flags, int)
         and bool(flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND))
     )
+    if write_open and os.path.basename(resolved).casefold() == "pyvenv.cfg":
+        _blocked_environment_mutation()
     if write_open and _managed_runtime_dir and (
         resolved == _managed_runtime_dir or resolved.startswith(_managed_runtime_dir + os.sep)
     ):

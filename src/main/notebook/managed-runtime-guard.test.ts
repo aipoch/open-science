@@ -71,6 +71,8 @@ describe('detectManagedRuntimeMutation', () => {
     ['python', `subprocess.run(["pip", "install", "pandas"])`],
     ['python', 'subprocess.run([sys.executable, "-m", "pip", "install", "pandas"])'],
     ['r', `system("R CMD INSTALL package.tar.gz")`],
+    ['r', `file.link(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "runtime-link")`],
+    ['r', `file.symlink(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "runtime-link")`],
     ['repl', `execFile("pip", ["install", "pandas"])`],
     ['repl', 'execFile("python3", ["-m", "pip", "install", "pandas"])'],
     ['bash', `tool=python3; mode=-m; action=venv; "$tool" "$mode" "$action" analysis-env`],
