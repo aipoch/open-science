@@ -4,10 +4,9 @@
  * pre-emit critique: P5 H5 E4 S5 R5 V4
  */
 // Composer context-usage indicator: a compact "% of context window" pill with a hover breakdown,
-// mirroring Claude Code's /context. The numerator (tokens in context) comes from the ACP usage_update
-// the runtime records per session; the denominator is already bound to the same agent-context generation
-// by the main process. Renders nothing until the active framework emits its first usage_update rather
-// than showing a fabricated zero.
+// mirroring Claude Code's /context. During generation the numerator is the local request estimate; an
+// ACP usage_update replaces it with the Agent's authoritative input total. The denominator is bound to
+// the selected model and agent-context generation by the main process.
 
 import { Gauge, Minimize2 } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type FocusEvent } from 'react'
@@ -111,11 +110,13 @@ const ComposerContextUsage = ({
   const percent = usagePercent !== undefined ? Math.round(usagePercent) : undefined
 
   const label = percent !== undefined ? `${percent}%` : formatTokens(used)
+  const breakdown = contextUsage.breakdown
+  const estimating = breakdown?.status === 'preflight'
   const showCompactAction =
-    compacting || (usagePercent !== undefined && usagePercent >= COMPACT_ACTION_THRESHOLD_PERCENT)
+    compacting ||
+    (!estimating && usagePercent !== undefined && usagePercent >= COMPACT_ACTION_THRESHOLD_PERCENT)
   const compactUnavailable = !canCompact || !onCompact
   const compactHint = !compacting && compactUnavailable ? compactDisabledReason : undefined
-  const breakdown = contextUsage.breakdown
   const categories = breakdown?.categories.filter((category) => category.tokens > 0) ?? []
   const categoryTotal = categories.reduce((sum, category) => sum + category.tokens, 0)
   const visualUsed = Math.max(used, categoryTotal)
@@ -142,7 +143,7 @@ const ComposerContextUsage = ({
           ref={triggerRef}
           type="button"
           className="flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-text-000 outline-none transition-colors duration-150 motion-reduce:transition-none hover:bg-bg-200 focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-bg-300"
-          aria-label={`Context used: ${label}`}
+          aria-label={`${estimating ? 'Estimated context' : 'Context used'}: ${label}`}
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-controls={open ? contentId : undefined}
@@ -194,7 +195,8 @@ const ComposerContextUsage = ({
                 {usagePercent !== undefined ? `${usagePercent.toFixed(1)}%` : formatTokens(used)}
               </span>
               <span className="min-w-0 truncate text-muted-foreground tabular-nums">
-                Agent used {formatDetailedTokens(used)} / {formatDetailedTokens(size)}
+                {estimating ? 'Local estimate' : 'Agent used'} {formatDetailedTokens(used)} /{' '}
+                {formatDetailedTokens(size)}
               </span>
             </div>
           </div>
@@ -241,15 +243,21 @@ const ComposerContextUsage = ({
               <div
                 data-slot="context-usage-diagnostics"
                 className="space-y-0.5 border-t border-border pt-2 text-[11px] leading-4 text-muted-foreground"
-                title="Agent total is authoritative; category values are local estimates."
+                title={
+                  estimating
+                    ? 'Local estimate updates while the Agent is generating.'
+                    : 'Agent total is authoritative; category values are local estimates.'
+                }
               >
-                <div className="whitespace-nowrap tabular-nums">
-                  Local {formatDetailedTokens(breakdown.estimatedTokens)} · Agent{' '}
-                  {formatDetailedTokens(used)} · Δ {breakdown.difference > 0 ? '+' : ''}
-                  {formatDetailedTokens(breakdown.difference)}
-                </div>
+                {estimating ? null : (
+                  <div className="whitespace-nowrap tabular-nums">
+                    Local {formatDetailedTokens(breakdown.estimatedTokens)} · Agent{' '}
+                    {formatDetailedTokens(used)} · Δ {breakdown.difference > 0 ? '+' : ''}
+                    {formatDetailedTokens(breakdown.difference)}
+                  </div>
+                )}
                 <div className="truncate whitespace-nowrap">
-                  {breakdown.status === 'preflight' ? 'Preflight' : 'Reconciled'}
+                  {estimating ? 'Estimating' : 'Reconciled'}
                   {breakdown.tokenizer ? ` · ${TOKENIZER_LABELS[breakdown.tokenizer]}` : ''}
                   {breakdown.model ? ` · ${breakdown.model}` : ''}
                 </div>

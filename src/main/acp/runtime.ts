@@ -1673,6 +1673,7 @@ class AcpRuntime {
 
     const usage = this.contextUsageBySession.get(sessionId)
     if (!usage || usage.size <= 0 || usage.used < 0) return false
+    if (usage.breakdown?.status === 'preflight') return false
 
     return (usage.used / usage.size) * 100 >= strategy.triggerAtPercent
   }
@@ -1687,6 +1688,15 @@ class AcpRuntime {
       throw new Error(`${this.framework.displayName} manages context compaction automatically.`)
     }
     const contextUsageBeforeCompaction = this.contextUsageBySession.get(appSessionId)
+    const contextUsageCheckpoint = this.contextUsageTracker.checkpointSession(appSessionId)
+    const restoreContextEstimate = (): void => {
+      this.contextUsageTracker.restoreSession(appSessionId, contextUsageCheckpoint)
+      if (contextUsageBeforeCompaction) {
+        this.contextUsageBySession.set(appSessionId, contextUsageBeforeCompaction)
+      } else {
+        this.contextUsageBySession.delete(appSessionId)
+      }
+    }
 
     this.pushEvent({
       kind: 'compaction',
@@ -1707,6 +1717,7 @@ class AcpRuntime {
         const message = await Promise.race([session.nextUpdate(), promptFailure])
         if (message.kind === 'stop') {
           if (message.response.stopReason === 'cancelled') {
+            restoreContextEstimate()
             this.pushEvent({
               kind: 'compaction',
               compactionReason: reason,
@@ -1761,6 +1772,7 @@ class AcpRuntime {
         this.handleSessionUpdate(message.notification, appSessionId, false)
       }
     } catch (error) {
+      restoreContextEstimate()
       this.pushEvent({
         kind: 'compaction',
         compactionReason: reason,
@@ -2723,6 +2735,7 @@ class AcpRuntime {
             message.response,
             promptTurn
           )
+          this.contextUsageTracker.finalizeAssistantOutput(request.sessionId)
           // Emit artifact metadata before stop so the renderer can attach files to the finished message.
           await this.emitArtifactRunEvent(request.sessionId, artifactRun)
           artifactEmitted = true
@@ -2767,7 +2780,11 @@ class AcpRuntime {
         this.handleSessionUpdate(message.notification, request.sessionId)
       }
     } catch (error) {
-      if (contextUsageCheckpoint && !contextUsageEstimateCommitted) {
+      if (
+        contextUsageCheckpoint &&
+        !contextUsageEstimateCommitted &&
+        !this.pendingProviderReconnect
+      ) {
         this.contextUsageTracker.restoreSession(request.sessionId, contextUsageCheckpoint)
         if (contextUsageBeforePrompt) {
           this.contextUsageBySession.set(request.sessionId, contextUsageBeforePrompt)
@@ -4875,7 +4892,8 @@ class AcpRuntime {
     if (!usage || !current) return
 
     const used = usage.inputTokens + (usage.cachedReadTokens ?? 0)
-    if (!Number.isFinite(used) || used < 0 || current.used === used) return
+    if (!Number.isFinite(used) || used < 0) return
+    if (current.used === used && current.breakdown?.status === 'reconciled') return
 
     this.contextUsageBySession.set(sessionId, {
       used,
@@ -4885,12 +4903,35 @@ class AcpRuntime {
     this.emitState()
   }
 
-  private contextUsageEstimateInput(sessionId?: string): SessionEstimateInput {
+  private contextUsageSelectionFor(sessionId?: string): {
+    model?: string
+    contextWindow?: number
+  } {
     const activeSession = sessionId ? this.sessions.get(sessionId) : undefined
     const appliedModel = sessionId
       ? (this.appliedSessionModels.get(sessionId) ??
         (activeSession ? this.appliedSessionModels.get(activeSession.sessionId) : undefined))
       : undefined
+    // OpenCode applies the requested provider model through the optional ACP model config. If the
+    // option was absent or rejected, the agent kept its own default and the requested model is unsafe
+    // for both tokenization and window sizing. Other frameworks configure their upstream model
+    // through env or an app-owned bridge, independently of the ACP transport model.
+    const selectedModelConfirmed = !(
+      this.framework.id === 'opencode' &&
+      this.pendingSessionModel &&
+      !appliedModel
+    )
+    if (!selectedModelConfirmed) return {}
+
+    const model = this.selectedContextUsageModel ?? appliedModel
+    return {
+      ...(model ? { model } : {}),
+      ...(this.selectedModelContextWindow ? { contextWindow: this.selectedModelContextWindow } : {})
+    }
+  }
+
+  private contextUsageEstimateInput(sessionId?: string): SessionEstimateInput {
+    const { model } = this.contextUsageSelectionFor(sessionId)
     const persistentSections = contextUsageMcpSections({
       activity: Boolean(this.activityGroupOptions && this.framework.acceptsStdioMcp),
       artifacts: this.artifactToolingAvailable(),
@@ -4900,14 +4941,16 @@ class AcpRuntime {
 
     return {
       frameworkId: this.framework.id,
-      ...(this.selectedContextUsageModel || appliedModel
-        ? { model: this.selectedContextUsageModel ?? appliedModel }
-        : {}),
+      ...(model ? { model } : {}),
       ...(this.framework.id === 'claude-code'
         ? { persistentSystemPrompt: this.getSystemPromptAppends() }
         : {}),
       ...(persistentSections.length > 0 ? { persistentSections } : {})
     }
+  }
+
+  private selectedContextWindowFor(sessionId: string): number | undefined {
+    return this.contextUsageSelectionFor(sessionId).contextWindow
   }
 
   private ensureContextUsageTracking(sessionId: string): void {
@@ -4920,8 +4963,19 @@ class AcpRuntime {
     status: NonNullable<AcpContextUsage['breakdown']>['status']
   ): boolean {
     const current = this.contextUsageBySession.get(sessionId)
-    if (!current) return false
+    if (status === 'preflight') {
+      const breakdown = this.contextUsageTracker.estimate(sessionId)
+      const size = this.selectedContextWindowFor(sessionId) ?? current?.size
+      if (!breakdown || !size || size <= 0) return false
+      this.contextUsageBySession.set(sessionId, {
+        used: breakdown.estimatedTokens,
+        size,
+        breakdown
+      })
+      return true
+    }
 
+    if (!current) return false
     const breakdown = this.contextUsageTracker.compare(sessionId, current.used, status)
     if (!breakdown) return false
     this.contextUsageBySession.set(sessionId, { ...current, breakdown })
@@ -4935,6 +4989,7 @@ class AcpRuntime {
     codexSkillInputs: ReadonlyArray<{ name: string; path: string }>
   ): Promise<void> {
     this.ensureContextUsageTracking(sessionId)
+    this.contextUsageTracker.commitPendingAssistantOutput(sessionId)
     this.contextUsageTracker.appendText(sessionId, 'system', promptPrefix ?? '')
     this.contextUsageTracker.appendPromptContent(sessionId, promptContent, promptPrefix)
 
@@ -4975,25 +5030,29 @@ class AcpRuntime {
     )
     const event = projection.event
 
-    this.ensureContextUsageTracking(routed.sessionId)
-    if (
-      routed.update.sessionUpdate === 'tool_call' ||
-      routed.update.sessionUpdate === 'tool_call_update'
-    ) {
-      const mcpServerNames = this.sessionMcpServerNames.get(routed.sessionId) ?? []
-      const providerToolName = extractProviderToolName(routed.update)
-      const isMcp =
-        isMcpToolName(routed.update.title, mcpServerNames) ||
-        isMcpToolName(providerToolName, mcpServerNames)
-      this.contextUsageTracker.observeSessionUpdate(
-        routed.sessionId,
-        routed,
-        projection.skillFile
-          ? { toolCategory: 'skills', skillFilePath: projection.skillFile.path }
-          : { toolCategory: isMcp ? 'mcp' : 'tools' }
-      )
-    } else {
-      this.contextUsageTracker.observeSessionUpdate(routed.sessionId, routed)
+    // A provider reconnect clears context immediately while its superseded prompt drains. Continue
+    // surfacing that prompt's visible output, but never rebuild usage from its late notifications.
+    if (!this.pendingProviderReconnect) {
+      this.ensureContextUsageTracking(routed.sessionId)
+      if (
+        routed.update.sessionUpdate === 'tool_call' ||
+        routed.update.sessionUpdate === 'tool_call_update'
+      ) {
+        const mcpServerNames = this.sessionMcpServerNames.get(routed.sessionId) ?? []
+        const providerToolName = extractProviderToolName(routed.update)
+        const isMcp =
+          isMcpToolName(routed.update.title, mcpServerNames) ||
+          isMcpToolName(providerToolName, mcpServerNames)
+        this.contextUsageTracker.observeSessionUpdate(
+          routed.sessionId,
+          routed,
+          projection.skillFile
+            ? { toolCategory: 'skills', skillFilePath: projection.skillFile.path }
+            : { toolCategory: isMcp ? 'mcp' : 'tools' }
+        )
+      } else {
+        this.contextUsageTracker.observeSessionUpdate(routed.sessionId, routed)
+      }
     }
 
     if (routed.update.sessionUpdate === 'current_mode_update') {
@@ -5022,7 +5081,7 @@ class AcpRuntime {
       )
       this.contextUsageBySession.set(routed.sessionId, {
         ...event.contextUsage,
-        size: this.selectedModelContextWindow ?? event.contextUsage.size,
+        size: this.selectedContextWindowFor(routed.sessionId) ?? event.contextUsage.size,
         ...(breakdown ? { breakdown } : {})
       })
       this.emitState()
@@ -5031,7 +5090,12 @@ class AcpRuntime {
 
     if (!visible) return
 
-    this.refreshEstimatedContextUsage(routed.sessionId, 'preflight')
+    if (
+      !this.pendingProviderReconnect &&
+      this.contextUsageBySession.get(routed.sessionId)?.breakdown?.status !== 'reconciled'
+    ) {
+      this.refreshEstimatedContextUsage(routed.sessionId, 'preflight')
+    }
 
     // Tool results (e.g. WebFetch's claude.ai domain-safety preflight, a failed Bash command) stream as
     // tool_call_update content, which the session-update log omits — so a tool that runs and fails leaves

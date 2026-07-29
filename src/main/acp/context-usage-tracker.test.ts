@@ -52,6 +52,64 @@ describe('ContextUsageTracker', () => {
     })
   })
 
+  it('exposes a local-only estimate before the Agent reports authoritative usage', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.appendText('s1', 'system', 'follow these rules')
+    tracker.appendPromptContent('s1', 'answer this question')
+
+    expect(tracker.estimate('s1')).toEqual({
+      source: 'estimated',
+      tokenizer: 'cl100k_base',
+      model: 'deepseek-v4',
+      estimatedTokens: 6,
+      difference: 0,
+      status: 'preflight',
+      categories: [
+        { key: 'system', tokens: 3, estimated: true },
+        { key: 'messages', tokens: 3, estimated: true }
+      ]
+    })
+  })
+
+  it('defers assistant output until it becomes input to the next prompt', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.appendPromptContent('s1', 'first question')
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        messageId: 'answer-1',
+        content: { type: 'text', text: 'generated answer content' }
+      }
+    })
+
+    expect(tracker.estimate('s1')?.estimatedTokens).toBe(2)
+
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'tool-1',
+        title: 'Search',
+        status: 'in_progress',
+        rawInput: { query: 'evidence' }
+      }
+    })
+
+    expect(tracker.estimate('s1')?.categories).toContainEqual({
+      key: 'messages',
+      tokens: 5,
+      estimated: true
+    })
+
+    tracker.commitPendingAssistantOutput('s1')
+    tracker.appendPromptContent('s1', 'second question')
+
+    expect(tracker.estimate('s1')?.estimatedTokens).toBe(8)
+  })
+
   it('counts persistent app-owned tool schemas in their explicit category', () => {
     const tracker = new ContextUsageTracker(wordCounter)
     tracker.beginSession('s1', {
@@ -100,6 +158,28 @@ describe('ContextUsageTracker', () => {
     expect(tracker.compare('s1', 5, 'reconciled')?.categories).toEqual([
       { key: 'messages', tokens: 2, estimated: true },
       { key: 'other', tokens: 3, estimated: false }
+    ])
+  })
+
+  it('drops buffered assistant output when restoring a failed control-turn checkpoint', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.appendPromptContent('s1', 'committed history')
+    const checkpoint = tracker.checkpointSession('s1')
+
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        messageId: 'hidden-control-output',
+        content: { type: 'text', text: 'compaction failed hidden output' }
+      }
+    })
+    tracker.restoreSession('s1', checkpoint)
+    tracker.commitPendingAssistantOutput('s1')
+
+    expect(tracker.estimate('s1')?.categories).toEqual([
+      { key: 'messages', tokens: 2, estimated: true }
     ])
   })
 
@@ -153,6 +233,61 @@ describe('ContextUsageTracker', () => {
         { key: 'tools', tokens: 4, estimated: true },
         { key: 'other', tokens: 6, estimated: false }
       ]
+    })
+  })
+
+  it('counts one tool result when raw output and display content mirror each other', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'tool-1',
+        title: 'Read',
+        status: 'completed',
+        rawInput: { path: 'paper.pdf' },
+        rawOutput: 'result text here',
+        content: [{ type: 'content', content: { type: 'text', text: 'result text here' } }]
+      }
+    })
+
+    expect(tracker.estimate('s1')).toMatchObject({
+      estimatedTokens: 4,
+      categories: [{ key: 'tools', tokens: 4, estimated: true }]
+    })
+  })
+
+  it('keeps canonical raw output when a later partial update contains only display content', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'tool-1',
+        status: 'in_progress',
+        rawOutput: 'canonical raw result'
+      }
+    })
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'tool-1',
+        status: 'completed',
+        content: [
+          {
+            type: 'content',
+            content: { type: 'text', text: 'longer display projection of the same result' }
+          }
+        ]
+      }
+    })
+
+    expect(tracker.estimate('s1')).toMatchObject({
+      estimatedTokens: 3,
+      categories: [{ key: 'tools', tokens: 3, estimated: true }]
     })
   })
 
@@ -217,6 +352,28 @@ describe('ContextUsageTracker', () => {
         { key: 'skills', tokens: 4, estimated: true },
         { key: 'other', tokens: 3, estimated: false }
       ]
+    })
+  })
+
+  it('counts a native Skill document once when raw output and content repeat it', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'claude-code', model: 'claude-sonnet-4-5' })
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'skill-1',
+        title: 'Loaded skill: pdf',
+        status: 'completed',
+        rawInput: { name: 'pdf' },
+        rawOutput: 'skill content here',
+        content: [{ type: 'content', content: { type: 'text', text: 'skill content here' } }]
+      }
+    })
+
+    expect(tracker.estimate('s1')).toMatchObject({
+      estimatedTokens: 4,
+      categories: [{ key: 'skills', tokens: 4, estimated: true }]
     })
   })
 

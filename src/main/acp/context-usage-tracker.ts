@@ -1,4 +1,4 @@
-import { countTokens as countAnthropicTokens } from '@anthropic-ai/tokenizer'
+import { getTokenizer as getAnthropicTokenizer } from '@anthropic-ai/tokenizer'
 import type { ContentBlock, SessionNotification } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
 import { Tiktoken } from 'js-tiktoken/lite'
@@ -25,6 +25,9 @@ type SessionEstimate = {
   model?: string
   totals: Record<EstimatedCategoryKey, number>
   keyedSections: Map<string, { category: EstimatedCategoryKey; tokens: number }>
+  canonicalRawOutputSections: Set<string>
+  pendingAssistantText: string
+  pendingAssistantTokens: number
 }
 
 type SessionEstimateInput = {
@@ -70,11 +73,15 @@ const cloneSessionEstimate = (state: SessionEstimate): SessionEstimate => ({
   profile: state.profile,
   ...(state.model ? { model: state.model } : {}),
   totals: { ...state.totals },
-  keyedSections: new Map(state.keyedSections)
+  keyedSections: new Map(state.keyedSections),
+  canonicalRawOutputSections: new Set(state.canonicalRawOutputSections),
+  pendingAssistantText: state.pendingAssistantText,
+  pendingAssistantTokens: state.pendingAssistantTokens
 })
 
 let o200kTokenizer: Tiktoken | undefined
 let cl100kTokenizer: Tiktoken | undefined
+let anthropicTokenizer: ReturnType<typeof getAnthropicTokenizer> | undefined
 
 const tiktoken = (profile: Extract<TokenizerProfile, 'o200k_base' | 'cl100k_base'>): Tiktoken => {
   if (profile === 'o200k_base') {
@@ -91,7 +98,8 @@ const defaultTokenCounter: TokenCounter = {
     if (!text) return 0
     try {
       return profile === 'anthropic'
-        ? countAnthropicTokens(text)
+        ? (anthropicTokenizer ??= getAnthropicTokenizer()).encode(text.normalize('NFKC'), 'all')
+            .length
         : tiktoken(profile).encode(text).length
     } catch {
       // A malformed string or tokenizer regression must never block a prompt. UTF-8 bytes / 4 is only
@@ -297,7 +305,10 @@ class ContextUsageTracker {
       profile,
       ...(input.model ? { model: input.model } : {}),
       totals: emptyTotals(),
-      keyedSections: new Map()
+      keyedSections: new Map(),
+      canonicalRawOutputSections: new Set(),
+      pendingAssistantText: '',
+      pendingAssistantTokens: 0
     }
     this.sessions.set(sessionId, state)
     this.replaceText(
@@ -348,6 +359,23 @@ class ContextUsageTracker {
     state.totals.messages += tokens
   }
 
+  // Completion text is not part of the current request's context. Keep streamed output aside and
+  // promote it only when the next user turn makes that completed answer part of the model input.
+  finalizeAssistantOutput(sessionId: string): void {
+    const state = this.sessions.get(sessionId)
+    if (!state?.pendingAssistantText) return
+    state.pendingAssistantTokens += this.counter.count(state.pendingAssistantText, state.profile)
+    state.pendingAssistantText = ''
+  }
+
+  commitPendingAssistantOutput(sessionId: string): void {
+    const state = this.sessions.get(sessionId)
+    if (!state) return
+    this.finalizeAssistantOutput(sessionId)
+    state.totals.messages += state.pendingAssistantTokens
+    state.pendingAssistantTokens = 0
+  }
+
   recordSkillDocument(sessionId: string, path: string, text: string): void {
     this.replaceText(sessionId, skillFileSectionId(path), 'skills', text)
   }
@@ -375,12 +403,20 @@ class ContextUsageTracker {
   ): void {
     const update = notification.update
     if (update.sessionUpdate === 'agent_message_chunk') {
-      this.appendText(sessionId, 'messages', contentBlockText(update.content))
+      const state = this.sessions.get(sessionId)
+      if (state) state.pendingAssistantText += contentBlockText(update.content)
       return
     }
     if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return
+    const state = this.sessions.get(sessionId)
+    if (!state) return
+    // An assistant segment emitted before a tool call becomes input to the Agent's next internal
+    // model request in this same user turn. Commit it at the observable tool boundary; the final
+    // assistant segment remains buffered until the next user prompt.
+    this.commitPendingAssistantOutput(sessionId)
 
-    const category: EstimatedCategoryKey = isNativeSkillToolUpdate(update)
+    const nativeSkill = isNativeSkillToolUpdate(update)
+    const category: EstimatedCategoryKey = nativeSkill
       ? 'skills'
       : (observation.toolCategory ?? 'tools')
     const budget: ToolTextBudget = {
@@ -409,21 +445,26 @@ class ContextUsageTracker {
         boundedJsonText(update.rawInput, budget)
       )
     }
-    if (update.rawOutput !== undefined) {
-      this.replaceText(
-        sessionId,
-        `${prefix}:output`,
-        category,
-        boundedJsonText(update.rawOutput, budget)
-      )
+    // Native Skill adapters may mirror the same instruction document in rawOutput and content. The
+    // request input is distinct metadata, but the document itself must occupy one stable section.
+    if (nativeSkill) {
+      const sectionId = `${prefix}:document`
+      if (update.rawOutput !== undefined) {
+        state.canonicalRawOutputSections.add(sectionId)
+        this.replaceText(sessionId, sectionId, category, boundedJsonText(update.rawOutput, budget))
+      } else if (update.content !== undefined && !state.canonicalRawOutputSections.has(sectionId)) {
+        this.replaceText(sessionId, sectionId, category, toolContentText(update.content, budget))
+      }
+      return
     }
-    if (update.content !== undefined) {
-      this.replaceText(
-        sessionId,
-        `${prefix}:content`,
-        category,
-        toolContentText(update.content, budget)
-      )
+    // ACP content is the displayable projection of the same result represented by rawOutput. Prefer
+    // the raw model-side value across partial updates; content is only a fallback until raw appears.
+    const sectionId = `${prefix}:output`
+    if (update.rawOutput !== undefined) {
+      state.canonicalRawOutputSections.add(sectionId)
+      this.replaceText(sessionId, sectionId, category, boundedJsonText(update.rawOutput, budget))
+    } else if (update.content !== undefined && !state.canonicalRawOutputSections.has(sectionId)) {
+      this.replaceText(sessionId, sectionId, category, toolContentText(update.content, budget))
     }
   }
 
@@ -432,14 +473,10 @@ class ContextUsageTracker {
     authoritativeTokens: number,
     status: AcpContextUsageBreakdown['status']
   ): AcpContextUsageBreakdown | undefined {
-    const state = this.sessions.get(sessionId)
-    if (!state) return undefined
+    const local = this.localBreakdown(sessionId)
+    if (!local) return undefined
 
-    const localCategories: AcpContextUsageCategory[] = ESTIMATED_CATEGORY_KEYS.flatMap((key) => {
-      const tokens = Math.max(0, Math.round(state.totals[key]))
-      return tokens > 0 ? [{ key, tokens, estimated: true }] : []
-    })
-    const estimatedTokens = localCategories.reduce((sum, category) => sum + category.tokens, 0)
+    const { state, categories: localCategories, estimatedTokens } = local
     const difference = Math.round(authoritativeTokens - estimatedTokens)
     const categories =
       difference > 0
@@ -454,6 +491,43 @@ class ContextUsageTracker {
       difference,
       status,
       categories
+    }
+  }
+
+  estimate(sessionId: string): AcpContextUsageBreakdown | undefined {
+    const local = this.localBreakdown(sessionId)
+    if (!local) return undefined
+
+    const { state, categories, estimatedTokens } = local
+    return {
+      source: 'estimated',
+      tokenizer: state.profile,
+      ...(state.model ? { model: state.model } : {}),
+      estimatedTokens,
+      difference: 0,
+      status: 'preflight',
+      categories
+    }
+  }
+
+  private localBreakdown(sessionId: string):
+    | {
+        state: SessionEstimate
+        categories: AcpContextUsageCategory[]
+        estimatedTokens: number
+      }
+    | undefined {
+    const state = this.sessions.get(sessionId)
+    if (!state) return undefined
+
+    const categories: AcpContextUsageCategory[] = ESTIMATED_CATEGORY_KEYS.flatMap((key) => {
+      const tokens = Math.max(0, Math.round(state.totals[key]))
+      return tokens > 0 ? [{ key, tokens, estimated: true }] : []
+    })
+    return {
+      state,
+      categories,
+      estimatedTokens: categories.reduce((sum, category) => sum + category.tokens, 0)
     }
   }
 

@@ -115,17 +115,18 @@ export type AcpContextUsageBreakdown = {
   model?: string
   // Sum of locally attributable categories before the Agent total is applied.
   estimatedTokens: number
-  // Signed Agent total minus local estimate. Positive values become the `other` category; negative
-  // values stay visible so compaction/tokenizer drift is not hidden by proportional redistribution.
+  // Zero while preflight has no Agent comparison. Once reconciled, signed Agent total minus local
+  // estimate: positive values become `other`; negative drift stays visible rather than being scaled.
   difference: number
   status: 'preflight' | 'reconciled'
   categories: AcpContextUsageCategory[]
 }
 
-// Current agent-context usage projected onto its logical app session. `used` is model input tokens plus
-// cache-read tokens; output/completion and cache-write tokens are excluded. `size` is the ACP-required
-// window bound to that same agent-context generation. Both expire when that context disconnects or is
-// replaced. Monetary cost is deliberately excluded: context tracking does not calculate billing.
+// Current agent-context usage projected onto its logical app session. While `breakdown.status` is
+// `preflight`, `used` is the local input estimate; once reconciled it is the Agent's model input plus
+// cache-read tokens. Output/completion and cache-write tokens are excluded. `size` is the selected
+// model window bound to that same agent-context generation. Both expire when that context disconnects
+// or is replaced. Monetary cost is deliberately excluded: context tracking does not calculate billing.
 export type AcpContextUsage = {
   used: number
   size: number

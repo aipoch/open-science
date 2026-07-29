@@ -15,7 +15,7 @@ import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime'
-import type { AcpPermissionRequest, AcpRuntimeEvent } from '../../shared/acp'
+import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
 import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import { terminateProcessTree } from '../process-tree'
 import { AgentMcpHttpHost } from './mcp-http-host'
@@ -716,7 +716,9 @@ describe('ACP runtime migration write-gate', () => {
         framework: { ...opencodeFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/opencode-acp',
         env: {},
-        sessionModel: 'claude-sonnet-4-5'
+        sessionModel: 'claude-sonnet-4-5',
+        contextUsageModel: 'claude-sonnet-4-5',
+        contextWindow: 1_000_000
       }),
       framework: opencodeFramework
     })
@@ -735,6 +737,50 @@ describe('ACP runtime migration write-gate', () => {
     expect(
       runtime.getSnapshot().contextUsageBySession['fallback-session']?.breakdown
     ).not.toHaveProperty('model')
+    expect(runtime.getSnapshot().contextUsageBySession['fallback-session']?.size).toBe(128_000)
+  })
+
+  it('tokenizes against an optional OpenCode model after the Agent confirms it', async () => {
+    const process = new FakeAgentProcess()
+    const configOptions = [
+      {
+        type: 'select',
+        id: 'model',
+        name: 'Model',
+        category: 'model',
+        currentValue: 'openai/gpt-4.1-mini',
+        options: [
+          { value: 'openai/gpt-4.1-mini', name: 'GPT-4.1 mini' },
+          { value: 'anthropic/claude-sonnet-4-5', name: 'Claude Sonnet 4.5' }
+        ]
+      } as SessionConfigOption
+    ]
+    startFakeAgent(process, ['selected-session'], { configOptions })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...opencodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/opencode-acp',
+        env: {},
+        sessionModel: 'claude-sonnet-4-5',
+        contextUsageModel: 'claude-sonnet-4-5'
+      }),
+      framework: opencodeFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    handleSessionUpdate(runtime, {
+      sessionId: 'selected-session',
+      update: { sessionUpdate: 'usage_update', used: 15, size: 200000 }
+    })
+
+    expect(
+      runtime.getSnapshot().contextUsageBySession['selected-session']?.breakdown
+    ).toMatchObject({
+      tokenizer: 'anthropic',
+      model: 'claude-sonnet-4-5'
+    })
   })
 
   it('rejects session creation when a required subscription model cannot be applied', async () => {
@@ -1909,13 +1955,9 @@ describe('ACP runtime session management', () => {
     })
 
     const session = await runtime.createSession({ cwd: '/workspace' })
-    handleSessionUpdate(runtime, {
+    await runtime.sendPrompt({
       sessionId: session.sessionId,
-      update: {
-        sessionUpdate: 'agent_message_chunk',
-        messageId: 'discarded-history',
-        content: { type: 'text', text: 'discarded history before compaction' }
-      }
+      text: 'discarded history before compaction'
     })
     handleSessionUpdate(runtime, {
       sessionId: session.sessionId,
@@ -6511,6 +6553,111 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('publishes the local estimate while a prompt is still generating', async () => {
+    const process = new FakeAgentProcess()
+    const finishPrompt = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['s1'], {
+      onPrompt: () => finishPrompt.promise
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...opencodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/opencode-acp',
+        env: {},
+        contextWindow: 1_000_000,
+        contextUsageModel: 'deepseek-v4-flash'
+      }),
+      framework: opencodeFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'analyze these results' })
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+
+    const usageWhileGenerating = runtime.getSnapshot().contextUsageBySession.s1
+    expect(usageWhileGenerating).toMatchObject({
+      used: expect.any(Number),
+      size: 1_000_000,
+      breakdown: {
+        source: 'estimated',
+        tokenizer: 'cl100k_base',
+        model: 'deepseek-v4-flash',
+        status: 'preflight',
+        difference: 0
+      }
+    })
+    expect(usageWhileGenerating.used).toBeGreaterThan(0)
+    expect(usageWhileGenerating.used).toBe(usageWhileGenerating.breakdown?.estimatedTokens)
+
+    finishPrompt.resolve()
+    await prompt
+  })
+
+  it('does not auto-compact from a high local estimate before Agent reconciliation', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/claude-agent-acp',
+        env: {},
+        contextWindow: 10,
+        contextUsageModel: 'deepseek-v4-flash'
+      }),
+      framework: claudeCodeFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: 's1',
+      text: 'This deliberately long prompt makes the local estimate exceed the tiny test window.'
+    })
+
+    expect(runtime.getSnapshot().contextUsageBySession.s1.breakdown?.status).toBe('preflight')
+    expect(fakeAgent.prompts.map(({ text }) => text)).not.toContain('/compact')
+  })
+
+  it('reconciles Codex PromptResponse usage when it equals the local estimate', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      onPrompt: ({ sessionId }) => {
+        const estimated = runtime.getSnapshot().contextUsageBySession[sessionId]?.used ?? 0
+        return {
+          stopReason: 'end_turn',
+          usage: {
+            totalTokens: estimated,
+            inputTokens: estimated,
+            outputTokens: 0
+          }
+        }
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {},
+        contextWindow: 128_000
+      }),
+      framework: codexFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: 's1', text: 'match the local estimate' })
+
+    expect(runtime.getSnapshot().contextUsageBySession.s1.breakdown).toMatchObject({
+      status: 'reconciled',
+      difference: 0
+    })
+  })
+
   it('tokenizes context with the upstream model instead of the ACP framework default', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['s1'])
@@ -6790,6 +6937,59 @@ describe('ACP runtime session management', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(process.killed).toBe(true)
     expect(runtime.getSnapshot().contextUsageBySession).toEqual({})
+  })
+
+  it('does not restore superseded context usage when a prompt fails during provider reconnect', async () => {
+    const process = new FakeAgentProcess()
+    const promptStarted = createDeferred()
+    const failPrompt = createDeferred()
+    startFakeAgent(process, ['s1'], {
+      onPrompt: async () => {
+        promptStarted.resolve()
+        await failPrompt.promise
+        throw new Error('old provider rejected prompt')
+      }
+    })
+    const snapshots: AcpStateSnapshot[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...opencodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/opencode-acp',
+        env: {},
+        contextWindow: 128_000
+      }),
+      framework: opencodeFramework,
+      callbacks: { onStateChanged: (snapshot) => snapshots.push(snapshot) }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 6400, size: 128000 }
+    })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'continue on old provider' })
+    await promptStarted.promise
+    await runtime.requestProviderReconnect()
+    const clearedSnapshotIndex = snapshots.length - 1
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        messageId: 'superseded-output',
+        content: { type: 'text', text: 'late output from old provider' }
+      }
+    })
+
+    failPrompt.resolve()
+    await expect(prompt).rejects.toThrow()
+
+    expect(
+      snapshots
+        .slice(clearedSnapshotIndex)
+        .some((snapshot) => Object.hasOwn(snapshot.contextUsageBySession, 's1'))
+    ).toBe(false)
   })
 
   it('retires a framework runtime only after its in-flight prompt finishes', async () => {

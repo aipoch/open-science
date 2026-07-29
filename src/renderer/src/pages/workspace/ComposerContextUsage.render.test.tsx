@@ -125,6 +125,78 @@ describe('ComposerContextUsage', () => {
     ).not.toBeNull()
   })
 
+  it('labels a generating snapshot as a local estimate without an Agent delta', async () => {
+    act(() =>
+      root.render(
+        <ComposerContextUsage
+          contextUsage={{
+            used: 20_600,
+            size: 1_000_000,
+            breakdown: {
+              source: 'estimated',
+              tokenizer: 'cl100k_base',
+              model: 'deepseek-v4-flash',
+              estimatedTokens: 20_600,
+              difference: 0,
+              status: 'preflight',
+              categories: [
+                { key: 'system', tokens: 2_400, estimated: true },
+                { key: 'messages', tokens: 100, estimated: true },
+                { key: 'mcp', tokens: 18_100, estimated: true }
+              ]
+            }
+          }}
+        />
+      )
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Estimated context: 2%"]'
+    )
+    await act(async () => {
+      trigger?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Local estimate 20.6k / 1M')
+    expect(document.body.textContent).toContain('Estimating · cl100k_base · deepseek-v4-flash')
+    expect(document.body.textContent).not.toContain('Agent 20.6k')
+    expect(document.body.textContent).not.toContain('Δ')
+  })
+
+  it('does not offer compaction from a high local estimate before Agent reconciliation', async () => {
+    act(() =>
+      root.render(
+        <ComposerContextUsage
+          contextUsage={{
+            used: 400_000,
+            size: 1_000_000,
+            breakdown: {
+              source: 'estimated',
+              tokenizer: 'cl100k_base',
+              estimatedTokens: 400_000,
+              difference: 0,
+              status: 'preflight',
+              categories: [{ key: 'messages', tokens: 400_000, estimated: true }]
+            }
+          }}
+          canCompact
+          onCompact={vi.fn()}
+        />
+      )
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Estimated context: 40%"]'
+    )
+    await act(async () => {
+      trigger?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[aria-label="Compact context"]')).toBeNull()
+  })
+
   it('keeps the compact action hidden until context usage reaches thirty percent', async () => {
     act(() =>
       root.render(
