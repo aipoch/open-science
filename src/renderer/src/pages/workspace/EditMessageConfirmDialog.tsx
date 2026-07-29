@@ -21,8 +21,7 @@ const cancelButtonClassName =
 const confirmButtonClassName =
   'border-transparent bg-amber-500 text-white hover:bg-amber-500/90 hover:text-white'
 
-// Confirms the destructive half of an inline edit: the turns after the edited message are
-// permanently dropped before the adjusted prompt is resent.
+// Confirms that editing starts a new selectable branch while retaining the original downstream path.
 const EditMessageConfirmDialog = ({
   open,
   subsequentTurns,
@@ -39,12 +38,12 @@ const EditMessageConfirmDialog = ({
       <AlertDialog.Overlay className={dialogOverlayClassName} />
       <AlertDialog.Content className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))]')}>
         <AlertDialog.Title className={dialogTitleClassName}>
-          Resend and overwrite later turns?
+          Resend on a new branch?
         </AlertDialog.Title>
         <AlertDialog.Description className={dialogDescriptionClassName}>
-          Sending this edited prompt will overwrite the {subsequentTurns}{' '}
-          {subsequentTurns === 1 ? 'turn' : 'turns'} that follow it in this conversation. This
-          action cannot be undone.
+          Sending this edited prompt starts a new branch from here. The {subsequentTurns}{' '}
+          {subsequentTurns === 1 ? 'turn' : 'turns'} that currently follow remain available from the
+          message revision controls.
         </AlertDialog.Description>
         <div className={dialogFooterClassName}>
           <AlertDialog.Cancel asChild>
@@ -54,7 +53,7 @@ const EditMessageConfirmDialog = ({
           </AlertDialog.Cancel>
           <AlertDialog.Action asChild>
             <Button type="button" className={confirmButtonClassName} onClick={onConfirm}>
-              Overwrite and resend
+              Branch and resend
             </Button>
           </AlertDialog.Action>
         </div>

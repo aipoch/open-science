@@ -32,6 +32,7 @@ describe('startWebHttpServer', () => {
     const rpc = {
       channels: () => [
         'test:echo',
+        'uploads:stage-local-file',
         'settings:list-agent-home-skills',
         'settings:import-agent-home-skills'
       ],
@@ -80,9 +81,29 @@ describe('startWebHttpServer', () => {
     })
     expect(await rpcResponse.json()).toEqual({ ok: true, result: { value: 1 } })
 
+    const binary = Uint8Array.from([0, 1, 127, 128, 255])
+    const encodedBinary = Buffer.from(binary).toString('base64')
+    const binaryRpcResponse = await fetch(`${base}/rpc/test%3Aecho`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'application/json',
+        'x-open-science-client': 'test-client'
+      },
+      body: JSON.stringify({ args: [{ $binary: encodedBinary }] })
+    })
+    expect(await binaryRpcResponse.json()).toEqual({
+      ok: true,
+      result: { $binary: encodedBinary }
+    })
+    const binaryRpcArgs = vi.mocked(rpc.invoke).mock.calls[1]?.[2]
+    expect(binaryRpcArgs?.[0]).toBeInstanceOf(Uint8Array)
+    expect(Array.from(binaryRpcArgs?.[0] as Uint8Array)).toEqual(Array.from(binary))
+
     // Channels unavailable to web clients are rejected over /rpc without reaching the handler.
     for (const channel of [
       'window:close',
+      'uploads:stage-local-file',
       'settings:list-agent-home-skills',
       'settings:import-agent-home-skills'
     ]) {
@@ -94,7 +115,7 @@ describe('startWebHttpServer', () => {
       expect(blockedResponse.status).toBe(403)
       expect(await blockedResponse.json()).toMatchObject({ ok: false })
     }
-    expect(rpc.invoke).toHaveBeenCalledTimes(1)
+    expect(rpc.invoke).toHaveBeenCalledTimes(2)
 
     const socket = new WebSocket(`ws://127.0.0.1:${server.port}/events?client=test-client`, {
       headers: { cookie, origin: base }

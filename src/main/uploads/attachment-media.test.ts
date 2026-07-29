@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -10,6 +10,8 @@ import {
   consumeInlineImageBudget,
   extractPdfText,
   ImageContentError,
+  MAX_AUTO_EXTRACT_PDF_BYTES,
+  MAX_AUTO_PROCESS_IMAGE_BYTES,
   MAX_IMAGE_PAYLOAD_BYTES,
   MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES,
   MAX_SESSION_INLINE_IMAGE_BYTES,
@@ -90,6 +92,16 @@ describe('MAX_IMAGE_PAYLOAD_BYTES', () => {
 })
 
 describe('buildImageContentData', () => {
+  it('does not decode image sources above the automatic processing limit', async () => {
+    const filePath = join(root, 'huge.png')
+    await writeFile(filePath, Buffer.from('small fixture'))
+
+    await expect(
+      buildImageContentData(filePath, 'image/png', MAX_AUTO_PROCESS_IMAGE_BYTES + 1)
+    ).rejects.toMatchObject({ code: 'IMAGE_SOURCE_TOO_LARGE' })
+    expect(createFromPath).not.toHaveBeenCalled()
+  })
+
   it('passes small images through untouched as raw base64', async () => {
     const filePath = join(root, 'small.png')
     const bytes = Buffer.from('tiny-image-bytes')
@@ -221,6 +233,15 @@ describe('consumeInlineImageBudget', () => {
 })
 
 describe('extractPdfText', () => {
+  it('does not read PDF sources above the automatic extraction limit', async () => {
+    const filePath = join(root, 'huge.pdf')
+    await writeFile(filePath, Buffer.from('%PDF-1.4'))
+    await truncate(filePath, MAX_AUTO_EXTRACT_PDF_BYTES + 1)
+
+    await expect(extractPdfText(filePath)).rejects.toThrow(/automatic extraction limit/i)
+    expect(getDocument).not.toHaveBeenCalled()
+  })
+
   it('joins per-page text with page markers', async () => {
     const filePath = join(root, 'doc.pdf')
     await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))

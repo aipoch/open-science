@@ -130,7 +130,6 @@ describe('PreviewFileContent', () => {
         finalizeRunArtifacts: vi.fn()
       },
       uploads: {
-        stageFiles: vi.fn(),
         deleteUpload: vi.fn(),
         finalizeSession: vi.fn(),
         readPreview: vi.fn().mockResolvedValue({
@@ -216,6 +215,7 @@ describe('PreviewFileContent', () => {
 
     expect(window.api.artifacts.readPreview).toHaveBeenCalledWith({
       path: '/workspace/data.json',
+      sessionId: 'session-1',
       maxBytes: 1024 * 1024,
       encoding: 'utf8',
       offset: 0
@@ -321,6 +321,7 @@ describe('PreviewFileContent', () => {
 
     expect(window.api.artifacts.readPreview).toHaveBeenLastCalledWith({
       path: '/workspace/large.txt',
+      sessionId: 'session-1',
       maxBytes: 1024 * 1024,
       encoding: 'utf8',
       offset: 5
@@ -783,6 +784,7 @@ describe('PreviewFileContent', () => {
 
     expect(window.api.uploads.readPreview).toHaveBeenCalledWith({
       path: '/Users/example/.open-science/uploads/default-project/session-1/notes.txt',
+      sessionId: 'session-1',
       maxBytes: 1024 * 1024,
       encoding: 'utf8',
       offset: 0

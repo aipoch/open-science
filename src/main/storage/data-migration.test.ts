@@ -10,6 +10,7 @@ import {
   symlink,
   writeFile
 } from 'node:fs/promises'
+import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -75,6 +76,44 @@ describe('copyAndVerify', () => {
     expect(deleteResult).toEqual({ deleted: ['artifacts', 'uploads'], failed: [] })
     expect(await exists(join(from, 'artifacts'))).toBe(false)
     expect(await exists(join(from, 'uploads'))).toBe(false)
+  })
+
+  it('copies and verifies top-level SQLite database files in the same migration set', async () => {
+    await writeFile(join(from, 'open-science.db'), 'sqlite bytes')
+
+    const result = await copyAndVerify({
+      from,
+      to,
+      dirs: ['open-science.db'],
+      signal: new AbortController().signal,
+      onProgress: () => {}
+    })
+
+    expect(result).toEqual({ ok: true })
+    expect(await readFile(join(to, 'open-science.db'), 'utf8')).toBe('sqlite bytes')
+    expect(await readFile(join(from, 'open-science.db'), 'utf8')).toBe('sqlite bytes')
+  })
+
+  it('rejects a same-size destination corruption during content verification', async () => {
+    await seedFixture()
+    let corrupted = false
+    const result = await copyAndVerify({
+      from,
+      to,
+      dirs: ['artifacts', 'uploads'],
+      signal: new AbortController().signal,
+      onProgress: (progress) => {
+        if (!corrupted && progress.phase === 'copy' && progress.currentPath === 'artifacts/a.txt') {
+          corrupted = true
+          writeFileSync(join(to, 'artifacts', 'a.txt'), 'jello artifacts')
+        }
+      }
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toMatch(/verification failed.*artifacts\/a\.txt/i)
+    expect(await readFile(join(from, 'artifacts', 'a.txt'), 'utf8')).toBe('hello artifacts')
+    expect(await exists(join(to, 'artifacts'))).toBe(false)
   })
 
   // Windows has no POSIX mode bits, so the executable-bit assertion is unix-only.

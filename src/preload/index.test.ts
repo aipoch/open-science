@@ -10,17 +10,20 @@
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-const { invokeMock, sendMock, exposeMock } = vi.hoisted(() => ({
+const { invokeMock, sendMock, exposeMock, getPathForFileMock, onMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   sendMock: vi.fn(),
-  exposeMock: vi.fn()
+  exposeMock: vi.fn(),
+  getPathForFileMock: vi.fn(),
+  onMock: vi.fn()
 }))
 
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: exposeMock },
+  webUtils: { getPathForFile: getPathForFileMock },
   ipcRenderer: {
     invoke: invokeMock,
-    on: vi.fn(),
+    on: onMock,
     off: vi.fn(),
     send: sendMock,
     removeListener: vi.fn()
@@ -68,6 +71,7 @@ type PreloadApi = {
   acp: {
     resumeSession: (request: unknown) => unknown
     resetSessionContext: (request: unknown) => unknown
+    compactSession: (request: unknown) => unknown
   }
   notifications: {
     takePendingOpenSession: () => unknown
@@ -80,6 +84,26 @@ type PreloadApi = {
   officePreview: {
     attachFrame: (sessionId: string) => Promise<unknown>
     reportState: (sessionId: string, state: unknown) => void
+  }
+  uploads: {
+    stageLocalFile: (file: File, request: unknown) => Promise<unknown>
+    claimLocalFile: (request: unknown) => Promise<void>
+  }
+  window: {
+    findInPage?: (request: unknown) => void
+    clearFind?: () => void
+    closeFind?: () => void
+    onShowWindowFind?: (
+      listener: (appearance: { theme: 'light' | 'dark'; followsSystem: boolean }) => void
+    ) => unknown
+    onWindowFindAppearance?: (
+      listener: (appearance: { theme: 'light' | 'dark'; followsSystem: boolean }) => void
+    ) => unknown
+    announceWindowFindAppearance?: (appearance: {
+      theme: 'light' | 'dark'
+      followsSystem: boolean
+    }) => void
+    announceWindowFindReady?: () => unknown
   }
 }
 
@@ -101,6 +125,59 @@ beforeAll(async () => {
 afterEach(() => {
   invokeMock.mockClear()
   sendMock.mockClear()
+  getPathForFileMock.mockReset()
+  onMock.mockClear()
+})
+
+describe('preload bridge — window find IPC channels', () => {
+  it('forwards find and clear requests without exposing a raw Electron object', () => {
+    const request = { requestId: 1, text: 'protein', findNext: true, forward: true }
+
+    api.window.findInPage?.(request)
+    api.window.clearFind?.()
+
+    expect(sendMock).toHaveBeenNthCalledWith(1, 'window:find-in-page', request)
+    expect(sendMock).toHaveBeenNthCalledWith(2, 'window:clear-find-in-page')
+  })
+
+  it('forwards the overlay close request and both appearance-bearing events from main', () => {
+    const showListener = vi.fn()
+    const appearanceListener = vi.fn()
+    api.window.closeFind?.()
+    api.window.onShowWindowFind?.(showListener)
+    api.window.onWindowFindAppearance?.(appearanceListener)
+
+    expect(sendMock).toHaveBeenCalledWith('window:find-close')
+    expect(onMock).toHaveBeenCalledWith('window:find-show', expect.any(Function))
+    expect(onMock).toHaveBeenCalledWith('window:find-appearance', expect.any(Function))
+
+    const wrappedListener = onMock.mock.calls.find(
+      ([channel]) => channel === 'window:find-show'
+    )?.[1] as ((event: unknown, appearance: unknown) => void) | undefined
+    const wrappedAppearanceListener = onMock.mock.calls.find(
+      ([channel]) => channel === 'window:find-appearance'
+    )?.[1] as ((event: unknown, appearance: unknown) => void) | undefined
+    const appearance = { theme: 'dark' as const, followsSystem: false }
+    wrappedListener?.({}, appearance)
+    wrappedAppearanceListener?.({}, appearance)
+
+    expect(showListener).toHaveBeenCalledWith(appearance)
+    expect(appearanceListener).toHaveBeenCalledWith(appearance)
+  })
+
+  it('announces Workspace find readiness to main on mount', () => {
+    api.window.announceWindowFindReady?.()
+
+    expect(sendMock).toHaveBeenCalledWith('shortcut:window-find-ready')
+  })
+
+  it('forwards renderer theme changes to main as a typed appearance payload', () => {
+    const appearance = { theme: 'dark' as const, followsSystem: false }
+
+    api.window.announceWindowFindAppearance?.(appearance)
+
+    expect(sendMock).toHaveBeenCalledWith('window:find-appearance-changed', appearance)
+  })
 })
 
 // Each case: invoke a bridge method with sample args, then assert the exact channel + forwarded args.
@@ -335,6 +412,12 @@ const cases: ForwardingCase[] = [
     channel: 'acp:reset-session-context',
     args: [sampleResumeRequest]
   },
+  {
+    name: 'acp.compactSession → acp:compact-session',
+    invoke: (a) => a.acp.compactSession({ sessionId: 's-1' }),
+    channel: 'acp:compact-session',
+    args: [{ sessionId: 's-1' }]
+  },
   // Notification click target: the renderer pulls it once sessions are hydrated.
   {
     name: 'notifications.takePendingOpenSession → notifications:take-pending-open-session',
@@ -376,5 +459,31 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
       sessionId: 'office-session-1',
       phase: 'ready'
     })
+  })
+
+  it('resolves native upload paths in preload and sends only metadata to main', async () => {
+    const file = { name: 'large.csv', size: 1024, type: 'text/csv' } as File
+    const attachment = { path: '/managed/.pending/large.csv' }
+    const request = {
+      transferId: 'transfer-1',
+      name: 'large.csv',
+      size: 1024,
+      mimeType: 'text/csv'
+    }
+    getPathForFileMock.mockReturnValue('/data/large.csv')
+    invokeMock.mockResolvedValueOnce(attachment)
+
+    await expect(api.uploads.stageLocalFile(file, request)).resolves.toBe(attachment)
+    await api.uploads.claimLocalFile({ transferId: request.transferId })
+
+    expect(getPathForFileMock).toHaveBeenCalledWith(file)
+    expect(invokeMock).toHaveBeenCalledWith('uploads:stage-local-file', {
+      ...request,
+      sourcePath: '/data/large.csv'
+    })
+    expect(invokeMock).toHaveBeenCalledWith('uploads:claim-local-file', {
+      transferId: request.transferId
+    })
+    expect(invokeMock).toHaveBeenCalledTimes(2)
   })
 })

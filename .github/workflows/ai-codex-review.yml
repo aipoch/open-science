@@ -4,12 +4,13 @@ on:
   workflow_call:
     inputs:
       auth_mode:
-        description: Authentication mode (api-key or subscription)
+        description: Preferred authentication mode (subscription or api-key)
         required: true
         type: string
       scope:
-        description: Review scope (correctness or architecture)
-        required: true
+        description: Retired dual-review caller compatibility; ignored by the combined reviewer
+        required: false
+        default: review
         type: string
       pull_request_number:
         required: true
@@ -71,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: ${{ format('codex-{0}-review-{1}', inputs.scope, inputs.pull_request_number) }}
+      group: ${{ format('codex-review-{0}', inputs.pull_request_number) }}
       cancel-in-progress: true
     permissions:
       contents: read
@@ -82,13 +83,17 @@ jobs:
     steps:
       # Install before credentials are written or untrusted repository files are checked out.
       - name: Set up Node.js for subscription auth
+        id: setup_subscription_node
         if: ${{ inputs.auth_mode == 'subscription' }}
+        continue-on-error: true
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: '24'
 
       - name: Install Codex CLI for subscription auth
+        id: install_subscription_cli
         if: ${{ inputs.auth_mode == 'subscription' }}
+        continue-on-error: true
         env:
           CODEX_VERSION: 0.144.6
         shell: bash
@@ -97,15 +102,37 @@ jobs:
           npm install -g "@openai/codex@${CODEX_VERSION}"
           codex --version
 
+      # The API action enables these only when it receives an API key or prompt. Subscription mode
+      # installs the CLI directly, so prepare the packaged Linux sandbox before the auth preflight.
+      - name: Prepare GitHub-hosted sandbox for subscription auth
+        id: prepare_subscription_sandbox
+        if: ${{ inputs.auth_mode == 'subscription' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_userns="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
+          if [[ -n "$current_userns" && "$current_userns" != "1" ]]; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+
+          current_apparmor="$(
+            sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true
+          )"
+          if [[ -n "$current_apparmor" && "$current_apparmor" != "0" ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
       - name: Prepare Codex authentication
         id: codex_auth
         env:
           CODEX_AUTH_JSON: ${{ inputs.auth_mode == 'subscription' && secrets.CODEX_AUTH_JSON || '' }}
           CODEX_AUTH_MODE: ${{ inputs.auth_mode }}
-          CODEX_BASE_URL: ${{ inputs.auth_mode == 'api-key' && secrets.CODEX_BASE_URL || '' }}
-          IS_FORK: ${{ inputs.is_fork }}
-          OPENAI_API_KEY: ${{ inputs.auth_mode == 'api-key' && secrets.OPENAI_API_KEY || '' }}
-          REVIEW_EVENT: ${{ inputs.review_event }}
+          CODEX_BASE_URL: ${{ secrets.CODEX_BASE_URL }}
+          CODEX_INSTALL_OUTCOME: ${{ steps.install_subscription_cli.outcome || 'skipped' }}
+          CODEX_MODEL: ${{ inputs.model }}
+          CODEX_SANDBOX_OUTCOME: ${{ steps.prepare_subscription_sandbox.outcome || 'skipped' }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
@@ -114,6 +141,136 @@ jobs:
           mkdir -p "$codex_home"
           chmod 700 "$codex_home"
           case "$CODEX_AUTH_MODE" in
+            api-key|subscription) ;;
+            *)
+              echo "Authentication mode must be api-key or subscription." >&2
+              exit 1
+              ;;
+          esac
+
+          effective_auth_mode="$CODEX_AUTH_MODE"
+          if [[ "$effective_auth_mode" == "subscription" &&
+            "$CODEX_INSTALL_OUTCOME" != "success" ]]; then
+            echo "::warning::Pinned Codex CLI setup failed; falling back to API-key auth."
+            effective_auth_mode=api-key
+          fi
+
+          if [[ "$effective_auth_mode" == "subscription" &&
+            "$CODEX_SANDBOX_OUTCOME" != "success" ]]; then
+            echo "::warning::Codex sandbox setup failed; falling back to API-key auth."
+            effective_auth_mode=api-key
+          fi
+
+          if [[ "$effective_auth_mode" == "subscription" ]] &&
+            { [[ -z "$CODEX_AUTH_JSON" ]] || ! jq -e '
+                .auth_mode == "chatgpt" and
+                (.tokens | type == "object") and
+                ((.tokens.refresh_token // "") | length > 0)
+              ' <<< "$CODEX_AUTH_JSON" > /dev/null 2>&1; }; then
+            echo "::warning::Codex subscription credentials are unavailable; falling back to API-key auth."
+            effective_auth_mode=api-key
+          fi
+
+          if [[ "$effective_auth_mode" == "subscription" ]]; then
+            auth_file="$codex_home/auth.json"
+            printf '%s' "$CODEX_AUTH_JSON" > "$auth_file"
+            chmod 600 "$auth_file"
+
+            preflight_dir="$(mktemp -d /tmp/codex-auth-preflight-work.XXXXXX)"
+            preflight_home="$(mktemp -d /tmp/codex-auth-preflight-home.XXXXXX)"
+            preflight_output="$RUNNER_TEMP/codex-auth-preflight.jsonl"
+            preflight_error="$RUNNER_TEMP/codex-auth-preflight.stderr"
+            preflight_key="$(jq -Rn --arg path "$preflight_dir" '$path')"
+            preflight_home_key="$(jq -Rn --arg path "$preflight_home" '$path')"
+            preflight_sentinel="$preflight_dir/sandbox-readable"
+            printf '%s\n' 'sandbox-ready' > "$preflight_sentinel"
+            cp "$auth_file" "$preflight_home/auth.json"
+            {
+              echo 'default_permissions = "ai_review"'
+              echo 'project_doc_max_bytes = 0'
+              echo
+              printf '[projects.%s]\n' "$preflight_key"
+              echo 'trust_level = "untrusted"'
+              echo
+              echo '[permissions.ai_review]'
+              echo 'description = "Read-only auth preflight with credential isolation."'
+              echo 'extends = ":read-only"'
+              echo
+              echo '[permissions.ai_review.filesystem]'
+              printf '%s = "deny"\n' "$preflight_home_key"
+            } > "$preflight_home/config.toml"
+            chmod 600 "$preflight_home/auth.json" "$preflight_home/config.toml"
+
+            if preflight_uid="$(id -u nobody 2> /dev/null)" &&
+              preflight_gid="$(id -g nobody 2> /dev/null)" &&
+              sudo chown -R "$preflight_uid:$preflight_gid" "$preflight_home" "$preflight_dir"; then
+              set +e
+              sudo -u nobody -- env -i \
+                PATH="$PATH" \
+                HOME="$preflight_home" \
+                CODEX_HOME="$preflight_home" \
+                codex sandbox --permission-profile ai_review -C "$preflight_dir" -- \
+                test -r "$preflight_home/auth.json"
+              credential_probe_status=$?
+              sudo -u nobody -- env -i \
+                PATH="$PATH" \
+                HOME="$preflight_home" \
+                CODEX_HOME="$preflight_home" \
+                codex sandbox --permission-profile ai_review -C "$preflight_dir" -- \
+                test -r "$preflight_sentinel"
+              readable_probe_status=$?
+              set -e
+
+              if (( credential_probe_status == 0 || readable_probe_status != 0 )); then
+                echo "::warning::Codex subscription sandbox probes failed; falling back to API-key auth."
+                effective_auth_mode=api-key
+                rm -f "$auth_file"
+              else
+                set +e
+                # Redirect as the runner so the unprivileged process cannot rewrite status files.
+                # shellcheck disable=SC2024
+                printf '%s\n' 'Reply with exactly OK. Do not call tools.' | \
+                sudo -u nobody -- env -i \
+                  PATH="$PATH" \
+                  HOME="$preflight_home" \
+                  CODEX_HOME="$preflight_home" \
+                  codex exec \
+                  --strict-config \
+                  --skip-git-repo-check \
+                  --cd "$preflight_dir" \
+                  --model "$CODEX_MODEL" \
+                  --config 'model_reasoning_effort="low"' \
+                  --config 'default_permissions="ai_review"' \
+                  --ephemeral \
+                  --ignore-rules \
+                  --json \
+                  > "$preflight_output" \
+                  2> "$preflight_error"
+                preflight_status=$?
+                set -e
+
+                if (( preflight_status == 0 )) &&
+                  jq -s -e 'any(.[]; .type == "turn.completed")' \
+                    "$preflight_output" > /dev/null 2>&1 &&
+                  sudo cp -- "$preflight_home/auth.json" "$auth_file"; then
+                  chmod 600 "$auth_file"
+                else
+                  echo "::warning::Codex subscription authentication failed; falling back to API-key auth."
+                  effective_auth_mode=api-key
+                  rm -f "$auth_file"
+                fi
+              fi
+              sudo rm -rf -- "$preflight_home" "$preflight_dir"
+            else
+              echo "::warning::Codex subscription preflight isolation failed; falling back to API-key auth."
+              effective_auth_mode=api-key
+              rm -f "$auth_file"
+              rm -rf -- "$preflight_home" "$preflight_dir" 2> /dev/null || true
+            fi
+            rm -f "$preflight_output" "$preflight_error"
+          fi
+
+          case "$effective_auth_mode" in
             api-key)
               if [[ -z "$OPENAI_API_KEY" ]]; then
                 echo "Repository secret OPENAI_API_KEY is required for API-key auth." >&2
@@ -126,34 +283,7 @@ jobs:
               permission_profile=':read-only'
               ;;
             subscription)
-              if [[ "$REVIEW_EVENT" != "workflow_dispatch" ]]; then
-                echo "Codex subscription auth is limited to manual workflow_dispatch reviews." >&2
-                exit 1
-              fi
-              if [[ "$IS_FORK" == "true" ]]; then
-                echo "Codex subscription auth is limited to same-repository pull requests." >&2
-                exit 1
-              fi
-              auth_file="$codex_home/auth.json"
-              if [[ -z "$CODEX_AUTH_JSON" ]]; then
-                echo "CODEX_AUTH_JSON is required for subscription auth." >&2
-                exit 1
-              fi
-              printf '%s' "$CODEX_AUTH_JSON" > "$auth_file"
-              if ! jq -e '
-                .auth_mode == "chatgpt" and
-                (.tokens | type == "object") and
-                ((.tokens.refresh_token // "") | length > 0)
-              ' "$auth_file" > /dev/null; then
-                echo "Codex subscription auth must be a valid chatgpt auth.json with a refresh token." >&2
-                exit 1
-              fi
-              chmod 600 "$auth_file"
               permission_profile='ai_review'
-              ;;
-            *)
-              echo "Authentication mode must be api-key or subscription." >&2
-              exit 1
               ;;
           esac
 
@@ -165,7 +295,7 @@ jobs:
             echo
             printf '[projects.%s]\n' "$workspace_key"
             echo 'trust_level = "untrusted"'
-            if [[ "$CODEX_AUTH_MODE" == "subscription" ]]; then
+            if [[ "$effective_auth_mode" == "subscription" ]]; then
               echo
               echo '[permissions.ai_review]'
               echo 'description = "Read-only PR review with credential isolation."'
@@ -177,7 +307,7 @@ jobs:
           } > "$codex_home/config.toml"
           chmod 600 "$codex_home/config.toml"
           {
-            echo "auth_mode=$CODEX_AUTH_MODE"
+            echo "auth_mode=$effective_auth_mode"
             echo "codex_home=$codex_home"
           } >> "$GITHUB_OUTPUT"
 
@@ -208,7 +338,7 @@ jobs:
 
       - name: Resolve Responses API endpoint
         id: responses_endpoint
-        if: ${{ inputs.auth_mode == 'api-key' }}
+        if: ${{ steps.codex_auth.outputs.auth_mode == 'api-key' }}
         env:
           CODEX_BASE_URL: ${{ secrets.CODEX_BASE_URL }}
         shell: bash
@@ -230,49 +360,32 @@ jobs:
           PR_BRANCH: ${{ inputs.head_ref }}
           PR_DIFF_BASE: ${{ steps.diff_base.outputs.sha }}
           PR_TITLE: ${{ inputs.pull_request_title }}
-          REVIEW_SCOPE: ${{ inputs.scope }}
           REVIEW_SHA: ${{ inputs.review_sha }}
         shell: bash
         run: |
           set -euo pipefail
-          instructions_file="$RUNNER_TEMP/codex-${REVIEW_SCOPE}-instructions.txt"
-          prompt_file="$RUNNER_TEMP/codex-${REVIEW_SCOPE}-prompt.txt"
-          schema_file="$RUNNER_TEMP/codex-${REVIEW_SCOPE}-schema.json"
-
-          case "$REVIEW_SCOPE" in
-            correctness)
-              review_header='## Codex Correctness Review'
-              branch_valid=false
-              if [[ "$PR_BRANCH" =~ ^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)/[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
-                branch_valid=true
-              fi
-              title_valid="$(
-                jq -nr \
-                  --arg title "$PR_TITLE" \
-                  '$title | test("^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)\\([a-z][A-Za-z0-9-]*\\)!?: [a-z]")'
-              )"
-              {
-                echo 'Apply the repository standards in CONTRIBUTING.md and the surrounding code.'
-                echo 'A trusted precheck evaluated the untrusted pull request metadata against the'
-                echo '<type>/<short-description> branch rule and <type>(<scope>): <description> title'
-                echo 'rule. Report a project-standard finding when either result below is false.'
-                echo "Branch name valid: ${branch_valid}"
-                echo "Pull request title valid: ${title_valid}"
-              } > "$instructions_file"
-              ;;
-            architecture)
-              review_header='## Codex Architecture Review'
-              {
-                echo 'Apply the repository architecture and integration conventions in CONTRIBUTING.md'
-                echo 'and the surrounding code. Do not repeat branch or pull request title checks; the'
-                echo 'correctness reviewer owns repository metadata and general correctness.'
-              } > "$instructions_file"
-              ;;
-            *)
-              echo "Review scope must be correctness or architecture." >&2
-              exit 1
-              ;;
-          esac
+          instructions_file="$RUNNER_TEMP/codex-review-instructions.txt"
+          prompt_file="$RUNNER_TEMP/codex-review-prompt.txt"
+          schema_file="$RUNNER_TEMP/codex-review-schema.json"
+          review_header='## Codex Review'
+          branch_valid=false
+          if [[ "$PR_BRANCH" =~ ^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)/[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+            branch_valid=true
+          fi
+          title_valid="$(
+            jq -nr \
+              --arg title "$PR_TITLE" \
+              '$title | test("^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)\\([a-z][A-Za-z0-9-]*\\)!?: [a-z]")'
+          )"
+          {
+            echo 'Apply the repository standards, architecture, and integration conventions in'
+            echo 'CONTRIBUTING.md and the surrounding code.'
+            echo 'A trusted precheck evaluated the untrusted pull request metadata against the'
+            echo '<type>/<short-description> branch rule and <type>(<scope>): <description> title'
+            echo 'rule. Report a project-standard finding when either result below is false.'
+            echo "Branch name valid: ${branch_valid}"
+            echo "Pull request title valid: ${title_valid}"
+          } > "$instructions_file"
 
           {
             echo
@@ -296,14 +409,12 @@ jobs:
             echo "Start with \`git diff --stat <base> HEAD\` and \`git diff <base> HEAD\`, substituting the"
             echo 'base commit above, then inspect relevant files and callers as needed.'
             echo
-            if [[ "$REVIEW_SCOPE" == "correctness" ]]; then
-              echo 'Focus on actionable correctness, security, regression, and repository-standard defects.'
-            else
-              echo 'Focus exclusively on architecture and integration: responsibility placement;'
-              echo 'main/preload/renderer/shared boundaries; IPC ownership; state flow; lifecycle cleanup;'
-              echo 'coupling; compatibility; packaging; cross-platform behavior; and user-visible workflows.'
-              echo 'Report a line-level defect only when it has concrete architectural or integration impact.'
-            fi
+            echo 'Focus on actionable correctness, security, regression, repository-standard,'
+            echo 'architecture, and integration defects. For architecture and integration, inspect'
+            echo 'responsibility placement; main/preload/renderer/shared boundaries; IPC ownership;'
+            echo 'state flow; lifecycle cleanup; coupling; compatibility; packaging; cross-platform'
+            echo 'behavior; and user-visible workflows. Report a line-level defect only when it has'
+            echo 'concrete impact.'
             echo
             echo 'Return the review through the required JSON schema. Use "needs changes" exactly when'
             echo 'findings is non-empty, and "mergeable" exactly when findings is empty. Every finding'
@@ -354,30 +465,11 @@ jobs:
             echo "review_header=$review_header"
           } >> "$GITHUB_OUTPUT"
 
-      # The API action enables these only when it receives an API key or prompt. Subscription mode
-      # installs the CLI directly, so prepare the packaged Linux sandbox before `codex exec`.
-      - name: Prepare GitHub-hosted sandbox for subscription auth
-        if: ${{ inputs.auth_mode == 'subscription' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          current_userns="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
-          if [[ -n "$current_userns" && "$current_userns" != "1" ]]; then
-            sudo sysctl -w kernel.unprivileged_userns_clone=1
-          fi
-
-          current_apparmor="$(
-            sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true
-          )"
-          if [[ -n "$current_apparmor" && "$current_apparmor" != "0" ]]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-
       - name: Prepare Codex review runtime
-        if: ${{ inputs.auth_mode == 'api-key' }}
+        if: ${{ steps.codex_auth.outputs.auth_mode == 'api-key' }}
         uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1
         with:
-          openai-api-key: ${{ inputs.auth_mode == 'api-key' && secrets.OPENAI_API_KEY || '' }}
+          openai-api-key: ${{ steps.codex_auth.outputs.auth_mode == 'api-key' && secrets.OPENAI_API_KEY || '' }}
           responses-api-endpoint: ${{ steps.responses_endpoint.outputs.url }}
           codex-home: ${{ steps.codex_auth.outputs.codex_home }}
           codex-version: 0.144.6
@@ -386,7 +478,7 @@ jobs:
       # The API action drops sudo itself. Apply the same boundary to the directly installed
       # subscription CLI before reviewing untrusted repository content.
       - name: Harden subscription review runtime
-        if: ${{ inputs.auth_mode == 'subscription' }}
+        if: ${{ steps.codex_auth.outputs.auth_mode == 'subscription' }}
         env:
           CODEX_HOME: ${{ steps.codex_auth.outputs.codex_home }}
         shell: bash
@@ -446,7 +538,7 @@ jobs:
           CODEX_HOME: ${{ steps.codex_auth.outputs.codex_home }}
           CODEX_INSTRUCTIONS_FILE: ${{ steps.review_inputs.outputs.instructions_file }}
           CODEX_MODEL: ${{ inputs.model }}
-          CODEX_PERMISSION_PROFILE: ${{ inputs.auth_mode == 'subscription' && 'ai_review' || ':read-only' }}
+          CODEX_PERMISSION_PROFILE: ${{ steps.codex_auth.outputs.auth_mode == 'subscription' && 'ai_review' || ':read-only' }}
           CODEX_PROMPT_FILE: ${{ steps.review_inputs.outputs.prompt_file }}
           CODEX_SCHEMA_FILE: ${{ steps.review_inputs.outputs.schema_file }}
           CODEX_INTERNAL_ORIGINATOR_OVERRIDE: codex_github_action
@@ -510,11 +602,10 @@ jobs:
           CODEX_MODEL: ${{ inputs.model }}
           DURATION_SECONDS: ${{ steps.run_codex.outputs.duration_seconds }}
           EXECUTION_FILE: ${{ runner.temp }}/codex-execution.jsonl
-          REVIEW_SCOPE: ${{ inputs.scope }}
         shell: bash
         run: |
           set -euo pipefail
-          summary_title="Codex ${REVIEW_SCOPE} review telemetry"
+          summary_title='Codex review telemetry'
           if [[ ! -s "$EXECUTION_FILE" ]]; then
             echo "::warning::${summary_title} is unavailable."
             printf '### %s\n\nTelemetry is unavailable.\n' "$summary_title" >> "$GITHUB_STEP_SUMMARY"

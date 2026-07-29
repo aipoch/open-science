@@ -185,14 +185,19 @@ describe('session store', () => {
           uploads: [
             expect.objectContaining({
               id: 'upload-1',
-              sessionId: 'transport-session-1',
-              path: finalizedUpload.path
+              sessionId: 'transport-session-1'
             })
           ]
         })
       ]
     })
     expect(finalizedSession.filesRevision).toBe(1)
+    expect(finalizedSession.messages[0].uploads?.[0]).not.toHaveProperty('path')
+    expect(
+      finalizedSession.conversationGraph?.messages.find(
+        (message) => message.id === pending?.messageId
+      )?.uploads?.[0]
+    ).toMatchObject({ id: 'upload-1', sessionId: 'transport-session-1' })
     expect(useSessionStore.getState().sessions[0]).toBe(finalizedSession)
   })
 
@@ -214,7 +219,23 @@ describe('session store', () => {
 
     useSessionStore.getState().removeMessage('transport-session-1', pending?.messageId ?? '')
 
-    expect(useSessionStore.getState().sessions[0].filesRevision).toBe(2)
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.filesRevision).toBe(2)
+    expect(session.messages.some((message) => message.id === pending?.messageId)).toBe(false)
+    expect(
+      toPersistedSession(session).messages.some((message) => message.id === pending?.messageId)
+    ).toBe(false)
+    expect(
+      session.conversationGraph?.messages.some((message) => message.id === pending?.messageId)
+    ).toBe(true)
+    expect(session.conversationGraph?.branches).toHaveLength(2)
+    const activeFrame = session.conversationGraph?.frames.find(
+      (frame) => frame.id === session.conversationGraph?.activeFrameId
+    )
+    const activeBranch = session.conversationGraph?.branches.find(
+      (branch) => branch.id === activeFrame?.activeBranchId
+    )
+    expect(activeBranch?.headMessageId).toBeUndefined()
   })
 
   it('binds a pending session to the runtime session id without rewriting the prompt', () => {
@@ -1153,17 +1174,19 @@ describe('session store', () => {
       sessionId: 'transport-session-1',
       content: 'Create an image'
     })
+    // A replayed/post-stop Artifact must create its file-only owner directly in the durable graph.
+    useSessionStore.getState().finishRun('transport-session-1')
 
     const attached = useSessionStore.getState().attachRunArtifacts({
       sessionId: 'transport-session-1',
       runId: 'run-1',
+      promptMessageId: userMessage?.messageId,
       eventId: 'artifact-event-1',
       artifacts: [createArtifactFile({ name: 'image.png', mimeType: 'image/png' })]
     })
 
-    useSessionStore.getState().finishRun('transport-session-1')
-
-    const message = useSessionStore.getState().sessions[0].messages[1]
+    const session = useSessionStore.getState().sessions[0]
+    const message = session.messages[1]
 
     expect(attached?.messageId).toBe(message.id)
     expect(message).toMatchObject({
@@ -1172,6 +1195,14 @@ describe('session store', () => {
       status: 'complete',
       streamId: 'run-1',
       responseToMessageId: userMessage?.messageId,
+      artifactIds: ['artifact-session-1:run-1:result.txt']
+    })
+    expect(
+      session.conversationGraph?.messages.find((item) => item.id === message.id)
+    ).toMatchObject({
+      role: 'agent',
+      status: 'complete',
+      parentMessageId: userMessage?.messageId,
       artifactIds: ['artifact-session-1:run-1:result.txt']
     })
   })
@@ -1212,6 +1243,10 @@ describe('session store', () => {
     expect(session.artifacts?.map((artifact) => artifact.id)).toEqual([
       'transport-session-1:message-1:result.txt'
     ])
+    expect(
+      session.conversationGraph?.messages.find((item) => item.id === attached?.messageId)
+        ?.artifactIds
+    ).toEqual(['transport-session-1:message-1:result.txt'])
     expect(session.filesRevision).toBe(1)
 
     useSessionStore.getState().replaceMessageArtifacts({
@@ -1445,6 +1480,32 @@ describe('session store', () => {
       ]
     })
     expect(persisted).not.toHaveProperty('isPending')
+  })
+
+  it('keeps a staged upload path until the main process publishes its immutable Version', () => {
+    const attachment = createUploadAttachment({
+      id: 'staged-upload-1',
+      path: '/Users/example/OpenScience-DEV/uploads/default-project/.pending/staged.csv'
+    })
+    const pending = useSessionStore.getState().appendPendingUserMessage({
+      content: 'Analyze the uploaded file',
+      attachments: [attachment],
+      cwd: '/workspace/project',
+      projectId: 'project-abc'
+    })
+
+    useSessionStore.getState().bindPendingSession({
+      pendingSessionId: pending?.sessionId ?? '',
+      sessionId: 'transport-session-1',
+      cwd: '/workspace/project'
+    })
+
+    const persisted = toPersistedSession(useSessionStore.getState().sessions[0])
+
+    expect(persisted.messages[0].uploads?.[0]).toMatchObject({
+      id: 'staged-upload-1',
+      path: attachment.path
+    })
   })
 
   describe('fix loop active flag', () => {
@@ -1701,7 +1762,7 @@ describe('truncateSessionFromMessage', () => {
     useSessionStore.setState(createInitialSessionState())
   })
 
-  it('drops the cut message and every later turn, clearing run and banner state', () => {
+  it('switches the compatibility projection at the cut while retaining the original Branch', () => {
     seedSession({
       status: 'error',
       error: 'previous failure',
@@ -1717,6 +1778,13 @@ describe('truncateSessionFromMessage', () => {
     expect(session.activeRun).toBeUndefined()
     expect(session.error).toBeUndefined()
     expect(session.interrupted).toBeUndefined()
+    expect(session.conversationGraph?.messages.map((message) => message.id)).toEqual([
+      'user-1',
+      'agent-1',
+      'user-2',
+      'agent-2'
+    ])
+    expect(session.conversationGraph?.branches).toHaveLength(2)
   })
 
   it('cuts later activities by creation time and keeps earlier ones', () => {
@@ -1799,5 +1867,195 @@ describe('truncateSessionFromMessage', () => {
     useSessionStore.getState().truncateSessionFromMessage('session-1', 'message-unknown')
 
     expect(useSessionStore.getState().sessions[0]).toBe(before)
+  })
+
+  it('switches between original and edited downstream histories as one Branch projection', () => {
+    seedSession()
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    const edited = useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'edited user-2'
+    })
+    expect(edited).toBeDefined()
+    useSessionStore.getState().finishRun('session-1')
+
+    const editedSession = useSessionStore.getState().sessions[0]
+    const graph = editedSession.conversationGraph
+    expect(graph).toBeDefined()
+    const originalBranchId = graph?.branches[0].id
+    const editedBranchId = graph?.frames[0].activeBranchId
+    expect(editedSession.messages.map((message) => message.content)).toEqual([
+      'user-1 content',
+      'agent-1 content',
+      'edited user-2'
+    ])
+
+    useSessionStore.getState().setBranchSwitchBlocked('session-1', true)
+    useSessionStore.getState().activateMessageBranch('session-1', originalBranchId ?? '')
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)?.id).toBe(edited?.messageId)
+
+    useSessionStore.getState().setBranchSwitchBlocked('session-1', false)
+    useSessionStore.getState().activateMessageBranch('session-1', originalBranchId ?? '')
+    expect(useSessionStore.getState().sessions[0].messages.map((message) => message.id)).toEqual([
+      'user-1',
+      'agent-1',
+      'user-2',
+      'agent-2'
+    ])
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+
+    useSessionStore.getState().clearBranchContextReset('session-1')
+    useSessionStore.getState().activateMessageBranch('session-1', editedBranchId ?? '')
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)?.id).toBe(edited?.messageId)
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+  })
+
+  it('retains an edited Branch response when an unchanged finalized Artifact is switched away and back', () => {
+    seedSession()
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    const edited = useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'edited user-2'
+    })
+    const response = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-edited',
+      eventId: 'assistant-event-edited',
+      content: 'edited agent response'
+    })
+    const artifact = createArtifactFile({
+      id: 'artifact-version-2',
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'artifact-run-2',
+      name: 'sin.png',
+      mimeType: 'image/png'
+    })
+    const attached = useSessionStore.getState().attachRunArtifacts({
+      sessionId: 'session-1',
+      runId: 'artifact-run-2',
+      promptMessageId: edited?.messageId,
+      eventId: 'artifact-event-2',
+      artifacts: [artifact]
+    })
+    expect(attached?.messageId).toBe(response?.messageId)
+
+    // Provenance finalization can return the same immutable Version descriptor that was attached by
+    // the pending event. Even when file metadata is unchanged, the new response must enter the Graph.
+    useSessionStore.getState().replaceMessageArtifacts({
+      sessionId: 'session-1',
+      messageId: response?.messageId ?? '',
+      artifacts: [artifact]
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    const editedSession = useSessionStore.getState().sessions[0]
+    const originalBranchId = editedSession.conversationGraph?.branches[0].id
+    const editedBranchId = editedSession.conversationGraph?.frames[0].activeBranchId
+    useSessionStore.getState().activateMessageBranch('session-1', originalBranchId ?? '')
+    useSessionStore.getState().activateMessageBranch('session-1', editedBranchId ?? '')
+
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)).toMatchObject({
+      id: response?.messageId,
+      content: 'edited agent response',
+      artifactIds: ['artifact-version-2']
+    })
+  })
+
+  it('settles a completed run as an explicit error when its graph projection is inconsistent', () => {
+    seedSession()
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    const branched = useSessionStore.getState().sessions[0]
+    const originalGraph = branched.conversationGraph
+    expect(originalGraph).toBeDefined()
+
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-1'
+          ? {
+              ...session,
+              status: 'running',
+              activeRun: { promptMessageId: 'user-2', startedAt: baseTime + 400 },
+              messages: [...session.messages, createMessage('user-2', 'user', baseTime + 200)]
+            }
+          : session
+      )
+    }))
+
+    expect(() => useSessionStore.getState().finishRun('session-1')).not.toThrow()
+
+    const settled = useSessionStore.getState().sessions[0]
+    expect(settled).toMatchObject({
+      status: 'error',
+      activeRun: undefined,
+      errorReportable: true,
+      conversationGraphSyncBlocked: true
+    })
+    expect(settled.error).toContain('Conversation history could not be finalized')
+    expect(settled.conversationGraph).toBe(originalGraph)
+    expect(() => toPersistedSession(settled)).toThrow(
+      'Session persistence is blocked after conversation graph synchronization failed.'
+    )
+  })
+
+  it('preserves the run failure context when graph synchronization also fails', () => {
+    seedSession()
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    const branched = useSessionStore.getState().sessions[0]
+    const originalGraph = branched.conversationGraph
+
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-1'
+          ? {
+              ...session,
+              status: 'running',
+              activeRun: { promptMessageId: 'user-2', startedAt: baseTime + 400 },
+              messages: [...session.messages, createMessage('user-2', 'user', baseTime + 200)]
+            }
+          : session
+      )
+    }))
+
+    expect(() => useSessionStore.getState().failRun('session-1', 'Provider failed')).not.toThrow()
+
+    const settled = useSessionStore.getState().sessions[0]
+    expect(settled).toMatchObject({
+      status: 'error',
+      activeRun: undefined,
+      errorReportable: true,
+      conversationGraphSyncBlocked: true
+    })
+    expect(settled.error).toContain('Provider failed')
+    expect(settled.error).toContain('Conversation history could not be finalized')
+    expect(settled.conversationGraph).toBe(originalGraph)
+  })
+
+  it('retains a failed edited Branch response when switched away and back', () => {
+    seedSession()
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'edited user-2'
+    })
+    const response = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-edited-failed',
+      eventId: 'assistant-event-edited-failed',
+      content: 'partial edited response'
+    })
+    useSessionStore.getState().failRun('session-1', 'Provider failed')
+
+    const failedSession = useSessionStore.getState().sessions[0]
+    const originalBranchId = failedSession.conversationGraph?.branches[0].id
+    const editedBranchId = failedSession.conversationGraph?.frames[0].activeBranchId
+    useSessionStore.getState().activateMessageBranch('session-1', originalBranchId ?? '')
+    useSessionStore.getState().activateMessageBranch('session-1', editedBranchId ?? '')
+
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)).toMatchObject({
+      id: response?.messageId,
+      content: 'partial edited response',
+      status: 'error'
+    })
   })
 })

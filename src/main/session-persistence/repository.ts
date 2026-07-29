@@ -5,7 +5,7 @@ import {
   createEmptySessionManifest,
   createSessionFile,
   normalizeSessionFile,
-  sanitizeSessionMessageImages,
+  sanitizeSessionUploadedAttachments,
   normalizeSessionManifest,
   type LoadAllSessionsResult,
   type PersistedChatSession,
@@ -17,6 +17,7 @@ import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-p
 const SESSIONS_DIR = 'sessions'
 const DELETED_SESSIONS_DIR = 'deleted-sessions'
 const MANIFEST_FILE = 'manifest.json'
+const FILE_REPLACEMENT_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const
 
 type SessionLoadDiagnostics = {
   result: LoadAllSessionsResult
@@ -28,12 +29,22 @@ type SessionLoadDiagnostics = {
 type SessionRepositoryDependencies = {
   remove(path: string, options: { force: boolean; recursive: boolean }): Promise<void>
   readSessionFile(path: string): Promise<string>
+  renameFile(source: string, destination: string): Promise<void>
+  wait(delayMs: number): Promise<void>
 }
 
 const DEFAULT_DEPENDENCIES: SessionRepositoryDependencies = {
   remove: (path, options) => rm(path, options),
-  readSessionFile: (path) => readFile(path, 'utf8')
+  readSessionFile: (path) => readFile(path, 'utf8'),
+  renameFile: (source, destination) => rename(source, destination),
+  wait: (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))
 }
+
+const isRetryableFileReplacementError = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  ['EPERM', 'EACCES', 'EBUSY'].includes(String((error as { code?: unknown }).code))
 
 // Production storage lives under ~/.open-science; dev builds use an isolated sibling directory.
 export const PROD_SESSION_DIR_NAME = '.open-science'
@@ -78,7 +89,9 @@ class SessionRepository {
   ) {
     this.dependencies = {
       remove: dependencies.remove ?? DEFAULT_DEPENDENCIES.remove,
-      readSessionFile: dependencies.readSessionFile ?? DEFAULT_DEPENDENCIES.readSessionFile
+      readSessionFile: dependencies.readSessionFile ?? DEFAULT_DEPENDENCIES.readSessionFile,
+      renameFile: dependencies.renameFile ?? DEFAULT_DEPENDENCIES.renameFile,
+      wait: dependencies.wait ?? DEFAULT_DEPENDENCIES.wait
     }
   }
 
@@ -181,8 +194,17 @@ class SessionRepository {
 
   // Writes through a unique temp file, then atomically replaces the target session file.
   private async writeSession(session: PersistedChatSession): Promise<void> {
+    const messages = [...session.messages, ...(session.conversationGraph?.messages ?? [])]
+    const legacyUpload = messages
+      .flatMap((message) => message.uploads ?? [])
+      .find((upload) => !upload.versionId)
+    if (legacyUpload) {
+      throw new Error(
+        `Session upload must be upgraded to an immutable Version before persistence: ${legacyUpload.id}`
+      )
+    }
     const filePath = this.sessionFilePath(session.projectId, session.id)
-    const sanitizedSession = sanitizeSessionMessageImages(session)
+    const sanitizedSession = sanitizeSessionUploadedAttachments(session)
 
     await mkdir(this.projectDir(session.projectId), { recursive: true })
     await this.atomicWrite(filePath, createSessionFile(encodeSessionDataPaths(sanitizedSession)))
@@ -199,7 +221,23 @@ class SessionRepository {
     const temporaryPath = `${filePath}.${Date.now()}-${this.writeSequence}.tmp`
 
     await writeFile(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
-    await rename(temporaryPath, filePath)
+    try {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          await this.dependencies.renameFile(temporaryPath, filePath)
+          return
+        } catch (error) {
+          const delayMs = FILE_REPLACEMENT_RETRY_DELAYS_MS[attempt]
+          if (delayMs === undefined || !isRetryableFileReplacementError(error)) throw error
+          await this.dependencies.wait(delayMs)
+        }
+      }
+    } catch (error) {
+      await this.dependencies
+        .remove(temporaryPath, { recursive: false, force: true })
+        .catch(() => undefined)
+      throw error
+    }
   }
 
   private async cleanupDeletedProjects(): Promise<void> {
@@ -265,7 +303,9 @@ class SessionRepository {
     }
 
     try {
-      const session = normalizeSessionFile(JSON.parse(raw) as unknown)
+      const session = normalizeSessionFile(JSON.parse(raw) as unknown, {
+        preserveLegacyUploadPaths: true
+      })
       if (!session) return { isComplete: await this.tryBackupInvalidFile(filePath) }
 
       return { session: decodeSessionDataPaths({ ...session, projectId }), isComplete: true }

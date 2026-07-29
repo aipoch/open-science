@@ -39,6 +39,8 @@ export const ORPHANED_ARTIFACTS_GROUP_ID = '__orphaned_artifacts__'
 // preview/download/@-mention paths treat an orphan exactly like any other managed file.
 const toMessageArtifact = (file: ArtifactFile): MessageArtifact => ({
   id: file.id,
+  ...(file.artifactId ? { artifactId: file.artifactId } : {}),
+  ...(file.versionId ? { versionId: file.versionId } : {}),
   kind: 'managed-file',
   path: file.path,
   fileUrl: file.fileUrl,
@@ -65,7 +67,7 @@ export const buildProjectFileLibrary = (
       if (message.role !== 'user' || !message.uploads) continue
 
       for (const attachment of message.uploads) {
-        if (!attachment.path) continue
+        if (!attachment.path && !attachment.versionId) continue
 
         uploadFiles.push({
           id: `upload:${attachment.id}`,

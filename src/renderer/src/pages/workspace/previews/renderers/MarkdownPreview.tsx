@@ -6,7 +6,7 @@ import { usePreviewFileContent } from '../usePreviewFileContent'
 import { SourcePreviewContent } from './SourcePreview'
 
 export const MarkdownPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
-  const state = usePreviewFileContent({ path: item.path, source: item.source })
+  const state = usePreviewFileContent(item)
 
   if (state.status === 'loading') return <PreviewLoadingContent />
 

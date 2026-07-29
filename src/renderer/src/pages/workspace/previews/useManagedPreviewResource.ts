@@ -4,6 +4,7 @@ import type { ManagedPreviewResource } from '../../../../../shared/preview-resou
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { createPreviewResourceKey } from './preview-resource-key'
+import { createPreviewRequestScope } from './preview-file-reader'
 
 type ManagedPreviewResourceState =
   | { status: 'idle'; resource?: undefined; error?: undefined }
@@ -19,7 +20,8 @@ type ManagedPreviewResourceResult =
 
 // Acquires and releases one managed-file capability with the component lifecycle.
 const useManagedPreviewResource = (
-  item: Pick<PreviewFileItem, 'path' | 'source' | 'mimeType' | 'size' | 'mtimeMs'>,
+  item: Pick<PreviewFileItem, 'path' | 'source' | 'mimeType' | 'size' | 'mtimeMs'> &
+    Partial<Pick<PreviewFileItem, 'projectId' | 'sessionId'>>,
   enabled = true
 ): ManagedPreviewResourceState => {
   const [result, setResult] = useState<ManagedPreviewResourceResult | null>(null)
@@ -36,6 +38,7 @@ const useManagedPreviewResource = (
       .acquire({
         source: item.source ?? 'artifact',
         path: item.path,
+        ...createPreviewRequestScope(item),
         ...(item.mimeType ? { mimeType: item.mimeType } : {})
       })
       .then((resource) => {
@@ -70,7 +73,17 @@ const useManagedPreviewResource = (
         )
       })
     }
-  }, [enabled, item.mimeType, item.mtimeMs, item.path, item.size, item.source, requestKey])
+  }, [
+    enabled,
+    item.mimeType,
+    item.mtimeMs,
+    item.path,
+    item.projectId,
+    item.sessionId,
+    item.size,
+    item.source,
+    requestKey
+  ])
 
   if (!enabled) return idleState
   if (result?.requestKey !== requestKey) return { status: 'loading' }

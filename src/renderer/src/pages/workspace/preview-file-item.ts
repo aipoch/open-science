@@ -1,7 +1,14 @@
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
 import type { ChatSession } from '@/stores/session-store'
+import type { ArtifactFile } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
-import { getUploadedAttachmentName } from '../../../../shared/uploads'
+import {
+  createArtifactVersionLocator,
+  parseArtifactVersionLocator,
+  type ArtifactLineageProvenance,
+  type ArtifactVersionDescriptor
+} from '../../../../shared/artifact-provenance'
+import { getUploadedAttachmentName, getUploadedAttachmentPath } from '../../../../shared/uploads'
 
 import { getArtifactName } from './artifact-preview-utils'
 import { getPreviewFormatForFile } from './preview-support'
@@ -11,19 +18,26 @@ export type MessageUploadAttachment = NonNullable<
   ChatSession['messages'][number]['uploads']
 >[number]
 type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
+type ManagedArtifactMentionPart = Exclude<ArtifactMentionPart, { source: 'linked-folder' }>
 
 // Builds the common preview workbench file item for generated artifacts and user uploads.
 export const createPreviewFileItem = ({
   id,
+  projectId,
   sessionId,
   path,
   name,
   mimeType,
   source,
   size,
-  mtimeMs
+  mtimeMs,
+  artifactId,
+  selectedVersionId,
+  versionNumber,
+  originSession
 }: {
   id: string
+  projectId?: string
   sessionId: string
   path: string
   name: string
@@ -31,9 +45,14 @@ export const createPreviewFileItem = ({
   source?: PreviewFileSource
   size?: number
   mtimeMs?: number
+  artifactId?: string
+  selectedVersionId?: string
+  versionNumber?: number
+  originSession?: PreviewFileItem['originSession']
 }): PreviewFileItem => {
   const item: PreviewFileItem = {
     id,
+    ...(projectId ? { projectId } : {}),
     sessionId,
     title: name,
     type: 'file',
@@ -47,42 +66,99 @@ export const createPreviewFileItem = ({
   if (mimeType) item.mimeType = mimeType
   if (typeof size === 'number') item.size = size
   if (typeof mtimeMs === 'number') item.mtimeMs = mtimeMs
+  if (artifactId) item.artifactId = artifactId
+  if (selectedVersionId) item.selectedVersionId = selectedVersionId
+  if (typeof versionNumber === 'number') item.versionNumber = versionNumber
+  if (originSession) item.originSession = originSession
 
   return item
 }
 
 // Converts app-managed generated files into preview tabs and ignores unmanaged artifacts.
 export const createPreviewFileItemFromArtifact = (
-  artifact: MessageArtifact,
-  sessionId: string
+  artifact: MessageArtifact | ArtifactFile,
+  sessionId: string,
+  projectId?: string
 ): PreviewFileItem | undefined => {
-  if (artifact.kind !== 'managed-file') return undefined
+  if ('kind' in artifact && artifact.kind !== 'managed-file') return undefined
 
-  const artifactName = getArtifactName(artifact)
+  const artifactName = 'kind' in artifact ? getArtifactName(artifact) : artifact.name
+  const nativeVersionPath =
+    projectId && artifact.artifactId && artifact.versionId
+      ? createArtifactVersionLocator({
+          projectId,
+          appSessionId: sessionId,
+          artifactId: artifact.artifactId,
+          versionId: artifact.versionId
+        })
+      : artifact.path
 
   return createPreviewFileItem({
-    id: artifact.id,
+    id: artifact.artifactId ?? artifact.id,
+    projectId,
     sessionId,
-    path: artifact.path,
+    path: nativeVersionPath,
     name: artifactName,
     mimeType: artifact.mimeType,
     size: artifact.size,
-    mtimeMs: artifact.mtimeMs
+    mtimeMs: artifact.mtimeMs,
+    artifactId: artifact.artifactId,
+    selectedVersionId: artifact.versionId,
+    versionNumber: artifact.versionNumber
   })
 }
+
+// Applies one immutable Artifact Version to the stable preview tab identity. Both image preview
+// and Provenance use this projection so switching Versions never creates a second tab.
+export const createPreviewFileItemForArtifactVersion = ({
+  item,
+  version,
+  projectId
+}: {
+  item: PreviewFileItem
+  version: ArtifactVersionDescriptor
+  projectId: string
+}): PreviewFileItem => ({
+  ...item,
+  projectId,
+  selectedVersionId: version.versionId,
+  versionNumber: version.versionNumber,
+  path: createArtifactVersionLocator({
+    projectId,
+    appSessionId: item.sessionId,
+    artifactId: version.artifactId,
+    versionId: version.versionId
+  }),
+  name: version.name,
+  title: version.name,
+  size: version.size,
+  mtimeMs: version.mtimeMs
+})
+
+// An omitted selection opens the newest finalized Version. An explicit selection is immutable
+// evidence: if it no longer resolves, callers must show it as unavailable rather than substitute bytes.
+export const resolveArtifactVersionDescriptor = (
+  lineage: ArtifactLineageProvenance,
+  selectedVersionId: string | undefined
+): ArtifactVersionDescriptor | undefined =>
+  selectedVersionId === undefined
+    ? lineage.versions.at(-1)
+    : lineage.versions.find((version) => version.versionId === selectedVersionId)
 
 // Converts a sent user upload into the same preview shape used by message attachment clicks.
 export const createPreviewFileItemFromUpload = (
   attachment: MessageUploadAttachment,
-  sessionId: string
+  sessionId: string,
+  projectId?: string
 ): PreviewFileItem => {
   const attachmentName = getUploadedAttachmentName(attachment)
 
   return createPreviewFileItem({
     id: `upload:${attachment.id}`,
+    projectId,
     sessionId,
     source: 'upload',
-    path: attachment.path,
+    path: getUploadedAttachmentPath(attachment, projectId),
     name: attachmentName,
     mimeType: attachment.mimeType,
     size: attachment.size
@@ -91,13 +167,27 @@ export const createPreviewFileItemFromUpload = (
 
 // Converts a sent-message artifact mention into the same preview shape used by its source panel.
 export const createPreviewFileItemFromMention = (
-  part: ArtifactMentionPart,
-  sessionId: string
-): PreviewFileItem =>
-  createPreviewFileItem({
-    id: part.id,
-    sessionId,
+  part: ManagedArtifactMentionPart,
+  sessionId: string,
+  projectId?: string
+): PreviewFileItem => {
+  const identity = part.source === 'artifact' ? parseArtifactVersionLocator(part.path) : undefined
+  const artifactId =
+    part.source === 'artifact'
+      ? (identity?.artifactId ?? (part.versionId ? part.id : undefined))
+      : undefined
+  const selectedVersionId =
+    part.source === 'artifact' ? (identity?.versionId ?? part.versionId) : undefined
+
+  return createPreviewFileItem({
+    id: artifactId ?? part.id,
+    projectId: identity?.projectId ?? projectId,
+    sessionId: identity?.appSessionId ?? sessionId,
     path: part.path,
     name: part.name,
-    source: part.source === 'upload' ? 'upload' : undefined
+    mimeType: part.mimeType,
+    source: part.source === 'upload' ? 'upload' : undefined,
+    artifactId,
+    selectedVersionId
   })
+}

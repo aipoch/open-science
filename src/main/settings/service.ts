@@ -83,8 +83,11 @@ import {
   isClaudeSubscriptionProvider,
   isClaudeSubscriptionProviderId,
   isCodexSubscriptionProvider,
+  isCodexSubscriptionProviderId,
   isProviderUsableByFramework,
-  providerEndpoints
+  providerEndpoints,
+  resolveCodexSubscriptionType,
+  requiresChatCompletionsBridge
 } from '../../shared/settings'
 import type { PackageMirror } from '../../shared/mirror'
 import {
@@ -228,12 +231,16 @@ import type {
 } from './types'
 import { classifyStatus, validateProvider } from './validate'
 import {
+  clearAppOwnedCodexAuthentication,
+  clearImportedCodexProviderRoute,
   CodexAuthController,
+  ensureCodexAuthHome,
   importCodexAuthentication,
   openCodexAuthSession,
   type CodexAuthControllerPort,
   type CodexAuthStatus
 } from './codex-auth'
+import { resolveSystemProxyEnvironment, type SystemProxyEnvironment } from './system-proxy'
 import {
   ClaudeIsolatedAuthController,
   type ClaudeIsolatedAuthControllerPort,
@@ -285,6 +292,20 @@ const CODEX_INSTALL_TARGET: InstallTarget = {
   // Codex exposes no supported shell installer; InstallCodexRequest cannot select this branch.
   scriptUnix: ''
 }
+
+// Native Responses vendors other than OpenAI run through a protocol-preserving proxy because Codex
+// emits namespace tools that those upstream APIs do not accept directly. Validation and runtime must
+// share this predicate so a passing test proves the same path the agent will use.
+const requiresNativeResponsesCompatibility = (
+  provider: ResolvedProvider,
+  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+): boolean =>
+  framework.id === 'codex' &&
+  framework.supportedApiTypes.includes('responses') &&
+  providerEndpoints(provider).includes('responses') &&
+  !isCodexSubscriptionProvider(provider.type) &&
+  provider.vendorId !== 'openai' &&
+  !isOfficialOpenAiResponsesBase(provider.openaiBaseUrl ?? provider.baseUrl)
 
 // Codex exposes local MCP tools as namespaced Responses functions. Chat Completions has no namespace
 // field, so the bridge receives the app-owned notebook schemas and aliases them for the upstream.
@@ -490,6 +511,9 @@ export type SettingsServiceOptions = {
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
   codexAuth?: CodexAuthControllerPort
+  // Resolves the user's current native/PAC proxy for Codex subscription traffic. Injectable so
+  // tests do not depend on the host machine's Electron session configuration.
+  resolveCodexProxyEnvironment?: () => Promise<SystemProxyEnvironment | undefined>
   // Encrypted-token controller for claude-isolated; default-constructed against this.storageRoot
   // when omitted. Storage is delegated to the host's SettingsRepository + encrypt/tryDecryptKey
   // pipeline, mirroring how CodexAuthController delegates to openCodexAuthSession.
@@ -523,6 +547,7 @@ class SettingsService {
   private readonly installManagedCodexImpl: (
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
+  private readonly resolveCodexProxyEnvironment: () => Promise<SystemProxyEnvironment | undefined>
   private readonly codexAuth: CodexAuthControllerPort
   private readonly claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort
   private readonly claudeSharedAuth: ClaudeSharedAuthControllerPort
@@ -582,6 +607,8 @@ class SettingsService {
     this.installManagedClaudeImpl = options.installManagedClaudeImpl ?? installManagedClaude
     this.installManagedOpencodeImpl = options.installManagedOpencodeImpl ?? installManagedOpencode
     this.installManagedCodexImpl = options.installManagedCodexImpl ?? installManagedCodex
+    this.resolveCodexProxyEnvironment =
+      options.resolveCodexProxyEnvironment ?? resolveSystemProxyEnvironment
     this.codexAuth =
       options.codexAuth ??
       new CodexAuthController({
@@ -594,7 +621,8 @@ class SettingsService {
             ),
             nativePath: settings.codex?.nativePath,
             mode,
-            storageRoot: this.storageRoot
+            storageRoot: this.storageRoot,
+            proxyEnv: await this.resolveCodexProxyEnvironment()
           })
         }
       })
@@ -2189,12 +2217,6 @@ class SettingsService {
   // Encrypts any new key, recomputes its mask, and inserts/updates the provider record.
   async upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot> {
     const settings = await this.repository.getSettings()
-    if (request.type === 'codex-shared') {
-      await importCodexAuthentication(
-        this.userCodexDir,
-        codexSubscriptionStorageDir(this.storageRoot)
-      )
-    }
     // Both Codex and Claude subscription providers use a fixed builtin id so the add path, the
     // token-save path, and every id-keyed lookup in this service converge on a single record.
     // Without this, a random id from `createProviderId()` would shadow the token-holding record
@@ -2210,6 +2232,42 @@ class SettingsService {
     const existing = requestedId
       ? settings.providers.find((provider) => provider.id === requestedId)
       : undefined
+
+    // An imported subscription becomes app-owned after the initial copy. Ordinary edits must not
+    // depend on the external CLI profile still existing or re-read a route that changed afterward.
+    // Only a new import, an explicit isolated -> imported switch, or the card's explicit re-import
+    // action crosses that profile boundary.
+    const reimportCodexAuthentication =
+      request.type === 'codex-shared' && request.reimportCodexAuthentication === true
+    if (
+      request.type === 'codex-shared' &&
+      (existing?.codexAuthMode !== 'imported' || reimportCodexAuthentication)
+    ) {
+      // The isolated adapter owns auth.json until its session has closed. Waiting here prevents a
+      // late browser-login write from replacing the credentials copied immediately below.
+      await this.codexAuth.cancelLogin()
+      await importCodexAuthentication(
+        this.userCodexDir,
+        codexSubscriptionStorageDir(this.storageRoot)
+      )
+      // Re-import can replace auth.json and the loopback route without changing any persisted
+      // provider field. Advance the generation so a status check started against the previous copy
+      // cannot write its result onto the refreshed credentials.
+      if (reimportCodexAuthentication && requestedId) {
+        this.advanceProviderValidationGeneration(requestedId)
+      }
+    } else if (request.type === 'codex-isolated' && existing?.codexAuthMode !== 'isolated') {
+      if (existing) await this.codexAuth.cancelLogin()
+      const codexHome = codexSubscriptionStorageDir(this.storageRoot)
+      await clearImportedCodexProviderRoute(codexHome)
+      await clearAppOwnedCodexAuthentication(codexHome)
+    }
+    if (isCodexSubscriptionProvider(request.type)) {
+      await ensureCodexAuthHome(
+        request.type === 'codex-shared' ? 'shared' : 'isolated',
+        this.storageRoot
+      )
+    }
 
     const provider: StoredProvider = {
       id: subscriptionIdentity?.id ?? existing?.id ?? this.createProviderId(),
@@ -2242,7 +2300,10 @@ class SettingsService {
 
     if (isCodexSubscriptionProvider(request.type)) {
       provider.apiEndpoints = ['responses']
-      credentialsChanged = existing !== undefined && existing.type !== request.type
+      provider.codexAuthMode = request.type === 'codex-shared' ? 'imported' : 'isolated'
+      credentialsChanged =
+        existing !== undefined &&
+        (existing.codexAuthMode !== provider.codexAuthMode || reimportCodexAuthentication)
     } else if (request.type === 'claude-isolated') {
       // claude-isolated has no fields of its own: the type tells the renderer/env-builder what to do
       // with the encrypted token (stored separately on login). A model override is allowed. The
@@ -2379,6 +2440,13 @@ class SettingsService {
   }
 
   async deleteProvider(id: string): Promise<SettingsSnapshot> {
+    if (isCodexSubscriptionProviderId(id)) {
+      await this.codexAuth.cancelLogin()
+      const codexHome = codexSubscriptionStorageDir(this.storageRoot)
+      await clearImportedCodexProviderRoute(codexHome)
+      await clearAppOwnedCodexAuthentication(codexHome)
+    }
+
     if (isClaudeSubscriptionProviderId(id)) {
       this.claudeIsolatedAuth.cancelLogin()
       this.claudeSharedAuth.cancelLogin()
@@ -2390,7 +2458,7 @@ class SettingsService {
   }
 
   cancelCodexLogin(): void {
-    this.codexAuth.cancelLogin()
+    void this.codexAuth.cancelLogin()
   }
 
   cancelClaudeLogin(): void {
@@ -2409,10 +2477,12 @@ class SettingsService {
     )
     // The provider can be edited while the browser flow is open. Unless the stored record is still
     // the isolated subscription the login was started for, the outcome is stale and discarded —
-    // recording it could stamp a switched-to-shared (and unauthenticated) profile as verified. Flag
+    // recording it could overwrite a switched-to-imported profile's independent validation. Flag
     // it as not-applied so a caller gating navigation on success (onboarding) does not advance on a
     // result the stored provider never received.
-    if (provider?.type !== 'codex-isolated') return { ...result, applied: false }
+    if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated') {
+      return { ...result, applied: false }
+    }
 
     await this.repository.upsertProvider(
       result.ok
@@ -2437,33 +2507,42 @@ class SettingsService {
   }
 
   async logoutIsolatedCodex(): Promise<ValidateProviderResult> {
-    const status = await this.codexAuth.logoutIsolated()
-
-    // A sign-out is confirmed only when the adapter acknowledged it cleanly, which is the only path
-    // that sets no message. A timeout or capability failure leaves the status ambiguous — the
-    // credential may still be in the isolated home — so we preserve the verified markers and surface
-    // the failure rather than falsely reporting the account as signed out.
-    const succeeded = status.authenticated === false && status.message === undefined
-
     const settings = await this.repository.getSettings()
     const provider = settings.providers.find(
       (candidate) => candidate.id === codexSubscriptionProviderIdentity().id
     )
-    if (provider && succeeded) {
-      await this.repository.upsertProvider({
-        ...provider,
-        lastValidatedAt: undefined,
-        lastValidationFailure: undefined
-      })
-    }
-
-    if (!succeeded) {
+    if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated') {
       return {
         ok: false,
-        category: status.message?.toLowerCase().includes('timed out') ? 'timeout' : 'unknown',
-        message: status.message ?? 'Codex sign-out did not complete.'
+        category: 'unknown',
+        message: 'No isolated Open Science Codex login is configured.'
       }
     }
+
+    // Never call the adapter's account/logout here. A legacy isolated profile may still hold a
+    // token copied from the user's CLI profile, and remotely revoking it would sign the CLI out as
+    // well. Removing only the file under the app-owned CODEX_HOME disconnects Open Science while
+    // preserving every external Codex login.
+    await this.codexAuth.cancelLogin()
+    try {
+      // Legacy isolated homes could still point at the OS keychain. Pin the app-owned profile to the
+      // file store before removing auth.json so future status/runtime checks cannot re-authenticate
+      // through a credential shared with the user's global CLI profile.
+      await ensureCodexAuthHome('isolated', this.storageRoot)
+      await clearAppOwnedCodexAuthentication(codexSubscriptionStorageDir(this.storageRoot))
+    } catch {
+      return {
+        ok: false,
+        category: 'unknown',
+        message: 'The Open Science Codex login could not be removed.'
+      }
+    }
+
+    await this.repository.upsertProvider({
+      ...provider,
+      lastValidatedAt: undefined,
+      lastValidationFailure: undefined
+    })
 
     return { ok: true, category: 'ok' }
   }
@@ -2828,11 +2907,8 @@ class SettingsService {
       : undefined
 
     const validationGeneration = resolved.storedId
-      ? (this.providerValidationGenerations.get(resolved.storedId) ?? 0) + 1
+      ? this.advanceProviderValidationGeneration(resolved.storedId)
       : undefined
-    if (resolved.storedId && validationGeneration !== undefined) {
-      this.providerValidationGenerations.set(resolved.storedId, validationGeneration)
-    }
 
     // Test against the framework the agent will actually spawn with. An OpenAI-only gateway tested
     // while Claude Code is active would otherwise fail a raw /v1/messages probe and be reported as an
@@ -2855,7 +2931,9 @@ class SettingsService {
             // action (loginIsolatedCodex), so testing or saving a provider never pops a browser the
             // user didn't ask for.
             await this.codexAuth.getStatus(
-              resolved.provider.type === 'codex-shared' ? 'shared' : 'isolated'
+              resolveCodexSubscriptionType(resolved.provider) === 'codex-shared'
+                ? 'shared'
+                : 'isolated'
             ),
             'Not signed in. Use Sign in to connect your ChatGPT account.'
           )
@@ -2875,6 +2953,13 @@ class SettingsService {
                 // only through a proxy (e.g. api.openai.com) would fail the probe as a false `network` error
                 // even with a valid key. The local Responses-bridge loopback stays on the direct fetch.
                 fetchImpl: netFetchStandard,
+                // Codex reaches Chat Completions-only providers through the local Responses bridge.
+                // A plain ping cannot prove the streaming function-call contract that runtime needs.
+                requireBridgeToolCall: requiresChatCompletionsBridge(resolved.provider, framework),
+                requireNativeResponsesCompatibility: requiresNativeResponsesCompatibility(
+                  resolved.provider,
+                  framework
+                ),
                 // For a multi-route provider, probe the route this framework actually drives so a passing
                 // test proves that route (e.g. Claude Code hits /v1/messages, not /v1/chat/completions).
                 // Codex is excluded: it bridges the provider's OpenAI route under its `responses` protocol,
@@ -3541,6 +3626,12 @@ class SettingsService {
         ? await this.probeCodexNativeVersion(settings.codex?.nativePath)
         : undefined
     const provider = this.resolveProvider(activeProvider, effectiveModel)
+    if (framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)) {
+      // Runtime resolution can be reached without opening a Settings auth session first. Enforce
+      // file-backed credentials here as well so a direct prompt never falls through to the user's
+      // global Codex keyring.
+      await ensureCodexAuthHome('isolated', this.storageRoot)
+    }
     // `codex-shared` is accepted only as a legacy/provider-time import request. Every runtime
     // subscription record converges on the same app-owned backend and profile boundary.
     const backendProviderId =
@@ -3558,16 +3649,11 @@ class SettingsService {
     // their protocol, but use a narrow compatibility proxy because Codex emits namespace tools while
     // several compatible APIs accept only flat function names. Official OpenAI and subscriptions
     // already implement Codex's native wire contract and remain direct.
-    const needsChatResponsesBridge =
-      framework.id === 'codex' &&
-      (provider.apiEndpoints?.includes('openai') ?? false) &&
-      !(provider.apiEndpoints?.includes('responses') ?? false)
-    const needsNativeResponsesCompatibility =
-      framework.id === 'codex' &&
-      (provider.apiEndpoints?.includes('responses') ?? false) &&
-      !isCodexSubscriptionProvider(provider.type) &&
-      provider.vendorId !== 'openai' &&
-      !isOfficialOpenAiResponsesBase(provider.openaiBaseUrl ?? provider.baseUrl)
+    const needsChatResponsesBridge = requiresChatCompletionsBridge(provider, framework)
+    const needsNativeResponsesCompatibility = requiresNativeResponsesCompatibility(
+      provider,
+      framework
+    )
     // A bridge may still serve a live Codex runtime from an earlier framework generation. Do not stop
     // or retarget it merely because the newly selected framework/provider does not need one.
     const responsesBridge = needsChatResponsesBridge
@@ -3592,6 +3678,9 @@ class SettingsService {
         instructions: connectorInstructions
       })
       await writeAgentConfigFiles(modelConfig.configFiles)
+      const usesCodexSystemProxy =
+        framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)
+      const proxyEnv = usesCodexSystemProxy ? await this.resolveCodexProxyEnvironment() : undefined
 
       // Protocol-driven frameworks apply an explicit model through the ACP session configOption. A Codex
       // subscription with no explicit selection leaves this undefined so Codex uses the account default.
@@ -3602,11 +3691,15 @@ class SettingsService {
         executablePath,
         env: {
           ...(modelConfig.env ?? {}),
+          ...(proxyEnv ?? {}),
           ...(framework.id === 'codex' && settings.codex?.nativePath
             ? { CODEX_PATH: settings.codex.nativePath }
             : {})
         },
         args: modelConfig.args,
+        ...(usesCodexSystemProxy
+          ? { proxyEnvironmentMode: proxyEnv === undefined ? 'inherit' : 'replace' }
+          : {}),
         sessionModel,
         ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type) && sessionModel
           ? { sessionModelRequired: true }
@@ -3807,6 +3900,7 @@ class SettingsService {
     return {
       id: provider.id,
       type: provider.type,
+      codexAuthMode: provider.codexAuthMode,
       name: provider.name,
       apiEndpoints: this.resolveProviderApiEndpoints(provider),
       baseUrl: provider.baseUrl,
@@ -3979,6 +4073,7 @@ class SettingsService {
 
     return {
       type: provider.type,
+      ...(provider.codexAuthMode === undefined ? {} : { codexAuthMode: provider.codexAuthMode }),
       baseUrl: provider.baseUrl,
       model,
       ...(contextWindow === undefined ? {} : { contextWindow }),
@@ -4098,12 +4193,19 @@ class SettingsService {
   private sameValidationTarget(left: ResolvedProvider, right: ResolvedProvider): boolean {
     return (
       left.type === right.type &&
+      left.codexAuthMode === right.codexAuthMode &&
       left.baseUrl === right.baseUrl &&
       left.openaiBaseUrl === right.openaiBaseUrl &&
       left.model === right.model &&
       left.key === right.key &&
       (left.apiEndpoints ?? []).join(',') === (right.apiEndpoints ?? []).join(',')
     )
+  }
+
+  private advanceProviderValidationGeneration(providerId: string): number {
+    const generation = (this.providerValidationGenerations.get(providerId) ?? 0) + 1
+    this.providerValidationGenerations.set(providerId, generation)
+    return generation
   }
 
   private async runClaudeSubscriptionProbe(

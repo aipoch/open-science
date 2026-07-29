@@ -23,7 +23,7 @@ import type {
 } from '../../shared/remote-fs'
 import { encodeRemoteFsError } from '../../shared/remote-fs'
 import { getProjectDbClient } from '../projects/prisma-client'
-import { resolveStorageRoot } from '../storage-root'
+import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import { SettingsRepository } from '../settings/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { ComputeApprovalBroker } from './compute-approval-broker'
@@ -378,12 +378,13 @@ const registerComputeIpcHandlers = (
   enabledComputeHostsRegistry: EnabledComputeHostsRegistry
 } => {
   const storageRoot = resolveStorageRoot()
+  const dataRoot = resolveDataRoot()
 
   // Share the settings repository with the broker so project grants are persisted (issue 05).
   const settingsRepo = new SettingsRepository(storageRoot)
 
   // Broadcast dispatcher status transitions to the renderer, same hook shape as the JobPoller uses.
-  const onJobUpdated = createJobUpdatedBroadcaster(repository, storageRoot)
+  const onJobUpdated = createJobUpdatedBroadcaster(repository, dataRoot)
 
   const handlers = createComputeHandlers(
     repository,
@@ -394,7 +395,7 @@ const registerComputeIpcHandlers = (
     jobRepository,
     onJobUpdated,
     artifactResolver,
-    storageRoot
+    dataRoot
   )
 
   ipcMain.handle('compute:list', () => handlers.list())

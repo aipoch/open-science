@@ -1,10 +1,12 @@
-export type ManagedPreviewSource = 'artifact' | 'upload'
+export type ManagedPreviewSource = 'artifact' | 'upload' | 'notebook-input'
 
 export const MANAGED_PREVIEW_LOAD_ERROR = 'open-science-preview-load-error'
 
 export type AcquireManagedPreviewRequest = {
   source: ManagedPreviewSource
   path: string
+  projectId?: string
+  sessionId?: string
   mimeType?: string
 }
 

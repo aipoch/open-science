@@ -17,12 +17,14 @@ import {
 } from '@/stores/session-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 
+import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 
 // Capture the props passed to the heavy child components so the test can drive selection and drafts.
 let conversationProps: {
   draftDoc: ComposerDoc
   attachments: UploadedAttachment[]
+  attachmentTransfers: ComposerUploadTransfer[]
   onDraftDocChange: (doc: ComposerDoc) => void
   onSendMessage: (forcedSkillIds: string[]) => void
   onStageAttachmentFiles: (files: File[]) => void
@@ -121,7 +123,9 @@ const createAttachment = (id: string): UploadedAttachment => ({
 const textDoc = (text: string): ComposerDoc => ({ nodes: [{ type: 'text', text }] })
 
 const deleteUpload = vi.fn(() => Promise.resolve())
-const stageFiles = vi.fn()
+const stageLocalFile = vi.fn()
+const claimLocalFile = vi.fn(() => Promise.resolve())
+const abortTransfer = vi.fn(() => Promise.resolve())
 
 describe('WorkspacePage draft preservation', () => {
   let container: HTMLDivElement
@@ -169,7 +173,14 @@ describe('WorkspacePage draft preservation', () => {
       },
       uploads: {
         deleteUpload,
-        stageFiles
+        stageLocalFile,
+        claimLocalFile,
+        beginTransfer: vi.fn(),
+        appendTransfer: vi.fn(),
+        getTransferStatus: vi.fn(),
+        finishTransfer: vi.fn(),
+        abortTransfer,
+        onTransferProgress: vi.fn(() => vi.fn())
       },
       reviewer: {
         onUpdated: vi.fn(() => vi.fn()),
@@ -202,7 +213,7 @@ describe('WorkspacePage draft preservation', () => {
 
   // Drives the composer's real staging pipeline so a per-session attachment lands in page state.
   const stageAttachment = async (attachment: UploadedAttachment): Promise<void> => {
-    stageFiles.mockResolvedValueOnce([attachment])
+    stageLocalFile.mockResolvedValueOnce(attachment)
     await act(async () => {
       conversationProps.onStageAttachmentFiles([
         new File(['data'], `${attachment.id}.txt`, { type: 'text/plain' })
@@ -292,6 +303,7 @@ describe('WorkspacePage draft preservation', () => {
     const attachmentA = createAttachment('att-a')
     await stageAttachment(attachmentA)
     expect(conversationProps.attachments).toEqual([attachmentA])
+    expect(claimLocalFile).toHaveBeenCalledWith({ transferId: expect.any(String) })
 
     // Switching away must not delete the staged file and must clear the composer for B.
     await openSession('sess-b')
@@ -358,6 +370,193 @@ describe('WorkspacePage draft preservation', () => {
     expect(deleteUpload).toHaveBeenCalledWith({ path: attachmentB.path })
     expect(runtime.deleteRuntimeSession).toHaveBeenCalledWith('sess-b')
     expect(conversationProps.draftDoc).toEqual(emptyDoc)
+  })
+
+  it('cancels in-flight and queued transfers before deleting their session draft', async () => {
+    await renderPage()
+
+    let rejectFirstUpload: ((reason?: unknown) => void) | undefined
+    stageLocalFile.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFirstUpload = reject
+        })
+    )
+    await act(async () => {
+      conversationProps.onStageAttachmentFiles([
+        new File(['first'], 'first.txt', { type: 'text/plain' }),
+        new File(['second'], 'second.txt', { type: 'text/plain' })
+      ])
+      await Promise.resolve()
+    })
+
+    const transferIds = conversationProps.attachmentTransfers.map(({ transferId }) => transferId)
+    expect(transferIds).toHaveLength(2)
+    expect(stageLocalFile).toHaveBeenCalledTimes(1)
+
+    const sessionA = useSessionStore.getState().sessions.find((session) => session.id === 'sess-a')!
+    await act(async () => {
+      sidebarProps.onDeleteSession(sessionA)
+    })
+    await act(async () => {
+      deleteDialogProps.onConfirmDelete()
+      await Promise.resolve()
+    })
+
+    for (const transferId of transferIds) {
+      expect(abortTransfer).toHaveBeenCalledWith({ transferId })
+    }
+
+    await act(async () => {
+      rejectFirstUpload?.(new Error('Upload cancelled'))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(stageLocalFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('deletes an attachment that finishes while active-session deletion is pending', async () => {
+    await renderPage()
+
+    // Returning to A leaves an inactive-draft snapshot in composerDraftsRef; active live state must
+    // win over that older snapshot when deletion eventually succeeds.
+    await openSession('sess-b')
+    await openSession('sess-a')
+
+    const attachment = createAttachment('att-finished-during-delete')
+    let finishUpload: ((value: UploadedAttachment) => void) | undefined
+    stageLocalFile.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishUpload = resolve
+        })
+    )
+    let finishDeletion: (() => void) | undefined
+    runtime.deleteRuntimeSession.mockImplementationOnce(
+      (id: string) =>
+        new Promise((resolve) => {
+          finishDeletion = () => {
+            useSessionStore.getState().deleteSession(id)
+            resolve(true)
+          }
+        })
+    )
+
+    await act(async () => {
+      conversationProps.onStageAttachmentFiles([
+        new File(['data'], 'late.txt', { type: 'text/plain' })
+      ])
+      await Promise.resolve()
+    })
+
+    const sessionA = useSessionStore.getState().sessions.find((session) => session.id === 'sess-a')!
+    await act(async () => {
+      sidebarProps.onDeleteSession(sessionA)
+    })
+    await act(async () => {
+      deleteDialogProps.onConfirmDelete()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      finishUpload?.(attachment)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(conversationProps.attachments).toEqual([attachment])
+
+    await act(async () => {
+      finishDeletion?.()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(deleteUpload).toHaveBeenCalledWith({ path: attachment.path })
+  })
+
+  it('deletes a staged attachment when deletion settles before the upload continuation', async () => {
+    await renderPage()
+
+    const attachment = createAttachment('att-resolved-before-continuation')
+    let finishUpload: ((value: UploadedAttachment) => void) | undefined
+    stageLocalFile.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishUpload = resolve
+        })
+    )
+    let finishDeletion: (() => void) | undefined
+    runtime.deleteRuntimeSession.mockImplementationOnce(
+      (id: string) =>
+        new Promise((resolve) => {
+          finishDeletion = () => {
+            useSessionStore.getState().deleteSession(id)
+            resolve(true)
+          }
+        })
+    )
+
+    await act(async () => {
+      conversationProps.onStageAttachmentFiles([
+        new File(['data'], 'late-continuation.txt', { type: 'text/plain' })
+      ])
+      await Promise.resolve()
+    })
+    const sessionA = useSessionStore.getState().sessions.find((session) => session.id === 'sess-a')!
+    await act(async () => {
+      sidebarProps.onDeleteSession(sessionA)
+    })
+    await act(async () => {
+      deleteDialogProps.onConfirmDelete()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      // Resolving in this order queues the upload's inner continuation, then deletion. Deletion
+      // aborts the controller before WorkspacePage receives the staged attachment.
+      finishUpload?.(attachment)
+      finishDeletion?.()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(deleteUpload).toHaveBeenCalledWith({ path: attachment.path })
+  })
+
+  it('ignores a duplicate deletion request while the same session deletion is pending', async () => {
+    await renderPage()
+
+    const finishDeletions: Array<(deleted: boolean) => void> = []
+    runtime.deleteRuntimeSession.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishDeletions.push(resolve)
+        })
+    )
+    const sessionA = useSessionStore.getState().sessions.find((session) => session.id === 'sess-a')!
+
+    await act(async () => {
+      sidebarProps.onDeleteSession(sessionA)
+    })
+    await act(async () => {
+      deleteDialogProps.onConfirmDelete()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      sidebarProps.onDeleteSession(sessionA)
+    })
+    await act(async () => {
+      deleteDialogProps.onConfirmDelete()
+      await Promise.resolve()
+    })
+
+    expect(runtime.deleteRuntimeSession).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      finishDeletions[0]?.(false)
+      await Promise.resolve()
+    })
   })
 
   it('keeps a stored draft and its staged files when session deletion fails', async () => {

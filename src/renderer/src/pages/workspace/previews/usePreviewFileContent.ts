@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import type { ArtifactPreviewResult } from '../../../../../shared/artifacts'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
-import { getPreviewFileReader } from './preview-file-reader'
+import { createPreviewRequestScope, getPreviewFileReader } from './preview-file-reader'
 import { isUnavailableFileError } from './preview-errors'
 
 export const PREVIEW_TEXT_MAX_BYTES = 1024 * 1024
@@ -27,6 +27,8 @@ type PreviewFileContentInternalState =
   | { requestKey: string; status: 'ready'; preview: ArtifactPreviewResult }
 
 type UsePreviewFileContentRequest = {
+  projectId?: string
+  sessionId?: string
   path: string
   source?: PreviewFileSource
   maxBytes?: number
@@ -35,12 +37,21 @@ type UsePreviewFileContentRequest = {
 
 // Centralizes artifact/upload preview reads so each renderer only handles parsing and display.
 export const usePreviewFileContent = ({
+  projectId,
+  sessionId,
   path,
   source = 'artifact',
   maxBytes = PREVIEW_TEXT_MAX_BYTES,
   encoding = 'utf8'
 }: UsePreviewFileContentRequest): PreviewFileContentLoadState => {
-  const fileKey = `${source}:${encoding}:${maxBytes}:${path}`
+  const fileKey = JSON.stringify([
+    projectId ?? null,
+    sessionId ?? null,
+    source,
+    encoding,
+    maxBytes,
+    path
+  ])
   // Keep byte offsets, not prior page contents, so only the active page remains in memory.
   const [pageState, setPageState] = useState<{ fileKey: string; offsets: number[]; index: number }>(
     {
@@ -62,7 +73,13 @@ export const usePreviewFileContent = ({
     let canceled = false
     const readPreview = getPreviewFileReader(source)
 
-    void readPreview({ path, maxBytes, encoding, offset })
+    void readPreview({
+      ...createPreviewRequestScope({ projectId, sessionId, source, path }),
+      path,
+      maxBytes,
+      encoding,
+      offset
+    })
       .then((preview) => {
         if (!canceled) setState({ status: 'ready', preview, requestKey })
       })
@@ -76,7 +93,7 @@ export const usePreviewFileContent = ({
     return () => {
       canceled = true
     }
-  }, [encoding, maxBytes, offset, path, requestKey, source])
+  }, [encoding, maxBytes, offset, path, projectId, requestKey, sessionId, source])
 
   if (state.requestKey !== requestKey) return { status: 'loading' }
 

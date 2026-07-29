@@ -20,8 +20,10 @@ const firstItem: PreviewFileItem = {
 const secondItem: PreviewFileItem = {
   ...firstItem,
   id: 'upload:second.pdf',
+  projectId: 'project-1',
+  sessionId: 'active-session',
   source: 'upload',
-  path: '/managed/second.pdf',
+  path: 'upload-version:project-1/source-session/upload-version-2',
   name: 'second.pdf',
   title: 'second.pdf'
 }
@@ -81,7 +83,8 @@ describe('useManagedPreviewResource', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/managed/first.pdf'
+      path: '/managed/first.pdf',
+      sessionId: 'session-1'
     })
     expect(container.textContent).toBe('resource-1')
 
@@ -90,7 +93,9 @@ describe('useManagedPreviewResource', () => {
     expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })
     expect(window.api.previewResources.acquire).toHaveBeenLastCalledWith({
       source: 'upload',
-      path: '/managed/second.pdf'
+      path: 'upload-version:project-1/source-session/upload-version-2',
+      projectId: 'project-1',
+      sessionId: 'source-session'
     })
     expect(container.textContent).toBe('resource-2')
 

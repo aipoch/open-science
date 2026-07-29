@@ -464,7 +464,8 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).toContain('/forecast')
     expect(html).toContain('bg-mention-chip')
     expect(html).toContain('text-mention-chip-foreground')
-    expect(html).toContain('@clinical trial03.pdf')
+    expect(html).toContain('aria-label="Preview clinical trial03.pdf"')
+    expect(html).toContain('file-name-extension')
   })
 
   it('renders plain content for user messages without structured parts', async () => {

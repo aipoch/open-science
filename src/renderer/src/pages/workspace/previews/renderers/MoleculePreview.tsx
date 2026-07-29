@@ -125,7 +125,7 @@ const MoleculePreviewCanvas = ({
 }
 
 export const MoleculePreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
-  const state = usePreviewFileContent({ path: item.path, source: item.source })
+  const state = usePreviewFileContent(item)
 
   if (state.status === 'loading') return <PreviewLoadingContent />
 

@@ -16,8 +16,10 @@ import { ClaudeIsolatedSignInModal } from '../settings/ClaudeIsolatedSignInModal
 import { ProviderForm } from '../settings/ProviderForm'
 import {
   createEmptyProviderFormValue,
+  defaultCustomApiEndpoint,
   getProviderFormErrors,
   hasProviderFormErrors,
+  providerFormApiEndpoints,
   providerKindPatch,
   type ProviderFormValue
 } from '../settings/provider-form-value'
@@ -35,7 +37,7 @@ const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
   vendorId: value.vendorId,
   region: value.region,
   // Persist the chosen API format so an OpenAI-compatible provider is validated + driven correctly.
-  apiEndpoints: [value.apiEndpoint],
+  apiEndpoints: providerFormApiEndpoints(value),
   supportsImageInput: value.supportsImageInput,
   reasoningEffortPreset: value.type === 'custom' ? value.reasoningEffortPreset : undefined,
   reasoningEffortTransport: value.type === 'custom' ? value.reasoningEffortTransport : undefined,
@@ -83,6 +85,7 @@ const ProviderStep = ({
   const [showProviderErrors, setShowProviderErrors] = useState(false)
   const [validationMessage, setValidationMessage] = useState<string | undefined>(undefined)
   const [validationOk, setValidationOk] = useState(false)
+  const customApiEndpoint = defaultCustomApiEndpoint(frameworkEndpoints)
   // Mirrors the Settings teardown: a pending isolated sign-in lives in the main process for up to
   // five minutes, and its guard rejects a second attempt as "already in progress". If the wizard
   // unmounts mid-flow (app quit, relaunch, forced navigation), cancel it so the next attempt starts
@@ -99,17 +102,30 @@ const ProviderStep = ({
     [cancelCodexLogin, cancelIsolatedClaudeLogin, cancelSharedClaudeLogin]
   )
 
-  // Codex starts with its subscription provider, but an existing draft always wins when navigating
-  // back to this step.
+  // Seed an untouched draft from the active framework. Codex starts with its subscription provider;
+  // custom-provider flows use the framework's preferred API format. An existing draft always wins
+  // when navigating back to this step.
   useEffect(() => {
-    if (agentFrameworkId !== 'codex') return
+    setFormValue((current) => {
+      if (
+        current.providerFormTouched ||
+        current.name ||
+        current.baseUrl ||
+        current.model ||
+        current.key
+      ) {
+        return current
+      }
 
-    setFormValue((current) =>
-      current.name || current.baseUrl || current.model || current.key
-        ? current
-        : createEmptyProviderFormValue(providerKindPatch('codex-subscription'))
-    )
-  }, [agentFrameworkId, setFormValue])
+      if (agentFrameworkId === 'codex') {
+        return createEmptyProviderFormValue(providerKindPatch('codex-subscription'))
+      }
+
+      if (current.type !== 'custom' || current.apiEndpoint === customApiEndpoint) return current
+
+      return { ...current, apiEndpoint: customApiEndpoint }
+    })
+  }, [agentFrameworkId, customApiEndpoint, setFormValue])
 
   // Onboarding always creates a provider, so required fields must be filled before it can continue.
   const formErrors = getProviderFormErrors(formValue)
@@ -160,7 +176,7 @@ const ProviderStep = ({
     // finish with a pair the agent can't actually spawn.
     if (
       !isProviderUsableByFramework(
-        { apiEndpoints: [formValue.apiEndpoint], type: formValue.type },
+        { apiEndpoints: providerFormApiEndpoints(formValue), type: formValue.type },
         { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
       )
     ) {
@@ -325,12 +341,15 @@ const ProviderStep = ({
           ) : null}
           <ProviderForm
             value={formValue}
-            onChange={(patch) => setFormValue((current) => ({ ...current, ...patch }))}
+            onChange={(patch) =>
+              setFormValue((current) => ({ ...current, ...patch, providerFormTouched: true }))
+            }
             errors={showProviderErrors ? formErrors : undefined}
             disabled={isSaving}
             encryptionAvailable={encryptionAvailable}
             showCodexSubscriptions={agentFrameworkId === 'codex'}
             showClaudeIsolated={agentFrameworkId === 'claude-code'}
+            defaultCustomApiEndpoint={customApiEndpoint}
           />
           {formValue.type === 'claude-isolated' ? (
             <p className="mt-4 text-sm text-muted-foreground">

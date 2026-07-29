@@ -11,7 +11,7 @@ import {
 } from '@/stores/preview-workbench-store'
 import { useReviewStore } from '@/stores/review-store'
 import { useSettingsStore } from '@/stores/settings-store'
-import type { ChatSession } from '@/stores/session-store'
+import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { shouldShowAgentLoadingMessage } from './agent-loading-message'
@@ -20,6 +20,7 @@ import {
   createPreviewFileItemFromMention,
   createPreviewFileItemFromUpload
 } from './preview-file-item'
+import { createPreviewRequestScope } from './previews/preview-file-reader'
 import type { JobSummary } from '../../../../shared/compute'
 import { CompletedJobCard } from '@/components/CompletedJobCard'
 import { JobDetailModal } from '@/components/JobDetailModal'
@@ -39,8 +40,7 @@ import type { ComposerDoc } from './composer/composer-doc'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
-  // Gates inline editing of sent user prompts; the handler truncates at the edited message and
-  // resends the adjusted doc as a fresh turn.
+  // Gates inline editing of sent user prompts; the handler forks at the edited message and resends.
   canEditMessage: boolean
   onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
 }
@@ -76,19 +76,27 @@ const getMessageArtifacts = (
 }
 
 // Sends an app-managed generated file to the preview workbench instead of opening it locally.
-const previewArtifact = (artifact: MessageArtifact, sessionId: string): void => {
-  const previewItem = createPreviewFileItemFromArtifact(artifact, sessionId)
+const previewArtifact = (
+  artifact: MessageArtifact,
+  sessionId: string,
+  projectId?: string
+): void => {
+  const previewItem = createPreviewFileItemFromArtifact(artifact, sessionId, projectId)
 
   // Generated files keep their artifact id so repeated clicks refresh the existing preview tab.
   if (previewItem) usePreviewWorkbenchStore.getState().upsertAndActivateItem(previewItem)
 }
 
 // Sends an app-managed uploaded file to the preview workbench.
-const previewUploadAttachment = (attachment: MessageUploadAttachment, sessionId: string): void => {
+const previewUploadAttachment = (
+  attachment: MessageUploadAttachment,
+  sessionId: string,
+  projectId?: string
+): void => {
   // Upload ids are namespaced away from artifact ids while preserving one tab per uploaded file.
   usePreviewWorkbenchStore
     .getState()
-    .upsertAndActivateItem(createPreviewFileItemFromUpload(attachment, sessionId))
+    .upsertAndActivateItem(createPreviewFileItemFromUpload(attachment, sessionId, projectId))
 }
 
 // Opens the Session reviewer panel in the preview workbench, positioned at the finding's locator.
@@ -110,6 +118,13 @@ const WorkspaceMessageScroller = ({
   onSendEditedMessage
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const currentSessionId = activeSession?.id
+  const currentProjectId = activeSession?.projectId
+  // The whole-window find bar is an Electron overlay owned by main; the Workspace only needs to tell
+  // main it is mounted and searchable so Cmd/Ctrl+F is intercepted (and re-arm UNREADY on unmount).
+  useEffect(() => {
+    const stop = window.api?.window?.announceWindowFindReady?.()
+    return () => stop?.()
+  }, [])
   const getReviewForTurn = useReviewStore((state) => state.getReviewForTurn)
   const loadReviewsForSession = useReviewStore((state) => state.loadReviewsForSession)
 
@@ -141,9 +156,9 @@ const WorkspaceMessageScroller = ({
   // Load persisted reviews whenever the active session changes.
   useEffect(() => {
     if (currentSessionId) {
-      void loadReviewsForSession(currentSessionId)
+      void loadReviewsForSession(currentSessionId, currentProjectId)
     }
-  }, [currentSessionId, loadReviewsForSession])
+  }, [currentProjectId, currentSessionId, loadReviewsForSession])
 
   // Reload (which recomputes staleness against current artifact bytes) when the window regains focus.
   // An artifact edited outside the app while this session stays open would otherwise keep showing its
@@ -153,11 +168,11 @@ const WorkspaceMessageScroller = ({
     if (!currentSessionId) return
 
     const onFocus = (): void => {
-      void loadReviewsForSession(currentSessionId)
+      void loadReviewsForSession(currentSessionId, currentProjectId)
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
-  }, [currentSessionId, loadReviewsForSession])
+  }, [currentProjectId, currentSessionId, loadReviewsForSession])
 
   // Group expansion is keyed by session so switching conversations never reuses stale UI state.
   const [collapsedActivityGroupState, setCollapsedActivityGroupState] =
@@ -292,23 +307,39 @@ const WorkspaceMessageScroller = ({
 
   // Routes a generated-file click to the preview workbench, scoped to the active session.
   const onPreviewArtifact = (artifact: MessageArtifact): void => {
-    if (currentSessionId) previewArtifact(artifact, currentSessionId)
+    if (currentSessionId) previewArtifact(artifact, currentSessionId, currentProjectId)
   }
 
   // Routes a sent-message upload click to the preview workbench for the active session.
   const onPreviewUploadAttachment = (attachment: MessageUploadAttachment): void => {
-    if (currentSessionId) previewUploadAttachment(attachment, currentSessionId)
+    if (currentSessionId) {
+      previewUploadAttachment(attachment, currentSessionId, activeSession?.projectId)
+    }
   }
 
   // Opens an artifact mention in the preview panel, probing existence first so a stale link warns.
   const onPreviewMentionArtifact = async (part: ArtifactMentionPart): Promise<void> => {
     if (!currentSessionId) return
+    if (part.source === 'linked-folder') {
+      showMentionNotice('Linked-folder files are not available until the folder is connected.')
+      return
+    }
 
     const read =
       part.source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
 
     try {
-      await read({ path: part.path, maxBytes: 1, encoding: 'utf8' })
+      await read({
+        ...createPreviewRequestScope({
+          projectId: currentProjectId,
+          sessionId: currentSessionId,
+          source: part.source,
+          path: part.path
+        }),
+        path: part.path,
+        maxBytes: 1,
+        encoding: 'utf8'
+      })
     } catch {
       showMentionNotice(`"${part.name}" is no longer available.`)
       return
@@ -316,7 +347,9 @@ const WorkspaceMessageScroller = ({
 
     usePreviewWorkbenchStore
       .getState()
-      .upsertAndActivateItem(createPreviewFileItemFromMention(part, currentSessionId))
+      .upsertAndActivateItem(
+        createPreviewFileItemFromMention(part, currentSessionId, currentProjectId)
+      )
   }
 
   // Opens Settings on a skill mention's detail, warning instead when the skill no longer exists.
@@ -424,11 +457,43 @@ const WorkspaceMessageScroller = ({
                     // Look up any review for this agent message (its id is the turnMessageId).
                     const review =
                       currentSessionId && item.message.role === 'agent'
-                        ? getReviewForTurn(currentSessionId, item.message.id)
+                        ? getReviewForTurn(currentSessionId, item.message.id, currentProjectId)
                         : undefined
 
                     // Jobs pre-assigned to this slot: each job appears in exactly one slot.
                     const jobsBeforeMessage = jobSlotsByItemIndex.get(itemIndex) ?? []
+                    const graph = activeSession?.conversationGraph
+                    const messageNode = graph?.messages.find(
+                      (message) => message.id === item.message.id
+                    )
+                    const revisionRootMessageId = messageNode?.revisionRootMessageId
+                    const revisions = revisionRootMessageId
+                      ? (graph?.messages
+                          .filter(
+                            (message) =>
+                              message.role === 'user' &&
+                              message.revisionRootMessageId === revisionRootMessageId
+                          )
+                          .sort(
+                            (left, right) =>
+                              left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+                          ) ?? [])
+                      : []
+                    const revisionIndex = revisions.findIndex(
+                      (message) => message.id === item.message.id
+                    )
+                    const activateRevision = (index: number): (() => void) | undefined => {
+                      const revision = revisions[index]
+                      return revision && activeSession
+                        ? () =>
+                            useSessionStore
+                              .getState()
+                              .activateMessageBranch(
+                                activeSession.id,
+                                revision.introducedOnBranchId
+                              )
+                        : undefined
+                    }
 
                     return (
                       <div key={item.id}>
@@ -455,6 +520,16 @@ const WorkspaceMessageScroller = ({
                           canEditMessage={canEditMessage}
                           onSendEditedMessage={onSendEditedMessage}
                           subsequentTurns={subsequentTurnCountByMessageId.get(item.message.id) ?? 0}
+                          revisionNavigation={
+                            revisionIndex >= 0 && revisions.length > 1
+                              ? {
+                                  index: revisionIndex,
+                                  total: revisions.length,
+                                  onPrevious: activateRevision(revisionIndex - 1),
+                                  onNext: activateRevision(revisionIndex + 1)
+                                }
+                              : undefined
+                          }
                           artifacts={artifacts}
                         />
                         {review ? (

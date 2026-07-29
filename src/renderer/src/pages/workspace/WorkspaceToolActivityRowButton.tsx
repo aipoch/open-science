@@ -9,7 +9,7 @@ import { getActivitySurfaceClassName } from './workspace-tool-activity-style'
 type WorkspaceToolActivityRowButtonProps = {
   activity: ToolActivity
   label: string
-  subtitle?: string
+  subtitle?: ReactNode
   metaLabel?: string
   isExpanded: boolean
   canExpand?: boolean

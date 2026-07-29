@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -15,6 +16,7 @@ import { load } from 'js-yaml'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 type WorkflowStep = {
+  'continue-on-error'?: boolean
   id?: string
   if?: string
   name?: string
@@ -43,7 +45,8 @@ type Workflow = {
   jobs: Record<string, WorkflowJob>
 }
 
-const mainText = readFileSync(join(process.cwd(), '.github/workflows/ai-review.yml'), 'utf8')
+const mainText = readFileSync(join(process.cwd(), '.github/workflows/ai-review-single.yml'), 'utf8')
+const retiredText = readFileSync(join(process.cwd(), '.github/workflows/ai-review.yml'), 'utf8')
 const codexText = readFileSync(join(process.cwd(), '.github/workflows/ai-codex-review.yml'), 'utf8')
 const publisherText = readFileSync(
   join(process.cwd(), '.github/workflows/ai-post-review.yml'),
@@ -51,6 +54,7 @@ const publisherText = readFileSync(
 )
 const reviewDocsText = readFileSync(join(process.cwd(), '.github/action/ai-review.md'), 'utf8')
 const mainWorkflow = load(mainText) as Workflow
+const retiredWorkflow = load(retiredText) as Record<string, unknown>
 const codexWorkflow = load(codexText) as Workflow
 const publisherWorkflow = load(publisherText) as Workflow
 const fixtureRoots: string[] = []
@@ -94,11 +98,13 @@ function simpleOutputs(path: string): Record<string, string> {
 type TargetOptions = {
   authMode?: 'api-key' | 'subscription'
   event?: 'pull_request_target' | 'workflow_dispatch'
-  dispatchReviewer?: string
-  automaticMode?: 'both' | 'correctness' | 'architecture' | 'disabled'
-  enabled?: 'true' | 'false'
+  enabled?: string
   isFork?: boolean
   forkMode?: 'disabled' | 'manual' | 'automatic'
+  reviewMode?: 'both' | 'correctness' | 'architecture' | 'disabled'
+  credentialPairs?: Array<'review' | 'correctness' | 'architecture' | 'shared'>
+  credentialKeys?: Array<'review' | 'correctness' | 'architecture' | 'shared'>
+  credentialBaseUrls?: Array<'review' | 'correctness' | 'architecture' | 'shared'>
 }
 
 function runTarget(options: TargetOptions = {}): {
@@ -106,7 +112,7 @@ function runTarget(options: TargetOptions = {}): {
   stderr: string
   outputs: Record<string, string>
 } {
-  const root = fixtureRoot('dual-codex-target-')
+  const root = fixtureRoot('single-codex-target-')
   const bin = join(root, 'bin')
   const output = join(root, 'github-output')
   mkdirSync(bin)
@@ -120,6 +126,9 @@ printf '%s' "$PR_JSON"
 `
   )
   const event = options.event ?? 'pull_request_target'
+  const credentialPairs = options.credentialPairs ?? ['shared']
+  const credentialKeys = options.credentialKeys ?? credentialPairs
+  const credentialBaseUrls = options.credentialBaseUrls ?? credentialPairs
   const result = spawnSync(
     'bash',
     ['-c', getRun(mainWorkflow, 'review_target', 'Resolve pull request metadata')],
@@ -143,10 +152,17 @@ printf '%s' "$PR_JSON"
         DISPATCH_PR_NUMBER: event === 'workflow_dispatch' ? '392' : '',
         EVENT_PR_NUMBER: event === 'pull_request_target' ? '392' : '',
         FORK_REVIEW_MODE: options.forkMode ?? 'manual',
-        CODEX_REVIEW_AUTH_MODE: options.authMode ?? 'api-key',
+        CODEX_REVIEW_AUTH_MODE: options.authMode ?? 'subscription',
+        CODEX_REVIEW_MODE: options.reviewMode ?? 'correctness',
         ENABLE_CODEX_REVIEW: options.enabled ?? 'true',
-        CODEX_REVIEW_MODE: options.automaticMode ?? 'correctness',
-        DISPATCH_REVIEWER: options.dispatchReviewer ?? 'both',
+        REVIEW_API_KEY_CONFIGURED: String(credentialKeys.includes('review')),
+        REVIEW_BASE_URL_CONFIGURED: String(credentialBaseUrls.includes('review')),
+        CORRECTNESS_API_KEY_CONFIGURED: String(credentialKeys.includes('correctness')),
+        CORRECTNESS_BASE_URL_CONFIGURED: String(credentialBaseUrls.includes('correctness')),
+        ARCHITECTURE_API_KEY_CONFIGURED: String(credentialKeys.includes('architecture')),
+        ARCHITECTURE_BASE_URL_CONFIGURED: String(credentialBaseUrls.includes('architecture')),
+        SHARED_API_KEY_CONFIGURED: String(credentialKeys.includes('shared')),
+        SHARED_BASE_URL_CONFIGURED: String(credentialBaseUrls.includes('shared')),
         REVIEW_EVENT: event,
         GITHUB_OUTPUT: output
       }
@@ -164,8 +180,12 @@ type AuthOptions = {
   authMode?: 'api-key' | 'subscription'
   baseUrl?: string
   event?: 'pull_request_target' | 'workflow_dispatch'
+  installAvailable?: boolean
   isFork?: boolean
   openAiApiKey?: string
+  sandboxAvailable?: boolean
+  sandboxProbeAvailable?: boolean
+  subscriptionAvailable?: boolean
 }
 
 function runAuth(options: AuthOptions = {}): {
@@ -177,11 +197,61 @@ function runAuth(options: AuthOptions = {}): {
   status: number | null
   stderr: string
 } {
-  const root = fixtureRoot('dual-codex-auth-')
+  const root = fixtureRoot('single-codex-auth-')
+  const bin = join(root, 'bin')
   const codexHome = join(root, 'codex-home')
   const authFile = join(codexHome, 'auth.json')
   const configFile = join(codexHome, 'config.toml')
   const output = join(root, 'github-output')
+  mkdirSync(bin)
+  executable(
+    join(bin, 'codex'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "\${OPENAI_API_KEY:-}" || -n "\${CODEX_BASE_URL:-}" ]]; then
+  echo 'fallback API credentials leaked into subscription preflight' >&2
+  exit 3
+fi
+if [[ -z "\${CODEX_HOME:-}" || ! -s "$CODEX_HOME/auth.json" ]]; then
+  echo 'staged subscription credential is unavailable' >&2
+  exit 2
+fi
+if [[ "\${1:-}" == 'sandbox' ]]; then
+  if [[ "$SANDBOX_PROBE_AVAILABLE" != 'true' ]]; then
+    exit 4
+  fi
+  if [[ " $* " == *'/auth.json'* ]]; then
+    exit 1
+  fi
+  exit 0
+fi
+if [[ "$SUBSCRIPTION_AVAILABLE" != 'true' ]]; then
+  echo 'subscription authentication rejected' >&2
+  exit 1
+fi
+printf '%s\n' '{"type":"turn.completed"}'
+`
+  )
+  executable(
+    join(bin, 'sudo'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == 'chown' ]]; then
+  exit 0
+fi
+if [[ "$1" == '-u' && "$2" == 'nobody' && "$3" == '--' ]]; then
+  shift 3
+  if [[ "$1" == 'env' && "$2" == '-i' ]]; then
+    shift 2
+    exec env -i \
+      SANDBOX_PROBE_AVAILABLE="$SANDBOX_PROBE_AVAILABLE" \
+      SUBSCRIPTION_AVAILABLE="$SUBSCRIPTION_AVAILABLE" \
+      "$@"
+  fi
+fi
+exec "$@"
+`
+  )
   const result = spawnSync(
     'bash',
     ['-c', getRun(codexWorkflow, 'review', 'Prepare Codex authentication')],
@@ -190,16 +260,22 @@ function runAuth(options: AuthOptions = {}): {
       encoding: 'utf8',
       env: {
         ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
         CODEX_AUTH_JSON: options.authJson ?? '',
         CODEX_AUTH_MODE: options.authMode ?? 'api-key',
         CODEX_BASE_URL: options.baseUrl ?? 'https://api.openai.com',
+        CODEX_INSTALL_OUTCOME: options.installAvailable === false ? 'failure' : 'success',
+        CODEX_SANDBOX_OUTCOME: options.sandboxAvailable === false ? 'failure' : 'success',
+        CODEX_MODEL: 'gpt-5.6-sol',
         GITHUB_OUTPUT: output,
         GITHUB_REPOSITORY: 'aipoch/open-science',
         GITHUB_WORKSPACE: root,
         IS_FORK: String(options.isFork ?? false),
         OPENAI_API_KEY: options.openAiApiKey ?? 'sk-test',
         REVIEW_EVENT: options.event ?? 'workflow_dispatch',
-        RUNNER_TEMP: root
+        RUNNER_TEMP: root,
+        SANDBOX_PROBE_AVAILABLE: String(options.sandboxProbeAvailable ?? true),
+        SUBSCRIPTION_AVAILABLE: String(options.subscriptionAvailable ?? true)
       }
     }
   )
@@ -207,10 +283,7 @@ function runAuth(options: AuthOptions = {}): {
     authFile,
     codexHome,
     configFile,
-    mode:
-      result.status === 0 && options.authMode === 'subscription'
-        ? statSync(authFile).mode
-        : undefined,
+    mode: result.status === 0 && existsSync(authFile) ? statSync(authFile).mode : undefined,
     outputs: result.status === 0 ? simpleOutputs(output) : {},
     status: result.status,
     stderr: result.stderr
@@ -221,9 +294,9 @@ type ReviewComment = { body: string | null; user: { login: string } }
 
 function runGate(
   comments: ReviewComment[],
-  { correctness = 'true', architecture = 'true', max = '20' } = {}
+  { max = '20' } = {}
 ): { status: number | null; stderr: string; outputs: Record<string, string>; summary: string } {
-  const root = fixtureRoot('dual-codex-gate-')
+  const root = fixtureRoot('single-codex-gate-')
   const bin = join(root, 'bin')
   const output = join(root, 'github-output')
   const summary = join(root, 'summary')
@@ -248,8 +321,6 @@ printf '%s' "$COMMENTS_PAGES_JSON"
         COMMENTS_PAGES_JSON: JSON.stringify([comments]),
         GH_REPO: 'aipoch/open-science',
         PR_NUMBER: '392',
-        CORRECTNESS_ENABLED: correctness,
-        ARCHITECTURE_ENABLED: architecture,
         CODEX_REVIEW_MAX_ROUNDS: max,
         GITHUB_OUTPUT: output,
         GITHUB_STEP_SUMMARY: summary
@@ -264,13 +335,13 @@ printf '%s' "$COMMENTS_PAGES_JSON"
   }
 }
 
-function runReviewInputs(scope: 'correctness' | 'architecture'): {
+function runReviewInputs(): {
   prompt: string
   instructions: string
   schema: Record<string, unknown>
   outputs: Record<string, string>
 } {
-  const root = fixtureRoot(`dual-codex-${scope}-inputs-`)
+  const root = fixtureRoot('single-codex-review-inputs-')
   const output = join(root, 'github-output')
   const result = spawnSync(
     'bash',
@@ -284,7 +355,6 @@ function runReviewInputs(scope: 'correctness' | 'architecture'): {
         PR_BRANCH: 'ci/dual-codex-review',
         PR_DIFF_BASE: 'base-sha',
         PR_TITLE: 'ci(review): replace Claude with dual Codex reviews',
-        REVIEW_SCOPE: scope,
         REVIEW_SHA: 'review-sha',
         GITHUB_OUTPUT: output
       }
@@ -347,9 +417,9 @@ async function runPublisher({
   }
   const processStub = {
     env: {
-      REVIEW_BODY: '## Codex Architecture Review\n\n**Verdict: mergeable**',
-      REVIEW_HEADER: '## Codex Architecture Review',
-      REVIEW_MARKER: '<!-- ai-review:codex-architecture -->',
+      REVIEW_BODY: '## Codex Review\n\n**Verdict: mergeable**',
+      REVIEW_HEADER: '## Codex Review',
+      REVIEW_MARKER: '<!-- ai-review:codex -->',
       PR_NUMBER: '392',
       REVIEW_HEAD_SHA: 'head-sha',
       REVIEW_RUN_ID: '1234',
@@ -367,19 +437,28 @@ async function runPublisher({
   return { postedBodies, output }
 }
 
-describe('dual Codex workflow contract', () => {
-  it('parses all three workflows as YAML', () => {
+describe('single Codex workflow contract', () => {
+  it('parses all active and retired workflows as YAML', () => {
     expect(() => load(mainText)).not.toThrow()
+    expect(() => load(retiredText)).not.toThrow()
     expect(() => load(codexText)).not.toThrow()
     expect(() => load(publisherText)).not.toThrow()
+  })
+
+  it('keeps the retired dual-review workflow inert', () => {
+    expect(retiredText).toContain('name: AI PR Review (Disabled)')
+    expect(retiredWorkflow.on).toEqual({ workflow_call: null })
   })
 
   it('documents subscription setup and credential refresh limitations', () => {
     expect(reviewDocsText).toContain('gh secret set CODEX_AUTH_JSON')
     expect(reviewDocsText).toContain('gh variable set CODEX_REVIEW_AUTH_MODE --body subscription')
     expect(reviewDocsText).toContain('GitHub-hosted runners are ephemeral')
+    expect(reviewDocsText).toMatch(
+      /Subscription auth is the default for every allowed automatic or manually dispatched pull request\s+review\./
+    )
     expect(reviewDocsText).toContain(
-      'manually dispatched review of a\n> same-repository pull request'
+      'Invalid or missing subscription credentials fall back to API-key auth.'
     )
   })
 
@@ -388,53 +467,56 @@ describe('dual Codex workflow contract', () => {
     expect(all).not.toMatch(/Claude|CLAUDE|Anthropic|ANTHROPIC|CodeGraph|CODEGRAPH/)
   })
 
-  it('supports automatic and manual reviewer switching', () => {
-    expect(mainText).toContain("vars.CODEX_REVIEW_MODE || 'correctness'")
-    expect(mainText).toMatch(
-      /reviewer:\n(?:\s+.*\n)*?\s+default: both\n(?:\s+.*\n)*?\s+options:\n\s+- both\n\s+- correctness\n\s+- architecture/
-    )
+  it('uses one reviewer for automatic and manual runs', () => {
+    expect(mainText).not.toContain('DISPATCH_REVIEWER')
+    expect(runTarget().outputs.review_enabled).toBe('true')
+    expect(runTarget({ event: 'workflow_dispatch' }).outputs.review_enabled).toBe('true')
+    expect(runTarget({ enabled: 'false' }).outputs.review_enabled).toBe('false')
+  })
 
-    expect(runTarget().outputs).toMatchObject({
-      correctness_enabled: 'true',
-      architecture_enabled: 'false'
-    })
-    expect(runTarget({ automaticMode: 'both' }).outputs).toMatchObject({
-      correctness_enabled: 'true',
-      architecture_enabled: 'true'
-    })
-    expect(runTarget({ automaticMode: 'architecture' }).outputs).toMatchObject({
-      correctness_enabled: 'false',
-      architecture_enabled: 'true'
-    })
+  it('preserves the legacy manual-only review mode', () => {
+    expect(runTarget({ reviewMode: 'disabled' }).outputs.review_enabled).toBe('false')
+    expect(
+      runTarget({ event: 'workflow_dispatch', reviewMode: 'disabled' }).outputs.review_enabled
+    ).toBe('true')
+  })
+
+  it('selects API credentials as an atomic pair with deterministic legacy priority', () => {
+    expect(runTarget({ credentialPairs: ['shared'] }).outputs.credential_scope).toBe('shared')
+    expect(
+      runTarget({ credentialPairs: ['architecture', 'shared'] }).outputs.credential_scope
+    ).toBe('architecture')
+    expect(
+      runTarget({ credentialPairs: ['correctness', 'architecture'] }).outputs.credential_scope
+    ).toBe('correctness')
+    expect(runTarget({ credentialPairs: ['review', 'correctness'] }).outputs.credential_scope).toBe(
+      'review'
+    )
     expect(
       runTarget({
-        event: 'workflow_dispatch',
-        automaticMode: 'architecture',
-        dispatchReviewer: 'correctness'
-      }).outputs
-    ).toMatchObject({ correctness_enabled: 'true', architecture_enabled: 'false' })
-    expect(runTarget({ enabled: 'false' }).outputs).toMatchObject({
-      correctness_enabled: 'false',
-      architecture_enabled: 'false'
-    })
-    expect(runTarget({ event: 'workflow_dispatch' }).outputs).toMatchObject({
-      correctness_enabled: 'true',
-      architecture_enabled: 'true'
-    })
+        credentialKeys: ['review', 'correctness'],
+        credentialBaseUrls: ['correctness']
+      }).outputs.credential_scope
+    ).toBe('correctness')
+    expect(
+      runTarget({
+        credentialKeys: ['architecture', 'shared'],
+        credentialBaseUrls: ['review', 'shared']
+      }).outputs.credential_scope
+    ).toBe('shared')
   })
 
-  it('rejects removed manual reviewer aliases', () => {
-    const result = runTarget({ event: 'workflow_dispatch', dispatchReviewer: 'codex' })
+  it('rejects an invalid reviewer enable flag', () => {
+    const result = runTarget({ enabled: 'sometimes' })
     expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('Dispatch reviewer must be both, correctness, or architecture.')
+    expect(result.stderr).toContain('ENABLE_CODEX_REVIEW must be true or false.')
   })
 
-  it('keeps fork review policy independent from reviewer selection', () => {
+  it('keeps fork review policy independent from the reviewer toggle', () => {
     expect(runTarget({ isFork: true, forkMode: 'manual' }).outputs.review_allowed).toBe('false')
     expect(
       runTarget({
         event: 'workflow_dispatch',
-        dispatchReviewer: 'architecture',
         isFork: true,
         forkMode: 'manual'
       }).outputs.review_allowed
@@ -442,9 +524,12 @@ describe('dual Codex workflow contract', () => {
     expect(runTarget({ isFork: true, forkMode: 'automatic' }).outputs.review_allowed).toBe('true')
   })
 
-  it('uses subscription only for manual same-repository reviews and otherwise falls back to API auth', () => {
-    expect(runTarget({ authMode: 'subscription' }).outputs).toMatchObject({
-      auth_mode: 'api-key',
+  it('prefers subscription for automatic and manual reviews before API fallback', () => {
+    expect(mainText).toContain(
+      "CODEX_REVIEW_AUTH_MODE: ${{ vars.CODEX_REVIEW_AUTH_MODE || 'subscription' }}"
+    )
+    expect(runTarget().outputs).toMatchObject({
+      auth_mode: 'subscription',
       review_allowed: 'true'
     })
     expect(
@@ -453,6 +538,7 @@ describe('dual Codex workflow contract', () => {
         event: 'workflow_dispatch'
       }).outputs
     ).toMatchObject({ auth_mode: 'subscription', review_allowed: 'true' })
+    expect(runTarget({ authMode: 'api-key' }).outputs.auth_mode).toBe('api-key')
     const fork = runTarget({
       authMode: 'subscription',
       event: 'workflow_dispatch',
@@ -460,31 +546,10 @@ describe('dual Codex workflow contract', () => {
       forkMode: 'automatic'
     })
     expect(fork.status, fork.stderr).toBe(0)
-    expect(fork.outputs).toMatchObject({ auth_mode: 'api-key', review_allowed: 'true' })
+    expect(fork.outputs).toMatchObject({ auth_mode: 'subscription', review_allowed: 'true' })
   })
 
-  it('rejects an invalid automatic review mode', () => {
-    const root = fixtureRoot('dual-codex-invalid-mode-')
-    const result = spawnSync(
-      'bash',
-      ['-c', getRun(mainWorkflow, 'review_target', 'Resolve pull request metadata')],
-      {
-        cwd: root,
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          FORK_REVIEW_MODE: 'manual',
-          CODEX_REVIEW_AUTH_MODE: 'api-key',
-          CODEX_REVIEW_MODE: 'claude',
-          ENABLE_CODEX_REVIEW: 'true'
-        }
-      }
-    )
-    expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('CODEX_REVIEW_MODE must be')
-  })
-
-  it('counts correctness and architecture review rounds independently', () => {
+  it('counts one combined review round and ignores retired architecture comments', () => {
     const comments: ReviewComment[] = [
       ...Array.from({ length: 19 }, () => ({
         body: '<!-- ai-review:codex -->\n## Codex Correctness Review',
@@ -501,58 +566,53 @@ describe('dual Codex workflow contract', () => {
     ]
     const result = runGate(comments)
     expect(result.status, result.stderr).toBe(0)
-    expect(result.outputs).toMatchObject({
-      correctness_should_run: 'true',
-      architecture_should_run: 'false'
-    })
-    expect(result.summary).toContain('correctness review round 20 of 20')
-    expect(result.summary).toContain('architecture review skipped')
+    expect(result.outputs.should_run).toBe('true')
+    expect(result.summary).toContain('Codex review round 20 of 20')
+
+    const atLimit = runGate([
+      ...comments,
+      {
+        body: '<!-- ai-review:codex -->\n## Codex Review',
+        user: { login: 'github-actions[bot]' }
+      }
+    ])
+    expect(atLimit.status, atLimit.stderr).toBe(0)
+    expect(atLimit.outputs.should_run).toBe('false')
+    expect(atLimit.summary).toContain('Codex review skipped')
   })
 
-  it('skips an unselected reviewer without consuming its round', () => {
-    const result = runGate([], { correctness: 'false', architecture: 'true', max: '0' })
+  it('supports an unlimited combined review round count', () => {
+    const result = runGate([], { max: '0' })
     expect(result.status, result.stderr).toBe(0)
-    expect(result.outputs).toMatchObject({
-      correctness_should_run: 'false',
-      architecture_should_run: 'true'
-    })
-    expect(result.summary).not.toContain('correctness review round')
-    expect(result.summary).toContain('architecture review round 1 (unlimited)')
+    expect(result.outputs.should_run).toBe('true')
+    expect(result.summary).toContain('Codex review round 1 (unlimited)')
   })
 
-  it('invokes the reusable Codex workflow twice with independent backends', () => {
-    const correctness = mainWorkflow.jobs.codex_correctness_review
-    const architecture = mainWorkflow.jobs.codex_architecture_review
-    expect(correctness.uses).toBe('./.github/workflows/ai-codex-review.yml')
-    expect(architecture.uses).toBe('./.github/workflows/ai-codex-review.yml')
-    expect(correctness.name).toBe('Correctness')
-    expect(architecture.name).toBe('Architecture')
+  it('invokes the reusable Codex workflow once for a combined review', () => {
+    const reviewJobs = Object.values(mainWorkflow.jobs).filter(
+      ({ uses }) => uses === './.github/workflows/ai-codex-review.yml'
+    )
+    const review = mainWorkflow.jobs.codex_review
+    expect(reviewJobs).toHaveLength(1)
+    expect(review).toBe(reviewJobs[0])
+    expect(review.name).toBe('Review')
     expect(codexWorkflow.jobs.review.name).toBe('Run Codex')
-    expect(correctness.permissions).toEqual({ contents: 'read' })
-    expect(architecture.permissions).toEqual({ contents: 'read' })
-    expect(correctness.with).toMatchObject({
+    expect(review.permissions).toEqual({ contents: 'read' })
+    expect(review.with).toMatchObject({
       auth_mode: '${{ needs.review_target.outputs.auth_mode }}',
-      scope: 'correctness',
-      model: "${{ vars.CODEX_CORRECTNESS_MODEL || vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}",
-      effort: "${{ vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_REVIEW_EFFORT || 'high' }}"
+      model:
+        "${{ vars.CODEX_REVIEW_MODEL || (needs.review_target.outputs.credential_scope == 'correctness' && vars.CODEX_CORRECTNESS_MODEL) || (needs.review_target.outputs.credential_scope == 'architecture' && vars.CODEX_ARCHITECTURE_MODEL) || ((needs.review_target.outputs.credential_scope == 'review' || needs.review_target.outputs.credential_scope == 'shared' || needs.review_target.outputs.credential_scope == 'none') && (vars.CODEX_CORRECTNESS_MODEL || vars.CODEX_ARCHITECTURE_MODEL)) || 'gpt-5.6-sol' }}",
+      effort:
+        "${{ vars.CODEX_REVIEW_EFFORT || (needs.review_target.outputs.credential_scope == 'correctness' && vars.CODEX_CORRECTNESS_EFFORT) || (needs.review_target.outputs.credential_scope == 'architecture' && vars.CODEX_ARCHITECTURE_EFFORT) || ((needs.review_target.outputs.credential_scope == 'review' || needs.review_target.outputs.credential_scope == 'shared' || needs.review_target.outputs.credential_scope == 'none') && (vars.CODEX_CORRECTNESS_EFFORT || vars.CODEX_ARCHITECTURE_EFFORT)) || 'high' }}"
     })
-    expect(correctness.secrets).toEqual({
+    expect(review.with).not.toHaveProperty('scope')
+    expect(review.secrets).toEqual({
       CODEX_AUTH_JSON:
         "${{ needs.review_target.outputs.auth_mode == 'subscription' && secrets.CODEX_AUTH_JSON || '' }}",
-      OPENAI_API_KEY: '${{ secrets.CODEX_CORRECTNESS_API_KEY || secrets.OPENAI_API_KEY }}',
-      CODEX_BASE_URL: '${{ secrets.CODEX_CORRECTNESS_BASE_URL || secrets.CODEX_BASE_URL }}'
-    })
-    expect(architecture.with).toMatchObject({
-      auth_mode: '${{ needs.review_target.outputs.auth_mode }}',
-      scope: 'architecture',
-      model: "${{ vars.CODEX_ARCHITECTURE_MODEL || vars.CODEX_REVIEW_MODEL || 'gpt-5.6-sol' }}",
-      effort: "${{ vars.CODEX_ARCHITECTURE_EFFORT || vars.CODEX_REVIEW_EFFORT || 'high' }}"
-    })
-    expect(architecture.secrets).toEqual({
-      CODEX_AUTH_JSON:
-        "${{ needs.review_target.outputs.auth_mode == 'subscription' && secrets.CODEX_AUTH_JSON || '' }}",
-      OPENAI_API_KEY: '${{ secrets.CODEX_ARCHITECTURE_API_KEY || secrets.OPENAI_API_KEY }}',
-      CODEX_BASE_URL: '${{ secrets.CODEX_ARCHITECTURE_BASE_URL || secrets.CODEX_BASE_URL }}'
+      OPENAI_API_KEY:
+        "${{ (needs.review_target.outputs.credential_scope == 'review' && secrets.CODEX_REVIEW_API_KEY) || (needs.review_target.outputs.credential_scope == 'correctness' && secrets.CODEX_CORRECTNESS_API_KEY) || (needs.review_target.outputs.credential_scope == 'architecture' && secrets.CODEX_ARCHITECTURE_API_KEY) || (needs.review_target.outputs.credential_scope == 'shared' && secrets.OPENAI_API_KEY) || '' }}",
+      CODEX_BASE_URL:
+        "${{ (needs.review_target.outputs.credential_scope == 'review' && secrets.CODEX_REVIEW_BASE_URL) || (needs.review_target.outputs.credential_scope == 'correctness' && secrets.CODEX_CORRECTNESS_BASE_URL) || (needs.review_target.outputs.credential_scope == 'architecture' && secrets.CODEX_ARCHITECTURE_BASE_URL) || (needs.review_target.outputs.credential_scope == 'shared' && secrets.CODEX_BASE_URL) || '' }}"
     })
   })
 
@@ -588,18 +648,78 @@ describe('dual Codex workflow contract', () => {
     expect(config).toContain('trust_level = "untrusted"')
   })
 
-  it('rejects a subscription secret that is not managed ChatGPT auth', () => {
-    const result = runAuth({
+  it('falls back to API-key auth when subscription credentials are unavailable', () => {
+    const invalid = runAuth({
       authJson: JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'sk-wrong-mode' }),
       authMode: 'subscription'
     })
+    expect(invalid.status, invalid.stderr).toBe(0)
+    expect(invalid.outputs.auth_mode).toBe('api-key')
+    expect(existsSync(invalid.authFile)).toBe(false)
+
+    const missing = runAuth({ authMode: 'subscription' })
+    expect(missing.status, missing.stderr).toBe(0)
+    expect(missing.outputs.auth_mode).toBe('api-key')
+
+    const rejected = runAuth({
+      authJson: JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: { refresh_token: 'revoked-refresh-token' }
+      }),
+      authMode: 'subscription',
+      subscriptionAvailable: false
+    })
+    expect(rejected.status, rejected.stderr).toBe(0)
+    expect(rejected.outputs.auth_mode).toBe('api-key')
+    expect(existsSync(rejected.authFile)).toBe(false)
+
+    const installFailed = runAuth({
+      authJson: JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: { refresh_token: 'refresh-seed' }
+      }),
+      authMode: 'subscription',
+      installAvailable: false
+    })
+    expect(installFailed.status, installFailed.stderr).toBe(0)
+    expect(installFailed.outputs.auth_mode).toBe('api-key')
+
+    const sandboxFailed = runAuth({
+      authJson: JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: { refresh_token: 'refresh-seed' }
+      }),
+      authMode: 'subscription',
+      sandboxAvailable: false
+    })
+    expect(sandboxFailed.status, sandboxFailed.stderr).toBe(0)
+    expect(sandboxFailed.outputs.auth_mode).toBe('api-key')
+
+    const sandboxProbeFailed = runAuth({
+      authJson: JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: { refresh_token: 'refresh-seed' }
+      }),
+      authMode: 'subscription',
+      sandboxProbeAvailable: false
+    })
+    expect(sandboxProbeFailed.status, sandboxProbeFailed.stderr).toBe(0)
+    expect(sandboxProbeFailed.outputs.auth_mode).toBe('api-key')
+  })
+
+  it('fails closed when neither subscription nor API-key credentials are available', () => {
+    const result = runAuth({
+      authMode: 'subscription',
+      baseUrl: '',
+      openAiApiKey: ''
+    })
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain(
-      'Codex subscription auth must be a valid chatgpt auth.json with a refresh token.'
+      'Repository secret OPENAI_API_KEY is required for API-key auth.'
     )
   })
 
-  it('rejects subscription auth outside a manual same-repository review', () => {
+  it('accepts subscription auth for automatic, manual, and fork reviews', () => {
     const seed = JSON.stringify({
       auth_mode: 'chatgpt',
       tokens: { refresh_token: 'refresh-seed' }
@@ -609,35 +729,52 @@ describe('dual Codex workflow contract', () => {
       authMode: 'subscription',
       event: 'pull_request_target'
     })
-    expect(automatic.status).not.toBe(0)
-    expect(automatic.stderr).toContain('manual workflow_dispatch reviews')
+    expect(automatic.status, automatic.stderr).toBe(0)
+    expect(automatic.outputs.auth_mode).toBe('subscription')
 
     const fork = runAuth({ authJson: seed, authMode: 'subscription', isFork: true })
-    expect(fork.status).not.toBe(0)
-    expect(fork.stderr).toContain('same-repository pull requests')
+    expect(fork.status, fork.stderr).toBe(0)
+    expect(fork.outputs.auth_mode).toBe('subscription')
   })
 
   it('uses the API action only for API-key auth and installs the CLI directly for subscription auth', () => {
     const prepareRuntime = getStep(codexWorkflow, 'review', 'Prepare Codex review runtime')
-    expect(prepareRuntime.if).toBe("${{ inputs.auth_mode == 'api-key' }}")
+    expect(prepareRuntime.if).toBe("${{ steps.codex_auth.outputs.auth_mode == 'api-key' }}")
     expect(prepareRuntime.with).toMatchObject({
       'codex-home': '${{ steps.codex_auth.outputs.codex_home }}',
       'codex-version': '0.144.6',
-      'openai-api-key': "${{ inputs.auth_mode == 'api-key' && secrets.OPENAI_API_KEY || '' }}",
+      'openai-api-key':
+        "${{ steps.codex_auth.outputs.auth_mode == 'api-key' && secrets.OPENAI_API_KEY || '' }}",
       'responses-api-endpoint': '${{ steps.responses_endpoint.outputs.url }}'
     })
     expect(getStep(codexWorkflow, 'review', 'Resolve Responses API endpoint').if).toBe(
-      "${{ inputs.auth_mode == 'api-key' }}"
+      "${{ steps.codex_auth.outputs.auth_mode == 'api-key' }}"
     )
     const setupNode = getStep(codexWorkflow, 'review', 'Set up Node.js for subscription auth')
+    expect(setupNode.id).toBe('setup_subscription_node')
     expect(setupNode.if).toBe("${{ inputs.auth_mode == 'subscription' }}")
+    expect(setupNode['continue-on-error']).toBe(true)
     expect(setupNode.uses).toBe('actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f')
     expect(setupNode.with).toEqual({ 'node-version': '24' })
     const installCli = getStep(codexWorkflow, 'review', 'Install Codex CLI for subscription auth')
+    expect(installCli.id).toBe('install_subscription_cli')
     expect(installCli.if).toBe("${{ inputs.auth_mode == 'subscription' }}")
+    expect(installCli['continue-on-error']).toBe(true)
     expect(installCli.env).toEqual({ CODEX_VERSION: '0.144.6' })
     expect(installCli.run).toContain('npm install -g "@openai/codex@${CODEX_VERSION}"')
     expect(installCli.run).toContain('codex --version')
+    const prepareAuth = getStep(codexWorkflow, 'review', 'Prepare Codex authentication')
+    expect(prepareAuth.run).toContain('sudo -u nobody -- env -i')
+    expect(prepareAuth.run).toContain(
+      'preflight_dir="$(mktemp -d /tmp/codex-auth-preflight-work.XXXXXX)"'
+    )
+    expect(prepareAuth.run).toContain(
+      'sudo chown -R "$preflight_uid:$preflight_gid" "$preflight_home" "$preflight_dir"'
+    )
+    expect(prepareAuth.run).toContain('CODEX_HOME="$preflight_home"')
+    expect(getStep(codexWorkflow, 'review', 'Run Codex review').env?.CODEX_PERMISSION_PROFILE).toBe(
+      "${{ steps.codex_auth.outputs.auth_mode == 'subscription' && 'ai_review' || ':read-only' }}"
+    )
     const stepNames = codexWorkflow.jobs.review.steps?.map(({ name }) => name) ?? []
     expect(stepNames.indexOf('Install Codex CLI for subscription auth')).toBeLessThan(
       stepNames.indexOf('Prepare Codex authentication')
@@ -653,14 +790,20 @@ describe('dual Codex workflow contract', () => {
       'review',
       'Prepare GitHub-hosted sandbox for subscription auth'
     )
+    expect(sandbox.id).toBe('prepare_subscription_sandbox')
     expect(sandbox.if).toBe("${{ inputs.auth_mode == 'subscription' }}")
+    expect(sandbox['continue-on-error']).toBe(true)
     expect(sandbox.run).toContain('kernel.unprivileged_userns_clone')
     expect(sandbox.run).toContain('kernel.apparmor_restrict_unprivileged_userns')
+    const stepNames = codexWorkflow.jobs.review.steps?.map(({ name }) => name) ?? []
+    expect(stepNames.indexOf('Prepare GitHub-hosted sandbox for subscription auth')).toBeLessThan(
+      stepNames.indexOf('Prepare Codex authentication')
+    )
   })
 
   it('drops sudo and verifies the subscription credential is denied to sandboxed commands', () => {
     const hardening = getStep(codexWorkflow, 'review', 'Harden subscription review runtime')
-    expect(hardening.if).toBe("${{ inputs.auth_mode == 'subscription' }}")
+    expect(hardening.if).toBe("${{ steps.codex_auth.outputs.auth_mode == 'subscription' }}")
     expect(hardening.run).toContain('/etc/sudoers.d/*')
     expect(hardening.run).not.toContain('command -v bwrap')
     expect(hardening.run).toContain('sudo -n true')
@@ -671,20 +814,17 @@ describe('dual Codex workflow contract', () => {
     expect(syntax.status, syntax.stderr).toBe(0)
   })
 
-  it('gives each Codex reviewer a distinct, non-overlapping focus', () => {
-    const correctness = runReviewInputs('correctness')
-    const architecture = runReviewInputs('architecture')
-    expect(correctness.outputs.review_header).toBe('## Codex Correctness Review')
-    expect(correctness.instructions).toContain('Branch name valid: true')
-    expect(correctness.prompt).toContain('correctness, security, regression')
-    expect(architecture.outputs.review_header).toBe('## Codex Architecture Review')
-    expect(architecture.instructions).not.toContain('Branch name valid')
-    expect(architecture.prompt).toContain('Focus exclusively on architecture and integration')
-    expect(architecture.prompt).toContain('IPC ownership')
-    expect(correctness.schema).toHaveProperty('properties')
+  it('combines correctness and architecture into one Codex review', () => {
+    const review = runReviewInputs()
+    expect(review.outputs.review_header).toBe('## Codex Review')
+    expect(review.instructions).toContain('Branch name valid: true')
+    expect(review.prompt).toContain('correctness, security, regression')
+    expect(review.prompt).toContain('architecture, and integration defects')
+    expect(review.prompt).toContain('IPC ownership')
+    expect(review.schema).toHaveProperty('properties')
   })
 
-  it('keeps both Codex reviewers static and read-only', () => {
+  it('keeps the Codex reviewer static and read-only', () => {
     const inputs = getRun(codexWorkflow, 'review', 'Build Codex review inputs')
     const run = getRun(codexWorkflow, 'review', 'Run Codex review')
     for (const command of ['install dependencies', 'lint', 'tests', 'typecheck', 'build']) {
@@ -811,7 +951,6 @@ printf '%s\n' \\
           CODEX_MODEL: 'codex-auto-review',
           DURATION_SECONDS: '7',
           EXECUTION_FILE: execution,
-          REVIEW_SCOPE: 'architecture',
           GITHUB_STEP_SUMMARY: summary
         }
       }
@@ -820,18 +959,18 @@ printf '%s\n' \\
     expect(result.stdout).toContain('Codex items: unique=2, tool_calls=1, failed=0')
     expect(result.stdout).toContain('Codex tokens: input=100, cached_input=80')
     const summaryText = readFileSync(summary, 'utf8')
-    expect(summaryText).toContain('### Codex architecture review telemetry')
+    expect(summaryText).toContain('### Codex review telemetry')
     expect(summaryText).toContain('| 1 | 100 | 80 | 20 | 5 |')
     expect(summaryText).toContain('| `command_execution` | 1 |')
   })
 
-  it('normalizes schema-valid results for either Codex header', async () => {
+  it('normalizes schema-valid results for the combined Codex header', async () => {
     await expect(
       normalize(
         JSON.stringify({ verdict: 'mergeable', summary: 'No issues.', findings: [] }),
-        '## Codex Architecture Review'
+        '## Codex Review'
       )
-    ).resolves.toContain('## Codex Architecture Review\n\n**Verdict: mergeable**')
+    ).resolves.toContain('## Codex Review\n\n**Verdict: mergeable**')
 
     await expect(
       normalize(
@@ -849,7 +988,7 @@ printf '%s\n' \\
             }
           ]
         }),
-        '## Codex Correctness Review'
+        '## Codex Review'
       )
     ).resolves.toContain('### [P1] Boundary is bypassed')
   })
@@ -871,49 +1010,44 @@ printf '%s\n' \\
             }
           ]
         }),
-        '## Codex Correctness Review'
+        '## Codex Review'
       )
     ).rejects.toThrow('Codex verdict disagrees with its findings')
   })
 
-  it('publishes each reviewer through the shared trusted workflow', () => {
-    expect(mainWorkflow.jobs.post_codex_correctness_feedback.uses).toBe(
+  it('publishes the combined review through the shared trusted workflow', () => {
+    expect(mainWorkflow.jobs.post_codex_feedback.uses).toBe(
       './.github/workflows/ai-post-review.yml'
     )
-    expect(mainWorkflow.jobs.post_codex_correctness_feedback.with).toMatchObject({
-      scope: 'correctness',
+    expect(mainWorkflow.jobs.post_codex_feedback.with).toMatchObject({
+      scope: 'review',
       marker: '<!-- ai-review:codex -->',
-      header: '## Codex Correctness Review'
-    })
-    expect(mainWorkflow.jobs.post_codex_architecture_feedback.with).toMatchObject({
-      scope: 'architecture',
-      marker: '<!-- ai-review:codex-architecture -->',
-      header: '## Codex Architecture Review'
+      header: '## Codex Review'
     })
     expect(getStep(publisherWorkflow, 'publish', 'Post Codex review').with?.retries).toBe(3)
   })
 
-  it('publishes architecture feedback with trusted provenance', async () => {
+  it('publishes combined feedback with trusted provenance', async () => {
     const result = await runPublisher()
     expect(result.output).toBe('true')
     expect(result.postedBodies).toEqual([
       [
-        '<!-- ai-review:codex-architecture -->',
+        '<!-- ai-review:codex -->',
         '<!-- ai-review-meta head=head-sha run=1234 -->',
-        '## Codex Architecture Review',
+        '## Codex Review',
         '',
         '**Verdict: mergeable**'
       ].join('\n')
     ])
   })
 
-  it('does not publish stale feedback or exceed the per-reviewer round limit', async () => {
+  it('does not publish stale feedback or exceed the review round limit', async () => {
     await expect(runPublisher({ currentHead: 'newer-head' })).resolves.toMatchObject({
       output: 'false',
       postedBodies: []
     })
     const prior = Array.from({ length: 20 }, () => ({
-      body: '<!-- ai-review:codex-architecture -->',
+      body: '<!-- ai-review:codex -->',
       user: { login: 'github-actions[bot]' }
     }))
     await expect(runPublisher({ comments: prior })).resolves.toMatchObject({
@@ -922,23 +1056,16 @@ printf '%s\n' \\
     })
   })
 
-  it('serializes each selected reviewer while allowing the two scopes to run in parallel', () => {
+  it('serializes duplicate runs of the single reviewer for each pull request', () => {
     expect(mainWorkflow.concurrency).toEqual({
       group:
-        "ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.reviewer || 'both' }}",
+        'ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}',
       'cancel-in-progress': true
     })
     expect(codexWorkflow.jobs.review.concurrency).toEqual({
-      group: "${{ format('codex-{0}-review-{1}', inputs.scope, inputs.pull_request_number) }}",
+      group: "${{ format('codex-review-{0}', inputs.pull_request_number) }}",
       'cancel-in-progress': true
     })
-    expect(mainWorkflow.jobs.codex_correctness_review.needs).toEqual([
-      'review_target',
-      'codex_review_gate'
-    ])
-    expect(mainWorkflow.jobs.codex_architecture_review.needs).toEqual([
-      'review_target',
-      'codex_review_gate'
-    ])
+    expect(mainWorkflow.jobs.codex_review.needs).toEqual(['review_target', 'codex_review_gate'])
   })
 })

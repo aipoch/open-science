@@ -5,6 +5,7 @@ import {
   LogOut,
   Pencil,
   PlugZap,
+  RefreshCw,
   Route,
   TriangleAlert,
   Trash2,
@@ -23,6 +24,7 @@ import {
   isCodexSubscriptionProvider,
   providerEndpoints,
   providerValidationFailed,
+  resolveCodexSubscriptionType,
   selectClaudeSubscriptionProvider
 } from '../../../../shared/settings'
 import { getOfficialVendor } from '../../../../shared/provider-registry'
@@ -46,6 +48,7 @@ type ProviderListProps = {
   onCancelCodexLogin?: () => void
   onLoginIsolatedCodex?: () => void
   onLogoutIsolatedCodex?: () => void
+  onReimportCodexAuthentication?: (provider: ProviderView) => void
   // Claude subscription's browser OAuth sign-in (shared mode): opens the browser and lands
   // credentials in ~/.claude. Mirrors the codex-isolated flow shape.
   isClaudeSharedLoginPending?: boolean
@@ -129,6 +132,7 @@ const ProviderList = ({
   onCancelCodexLogin,
   onLoginIsolatedCodex,
   onLogoutIsolatedCodex,
+  onReimportCodexAuthentication,
   isClaudeSharedLoginPending = false,
   onLoginSharedClaude,
   onCancelSharedClaudeLogin,
@@ -184,6 +188,9 @@ const ProviderList = ({
           // A passing test shows a green check. Suppressed while a test is in flight.
           const isVerified = !failure && !isBusy && provider.lastValidatedAt !== undefined
           const isCodexSubscription = isCodexSubscriptionProvider(provider.type)
+          const codexSubscriptionType = isCodexSubscription
+            ? resolveCodexSubscriptionType(provider)
+            : undefined
           // The provider sourcing the selected model (and the last remaining one) can't be deleted:
           // removing it would leave no model to run, so its delete action stays disabled.
           const canDelete = !isActiveSource && displayedProviders.length > 1
@@ -262,9 +269,9 @@ const ProviderList = ({
                     ) : null}
                   </div>
                   <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-                    {provider.type === 'codex-shared' ? (
+                    {codexSubscriptionType === 'codex-shared' ? (
                       <div>Authentication imported into Open Science</div>
-                    ) : provider.type === 'codex-isolated' ? (
+                    ) : codexSubscriptionType === 'codex-isolated' ? (
                       <div>Codex login stored separately by Open Science</div>
                     ) : provider.type === 'claude-isolated' && isClaudeIsolatedLoginPending ? (
                       // Browser sign-in in flight. `claude setup-token` opens the browser itself and
@@ -322,7 +329,7 @@ const ProviderList = ({
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  {provider.type === 'codex-isolated' && isCodexLoginPending ? (
+                  {isCodexSubscription && isCodexLoginPending ? (
                     <SettingsIconAction
                       label="Cancel sign-in"
                       icon={X}
@@ -343,7 +350,18 @@ const ProviderList = ({
                       className="border border-border text-foreground"
                     />
                   )}
-                  {provider.type === 'codex-isolated' && !isVerified && !isCodexLoginPending ? (
+                  {codexSubscriptionType === 'codex-shared' && !isCodexLoginPending ? (
+                    <SettingsIconAction
+                      label="Re-import Codex login"
+                      icon={RefreshCw}
+                      onClick={() => onReimportCodexAuthentication?.(provider)}
+                      disabled={isBusy}
+                      className="border border-border text-foreground"
+                    />
+                  ) : null}
+                  {codexSubscriptionType === 'codex-isolated' &&
+                  !isVerified &&
+                  !isCodexLoginPending ? (
                     <SettingsIconAction
                       label="Sign in"
                       icon={LogIn}
@@ -352,7 +370,7 @@ const ProviderList = ({
                       className="border border-border text-foreground"
                     />
                   ) : null}
-                  {provider.type === 'codex-isolated' && isVerified ? (
+                  {codexSubscriptionType === 'codex-isolated' && isVerified ? (
                     <SettingsIconAction
                       label="Sign out"
                       icon={LogOut}

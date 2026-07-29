@@ -65,7 +65,7 @@ describe('PreviewToolContent', () => {
   it('shows the reviewer empty state when the requested session has no reviews', () => {
     const html = render(createItem({ toolKind: 'reviewer', reviewerSessionId: 'review-session' }))
 
-    expect(mocks.getReviewsForSession).toHaveBeenCalledWith('review-session')
+    expect(mocks.getReviewsForSession).toHaveBeenCalledWith('review-session', 'project-1')
     expect(html).toContain('No review available for this session.')
   })
 

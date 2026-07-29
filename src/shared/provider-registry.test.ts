@@ -32,8 +32,16 @@ describe('provider registry', () => {
   it('narrows known vendor ids and rejects unknown values', () => {
     expect(isOfficialVendorId('deepseek')).toBe(true)
     expect(isOfficialVendorId('openai')).toBe(true)
+    expect(isOfficialVendorId('xai')).toBe(true)
     expect(isOfficialVendorId(undefined)).toBe(false)
     expect(isOfficialVendorId(42)).toBe(false)
+  })
+
+  it('places Grok immediately after Anthropic in the official provider picker', () => {
+    const anthropicIndex = OFFICIAL_VENDORS.findIndex((vendor) => vendor.id === 'anthropic')
+
+    expect(anthropicIndex).toBeGreaterThanOrEqual(0)
+    expect(OFFICIAL_VENDORS[anthropicIndex + 1]?.id).toBe('xai')
   })
 
   it('resolves a single-endpoint vendor base URL', () => {
@@ -101,6 +109,7 @@ describe('provider registry', () => {
 
   it('exposes the first catalog entry as the default model', () => {
     expect(defaultVendorModel('openai')).toBe('gpt-5.6-sol')
+    expect(defaultVendorModel('xai')).toBe('grok-4.5')
     expect(defaultVendorModel('zhipu')).toBe('glm-5.2')
   })
 
@@ -118,6 +127,17 @@ describe('provider registry', () => {
       slots: ['low', 'medium', 'high', 'high', 'high']
     })
     expect(resolveVendorModelReasoningEffort('anthropic', 'claude-haiku-4-5-20251001')).toEqual({
+      supported: false
+    })
+    expect(resolveVendorModelReasoningEffort('xai', 'grok-4.5')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'xhigh', 'xhigh']
+    })
+    expect(resolveVendorModelReasoningEffort('xai', 'grok-4.3')).toEqual({
+      supported: true,
+      slots: ['none', 'low', 'medium', 'high', 'xhigh']
+    })
+    expect(resolveVendorModelReasoningEffort('xai', 'grok-build-0.1')).toEqual({
       supported: false
     })
     expect(resolveVendorModelReasoningEffort('minimax', 'MiniMax-M3')).toEqual({
@@ -245,6 +265,17 @@ describe('provider registry', () => {
     expect(defaultVendorModel('volcengine')).toBe('doubao-seed-2-1-pro-260628')
   })
 
+  it('routes Grok through xAI Chat Completions and Responses with a curated model catalog', () => {
+    expect(resolveVendorApiEndpoints('xai')).toEqual(['openai', 'responses'])
+    expect(resolveVendorBaseUrl('xai')).toBe('https://api.x.ai')
+    expect(resolveVendorOpenAiBaseUrl('xai')).toBe('https://api.x.ai/v1')
+    expect(resolveVendorApiKeyUrl('xai')).toBe('https://console.x.ai/team/default/api-keys')
+    // xAI's live catalog also includes image, audio, and video generation models, so keep refresh
+    // hidden and expose only the curated language-model catalog.
+    expect(resolveVendorModelsUrl('xai')).toBeUndefined()
+    expect(defaultVendorModel('xai')).toBe('grok-4.5')
+  })
+
   it('routes Kimi through both APIs so Codex can bridge it', () => {
     expect(resolveVendorApiEndpoints('kimi')).toEqual(['anthropic', 'openai'])
     expect(resolveVendorBaseUrl('kimi')).toBe('https://api.moonshot.cn/anthropic')
@@ -312,6 +343,12 @@ describe('provider registry', () => {
       expect(isVendorModelMultimodal('anthropic', 'claude-sonnet-5')).toBe(true)
       expect(isVendorModelMultimodal('anthropic', 'claude-haiku-4-5-20251001')).toBe(true)
       expect(isVendorModelMultimodal('anthropic', 'claude-opus-4-8[1m]')).toBe(true)
+    })
+
+    it('returns true for all curated Grok language models', () => {
+      expect(isVendorModelMultimodal('xai', 'grok-4.5')).toBe(true)
+      expect(isVendorModelMultimodal('xai', 'grok-4.3')).toBe(true)
+      expect(isVendorModelMultimodal('xai', 'grok-build-0.1')).toBe(true)
     })
 
     it('treats Anthropic/OpenAI as vision-capable for live-fetched ids not in the bundled catalog', () => {
@@ -431,6 +468,9 @@ describe('provider registry', () => {
       expect(resolveModelContextWindow('anthropic', 'claude-haiku-4-5-20251001')).toBe(200_000)
       expect(resolveModelContextWindow('openai', 'gpt-5.6-sol')).toBe(1_050_000)
       expect(resolveModelContextWindow('openai', 'gpt-5.4-mini')).toBe(400_000)
+      expect(resolveModelContextWindow('xai', 'grok-4.5')).toBe(500_000)
+      expect(resolveModelContextWindow('xai', 'grok-4.3')).toBe(1_000_000)
+      expect(resolveModelContextWindow('xai', 'grok-build-0.1')).toBe(256_000)
       expect(resolveModelContextWindow('deepseek', 'deepseek-v4-flash')).toBe(1_000_000)
       expect(resolveModelContextWindow('zhipu', 'glm-5.2')).toBe(1_000_000)
       expect(resolveModelContextWindow('zhipu', 'glm-5.1')).toBe(200_000)

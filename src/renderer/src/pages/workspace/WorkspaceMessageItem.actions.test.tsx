@@ -21,6 +21,11 @@ vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
 }))
 
+// Artifact rendering is outside this test's boundary and imports the PDF worker bundle.
+vi.mock('./artifact-preview', () => ({
+  ArtifactPreview: () => <div data-testid="artifact-preview" />
+}))
+
 let container: HTMLDivElement
 let root: Root
 
@@ -43,8 +48,15 @@ const renderItem = async (
   message: ChatMessage,
   options: {
     canEditMessage?: boolean
+    showUserActions?: boolean
     onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
     subsequentTurns?: number
+    revisionNavigation?: {
+      index: number
+      total: number
+      onPrevious?: () => void
+      onNext?: () => void
+    }
   } = {}
 ): Promise<void> => {
   await act(async () => {
@@ -56,8 +68,10 @@ const renderItem = async (
         onOpenSkillMention={noop}
         onPreviewMentionArtifact={noop}
         canEditMessage={options.canEditMessage ?? false}
+        showUserActions={options.showUserActions}
         onSendEditedMessage={options.onSendEditedMessage}
         subsequentTurns={options.subsequentTurns ?? 0}
+        revisionNavigation={options.revisionNavigation}
       />
     )
   })
@@ -128,6 +142,14 @@ afterEach(() => {
 })
 
 describe('WorkspaceMessageItem user message actions', () => {
+  it('keeps the normal Session transcript gutter by default', async () => {
+    await renderItem(createMessage())
+
+    const transcriptRow = container.querySelector<HTMLElement>('[class~="pb-1"][class~="pt-5"]')
+    expect(transcriptRow?.classList.contains('px-4')).toBe(true)
+    expect(transcriptRow?.classList.contains('md:px-6')).toBe(true)
+  })
+
   it('renders copy and edit actions next to user bubbles only', async () => {
     await renderItem(createMessage())
 
@@ -138,6 +160,29 @@ describe('WorkspaceMessageItem user message actions', () => {
 
     expect(container.querySelector('[aria-label="Copy message"]')).toBeNull()
     expect(container.querySelector('[aria-label="Edit message"]')).toBeNull()
+  })
+
+  it('hides copy and edit actions on an immutable message surface', async () => {
+    await renderItem(createMessage(), { canEditMessage: false, showUserActions: false })
+
+    expect(container.querySelector('[aria-label="Copy message"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Edit message"]')).toBeNull()
+  })
+
+  it('switches between message revisions through the rendered navigation controls', async () => {
+    const onPrevious = vi.fn()
+    const onNext = vi.fn()
+    await renderItem(createMessage(), {
+      canEditMessage: true,
+      revisionNavigation: { index: 1, total: 3, onPrevious, onNext }
+    })
+
+    expect(container.querySelector('[aria-label="Message revision"]')?.textContent).toBe('2/3')
+    await click(getButton('Previous message revision'))
+    await click(getButton('Next message revision'))
+
+    expect(onPrevious).toHaveBeenCalledOnce()
+    expect(onNext).toHaveBeenCalledOnce()
   })
 
   it('copies the message content and confirms with a transient check state', async () => {
@@ -244,12 +289,12 @@ describe('WorkspaceMessageItem user message actions', () => {
     await click(getButton('Edit message'))
     await click(getEditorCardButton('Send'))
 
-    // The resend waits for explicit confirmation, and the dialog names the deletion cost.
+    // The resend waits for explicit confirmation and explains that later turns remain on the old branch.
     expect(onSendEditedMessage).not.toHaveBeenCalled()
-    expect(getDialog()?.textContent).toContain('Resend and overwrite later turns?')
+    expect(getDialog()?.textContent).toContain('Resend on a new branch?')
     expect(getDialog()?.textContent).toContain('3 turns')
 
-    await click(getDialogButton('Overwrite and resend'))
+    await click(getDialogButton('Branch and resend'))
 
     expect(onSendEditedMessage).toHaveBeenCalledWith('message-1', {
       nodes: [{ type: 'text', text: 'Prompt text' }]

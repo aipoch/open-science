@@ -266,14 +266,20 @@ const ManagedImageThumbnail = ({
   artifact,
   name,
   source,
+  projectId,
+  sessionId,
   enabled
 }: {
   artifact: MessageArtifact
   name: string
   source: PreviewFileSource
+  projectId?: string
+  sessionId?: string
   enabled: boolean
 }): React.JSX.Element => {
   const requestKey = createPreviewResourceKey({
+    projectId,
+    sessionId,
     source,
     path: artifact.path,
     mimeType: artifact.mimeType,
@@ -286,6 +292,8 @@ const ManagedImageThumbnail = ({
   const resourceState = useManagedPreviewResource(
     {
       path: artifact.path,
+      projectId,
+      sessionId,
       source,
       mimeType: artifact.mimeType,
       size: artifact.size,
@@ -313,11 +321,15 @@ export const ArtifactPreview = ({
   artifact,
   preview,
   source = 'artifact',
+  projectId,
+  sessionId,
   isVisible = true
 }: {
   artifact: MessageArtifact
   preview?: ArtifactPreviewResult
   source?: PreviewFileSource
+  projectId?: string
+  sessionId?: string
   isVisible?: boolean
 }): React.JSX.Element => {
   const artifactName = getArtifactName(artifact)
@@ -331,6 +343,8 @@ export const ArtifactPreview = ({
         path={artifact.path}
         name={artifactName}
         source={source}
+        projectId={projectId}
+        sessionId={sessionId}
         mimeType={artifact.mimeType}
         size={artifact.size}
         mtimeMs={artifact.mtimeMs}
@@ -344,6 +358,8 @@ export const ArtifactPreview = ({
         artifact={artifact}
         name={artifactName}
         source={source}
+        projectId={projectId}
+        sessionId={sessionId}
         enabled={isVisible}
       />
     )

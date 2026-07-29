@@ -1,5 +1,6 @@
 import type { ToolActivity } from '@/stores/session-store'
 
+import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { usePreviewFileContent } from './previews/usePreviewFileContent'
 
 // Byte cap for inline tool-output image previews. Co-located here (rather than in preview-support,
@@ -45,8 +46,6 @@ const WorkspaceToolImageOutput = ({
     maxBytes: PREVIEW_PANEL_IMAGE_MAX_BYTES,
     encoding: 'base64'
   })
-  const caption = [section.name, section.sizeLabel].filter(Boolean).join(' · ')
-
   if (state.status === 'ready' && state.preview.encoding === 'base64' && !state.preview.truncated) {
     return (
       <div className="space-y-1">
@@ -57,15 +56,31 @@ const WorkspaceToolImageOutput = ({
           className="max-h-64 max-w-full rounded-md border border-border-200 object-contain"
           draggable={false}
         />
-        {caption ? <div className="text-[11px] text-text-300">{caption}</div> : null}
+        {section.name || section.sizeLabel ? (
+          <div className="flex min-w-0 items-center gap-1 text-[11px] text-text-300">
+            {section.name ? <ExtensionPreservingFileName name={section.name} /> : null}
+            {section.name && section.sizeLabel ? <span className="shrink-0">·</span> : null}
+            {section.sizeLabel ? <span className="shrink-0">{section.sizeLabel}</span> : null}
+          </div>
+        ) : null}
       </div>
     )
   }
 
   const fallbackText =
-    state.status === 'loading' ? 'Loading preview…' : (section.name ?? section.path)
+    state.status === 'loading'
+      ? 'Loading preview…'
+      : (section.name ?? (section.path.split(/[\\/]/u).at(-1) || section.path))
 
-  return <div className="text-[12px] text-text-300">{fallbackText}</div>
+  return (
+    <div className="text-[12px] text-text-300">
+      {state.status === 'loading' ? (
+        fallbackText
+      ) : (
+        <ExtensionPreservingFileName name={fallbackText} />
+      )}
+    </div>
+  )
 }
 
 // Renders one detail section as a diff, an image preview, a collapsible code panel, or a plain
@@ -119,7 +134,13 @@ const WorkspaceToolDetailsRow = ({
   <WorkspaceToolActivityRowButton
     activity={activity}
     label={details.displayName}
-    subtitle={details.subtitle}
+    subtitle={
+      details.displayName === 'Write file' && details.subtitle ? (
+        <ExtensionPreservingFileName name={details.subtitle} />
+      ) : (
+        details.subtitle
+      )
+    }
     metaLabel={details.metaLabel}
     isExpanded={isExpanded}
     panelClassName="mx-1 mb-1.5 space-y-2.5 md:ml-[30px]"

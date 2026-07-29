@@ -7,6 +7,12 @@ import { SettingsPage } from './SettingsPage'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = (): boolean => false
+  Element.prototype.setPointerCapture = (): void => undefined
+  Element.prototype.releasePointerCapture = (): void => undefined
+}
+
 let container: HTMLDivElement
 let root: Root
 
@@ -613,6 +619,93 @@ describe('SettingsPage layout', () => {
     }
   })
 
+  it('defaults a custom gateway to the active framework API format', async () => {
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportedApiTypes: ['anthropic', 'openai'],
+          supportsSkills: true
+        }
+      ],
+      opencode: { resolvedPath: '/x/opencode' }
+    })
+
+    const addProvider = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Add provider')
+    act(() => addProvider?.click())
+
+    openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Provider type"]'))
+    const customGateway = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="option"]')
+    ).find((option) => option.textContent?.includes('Custom Gateway'))
+    clickRadixMenuItem(customGateway)
+
+    expect(document.body.querySelector('[aria-label="API format"]')?.textContent).toContain(
+      '/v1/chat/completions'
+    )
+  })
+
+  it('preserves the saved API format when editing a custom gateway', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const provider = {
+      id: 'custom-messages',
+      type: 'custom',
+      name: 'Messages gateway',
+      baseUrl: 'https://gateway.example',
+      model: 'model-a',
+      models: ['model-a'],
+      apiEndpoints: ['anthropic'],
+      supportsImageInput: false,
+      hasKey: true,
+      maskedKey: 'sk-…test',
+      needsKey: false
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: {},
+      opencode: { resolvedPath: '/x/opencode' },
+      codex: {},
+      providers: [provider],
+      activeProviderId: provider.id,
+      activeModel: provider.model,
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportedApiTypes: ['anthropic', 'openai'],
+          supportsSkills: true
+        }
+      ]
+    })
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      opencodeReady: true,
+      agentFrameworkId: 'opencode',
+      agentReady: true,
+      activeProviderReady: true
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    })
+
+    expect(document.body.querySelector('[aria-label="Provider type"]')?.textContent).toContain(
+      'Custom Gateway'
+    )
+    expect(document.body.querySelector('[aria-label="API format"]')?.textContent).toContain(
+      '/v1/messages'
+    )
+  })
+
   it('switches to the General panel and shows the diagnostic log file', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -627,8 +720,8 @@ describe('SettingsPage layout', () => {
       generalTab?.click()
     })
 
-    // AppVersion, Notifications, App icon, Diagnostics, Command line tool, Community.
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(6)
+    // Appearance, AppVersion, Notifications, App icon, Diagnostics, Command line tool, Community.
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(7)
     expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
 
     // The Diagnostics panel surfaces the log file path plus Open and Reveal controls.

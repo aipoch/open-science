@@ -10,7 +10,7 @@ import {
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   type ClaudeDetectResult
 } from '../../shared/settings'
-import type { CodexAuthControllerPort } from './codex-auth'
+import type { CodexAuthControllerPort, CodexAuthStatus } from './codex-auth'
 import type {
   ClaudeIsolatedAuthControllerPort,
   ClaudeIsolatedAuthStatus
@@ -19,6 +19,7 @@ import type { ClaudeSharedAuthControllerPort } from './claude-shared-auth'
 import type { UserSkillRepository } from '../skills/user-skill-repository'
 import type { ResponsesBridge } from './responses-bridge'
 import type { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
+import type { SystemProxyEnvironment } from './system-proxy'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -89,6 +90,18 @@ const validAnthropicResponse = (): Response =>
     { status: 200, headers: { 'content-type': 'application/json' } }
   )
 
+const validBridgeToolCallResponse = (): Response =>
+  new Response(
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"open_science_bridge_probe","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n',
+    { status: 200, headers: { 'content-type': 'text/event-stream' } }
+  )
+
+const validNativeCompatibilityToolCallResponse = (): Response =>
+  new Response(
+    'data: {"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"open_science__bridge_probe","arguments":"{}"}}\n\ndata: {"type":"response.completed","response":{"output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"open_science__bridge_probe","arguments":"{}"}]}}\n\n',
+    { status: 200, headers: { 'content-type': 'text/event-stream' } }
+  )
+
 type ManagedInstallImpl = (options: {
   installId: string
   onEvent: (event: { kind: string; installId: string }) => void
@@ -129,6 +142,7 @@ const createService = (
     // When false, the ACP smoke test fails (adapter present but can't initialize).
     codexSmokeOk?: boolean
     codexAuth?: CodexAuthControllerPort
+    resolveCodexProxyEnvironment?: () => Promise<SystemProxyEnvironment | undefined>
     claudeIsolatedAuth?: ClaudeIsolatedAuthControllerPort
     claudeSharedAuth?: ClaudeSharedAuthControllerPort
     executeClaudeProbe?: (
@@ -207,6 +221,8 @@ const createService = (
       managedCodexPath: options.managedCodexNativePath ?? options.codexDetected?.nativePath
     },
     codexAuth: options.codexAuth,
+    resolveCodexProxyEnvironment:
+      options.resolveCodexProxyEnvironment ?? (() => Promise.resolve({})),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     claudeIsolatedAuth: options.claudeIsolatedAuth as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -227,11 +243,28 @@ afterEach(async () => {
 })
 
 describe('SettingsService: providers', () => {
-  it('imports only existing Codex authentication and persists an isolated provider', async () => {
+  it('imports existing Codex authentication and its safe active provider route', async () => {
     const userCodexDir = join(storageRoot, 'user-codex')
     await mkdir(join(userCodexDir, 'skills', 'private'), { recursive: true })
     await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
-    await writeFile(join(userCodexDir, 'config.toml'), 'model = "private"\n')
+    await writeFile(
+      join(userCodexDir, 'config.toml'),
+      [
+        'model_provider = "subscription-route"',
+        'model = "private"',
+        '',
+        '[mcp_servers.private]',
+        'command = "private-command"',
+        '',
+        '[model_providers.subscription-route]',
+        'name = "OpenAI"',
+        'requires_openai_auth = true',
+        'supports_websockets = false',
+        'wire_api = "responses"',
+        'base_url = "http://127.0.0.1:1087/v1"',
+        ''
+      ].join('\n')
+    )
     await writeFile(join(userCodexDir, 'skills', 'private', 'SKILL.md'), '# Private')
     const service = createService(undefined, { userCodexDir })
 
@@ -239,17 +272,253 @@ describe('SettingsService: providers', () => {
 
     expect(snapshot.providers[0]).toMatchObject({
       id: CODEX_SUBSCRIPTION_PROVIDER_ID,
-      type: 'codex-isolated'
+      type: 'codex-isolated',
+      codexAuthMode: 'imported'
+    })
+    expect((await repository.getSettings()).providers[0]).toMatchObject({
+      type: 'codex-isolated',
+      codexAuthMode: 'imported'
     })
     expect(await readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')).toBe(
       '{"tokens":{"access_token":"secret"}}'
     )
-    await expect(
-      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
-    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
+      [
+        'cli_auth_credentials_store = "file"',
+        '# Open Science: begin imported Codex route selection',
+        'model_provider = "subscription-route"',
+        '# Open Science: end imported Codex route selection',
+        '# Open Science: begin imported Codex provider',
+        '[model_providers."subscription-route"]',
+        'name = "OpenAI"',
+        'base_url = "http://127.0.0.1:1087/v1"',
+        'wire_api = "responses"',
+        'requires_openai_auth = true',
+        'supports_websockets = false',
+        '# Open Science: end imported Codex provider',
+        ''
+      ].join('\n')
+    )
     await expect(
       readFile(join(storageRoot, 'codex-subscription', 'skills', 'private', 'SKILL.md'), 'utf8')
     ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('preserves an imported Codex route on resave and clears it on an explicit mode switch', async () => {
+    const userCodexDir = join(storageRoot, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+    await writeFile(
+      join(userCodexDir, 'config.toml'),
+      [
+        'model_provider = "subscription-route"',
+        '',
+        '[model_providers.subscription-route]',
+        'name = "OpenAI"',
+        'requires_openai_auth = true',
+        'wire_api = "responses"',
+        'base_url = "http://127.0.0.1:1087/v1"',
+        ''
+      ].join('\n')
+    )
+    const service = createService(undefined, { userCodexDir })
+
+    const imported = await service.upsertProvider({ type: 'codex-shared' })
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.toContain('model_provider = "subscription-route"')
+
+    const verifiedImportedProvider = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({ ...verifiedImportedProvider, lastValidatedAt: 123 })
+    await rm(userCodexDir, { recursive: true, force: true })
+
+    const resaved = await service.upsertProvider({
+      id: imported.providers[0].id,
+      type: imported.providers[0].codexAuthMode === 'imported' ? 'codex-shared' : 'codex-isolated'
+    })
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.toContain('model_provider = "subscription-route"')
+    expect(resaved.providers[0].lastValidatedAt).toBe(123)
+
+    const isolated = await service.upsertProvider({
+      id: imported.providers[0].id,
+      type: 'codex-isolated'
+    })
+
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.toBe('cli_auth_credentials_store = "file"\n')
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(isolated.providers[0]).toMatchObject({
+      type: 'codex-isolated',
+      codexAuthMode: 'isolated'
+    })
+    expect(isolated.providers[0].lastValidatedAt).toBeUndefined()
+  })
+
+  it('clears an imported Codex route when isolated setup is recreated after deletion', async () => {
+    const userCodexDir = join(storageRoot, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+    await writeFile(
+      join(userCodexDir, 'config.toml'),
+      [
+        'model_provider = "subscription-route"',
+        '',
+        '[model_providers.subscription-route]',
+        'name = "OpenAI"',
+        'requires_openai_auth = true',
+        'wire_api = "responses"',
+        'base_url = "http://127.0.0.1:1087/v1"',
+        ''
+      ].join('\n')
+    )
+    const service = createService(undefined, { userCodexDir })
+
+    await service.upsertProvider({ type: 'codex-shared' })
+    await service.deleteProvider(CODEX_SUBSCRIPTION_PROVIDER_ID)
+    expect((await repository.getSettings()).providers).toEqual([])
+
+    const isolated = await service.upsertProvider({ type: 'codex-isolated' })
+
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.toBe('cli_auth_credentials_store = "file"\n')
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(isolated.providers[0]).toMatchObject({
+      type: 'codex-isolated',
+      codexAuthMode: 'isolated'
+    })
+  })
+
+  it('deleting a Codex subscription removes only its app-owned authentication and route', async () => {
+    const userCodexDir = join(storageRoot, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"global"}}')
+    await writeFile(
+      join(userCodexDir, 'config.toml'),
+      [
+        'model_provider = "subscription-route"',
+        '',
+        '[model_providers.subscription-route]',
+        'name = "OpenAI"',
+        'requires_openai_auth = true',
+        'wire_api = "responses"',
+        'base_url = "http://127.0.0.1:1087/v1"',
+        ''
+      ].join('\n')
+    )
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn(),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
+    const service = createService(undefined, { codexAuth, userCodexDir })
+    await service.upsertProvider({ type: 'codex-shared' })
+    vi.mocked(codexAuth.cancelLogin).mockClear()
+
+    await service.deleteProvider(CODEX_SUBSCRIPTION_PROVIDER_ID)
+
+    expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.not.toContain('Open Science:')
+    await expect(readFile(join(userCodexDir, 'auth.json'), 'utf8')).resolves.toContain('global')
+  })
+
+  it('refreshes an imported Codex profile only when re-import is explicitly requested', async () => {
+    const userCodexDir = join(storageRoot, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"old"}}')
+    await writeFile(
+      join(userCodexDir, 'config.toml'),
+      [
+        'model_provider = "old-route"',
+        '',
+        '[model_providers.old-route]',
+        'name = "Old route"',
+        'requires_openai_auth = true',
+        'wire_api = "responses"',
+        'base_url = "http://127.0.0.1:1087/v1"',
+        ''
+      ].join('\n')
+    )
+    const service = createService(undefined, { userCodexDir })
+    const imported = await service.upsertProvider({ type: 'codex-shared' })
+    const stored = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({ ...stored, lastValidatedAt: 123 })
+
+    await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"new"}}')
+    await writeFile(
+      join(userCodexDir, 'config.toml'),
+      [
+        'model_provider = "new-route"',
+        '',
+        '[model_providers.new-route]',
+        'name = "New route"',
+        'requires_openai_auth = true',
+        'wire_api = "responses"',
+        'base_url = "http://127.0.0.1:2087/v1"',
+        ''
+      ].join('\n')
+    )
+
+    const refreshed = await service.upsertProvider({
+      id: imported.providers[0].id,
+      type: 'codex-shared',
+      reimportCodexAuthentication: true
+    })
+
+    expect(await readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')).toBe(
+      '{"tokens":{"access_token":"new"}}'
+    )
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.toContain('base_url = "http://127.0.0.1:2087/v1"')
+    expect(refreshed.providers[0].lastValidatedAt).toBeUndefined()
+  })
+
+  it('discards an in-flight Codex validation when imported authentication is refreshed', async () => {
+    let resolveStatus!: (status: CodexAuthStatus) => void
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn(
+        () =>
+          new Promise<CodexAuthStatus>((resolve) => {
+            resolveStatus = resolve
+          })
+      ),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
+    const service = createService(undefined, { codexAuth })
+    const imported = await service.upsertProvider({ type: 'codex-shared' })
+
+    const pendingValidation = service.validateProvider({
+      providerId: imported.providers[0].id
+    })
+    await writeFile(
+      join(storageRoot, 'no-user-codex', 'auth.json'),
+      '{"tokens":{"access_token":"refreshed"}}'
+    )
+    await service.upsertProvider({
+      id: imported.providers[0].id,
+      type: 'codex-shared',
+      reimportCodexAuthentication: true
+    })
+    resolveStatus({ mode: 'shared', supported: true, authenticated: true })
+
+    await expect(pendingValidation).resolves.toMatchObject({ ok: true, applied: false })
+    expect((await repository.getSettings()).providers[0].lastValidatedAt).toBeUndefined()
   })
 
   it.each([
@@ -398,13 +667,15 @@ describe('SettingsService: providers', () => {
     expect((await repository.getSettings()).providers).toEqual([])
   })
 
-  it('validates imported and in-app subscription setup through the isolated status check', async () => {
+  it('validates imported and in-app subscription setup through their matching status checks', async () => {
     const codexAuth: CodexAuthControllerPort = {
-      getStatus: vi.fn().mockResolvedValue({
-        mode: 'shared',
-        supported: true,
-        authenticated: true
-      }),
+      getStatus: vi.fn((mode) =>
+        Promise.resolve({
+          mode,
+          supported: true,
+          authenticated: true
+        })
+      ),
       loginIsolated: vi.fn().mockResolvedValue({
         mode: 'isolated',
         supported: true,
@@ -419,16 +690,75 @@ describe('SettingsService: providers', () => {
     await expect(
       service.validateProvider({ providerId: CODEX_SHARED_PROVIDER_ID })
     ).resolves.toMatchObject({ ok: true })
+    expect(codexAuth.getStatus).toHaveBeenNthCalledWith(1, 'shared')
     await service.upsertProvider({ type: 'codex-isolated' })
     await expect(
       service.validateProvider({ providerId: CODEX_ISOLATED_PROVIDER_ID })
     ).resolves.toMatchObject({ ok: true })
-    expect(codexAuth.getStatus).toHaveBeenCalledWith('isolated')
+    expect(codexAuth.getStatus).toHaveBeenNthCalledWith(2, 'isolated')
     // Validation never opens the browser login; that is the explicit sign-in action's job.
     expect(codexAuth.loginIsolated).not.toHaveBeenCalled()
 
     const stored = await repository.getSettings()
     expect(stored.providers.every((provider) => provider.lastValidatedAt !== undefined)).toBe(true)
+  })
+
+  it('reports imported login guidance when imported subscription auth is unavailable', async () => {
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn((mode) =>
+        Promise.resolve({
+          mode,
+          supported: true,
+          authenticated: false
+        })
+      ),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
+    const service = createService(undefined, { codexAuth })
+    await service.upsertProvider({ type: 'codex-shared' })
+
+    await expect(
+      service.validateProvider({ providerId: CODEX_SHARED_PROVIDER_ID })
+    ).resolves.toMatchObject({
+      ok: false,
+      category: 'auth',
+      message:
+        'No existing Codex login was found. Run `codex login` or use the isolated Open Science login.'
+    })
+    expect(codexAuth.getStatus).toHaveBeenCalledWith('shared')
+  })
+
+  it('does not apply a pending Codex validation after the subscription auth mode changes', async () => {
+    const userCodexDir = join(storageRoot, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+    let finishStatus!: () => void
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn(
+        () =>
+          new Promise<CodexAuthStatus>((resolve) => {
+            finishStatus = () => resolve({ mode: 'isolated', supported: true, authenticated: true })
+          })
+      ),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
+    const service = createService(undefined, { codexAuth, userCodexDir })
+    await service.upsertProvider({ type: 'codex-shared' })
+
+    const validation = service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })
+    await vi.waitFor(() => expect(codexAuth.getStatus).toHaveBeenCalledOnce())
+    await service.upsertProvider({ type: 'codex-isolated' })
+    finishStatus()
+
+    await expect(validation).resolves.toMatchObject({ ok: true, applied: false })
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.codexAuthMode).toBe('isolated')
+    expect(stored.lastValidatedAt).toBeUndefined()
+    expect(stored.lastValidationFailure).toBeUndefined()
   })
 
   it('reports an unauthenticated isolated status without triggering sign-in', async () => {
@@ -500,21 +830,15 @@ describe('SettingsService: providers', () => {
     })
   })
 
-  it('keeps the sign-in outcome when existing authentication is reimported mid-flow', async () => {
-    let resolveLogin!: (status: {
-      mode: 'isolated'
-      supported: boolean
-      authenticated: boolean
-    }) => void
+  it('discards a late isolated sign-in failure after authentication is imported mid-flow', async () => {
+    let resolveLogin!: (status: CodexAuthStatus) => void
     const codexAuth: CodexAuthControllerPort = {
       getStatus: vi.fn(),
       loginIsolated: vi.fn(
         () =>
-          new Promise<{ mode: 'isolated'; supported: boolean; authenticated: boolean }>(
-            (resolve) => {
-              resolveLogin = resolve
-            }
-          )
+          new Promise<CodexAuthStatus>((resolve) => {
+            resolveLogin = resolve
+          })
       ),
       cancelLogin: vi.fn(),
       logoutIsolated: vi.fn()
@@ -522,17 +846,52 @@ describe('SettingsService: providers', () => {
     const service = createService(undefined, { codexAuth })
     await service.upsertProvider({ type: 'codex-isolated' })
 
-    // Importing existing authentication converges on the same app-owned runtime profile, so it does
-    // not create a second profile boundary while the browser flow is open.
     const pending = service.loginIsolatedCodex()
     await service.upsertProvider({ type: 'codex-shared' })
-    resolveLogin({ mode: 'isolated', supported: true, authenticated: true })
+    const imported = (await repository.getSettings()).providers[0]
+    expect(imported.codexAuthMode).toBe('imported')
+    await repository.upsertProvider({ ...imported, lastValidatedAt: 123 })
+    resolveLogin({
+      mode: 'isolated',
+      supported: true,
+      authenticated: false,
+      message: 'Codex sign-in timed out.'
+    })
 
-    await expect(pending).resolves.toMatchObject({ ok: true, applied: true })
+    await expect(pending).resolves.toMatchObject({ ok: false, applied: false })
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.type).toBe('codex-isolated')
-    expect(stored.lastValidatedAt).toBeDefined()
+    expect(stored.codexAuthMode).toBe('imported')
+    expect(stored.lastValidatedAt).toBe(123)
     expect(stored.lastValidationFailure).toBeUndefined()
+  })
+
+  it('waits for isolated sign-in cancellation before importing authentication', async () => {
+    const userCodexDir = join(storageRoot, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"imported"}}')
+    let finishCancellation!: () => void
+    const cancellationGate = new Promise<void>((resolve) => {
+      finishCancellation = resolve
+    })
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn(),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(() => cancellationGate),
+      logoutIsolated: vi.fn()
+    }
+    const service = createService(undefined, { codexAuth, userCodexDir })
+    await service.upsertProvider({ type: 'codex-isolated' })
+    const appAuthPath = join(storageRoot, 'codex-subscription', 'auth.json')
+    await writeFile(appAuthPath, '{"tokens":{"access_token":"isolated"}}')
+
+    const switching = service.upsertProvider({ type: 'codex-shared' })
+    await vi.waitFor(() => expect(codexAuth.cancelLogin).toHaveBeenCalledOnce())
+    await expect(readFile(appAuthPath, 'utf8')).resolves.toContain('isolated')
+
+    finishCancellation()
+    await switching
+    await expect(readFile(appAuthPath, 'utf8')).resolves.toContain('imported')
   })
 
   it('keeps the Codex account default when a subscription is activated without a model', async () => {
@@ -570,7 +929,7 @@ describe('SettingsService: providers', () => {
     expect(snapshot.providers[0].lastValidatedAt).toBeUndefined()
   })
 
-  it('cancels isolated login and clears provider readiness on logout', async () => {
+  it('cancels isolated login and removes only the app-owned credential on logout', async () => {
     const codexAuth: CodexAuthControllerPort = {
       getStatus: vi.fn(),
       loginIsolated: vi.fn().mockResolvedValue({
@@ -588,50 +947,45 @@ describe('SettingsService: providers', () => {
     const service = createService(undefined, { codexAuth })
     await service.upsertProvider({ type: 'codex-isolated' })
     await service.loginIsolatedCodex()
+    const appAuthPath = join(storageRoot, 'codex-subscription', 'auth.json')
+    await writeFile(appAuthPath, '{"tokens":{"access_token":"isolated"}}')
 
     service.cancelCodexLogin()
     await service.logoutIsolatedCodex()
 
-    expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
-    expect(codexAuth.logoutIsolated).toHaveBeenCalledOnce()
+    expect(codexAuth.cancelLogin).toHaveBeenCalledTimes(2)
+    expect(codexAuth.logoutIsolated).not.toHaveBeenCalled()
+    await expect(readFile(appAuthPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.lastValidatedAt).toBeUndefined()
     expect(stored.lastValidationFailure).toBeUndefined()
   })
 
-  it('preserves the verified markers when isolated sign-out times out', async () => {
-    // The P1 fix: a timed-out sign-out never called logout(), so the credential may still be in the
-    // isolated home. Clearing lastValidatedAt would falsely mark the provider as signed out while
-    // the credential is usable — instead preserve the verified state and return the failure so the
-    // user knows to retry.
+  it('rejects isolated logout for imported authentication without deleting its copy', async () => {
     const codexAuth = {
       getStatus: vi.fn(),
-      loginIsolated: vi.fn().mockResolvedValue({
-        mode: 'isolated',
-        supported: true,
-        authenticated: true
-      }),
+      loginIsolated: vi.fn(),
       cancelLogin: vi.fn(),
-      logoutIsolated: vi.fn().mockResolvedValue({
-        mode: 'isolated',
-        supported: true,
-        authenticated: false,
-        message: 'Codex sign-out timed out.'
-      })
+      logoutIsolated: vi.fn()
     }
     const service = createService(undefined, { codexAuth })
-    await service.upsertProvider({ type: 'codex-isolated' })
-    await service.loginIsolatedCodex()
+    await service.upsertProvider({ type: 'codex-shared' })
+    codexAuth.cancelLogin.mockClear()
+    const appAuthPath = join(storageRoot, 'codex-subscription', 'auth.json')
 
     const result = await service.logoutIsolatedCodex()
 
-    expect(result).toEqual({ ok: false, category: 'timeout', message: 'Codex sign-out timed out.' })
-    const stored = (await repository.getSettings()).providers[0]
-    expect(stored.lastValidatedAt).toBeGreaterThan(0)
-    expect(stored.lastValidationFailure).toBeUndefined()
+    expect(result).toEqual({
+      ok: false,
+      category: 'unknown',
+      message: 'No isolated Open Science Codex login is configured.'
+    })
+    expect(codexAuth.cancelLogin).not.toHaveBeenCalled()
+    expect(codexAuth.logoutIsolated).not.toHaveBeenCalled()
+    await expect(readFile(appAuthPath, 'utf8')).resolves.toContain('access_token')
   })
 
-  it('returns success when isolated sign-out completes cleanly', async () => {
+  it('returns success when the app-owned isolated credential is already absent', async () => {
     const codexAuth = {
       getStatus: vi.fn(),
       loginIsolated: vi.fn().mockResolvedValue({
@@ -649,10 +1003,17 @@ describe('SettingsService: providers', () => {
     const service = createService(undefined, { codexAuth })
     await service.upsertProvider({ type: 'codex-isolated' })
     await service.loginIsolatedCodex()
+    const appConfigPath = join(storageRoot, 'codex-subscription', 'config.toml')
+    await writeFile(appConfigPath, 'cli_auth_credentials_store = "auto"\n')
 
     const result = await service.logoutIsolatedCodex()
 
     expect(result).toEqual({ ok: true, category: 'ok' })
+    expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
+    expect(codexAuth.logoutIsolated).not.toHaveBeenCalled()
+    await expect(readFile(appConfigPath, 'utf8')).resolves.toBe(
+      'cli_auth_credentials_store = "file"\n'
+    )
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.lastValidatedAt).toBeUndefined()
     expect(stored.lastValidationFailure).toBeUndefined()
@@ -1246,9 +1607,9 @@ describe('SettingsService: validation', () => {
     expect(stored.lastValidationFailure).toBeUndefined()
   })
 
-  it('runs a plain connectivity probe under Codex without a per-model capability check', async () => {
+  it('requires the streaming tool-call contract for a provider Codex reaches through the bridge', async () => {
     const service = createService()
-    const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
+    const fetchMock = vi.fn().mockResolvedValue(validBridgeToolCallResponse())
     vi.stubGlobal('fetch', fetchMock)
     const created = (
       await service.upsertProvider({
@@ -1261,20 +1622,22 @@ describe('SettingsService: validation', () => {
       })
     ).providers[0]
 
-    // Under Codex a provider test stays a connectivity/key check: a basic non-streaming ping on the
-    // provider's endpoint, not a strict streaming function-tool probe. Per-model bridge support is a
-    // static registry mark (bridgeUnsupportedModels), so there is no runtime capability to record.
+    // Codex will translate Responses requests through this provider's Chat Completions endpoint, so
+    // validation must exercise the same streaming function-call contract before recording success.
     await repository.setAgentFramework('codex')
-    await service.validateProvider({ providerId: created.id })
+    const result = await service.validateProvider({ providerId: created.id })
 
+    expect(result).toMatchObject({ ok: true, category: 'ok' })
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.lastValidatedAt).toBeGreaterThan(0)
     expect(stored.lastValidationFailure).toBeUndefined()
 
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
     expect(fetchMock.mock.calls[0][0]).toBe('https://g/v1/chat/completions')
-    expect(body).toMatchObject({ stream: false, messages: [{ role: 'user', content: 'ping' }] })
-    expect(body).not.toHaveProperty('tools')
+    expect(body).toMatchObject({
+      stream: true,
+      tools: [{ type: 'function', function: { name: 'open_science_bridge_probe' } }]
+    })
   })
 })
 
@@ -2029,7 +2392,16 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' },
+      resolveCodexProxyEnvironment: () =>
+        Promise.resolve({
+          HTTP_PROXY: 'http://proxy.example.test:3128',
+          HTTPS_PROXY: 'http://proxy.example.test:3128',
+          http_proxy: 'http://proxy.example.test:3128',
+          https_proxy: 'http://proxy.example.test:3128',
+          NO_PROXY: 'localhost,127.0.0.1,::1',
+          no_proxy: 'localhost,127.0.0.1,::1'
+        })
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
@@ -2068,9 +2440,25 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.env.NO_BROWSER).toBeUndefined()
     expect(backend.env.CODEX_PATH).toBe('/data/codex-managed/native/codex')
     expect(backend.env.CODEX_HOME).toBe(join(storageRoot, 'codex-subscription'))
+    expect(backend.env.HTTPS_PROXY).toBe('http://proxy.example.test:3128')
+    expect(backend.env.NO_PROXY).toContain('127.0.0.1')
+    expect(backend.proxyEnvironmentMode).toBe('replace')
+    expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
+      'cli_auth_credentials_store = "file"\n'
+    )
     expect(await readFile(join(storageRoot, 'codex', 'config.toml'), 'utf8')).toBe(
       'model = "account-default"\ncli_auth_credentials_store = "ephemeral"\n'
     )
+
+    const fallbackService = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' },
+      resolveCodexProxyEnvironment: () => Promise.resolve(undefined)
+    })
+    const fallbackBackend = await fallbackService.resolveActiveAgentBackend()
+
+    expect(fallbackBackend.proxyEnvironmentMode).toBe('inherit')
+    expect(fallbackBackend.env).not.toHaveProperty('HTTP_PROXY')
+    expect(fallbackBackend.env).not.toHaveProperty('HTTPS_PROXY')
   })
 
   it('resolves an unpinned subscription backend to the Codex account default', async () => {
@@ -2819,10 +3207,10 @@ describe('SettingsService: official vendors', () => {
     })
   })
 
-  it('probes DeepSeek on its OpenAI route as a plain connectivity check under Codex', async () => {
+  it('probes DeepSeek with the bridge tool-call contract under Codex', async () => {
     const service = createService()
     await repository.setAgentFramework('codex')
-    const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
+    const fetchMock = vi.fn().mockResolvedValue(validBridgeToolCallResponse())
     vi.stubGlobal('fetch', fetchMock)
 
     const result = await service.validateProvider({
@@ -2830,11 +3218,32 @@ describe('SettingsService: official vendors', () => {
     })
 
     expect(result.ok).toBe(true)
-    // The dual-endpoint vendor is probed on its OpenAI /v1/chat/completions route, but with a basic
-    // non-streaming ping — not a strict streaming function-tool probe. Bridge compatibility is static.
+    // The dual-endpoint vendor reaches Codex through the Chat Completions bridge, so the probe must
+    // prove streaming function calls on the same OpenAI route before validation succeeds.
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
-    expect(body).toMatchObject({ stream: false, messages: [{ role: 'user', content: 'ping' }] })
-    expect(body).not.toHaveProperty('tools')
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/v1/chat/completions')
+    expect(body).toMatchObject({
+      stream: true,
+      tools: [{ type: 'function', function: { name: 'open_science_bridge_probe' } }]
+    })
+  })
+
+  it('probes native Responses vendors through the Codex namespace compatibility contract', async () => {
+    const service = createService()
+    await repository.setAgentFramework('codex')
+    const fetchMock = vi.fn().mockResolvedValue(validNativeCompatibilityToolCallResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await service.validateProvider({
+      draft: { type: 'official', vendorId: 'xai', key: 'sk-xai' }
+    })
+
+    expect(result).toMatchObject({ ok: true, category: 'ok' })
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.x.ai/v1/responses')
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      stream: true,
+      tools: [{ type: 'function', name: 'open_science__bridge_probe' }]
+    })
   })
 
   it('validates an anthropic-only official draft against its /v1/messages route', async () => {

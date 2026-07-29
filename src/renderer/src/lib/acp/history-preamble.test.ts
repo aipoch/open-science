@@ -82,30 +82,35 @@ describe('buildHistoryPreamble', () => {
   })
 
   it('collects bounded recent image uploads and inline assistant images for replay', () => {
-    const media = buildHistoryReplayMedia([
-      message({
-        role: 'user',
-        content: 'look',
-        uploads: [
-          {
-            id: 'u1',
-            sessionId: 's1',
-            name: 'plot.png',
-            originalName: 'plot.png',
-            path: '/uploads/plot.png',
-            mimeType: 'image/png',
-            size: 10
-          }
-        ]
-      }),
-      message({
-        role: 'agent',
-        content: '',
-        images: [{ id: 'i1', mimeType: 'image/png', data: 'aGVsbG8=', byteLength: 5 }]
-      })
-    ])
+    const media = buildHistoryReplayMedia(
+      [
+        message({
+          role: 'user',
+          content: 'look',
+          uploads: [
+            {
+              id: 'u1',
+              versionId: 'v1',
+              sessionId: 's1',
+              name: 'plot.png',
+              originalName: 'plot.png',
+              path: '/uploads/plot.png',
+              mimeType: 'image/png',
+              size: 10
+            }
+          ]
+        }),
+        message({
+          role: 'agent',
+          content: '',
+          images: [{ id: 'i1', mimeType: 'image/png', data: 'aGVsbG8=', byteLength: 5 }]
+        })
+      ],
+      'project-1'
+    )
 
     expect(media.attachments.map((item) => item.id)).toEqual(['u1'])
+    expect(media.attachments[0].path).toBe('upload-version:project-1/s1/v1')
     expect(media.images).toHaveLength(1)
   })
 })

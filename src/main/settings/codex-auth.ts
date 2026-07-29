@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { isIP } from 'node:net'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 
@@ -9,6 +10,7 @@ import * as acp from '@agentclientprotocol/sdk'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { terminateProcessTree } from '../process-tree'
 import { augmentedPathEnv } from './shell-path'
+import { clearSystemProxyEnvironment, type SystemProxyEnvironment } from './system-proxy'
 
 export type CodexAuthMode = 'shared' | 'isolated'
 
@@ -38,6 +40,7 @@ export type CodexAuthLaunch = {
   nativePath?: string
   mode: CodexAuthMode
   storageRoot: string
+  proxyEnv?: SystemProxyEnvironment
 }
 
 type CodexAuthControllerOptions = {
@@ -60,25 +63,421 @@ const CODEX_ENV_KEYS = [
   'NO_BROWSER'
 ] as const
 
+type ImportedCodexProviderRoute = {
+  id: string
+  name: string
+  baseUrl: string
+  supportsWebsockets?: boolean
+}
+
+type TomlScalar = string | boolean
+
+const parseTomlString = (literal: string): string | undefined => {
+  const trimmed = literal.trim()
+
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown
+      return typeof parsed === 'string' ? parsed : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) return trimmed.slice(1, -1)
+  return undefined
+}
+
+const parseTomlKey = (literal: string): string | undefined =>
+  /^[A-Za-z0-9_-]+$/.test(literal) ? literal : parseTomlString(literal)
+
+const parseTomlAssignmentKey = (line: string): string | undefined => {
+  const match = line.match(/^\s*("(?:\\.|[^"\\])*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.|\s*=)/)
+  return match ? parseTomlKey(match[1]) : undefined
+}
+
+const parseTomlScalarAssignment = (
+  line: string
+): { key: string; value: TomlScalar } | undefined => {
+  const stringMatch = line.match(
+    /^\s*("(?:\\.|[^"\\])*"|'[^']*'|[A-Za-z0-9_-]+)\s*=\s*("(?:\\.|[^"\\])*"|'[^']*')\s*(?:#.*)?$/
+  )
+  if (stringMatch) {
+    const key = parseTomlKey(stringMatch[1])
+    const value = parseTomlString(stringMatch[2])
+    return key === undefined || value === undefined ? undefined : { key, value }
+  }
+
+  const booleanMatch = line.match(
+    /^\s*("(?:\\.|[^"\\])*"|'[^']*'|[A-Za-z0-9_-]+)\s*=\s*(true|false)\s*(?:#.*)?$/
+  )
+  if (!booleanMatch) return undefined
+
+  const key = parseTomlKey(booleanMatch[1])
+  return key === undefined ? undefined : { key, value: booleanMatch[2] === 'true' }
+}
+
+const parseModelProviderTableId = (line: string): string | undefined => {
+  const match = line.match(
+    /^\s*\[\s*(?:model_providers|"model_providers"|'model_providers')\s*\.\s*("(?:\\.|[^"\\])*"|'[^']*'|[A-Za-z0-9_-]+)\s*\]\s*(?:#.*)?$/
+  )
+  if (!match) return undefined
+
+  const key = match[1]
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : parseTomlString(key)
+}
+
+const parseModelProviderTableRootId = (line: string): string | undefined => {
+  const match = line.match(
+    /^\s*\[\s*(?:model_providers|"model_providers"|'model_providers')\s*\.\s*("(?:\\.|[^"\\])*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.|\s*\])/
+  )
+  if (!match) return undefined
+
+  const key = match[1]
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : parseTomlString(key)
+}
+
+const isModelProviderAssignment = (line: string): boolean =>
+  /^\s*(?:model_provider|"model_provider"|'model_provider')\s*=/.test(line)
+
+const isLoopbackHostname = (hostname: string): boolean => {
+  const unwrappedHostname =
+    hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
+  if (unwrappedHostname === 'localhost') return true
+
+  const ipVersion = isIP(unwrappedHostname)
+  return ipVersion === 4
+    ? unwrappedHostname.startsWith('127.')
+    : ipVersion === 6 && unwrappedHostname === '::1'
+}
+
+// These provider fields can carry credentials or make the route depend on values that the isolated
+// profile deliberately does not copy. Reject the whole route instead of persisting a sanitized but
+// unusable endpoint. Scalar retry/timing options remain safe to omit.
+const UNSAFE_IMPORTED_ROUTE_KEYS = new Set([
+  'env_key',
+  'experimental_bearer_token',
+  'http_headers',
+  'env_http_headers',
+  'query_params'
+])
+
+// Import only the active provider's non-secret route. This preserves a working local Codex network
+// path (for example a loopback proxy endpoint) without copying models, MCP servers, hooks,
+// headers, bearer tokens, or any other user configuration into the app-owned profile.
+const extractCodexProviderRoute = (configToml: string): ImportedCodexProviderRoute | undefined => {
+  const lines = configToml.split(/\r?\n/)
+  let activeProviderId: string | undefined
+
+  for (const line of lines) {
+    if (/^\s*\[/.test(line)) break
+    const assignment = parseTomlScalarAssignment(line)
+    if (assignment?.key === 'model_provider' && typeof assignment.value === 'string') {
+      activeProviderId = assignment.value
+      break
+    }
+  }
+
+  if (!activeProviderId || activeProviderId.length > 128) return undefined
+
+  let inActiveProviderTable = false
+  let name: string | undefined
+  let baseUrl: string | undefined
+  let wireApi: string | undefined
+  let requiresOpenAiAuth: boolean | undefined
+  let supportsWebsockets: boolean | undefined
+
+  for (const line of lines) {
+    if (/^\s*\[/.test(line)) {
+      const providerTableId = parseModelProviderTableId(line)
+      const providerTableRootId = parseModelProviderTableRootId(line)
+      // Nested provider tables are not serialized into the app-owned profile and commonly carry
+      // headers/query parameters. Treat any nested dependency on the active route as incompatible.
+      if (providerTableRootId === activeProviderId && providerTableId !== activeProviderId) {
+        return undefined
+      }
+      inActiveProviderTable = providerTableId === activeProviderId
+      continue
+    }
+    if (!inActiveProviderTable) continue
+
+    const assignmentKey = parseTomlAssignmentKey(line)
+    if (assignmentKey && UNSAFE_IMPORTED_ROUTE_KEYS.has(assignmentKey)) return undefined
+
+    const assignment = parseTomlScalarAssignment(line)
+    if (!assignment) continue
+
+    if (assignment.key === 'name' && typeof assignment.value === 'string') {
+      name = assignment.value
+    } else if (assignment.key === 'base_url' && typeof assignment.value === 'string') {
+      baseUrl = assignment.value
+    } else if (assignment.key === 'wire_api' && typeof assignment.value === 'string') {
+      wireApi = assignment.value
+    } else if (assignment.key === 'requires_openai_auth' && typeof assignment.value === 'boolean') {
+      requiresOpenAiAuth = assignment.value
+    } else if (assignment.key === 'supports_websockets' && typeof assignment.value === 'boolean') {
+      supportsWebsockets = assignment.value
+    }
+  }
+
+  if (!baseUrl || wireApi !== 'responses' || requiresOpenAiAuth !== true) return undefined
+
+  // WHATWG URL normalizes an empty trailing query or fragment away, so inspect the raw value as
+  // well. Imported routes never need either delimiter, even when no query/hash content follows it.
+  if (baseUrl.includes('?') || baseUrl.includes('#')) return undefined
+
+  try {
+    const url = new URL(baseUrl)
+    if (
+      (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+      !isLoopbackHostname(url.hostname) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    ) {
+      return undefined
+    }
+  } catch {
+    return undefined
+  }
+
+  return {
+    id: activeProviderId,
+    name: name?.trim() || activeProviderId,
+    baseUrl,
+    ...(supportsWebsockets === undefined ? {} : { supportsWebsockets })
+  }
+}
+
+const serializeLegacyCodexProviderRoute = (route: ImportedCodexProviderRoute): string =>
+  [
+    `model_provider = ${JSON.stringify(route.id)}`,
+    '',
+    `[model_providers.${JSON.stringify(route.id)}]`,
+    `name = ${JSON.stringify(route.name)}`,
+    `base_url = ${JSON.stringify(route.baseUrl)}`,
+    'wire_api = "responses"',
+    'requires_openai_auth = true',
+    ...(route.supportsWebsockets === undefined
+      ? []
+      : [`supports_websockets = ${String(route.supportsWebsockets)}`]),
+    ''
+  ].join('\n')
+
+const IMPORTED_ROUTE_SELECTION_BEGIN = '# Open Science: begin imported Codex route selection'
+const IMPORTED_ROUTE_SELECTION_END = '# Open Science: end imported Codex route selection'
+const IMPORTED_ROUTE_PROVIDER_BEGIN = '# Open Science: begin imported Codex provider'
+const IMPORTED_ROUTE_PROVIDER_END = '# Open Science: end imported Codex provider'
+const IMPORTED_ROUTE_PRESERVED_LINE = '# Open Science: preserved Codex config '
+const CODEX_FILE_CREDENTIAL_STORE = 'cli_auth_credentials_store = "file"'
+
+const isCodexCredentialStoreAssignment = (line: string): boolean =>
+  /^\s*(?:cli_auth_credentials_store|"cli_auth_credentials_store"|'cli_auth_credentials_store')\s*=/.test(
+    line
+  )
+
+// CODEX_HOME isolates file-backed auth.json, but the default/auto store can still select the
+// process-wide OS keyring. Pin subscription profiles to file storage so status, login, and logout
+// cannot observe or mutate the user's global Codex CLI credential.
+const serializeCodexFileCredentialStore = (existingConfigToml: string): string => {
+  const lines = existingConfigToml.split(/\r?\n/)
+  const result: string[] = []
+  let inTopLevel = true
+
+  for (const line of lines) {
+    if (/^\s*\[/.test(line)) inTopLevel = false
+    if (inTopLevel && isCodexCredentialStoreAssignment(line)) continue
+    result.push(line)
+  }
+
+  while (result.at(-1) === '') result.pop()
+  const firstOwnedMarkerIndex = result.findIndex(
+    (line) => line === IMPORTED_ROUTE_SELECTION_BEGIN || line === IMPORTED_ROUTE_PROVIDER_BEGIN
+  )
+  const firstTableIndex = result.findIndex((line) => /^\s*\[/.test(line))
+  const insertionCandidates = [firstOwnedMarkerIndex, firstTableIndex].filter((index) => index >= 0)
+  const insertionIndex =
+    insertionCandidates.length > 0 ? Math.min(...insertionCandidates) : result.length
+  result.splice(insertionIndex, 0, CODEX_FILE_CREDENTIAL_STORE)
+  result.push('')
+
+  return result.join('\n')
+}
+
+const restoreCompleteMarkedBlock = (lines: string[], begin: string, end: string): string[] => {
+  const result = [...lines]
+  let beginIndex = result.indexOf(begin)
+
+  while (beginIndex >= 0) {
+    const relativeEndIndex = result.slice(beginIndex + 1).indexOf(end)
+    if (relativeEndIndex < 0) break
+
+    const endIndex = beginIndex + relativeEndIndex + 1
+    const preservedLines = result.slice(beginIndex + 1, endIndex).flatMap((line) => {
+      if (!line.startsWith(IMPORTED_ROUTE_PRESERVED_LINE)) return []
+      try {
+        const preservedLine = JSON.parse(
+          line.slice(IMPORTED_ROUTE_PRESERVED_LINE.length)
+        ) as unknown
+        return typeof preservedLine === 'string' ? [preservedLine] : []
+      } catch {
+        return []
+      }
+    })
+    result.splice(beginIndex, relativeEndIndex + 2, ...preservedLines)
+    beginIndex = result.indexOf(begin)
+  }
+
+  return result
+}
+
+const hasCompleteMarkedBlock = (lines: string[], begin: string, end: string): boolean => {
+  const beginIndex = lines.indexOf(begin)
+  return beginIndex >= 0 && lines.slice(beginIndex + 1).includes(end)
+}
+
+const removeImportedCodexProviderRoute = (configToml: string): string => {
+  const lines = configToml.split(/\r?\n/)
+  const hasMarkedRoute =
+    hasCompleteMarkedBlock(lines, IMPORTED_ROUTE_SELECTION_BEGIN, IMPORTED_ROUTE_SELECTION_END) ||
+    hasCompleteMarkedBlock(lines, IMPORTED_ROUTE_PROVIDER_BEGIN, IMPORTED_ROUTE_PROVIDER_END)
+  const withoutMarkedBlocks = restoreCompleteMarkedBlock(
+    restoreCompleteMarkedBlock(lines, IMPORTED_ROUTE_SELECTION_BEGIN, IMPORTED_ROUTE_SELECTION_END),
+    IMPORTED_ROUTE_PROVIDER_BEGIN,
+    IMPORTED_ROUTE_PROVIDER_END
+  ).join('\n')
+
+  // Builds produced before route markers wrote only the sanitized route. Recognize that exact shape
+  // so switching modes can clean it up without ever treating a mixed, user-authored config as ours.
+  const legacyRoute = hasMarkedRoute ? undefined : extractCodexProviderRoute(withoutMarkedBlocks)
+  if (
+    legacyRoute &&
+    withoutMarkedBlocks.trim() === serializeLegacyCodexProviderRoute(legacyRoute).trim()
+  ) {
+    return ''
+  }
+
+  return withoutMarkedBlocks
+}
+
+const removeConflictingCodexProviderRoute = (
+  lines: string[],
+  providerId: string
+): { lines: string[]; selection: string[]; provider: string[] } => {
+  const result: string[] = []
+  const selection: string[] = []
+  const provider: string[] = []
+  let inTopLevel = true
+  let inConflictingProviderTable = false
+
+  for (const line of lines) {
+    if (/^\s*\[/.test(line)) {
+      inTopLevel = false
+      inConflictingProviderTable = parseModelProviderTableRootId(line) === providerId
+      if (inConflictingProviderTable) {
+        provider.push(line)
+        continue
+      }
+    } else if (inConflictingProviderTable) {
+      provider.push(line)
+      continue
+    }
+
+    if (inTopLevel && isModelProviderAssignment(line)) {
+      selection.push(line)
+      continue
+    }
+    result.push(line)
+  }
+
+  return { lines: result, selection, provider }
+}
+
+const serializePreservedConfigLines = (lines: string[]): string[] =>
+  lines.map((line) => `${IMPORTED_ROUTE_PRESERVED_LINE}${JSON.stringify(line)}`)
+
+const serializeImportedCodexProviderRoute = (
+  route: ImportedCodexProviderRoute,
+  existingConfigToml: string
+): string => {
+  const conflictingRoute = removeConflictingCodexProviderRoute(
+    removeImportedCodexProviderRoute(existingConfigToml).split(/\r?\n/),
+    route.id
+  )
+  const baseLines = conflictingRoute.lines
+  while (baseLines.at(-1) === '') baseLines.pop()
+
+  const firstTableIndex = baseLines.findIndex((line) => /^\s*\[/.test(line))
+  const selectionIndex = firstTableIndex < 0 ? baseLines.length : firstTableIndex
+  baseLines.splice(
+    selectionIndex,
+    0,
+    IMPORTED_ROUTE_SELECTION_BEGIN,
+    ...serializePreservedConfigLines(conflictingRoute.selection),
+    `model_provider = ${JSON.stringify(route.id)}`,
+    IMPORTED_ROUTE_SELECTION_END
+  )
+  baseLines.push(
+    IMPORTED_ROUTE_PROVIDER_BEGIN,
+    ...serializePreservedConfigLines(conflictingRoute.provider),
+    `[model_providers.${JSON.stringify(route.id)}]`,
+    `name = ${JSON.stringify(route.name)}`,
+    `base_url = ${JSON.stringify(route.baseUrl)}`,
+    'wire_api = "responses"',
+    'requires_openai_auth = true',
+    ...(route.supportsWebsockets === undefined
+      ? []
+      : [`supports_websockets = ${String(route.supportsWebsockets)}`]),
+    IMPORTED_ROUTE_PROVIDER_END,
+    ''
+  )
+
+  return baseLines.join('\n')
+}
+
+const writePrivateFileAtomically = async (
+  destinationPath: string,
+  content: string
+): Promise<void> => {
+  const temporaryPath = `${destinationPath}.${randomUUID()}.tmp`
+  try {
+    await writeFile(temporaryPath, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+    await chmod(temporaryPath, 0o600)
+    await rename(temporaryPath, destinationPath)
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined)
+  }
+}
+
 export const createCodexAuthEnvironment = (
   _mode: CodexAuthMode,
   storageRoot: string,
-  sourceEnv: NodeJS.ProcessEnv = process.env
+  sourceEnv: NodeJS.ProcessEnv = process.env,
+  proxyEnv?: SystemProxyEnvironment
 ): NodeJS.ProcessEnv => {
   const env = augmentedPathEnv(sourceEnv)
   for (const key of CODEX_ENV_KEYS) delete env[key]
+  if (proxyEnv !== undefined) clearSystemProxyEnvironment(env)
 
-  return { ...env, CODEX_HOME: codexSubscriptionStorageDir(storageRoot) }
+  return {
+    ...env,
+    ...(proxyEnv ?? {}),
+    CODEX_HOME: codexSubscriptionStorageDir(storageRoot)
+  }
 }
 
-// Provider setup may import an existing login, but runtime isolation is strict: copy the credential
-// file only. Global config, Skills, sessions, memories, and hooks remain outside Open Science.
+// Provider setup imports an existing login plus the safe, non-secret subset of its active provider
+// route. Global model defaults, MCP servers, Skills, sessions, memories, hooks, and tokens embedded in
+// provider config remain outside Open Science.
 export const importCodexAuthentication = async (
   sourceHome: string,
   destinationHome: string
 ): Promise<void> => {
   const sourcePath = join(sourceHome, 'auth.json')
   const destinationPath = join(destinationHome, 'auth.json')
+  const sourceConfigPath = join(sourceHome, 'config.toml')
+  const destinationConfigPath = join(destinationHome, 'config.toml')
   let content: string
 
   try {
@@ -89,15 +488,57 @@ export const importCodexAuthentication = async (
     throw new Error('The selected Codex profile does not contain importable authentication.')
   }
 
-  await mkdir(destinationHome, { recursive: true })
-  const temporaryPath = `${destinationPath}.${randomUUID()}.tmp`
+  let providerRoute: ImportedCodexProviderRoute | undefined
   try {
-    await writeFile(temporaryPath, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
-    await chmod(temporaryPath, 0o600)
-    await rename(temporaryPath, destinationPath)
-  } finally {
-    await rm(temporaryPath, { force: true }).catch(() => undefined)
+    providerRoute = extractCodexProviderRoute(await readFile(sourceConfigPath, 'utf8'))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
+
+  await mkdir(destinationHome, { recursive: true })
+  await writePrivateFileAtomically(destinationPath, content)
+  if (providerRoute) {
+    let existingConfigToml = ''
+    try {
+      existingConfigToml = await readFile(destinationConfigPath, 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    await writePrivateFileAtomically(
+      destinationConfigPath,
+      serializeImportedCodexProviderRoute(providerRoute, existingConfigToml)
+    )
+  } else {
+    await clearImportedCodexProviderRoute(destinationHome)
+  }
+}
+
+export const clearImportedCodexProviderRoute = async (destinationHome: string): Promise<void> => {
+  const destinationConfigPath = join(destinationHome, 'config.toml')
+  let existingConfigToml: string
+
+  try {
+    existingConfigToml = await readFile(destinationConfigPath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+
+  const cleanedConfigToml = removeImportedCodexProviderRoute(existingConfigToml)
+  if (cleanedConfigToml === existingConfigToml) return
+
+  if (cleanedConfigToml.trim()) {
+    await writePrivateFileAtomically(destinationConfigPath, cleanedConfigToml)
+  } else {
+    await rm(destinationConfigPath, { force: true })
+  }
+}
+
+// Switching away from an imported profile must discard the copied credential without invoking
+// Codex logout. Logging out a copied token can revoke the same session still used by the user's
+// global CLI profile; unlinking only the app-owned copy preserves that external login.
+export const clearAppOwnedCodexAuthentication = async (destinationHome: string): Promise<void> => {
+  await rm(join(destinationHome, 'auth.json'), { force: true })
 }
 
 const abortError = (message: string): Error => {
@@ -152,7 +593,7 @@ export class CodexAuthController {
   private readonly openSession: (mode: CodexAuthMode) => Promise<CodexAuthSession>
   private readonly loginTimeoutMs: number
   private readonly statusTimeoutMs: number
-  private activeLogin: AbortController | undefined
+  private activeLogin: { abort: AbortController; completion: Promise<void> } | undefined
 
   constructor(options: CodexAuthControllerOptions) {
     this.openSession = options.openSession
@@ -166,14 +607,13 @@ export class CodexAuthController {
   // abort, timeout, and teardown. The caller supplies the AbortController so it can register it
   // synchronously before any await (loginIsolated stores it in activeLogin, before this async helper
   // is even entered, so its re-entrancy guard cannot race); `onAborted` maps a timeout/cancel into a
-  // result, and `onSettled` runs in the finally for caller-side teardown (clearing activeLogin).
+  // result.
   private async withBoundedSession(
     mode: CodexAuthMode,
     timeoutMs: number,
     run: (session: CodexAuthSession, signal: AbortSignal) => Promise<CodexAuthStatus>,
     onAborted: (reason: unknown) => CodexAuthStatus,
-    abort: AbortController = new AbortController(),
-    onSettled?: () => void
+    abort: AbortController = new AbortController()
   ): Promise<CodexAuthStatus> {
     const timeout = setTimeout(() => abort.abort('timeout'), timeoutMs)
     let authSession: CodexAuthSession | undefined
@@ -192,7 +632,6 @@ export class CodexAuthController {
       throw error
     } finally {
       clearTimeout(timeout)
-      onSettled?.()
       await authSession?.close()
     }
   }
@@ -237,9 +676,16 @@ export class CodexAuthController {
 
     // Claim the in-progress slot synchronously, in the same tick as the guard above and before the
     // async helper is entered, so two rapid calls cannot both pass the guard and open two browser
-    // sign-ins. cancelLogin aborts this same controller; onSettled clears the slot on teardown.
+    // sign-ins. cancelLogin aborts this same controller and waits for the session teardown below.
     const abort = new AbortController()
-    this.activeLogin = abort
+    let finishCompletion!: () => void
+    const activeLogin = {
+      abort,
+      completion: new Promise<void>((resolve) => {
+        finishCompletion = resolve
+      })
+    }
+    this.activeLogin = activeLogin
 
     return this.withBoundedSession(
       'isolated',
@@ -270,15 +716,19 @@ export class CodexAuthController {
             ? 'Codex sign-in timed out after five minutes.'
             : 'Codex sign-in was cancelled.'
       }),
-      abort,
-      () => {
-        this.activeLogin = undefined
-      }
-    )
+      abort
+    ).finally(() => {
+      if (this.activeLogin === activeLogin) this.activeLogin = undefined
+      finishCompletion()
+    })
   }
 
-  cancelLogin(): void {
-    this.activeLogin?.abort('cancelled')
+  async cancelLogin(): Promise<void> {
+    const activeLogin = this.activeLogin
+    if (!activeLogin) return
+
+    activeLogin.abort.abort('cancelled')
+    await activeLogin.completion
   }
 
   async logoutIsolated(): Promise<CodexAuthStatus> {
@@ -322,14 +772,29 @@ export const ensureCodexAuthHome = async (
   _mode: CodexAuthMode,
   storageRoot: string
 ): Promise<void> => {
-  await mkdir(codexSubscriptionStorageDir(storageRoot), { recursive: true })
+  const codexHome = codexSubscriptionStorageDir(storageRoot)
+  const configPath = join(codexHome, 'config.toml')
+  await mkdir(codexHome, { recursive: true })
+
+  let existingConfigToml = ''
+  try {
+    existingConfigToml = await readFile(configPath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+
+  const nextConfigToml = serializeCodexFileCredentialStore(existingConfigToml)
+  if (nextConfigToml !== existingConfigToml) {
+    await writePrivateFileAtomically(configPath, nextConfigToml)
+  }
 }
 
 export const openCodexAuthSession = async ({
   adapterPath,
   nativePath,
   mode,
-  storageRoot
+  storageRoot,
+  proxyEnv
 }: CodexAuthLaunch): Promise<CodexAuthSession> => {
   await ensureCodexAuthHome(mode, storageRoot)
 
@@ -337,7 +802,7 @@ export const openCodexAuthSession = async ({
   const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(adapterPath)
   const command = isJavaScript ? process.execPath : needsShell ? `"${adapterPath}"` : adapterPath
   const args = isJavaScript ? [adapterPath] : []
-  const env = createCodexAuthEnvironment(mode, storageRoot)
+  const env = createCodexAuthEnvironment(mode, storageRoot, process.env, proxyEnv)
   if (isJavaScript) env.ELECTRON_RUN_AS_NODE = '1'
   if (nativePath) env.CODEX_PATH = nativePath
 

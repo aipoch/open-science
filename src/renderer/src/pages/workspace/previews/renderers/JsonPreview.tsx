@@ -15,7 +15,7 @@ const formatJsonPreview = (content: string): { formatted: string; error?: string
 }
 
 export const JsonPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
-  const state = usePreviewFileContent({ path: item.path, source: item.source })
+  const state = usePreviewFileContent(item)
 
   if (state.status === 'loading') return <PreviewLoadingContent />
 

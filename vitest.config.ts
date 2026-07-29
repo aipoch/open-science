@@ -1,10 +1,22 @@
-import { resolve } from 'path'
+import { basename, dirname, resolve } from 'path'
 import { defineConfig, configDefaults } from 'vitest/config'
+
+const testRoot = resolve('.')
+const sharedInstallRoot = basename(dirname(testRoot)) === '.worktree' ? resolve('../..') : testRoot
 
 // Mirrors the renderer alias from electron.vite.config.ts so tests that mount real component
 // trees (instead of mocking every aliased import) can resolve '@/...' without a build step.
 export default defineConfig({
+  server: {
+    // Vitest may still canonicalize worker URLs through the shared install even when module
+    // resolution preserves symlinks. Limit the additional allowance to this repository root.
+    fs: { allow: [...new Set([testRoot, sharedInstallRoot])] }
+  },
   resolve: {
+    // Git worktrees reuse the repository-root dependency install through a local node_modules
+    // symlink. Keep that logical path so Vite does not resolve PDF workers outside the test root and
+    // reject them before the component suite can run. A normal checkout already has a local install.
+    preserveSymlinks: true,
     alias: {
       '@': resolve('src/renderer/src'),
       '@renderer': resolve('src/renderer/src'),

@@ -7,9 +7,13 @@ import { encodeRunDocumentDataPaths } from '../notebook/run-document-data-paths'
 import type { PreviewStateRepository } from '../projects/preview-repository'
 import type { ProjectRepository } from '../projects/repository'
 import type { SessionRepository } from '../session-persistence/repository'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 
 type NormalizeDeps = {
   sessionRepository: SessionRepository
+  sessionUploads: {
+    upgradeLegacySessionUploads(session: PersistedChatSession): Promise<PersistedChatSession>
+  }
   previewStateRepository: PreviewStateRepository
   projectRepository: ProjectRepository
   // Used only for the direct notebook run.json walk below.
@@ -25,11 +29,14 @@ const isMissingFileError = (error: unknown): boolean =>
 
 // Re-persists every session: the read decodes a legacy absolute path as a passthrough (see
 // decodeDataPath), and the write encodes it to $DATA — converting it in place.
-const normalizeSessions = async (sessionRepository: SessionRepository): Promise<void> => {
+const normalizeSessions = async (
+  sessionRepository: SessionRepository,
+  sessionUploads: NormalizeDeps['sessionUploads']
+): Promise<void> => {
   const { sessions } = await sessionRepository.loadAll()
 
   for (const session of sessions) {
-    await sessionRepository.saveSession(session)
+    await sessionRepository.saveSession(await sessionUploads.upgradeLegacySessionUploads(session))
   }
 }
 
@@ -99,7 +106,7 @@ const normalizeNotebookRunFiles = async (dataRoot: string): Promise<void> => {
 // no-op (see data-path.ts / normalize-legacy-paths.test.ts). Errors are NOT caught here — the caller
 // wraps this call and only sets the "done" marker on success, so a failure simply retries next launch.
 export const normalizeLegacyDataPaths = async (deps: NormalizeDeps): Promise<void> => {
-  await normalizeSessions(deps.sessionRepository)
+  await normalizeSessions(deps.sessionRepository, deps.sessionUploads)
   await normalizePreviewStates(deps.projectRepository, deps.previewStateRepository)
   await normalizeNotebookRunFiles(deps.dataRoot)
 }

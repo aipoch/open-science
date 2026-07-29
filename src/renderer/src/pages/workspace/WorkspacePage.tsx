@@ -27,9 +27,10 @@ import {
   suppressNextAutoReview,
   clearSuppressNextAutoReview
 } from '@/lib/acp/workspace-events'
-import type { StageUploadFile, UploadedAttachment } from '../../../../shared/uploads'
+import type { UploadedAttachment } from '../../../../shared/uploads'
 
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
+import { stageComposerFile, type ComposerUploadTransfer } from './composer-upload-transfer'
 import {
   docIsEmpty,
   docToArtifactRefs,
@@ -74,21 +75,6 @@ const previewPanelAnimation = {
 
 const prefersReducedMotion = (): boolean =>
   window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
-
-// Reads a browser File into the base64 payload expected by the upload IPC layer.
-const readFileAsBase64 = (file: File): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader()
-
-    reader.onload = () => {
-      const result = typeof reader.result === 'string' ? reader.result : ''
-      const commaIndex = result.indexOf(',')
-
-      resolve(commaIndex >= 0 ? result.slice(commaIndex + 1) : result)
-    }
-    reader.onerror = () => reject(reader.error ?? new Error('File could not be read.'))
-    reader.readAsDataURL(file)
-  })
 
 // Provides stable names for pasted images, which often arrive without a useful filename.
 const getUploadFilename = (file: File, index: number): string => {
@@ -160,6 +146,9 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     permissionProfiles,
     permissionGrants,
     contextUsageBySession,
+    promptInFlightSessionIds = [],
+    nativeContextCompactionSessionIds,
+    compactContext,
     sendMessage,
     resendEditedMessage,
     cancelRun,
@@ -187,11 +176,32 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   // Unsent composer state (rich doc + staged attachments) is kept per session (and per new conversation)
   // so switching away and back restores it. The active key's state is live; this map holds inactive keys.
   const composerDraftsRef = useRef<
-    Record<string, { doc: ComposerDoc; attachments: UploadedAttachment[] }>
+    Record<
+      string,
+      {
+        doc: ComposerDoc
+        attachments: UploadedAttachment[]
+        attachmentTransfers: ComposerUploadTransfer[]
+      }
+    >
+  >({})
+  // Mutable cleanup ledgers bridge the async runtime-deletion window. Uploads that finish or queue
+  // after confirmation are added here so a successful deletion cannot strand staged files.
+  const sessionDeletionCleanupRef = useRef<
+    Record<
+      string,
+      {
+        attachments: UploadedAttachment[]
+        attachmentTransfers: ComposerUploadTransfer[]
+      }
+    >
   >({})
   const previousDraftKeyRef = useRef<string>(selectedSessionId ?? NEW_CONVERSATION_DRAFT_KEY)
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([])
-  const [isUploadingAttachments, setIsUploadingAttachments] = useState(false)
+  const [attachmentTransfers, setAttachmentTransfers] = useState<ComposerUploadTransfer[]>([])
+  const attachmentTransfersRef = useRef<ComposerUploadTransfer[]>([])
+  const attachmentTransferControllersRef = useRef<Record<string, AbortController>>({})
+  const cancelledAttachmentTransfersRef = useRef(new Set<string>())
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [notebookReferences, setNotebookReferences] = useState<
     Record<string, NotebookSessionReference>
@@ -199,15 +209,41 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const [sessionToRename, setSessionToRename] = useState<ChatSession | undefined>(undefined)
   const [renameDraft, setRenameDraft] = useState('')
   const [sessionToDelete, setSessionToDelete] = useState<ChatSession | undefined>(undefined)
+  const [sessionDeletionInProgressIds, setSessionDeletionInProgressIds] = useState<
+    ReadonlySet<string>
+  >(new Set())
   const [sessionToViewNotebook, setSessionToViewNotebook] = useState<ChatSession | undefined>(
     undefined
   )
   const [jobListModal, setJobListModal] = useState({ open: false, sessionId: '' })
+
+  useEffect(() => {
+    attachmentTransfersRef.current = attachmentTransfers
+  }, [attachmentTransfers])
+
+  useEffect(
+    () => () => {
+      const transferIds = new Set(Object.keys(attachmentTransferControllersRef.current))
+      for (const transfer of attachmentTransfersRef.current) transferIds.add(transfer.transferId)
+      for (const draft of Object.values(composerDraftsRef.current)) {
+        for (const transfer of draft.attachmentTransfers) transferIds.add(transfer.transferId)
+      }
+      for (const transferId of transferIds) {
+        cancelledAttachmentTransfersRef.current.add(transferId)
+        attachmentTransferControllersRef.current[transferId]?.abort()
+        void window.api.uploads.abortTransfer({ transferId })
+      }
+    },
+    []
+  )
   // The selected session is the only conversation rendered in the center panel.
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId),
     [selectedSessionId, sessions]
   )
+  const activeSessionHasRuntimeInteraction = activeSession
+    ? promptInFlightSessionIds.includes(activeSession.id)
+    : false
   const visiblePermissionRequests = useMemo(
     () => getVisiblePermissionRequests(pendingPermissions, activeSession?.id),
     [activeSession?.id, pendingPermissions]
@@ -221,6 +257,9 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   // Session grants only exist for a bound Agent session; new conversations have none yet.
   const activePermissionGrants = activeSession ? (permissionGrants?.[activeSession.id] ?? []) : []
   const activeContextUsage = activeSession ? contextUsageBySession?.[activeSession.id] : undefined
+  const activeSessionSupportsNativeCompaction = activeSession
+    ? nativeContextCompactionSessionIds?.includes(activeSession.id) === true
+    : false
   // Auto-review defaults off: an existing session is enabled only when explicitly turned on; a new
   // conversation uses the draft toggle (which also starts off).
   const activeAutoReviewEnabled = activeSession
@@ -266,16 +305,26 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const handleReviewUpdate = useReviewStore((state) => state.handleReviewUpdate)
   // Composer controls follow only the selected session and persistence readiness.
   const canEditDraft = isSessionPersistenceReady
+  const isUploadingAttachments = attachmentTransfers.some(
+    (transfer) =>
+      transfer.status === 'queued' ||
+      transfer.status === 'uploading' ||
+      transfer.status === 'cancelling'
+  )
   // Sending is disabled while the current session is running, awaiting a decision, or locked by the
   // fix loop (fixLoopActive). The fix loop lock persists across both the reviewer-review sub-phase and
   // the main agent-fix sub-phase; typing does not override the lock.
   const canSendMessage =
     isSessionPersistenceReady &&
-    !isUploadingAttachments &&
+    attachmentTransfers.length === 0 &&
     (!docIsEmpty(draftDoc) || attachments.length > 0) &&
     activeSession?.status !== 'running' &&
     activeSession?.status !== 'waiting-permission' &&
+    !activeSessionHasRuntimeInteraction &&
     !activeSession?.fixLoopActive &&
+    // A graph-integrity failure keeps only the in-memory terminal projection. Require restart before
+    // another prompt can mutate or persist this Session over its last valid durable Branch graph.
+    !activeSession?.conversationGraphSyncBlocked &&
     // Auto-recovery drops the session to idle while it resets context and replays the transcript; block
     // sends in that window so a manual prompt can't race the recovery resend into the same session.
     !activeSession?.compacting
@@ -283,15 +332,46 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   // resent prompt can never overlap an in-flight turn, permission wait, fix loop, or compaction.
   const canEditMessage =
     isSessionPersistenceReady &&
+    attachmentTransfers.length === 0 &&
     activeSession?.status !== 'running' &&
     activeSession?.status !== 'waiting-permission' &&
+    !activeSessionHasRuntimeInteraction &&
+    !isReviewing &&
     !activeSession?.fixLoopActive &&
-    !activeSession?.compacting
+    !activeSession?.conversationGraphSyncBlocked &&
+    !activeSession?.compacting &&
+    !sessionDeletionInProgressIds.has(activeSession?.id ?? '')
+  useEffect(() => {
+    const sessionId = activeSession?.id
+    if (!sessionId) return
+    useSessionStore.getState().setBranchSwitchBlocked(sessionId, !canEditMessage)
+    return () => useSessionStore.getState().setBranchSwitchBlocked(sessionId, false)
+  }, [activeSession?.id, canEditMessage])
   const canChangePermissionProfile =
     isSessionPersistenceReady &&
     activeSession?.status !== 'running' &&
-    activeSession?.status !== 'waiting-permission'
+    activeSession?.status !== 'waiting-permission' &&
+    !activeSessionHasRuntimeInteraction &&
+    !activeSession?.compacting
+  const canCompactContext =
+    isSessionPersistenceReady &&
+    activeSessionSupportsNativeCompaction &&
+    activeSession?.status === 'idle' &&
+    !activeSessionHasRuntimeInteraction &&
+    !activeSession.interrupted &&
+    !activeSession.fixLoopActive &&
+    !activeSession.compacting
+  const compactContextDisabledReason = !activeSessionSupportsNativeCompaction
+    ? 'Send a message to reconnect this session before compacting.'
+    : activeSession?.status === 'error'
+      ? 'Resolve the current session error before compacting.'
+      : 'Wait for the current agent activity to finish.'
   const visibleActionError = attachmentError ?? (activeSession ? null : actionError)
+
+  const compactActiveContext = useCallback((): void => {
+    if (!activeSession || !canCompactContext) return
+    void compactContext?.(activeSession.id)
+  }, [activeSession, canCompactContext, compactContext])
 
   const animatePreviewPanelSize = useCallback(
     (
@@ -403,15 +483,21 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
 
     if (currentDraftKey === previousDraftKey) return
 
-    composerDraftsRef.current[previousDraftKey] = { doc: draftDoc, attachments }
+    composerDraftsRef.current[previousDraftKey] = {
+      doc: draftDoc,
+      attachments,
+      attachmentTransfers
+    }
     const nextDraft = composerDraftsRef.current[currentDraftKey] ?? {
       doc: emptyDoc,
-      attachments: []
+      attachments: [],
+      attachmentTransfers: []
     }
     setDraftDoc(nextDraft.doc)
     setAttachments(nextDraft.attachments)
+    setAttachmentTransfers(nextDraft.attachmentTransfers)
     previousDraftKeyRef.current = currentDraftKey
-  }, [selectedSessionId, draftDoc, attachments])
+  }, [selectedSessionId, draftDoc, attachments, attachmentTransfers])
 
   // The first agent-side notebook call promotes a notebook entry into the composer status bar.
   useEffect(() => {
@@ -442,11 +528,12 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   // A clear=true event cancels that suppression if the correction turn failed to send.
   useEffect(() => {
     const removeSuppressListener = window.api.reviewer.onSuppressNextAutoReview(
-      ({ sessionId, clear }) => {
+      ({ projectId, appSessionId, clear }) => {
+        if (projectId !== scopedProjectId) return
         if (clear) {
-          clearSuppressNextAutoReview(sessionId)
+          clearSuppressNextAutoReview(appSessionId)
         } else {
-          suppressNextAutoReview(sessionId)
+          suppressNextAutoReview(appSessionId)
         }
       }
     )
@@ -454,24 +541,26 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     return () => {
       removeSuppressListener()
     }
-  }, [])
+  }, [scopedProjectId])
 
   // Subscribe to fix loop lifecycle events from the main process. When a fix loop starts for a
   // session, set fixLoopActive=true to disable the send button. When it ends or is aborted, clear
   // the flag. The lock is per-session: other sessions remain interactive.
   useEffect(() => {
-    const removeStartListener = window.api.reviewer.onFixLoopStart(({ sessionId }) => {
-      setFixLoopActive(sessionId, true)
-    })
-    const removeEndListener = window.api.reviewer.onFixLoopEnd(({ sessionId }) => {
-      setFixLoopActive(sessionId, false)
+    const removeStartListener = window.api.reviewer.onFixLoopStart(
+      ({ projectId, appSessionId }) => {
+        if (projectId === scopedProjectId) setFixLoopActive(appSessionId, true)
+      }
+    )
+    const removeEndListener = window.api.reviewer.onFixLoopEnd(({ projectId, appSessionId }) => {
+      if (projectId === scopedProjectId) setFixLoopActive(appSessionId, false)
     })
 
     return () => {
       removeStartListener()
       removeEndListener()
     }
-  }, [setFixLoopActive])
+  }, [scopedProjectId, setFixLoopActive])
 
   // The availability event only fires while the agent is live, so a session opened after relaunch
   // would lose its notebook entry until the next call. Probe persisted run.json on selection to
@@ -558,6 +647,48 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     })
   }
 
+  const updateDraftTransfers = (
+    draftKey: string,
+    update: (transfers: ComposerUploadTransfer[]) => ComposerUploadTransfer[]
+  ): void => {
+    if (previousDraftKeyRef.current === draftKey) {
+      setAttachmentTransfers(update)
+      return
+    }
+
+    const draft = composerDraftsRef.current[draftKey]
+    if (draft) draft.attachmentTransfers = update(draft.attachmentTransfers)
+  }
+
+  const commitDraftAttachment = (
+    draftKey: string,
+    transferId: string,
+    attachment: UploadedAttachment
+  ): void => {
+    const deletionCleanup = sessionDeletionCleanupRef.current[draftKey]
+    if (deletionCleanup) {
+      deletionCleanup.attachmentTransfers = deletionCleanup.attachmentTransfers.filter(
+        (transfer) => transfer.transferId !== transferId
+      )
+      deletionCleanup.attachments.push(attachment)
+    }
+
+    if (previousDraftKeyRef.current === draftKey) {
+      setAttachmentTransfers((transfers) =>
+        transfers.filter((transfer) => transfer.transferId !== transferId)
+      )
+      setAttachments((currentAttachments) => [...currentAttachments, attachment])
+      return
+    }
+
+    const draft = composerDraftsRef.current[draftKey]
+    if (!draft) return
+    draft.attachmentTransfers = draft.attachmentTransfers.filter(
+      (transfer) => transfer.transferId !== transferId
+    )
+    draft.attachments.push(attachment)
+  }
+
   // Keeps New as a local draft reset after persistence hydration has selected restored sessions.
   const openNewConversation = (): void => {
     if (!isSessionPersistenceReady) return
@@ -586,33 +717,126 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     }
 
     // Enforce the size and count limits up front so rejected files are never read or uploaded.
-    const { accepted, error } = planComposerAttachmentIntake(files, attachments.length)
+    const { accepted, error } = planComposerAttachmentIntake(
+      files,
+      attachments.length + attachmentTransfers.length
+    )
 
     setAttachmentError(error)
 
     if (accepted.length === 0) return
 
-    setIsUploadingAttachments(true)
+    const draftKey = previousDraftKeyRef.current
+    const pending = accepted.map(
+      (file, index): { file: File; transfer: ComposerUploadTransfer } => {
+        const name = getUploadFilename(file, index)
+        return {
+          file,
+          transfer: {
+            transferId: crypto.randomUUID(),
+            name,
+            mimeType: file.type || undefined,
+            receivedBytes: 0,
+            totalBytes: file.size,
+            status: 'queued'
+          }
+        }
+      }
+    )
+    setAttachmentTransfers((transfers) => [
+      ...transfers,
+      ...pending.map(({ transfer }) => transfer)
+    ])
+    const deletionCleanup = sessionDeletionCleanupRef.current[draftKey]
+    if (deletionCleanup) {
+      deletionCleanup.attachmentTransfers.push(...pending.map(({ transfer }) => transfer))
+    }
 
     void (async () => {
-      try {
-        // Browser File objects cannot cross IPC directly, so send base64 content plus metadata.
-        const stagedFiles: StageUploadFile[] = await Promise.all(
-          accepted.map(async (file, index) => ({
-            name: getUploadFilename(file, index),
-            mimeType: file.type || undefined,
-            content: await readFileAsBase64(file)
-          }))
+      // Serialize files so a multi-select never holds one chunk per attachment in memory at once.
+      for (const { file, transfer } of pending) {
+        if (cancelledAttachmentTransfersRef.current.delete(transfer.transferId)) continue
+        const controller = new AbortController()
+        attachmentTransferControllersRef.current[transfer.transferId] = controller
+        updateDraftTransfers(draftKey, (transfers) =>
+          transfers.map((candidate) =>
+            candidate.transferId === transfer.transferId
+              ? { ...candidate, status: 'uploading' }
+              : candidate
+          )
         )
-        const stagedAttachments = await window.api.uploads.stageFiles({ files: stagedFiles })
 
-        setAttachments((currentAttachments) => [...currentAttachments, ...stagedAttachments])
-      } catch (error) {
-        setAttachmentError(getErrorMessage(error))
-      } finally {
-        setIsUploadingAttachments(false)
+        try {
+          const attachment = await stageComposerFile(file, window.api.uploads, {
+            transferId: transfer.transferId,
+            name: transfer.name,
+            signal: controller.signal,
+            onProgress: (progress) => {
+              updateDraftTransfers(draftKey, (transfers) =>
+                transfers.map((candidate) =>
+                  candidate.transferId === transfer.transferId
+                    ? { ...candidate, ...progress, status: 'uploading' }
+                    : candidate
+                )
+              )
+            }
+          })
+          if (controller.signal.aborted) {
+            await Promise.all([
+              window.api.uploads.deleteUpload({ path: attachment.path }).catch(() => undefined),
+              window.api.uploads
+                .abortTransfer({ transferId: transfer.transferId })
+                .catch(() => undefined)
+            ])
+            continue
+          }
+          commitDraftAttachment(draftKey, transfer.transferId, attachment)
+          await window.api.uploads
+            .claimLocalFile?.({ transferId: transfer.transferId })
+            .catch((error) => console.warn('Failed to claim staged local upload', error))
+        } catch (uploadError) {
+          if (controller.signal.aborted) {
+            updateDraftTransfers(draftKey, (transfers) =>
+              transfers.filter((candidate) => candidate.transferId !== transfer.transferId)
+            )
+          } else {
+            const message = getErrorMessage(uploadError)
+            updateDraftTransfers(draftKey, (transfers) =>
+              transfers.map((candidate) =>
+                candidate.transferId === transfer.transferId
+                  ? { ...candidate, status: 'error', error: message }
+                  : candidate
+              )
+            )
+            if (previousDraftKeyRef.current === draftKey) setAttachmentError(message)
+          }
+        } finally {
+          delete attachmentTransferControllersRef.current[transfer.transferId]
+          cancelledAttachmentTransfersRef.current.delete(transfer.transferId)
+        }
       }
     })()
+  }
+
+  const cancelAttachmentTransfer = (transfer: ComposerUploadTransfer): void => {
+    const draftKey = previousDraftKeyRef.current
+    cancelledAttachmentTransfersRef.current.add(transfer.transferId)
+    attachmentTransferControllersRef.current[transfer.transferId]?.abort()
+    updateDraftTransfers(draftKey, (transfers) =>
+      transfers.map((candidate) =>
+        candidate.transferId === transfer.transferId
+          ? { ...candidate, status: 'cancelling' }
+          : candidate
+      )
+    )
+    void window.api.uploads
+      .abortTransfer({ transferId: transfer.transferId })
+      .catch(() => undefined)
+      .finally(() => {
+        updateDraftTransfers(draftKey, (transfers) =>
+          transfers.filter((candidate) => candidate.transferId !== transfer.transferId)
+        )
+      })
   }
 
   // Removes one staged attachment from both local UI state and managed upload storage.
@@ -620,6 +844,12 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     setAttachments((currentAttachments) =>
       currentAttachments.filter((item) => item.id !== attachment.id)
     )
+    const deletionCleanup = sessionDeletionCleanupRef.current[previousDraftKeyRef.current]
+    if (deletionCleanup) {
+      deletionCleanup.attachments = deletionCleanup.attachments.filter(
+        (item) => item.id !== attachment.id
+      )
+    }
     void window.api.uploads.deleteUpload({ path: attachment.path }).catch((error) => {
       setAttachmentError(getErrorMessage(error))
     })
@@ -736,18 +966,42 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
 
     const deletedSessionId = sessionToDelete.id
     const isActiveSession = deletedSessionId === selectedSessionId
+    if (sessionDeletionCleanupRef.current[deletedSessionId]) {
+      setSessionToDelete(undefined)
+      return
+    }
     const storedDraft = composerDraftsRef.current[deletedSessionId]
-    const abandonedAttachments = storedDraft?.attachments ?? (isActiveSession ? attachments : [])
+    sessionDeletionCleanupRef.current[deletedSessionId] = {
+      attachments: [...(isActiveSession ? attachments : (storedDraft?.attachments ?? []))],
+      attachmentTransfers: [
+        ...(isActiveSession ? attachmentTransfers : (storedDraft?.attachmentTransfers ?? []))
+      ]
+    }
+    setSessionDeletionInProgressIds((current) => new Set(current).add(deletedSessionId))
 
     setSessionToDelete(undefined)
     // Staged bytes and local draft state are owned by the session until runtime and durable deletion
     // both succeed. The store's successful deletion updates selection and lets the draft effect load
     // the fallback session without clearing that replacement draft here.
     void deleteRuntimeSession(deletedSessionId).then((deleted) => {
-      if (!deleted) return
+      const deletionCleanup = sessionDeletionCleanupRef.current[deletedSessionId]
+      delete sessionDeletionCleanupRef.current[deletedSessionId]
+      setSessionDeletionInProgressIds((current) => {
+        const next = new Set(current)
+        next.delete(deletedSessionId)
+        return next
+      })
+      if (!deleted || !deletionCleanup) return
 
       delete composerDraftsRef.current[deletedSessionId]
-      deleteAttachmentFiles(abandonedAttachments)
+      for (const transfer of deletionCleanup.attachmentTransfers) {
+        // Queued files have no controller yet. Mark every transfer before aborting the active one so
+        // the serialized loop skips later entries after the in-flight request settles.
+        cancelledAttachmentTransfersRef.current.add(transfer.transferId)
+        attachmentTransferControllersRef.current[transfer.transferId]?.abort()
+        void window.api.uploads.abortTransfer({ transferId: transfer.transferId })
+      }
+      deleteAttachmentFiles(deletionCleanup.attachments)
     })
   }
 
@@ -766,9 +1020,11 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     // If a fix loop is running, abort it. The abort handler in the main process will stop the loop;
     // the renderer reacts to the FIX_LOOP_END event broadcast and clears fixLoopActive.
     if (activeSession.fixLoopActive) {
-      void window.api.reviewer.abortFixLoop(sessionId).catch((error) => {
-        console.warn('Failed to abort fix loop:', error)
-      })
+      void window.api.reviewer
+        .abortFixLoop({ projectId: activeSession.projectId, appSessionId: sessionId })
+        .catch((error) => {
+          console.warn('Failed to abort fix loop:', error)
+        })
     }
 
     void cancelRun(sessionId)
@@ -907,6 +1163,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             actionError={visibleActionError}
             isPreviewPanelCollapsed={previewPanelState === 'collapsed'}
             attachments={attachments}
+            attachmentTransfers={attachmentTransfers}
             isUploadingAttachments={isUploadingAttachments}
             notebookReference={activeNotebookReference}
             pendingPermissions={visiblePermissionRequests}
@@ -914,12 +1171,16 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             permissionProfileState={activePermissionProfileState}
             permissionGrants={activePermissionGrants}
             contextUsage={activeContextUsage}
+            canCompactContext={canCompactContext}
+            compactContextDisabledReason={compactContextDisabledReason}
+            onCompactContext={compactActiveContext}
             canChangePermissionProfile={canChangePermissionProfile}
             autoReviewEnabled={activeAutoReviewEnabled}
             onDraftDocChange={setDraftDoc}
             onSendMessage={sendCurrentMessage}
             onStageAttachmentFiles={stageAttachmentFiles}
             onRemoveAttachment={removeComposerAttachment}
+            onCancelAttachmentTransfer={cancelAttachmentTransfer}
             onCancelRun={cancelActiveRun}
             onResumeSession={resumeActiveSession}
             onOpenNotebook={openNotebookPreview}

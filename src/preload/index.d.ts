@@ -1,5 +1,6 @@
 import type {
   AcpCancelPromptRequest,
+  AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
@@ -22,6 +23,15 @@ import type {
   ReadArtifactPreviewRequest,
   ReconcilePendingArtifactsRequest
 } from '../shared/artifacts'
+import type {
+  ArtifactLineageProvenance,
+  ArtifactVersionExecutionProvenance,
+  ArtifactVersionMessagesProvenance,
+  ArtifactVersionProvenance,
+  ArtifactVersionReviewProvenance,
+  GetArtifactLineageRequest,
+  GetArtifactVersionProvenanceRequest
+} from '../shared/artifact-provenance'
 import type {
   SaveBlobFileRequest,
   SaveBlobFileResult,
@@ -186,18 +196,30 @@ import type {
 import type { CliLauncherStatus } from '../shared/cli'
 import type { AppInfo, DownloadProgress, UpdateStatus } from '../shared/update'
 import type {
+  AppendUploadTransferRequest,
+  BeginUploadTransferRequest,
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
-  StageUploadFilesRequest,
+  UploadTransferProgress,
+  UploadTransferRequest,
+  UploadTransferStatus,
   UploadedAttachment
 } from '../shared/uploads'
 import type {
   ReviewWithChecks,
   ReviewRunRequest,
   ReviewRunResult,
+  ReviewSessionRequest,
+  ReviewSuppressionEvent,
   ReviewUpdateEvent
 } from '../shared/reviewer'
-import type { CloseConfirmRequest, CloseConfirmResponse } from '../shared/window-controls'
+import type {
+  CloseConfirmRequest,
+  CloseConfirmResponse,
+  WindowFindAppearance,
+  WindowFindRequest,
+  WindowFindResult
+} from '../shared/window-controls'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -223,6 +245,7 @@ interface OpenScienceAPI {
     resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
     resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
     sendPrompt(request: AcpPromptRequest): Promise<AcpStateSnapshot>
+    compactSession(request: AcpCompactSessionRequest): Promise<AcpStateSnapshot>
     cancel(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot>
     deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot>
     respondToPermission(response: AcpPermissionResponse): Promise<AcpStateSnapshot>
@@ -437,10 +460,34 @@ interface OpenScienceAPI {
     reconcilePendingArtifacts(request: ReconcilePendingArtifactsRequest): Promise<ArtifactFile[]>
     openFile(request: OpenArtifactFileRequest): Promise<void>
     readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
+    getLineage(request: GetArtifactLineageRequest): Promise<ArtifactLineageProvenance | undefined>
+    getVersionProvenance(
+      request: GetArtifactVersionProvenanceRequest
+    ): Promise<ArtifactVersionProvenance>
+    getVersionExecution(
+      request: GetArtifactVersionProvenanceRequest
+    ): Promise<ArtifactVersionExecutionProvenance>
+    getVersionMessages(
+      request: GetArtifactVersionProvenanceRequest
+    ): Promise<ArtifactVersionMessagesProvenance>
+    getVersionReview(
+      request: GetArtifactVersionProvenanceRequest
+    ): Promise<ArtifactVersionReviewProvenance>
   }
   uploads: {
-    // Stages files selected or pasted in the renderer into app-managed upload storage.
-    stageFiles(request: StageUploadFilesRequest): Promise<UploadedAttachment[]>
+    // Desktop-only path fast path; omitted by the Web capability map.
+    stageLocalFile?(
+      file: File,
+      request: BeginUploadTransferRequest
+    ): Promise<UploadedAttachment | null>
+    // Acknowledges that the renderer committed a native-path upload into its draft state.
+    claimLocalFile?(request: UploadTransferRequest): Promise<void>
+    beginTransfer(request: BeginUploadTransferRequest): Promise<UploadTransferStatus>
+    appendTransfer(request: AppendUploadTransferRequest): Promise<UploadTransferStatus>
+    getTransferStatus(request: UploadTransferRequest): Promise<UploadTransferStatus | null>
+    finishTransfer(request: UploadTransferRequest): Promise<UploadedAttachment>
+    abortTransfer(request: UploadTransferRequest): Promise<void>
+    onTransferProgress(listener: AcpListener<UploadTransferProgress>): RemoveListener
     // Deletes a staged upload when the composer chip is removed or the draft is abandoned.
     deleteUpload(request: DeleteUploadRequest): Promise<void>
     // Moves pending uploads into the durable session directory once a session id exists.
@@ -450,6 +497,7 @@ interface OpenScienceAPI {
   }
   notebook: {
     state(request: NotebookSessionRequest): Promise<NotebookSessionState>
+    readInputPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
     getReference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
     beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<{
       sessionId: string
@@ -550,25 +598,33 @@ interface OpenScienceAPI {
     // Trigger a background review for the given turn. Fire-and-forget; updates come via onUpdated.
     run(request: ReviewRunRequest): Promise<ReviewRunResult>
     // Load persisted reviews for a session (called at workspace startup).
-    getForSession(sessionId: string): Promise<ReviewWithChecks[]>
+    getForSession(request: ReviewSessionRequest): Promise<ReviewWithChecks[]>
     // Subscribe to review lifecycle/findings updates pushed from the main process.
     onUpdated(listener: AcpListener<ReviewUpdateEvent>): RemoveListener
     // Subscribe to loop-guard events: suppress (or, when clear=true, un-suppress) the next
     // auto-review for the given session.
-    onSuppressNextAutoReview(
-      listener: AcpListener<{ sessionId: string; clear?: boolean }>
-    ): RemoveListener
+    onSuppressNextAutoReview(listener: AcpListener<ReviewSuppressionEvent>): RemoveListener
     // Fix loop lock: fired when the loop starts (lock composer) / ends or is aborted (unlock).
-    onFixLoopStart(listener: AcpListener<{ sessionId: string }>): RemoveListener
-    onFixLoopEnd(listener: AcpListener<{ sessionId: string }>): RemoveListener
+    onFixLoopStart(listener: AcpListener<ReviewSessionRequest>): RemoveListener
+    onFixLoopEnd(listener: AcpListener<ReviewSessionRequest>): RemoveListener
     // Sends an abort request to stop the running fix loop for a session.
-    abortFixLoop(sessionId: string): Promise<void>
+    abortFixLoop(request: ReviewSessionRequest): Promise<void>
   }
   window: {
     // Closes the focused window (the Cmd+W / Ctrl+W fallback when no preview panel is open).
     close(): Promise<void>
     // Fires when Cmd+W / Ctrl+W is pressed; the renderer decides pane-vs-window.
     onCloseActivePane(listener: () => void): RemoveListener
+    findInPage?(request: WindowFindRequest): void
+    clearFind?(): void
+    // Announces the Workspace is mounted (READY) and returns a teardown that announces UNREADY.
+    announceWindowFindReady?(): RemoveListener
+    onFindInPageResult?(listener: AcpListener<WindowFindResult>): RemoveListener
+    // Overlay-only: main signals the bar was shown; the overlay asks main to hide it.
+    onShowWindowFind?(listener: AcpListener<WindowFindAppearance>): RemoveListener
+    onWindowFindAppearance?(listener: AcpListener<WindowFindAppearance>): RemoveListener
+    announceWindowFindAppearance?(appearance: WindowFindAppearance): void
+    closeFind?(): void
     // Fires when main asks to confirm a close/quit; the renderer renders the modal and replies.
     onCloseConfirmRequest?(listener: (payload: CloseConfirmRequest) => void): RemoveListener
     // Renderer -> main: modal-mounted ack, then the user's choice, keyed by requestId.

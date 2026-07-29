@@ -89,6 +89,25 @@ describe('ProviderForm field switching', () => {
     )
   })
 
+  it('renders the bundled Grok brand mark for the xAI provider', () => {
+    render(
+      createEmptyProviderFormValue({
+        type: 'official',
+        name: 'Grok (xAI)',
+        vendorId: 'xai',
+        apiEndpoint: 'responses'
+      })
+    )
+
+    const providerType = container.querySelector('[aria-label="Provider type"]')
+    const icon = providerType?.querySelector('img')
+
+    expect(providerType?.textContent).toContain('Grok (xAI)')
+    expect(icon?.getAttribute('src')).toMatch(/^data:image\/svg\+xml/)
+    expect(decodeURIComponent(icon?.getAttribute('src') ?? '')).toContain('<title>Grok</title>')
+    expect(container.textContent).toContain('grok-4.5')
+  })
+
   it('allows a custom gateway to select the Responses endpoint', () => {
     render(
       createEmptyProviderFormValue({
@@ -160,7 +179,9 @@ describe('ProviderForm field switching', () => {
     expect(container.querySelector('[aria-label="Provider name"]')).toBeNull()
     expect(container.querySelector('[aria-label="API key"]')).toBeNull()
     expect(container.querySelector('[aria-label="Model"]')).toBeNull()
-    expect(container.textContent).toContain('Copies only Codex authentication into Open Science')
+    expect(container.textContent).toContain(
+      "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science"
+    )
     expect(container.textContent).toContain('Skills and sessions are not imported')
   })
 

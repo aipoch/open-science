@@ -7,7 +7,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { AcpResumeSessionRequest } from '../../shared/acp'
+import type { AcpCompactSessionRequest, AcpResumeSessionRequest } from '../../shared/acp'
 import {
   beginMigration,
   clearMigrationPending,
@@ -36,6 +36,7 @@ vi.mock('node:fs/promises', () => ({ mkdir, rm }))
 // handler's method needs meaningful behavior. Hoisted so the (hoisted) vi.mock factory can reference it.
 const {
   cancelPrompt,
+  compactSession,
   createSession,
   deleteSession,
   disconnect,
@@ -45,6 +46,7 @@ const {
   AcpRuntimeMock
 } = vi.hoisted(() => {
   const cancelPrompt = vi.fn().mockResolvedValue({})
+  const compactSession = vi.fn().mockResolvedValue({ stopReason: 'end_turn' })
   const createSession = vi
     .fn()
     .mockImplementation(async (request) => ({ sessionId: 's-new', cwd: request.cwd }))
@@ -59,6 +61,7 @@ const {
     return {
       createSession,
       cancelPrompt,
+      compactSession,
       deleteSession,
       disconnect,
       resetSessionContext,
@@ -79,6 +82,7 @@ const {
   })
   return {
     cancelPrompt,
+    compactSession,
     createSession,
     deleteSession,
     disconnect,
@@ -157,6 +161,7 @@ afterEach(() => {
   createSession.mockReset()
   createSession.mockImplementation(async (request) => ({ sessionId: 's-new', cwd: request.cwd }))
   resetSessionContext.mockClear()
+  compactSession.mockClear()
   cancelPrompt.mockClear()
   deleteSession.mockClear()
   disconnect.mockClear()
@@ -423,6 +428,19 @@ describe('registerAcpIpcHandlers — reset-session-context bridge', () => {
     // The distinct resume channel must not be driven by the reset call.
     expect(resumeSession).not.toHaveBeenCalled()
     expect(result).toEqual({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
+  })
+})
+
+describe('registerAcpIpcHandlers — native context compaction bridge', () => {
+  it('forwards the session to its runtime and returns the refreshed snapshot', async () => {
+    registerWithFakes()
+    const request: AcpCompactSessionRequest = { sessionId: 's-1' }
+
+    const result = await handlers.get('acp:compact-session')?.({}, request)
+
+    expect(compactSession).toHaveBeenCalledOnce()
+    expect(compactSession).toHaveBeenCalledWith(request)
+    expect(result).toMatchObject({ status: 'idle', cwd: '/workspace' })
   })
 })
 

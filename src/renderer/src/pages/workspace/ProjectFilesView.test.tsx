@@ -17,7 +17,11 @@ import {
 } from '@/stores/session-store'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProjectFilesChangedEvent, ProjectFileItem } from '../../../../shared/project-files'
-import type { UploadedAttachment } from '../../../../shared/uploads'
+import {
+  createUploadVersionReference,
+  getUploadedAttachmentPath,
+  type UploadedAttachment
+} from '../../../../shared/uploads'
 
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
   id: 'message-1',
@@ -375,7 +379,7 @@ describe('ProjectFilesView', () => {
       projectId: 'default',
       sessionId: file.sessionId,
       name: file.name,
-      path: file.attachment.path,
+      path: getUploadedAttachmentPath(file.attachment, 'default'),
       mimeType: file.attachment.mimeType,
       size: file.size,
       mtimeMs: file.timestamp,
@@ -896,7 +900,7 @@ describe('ProjectFilesView', () => {
     ])
 
     expect(container.textContent).toContain('Your uploads')
-    expect(container.textContent).toContain('iso621_bridg...inase.fasta')
+    expect(container.textContent).toContain('iso621_bridge_recombinase.fasta')
     expect(container.querySelector('[title="iso621_bridge_recombinase.fasta"]')).not.toBeNull()
     expect(container.textContent).not.toContain('Hidden session title')
     expect(
@@ -2113,6 +2117,9 @@ describe('ProjectFilesView', () => {
     const generatedMeta = generatedButton?.querySelector('[data-testid="project-file-meta"]')
 
     expect(generatedMeta?.className).toContain('flex-col')
+    expect(generatedMeta?.querySelector('[data-testid="file-name-extension"]')?.textContent).toBe(
+      '.png'
+    )
     expect(generatedButton?.textContent).toContain('4 KB')
     expect(generatedButton?.textContent).toContain('2 hours ago')
   })
@@ -2154,11 +2161,15 @@ describe('ProjectFilesView', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
       path: '/workspace/typhoon_tracks.png',
+      projectId: 'default',
+      sessionId: 'session-1',
       mimeType: 'image/png'
     })
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'upload',
       path: '/uploads/uploaded_image.png',
+      projectId: 'default',
+      sessionId: 'session-1',
       mimeType: 'image/png'
     })
     expect(
@@ -2244,6 +2255,8 @@ describe('ProjectFilesView', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
       path: '/workspace/generated-image',
+      projectId: 'default',
+      sessionId: 'session-1',
       mimeType: 'image/png'
     })
   })
@@ -2326,6 +2339,8 @@ describe('ProjectFilesView', () => {
 
     expect(window.api.artifacts.readPreview).toHaveBeenCalledWith({
       path: '/workspace/results.csv',
+      projectId: 'default',
+      sessionId: 'session-1',
       maxBytes: 32768,
       encoding: 'utf8'
     })
@@ -2531,6 +2546,7 @@ describe('ProjectFilesView', () => {
       await Promise.resolve()
     })
 
+    await vi.waitFor(() => expect(projectFilesChangedListener).toBeTypeOf('function'))
     const { useSessionStore } = await import('@/stores/session-store')
     await act(async () => {
       useSessionStore.getState().replaceMessageUploads({
@@ -2538,6 +2554,8 @@ describe('ProjectFilesView', () => {
         messageId: 'message-1',
         uploads: [
           createUpload({
+            versionId: 'upload-version-1',
+            versionNumber: 1,
             name: 'results.csv',
             originalName: 'results.csv',
             path: '/uploads/session-1/results.csv',
@@ -2562,10 +2580,56 @@ describe('ProjectFilesView', () => {
       'Failed to read project file preview',
       expect.any(Error)
     )
-    expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
-      expect.objectContaining({ path: '/uploads/session-1/results.csv', encoding: 'utf8' })
+    await vi.waitFor(() =>
+      expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
+        expect.objectContaining({
+          path: 'upload-version:default/session-1/upload-version-1',
+          encoding: 'utf8'
+        })
+      )
     )
     expect(container.textContent).toContain('1 rows · 2 columns')
+  })
+
+  it('reads a project upload preview with the source Session encoded by its Version locator', async () => {
+    const sourceSessionId = 'source-session'
+    const versionId = 'upload-version-cross-session'
+    const path = createUploadVersionReference(versionId, {
+      projectId: 'default',
+      sessionId: sourceSessionId
+    })
+    await renderView([
+      createSession({
+        id: 'current-session',
+        messages: [
+          createMessage({
+            uploads: [
+              createUpload({
+                id: 'upload-cross-session',
+                versionId,
+                sessionId: sourceSessionId,
+                path: undefined,
+                name: 'cross-session.csv',
+                originalName: 'cross-session.csv',
+                mimeType: 'text/csv'
+              })
+            ]
+          })
+        ]
+      })
+    ])
+
+    await vi.waitFor(() => {
+      const thumbnailRequest = vi
+        .mocked(window.api.uploads.readPreview)
+        .mock.calls.map(([request]) => request)
+        .find((request) => request.maxBytes !== 1)
+      expect(thumbnailRequest).toMatchObject({
+        path,
+        projectId: 'default',
+        sessionId: sourceSessionId
+      })
+    })
   })
 
   it('hides a stale thumbnail while a new file version is loading', async () => {
@@ -2612,6 +2676,7 @@ describe('ProjectFilesView', () => {
     })
     expect(container.textContent).toContain('legacy_column')
 
+    await vi.waitFor(() => expect(projectFilesChangedListener).toBeTypeOf('function'))
     const { useSessionStore } = await import('@/stores/session-store')
     await act(async () => {
       useSessionStore.getState().replaceMessageUploads({
@@ -2619,6 +2684,8 @@ describe('ProjectFilesView', () => {
         messageId: 'message-1',
         uploads: [
           createUpload({
+            versionId: 'upload-version-1',
+            versionNumber: 1,
             name: 'results.csv',
             originalName: 'results.csv',
             path: '/uploads/session-1/results.csv',
@@ -2636,8 +2703,13 @@ describe('ProjectFilesView', () => {
       await Promise.resolve()
     })
 
-    expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
-      expect.objectContaining({ path: '/uploads/session-1/results.csv', encoding: 'utf8' })
+    await vi.waitFor(() =>
+      expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
+        expect.objectContaining({
+          path: 'upload-version:default/session-1/upload-version-1',
+          encoding: 'utf8'
+        })
+      )
     )
     expect(container.textContent).not.toContain('legacy_column')
   })
@@ -2777,8 +2849,8 @@ describe('ProjectFilesView', () => {
       })
     ])
 
-    expect(container.textContent).toContain('denovo_desig...orklist.csv')
-    expect(container.textContent).not.toContain('denovo_design_worklist.csv')
+    expect(container.textContent).toContain('denovo_design_worklist.csv')
+    expect(container.querySelector('[data-testid="file-name-extension"]')?.textContent).toBe('.csv')
   })
 
   it('uses taller file cards and preview thumbnails', async () => {

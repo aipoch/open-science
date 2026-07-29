@@ -19,7 +19,7 @@ const chatSseResponse = (body: string = toolCallSse): Response =>
   new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } })
 
 describe('validate: request construction', () => {
-  it('builds a bearer /v1/messages probe with anthropic-version and a 1-token body', () => {
+  it('builds a bearer /v1/messages probe with anthropic-version and a small reasoning budget', () => {
     const request = buildValidationRequest({
       type: 'custom',
       baseUrl: 'https://api.anthropic.com',
@@ -30,7 +30,7 @@ describe('validate: request construction', () => {
     expect(request.url).toBe('https://api.anthropic.com/v1/messages')
     expect(request.headers.authorization).toBe('Bearer test-token')
     expect(request.headers['anthropic-version']).toBe('2023-06-01')
-    expect(JSON.parse(request.body)).toMatchObject({ model: 'claude-sonnet-4-5', max_tokens: 1 })
+    expect(JSON.parse(request.body)).toMatchObject({ model: 'claude-sonnet-4-5', max_tokens: 16 })
   })
 
   it('normalizes a base URL that already carries /v1 so the probe never doubles it', () => {
@@ -274,6 +274,35 @@ describe('validate: provider dispatch', () => {
     expect(result).toMatchObject({ ok: true, category: 'ok', status: 200 })
   })
 
+  it('gives reasoning Anthropic providers enough output budget to return a message envelope', async () => {
+    const fetchImpl = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { max_tokens: number }
+      const message =
+        request.max_tokens >= 16
+          ? {
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'thinking', thinking: '...' }],
+              usage: { input_tokens: 1, output_tokens: request.max_tokens }
+            }
+          : {
+              type: '',
+              role: '',
+              content: [{ type: 'text', text: '' }],
+              usage: { input_tokens: 1, output_tokens: request.max_tokens }
+            }
+
+      return Promise.resolve(new Response(JSON.stringify(message), { status: 200 }))
+    })
+
+    const result = await validateProvider(
+      { type: 'custom', baseUrl: 'https://api.kimi.com/coding', key: 'k', model: 'kimi-k3' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch, frameworkEndpoints: ['anthropic'] }
+    )
+
+    expect(result).toMatchObject({ ok: true, category: 'ok', status: 200 })
+  })
+
   it('rejects an empty 200 Anthropic response instead of recording a false validation success', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
 
@@ -440,6 +469,37 @@ describe('validate: provider dispatch', () => {
     })
   })
 
+  it('keeps a text-only native Responses compatibility provider unverified', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          'data: {"type":"response.output_text.delta","delta":"ok"}\n\ndata: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}}\n\n',
+          { status: 200, headers: { 'content-type': 'text/event-stream' } }
+        )
+      )
+
+    const result = await validateProvider(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.x.ai/v1',
+        key: 'k',
+        model: 'm'
+      },
+      {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        requireNativeResponsesCompatibility: true
+      }
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      category: 'unknown',
+      message: expect.stringContaining('namespace function tool call')
+    })
+  })
+
   it('keeps the friendly auth guidance and does not surface a raw 401 body', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       status: 401,
@@ -528,6 +588,27 @@ describe('validate: provider dispatch', () => {
     const result = await validateProvider(
       { type: 'custom', baseUrl: 'nonsense' },
       { fetchImpl: fetchImpl as unknown as typeof fetch }
+    )
+
+    expect(result.category).toBe('bad-url')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('reports bad-url before starting native Responses compatibility validation', async () => {
+    const fetchImpl = vi.fn()
+
+    const result = await validateProvider(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'nonsense',
+        key: 'k',
+        model: 'm'
+      },
+      {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        requireNativeResponsesCompatibility: true
+      }
     )
 
     expect(result.category).toBe('bad-url')

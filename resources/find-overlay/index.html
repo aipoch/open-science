@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Find in window</title>
+    <script>
+      // Before the renderer-owned appearance arrives, match the OS for the first paint. The overlay
+      // logic removes this class for an explicit light preference before the view is reused.
+      document.documentElement.classList.toggle(
+        'dark',
+        window.matchMedia?.('(prefers-color-scheme: dark)').matches === true
+      )
+    </script>
+    <style>
+      :root {
+        color-scheme: light;
+        --background: #fafaf8;
+        --foreground: #202321;
+        --popover: #ffffff;
+        --popover-foreground: #202321;
+        --muted: #ececea;
+        --muted-foreground: #646762;
+        --border: #dededa;
+        --ring: oklch(0.58 0.11 184);
+      }
+      .dark {
+        color-scheme: dark;
+        --background: #1a1a18;
+        --foreground: #e8e6df;
+        --popover: #26251f;
+        --popover-foreground: #e8e6df;
+        --muted: #33322b;
+        --muted-foreground: #a8a49a;
+        --border: #3a3931;
+        --ring: oklch(0.66 0.1 184);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+        background: var(--background);
+        color: var(--foreground);
+        -webkit-user-select: none;
+        user-select: none;
+        overflow: hidden;
+      }
+      .bar {
+        display: flex;
+        height: 100%;
+        align-items: center;
+        gap: 4px;
+        padding: 0 8px;
+      }
+      .icon {
+        width: 16px;
+        height: 16px;
+        color: var(--muted-foreground);
+        flex: none;
+      }
+      /* Plain text field — visible characters, no password masking. */
+      input {
+        flex: 1 1 auto;
+        min-width: 0;
+        height: 28px;
+        border: 1px solid transparent;
+        background: transparent;
+        padding: 0 4px;
+        font-size: 13px;
+        color: var(--foreground);
+        outline: none;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      input::placeholder {
+        color: var(--muted-foreground);
+      }
+      input:focus-visible,
+      .btn:focus-visible {
+        border-color: color-mix(in srgb, var(--ring) 50%, transparent);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
+      }
+      .count {
+        min-width: 48px;
+        flex: none;
+        text-align: center;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        color: var(--muted-foreground);
+      }
+      .divider {
+        width: 1px;
+        height: 20px;
+        background: var(--border);
+        flex: none;
+      }
+      .btn {
+        display: inline-flex;
+        width: 28px;
+        height: 28px;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted-foreground);
+        cursor: default;
+        outline: none;
+        transition:
+          background-color 150ms ease,
+          color 150ms ease;
+      }
+      .btn:hover {
+        background: var(--muted);
+        color: var(--foreground);
+      }
+      .btn svg {
+        width: 16px;
+        height: 16px;
+      }
+      .tooltip-anchor {
+        position: relative;
+        display: inline-flex;
+        flex: none;
+      }
+      .tooltip-content {
+        position: absolute;
+        z-index: 1;
+        top: 50%;
+        right: calc(100% + 4px);
+        visibility: hidden;
+        padding: 4px 6px;
+        transform: translateY(-50%);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--popover);
+        color: var(--popover-foreground);
+        font-size: 11px;
+        line-height: 16px;
+        opacity: 0;
+        pointer-events: none;
+        white-space: nowrap;
+        transition: opacity 150ms ease;
+      }
+      .tooltip-anchor:hover .tooltip-content,
+      .tooltip-anchor:focus-within .tooltip-content {
+        visibility: visible;
+        opacity: 1;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .btn,
+        .tooltip-content {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bar" role="search" aria-label="Find in window">
+      <svg
+        class="icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        aria-hidden="true"
+      >
+        <circle cx="11" cy="11" r="7"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+      <input
+        id="find-overlay-query"
+        type="text"
+        autocomplete="off"
+        autocapitalize="off"
+        autocorrect="off"
+        spellcheck="false"
+        aria-label="Find text"
+        placeholder="Find"
+      />
+      <span class="count" id="find-overlay-count">0 / 0</span>
+      <span class="divider" aria-hidden="true"></span>
+      <span class="tooltip-anchor">
+        <button
+          type="button"
+          class="btn"
+          id="find-overlay-prev"
+          aria-label="Previous match"
+          aria-describedby="find-overlay-prev-tooltip"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            aria-hidden="true"
+          >
+            <polyline points="18 15 12 9 6 15"></polyline>
+          </svg>
+        </button>
+        <span class="tooltip-content" id="find-overlay-prev-tooltip" role="tooltip">
+          Previous match (Shift+Enter)
+        </span>
+      </span>
+      <span class="tooltip-anchor">
+        <button
+          type="button"
+          class="btn"
+          id="find-overlay-next"
+          aria-label="Next match"
+          aria-describedby="find-overlay-next-tooltip"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            aria-hidden="true"
+          >
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
+        <span class="tooltip-content" id="find-overlay-next-tooltip" role="tooltip">
+          Next match (Enter)
+        </span>
+      </span>
+      <span class="tooltip-anchor">
+        <button
+          type="button"
+          class="btn"
+          id="find-overlay-close"
+          aria-label="Close find"
+          aria-describedby="find-overlay-close-tooltip"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            aria-hidden="true"
+          >
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+        <span class="tooltip-content" id="find-overlay-close-tooltip" role="tooltip">
+          Close (Esc)
+        </span>
+      </span>
+    </div>
+    <script type="module" src="./findOverlay.js"></script>
+  </body>
+</html>

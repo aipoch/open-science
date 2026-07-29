@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { CliUsageError, parseCliArgs, reportCliError, runTaskCommand } from './cli.mjs'
+import {
+  CliUsageError,
+  parseCliArgs,
+  reportCliError,
+  rollbackCommand,
+  runTaskCommand
+} from './cli.mjs'
 
 describe('task CLI', () => {
   it('parses the first milestone run interface', () => {
@@ -100,6 +106,52 @@ describe('task CLI', () => {
     expect(client.waitForRun).toHaveBeenCalledWith('run-1')
     expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({ status: 'completed', output: 'Done' })
     expect(log).toHaveBeenCalledTimes(1)
+  })
+
+  it('parses and runs the explicit offline rollback command', async () => {
+    const parsed = parseCliArgs([
+      'rollback-to-0.7.3',
+      '--yes',
+      '--config-root',
+      '/config',
+      '--data-root',
+      '/data',
+      '--output',
+      '/rollback'
+    ])
+    expect(parsed).toEqual({
+      command: 'rollback-to-0.7.3',
+      options: {
+        open: true,
+        json: false,
+        yes: true,
+        configRoot: '/config',
+        dataRoot: '/data',
+        output: '/rollback'
+      }
+    })
+
+    const runRollback = vi.fn().mockResolvedValue({
+      targetVersion: '0.7.3',
+      rollbackDataRoot: '/rollback',
+      preservedConfigRoot: '/config.before-rollback',
+      preservedDataRoot: '/data',
+      sessionsConverted: 4
+    })
+    const log = vi.fn()
+    await rollbackCommand(parsed.options, { runRollback, log })
+
+    expect(runRollback).toHaveBeenCalledWith({
+      configRoot: '/config',
+      dataRoot: '/data',
+      output: '/rollback',
+      confirm: true
+    })
+    expect(log.mock.calls.map(([line]) => line)).toContain(
+      'Preserved newer Config Root: /config.before-rollback'
+    )
+    expect(() => parseCliArgs(['rollback-to-0.7.3'])).not.toThrow()
+    expect(() => parseCliArgs(['status', '--yes'])).toThrow('--yes requires rollback-to-0.7.3.')
   })
 
   it('dispatches project, session, and artifact commands through the SDK', async () => {

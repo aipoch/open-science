@@ -13,9 +13,14 @@ import {
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
-import type { UploadedAttachment } from '../../../../shared/uploads'
-import type { ArtifactReference } from '../../../../shared/artifacts'
+import {
+  toPersistedUploadedAttachment,
+  toRuntimeUploadedAttachment,
+  type UploadedAttachment
+} from '../../../../shared/uploads'
+import type { FileReference } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
+import { getActiveConversationContext } from '../../../../shared/conversation-graph'
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import {
@@ -51,7 +56,7 @@ type SendWorkspaceMessageInput = {
   // Skills the user picked in the composer; force-loaded and nudged for this turn only.
   forcedSkillIds?: string[]
   // Existing files referenced via `@` mentions; attached to the prompt as content blocks.
-  referencedArtifacts?: ArtifactReference[]
+  referencedArtifacts?: FileReference[]
   // Structured mention segments of the draft, persisted so the sent bubble renders styled pills.
   parts?: MessagePart[]
   // Set by the interrupted-resume path when its own resume already reset the agent's context. The
@@ -64,6 +69,13 @@ type SendWorkspaceMessageInput = {
   preAppendedMessageId?: string
   // Current Provider capability, injected by the hook so context replay cannot bypass image gating.
   supportsImageInput?: boolean
+  // Internal overflow-recovery handoff: that flow owns the compacting state and replaces it with the
+  // retried run synchronously. Ordinary composer sends must never bypass the local compaction gate.
+  allowCompactionRecovery?: boolean
+  // Edit-resend performs the reset itself so it can roll back the optimistic Branch on failure. The
+  // common send path still owns replay completion and clears the durable retry marker only after the
+  // provider accepts the prompt.
+  branchContextAlreadyReset?: boolean
 }
 
 type SendWorkspaceMessageResult = {
@@ -80,15 +92,17 @@ type ResendEditedMessageInput = {
   // Skills picked in the inline editor; force-loaded and nudged for the resent turn only.
   forcedSkillIds?: string[]
   // Files referenced via `@` mentions in the inline editor; attached to the resent prompt.
-  referencedArtifacts?: ArtifactReference[]
+  referencedArtifacts?: FileReference[]
 }
 
 type WorkspaceMessageRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'createSession' | 'resumeSession' | 'resetSessionContext' | 'sendPrompt'
->
+> &
+  Partial<Pick<ReturnType<typeof useAcpRuntime>, 'compactSession'>>
 
 type WorkspaceDeletionRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'deleteSession'>
+type WorkspaceCancellationRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'cancel'>
 type PersistSessionDeletion = (request: { projectId: string; sessionId: string }) => Promise<void>
 
 type RuntimeEventApplier = (event: AcpRuntimeEvent) => Promise<boolean>
@@ -228,12 +242,14 @@ const failOrMarkDisconnected = async (
 const finalizeWorkspaceAttachments = async (
   sessionId: string,
   messageId: string,
-  attachments: UploadedAttachment[]
+  attachments: UploadedAttachment[],
+  projectId?: string
 ): Promise<UploadedAttachment[]> => {
   if (attachments.length === 0) return attachments
 
   // The renderer message is written before runtime work starts, so its upload paths are replaced.
   const finalizedAttachments = await window.api.uploads.finalizeSession({
+    projectId,
     sessionId,
     attachments
   })
@@ -241,12 +257,31 @@ const finalizeWorkspaceAttachments = async (
   useSessionStore.getState().replaceMessageUploads({
     sessionId,
     messageId,
-    uploads: finalizedAttachments
+    uploads: finalizedAttachments.map(toPersistedUploadedAttachment)
   })
   // Keep tabs opened from staged attachments pointed at the files after their final move.
   usePreviewWorkbenchStore.getState().reconcileFinalizedUploads(finalizedAttachments)
 
   return finalizedAttachments
+}
+
+const getPromptProvenanceContext = (
+  sessionId: string,
+  promptMessageId: string
+): ReturnType<typeof getActiveConversationContext> | { promptMessageId: string } => {
+  const graph = useSessionStore
+    .getState()
+    .sessions.find((session) => session.id === sessionId)?.conversationGraph
+  return graph ? getActiveConversationContext(graph, promptMessageId) : { promptMessageId }
+}
+
+const shutdownNotebookForBranchChange = async (
+  sessionId: string,
+  workspaceCwd: string,
+  projectName?: string
+): Promise<void> => {
+  if (typeof window === 'undefined' || !window.api?.notebook?.shutdown) return
+  await window.api.notebook.shutdown({ sessionId, workspaceCwd, projectName })
 }
 
 const processVisibleWorkspaceRuntimeEvents = async (
@@ -341,7 +376,7 @@ const startPendingSessionPrompt = (
   projectName: string | undefined,
   permissionProfile: PermissionProfileId,
   forcedSkillIds: string[] | undefined,
-  referencedArtifacts: ArtifactReference[] | undefined
+  referencedArtifacts: FileReference[] | undefined
 ): void => {
   void (async () => {
     let createdSession
@@ -388,7 +423,8 @@ const startPendingSessionPrompt = (
         promptAttachments = await finalizeWorkspaceAttachments(
           runtimeSessionId,
           bound.messageId,
-          attachments
+          attachments,
+          projectName
         )
       }
     } catch (error) {
@@ -400,7 +436,18 @@ const startPendingSessionPrompt = (
     // turn's error event from a stale one when it derives the report affordance.
     const priorErrorEventId = latestPromptFailureEventId(runtime.state.events, runtimeSessionId)
     void runtime
-      .sendPrompt(runtimeSessionId, content, promptAttachments, forcedSkillIds, referencedArtifacts)
+      .sendPrompt(
+        runtimeSessionId,
+        content,
+        promptAttachments,
+        forcedSkillIds,
+        referencedArtifacts,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        getPromptProvenanceContext(runtimeSessionId, bound.messageId)
+      )
       .catch((error) => {
         // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
         // visible session error, instead of being swallowed as an unhandled rejection.
@@ -429,7 +476,9 @@ const sendWorkspaceMessage = async (
     parts,
     forceHistoryReplay,
     preAppendedMessageId,
-    supportsImageInput
+    supportsImageInput,
+    allowCompactionRecovery,
+    branchContextAlreadyReset
   }: SendWorkspaceMessageInput
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   const content = text.trim()
@@ -445,11 +494,13 @@ const sendWorkspaceMessage = async (
       .getState()
       .sessions.find((session) => session.id === targetSessionId)
 
-    // A pre-appended prompt already marked its own run, so the duplicate-submit guard must not
-    // reject the send that belongs to it.
+    // Runtime ownership is authoritative while native compaction or another control turn is active.
+    // A pre-appended prompt may bypass only the local status guard because it marked its own run.
     if (
-      !preAppendedMessageId &&
-      (currentSession?.status === 'running' || currentSession?.status === 'waiting-permission')
+      runtime.state.promptInFlightSessionIds.includes(targetSessionId) ||
+      (currentSession?.compacting && !allowCompactionRecovery) ||
+      (!preAppendedMessageId &&
+        (currentSession?.status === 'running' || currentSession?.status === 'waiting-permission'))
     ) {
       return undefined
     }
@@ -487,6 +538,34 @@ const sendWorkspaceMessage = async (
       return appended
     }
 
+    // Branch activation changes only the durable projection. Before the first continuation on that
+    // path, drop both volatile contexts so neither the provider nor a live kernel can leak sibling-
+    // Branch state into the prompt. The active Branch transcript is replayed below after reset.
+    let branchContextResetPerformed = Boolean(branchContextAlreadyReset)
+    if (currentSession?.branchContextResetRequired && !branchContextAlreadyReset) {
+      const resetCwd = targetCwd || currentSession.cwd || runtime.state.cwd
+      if (!resetCwd) {
+        useSessionStore.getState().failRun(targetSessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
+        return undefined
+      }
+      try {
+        await shutdownNotebookForBranchChange(targetSessionId, resetCwd, sessionProjectName)
+        const reset = await runtime.resetSessionContext(
+          targetSessionId,
+          resetCwd,
+          sessionProjectName,
+          currentSession.permissionProfile ?? permissionProfile
+        )
+        useSessionStore
+          .getState()
+          .markResumed(targetSessionId, reset?.frameworkId, reset?.backendId)
+        branchContextResetPerformed = true
+      } catch (error) {
+        useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
+        return undefined
+      }
+    }
+
     // A framework switch applies at the next turn boundary. The retiring runtime may still expose the
     // old session for a brief teardown window, so compare persisted ownership as well as the snapshot.
     const frameworkChanged = Boolean(
@@ -495,7 +574,8 @@ const sendWorkspaceMessage = async (
       agentFrameworkId !== currentSession.agentFrameworkId
     )
     const shouldResumeSession =
-      frameworkChanged || !runtime.state.sessionIds.includes(targetSessionId)
+      !branchContextResetPerformed &&
+      (frameworkChanged || !runtime.state.sessionIds.includes(targetSessionId))
     let resumeCwd: string | undefined
 
     if (shouldResumeSession) {
@@ -569,9 +649,12 @@ const sendWorkspaceMessage = async (
     // happened (interrupted-resume path — its internal re-resume above hits an already-attached session
     // and can't report the reset again). historyMessages ends before the newly appended user message,
     // so this is the prior conversation only — the turn being sent is not duplicated in.
-    if ((contextResetFromResume || forceHistoryReplay) && historyMessages) {
+    if (
+      (branchContextResetPerformed || contextResetFromResume || forceHistoryReplay) &&
+      historyMessages
+    ) {
       historyPreamble = buildHistoryPreamble(historyMessages)
-      const media = buildHistoryReplayMedia(historyMessages)
+      const media = buildHistoryReplayMedia(historyMessages, sessionProjectName)
       if (
         supportsImageInput === false &&
         (media.images.length > 0 || media.attachments.length > 0)
@@ -586,7 +669,7 @@ const sendWorkspaceMessage = async (
     const resumeFallback =
       forcedSkillIds && forcedSkillIds.length > 0 && historyMessages
         ? (() => {
-            const media = buildHistoryReplayMedia(historyMessages)
+            const media = buildHistoryReplayMedia(historyMessages, sessionProjectName)
             return {
               historyPreamble: buildHistoryPreamble(historyMessages),
               historyAttachments: media.attachments,
@@ -603,7 +686,8 @@ const sendWorkspaceMessage = async (
         promptAttachments = await finalizeWorkspaceAttachments(
           targetSessionId,
           appended.messageId,
-          attachments
+          attachments,
+          sessionProjectName
         )
       }
     } catch (error) {
@@ -626,8 +710,15 @@ const sendWorkspaceMessage = async (
         historyPreamble,
         historyAttachments,
         historyImages,
-        resumeFallback
+        resumeFallback,
+        getPromptProvenanceContext(targetSessionId, appended.messageId)
       )
+      .then((snapshot) => {
+        if (branchContextResetPerformed) {
+          useSessionStore.getState().clearBranchContextReset(targetSessionId)
+        }
+        return snapshot
+      })
       .catch((error) => {
         // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
         // visible session error, instead of being swallowed as an unhandled rejection.
@@ -749,7 +840,9 @@ const resumeInterruptedWorkspaceSession = async (
   await sendWorkspaceMessage(runtime, {
     sessionId,
     text: interruptedTurn.content,
-    attachments: interruptedTurn.uploads ?? [],
+    attachments: (interruptedTurn.uploads ?? []).map((upload) =>
+      toRuntimeUploadedAttachment(upload, session.projectId)
+    ),
     parts: interruptedTurn.parts,
     cwd: resumeCwd,
     projectId: session.projectId,
@@ -766,15 +859,63 @@ const resumeInterruptedWorkspaceSession = async (
 // per-session inline-image budget) makes a second overflow unlikely, so this is a backstop, not the norm.
 const CONTEXT_OVERFLOW_RECOVERY_COOLDOWN_MS = 15_000
 
-// Auto-recovers a conversation whose replayed history outgrew the provider's request-size limit
-// (accumulated images/attachments → "Request too large" / the backend's compaction failing with
-// media_unstrippable). This is the app-level compaction the backend cannot do: reset the agent context
-// to a fresh session (no media), then replay a bounded TEXT transcript and re-send the unanswered turn.
-// Mirrors resumeInterruptedWorkspaceSession, differing only in resetting rather than resuming. Returns
-// false when there is nothing to recover or the reset itself fails, so the caller keeps the visible error.
-const recoverContextOverflowWorkspaceSession = async (
+// Invokes native compaction only when the runtime snapshot explicitly advertises it for the attached
+// session. This capability gate keeps renderer callers independent of framework ids and command syntax.
+const compactWorkspaceSession = async (
   runtime: WorkspaceMessageRuntime,
   sessionId: string
+): Promise<boolean> => {
+  if (
+    runtime.compactSession === undefined ||
+    runtime.state.nativeContextCompactionSessionIds?.includes(sessionId) !== true
+  ) {
+    return false
+  }
+
+  const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
+  if (
+    !session ||
+    session.status !== 'idle' ||
+    session.compacting ||
+    session.activeRun ||
+    runtime.state.promptInFlightSessionIds.includes(sessionId)
+  ) {
+    return false
+  }
+
+  // Acquire the renderer gate synchronously so a second click or fast submit cannot append transcript
+  // state before the main-process compaction event/snapshot completes its IPC round trip.
+  useSessionStore.getState().beginCompaction(sessionId)
+
+  try {
+    const snapshot = await runtime.compactSession(sessionId)
+    if (snapshot) return true
+
+    // IPC helpers convert transport failures to an undefined snapshot. Record a session-scoped
+    // failure before releasing the local gate so a late main-process event cannot be the only path
+    // to a visible error.
+    useSessionStore.getState().failCompaction(sessionId, 'Context compaction failed.')
+    return false
+  } catch (error) {
+    useSessionStore
+      .getState()
+      .failCompaction(sessionId, getErrorMessage(error).trim() || 'Context compaction failed.')
+    return false
+  } finally {
+    // Terminal events normally settle this first. This is also the transport-failure safety net when
+    // no compaction event reaches the renderer.
+    useSessionStore.getState().finishCompaction(sessionId)
+  }
+}
+
+// Auto-recovers a conversation whose request outgrew the provider limit. Native-capable frameworks
+// compact their attached session first and keep ownership of the summary; older/managed frameworks fall
+// back to replacing the agent session and replaying a bounded text transcript. The unanswered turn is
+// then retried exactly once. Returns false when there is nothing to recover or both recovery paths fail.
+const recoverContextOverflowWorkspaceSession = async (
+  runtime: WorkspaceMessageRuntime,
+  sessionId: string,
+  cancelledSessionIds?: Set<string>
 ): Promise<boolean> => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
 
@@ -793,42 +934,120 @@ const recoverContextOverflowWorkspaceSession = async (
 
   // Flip to the neutral compacting state up front so the UI never shows the raw overflow error while the
   // reset round-trip is in flight (idempotent with the event-path beginCompaction).
-  useSessionStore.getState().beginCompaction(sessionId)
-
-  try {
-    await runtime.resetSessionContext(
-      sessionId,
-      resumeCwd,
-      session.projectId,
-      session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
-    )
-  } catch (error) {
-    useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
-    return false
+  useSessionStore.getState().beginCompaction(sessionId, { supersedeActiveRun: true })
+  const isCompactionStillActive = (): boolean =>
+    useSessionStore.getState().sessions.find((item) => item.id === sessionId)?.compacting === true
+  const finishCancelledRecovery = (): boolean => {
+    if (cancelledSessionIds?.delete(sessionId) !== true) return false
+    useSessionStore.getState().finishCompaction(sessionId)
+    return true
   }
+
+  const supportsNativeCompaction =
+    runtime.state.nativeContextCompactionSessionIds?.includes(sessionId) === true &&
+    runtime.compactSession !== undefined
+  let nativeCompacted = false
+  let postRecoveryState: WorkspaceMessageRuntime['state'] | undefined
+
+  if (supportsNativeCompaction) {
+    try {
+      postRecoveryState = await runtime.compactSession?.(sessionId, 'overflow-recovery')
+      nativeCompacted = Boolean(postRecoveryState)
+    } catch {
+      // Fall through to the replacement+replay safety net below.
+    }
+
+    // Cancellation intent is consumed only after the native control turn actually stops, keeping the
+    // composer locked between the cancel acknowledgement and the terminal response.
+    if (finishCancelledRecovery()) return false
+    // Disconnect handling clears the local compacting state. Respect that terminal transition instead
+    // of turning a dropped native control turn into reset-and-replay.
+    if (!isCompactionStillActive()) return false
+  }
+
+  if (!nativeCompacted) {
+    try {
+      await runtime.resetSessionContext(
+        sessionId,
+        resumeCwd,
+        session.projectId,
+        session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
+      )
+      const remainingPromptInFlightSessionIds = runtime.state.promptInFlightSessionIds.filter(
+        (id) => id !== sessionId
+      )
+      // resetSessionContext returns session metadata rather than a runtime snapshot. Its terminal
+      // response nevertheless releases this session's operation lease, so project that fact into the
+      // stale event snapshot retained by this recovery task before applying the authoritative guard.
+      postRecoveryState = {
+        ...runtime.state,
+        promptInFlight: remainingPromptInFlightSessionIds.length > 0,
+        promptInFlightSessionIds: remainingPromptInFlightSessionIds
+      }
+    } catch (error) {
+      if (finishCancelledRecovery()) return false
+      if (!isCompactionStillActive()) return false
+      useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
+      return false
+    }
+  }
+
+  // A user can cancel while the reset request is in flight. The fresh context may already exist, but
+  // cancellation still owns the UI decision: leave the unanswered turn intact and do not resend it.
+  if (finishCancelledRecovery()) return false
+  if (!isCompactionStillActive()) return false
+
+  const retryRuntime = { ...runtime, state: postRecoveryState ?? runtime.state }
+  // Do not mutate the transcript unless the terminal compaction/reset response confirms that the
+  // runtime released this session. This protects against an adapter returning a premature snapshot.
+  if (retryRuntime.state.promptInFlightSessionIds.includes(sessionId)) return false
 
   // Drop the unanswered turn so the re-send does not duplicate the bubble; the remaining prior turns are
   // replayed as a text preamble via forceHistoryReplay (session.messages was captured before removal).
   useSessionStore.getState().removeMessage(sessionId, interruptedTurn.id)
 
-  await sendWorkspaceMessage(runtime, {
+  const retried = await sendWorkspaceMessage(retryRuntime, {
     sessionId,
     text: interruptedTurn.content,
-    attachments: interruptedTurn.uploads ?? [],
+    attachments: (interruptedTurn.uploads ?? []).map((upload) =>
+      toRuntimeUploadedAttachment(upload, session.projectId)
+    ),
     parts: interruptedTurn.parts,
     cwd: resumeCwd,
     projectId: session.projectId,
     permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-    // A fresh agent session lost the prior context, so replay the transcript on this first prompt.
-    forceHistoryReplay: true,
+    // Native compaction retained its own framework-authored summary. Only a replacement session needs
+    // OpenScience to replay the prior transcript into its first prompt.
+    forceHistoryReplay: !nativeCompacted,
+    allowCompactionRecovery: true,
     agentModel: session.agentModel
   })
 
-  return true
+  return Boolean(retried)
 }
 
-// Resends an inline-edited prompt by truncating the conversation at the edited message. The cut and
-// the adjusted prompt's bubble are applied optimistically — the run is marked and the waiting
+// Cancels the active agent interaction. A successful compaction cancellation also settles the local
+// neutral state immediately; overflow recovery observes that transition and does not reset or retry.
+const cancelWorkspaceRun = async (
+  runtime: WorkspaceCancellationRuntime,
+  sessionId: string,
+  cancelledSessionIds?: Set<string>
+): Promise<void> => {
+  const wasCompacting =
+    useSessionStore.getState().sessions.find((session) => session.id === sessionId)?.compacting ===
+    true
+  if (wasCompacting) cancelledSessionIds?.add(sessionId)
+  const snapshot = await runtime.cancel(sessionId)
+
+  if (!snapshot) {
+    cancelledSessionIds?.delete(sessionId)
+    useSessionStore.getState().failRun(sessionId, 'Agent cancellation failed')
+  }
+}
+
+// Resends an inline-edited prompt by forking the conversation at the edited message. The active
+// projection switches optimistically while the original downstream Branch remains durable; the
+// adjusted prompt's bubble is applied and the run is marked, so the waiting
 // indicator shows immediately, like a composer send — then the agent session is reset (ACP has no
 // history truncation) and the kept turns are replayed as a text preamble on the resent prompt. A
 // failed reset rolls the transcript back so nothing is lost. Returns false when the flow cannot
@@ -847,12 +1066,22 @@ const resendEditedWorkspaceMessage = async (
   const content = input.text.trim()
   const cutIndex = session.messages.findIndex((message) => message.id === input.messageId)
 
-  if (!resumeCwd || !content || cutIndex < 0) return false
+  if (
+    !resumeCwd ||
+    !content ||
+    cutIndex < 0 ||
+    runtime.state.promptInFlightSessionIds.includes(input.sessionId)
+  ) {
+    return false
+  }
 
-  // Validate replay compatibility before the destructive cut: a kept history with images — whether
+  // Validate replay compatibility before the Branch switch: a kept history with images — whether
   // agent-emitted blocks or user uploads — cannot be replayed on a model without image input, and
   // discovering that after the truncation would leave the later turns dropped with no prompt dispatched.
-  const replayMedia = buildHistoryReplayMedia(session.messages.slice(0, cutIndex))
+  const replayMedia = buildHistoryReplayMedia(
+    session.messages.slice(0, cutIndex),
+    session.projectId
+  )
 
   if (
     supportsImageInput === false &&
@@ -862,8 +1091,8 @@ const resendEditedWorkspaceMessage = async (
     return false
   }
 
-  // The optimistic cut + append: the edited message and every later turn drop out, and the adjusted
-  // prompt takes their place as a live run with its bubble and waiting indicator already visible.
+  // The optimistic Branch projection + append replaces the visible downstream path while retaining
+  // the original Branch in Session JSON; the adjusted prompt becomes a live run immediately.
   const preEditSession = session
   useSessionStore.getState().truncateSessionFromMessage(input.sessionId, input.messageId)
   const appended = useSessionStore.getState().appendUserMessage({
@@ -879,6 +1108,7 @@ const resendEditedWorkspaceMessage = async (
   if (!appended) return false
 
   try {
+    await shutdownNotebookForBranchChange(input.sessionId, resumeCwd, session.projectId)
     await runtime.resetSessionContext(
       input.sessionId,
       resumeCwd,
@@ -909,6 +1139,7 @@ const resendEditedWorkspaceMessage = async (
     forceHistoryReplay: true,
     preAppendedMessageId: appended.messageId,
     supportsImageInput,
+    branchContextAlreadyReset: true,
     agentModel
   })
 
@@ -922,7 +1153,8 @@ const processContextOverflowRecovery = (
   runtime: WorkspaceMessageRuntime,
   events: AcpRuntimeEvent[],
   handledEventIds: Set<string>,
-  recoveringSessionIds: Set<string>,
+  recoveryCooldownSessionIds: Set<string>,
+  activeRecoverySessionIds: Set<string>,
   recover: (
     runtime: WorkspaceMessageRuntime,
     sessionId: string
@@ -946,12 +1178,14 @@ const processContextOverflowRecovery = (
     const { sessionId } = event
 
     if (!runtime.state.sessionIds.includes(sessionId)) continue
-    if (recoveringSessionIds.has(sessionId)) continue
+    if (recoveryCooldownSessionIds.has(sessionId)) continue
 
-    recoveringSessionIds.add(sessionId)
+    recoveryCooldownSessionIds.add(sessionId)
+    activeRecoverySessionIds.add(sessionId)
     void recover(runtime, sessionId).finally(() => {
+      activeRecoverySessionIds.delete(sessionId)
       setTimeout(
-        () => recoveringSessionIds.delete(sessionId),
+        () => recoveryCooldownSessionIds.delete(sessionId),
         CONTEXT_OVERFLOW_RECOVERY_COOLDOWN_MS
       )
     })
@@ -965,10 +1199,11 @@ const processContextOverflowRecovery = (
   }
 }
 
-// Flags running sessions as disconnected on a TRANSITION into a dropped connection state. Abnormal
-// drops (agent crash / gateway drop) go through main's handleConnectionClosed → status 'closed';
-// deliberate mid-prompt disconnects use disconnect(false) (no 'closed' emit) and idle provider/skills
-// reconnects have no running session, so neither reaches markDisconnected here.
+// Flags sessions with an active prompt or native compaction as disconnected on a TRANSITION into a
+// dropped connection state. Abnormal drops (agent crash / gateway drop) go through main's
+// handleConnectionClosed → status 'closed'; deliberate mid-prompt disconnects use disconnect(false)
+// (no 'closed' emit) and idle provider/skills reconnects have no active interaction, so neither reaches
+// markDisconnected here.
 const markRunningSessionsDisconnectedOnDrop = (
   previousStatus: AcpConnectionStatus,
   currentStatus: AcpConnectionStatus,
@@ -978,7 +1213,13 @@ const markRunningSessionsDisconnectedOnDrop = (
   const { sessions, markDisconnected } = useSessionStore.getState()
 
   for (const session of sessions) {
-    if (session.status !== 'running' && session.status !== 'waiting-permission') continue
+    if (
+      session.status !== 'running' &&
+      session.status !== 'waiting-permission' &&
+      !session.compacting
+    ) {
+      continue
+    }
 
     const previousOwnedStatus = previousSessionStatuses[session.id]
     const currentOwnedStatus = currentSessionStatuses[session.id]
@@ -1033,6 +1274,9 @@ const useWorkspaceAgentRuntime = (): {
   permissionProfiles: Record<string, SessionPermissionProfileState>
   permissionGrants: Record<string, AcpPermissionGrant[]>
   contextUsageBySession: Record<string, AcpContextUsage>
+  promptInFlightSessionIds: string[]
+  nativeContextCompactionSessionIds: string[]
+  compactContext: (sessionId: string) => Promise<boolean>
   sendMessage: (input: SendWorkspaceMessageInput) => Promise<SendWorkspaceMessageResult | undefined>
   resendEditedMessage: (
     sessionId: string,
@@ -1061,10 +1305,12 @@ const useWorkspaceAgentRuntime = (): {
   const previousSessionStatusesRef = useRef(runtime.state.sessionConnectionStatuses)
   // Dedup + cooldown state for the request-size overflow auto-recovery, kept across re-renders.
   const handledOverflowEventIds = useRef(new Set<string>())
-  const recoveringOverflowSessionIds = useRef(new Set<string>())
+  const overflowRecoveryCooldownSessionIds = useRef(new Set<string>())
+  const activeOverflowRecoverySessionIds = useRef(new Set<string>())
+  const cancelledOverflowRecoverySessionIds = useRef(new Set<string>())
 
-  // Auto-recovers when a conversation outgrows the provider's request-size limit: resets the agent
-  // context and replays a text-only transcript instead of dead-ending on an unrecoverable error. Runs
+  // Auto-recovers when a conversation outgrows the provider's request-size limit: asks capable agents
+  // to compact natively, with context replacement + text replay as a fallback. Runs
   // BEFORE the event processor below so it can flip the session to `compacting` first — the event
   // processor then shows the neutral note only when a recovery actually started, and surfaces a real
   // error otherwise (e.g. a repeat overflow inside the cooldown), never a stuck "Compacting…".
@@ -1073,7 +1319,18 @@ const useWorkspaceAgentRuntime = (): {
       runtime,
       runtime.state.events,
       handledOverflowEventIds.current,
-      recoveringOverflowSessionIds.current
+      overflowRecoveryCooldownSessionIds.current,
+      activeOverflowRecoverySessionIds.current,
+      (recoveryRuntime, sessionId) => {
+        // Cancellation intent belongs only to this live attempt; never let a stale marker from an
+        // already-settled recovery abort a later overflow retry.
+        cancelledOverflowRecoverySessionIds.current.delete(sessionId)
+        return recoverContextOverflowWorkspaceSession(
+          recoveryRuntime,
+          sessionId,
+          cancelledOverflowRecoverySessionIds.current
+        )
+      }
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runtime is read fresh; fire on new events.
   }, [runtime.state.events])
@@ -1129,6 +1386,11 @@ const useWorkspaceAgentRuntime = (): {
     [runtime, supportsImageInput, activeModel]
   )
 
+  const compactContext = useCallback(
+    (sessionId: string): Promise<boolean> => compactWorkspaceSession(runtime, sessionId),
+    [runtime]
+  )
+
   // Explicitly re-attaches an interrupted session's ACP runtime so the user can keep chatting. On
   // success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
   const resumeInterruptedSession = useCallback(
@@ -1139,13 +1401,14 @@ const useWorkspaceAgentRuntime = (): {
 
   // Sends a cancellation request while the runtime waits for the eventual stop event.
   const cancelRun = useCallback(
-    async (sessionId: string): Promise<void> => {
-      const snapshot = await runtime.cancel(sessionId)
-
-      if (!snapshot) {
-        useSessionStore.getState().failRun(sessionId, 'Agent cancellation failed')
-      }
-    },
+    (sessionId: string): Promise<void> =>
+      cancelWorkspaceRun(
+        runtime,
+        sessionId,
+        activeOverflowRecoverySessionIds.current.has(sessionId)
+          ? cancelledOverflowRecoverySessionIds.current
+          : undefined
+      ),
     [runtime]
   )
 
@@ -1205,6 +1468,9 @@ const useWorkspaceAgentRuntime = (): {
     permissionProfiles: runtime.state.permissionProfiles,
     permissionGrants: runtime.state.permissionGrants,
     contextUsageBySession: runtime.state.contextUsageBySession,
+    promptInFlightSessionIds: runtime.state.promptInFlightSessionIds,
+    nativeContextCompactionSessionIds: runtime.state.nativeContextCompactionSessionIds ?? [],
+    compactContext,
     sendMessage,
     resendEditedMessage,
     cancelRun,
@@ -1217,6 +1483,8 @@ const useWorkspaceAgentRuntime = (): {
 }
 
 export {
+  cancelWorkspaceRun,
+  compactWorkspaceSession,
   createWorkspaceRuntimeEventProcessor,
   getResumeFailureMessage,
   deleteWorkspaceSession,

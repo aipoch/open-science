@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -34,7 +35,16 @@ describe('managed-file deletion integration', () => {
     sessions = new SessionRepository(storageRoot)
     files = new ManagedFileIndexRepository(() => Promise.resolve(client), storageRoot)
     coordinator = new SessionPersistenceCoordinator(sessions, files)
-    uploadPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'input.csv')
+    uploadPath = join(
+      storageRoot,
+      'uploads',
+      PROJECT_ID,
+      SESSION_ID,
+      'upload-1',
+      'versions',
+      'upload-version-1',
+      'content'
+    )
     artifactPath = join(
       storageRoot,
       'artifacts',
@@ -48,6 +58,31 @@ describe('managed-file deletion integration', () => {
       writeManagedFile(uploadPath, 'upload bytes'),
       writeManagedFile(artifactPath, 'artifact bytes')
     ])
+    await client.fileOriginSession.create({
+      data: { projectId: PROJECT_ID, sessionId: SESSION_ID }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-1',
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        filename: 'input.csv',
+        originalFilename: 'input.csv',
+        versions: {
+          create: {
+            id: 'upload-version-1',
+            versionNumber: 1,
+            state: 'ready',
+            contentStorageKey: relativeStorageKey(storageRoot, uploadPath),
+            filename: 'input.csv',
+            originalFilename: 'input.csv',
+            sizeBytes: BigInt('upload bytes'.length),
+            checksum: createHash('sha256').update('upload bytes').digest('hex'),
+            createdAt: new Date(100)
+          }
+        }
+      }
+    })
     await sessions.saveSession(createSession(uploadPath, artifactPath))
     await coordinator.loadAll()
     await expect(files.getOverview(PROJECT_ID)).resolves.toMatchObject({ totalCount: 2 })
@@ -77,7 +112,7 @@ describe('managed-file deletion integration', () => {
   })
 })
 
-const createSession = (uploadPath: string, artifactPath: string): PersistedChatSession => ({
+const createSession = (_uploadPath: string, artifactPath: string): PersistedChatSession => ({
   id: SESSION_ID,
   projectId: PROJECT_ID,
   title: 'Deletion integration',
@@ -93,11 +128,13 @@ const createSession = (uploadPath: string, artifactPath: string): PersistedChatS
       uploads: [
         {
           id: 'upload-1',
+          versionId: 'upload-version-1',
+          versionNumber: 1,
           sessionId: SESSION_ID,
           name: 'input.csv',
           originalName: 'input.csv',
-          path: uploadPath,
-          size: 'upload bytes'.length
+          size: 'upload bytes'.length,
+          sha256: createHash('sha256').update('upload bytes').digest('hex')
         }
       ],
       createdAt: 100,
@@ -121,3 +158,9 @@ const writeManagedFile = async (path: string, content: string): Promise<void> =>
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, content, 'utf8')
 }
+
+const relativeStorageKey = (root: string, path: string): string =>
+  path
+    .slice(root.length + 1)
+    .split('/')
+    .join('/')

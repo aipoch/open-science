@@ -1,5 +1,5 @@
 import type { ToolCallContent, ToolCallLocation, ToolKind } from '@agentclientprotocol/sdk'
-import type { ArtifactFile, ArtifactReference } from './artifacts'
+import type { ArtifactFile, FileReference } from './artifacts'
 import type { UploadedAttachment } from './uploads'
 import type { PermissionProfileId, SessionPermissionProfileState } from './permission-profiles'
 import type { AgentFrameworkId } from './settings'
@@ -79,6 +79,7 @@ export type AcpRuntimeEventKind =
   | 'plan'
   | 'permission'
   | 'artifact'
+  | 'compaction'
   | 'error'
   | 'stop'
   | 'raw'
@@ -92,8 +93,8 @@ export type AcpRuntimeEventLevel = 'info' | 'warning' | 'error'
 export const ACP_PROMPT_FAILED_EVENT_TITLE = 'Prompt failed'
 
 // Marks a prompt failure the app can auto-recover from without user action. 'context-overflow' means
-// the conversation outgrew the provider's request-size limit (accumulated media); the renderer resets
-// the agent context and replays a text-only transcript. Absent on ordinary events.
+// the conversation outgrew the provider's request-size limit; the renderer tries framework-native
+// compaction first, then falls back to a fresh context plus text replay. Absent on ordinary events.
 export type AcpRecoverableFailure = 'context-overflow'
 
 // Current agent-context usage projected onto its logical app session. `used` is model input tokens plus
@@ -113,6 +114,9 @@ export type AcpRuntimeEvent = {
   // Present only on a usage_update-derived event; the runtime records it per session and does not push
   // the event into the visible conversation.
   contextUsage?: AcpContextUsage
+  // Identifies who owns a native compaction lifecycle so overflow recovery can keep its retry gate
+  // active until the replacement prompt takes over, even if control-turn events arrive first.
+  compactionReason?: 'automatic' | 'manual' | 'overflow-recovery'
   // Set on an error event the app can auto-recover from, so the renderer compacts-and-retries instead
   // of surfacing a dead-end error.
   recoverable?: AcpRecoverableFailure
@@ -143,6 +147,7 @@ export type AcpRuntimeEvent = {
   terminalExitCode?: number | null
   // Artifact events use these ids to bridge runtime-owned runs to renderer-owned messages.
   runId?: string
+  promptMessageId?: string
   artifactSessionId?: string
   artifactClaimId?: string
   artifacts?: ArtifactFile[]
@@ -224,6 +229,9 @@ export type AcpStateSnapshot = {
   // Latest context-window usage for each logical app session's current agent-context generation.
   // Missing means unknown or invalidated; framework switches and reconnects clear the old generation.
   contextUsageBySession: Record<string, AcpContextUsage>
+  // Sessions whose attached framework exposes a native compaction control turn. Missing is accepted
+  // from an older main process during a rolling dev reload.
+  nativeContextCompactionSessionIds?: string[]
   promptInFlight: boolean
   promptInFlightSessionIds: string[]
 }
@@ -259,6 +267,11 @@ export type AcpResumeSessionRequest = {
   previousBackendId?: string
 }
 
+export type AcpCompactSessionRequest = {
+  sessionId: string
+  reason?: 'manual' | 'overflow-recovery'
+}
+
 export type AcpSetPermissionProfileRequest = {
   sessionId: string
   profile: PermissionProfileId
@@ -267,11 +280,23 @@ export type AcpSetPermissionProfileRequest = {
 export type AcpPromptRequest = {
   sessionId: string
   text: string
+  // Immutable conversation-graph binding for Artifact Provenance. Older callers may omit it; the
+  // runtime supplies a root-frame/root-branch compatibility binding during the Session JSON v2
+  // rollout.
+  provenanceContext?: {
+    promptMessageId: string
+    rootFrameId?: string
+    agentFrameId?: string
+    messageBranchId?: string
+    messageBranchAncestry?: string[]
+    messageAncestry?: string[]
+    runtimeSegmentId?: string
+  }
   attachments?: UploadedAttachment[]
   // Skills the user explicitly picked in the composer; the runtime force-loads and nudges them.
   forcedSkillIds?: string[]
   // Existing files referenced via composer `@` mentions; appended as prompt content blocks.
-  referencedArtifacts?: ArtifactReference[]
+  referencedArtifacts?: FileReference[]
   // Transcript of prior turns injected only into the content sent to the agent (never the user-facing
   // message), so a freshly-adopted session after a framework switch keeps conversational continuity.
   historyPreamble?: string

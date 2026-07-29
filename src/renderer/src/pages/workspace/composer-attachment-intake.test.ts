@@ -28,7 +28,7 @@ describe('planComposerAttachmentIntake', () => {
     const result = planComposerAttachmentIntake([valid, huge], 0)
 
     expect(result.accepted).toEqual([valid])
-    expect(result.error).toBe('big.zip exceeds the 50 MB limit')
+    expect(result.error).toBe('big.zip exceeds the 10 GB limit')
   })
 
   it('combines multiple oversized file names in the error', () => {
@@ -38,7 +38,7 @@ describe('planComposerAttachmentIntake', () => {
     const result = planComposerAttachmentIntake([first, second], 0)
 
     expect(result.accepted).toEqual([])
-    expect(result.error).toBe('one.bin, two.bin exceeds the 50 MB limit')
+    expect(result.error).toBe('one.bin, two.bin exceeds the 10 GB limit')
   })
 
   it('rejects the whole batch when it would exceed the attachment count', () => {

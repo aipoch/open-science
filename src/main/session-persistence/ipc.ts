@@ -12,9 +12,7 @@ import { resolveStorageRoot } from '../storage-root'
 import { SessionRepository } from './repository'
 import { ReviewRepository } from '../reviewer/repository'
 import { getProjectDbClient } from '../projects/prisma-client'
-import { createLogger } from '../logger'
-
-const log = createLogger('session-persistence:ipc')
+import { withDataRootWrite } from '../storage/migration-state'
 
 type SessionPersistenceBackend = {
   loadAll: () => Promise<LoadAllSessionsResult>
@@ -35,22 +33,19 @@ type SessionPersistenceHandlers = {
 const createSessionPersistenceHandlers = (
   repository: SessionPersistenceBackend,
   reviewRepository: ReviewRepository
-): SessionPersistenceHandlers => ({
-  loadAll: () => repository.loadAll(),
-  saveSession: (session) => repository.saveSession(session),
-  deleteSession: async (request) => {
-    // Delete the authoritative session first. Review cleanup is derived and must not erase data when
-    // the durable session deletion itself fails.
-    await repository.deleteSession(request.projectId, request.sessionId)
-    await reviewRepository.deleteReviewsForSession(request.sessionId).catch((error: unknown) => {
-      log.warn('deleteReviewsForSession failed after session delete (non-fatal)', {
-        sessionId: request.sessionId,
-        error: error instanceof Error ? error.message : String(error)
-      })
-    })
-  },
-  saveManifest: (request) => repository.saveManifest(request)
-})
+): SessionPersistenceHandlers => {
+  // Kept as an injected boundary for project-level cleanup compatibility; session deletion must not
+  // call it because Reviews belong to retained provenance.
+  void reviewRepository
+  return {
+    loadAll: () => repository.loadAll(),
+    saveSession: (session) => repository.saveSession(session),
+    // A session delete tombstones its origin graph but deliberately retains Review rows, findings and
+    // scope snapshots. Provenance remains readable from Files; project deletion owns final cleanup.
+    deleteSession: (request) => repository.deleteSession(request.projectId, request.sessionId),
+    saveManifest: (request) => repository.saveManifest(request)
+  }
+}
 
 // Creates the production repository rooted at the (dev-aware) storage root.
 const createDefaultSessionRepository = (): SessionRepository =>
@@ -67,23 +62,29 @@ const registerSessionPersistenceIpcHandlers = (
   const handlers = createSessionPersistenceHandlers(repository, reviewRepository)
 
   // Keep persistence IPC separate from ACP runtime commands; it owns durable UI state only.
-  ipcMain.handle('sessions:load-all', () => handlers.loadAll())
+  // loadAll can replay pending deletions and every mutation can materialize provenance/upload bytes.
+  // Hold the shared data-root lease at the IPC boundary so migration drains the complete operation.
+  ipcMain.handle('sessions:load-all', () => withDataRootWrite(() => handlers.loadAll()))
   ipcMain.handle('sessions:save-session', async (event, session: PersistedChatSession) => {
-    const created = await handlers.saveSession(session)
-    broadcastLifecycleEvent(
-      created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,
-      {
-        session,
-        originClientId: getLifecycleClientId(event)
-      }
-    )
+    await withDataRootWrite(async () => {
+      const created = await handlers.saveSession(session)
+      broadcastLifecycleEvent(
+        created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,
+        {
+          session,
+          originClientId: getLifecycleClientId(event)
+        }
+      )
+    })
   })
   ipcMain.handle('sessions:delete-session', async (_event, request: DeleteSessionRequest) => {
-    await handlers.deleteSession(request)
-    broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionDeleted, request)
+    await withDataRootWrite(async () => {
+      await handlers.deleteSession(request)
+      broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionDeleted, request)
+    })
   })
   ipcMain.handle('sessions:save-manifest', (_event, request: SaveSessionManifestRequest) =>
-    handlers.saveManifest(request)
+    withDataRootWrite(() => handlers.saveManifest(request))
   )
 }
 

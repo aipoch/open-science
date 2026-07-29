@@ -19,6 +19,7 @@ import type { AcpRuntime } from '../acp/runtime'
 import { ReviewRepository } from './repository'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import { runReview } from './orchestrator'
+import { callSubmitFindingsAfterReadingEvidence as callSubmitFindings } from './reviewer-mcp-test-client'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 
 // The reviewer prompt built by buildReviewerPrompt always starts with this line (see orchestrator.ts).
@@ -87,80 +88,11 @@ const makeStubRuntime = (session: unknown, promptPrefix: string | undefined): Ac
 // --- Reviewer MCP submit helper (mirrors orchestrator.test.ts) ---
 // Used to drive the initial review to a warn outcome so the fix loop (and thus runScopedReview) runs.
 // The MCP Streamable HTTP transport answers over SSE, so responses are parsed out of the event stream.
-const MCP_ACCEPT = 'application/json, text/event-stream'
-
-const parseMcpSseBody = (body: string): { result?: unknown; error?: { message?: string } } => {
-  const dataLine = body.split('\n').find((line) => line.startsWith('data:'))
-  const json = dataLine ? dataLine.slice('data:'.length).trim() : body.trim()
-  return json ? (JSON.parse(json) as { result?: unknown; error?: { message?: string } }) : {}
-}
-
 type SubmittedCheck = {
   status: 'pass' | 'warn' | 'fail'
   claim: string
   evidence: string
   locator?: { blockRef: { messageId?: string; blockIndex: number }; contentHash: string }
-}
-
-const callSubmitFindings = async (
-  mcpBaseUrl: string,
-  token: string,
-  checks: SubmittedCheck[]
-): Promise<void> => {
-  const initResponse = await fetch(mcpBaseUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: MCP_ACCEPT,
-      authorization: `Bearer ${token}`
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: { name: 'test-client', version: '1.0' }
-      }
-    })
-  })
-  if (!initResponse.ok) throw new Error(`MCP initialize failed: ${initResponse.status}`)
-
-  const initJson = parseMcpSseBody(await initResponse.text())
-  const sessionId = initResponse.headers.get('mcp-session-id')
-  if (!sessionId || !initJson.result) throw new Error('MCP initialize did not return a session id')
-
-  await fetch(mcpBaseUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: MCP_ACCEPT,
-      authorization: `Bearer ${token}`,
-      'mcp-session-id': sessionId
-    },
-    body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })
-  })
-
-  const toolResponse = await fetch(mcpBaseUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: MCP_ACCEPT,
-      authorization: `Bearer ${token}`,
-      'mcp-session-id': sessionId
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 2,
-      method: 'tools/call',
-      params: { name: 'submit_findings', arguments: { checks } }
-    })
-  })
-  if (!toolResponse.ok) throw new Error(`submit_findings call failed: ${toolResponse.status}`)
-  const toolJson = parseMcpSseBody(await toolResponse.text())
-  if (toolJson.error)
-    throw new Error(`submit_findings error: ${toolJson.error.message ?? 'unknown'}`)
 }
 
 // Pulls the reviewer HTTP MCP server url + bearer token out of the mcpServers config that runReview

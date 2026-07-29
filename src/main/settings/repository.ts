@@ -215,6 +215,7 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   const lastValidationFailure = sanitizeValidationFailure(value.lastValidationFailure)
   const expiresAt = asNumber(value.expiresAt)
   const disconnectedAt = asNumber(value.disconnectedAt)
+  const codexAuthMode = asString(value.codexAuthMode)
   // Keep only a clean list of non-empty string model ids.
   const fetchedModels = Array.isArray(value.fetchedModels)
     ? value.fetchedModels.filter(
@@ -262,6 +263,12 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   if (expiresAt !== undefined) provider.expiresAt = expiresAt
   if (disconnectedAt !== undefined && type === 'claude-shared') {
     provider.disconnectedAt = disconnectedAt
+  }
+  if (
+    isCodexSubscriptionProvider(type) &&
+    (codexAuthMode === 'imported' || codexAuthMode === 'isolated')
+  ) {
+    provider.codexAuthMode = codexAuthMode
   }
 
   return provider
@@ -396,6 +403,10 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
         // `codex-shared` is legacy setup input only. Runtime always uses the app-owned
         // subscription home, so sanitized/newly persisted state has one isolated form.
         type: 'codex-isolated' as const,
+        // Releases before codexAuthMode normalized both setup choices to the subscription id, so
+        // that shape is ambiguous. Prefer isolated to preserve the established runtime behavior;
+        // legacy shared users can explicitly re-import into the new app-owned profile.
+        codexAuthMode: selectedCodexProvider.codexAuthMode ?? 'isolated',
         name: codexSubscriptionProviderIdentity().name
       }
     : undefined

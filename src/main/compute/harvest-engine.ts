@@ -36,6 +36,7 @@ import {
 } from './harvest-classifier'
 import { getNotebookSessionRoot } from '../notebook/repository'
 import { buildComputeDonePayload } from './job-notifier'
+import { withDataRootWrite } from '../storage/migration-state'
 
 // ---------------------------------------------------------------------------
 // Public path helper
@@ -241,6 +242,13 @@ const buildLeftOnRemoteUri = (
  * previous harvest (re-downloads files, re-writes DB fields).
  */
 export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<void> => {
+  // A harvest writes into the relocatable session workspace. Keep one writer lease across the
+  // entire operation so a data-root move cannot copy one subset of outputs then let later files
+  // land in the old root before commit.
+  return await withDataRootWrite(async () => harvestJobUnchecked(job, deps))
+}
+
+const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<void> => {
   const { sshRunner, scpRunner, hostRepository, jobRepository, storageRoot } = deps
   const resolveFn = deps.resolveSshTargetFn ?? resolveSshTarget
 
@@ -268,7 +276,10 @@ export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<vo
   }
 
   // Helper: finalize + broadcast + return (DRY for all early-exit paths).
-  const finalizeAndReturn = async (harvestError: string | null, leftOnRemoteJson: string): Promise<void> => {
+  const finalizeAndReturn = async (
+    harvestError: string | null,
+    leftOnRemoteJson: string
+  ): Promise<void> => {
     const updatedJob = await finalize(harvestError, leftOnRemoteJson)
     // Broadcast the compute_done notification. We already have host lookup result here for
     // displayName, but early-exit paths don't — so we delegate displayName lookup to the

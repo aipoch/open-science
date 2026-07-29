@@ -313,6 +313,7 @@ export { buildOpencodeConfig }
 export const opencodeFramework: AgentFramework = {
   id: 'opencode',
   displayName: 'OpenCode',
+  contextCompaction: { kind: 'native-command', command: '/compact', triggerAtPercent: 90 },
   // opencode discovers skills natively at <configDir>/skills/<name>/SKILL.md (same layout as Claude),
   // loaded on-demand via its skill tool; the app materializes the enabled set into the isolated config.
   supportsSkills: true,

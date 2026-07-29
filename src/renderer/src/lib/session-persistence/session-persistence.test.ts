@@ -182,6 +182,86 @@ describe('renderer session persistence bridge', () => {
     expect(api.saveSession).not.toHaveBeenCalled()
   })
 
+  it('does not overwrite the last durable graph after terminal graph synchronization fails', async () => {
+    const api = createApi()
+    useSessionStore
+      .getState()
+      .hydrateSessions([createPersistedSession({ id: 'session-1', projectId: 'project-a' })])
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-1'
+          ? {
+              ...session,
+              status: 'error',
+              error: 'Conversation history could not be finalized safely.',
+              conversationGraphSyncBlocked: true
+            }
+          : session
+      )
+    }))
+
+    await save(useSessionStore.getState())
+
+    expect(api.saveSession).not.toHaveBeenCalled()
+  })
+
+  it('waits for staged uploads to acquire an immutable Version before saving the Session', async () => {
+    const api = createApi()
+    const save = createStoreSaver(api)
+    const appended = useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Analyze this upload',
+      cwd: '/workspace/project',
+      projectId: 'project-a',
+      attachments: [
+        {
+          id: 'upload-1',
+          sessionId: '.pending',
+          name: 'sample.csv',
+          originalName: 'sample.csv',
+          path: '/data/uploads/default-project/.pending/sample.csv',
+          mimeType: 'text/csv',
+          size: 12
+        }
+      ]
+    })
+
+    await save(useSessionStore.getState())
+    expect(api.saveSession).not.toHaveBeenCalled()
+
+    useSessionStore.getState().replaceMessageUploads({
+      sessionId: 'session-1',
+      messageId: appended?.messageId ?? '',
+      uploads: [
+        {
+          id: 'upload-1',
+          versionId: 'upload-version-1',
+          versionNumber: 1,
+          sessionId: 'session-1',
+          name: 'sample.csv',
+          originalName: 'sample.csv',
+          mimeType: 'text/csv',
+          size: 12,
+          sha256: 'abc123'
+        }
+      ]
+    })
+
+    await save(useSessionStore.getState())
+    expect(api.saveSession).toHaveBeenCalledOnce()
+    expect(api.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({
+            uploads: [expect.objectContaining({ versionId: 'upload-version-1' })]
+          })
+        ]
+      })
+    )
+  })
+
   it('does not infer durable deletion from sessions removed from the store', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',

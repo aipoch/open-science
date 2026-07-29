@@ -1,7 +1,11 @@
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
-import type { ChatApiEndpoint, ProviderType } from '../../shared/settings'
+import type {
+  ChatApiEndpoint,
+  CodexSubscriptionAuthMode,
+  ProviderType
+} from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
 import type { CustomReasoningEffortTransport } from '../../shared/reasoning-effort'
 import { normalizeAnthropicBaseUrl } from './base-url'
@@ -12,6 +16,7 @@ import { normalizeAnthropicBaseUrl } from './base-url'
 // A provider resolved for spawning: the plaintext key is already decrypted by the caller.
 export type ResolvedProvider = {
   type: ProviderType
+  codexAuthMode?: CodexSubscriptionAuthMode
   // Retained for official providers even though they use the custom credential path at runtime.
   // Transport adapters need this stable identity because `none` has vendor-specific wire semantics.
   vendorId?: OfficialVendorId

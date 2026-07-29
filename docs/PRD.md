@@ -30,7 +30,7 @@ This shows up as four structural pains:
 ## 4. Non-Goals
 
 - **Not a real-time multi-user collaborative editor.** Team workflows happen through export/share/import, not simultaneous co-editing of one session.
-- **Not a replacement for domain-expert judgment.** Statistical validity, batch-effect analysis, and data-leakage risk remain calls the researcher makes; the system reduces the cost of *executing* and *recording* work, not the cost of *judging* it.
+- **Not a replacement for domain-expert judgment.** Statistical validity, batch-effect analysis, and data-leakage risk remain calls the researcher makes; the system reduces the cost of _executing_ and _recording_ work, not the cost of _judging_ it.
 - **Not modeling research semantics.** The system's structured objects are computations and artifacts, not first-class "hypothesis / experiment / conclusion" entities.
 - **Not a proxy, reskin, or unofficial client of any closed-source product.** Open Science shares no code with any single vendor's client software.
 
@@ -65,24 +65,35 @@ These are the constraints the project treats as non-negotiable as it grows (see 
 
 Open Science today is an Electron + React + TypeScript desktop application built around four cooperating layers:
 
-| Layer | Responsibility | Current implementation |
-| --- | --- | --- |
-| **Interface** | Desktop shell, workspace UI, home page | Electron main/renderer split; React + TypeScript; shadcn/Radix design system (see [`design.md`](../design.md)) |
-| **Agent Harness** | Plan → execute → reflect loop, tool-call visualization, permission gating | Agent runtime wrapped over the Agent Client Protocol (ACP), `src/main/acp/`; typed tool-activity rows in the transcript; a permission broker that pauses on higher-risk tool calls pending approval |
-| **Execution / Data Plane** | Sandboxed code execution, artifact generation | A persistent Python notebook kernel (`src/main/notebook/`) with durable, replayable run history, plus the agent's own shell/search tool access |
-| **Persistence** | Project/session storage, artifact storage | Prisma + SQLite for the Project entity; per-project, per-file session storage on disk (`src/main/session-persistence/`); artifact files organized by session/message/run (`src/main/artifacts/`) |
+| Layer                      | Responsibility                                                            | Current implementation                                                                                                                                                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Interface**              | Desktop shell, workspace UI, home page                                    | Electron main/renderer split; React + TypeScript; shadcn/Radix design system (see [`design.md`](../design.md))                                                                                                                            |
+| **Agent Harness**          | Plan → execute → reflect loop, tool-call visualization, permission gating | Agent runtime wrapped over the Agent Client Protocol (ACP), `src/main/acp/`; typed tool-activity rows in the transcript; a permission broker that pauses on higher-risk tool calls pending approval                                       |
+| **Execution / Data Plane** | Sandboxed code execution, artifact generation                             | A persistent Python notebook kernel (`src/main/notebook/`) with durable, replayable run history, plus the agent's own shell/search tool access                                                                                            |
+| **Persistence**            | Project/session storage, artifact storage                                 | Prisma + SQLite for project and provenance metadata; per-project, per-file session storage on disk (`src/main/session-persistence/`); immutable artifact versions and evidence sidecars under app-managed storage (`src/main/artifacts/`) |
 
 Key implemented capabilities, mapped to the codebase:
 
 - **Project layer.** Prisma + SQLite `Project` model; full CRUD via IPC (`projects:create/list/get/update/delete`); a home page showing all projects and the five most recent sessions across them.
 - **Per-project session storage.** Sessions live at `sessions/<projectId>/<sessionId>.json` (migrated from a legacy single-file format on first run, idempotently); a manifest file restores the last-open project/session; a save bridge diffs the in-memory store against disk so only changed sessions get written.
 - **Notebook execution kernel.** One persistent Python process per notebook session, bridged over stdin/stdout, with per-run history (`run.json`) and write-locking to prevent concurrent corruption.
-- **Artifacts.** An in-process MCP server (`open-science-artifacts`) exposes a `write_artifact_file` tool the agent calls with either inline content or a local file path; artifacts are namespaced by project, session, message, and run.
+- **Artifacts and provenance.** An in-process MCP server (`open-science-artifacts`) exposes a `write_artifact_file` tool the agent calls with either inline content or a local file path. Each save creates an immutable, session-scoped artifact version with available producer code, execution history, input references, environment inventory, message context, and reviewer evidence.
 - **File preview.** Renderers for CSV, FASTA, HTML, image, JSON, Markdown, and plain text, plus a read-only notebook preview showing code and execution output side by side, all inside a dedicated preview workbench.
 - **Permissions.** An `AcpPermissionBroker` intercepts tool-call permission requests from the agent runtime and surfaces them to the renderer for explicit approval before the call proceeds.
 - **Attachments.** File uploads are threaded into the agent's prompt context.
 
-For the gap between this and the full target architecture (model-agnostic gateway, provenance chain, skills commons, remote compute, security hardening, etc.), see the [Capability Map in `ROADMAP.md`](../ROADMAP.md#capability-map) — this PRD describes what the product is *for*; the roadmap tracks what's *built*.
+### Provenance Guarantee Level
+
+The current provenance implementation is an audit and traceability record, not a deterministic replay contract:
+
+- Artifact bytes, version metadata, evidence manifests, and retained message projections are checksummed and validated for storage integrity.
+- Environment evidence is an immutable inventory observed at production time. It is not a solver lockfile, does not capture every external runtime, system library, or package source, and cannot by itself recreate the environment.
+- Retained message projections preserve the text and structured activity needed to inspect a producing branch. Binary media and large attachment payloads are intentionally omitted, so they are not a complete Session backup.
+- Code and execution evidence can be unavailable when no producer run can be proven. The UI reports that state instead of inferring lineage from an untrusted agent claim.
+
+Exact environment export/restore, portable lock generation, and full-fidelity Session replay remain separate capabilities. Product and reviewer claims should describe this version as provenance for audit and investigation, not guaranteed reproduction.
+
+For the gap between this and the full target architecture (model-agnostic gateway, deterministic reproduction, skills commons, remote compute, security hardening, etc.), see the [Capability Map in `ROADMAP.md`](../ROADMAP.md#capability-map) — this PRD describes what the product is _for_; the roadmap tracks what's _built_.
 
 ## 9. Distribution & Packaging
 

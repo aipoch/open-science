@@ -1,7 +1,8 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
 import type {
   AcpCancelPromptRequest,
+  AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
@@ -24,6 +25,15 @@ import type {
   ReadArtifactPreviewRequest,
   ReconcilePendingArtifactsRequest
 } from '../shared/artifacts'
+import type {
+  ArtifactLineageProvenance,
+  ArtifactVersionExecutionProvenance,
+  ArtifactVersionMessagesProvenance,
+  ArtifactVersionProvenance,
+  ArtifactVersionReviewProvenance,
+  GetArtifactLineageRequest,
+  GetArtifactVersionProvenanceRequest
+} from '../shared/artifact-provenance'
 import type {
   SaveBlobFileRequest,
   SaveBlobFileResult,
@@ -195,25 +205,42 @@ import type {
 import type { CliLauncherStatus } from '../shared/cli'
 import type { AppInfo, DownloadProgress, UpdateStatus } from '../shared/update'
 import type {
+  AppendUploadTransferRequest,
+  BeginUploadTransferRequest,
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
-  StageUploadFilesRequest,
+  UploadTransferProgress,
+  UploadTransferRequest,
+  UploadTransferStatus,
   UploadedAttachment
 } from '../shared/uploads'
 import type {
   ReviewWithChecks,
   ReviewRunRequest,
   ReviewRunResult,
+  ReviewSessionRequest,
+  ReviewSuppressionEvent,
   ReviewUpdateEvent
 } from '../shared/reviewer'
 import { REVIEWER_IPC } from '../shared/reviewer'
 import {
+  announceWindowFindReady,
   subscribeCloseActivePane,
   WINDOW_CLOSE_CHANNEL,
   WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL,
   WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL,
+  WINDOW_FIND_CLEAR_CHANNEL,
+  WINDOW_FIND_CLOSE_CHANNEL,
+  WINDOW_FIND_APPEARANCE_CHANNEL,
+  WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL,
+  WINDOW_FIND_REQUEST_CHANNEL,
+  WINDOW_FIND_RESULT_CHANNEL,
+  WINDOW_FIND_SHOW_CHANNEL,
   type CloseConfirmRequest,
-  type CloseConfirmResponse
+  type CloseConfirmResponse,
+  type WindowFindAppearance,
+  type WindowFindRequest,
+  type WindowFindResult
 } from '../shared/window-controls'
 
 type RemoveListener = () => void
@@ -253,6 +280,7 @@ type OpenScienceAPI = {
     resumeSession: (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
     resetSessionContext: (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
     sendPrompt: (request: AcpPromptRequest) => Promise<AcpStateSnapshot>
+    compactSession: (request: AcpCompactSessionRequest) => Promise<AcpStateSnapshot>
     cancel: (request: AcpCancelPromptRequest) => Promise<AcpStateSnapshot>
     deleteSession: (request: AcpDeleteSessionRequest) => Promise<AcpStateSnapshot>
     respondToPermission: (response: AcpPermissionResponse) => Promise<AcpStateSnapshot>
@@ -483,10 +511,36 @@ type OpenScienceAPI = {
     openFile: (request: OpenArtifactFileRequest) => Promise<void>
     // Reads a bounded text preview from managed generated files.
     readPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
+    getLineage: (
+      request: GetArtifactLineageRequest
+    ) => Promise<ArtifactLineageProvenance | undefined>
+    getVersionProvenance: (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ArtifactVersionProvenance>
+    getVersionExecution: (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ArtifactVersionExecutionProvenance>
+    getVersionMessages: (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ArtifactVersionMessagesProvenance>
+    getVersionReview: (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ArtifactVersionReviewProvenance>
   }
   uploads: {
-    // Stages files selected or pasted in the renderer into app-managed upload storage.
-    stageFiles: (request: StageUploadFilesRequest) => Promise<UploadedAttachment[]>
+    // Desktop-only path fast path. A null result means this File has no native path.
+    stageLocalFile?: (
+      file: File,
+      request: BeginUploadTransferRequest
+    ) => Promise<UploadedAttachment | null>
+    // Acknowledges that the renderer committed a native-path upload into its draft state.
+    claimLocalFile?: (request: UploadTransferRequest) => Promise<void>
+    beginTransfer: (request: BeginUploadTransferRequest) => Promise<UploadTransferStatus>
+    appendTransfer: (request: AppendUploadTransferRequest) => Promise<UploadTransferStatus>
+    getTransferStatus: (request: UploadTransferRequest) => Promise<UploadTransferStatus | null>
+    finishTransfer: (request: UploadTransferRequest) => Promise<UploadedAttachment>
+    abortTransfer: (request: UploadTransferRequest) => Promise<void>
+    onTransferProgress: (listener: AcpListener<UploadTransferProgress>) => RemoveListener
     // Deletes a staged upload when the composer chip is removed or the draft is abandoned.
     deleteUpload: (request: DeleteUploadRequest) => Promise<void>
     // Moves pending uploads into the durable session directory once a session id exists.
@@ -496,6 +550,7 @@ type OpenScienceAPI = {
   }
   notebook: {
     state: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
+    readInputPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
     // Resolves an existing notebook entry for a session without creating one, or null when absent.
     getReference: (request: NotebookSessionRequest) => Promise<NotebookSessionReference | null>
     beginCodeCell: (request: BeginNotebookCodeCellRequest) => Promise<{
@@ -600,22 +655,31 @@ type OpenScienceAPI = {
   }
   reviewer: {
     run: (request: ReviewRunRequest) => Promise<ReviewRunResult>
-    getForSession: (sessionId: string) => Promise<ReviewWithChecks[]>
+    getForSession: (request: ReviewSessionRequest) => Promise<ReviewWithChecks[]>
     onUpdated: (listener: AcpListener<ReviewUpdateEvent>) => RemoveListener
-    onSuppressNextAutoReview: (
-      listener: AcpListener<{ sessionId: string; clear?: boolean }>
-    ) => RemoveListener
+    onSuppressNextAutoReview: (listener: AcpListener<ReviewSuppressionEvent>) => RemoveListener
     // Fix loop lock events.
-    onFixLoopStart: (listener: AcpListener<{ sessionId: string }>) => RemoveListener
-    onFixLoopEnd: (listener: AcpListener<{ sessionId: string }>) => RemoveListener
+    onFixLoopStart: (listener: AcpListener<ReviewSessionRequest>) => RemoveListener
+    onFixLoopEnd: (listener: AcpListener<ReviewSessionRequest>) => RemoveListener
     // Sends an abort request to stop the running fix loop for a session.
-    abortFixLoop: (sessionId: string) => Promise<void>
+    abortFixLoop: (request: ReviewSessionRequest) => Promise<void>
   }
   window: {
     // Closes the focused window (the Cmd+W / Ctrl+W fallback when no preview panel is open).
     close: () => Promise<void>
     // Fires when Cmd+W / Ctrl+W is pressed; the renderer decides pane-vs-window.
     onCloseActivePane: (listener: () => void) => RemoveListener
+    // Electron-only whole-window find. These are absent in the localhost Web UI, where the browser
+    // owns Cmd/Ctrl+F instead. The find bar itself is an Electron overlay; the Workspace only announces
+    // readiness, and the overlay subscribes to show events / requests searches via these.
+    findInPage?: (request: WindowFindRequest) => void
+    clearFind?: () => void
+    announceWindowFindReady?: () => RemoveListener
+    onFindInPageResult?: (listener: AcpListener<WindowFindResult>) => RemoveListener
+    onShowWindowFind?: (listener: AcpListener<WindowFindAppearance>) => RemoveListener
+    onWindowFindAppearance?: (listener: AcpListener<WindowFindAppearance>) => RemoveListener
+    announceWindowFindAppearance?: (appearance: WindowFindAppearance) => void
+    closeFind?: () => void
     // Fires when main asks to confirm a close/quit; the renderer renders the modal and replies.
     onCloseConfirmRequest?: (listener: (payload: CloseConfirmRequest) => void) => RemoveListener
     // Renderer -> main: modal-mounted ack, then the user's choice, keyed by requestId.
@@ -651,6 +715,8 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('acp:reset-session-context', request) as Promise<AcpCreateSessionResponse>,
     sendPrompt: (request) =>
       ipcRenderer.invoke('acp:send-prompt', request) as Promise<AcpStateSnapshot>,
+    compactSession: (request) =>
+      ipcRenderer.invoke('acp:compact-session', request) as Promise<AcpStateSnapshot>,
     cancel: (request) => ipcRenderer.invoke('acp:cancel', request) as Promise<AcpStateSnapshot>,
     deleteSession: (request) =>
       ipcRenderer.invoke('acp:delete-session', request) as Promise<AcpStateSnapshot>,
@@ -1015,12 +1081,58 @@ const api: OpenScienceAPI = {
     openFile: (request) => ipcRenderer.invoke('artifacts:open-file', request) as Promise<void>,
     // Keep preview reads on the same managed-file trust path as opening files.
     readPreview: (request) =>
-      ipcRenderer.invoke('artifacts:read-preview', request) as Promise<ArtifactPreviewResult>
+      ipcRenderer.invoke('artifacts:read-preview', request) as Promise<ArtifactPreviewResult>,
+    getLineage: (request) =>
+      ipcRenderer.invoke('artifacts:get-lineage', request) as Promise<
+        ArtifactLineageProvenance | undefined
+      >,
+    getVersionProvenance: (request) =>
+      ipcRenderer.invoke(
+        'artifacts:get-version-provenance',
+        request
+      ) as Promise<ArtifactVersionProvenance>,
+    getVersionExecution: (request) =>
+      ipcRenderer.invoke(
+        'artifacts:get-version-execution',
+        request
+      ) as Promise<ArtifactVersionExecutionProvenance>,
+    getVersionMessages: (request) =>
+      ipcRenderer.invoke(
+        'artifacts:get-version-messages',
+        request
+      ) as Promise<ArtifactVersionMessagesProvenance>,
+    getVersionReview: (request) =>
+      ipcRenderer.invoke(
+        'artifacts:get-version-review',
+        request
+      ) as Promise<ArtifactVersionReviewProvenance>
   },
   uploads: {
     // Upload IPC remains behind the preload bridge so renderer code never receives raw fs access.
-    stageFiles: (request) =>
-      ipcRenderer.invoke('uploads:stage-files', request) as Promise<UploadedAttachment[]>,
+    stageLocalFile: async (file, request) => {
+      const sourcePath = webUtils.getPathForFile(file)
+      if (!sourcePath) return null
+      return (await ipcRenderer.invoke('uploads:stage-local-file', {
+        ...request,
+        sourcePath
+      })) as UploadedAttachment
+    },
+    claimLocalFile: (request) =>
+      ipcRenderer.invoke('uploads:claim-local-file', request) as Promise<void>,
+    beginTransfer: (request) =>
+      ipcRenderer.invoke('uploads:begin-transfer', request) as Promise<UploadTransferStatus>,
+    appendTransfer: (request) =>
+      ipcRenderer.invoke('uploads:append-transfer', request) as Promise<UploadTransferStatus>,
+    getTransferStatus: (request) =>
+      ipcRenderer.invoke(
+        'uploads:transfer-status',
+        request
+      ) as Promise<UploadTransferStatus | null>,
+    finishTransfer: (request) =>
+      ipcRenderer.invoke('uploads:finish-transfer', request) as Promise<UploadedAttachment>,
+    abortTransfer: (request) =>
+      ipcRenderer.invoke('uploads:abort-transfer', request) as Promise<void>,
+    onTransferProgress: (listener) => onIpcMessage('uploads:transfer-progress', listener),
     deleteUpload: (request) => ipcRenderer.invoke('uploads:delete', request) as Promise<void>,
     finalizeSession: (request) =>
       ipcRenderer.invoke('uploads:finalize-session', request) as Promise<UploadedAttachment[]>,
@@ -1031,6 +1143,8 @@ const api: OpenScienceAPI = {
     // Notebook commands stay behind typed IPC so renderer code never talks to local RPC directly.
     state: (request) =>
       ipcRenderer.invoke('notebook:state', request) as Promise<NotebookSessionState>,
+    readInputPreview: (request) =>
+      ipcRenderer.invoke('notebook:read-input-preview', request) as Promise<ArtifactPreviewResult>,
     getReference: (request) =>
       ipcRenderer.invoke('notebook:reference', request) as Promise<NotebookSessionReference | null>,
     beginCodeCell: (request) =>
@@ -1146,19 +1260,19 @@ const api: OpenScienceAPI = {
   reviewer: {
     run: (request: ReviewRunRequest) =>
       ipcRenderer.invoke(REVIEWER_IPC.RUN, request) as Promise<ReviewRunResult>,
-    getForSession: (sessionId: string) =>
-      ipcRenderer.invoke(REVIEWER_IPC.GET_FOR_SESSION, sessionId) as Promise<ReviewWithChecks[]>,
+    getForSession: (request: ReviewSessionRequest) =>
+      ipcRenderer.invoke(REVIEWER_IPC.GET_FOR_SESSION, request) as Promise<ReviewWithChecks[]>,
     onUpdated: (listener) => onIpcMessage(REVIEWER_IPC.UPDATED, listener),
-    onSuppressNextAutoReview: (listener: AcpListener<{ sessionId: string; clear?: boolean }>) =>
+    onSuppressNextAutoReview: (listener: AcpListener<ReviewSuppressionEvent>) =>
       onIpcMessage(REVIEWER_IPC.SUPPRESS_NEXT_AUTO_REVIEW, listener),
     // Fix loop lock: fired when the loop starts (lock composer) / ends or is aborted (unlock).
-    onFixLoopStart: (listener: AcpListener<{ sessionId: string }>) =>
+    onFixLoopStart: (listener: AcpListener<ReviewSessionRequest>) =>
       onIpcMessage(REVIEWER_IPC.FIX_LOOP_START, listener),
-    onFixLoopEnd: (listener: AcpListener<{ sessionId: string }>) =>
+    onFixLoopEnd: (listener: AcpListener<ReviewSessionRequest>) =>
       onIpcMessage(REVIEWER_IPC.FIX_LOOP_END, listener),
     // Sends an abort request to the main process to stop the running fix loop for a session.
-    abortFixLoop: (sessionId: string) =>
-      ipcRenderer.invoke(REVIEWER_IPC.ABORT_FIX_LOOP, sessionId) as Promise<void>
+    abortFixLoop: (request: ReviewSessionRequest) =>
+      ipcRenderer.invoke(REVIEWER_IPC.ABORT_FIX_LOOP, request) as Promise<void>
   },
   window: {
     close: () => ipcRenderer.invoke(WINDOW_CLOSE_CHANNEL) as Promise<void>,
@@ -1172,6 +1286,20 @@ const api: OpenScienceAPI = {
         },
         listener
       ),
+    findInPage: (request) => ipcRenderer.send(WINDOW_FIND_REQUEST_CHANNEL, request),
+    clearFind: () => ipcRenderer.send(WINDOW_FIND_CLEAR_CHANNEL),
+    // The Workspace announces it is mounted and searchable so main knows whether to intercept
+    // Cmd/Ctrl+F. Returns a teardown that announces UNREADY on unmount.
+    announceWindowFindReady: () =>
+      announceWindowFindReady({ send: (channel) => ipcRenderer.send(channel) }),
+    onFindInPageResult: (listener) => onIpcMessage(WINDOW_FIND_RESULT_CHANNEL, listener),
+    // Overlay-only surface: main signals the bar was shown (focus + restore remembered query), and the
+    // overlay asks main to hide it. The localhost Web UI never loads this overlay, so both stay optional.
+    onShowWindowFind: (listener) => onIpcMessage(WINDOW_FIND_SHOW_CHANNEL, listener),
+    onWindowFindAppearance: (listener) => onIpcMessage(WINDOW_FIND_APPEARANCE_CHANNEL, listener),
+    announceWindowFindAppearance: (appearance) =>
+      ipcRenderer.send(WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL, appearance),
+    closeFind: () => ipcRenderer.send(WINDOW_FIND_CLOSE_CHANNEL),
     onCloseConfirmRequest: (listener) =>
       onIpcMessage(WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL, listener),
     sendCloseConfirmResponse: (payload) =>

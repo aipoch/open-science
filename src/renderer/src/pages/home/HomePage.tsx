@@ -20,6 +20,7 @@ import { useSessionStore } from '@/stores/session-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
+import { ThemePreferenceMenu } from '@/components/ThemeControls'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
 import { APP } from '../../../../shared/app-config'
 import type { Project } from '../../../../shared/projects'
@@ -246,6 +247,7 @@ const HomePage = (): React.JSX.Element => {
               </button>
             ) : null}
             <GitHubStarBadge />
+            <ThemePreferenceMenu />
             <button
               type="button"
               aria-label="Model settings"

@@ -42,6 +42,7 @@ describe('WorkspaceToolCodeBlock', () => {
   afterEach(() => {
     act(() => root.unmount())
     container.remove()
+    document.documentElement.classList.remove('dark')
     vi.clearAllMocks()
   })
 
@@ -57,6 +58,19 @@ describe('WorkspaceToolCodeBlock', () => {
     // The htmlStyle color must reach the DOM; jsdom normalizes the hex to rgb.
     expect((token as HTMLElement | null)?.style.color).toBe('rgb(215, 58, 73)')
     expect((token as HTMLElement | null)?.style.getPropertyValue('--shiki-dark')).toBe('#F97583')
+  })
+
+  it('uses the Shiki dark token color when the app is in dark mode', async () => {
+    document.documentElement.classList.add('dark')
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<WorkspaceToolCodeBlock code="import" language="python" />)
+    })
+
+    const token = container.querySelector('span[style]')
+
+    // Shiki leaves the light color inline, so the dark utility must override it with !important.
+    expect(token?.className).toContain('dark:[color:var(--shiki-dark)]!')
   })
 
   it('does not report a successful copy when the Clipboard API rejects the request', async () => {

@@ -17,6 +17,7 @@ import {
 } from './onboarding-test-utils'
 import {
   createEmptyProviderFormValue,
+  providerKindPatch,
   type ProviderFormValue
 } from '../settings/provider-form-value'
 
@@ -102,6 +103,79 @@ const submitClaudeFallbackToken = async (token: string): Promise<void> => {
 }
 
 describe('ProviderStep', () => {
+  it('defaults an untouched custom gateway to the active framework API format', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportedApiTypes: ['anthropic', 'openai'],
+          supportsSkills: true
+        }
+      ]
+    })
+
+    await renderStep()
+
+    expect(container.querySelector('[aria-label="API format"]')?.textContent).toContain(
+      '/v1/chat/completions'
+    )
+  })
+
+  it('preserves a manually chosen API format when revisiting an otherwise blank draft', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportedApiTypes: ['anthropic', 'openai'],
+          supportsSkills: true
+        }
+      ]
+    })
+
+    await renderStep({
+      initialValue: {
+        ...createEmptyProviderFormValue({ apiEndpoint: 'anthropic' }),
+        providerFormTouched: true
+      }
+    })
+
+    expect(container.querySelector('[aria-label="API format"]')?.textContent).toContain(
+      '/v1/messages'
+    )
+  })
+
+  it('preserves any user-edited custom draft when the active framework changes', async () => {
+    await renderStep()
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Supports image input"]')?.click()
+    })
+    await act(async () => {
+      useSettingsStore.setState({
+        agentFrameworkId: 'codex',
+        agentFrameworks: [
+          {
+            id: 'codex',
+            displayName: 'Codex',
+            supportedApiTypes: ['responses'],
+            supportsSkills: true
+          }
+        ]
+      })
+    })
+
+    expect(container.querySelector('[aria-label="Provider type"]')?.textContent).toContain(
+      'Custom Gateway'
+    )
+    expect(
+      container.querySelector('[aria-label="Supports image input"]')?.getAttribute('data-state')
+    ).toBe('checked')
+  })
+
   it('defers required-field errors until the first submit attempt', async () => {
     readyClaudeEnvironment()
 
@@ -325,6 +399,27 @@ describe('ProviderStep', () => {
     expect(container.querySelector('[aria-label="API key"]')).toBeNull()
   })
 
+  it('defaults a Codex custom gateway to the Responses API', async () => {
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      agentFrameworks: [
+        {
+          id: 'codex',
+          displayName: 'Codex',
+          supportedApiTypes: ['responses'],
+          supportsSkills: true
+        }
+      ]
+    })
+
+    await renderStep()
+    await selectOption('Provider type', 'Custom Gateway')
+
+    expect(container.querySelector('[aria-label="API format"]')?.textContent).toContain(
+      '/v1/responses'
+    )
+  })
+
   it('keeps an existing provider draft when Codex is selected', async () => {
     useSettingsStore.setState(codexReadyState())
     const initialValue = {
@@ -341,6 +436,38 @@ describe('ProviderStep', () => {
       'https://gateway.example'
     )
     expect(container.querySelector<HTMLInputElement>('[aria-label="Model"]')?.value).toBe('gpt-5')
+    expect(container.querySelector('[aria-label="API format"]')?.textContent).toContain(
+      '/v1/messages'
+    )
+  })
+
+  it('lets Codex continue with a bridge-compatible official provider', async () => {
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      agentFrameworks: [
+        {
+          id: 'codex',
+          displayName: 'Codex',
+          supportedApiTypes: ['responses'],
+          supportsSkills: true
+        }
+      ]
+    })
+    const saveAndActivateProvider = vi
+      .fn()
+      .mockResolvedValue({ providerId: 'p1', validation: { ok: true, category: 'ok' } })
+    useSettingsStore.setState({ saveAndActivateProvider })
+
+    await renderStep({
+      initialValue: createEmptyProviderFormValue({
+        ...providerKindPatch('official:kimiforcode'),
+        key: 'sk-test'
+      })
+    })
+    await clickButton(/test & continue/i)
+
+    expect(container.textContent).not.toContain("isn't compatible with Codex")
+    expect(saveAndActivateProvider).toHaveBeenCalledOnce()
   })
 
   // Switches the auth picker to the isolated "Sign in with Open Science" mode — the only path that

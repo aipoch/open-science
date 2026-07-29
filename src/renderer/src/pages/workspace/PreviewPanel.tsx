@@ -1,5 +1,5 @@
-import { X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { BookOpen, File, FolderOpen, X } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
@@ -8,7 +8,8 @@ import { cn } from '@/lib/utils'
 import type { PreviewFileItem, PreviewItem } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
-import { MiddleEllipsisFileName, PreviewFileSurface } from './PreviewFileSurface'
+import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
+import { PreviewFileSurface } from './PreviewFileSurface'
 import { PreviewFileContent } from './previews/PreviewFileContent'
 import { PreviewToolContent } from './previews/PreviewToolContent'
 
@@ -45,11 +46,34 @@ const getPreviewTabId = (itemId: string): string => `preview-tab-${encodeURIComp
 const getPreviewPanelId = (itemId: string): string => `preview-panel-${encodeURIComponent(itemId)}`
 const PREVIEW_MODAL_FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+const PREVIEW_TAB_EDGE_INSET = 8
+
+// Scrolls only when the complete tab falls outside the tab list's padded visible bounds.
+const scrollPreviewTabIntoView = (
+  tabList: HTMLElement,
+  tab: HTMLElement,
+  behavior: ScrollBehavior
+): void => {
+  const tabListRect = tabList.getBoundingClientRect()
+  if (tabListRect.width <= PREVIEW_TAB_EDGE_INSET * 2) return
+
+  const tabRect = tab.getBoundingClientRect()
+  const visibleLeft = tabListRect.left + PREVIEW_TAB_EDGE_INSET
+  const visibleRight = tabListRect.right - PREVIEW_TAB_EDGE_INSET
+  let offset = 0
+
+  if (tabRect.left < visibleLeft) offset = tabRect.left - visibleLeft
+  else if (tabRect.right > visibleRight) offset = tabRect.right - visibleRight
+  if (offset === 0) return
+
+  tabList.scrollTo({ left: tabList.scrollLeft + offset, behavior })
+}
 
 // One tab owns activation/keyboard behavior while its sibling close button preserves quick removal.
 const PreviewTab = ({
   tab,
   isActive,
+  containerRef,
   tabRef,
   onActivate,
   onClose,
@@ -57,12 +81,14 @@ const PreviewTab = ({
 }: {
   tab: PreviewItem
   isActive: boolean
+  containerRef: (element: HTMLDivElement | null) => void
   tabRef: (element: HTMLButtonElement | null) => void
   onActivate: (id: string) => void
   onClose: (id: string) => void
   onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
 }): React.JSX.Element => (
   <div
+    ref={containerRef}
     role="presentation"
     className={cn(
       previewTabClassName,
@@ -77,13 +103,20 @@ const PreviewTab = ({
       aria-controls={getPreviewPanelId(tab.id)}
       aria-selected={isActive}
       tabIndex={isActive ? 0 : -1}
-      className="flex min-w-0 flex-1 self-stretch items-center text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
+      className="flex min-w-0 flex-1 items-center gap-1 self-stretch text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
       onClick={() => onActivate(tab.id)}
       onKeyDown={onKeyDown}
       title={tab.title}
     >
       {tab.type === 'file' ? (
-        <MiddleEllipsisFileName name={tab.name} />
+        <File className="size-3.5 shrink-0" aria-hidden="true" />
+      ) : tab.toolKind === 'files' ? (
+        <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" />
+      ) : tab.toolKind === 'notebook' ? (
+        <BookOpen className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
+      ) : null}
+      {tab.type === 'file' ? (
+        <ExtensionPreservingFileName name={tab.name} className="flex-1" />
       ) : (
         <span className="min-w-0 truncate">{tab.title}</span>
       )}
@@ -115,7 +148,45 @@ const PreviewTabBar = ({
   onActivate: (id: string) => void
   onClose: (id: string) => void
 }): React.JSX.Element => {
+  const tabListRef = useRef<HTMLDivElement | null>(null)
+  const tabContainerRefs = useRef<Array<HTMLDivElement | null>>([])
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
+
+  const scrollActiveTabIntoView = useCallback(
+    (behavior: ScrollBehavior): void => {
+      const tabList = tabListRef.current
+      if (!tabList) return
+
+      const activeIndex = tabs.findIndex((tab) => tab.id === activeItemId)
+      const activeTab = activeIndex === -1 ? null : tabContainerRefs.current[activeIndex]
+      if (activeTab) scrollPreviewTabIntoView(tabList, activeTab, behavior)
+    },
+    [activeItemId, tabs]
+  )
+
+  // External activation keeps the selected tab visible without moving keyboard focus.
+  useEffect(() => {
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+    scrollActiveTabIntoView(reduceMotion ? 'auto' : 'smooth')
+  }, [scrollActiveTabIntoView])
+
+  // Panel expansion and drag-resizing can clip an unchanged active tab, so recheck on width changes.
+  useEffect(() => {
+    const tabList = tabListRef.current
+    if (!tabList || typeof ResizeObserver === 'undefined') return
+
+    let previousWidth = tabList.getBoundingClientRect().width
+    const observer = new ResizeObserver(() => {
+      const nextWidth = tabList.getBoundingClientRect().width
+      if (nextWidth === previousWidth) return
+
+      previousWidth = nextWidth
+      scrollActiveTabIntoView('auto')
+    })
+    observer.observe(tabList)
+
+    return () => observer.disconnect()
+  }, [scrollActiveTabIntoView])
 
   const moveToTab = (index: number): void => {
     const tab = tabs[index]
@@ -152,16 +223,20 @@ const PreviewTabBar = ({
 
   return (
     <div
+      ref={tabListRef}
       role="tablist"
       aria-label="Open previews"
       aria-orientation="horizontal"
-      className="flex shrink-0 items-center gap-1 overflow-x-auto px-2 pb-2"
+      className="flex min-w-0 w-full shrink-0 items-center gap-1 overflow-x-auto px-2 pb-2"
     >
       {tabs.map((tab, index) => (
         <PreviewTab
           key={tab.id}
           tab={tab}
           isActive={tab.id === activeItemId}
+          containerRef={(element) => {
+            tabContainerRefs.current[index] = element
+          }}
           tabRef={(element) => {
             tabRefs.current[index] = element
           }}
@@ -274,6 +349,7 @@ const PreviewFilePanel = ({
           contentKey={contentKey}
           onClose={isFullScreenOpen ? closeFullScreen : () => onClose(item.id)}
           onOpenFullScreen={isFullScreenOpen ? undefined : openFullScreen}
+          provenanceEntry={isFullScreenOpen ? 'trailing' : 'menu'}
         />
       </section>
     </>

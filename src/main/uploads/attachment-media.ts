@@ -1,11 +1,16 @@
 import { createRequire } from 'node:module'
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 // Images larger than this are downscaled/re-encoded before inlining so a single upload never
 // blows past the model's per-image (~5MB) and total-request (~32MB) limits after base64 growth.
 export const MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024
+
+// Source files above these limits stay as resource links. They must never be decoded/read in full in
+// the main process merely because the managed upload storage now accepts multi-gigabyte files.
+export const MAX_AUTO_PROCESS_IMAGE_BYTES = 50 * 1024 * 1024
+export const MAX_AUTO_EXTRACT_PDF_BYTES = 50 * 1024 * 1024
 
 // A single image must stay under the provider per-image limit AFTER base64 growth. Anthropic rejects
 // an image near 5MB and OpenCode's default image config caps base64 at 5MB (5242880); base64 inflates
@@ -54,6 +59,7 @@ export type ImageContentErrorCode =
   | 'IMAGE_DECODE_FAILED'
   | 'IMAGE_PROCESSING_FAILED'
   | 'IMAGE_PAYLOAD_TOO_LARGE'
+  | 'IMAGE_SOURCE_TOO_LARGE'
   | 'IMAGE_TOTAL_BUDGET_EXCEEDED'
 
 type ImageContentErrorDetails = {
@@ -129,6 +135,14 @@ export const buildImageContentData = async (
   size: number
 ): Promise<ImageContentData> => {
   const fallbackMimeType = mimeType ?? 'application/octet-stream'
+
+  if (size > MAX_AUTO_PROCESS_IMAGE_BYTES) {
+    throw new ImageContentError(
+      'IMAGE_SOURCE_TOO_LARGE',
+      `Image source is ${size} bytes, exceeding the automatic processing limit.`,
+      { sourceBytes: size, limitBytes: MAX_AUTO_PROCESS_IMAGE_BYTES }
+    )
+  }
 
   if (size <= MAX_INLINE_IMAGE_BYTES) {
     return { data: (await readFile(filePath)).toString('base64'), mimeType: fallbackMimeType }
@@ -222,6 +236,12 @@ const resolvePdfjsAssetUrls = (): { cMapUrl: string; standardFontDataUrl: string
 // Extracts selectable text from a PDF so the model receives readable content instead of the raw
 // (base64) file, which would otherwise overflow the request size limit.
 export const extractPdfText = async (filePath: string): Promise<PdfTextResult> => {
+  const fileInfo = await stat(filePath)
+  if (fileInfo.size > MAX_AUTO_EXTRACT_PDF_BYTES) {
+    throw new Error(
+      `PDF source is ${fileInfo.size} bytes, exceeding the automatic extraction limit.`
+    )
+  }
   const pdfjs = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as typeof import('pdfjs-dist')
   const { cMapUrl, standardFontDataUrl } = resolvePdfjsAssetUrls()
   const fileData = await readFile(filePath)

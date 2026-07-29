@@ -112,6 +112,28 @@ const canConservativelyAutoApprove = (
 const resolveAllowOptionId = (params: RequestPermissionRequest): string | undefined =>
   params.options.find((option) => option.kind.toLowerCase() === 'allow_once')?.optionId
 
+const isArtifactSaveTool = (
+  params: RequestPermissionRequest,
+  mcpServerNames: readonly string[]
+): boolean => {
+  if (!mcpServerNames.includes('open-science-artifacts')) return false
+
+  // title is presentation text controlled by the Agent and cannot prove which provider capability
+  // ACP is asking to execute. Only framework metadata supplied with the tool call may claim the
+  // no-prompt Artifact save exception.
+  const providerToolName = extractProviderToolName(params.toolCall)
+  if (!providerToolName) return false
+
+  return (
+    providerToolName === 'mcp__open-science-artifacts__write_artifact_file' ||
+    providerToolName === 'mcp__open_science_artifacts__write_artifact_file' ||
+    providerToolName === 'mcp.open-science-artifacts.write_artifact_file' ||
+    providerToolName === 'open-science-artifacts_write_artifact_file' ||
+    resolveMcpProviderLeafIdentity(providerToolName, mcpServerNames) ===
+      'open-science-artifacts/write_artifact_file'
+  )
+}
+
 // Returns an option only when the application can make a provider-neutral decision. Full access is the
 // user's explicit, dialog-confirmed choice, so it auto-approves everything (for frameworks that delegate
 // permissions rather than bypassing natively — a native-bypass agent sends no requests here at all).
@@ -121,6 +143,13 @@ const resolveAutomaticPermission = (
   context: PermissionPolicyContext | undefined
 ): string | undefined => {
   if (context?.profile === 'full') {
+    return resolveAllowOptionId(params)
+  }
+
+  // Saving an already-existing/inline result into the exact app-owned Artifact capability is part
+  // of normal turn finalization. It cannot execute code or choose Project/Session ownership, so it
+  // receives one call-scoped allow decision under every profile without showing an approval card.
+  if (context?.mcpServerNames && isArtifactSaveTool(params, context.mcpServerNames)) {
     return resolveAllowOptionId(params)
   }
 
@@ -150,6 +179,7 @@ const resolveAutomaticPermission = (
 export {
   canConservativelyAutoApprove,
   isMcpToolName,
+  isArtifactSaveTool,
   isWithinWorkspace,
   resolveMcpProviderLeafIdentity,
   resolveAutomaticPermission,

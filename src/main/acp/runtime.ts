@@ -22,6 +22,7 @@ import { pathToFileURL } from 'node:url'
 
 import type {
   AcpCancelPromptRequest,
+  AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
@@ -68,8 +69,11 @@ import { describePromptError, isProviderPromptError } from './prompt-error'
 import {
   ATTACHMENT_PREVIEW_BYTES,
   MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
+  buildDatasetAttachmentNotice,
+  buildDeferredMediaNotice,
   buildOversizedAttachmentNotice,
   imageAttachmentMimeType,
+  isDatasetAttachment,
   isTabularAttachment,
   isTextLikeAttachment,
   mimeEssence
@@ -118,9 +122,14 @@ import type { ResponsesBridgeSkillCandidate } from '../settings/responses-bridge
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
 import { CodexSkillActivityProjector } from './codex-skill-activity'
+import {
+  createManagedFileReferenceResolver,
+  type FileReferenceResolver
+} from './file-reference-resolver'
 import type { UploadRepository } from '../uploads/repository'
-import type { UploadedAttachment } from '../../shared/uploads'
-import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
+import { DEFAULT_UPLOAD_PROJECT_NAME, type UploadedAttachment } from '../../shared/uploads'
+import type { ArtifactFile, FileReference } from '../../shared/artifacts'
+import type { ArtifactRpcCapabilityBinding } from '../../shared/artifact-provenance'
 import { isMediaOverflowError } from '../../shared/media-overflow'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import { REVIEWER_MCP_SERVER_NAME, REVIEWER_MCP_TOOLS } from '../../shared/reviewer'
@@ -130,6 +139,8 @@ import {
   consumeInlineImageBudget,
   extractPdfText,
   ImageContentError,
+  MAX_AUTO_EXTRACT_PDF_BYTES,
+  MAX_AUTO_PROCESS_IMAGE_BYTES,
   MAX_SESSION_INLINE_IMAGE_BYTES,
   type InlineImageBudget
 } from '../uploads/attachment-media'
@@ -228,6 +239,19 @@ type AcpRuntimeArtifactOptions = {
   mcpCommand?: string
   repository?: ArtifactRepository
   runRegistry?: ArtifactRunRegistry
+  getRpcConnection?: () => Promise<NotebookRpcConnection>
+  issueRpcCapability?: (binding: ArtifactRpcCapabilityBinding) => string
+  revokeRpcCapability?: (token: string) => void
+  provenance?: Pick<
+    import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
+    'listRunVersions' | 'writeAppGeneratedVersion'
+  > &
+    Partial<
+      Pick<
+        import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
+        'resolveVersionContent'
+      >
+    >
 }
 
 type AcpRuntimeUploadOptions = {
@@ -235,9 +259,19 @@ type AcpRuntimeUploadOptions = {
 }
 
 type ActiveArtifactRun = {
+  appSessionId: string
   runId: string
   artifactSessionId: string
   currentRunFile: string
+  rootFrameId: string
+  agentFrameId: string
+  messageBranchId: string
+  messageBranchAncestry: string[]
+  messageAncestry: string[]
+  runtimeSegmentId: string
+  promptMessageId: string
+  agentName: string
+  rpcCapabilityToken?: string
 }
 
 type AcpRuntimeNotebookOptions = {
@@ -246,6 +280,17 @@ type AcpRuntimeNotebookOptions = {
   mcpCommand?: string
   getRpcConnection?: () => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
+  setArtifactProvenanceContext?: (
+    sessionId: string,
+    context: import('../../shared/notebook').NotebookRunProvenanceContext | undefined
+  ) => void
+  registerTurnInputs?: (request: {
+    projectId: string
+    appSessionId: string
+    promptMessageId: string
+    uploads: UploadedAttachment[]
+    references: FileReference[]
+  }) => Promise<void>
 }
 
 type AcpRuntimeSkillImportOptions = {
@@ -256,7 +301,11 @@ type AcpRuntimeSkillImportOptions = {
   isEnabled?: () => Promise<boolean>
   getRpcConnection: () => Promise<SkillImportRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
-  authorizeReferencedUploads?: (sessionId: string, paths: string[]) => Promise<() => void>
+  authorizeReferencedUploads?: (
+    projectId: string,
+    sessionId: string,
+    paths: string[]
+  ) => Promise<() => void>
 }
 
 type AcpRuntimeActivityGroupOptions = {
@@ -283,7 +332,14 @@ type CodexMcpToolIdentity = {
 
 type OpenCodeMcpToolInput = {
   title: string
+  providerToolName: string
   rawInput?: unknown
+}
+
+type ClaudeCodeMcpToolInput = {
+  title: string
+  providerToolName: string
+  rawInput: Record<string, unknown>
 }
 
 type OpenCodePermissionContextWaitOutcome = 'ready' | 'timeout' | 'cancelled'
@@ -369,6 +425,7 @@ const codexMcpToolIdentity = (
 const MAX_EVENTS = 500
 // Bounds pending Codex MCP identities even if an agent never emits terminal tool updates.
 const MAX_CODEX_MCP_TOOL_IDENTITIES_PER_SESSION = 32
+const MAX_CLAUDE_CODE_MCP_TOOL_INPUTS_PER_SESSION = 32
 const MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION = 32
 const MAX_PERMISSION_CODE_PREVIEW_CHARS = 7_500
 const OPENCODE_PERMISSION_CONTEXT_WAIT_MS = 1_000
@@ -394,7 +451,9 @@ const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
   '<open_science_artifact_instructions>',
   'When this turn creates or saves local user-facing files such as images, documents, reports, data exports, XML, SVG, HTML, CSV, PDF, or archives, you MUST save them through the MCP tool `write_artifact_file` from the `open-science-artifacts` server.',
   'Do not save generated user-facing files directly into the workspace or current directory unless the user explicitly asks to modify project files.',
-  'Pass only the filename, MIME type, and either inline content or a local source path to `write_artifact_file`; the app assigns the project, session, run, and final message location.',
+  'Pass the filename, MIME type, and either inline content or a local source path to `write_artifact_file`; the app assigns the project, session, Artifact run, and final message location.',
+  'If a Notebook, REPL, or shell execution produced the file, also pass `producerRunId` with the exact `runId` returned by the execution that created or last modified it. Omit `producerRunId` only when no Notebook execution produced the file; never use the Artifact run ID as the producer.',
+  'Only claim a generated file is available after `write_artifact_file` succeeds. If it fails or is denied, state that the local file may exist but was not saved as an Artifact, and do not present it as downloadable.',
   'After using the tool, mention the generated filename rather than an absolute filesystem path. The app will display the generated file list below your message.',
   'Never write files inside a skill directory — loaded skills are read-only; route any file a skill generates through `write_artifact_file`.',
   '</open_science_artifact_instructions>'
@@ -609,7 +668,8 @@ class AcpRuntime {
   // Running total of base64 image bytes this session has inlined. The agent replays full history each
   // turn, so this accumulates; once it nears the request ceiling further images degrade to file links
   // (see canInlineImageInSession) so a long conversation can never overflow the request or break
-  // compaction with `media_unstrippable`. Cleared on session delete and on disconnect.
+  // compaction with `media_unstrippable`. Cleared after successful native compaction, on session
+  // delete, and on disconnect.
   private readonly sessionInlineImageBytes = new Map<string, number>()
   // Per-session names of the MCP servers the agent was actually given (from createMcpServers), so
   // MCP-originated tool calls can be recognized across frameworks (Claude's mcp__<server>__<tool> vs
@@ -619,6 +679,10 @@ class AcpRuntime {
   // Codex splits an MCP approval across two ACP messages: tool_call carries the identity/arguments,
   // then request_permission carries only the call id. Retain only pending identities until consumed.
   private readonly codexMcpToolIdentities = new Map<string, Map<string, CodexMcpToolIdentity>>()
+  // Claude Code can omit provider metadata from request_permission even though the preceding tool_call
+  // carries the exact qualified MCP title and arguments. Bind those two messages by call id so the
+  // Artifact save exception never has to trust an isolated, presentation-only permission title.
+  private readonly claudeCodeMcpToolInputs = new Map<string, Map<string, ClaudeCodeMcpToolInput>>()
   // OpenCode sends the MCP name in request_permission but drops its arguments to `{}`. The immediately
   // preceding tool update carries those arguments under the same call id, so retain them until the
   // permission arrives. This is required for notebook runtime separation and permission preview.
@@ -655,6 +719,9 @@ class AcpRuntime {
   // framework while moving to a different on-disk session store, where the old id is not resumable.
   private readonly sessionBackendIds = new Map<string, string>()
   private readonly promptInFlightSessionIds = new Set<string>()
+  // Framework control turns use a separate lock so an overflowed prompt's late `finally` can release
+  // only its own prompt lock without making an in-progress native compaction look idle.
+  private readonly contextCompactionInFlightSessionIds = new Set<string>()
   // Public operations acquire this lease synchronously, before backend resolution, skill checks, or
   // session handshakes can await. Retirement cannot remove a generation while one of those preflight
   // phases is still capable of spawning or attaching a process/session.
@@ -738,6 +805,7 @@ class AcpRuntime {
   private readonly artifactRepository: ArtifactRepository | undefined
   private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
   private readonly uploadRepository: UploadRepository | undefined
+  private readonly fileReferenceResolver: FileReferenceResolver
   private readonly artifactSessionIds = new Map<string, string>()
   // app session id -> the notebook routing id registered with the http MCP host, so it can be
   // unregistered on session delete (the artifact routing id is tracked in artifactSessionIds).
@@ -748,6 +816,7 @@ class AcpRuntime {
   private skillImportEnabled = true
   private artifactSessionSequence = 0
   private artifactRunSequence = 0
+  private readonly runtimeInstanceId = randomUUID()
   private notebookSessionSequence = 0
   private skillImportSessionSequence = 0
   // The in-flight artifact run keyed by app session id, so app-side tools (e.g. molecule preview)
@@ -780,6 +849,11 @@ class AcpRuntime {
       ? (options.artifacts.runRegistry ?? new ArtifactRunRegistry())
       : undefined
     this.uploadRepository = options.uploads?.repository
+    this.fileReferenceResolver = createManagedFileReferenceResolver({
+      uploads: this.uploadRepository,
+      artifacts: this.artifactRepository,
+      artifactVersions: options.artifacts?.provenance
+    })
     this.permissionBroker = new AcpPermissionBroker((request) => {
       // Relabel to the app-facing id when this session was adopted onto a replaced agent.
       const sessionId = this.agentToAppSessionId.get(request.sessionId) ?? request.sessionId
@@ -802,7 +876,7 @@ class AcpRuntime {
   // Returns an immutable renderer-facing view of connection and session state.
   getSnapshot(): AcpStateSnapshot {
     const sessionIds = Array.from(this.sessions.keys())
-    const promptInFlightSessionIds = Array.from(this.promptInFlightSessionIds)
+    const promptInFlightSessionIds = this.getInFlightSessionIds()
 
     return {
       status: this.status,
@@ -817,6 +891,8 @@ class AcpRuntime {
         sessionIds.map((sessionId) => [sessionId, this.permissionBroker.listGrants(sessionId)])
       ),
       contextUsageBySession: Object.fromEntries(this.contextUsageBySession),
+      nativeContextCompactionSessionIds:
+        this.framework.contextCompaction.kind === 'native-command' ? sessionIds : [],
       promptInFlight: promptInFlightSessionIds.length > 0,
       promptInFlightSessionIds
     }
@@ -824,10 +900,23 @@ class AcpRuntime {
 
   // Lists sessions with an in-flight prompt, for the pre-migration active-session warning.
   getActivePromptSessions(): { projectName: string; sessionId: string }[] {
-    return Array.from(this.promptInFlightSessionIds, (sessionId) => ({
+    return this.getInFlightSessionIds().map((sessionId) => ({
       projectName: this.resolveSessionProjectName(sessionId),
       sessionId
     }))
+  }
+
+  private getInFlightSessionIds(): string[] {
+    return Array.from(
+      new Set([...this.promptInFlightSessionIds, ...this.contextCompactionInFlightSessionIds])
+    )
+  }
+
+  private hasSessionInteractionInFlight(sessionId: string): boolean {
+    return (
+      this.promptInFlightSessionIds.has(sessionId) ||
+      this.contextCompactionInFlightSessionIds.has(sessionId)
+    )
   }
 
   // Run ids of turns currently in flight, from live in-memory state (not the persisted current-run
@@ -1474,6 +1563,7 @@ class AcpRuntime {
     // agent session. Provider tool context must not survive because a fresh agent may reuse call ids.
     this.cancelPermissionFlowForSession(request.sessionId)
     this.codexMcpToolIdentities.delete(request.sessionId)
+    this.claudeCodeMcpToolInputs.delete(request.sessionId)
 
     if (attached) {
       attached.dispose()
@@ -1493,8 +1583,158 @@ class AcpRuntime {
     // after async artifact cleanup, so the recovery resend that follows this reset would otherwise race
     // it and be rejected with "An ACP prompt is already running for this session".
     this.promptInFlightSessionIds.delete(request.sessionId)
+    this.contextCompactionInFlightSessionIds.delete(request.sessionId)
 
     return this.adoptFreshSession(connection, request, sessionCwd, projectName)
+  }
+
+  // Invokes the framework's own context compaction command on the attached agent session. The
+  // command is an internal control turn: fresh usage updates are retained, while its command
+  // echo/status output is not projected into the user's conversation.
+  async compactSession(request: AcpCompactSessionRequest): Promise<PromptResponse> {
+    return this.withOperationLease(() => this.compactSessionOperation(request))
+  }
+
+  private async compactSessionOperation(
+    request: AcpCompactSessionRequest
+  ): Promise<PromptResponse> {
+    const session = this.sessions.get(request.sessionId)
+    if (!session) throw new Error(`ACP session not found: ${request.sessionId}`)
+    if (this.contextCompactionInFlightSessionIds.has(request.sessionId)) {
+      throw new Error('Context compaction is already running for this session')
+    }
+    if (
+      this.promptInFlightSessionIds.has(request.sessionId) &&
+      request.reason !== 'overflow-recovery'
+    ) {
+      throw new Error('An ACP prompt is already running for this session')
+    }
+
+    // A recoverable overflow is emitted only after the provider prompt has already rejected; the old
+    // turn may still be doing artifact cleanup, but it no longer owns the agent session. Transfer its
+    // public lock to the control turn now so the retry can start immediately after compaction, while the
+    // dedicated compaction lock below keeps unrelated sends blocked during `/compact` itself.
+    if (request.reason === 'overflow-recovery') {
+      this.promptInFlightSessionIds.delete(request.sessionId)
+    }
+
+    this.contextCompactionInFlightSessionIds.add(request.sessionId)
+    this.emitState()
+
+    try {
+      return await this.performNativeContextCompaction(
+        session,
+        request.sessionId,
+        request.reason ?? 'manual'
+      )
+    } finally {
+      const cancelTimer = this.cancelTimers.get(request.sessionId)
+      if (cancelTimer) this.clearTimer(cancelTimer)
+      this.cancelTimers.delete(request.sessionId)
+      this.contextCompactionInFlightSessionIds.delete(request.sessionId)
+      this.emitState()
+    }
+  }
+
+  private shouldAutoCompactContext(sessionId: string): boolean {
+    const strategy = this.framework.contextCompaction
+    if (strategy.kind !== 'native-command' || strategy.triggerAtPercent === undefined) return false
+
+    const usage = this.contextUsageBySession.get(sessionId)
+    if (!usage || usage.size <= 0 || usage.used < 0) return false
+
+    return (usage.used / usage.size) * 100 >= strategy.triggerAtPercent
+  }
+
+  private async performNativeContextCompaction(
+    session: ActiveSession,
+    appSessionId: string,
+    reason: NonNullable<AcpRuntimeEvent['compactionReason']>
+  ): Promise<PromptResponse> {
+    const strategy = this.framework.contextCompaction
+    if (strategy.kind !== 'native-command') {
+      throw new Error(`${this.framework.displayName} manages context compaction automatically.`)
+    }
+    const contextUsageBeforeCompaction = this.contextUsageBySession.get(appSessionId)
+
+    this.pushEvent({
+      kind: 'compaction',
+      compactionReason: reason,
+      level: 'info',
+      sessionId: appSessionId,
+      status: 'in_progress',
+      title: 'Compacting context'
+    })
+
+    try {
+      let failureText: string | undefined
+      const promptFailure = new Promise<never>((_, reject) => {
+        session.prompt([{ type: 'text', text: strategy.command }]).catch(reject)
+      })
+
+      for (;;) {
+        const message = await Promise.race([session.nextUpdate(), promptFailure])
+        if (message.kind === 'stop') {
+          if (message.response.stopReason === 'cancelled') {
+            this.pushEvent({
+              kind: 'compaction',
+              compactionReason: reason,
+              level: 'info',
+              sessionId: appSessionId,
+              status: 'cancelled',
+              title: 'Context compaction cancelled'
+            })
+            return message.response
+          }
+          if (message.response.stopReason !== 'end_turn') {
+            throw new Error(
+              `Context compaction stopped before completion: ${message.response.stopReason}`
+            )
+          }
+          if (failureText) throw new Error(failureText)
+
+          // Some adapters do not emit usage_update for their compaction control turn. Invalidate only
+          // the unchanged pre-compaction reading; a fresh update received during the turn is a new
+          // object and remains available to the context meter and auto-compaction threshold.
+          if (this.contextUsageBySession.get(appSessionId) === contextUsageBeforeCompaction) {
+            this.contextUsageBySession.delete(appSessionId)
+          }
+          this.sessionInlineImageBytes.delete(appSessionId)
+          this.pushEvent({
+            kind: 'compaction',
+            compactionReason: reason,
+            level: 'info',
+            sessionId: appSessionId,
+            status: 'completed',
+            title: 'Context compacted'
+          })
+          return message.response
+        }
+
+        const update = message.notification.update
+        if (
+          !failureText &&
+          strategy.failureTextPrefix &&
+          update.sessionUpdate === 'agent_message_chunk' &&
+          update.content.type === 'text' &&
+          update.content.text.trimStart().startsWith(strategy.failureTextPrefix)
+        ) {
+          failureText = update.content.text.trim()
+        }
+        this.handleSessionUpdate(message.notification, appSessionId, false)
+      }
+    } catch (error) {
+      this.pushEvent({
+        kind: 'compaction',
+        compactionReason: reason,
+        level: 'error',
+        sessionId: appSessionId,
+        status: 'failed',
+        title: 'Context compaction failed',
+        text: errorMessage(error)
+      })
+      throw error
+    }
   }
 
   // Races the network-bound resume against a timeout so a stalled agent handshake cannot hang Resume
@@ -1720,7 +1960,7 @@ class AcpRuntime {
     const session = this.sessions.get(request.sessionId)
 
     if (!session) throw new Error(`ACP session not found: ${request.sessionId}`)
-    if (this.promptInFlightSessionIds.has(request.sessionId)) {
+    if (this.hasSessionInteractionInFlight(request.sessionId)) {
       throw new Error('Permission profile cannot be changed while the Agent is running.')
     }
     if (this.permissionBroker.hasPendingForSession(request.sessionId)) {
@@ -1950,6 +2190,7 @@ class AcpRuntime {
   private hasBlockingActivity(): boolean {
     return (
       this.promptInFlightSessionIds.size > 0 ||
+      this.contextCompactionInFlightSessionIds.size > 0 ||
       this.reviewerSessionIds.size > 0 ||
       this.activityLeaseCount > 0
     )
@@ -1985,6 +2226,7 @@ class AcpRuntime {
       this.permissionBroker.cancelAllPending()
       this.clearReviewerSessionState()
       this.promptInFlightSessionIds.clear()
+      this.contextCompactionInFlightSessionIds.clear()
       // Context usage belongs to this live agent-context generation. Invalidate it before teardown,
       // including when a later session.dispose throws. A reconnect may resume the native context or
       // replay history into a fresh one; only that generation's own usage_update can repopulate it.
@@ -2001,6 +2243,7 @@ class AcpRuntime {
       this.latestSessionConfigOptions.clear()
       this.sessionMcpServerNames.clear()
       this.codexMcpToolIdentities.clear()
+      this.claudeCodeMcpToolInputs.clear()
       this.codexSkillActivity.clear()
       this.clearAllOpenCodePermissionToolContext()
       this.sessionProjectNames.clear()
@@ -2118,7 +2361,8 @@ class AcpRuntime {
       process = backend.framework.spawn({
         executablePath: backend.executablePath,
         env: backend.env,
-        args: backend.args ?? []
+        args: backend.args ?? [],
+        proxyEnvironmentMode: backend.proxyEnvironmentMode
       })
     } catch (error) {
       // Wrap (never mutate) the failure with the framework this spawn targeted: the connect-level catch
@@ -2196,7 +2440,7 @@ class AcpRuntime {
       throw new Error(`ACP session not found: ${request.sessionId}`)
     }
 
-    if (this.promptInFlightSessionIds.has(request.sessionId)) {
+    if (this.hasSessionInteractionInFlight(request.sessionId)) {
       throw new Error('An ACP prompt is already running for this session')
     }
 
@@ -2214,7 +2458,7 @@ class AcpRuntime {
         // The Skill check yields before a force-load reconnect mutates runtime-wide state. A newer turn
         // may have claimed this session meanwhile, so refuse the stale reconnect before it can tear down
         // that turn.
-        if (this.promptInFlightSessionIds.has(request.sessionId)) {
+        if (this.hasSessionInteractionInFlight(request.sessionId)) {
           throw new Error('An ACP prompt is already running for this session')
         }
 
@@ -2256,7 +2500,7 @@ class AcpRuntime {
     // Another prompt can claim this session while the force-load check above is awaiting. Re-acquire
     // the turn lock before publishing its token so a delayed attempt cannot overwrite a newer turn's
     // lifecycle state.
-    if (this.promptInFlightSessionIds.has(request.sessionId)) {
+    if (this.hasSessionInteractionInFlight(request.sessionId)) {
       throw new Error('An ACP prompt is already running for this session')
     }
 
@@ -2288,7 +2532,7 @@ class AcpRuntime {
 
     try {
       // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
-      artifactRun = await this.activateArtifactRun(request.sessionId)
+      artifactRun = await this.activateArtifactRun(request.sessionId, request.provenanceContext)
       if (artifactRun) {
         this.activeArtifactRuns.set(request.sessionId, artifactRun)
       } else {
@@ -2436,6 +2680,20 @@ class AcpRuntime {
             text: message.stopReason,
             raw: message.response
           })
+          if (this.shouldAutoCompactContext(request.sessionId)) {
+            try {
+              await this.performNativeContextCompaction(
+                activeSession,
+                request.sessionId,
+                'automatic'
+              )
+            } catch (error) {
+              log.warn('automatic context compaction failed', {
+                sessionId: request.sessionId,
+                ...errorLogFields(error)
+              })
+            }
+          }
           return message.response
         }
 
@@ -2465,8 +2723,8 @@ class AcpRuntime {
       // provider's real rejection reason from the log.
       log.error('prompt failed', { sessionId: request.sessionId, ...errorLogFields(error) })
       const text = describePromptError(error, { model: this.pendingSessionModel })
-      // Tag a request-size overflow as recoverable so the renderer compacts-and-retries (reset context +
-      // replay a text transcript) instead of dead-ending; the error still throws to drive that recovery.
+      // Tag a request-size overflow as recoverable so the renderer tries native compaction, falls back
+      // to context replacement + text replay, and retries instead of dead-ending.
       // The structured errorKind slug is checked alongside the message text: providers relay the same
       // overflow in different wordings, and a slug-only match needs no message at all.
       const recoverable =
@@ -2526,6 +2784,7 @@ class AcpRuntime {
         if (cancelTimer) this.clearTimer(cancelTimer)
         this.cancelTimers.delete(request.sessionId)
         this.codexMcpToolIdentities.delete(request.sessionId)
+        this.claudeCodeMcpToolInputs.delete(request.sessionId)
         this.clearOpenCodePermissionToolContext(request.sessionId)
         this.currentPromptTurnBySession.delete(request.sessionId)
         this.promptInFlightSessionIds.delete(request.sessionId)
@@ -2577,7 +2836,7 @@ class AcpRuntime {
       this.cancelTimers.set(
         request.sessionId,
         this.setTimer(() => {
-          if (!this.promptInFlightSessionIds.has(request.sessionId)) return
+          if (!this.hasSessionInteractionInFlight(request.sessionId)) return
           this.pushEvent({
             kind: 'error',
             level: 'error',
@@ -2673,6 +2932,7 @@ class AcpRuntime {
     this.latestSessionConfigOptions.delete(request.sessionId)
     this.sessionMcpServerNames.delete(request.sessionId)
     this.codexMcpToolIdentities.delete(request.sessionId)
+    this.claudeCodeMcpToolInputs.delete(request.sessionId)
     this.clearOpenCodePermissionToolContext(request.sessionId)
     this.sessionProjectNames.delete(request.sessionId)
     this.sessionFrameworks.delete(request.sessionId)
@@ -2684,6 +2944,7 @@ class AcpRuntime {
     this.skillImportRoutingIds.delete(request.sessionId)
     this.skillImportTurnTokens.delete(request.sessionId)
     this.promptInFlightSessionIds.delete(request.sessionId)
+    this.contextCompactionInFlightSessionIds.delete(request.sessionId)
 
     // Only announce a deletion and shift the current session when something was actually attached; a
     // detached cleanup (post-switch) must not emit a spurious event or move currentSessionId.
@@ -2827,6 +3088,7 @@ class AcpRuntime {
   ): Promise<string | ContentBlock[]> {
     const attachments = [...(request.historyAttachments ?? []), ...(request.attachments ?? [])]
     const referencedArtifacts = request.referencedArtifacts ?? []
+    let finalizedPromptUploads: UploadedAttachment[] = []
 
     if (
       attachments.length === 0 &&
@@ -2869,8 +3131,10 @@ class AcpRuntime {
 
       const finalizedAttachments = await this.uploadRepository.finalizePendingSessionUploads(
         sessionId,
-        attachments
+        attachments,
+        this.resolveSessionProjectName(sessionId)
       )
+      finalizedPromptUploads = finalizedAttachments
 
       // Keep the user's text first, then append files in the same order they were added. A file may
       // expand to several blocks (an oversized text file becomes a preview notice + a resource link);
@@ -2894,6 +3158,22 @@ class AcpRuntime {
       }
     }
 
+    if (
+      this.notebookOptions?.registerTurnInputs &&
+      (finalizedPromptUploads.length > 0 || referencedArtifacts.length > 0)
+    ) {
+      await this.notebookOptions.registerTurnInputs({
+        projectId: this.resolveSessionProjectName(sessionId),
+        appSessionId: sessionId,
+        promptMessageId:
+          request.provenanceContext?.promptMessageId ??
+          this.activeArtifactRuns.get(sessionId)?.promptMessageId ??
+          `prompt-unbound-${sessionId}`,
+        uploads: finalizedPromptUploads,
+        references: referencedArtifacts
+      })
+    }
+
     return contentBlocks
   }
 
@@ -2902,22 +3182,22 @@ class AcpRuntime {
   // session-owner check for every path that was not selected in this turn.
   private async authorizeReferencedSkillUploads(
     sessionId: string,
-    references: ArtifactReference[]
+    references: FileReference[]
   ): Promise<(() => void) | undefined> {
     if (!this.skillImportEnabled) return undefined
 
     const authorize = this.skillImportOptions?.authorizeReferencedUploads
     if (!authorize) return undefined
 
-    const paths = references
-      .filter((reference) => {
-        if (reference.source !== 'upload') return false
-        const normalizedName = reference.name.toLowerCase()
-        return normalizedName.endsWith('.skill') || normalizedName.endsWith('.zip')
-      })
-      .map((reference) => reference.path)
+    const paths = references.flatMap((reference) => {
+      if (reference.source !== 'upload') return []
+      const normalizedName = reference.name.toLowerCase()
+      return normalizedName.endsWith('.skill') || normalizedName.endsWith('.zip')
+        ? [reference.path]
+        : []
+    })
 
-    return paths.length > 0 ? authorize(sessionId, paths) : undefined
+    return authorize(this.resolveSessionProjectName(sessionId), sessionId, paths)
   }
 
   private imageOverflowResourceLink(
@@ -2944,7 +3224,10 @@ class AcpRuntime {
   ): Promise<ContentBlock[]> {
     if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
 
-    const filePath = await this.uploadRepository.resolveManagedUploadPath({ path: attachment.path })
+    const filePath = await this.uploadRepository.resolveManagedUploadPath(
+      { path: attachment.path },
+      { projectId: this.resolveSessionProjectName(sessionId), sessionId }
+    )
     const { size } = await stat(filePath)
 
     return this.buildFileContentBlock({
@@ -2961,57 +3244,24 @@ class AcpRuntime {
   // Converts one `@`-mentioned artifact into the same content block an equivalent upload produces.
   private async createReferencedArtifactContentBlock(
     sessionId: string,
-    reference: ArtifactReference
+    reference: FileReference
   ): Promise<ContentBlock[]> {
-    const { filePath, allowSkillImportReference } = await this.resolveReferencedArtifactPath(
-      sessionId,
+    const resolvedReference = await this.fileReferenceResolver.resolve(
+      { sessionId, projectId: this.resolveSessionProjectName(sessionId) },
       reference
     )
-    const { size } = await stat(filePath)
 
     return this.buildFileContentBlock({
       sessionId,
-      absolutePath: filePath,
-      uri: pathToFileURL(filePath).href,
-      name: reference.name,
-      mimeType: reference.mimeType,
-      size,
+      absolutePath: resolvedReference.absolutePath,
+      uri: resolvedReference.uri,
+      name: resolvedReference.name,
+      mimeType: resolvedReference.mimeType,
+      size: resolvedReference.size,
       // The import tool currently owns only session uploads. Artifact-store paths remain ordinary
       // references so the prompt never advertises a URI that main will reject at the trust boundary.
-      allowSkillImportReference
+      allowSkillImportReference: resolvedReference.allowSkillImportReference
     })
-  }
-
-  // Resolves a referenced file through the managed-path validator for its owning repository.
-  private async resolveReferencedArtifactPath(
-    sessionId: string,
-    reference: ArtifactReference
-  ): Promise<{ filePath: string; allowSkillImportReference: boolean }> {
-    if (reference.source === 'upload') {
-      if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
-      try {
-        return {
-          filePath: await this.uploadRepository.resolveSessionUploadPath(sessionId, {
-            path: reference.path
-          }),
-          allowSkillImportReference: true
-        }
-      } catch {
-        // An explicit `@` reference grants this exact managed upload path for the active turn. The
-        // importer still requires the matching turn token and URI allowlist entry, and rejects every
-        // unreferenced cross-session path through its normal ownership check.
-        return {
-          filePath: await this.uploadRepository.resolveManagedUploadPath({ path: reference.path }),
-          allowSkillImportReference: true
-        }
-      }
-    }
-
-    if (!this.artifactRepository) throw new Error('Artifact storage is not configured.')
-    return {
-      filePath: await this.artifactRepository.resolveManagedFilePath({ path: reference.path }),
-      allowSkillImportReference: false
-    }
   }
 
   // Builds the richest ACP content block that is safe for a resolved file, shared by uploads and
@@ -3085,6 +3335,15 @@ class AcpRuntime {
     const imageMimeType = imageAttachmentMimeType(name, mimeType)
 
     if (imageMimeType) {
+      if (size > MAX_AUTO_PROCESS_IMAGE_BYTES) {
+        return [
+          {
+            type: 'text',
+            text: buildDeferredMediaNotice({ name, size, kind: 'image' })
+          },
+          { type: 'resource_link', uri, name, title: name, mimeType: imageMimeType, size }
+        ]
+      }
       const { data, mimeType: outMimeType } = await buildImageContentData(
         absolutePath,
         imageMimeType,
@@ -3109,6 +3368,15 @@ class AcpRuntime {
     // PDFs are never inlined as base64 (a 20MB file overflows the 32MB request limit); instead we
     // extract selectable text so the model reads readable content. Page images are a future option.
     if (this.isPdfFile(name, mimeType)) {
+      if (size > MAX_AUTO_EXTRACT_PDF_BYTES) {
+        return [
+          {
+            type: 'text',
+            text: buildDeferredMediaNotice({ name, size, kind: 'PDF' })
+          },
+          { type: 'resource_link', uri, name, title: name, mimeType: 'application/pdf', size }
+        ]
+      }
       return [await this.createPdfContentBlock(name, absolutePath, uri)]
     }
 
@@ -3143,6 +3411,13 @@ class AcpRuntime {
             tabular: isTabularAttachment(name, mimeType)
           })
         },
+        { type: 'resource_link', uri, name, title: name, mimeType, size }
+      ]
+    }
+
+    if (isDatasetAttachment(name, mimeType)) {
+      return [
+        { type: 'text', text: buildDatasetAttachmentNotice({ name, size }) },
         { type: 'resource_link', uri, name, title: name, mimeType, size }
       ]
     }
@@ -3309,12 +3584,16 @@ class AcpRuntime {
   }
 
   // Builds the artifact MCP environment for one session, shared by the stdio config and the http host.
-  private buildArtifactEnvironment(
+  private async buildArtifactEnvironment(
     artifactSessionId: string,
     sessionCwd: string,
     projectName: string
-  ): ArtifactMcpEnvironment | undefined {
+  ): Promise<ArtifactMcpEnvironment | undefined> {
     if (!this.artifactOptions || !artifactSessionId) return undefined
+
+    const connection = this.artifactOptions.getRpcConnection
+      ? await this.artifactOptions.getRpcConnection()
+      : undefined
 
     // Only the session workspace is a static import root. The notebook session root is intentionally
     // NOT added here: at session creation we only hold the pre-start alias, and authorizing the alias
@@ -3325,17 +3604,22 @@ class AcpRuntime {
       projectName,
       sessionId: artifactSessionId,
       currentRunFile: this.getArtifactCurrentRunFile(artifactSessionId, projectName),
-      allowedImportRoots: [sessionCwd]
+      allowedImportRoots: [sessionCwd],
+      rpcEndpoint: connection?.endpoint
     }
   }
 
   // Provides the agent with exactly one artifact MCP server scoped to this session's storage context.
-  private createArtifactMcpServers(
+  private async createArtifactMcpServers(
     artifactSessionId: string,
     sessionCwd: string,
     projectName: string
-  ): McpServer[] {
-    const environment = this.buildArtifactEnvironment(artifactSessionId, sessionCwd, projectName)
+  ): Promise<McpServer[]> {
+    const environment = await this.buildArtifactEnvironment(
+      artifactSessionId,
+      sessionCwd,
+      projectName
+    )
 
     if (!environment || !this.artifactOptions) return []
 
@@ -3503,7 +3787,7 @@ class AcpRuntime {
       ? [
           ...this.createActivityGroupMcpServers(),
           ...(artifactEnabled
-            ? this.createArtifactMcpServers(artifactSessionId, sessionCwd, projectName)
+            ? await this.createArtifactMcpServers(artifactSessionId, sessionCwd, projectName)
             : []),
           ...(await this.createNotebookMcpServers(notebookSessionId, sessionCwd, projectName)),
           ...(await this.createSkillImportMcpServers(skillImportSessionId))
@@ -3573,7 +3857,7 @@ class AcpRuntime {
     const authHeader = { name: 'authorization', value: `Bearer ${token}` }
     const servers: McpServer[] = []
 
-    const artifactEnvironment = this.buildArtifactEnvironment(
+    const artifactEnvironment = await this.buildArtifactEnvironment(
       artifactSessionId,
       sessionCwd,
       projectName
@@ -3688,12 +3972,20 @@ class AcpRuntime {
 
   // Resolves the artifact/notebook storage project for a session, defaulting to the runtime constant.
   private resolveSessionProjectName(sessionId: string): string {
-    return this.sessionProjectNames.get(sessionId) ?? this.artifactOptions?.projectName ?? ''
+    return (
+      this.sessionProjectNames.get(sessionId) ??
+      this.artifactOptions?.projectName ??
+      DEFAULT_UPLOAD_PROJECT_NAME
+    )
   }
 
   // Normalizes a requested project name, falling back to the runtime default when absent.
   private normalizeProjectName(requestedProjectName: string | undefined): string {
-    return requestedProjectName?.trim() || (this.artifactOptions?.projectName ?? '')
+    return (
+      requestedProjectName?.trim() ||
+      this.artifactOptions?.projectName ||
+      DEFAULT_UPLOAD_PROJECT_NAME
+    )
   }
 
   // Resolves the per-session handoff file that tells the MCP process which run is active.
@@ -3710,19 +4002,50 @@ class AcpRuntime {
   }
 
   // Marks a new assistant turn as the active artifact run before the model can call the MCP tool.
-  private async activateArtifactRun(sessionId: string): Promise<ActiveArtifactRun | undefined> {
+  private async activateArtifactRun(
+    sessionId: string,
+    provenanceContext: AcpPromptRequest['provenanceContext']
+  ): Promise<ActiveArtifactRun | undefined> {
     if (!this.artifactOptions || !this.artifactRepository) return undefined
 
     this.artifactRunSequence += 1
     const artifactSessionId = this.artifactSessionIds.get(sessionId) ?? sessionId
     const projectName = this.resolveSessionProjectName(sessionId)
     const currentRunFile = this.getArtifactCurrentRunFile(artifactSessionId, projectName)
-    const artifactRun = {
-      runId: `artifact-run-${Date.now()}-${this.artifactRunSequence}`,
+    const runId = `artifact-run-${Date.now()}-${this.artifactRunSequence}`
+    const rootFrameId = provenanceContext?.rootFrameId ?? `root-frame-${sessionId}`
+    const messageBranchId = provenanceContext?.messageBranchId ?? `message-branch-${sessionId}`
+    const promptMessageId = provenanceContext?.promptMessageId ?? `prompt-${runId}`
+    // Imported/restored graphs may provide ancestor-only paths, while some legacy paths already
+    // include the active leaf. Canonicalize only the runtime-owned leaf: preserve every ancestor and
+    // keep repository validation strict for duplicates or unrelated ids elsewhere in the proof.
+    const messageBranchAncestry = [
+      ...(provenanceContext?.messageBranchAncestry ?? []).filter(
+        (branchId) => branchId !== messageBranchId
+      ),
+      messageBranchId
+    ]
+    const messageAncestry = [
+      ...(provenanceContext?.messageAncestry ?? []).filter(
+        (messageId) => messageId !== promptMessageId
+      ),
+      promptMessageId
+    ]
+    const artifactRun: ActiveArtifactRun = {
+      appSessionId: sessionId,
+      runId,
       artifactSessionId,
-      currentRunFile
+      currentRunFile,
+      rootFrameId,
+      agentFrameId: provenanceContext?.agentFrameId ?? rootFrameId,
+      messageBranchId,
+      messageBranchAncestry,
+      messageAncestry,
+      runtimeSegmentId:
+        provenanceContext?.runtimeSegmentId ?? `runtime-segment-${this.runtimeInstanceId}`,
+      promptMessageId,
+      agentName: this.framework.displayName
     }
-
     // Notebook kernels are keyed by the FINAL ACP session id (the notebook RPC layer rewrites the
     // pre-start alias to it before touching disk). This handoff runs per turn with that final id, so
     // it — not the session-creation env, which only had the alias — is the correct place to pin the
@@ -3730,7 +4053,17 @@ class AcpRuntime {
     const runContext: ArtifactRunContext =
       this.notebookOptions && this.artifactOptions
         ? {
-            runId: artifactRun.runId,
+            artifactRunId: artifactRun.runId,
+            appSessionId: sessionId,
+            rootFrameId: artifactRun.rootFrameId,
+            agentFrameId: artifactRun.agentFrameId,
+            messageBranchId: artifactRun.messageBranchId,
+            messageBranchAncestry: artifactRun.messageBranchAncestry,
+            messageAncestry: artifactRun.messageAncestry,
+            runtimeSegmentId: artifactRun.runtimeSegmentId,
+            promptMessageId: artifactRun.promptMessageId,
+            agentName: artifactRun.agentName,
+            notebookSessionId: sessionId,
             notebookDataDir: getNotebookDataRoot(
               this.artifactOptions.dataRoot,
               projectName,
@@ -3742,19 +4075,68 @@ class AcpRuntime {
               sessionId
             )
           }
-        : { runId: artifactRun.runId }
+        : {
+            artifactRunId: artifactRun.runId,
+            appSessionId: sessionId,
+            rootFrameId: artifactRun.rootFrameId,
+            agentFrameId: artifactRun.agentFrameId,
+            messageBranchId: artifactRun.messageBranchId,
+            messageBranchAncestry: artifactRun.messageBranchAncestry,
+            messageAncestry: artifactRun.messageAncestry,
+            runtimeSegmentId: artifactRun.runtimeSegmentId,
+            promptMessageId: artifactRun.promptMessageId,
+            agentName: artifactRun.agentName
+          }
 
-    await mkdir(dirname(currentRunFile), { recursive: true })
-    await writeFile(currentRunFile, `${JSON.stringify(runContext)}\n`, 'utf8')
+    artifactRun.rpcCapabilityToken = this.artifactOptions.issueRpcCapability?.({
+      projectId: projectName,
+      appSessionId: sessionId,
+      artifactStorageSessionId: artifactSessionId,
+      artifactRunId: artifactRun.runId,
+      rootFrameId: artifactRun.rootFrameId,
+      agentFrameId: artifactRun.agentFrameId,
+      messageBranchId: artifactRun.messageBranchId,
+      messageBranchAncestry: artifactRun.messageBranchAncestry,
+      messageAncestry: artifactRun.messageAncestry,
+      runtimeSegmentId: artifactRun.runtimeSegmentId,
+      promptMessageId: artifactRun.promptMessageId,
+      agentName: artifactRun.agentName,
+      ...(this.notebookOptions ? { notebookSessionId: sessionId } : {}),
+      allowedMethods: ['artifactCreateVersion', 'artifactReplayVersion']
+    })
+    if (artifactRun.rpcCapabilityToken) {
+      runContext.rpcCapabilityToken = artifactRun.rpcCapabilityToken
+    }
 
-    return artifactRun
+    try {
+      await mkdir(dirname(currentRunFile), { recursive: true })
+      await writeFile(currentRunFile, `${JSON.stringify(runContext)}\n`, 'utf8')
+      this.notebookOptions?.setArtifactProvenanceContext?.(sessionId, {
+        rootFrameId: artifactRun.rootFrameId,
+        agentFrameId: artifactRun.agentFrameId,
+        messageBranchId: artifactRun.messageBranchId,
+        runtimeSegmentId: artifactRun.runtimeSegmentId,
+        promptMessageId: artifactRun.promptMessageId
+      })
+
+      return artifactRun
+    } catch (error) {
+      if (artifactRun.rpcCapabilityToken) {
+        this.artifactOptions.revokeRpcCapability?.(artifactRun.rpcCapabilityToken)
+      }
+      throw error
+    }
   }
 
   // Clears the handoff file after the prompt so late MCP writes cannot attach to a completed turn.
   private async clearArtifactRun(artifactRun: ActiveArtifactRun | undefined): Promise<void> {
     if (!artifactRun) return
 
+    if (artifactRun.rpcCapabilityToken) {
+      this.artifactOptions?.revokeRpcCapability?.(artifactRun.rpcCapabilityToken)
+    }
     await writeFile(artifactRun.currentRunFile, `${JSON.stringify({})}\n`, 'utf8')
+    this.notebookOptions?.setArtifactProvenanceContext?.(artifactRun.appSessionId, undefined)
   }
 
   // Writes an inline file into the in-flight turn's pending artifact run so it attaches to the resulting
@@ -3776,8 +4158,30 @@ class AcpRuntime {
       throw new Error('No active assistant turn to attach a generated file to.')
     }
 
+    const projectName = this.resolveSessionProjectName(sessionId)
+    const provenance = this.artifactOptions?.provenance
+    if (provenance) {
+      return provenance.writeAppGeneratedVersion({
+        projectId: projectName,
+        appSessionId: sessionId,
+        artifactStorageSessionId: run.artifactSessionId,
+        artifactRunId: run.runId,
+        rootFrameId: run.rootFrameId,
+        agentFrameId: run.agentFrameId,
+        messageBranchId: run.messageBranchId,
+        messageBranchAncestry: run.messageBranchAncestry,
+        messageAncestry: run.messageAncestry,
+        runtimeSegmentId: run.runtimeSegmentId,
+        promptMessageId: run.promptMessageId,
+        agentName: run.agentName,
+        filename: input.filename,
+        content: input.content,
+        contentType: input.mimeType
+      })
+    }
+
     return this.artifactRepository.writePendingFile({
-      projectName: this.resolveSessionProjectName(sessionId),
+      projectName,
       sessionId: run.artifactSessionId,
       runId: run.runId,
       filename: input.filename,
@@ -3801,11 +4205,17 @@ class AcpRuntime {
     }
 
     const sessionProjectName = this.resolveSessionProjectName(sessionId)
-    const artifacts = await this.artifactRepository.listPendingRunFiles({
-      projectName: sessionProjectName,
-      sessionId: artifactRun.artifactSessionId,
-      runId: artifactRun.runId
-    })
+    const artifacts = this.artifactOptions.provenance
+      ? await this.artifactOptions.provenance.listRunVersions({
+          projectId: sessionProjectName,
+          appSessionId: sessionId,
+          artifactRunId: artifactRun.runId
+        })
+      : await this.artifactRepository.listPendingRunFiles({
+          projectName: sessionProjectName,
+          sessionId: artifactRun.artifactSessionId,
+          runId: artifactRun.runId
+        })
 
     if (artifacts.length === 0) return
 
@@ -3813,7 +4223,14 @@ class AcpRuntime {
       projectName: sessionProjectName,
       artifactSessionId: artifactRun.artifactSessionId,
       sessionId,
-      runId: artifactRun.runId
+      runId: artifactRun.runId,
+      rootFrameId: artifactRun.rootFrameId,
+      agentFrameId: artifactRun.agentFrameId,
+      messageBranchId: artifactRun.messageBranchId,
+      messageBranchAncestry: artifactRun.messageBranchAncestry,
+      messageAncestry: artifactRun.messageAncestry,
+      runtimeSegmentId: artifactRun.runtimeSegmentId,
+      promptMessageId: artifactRun.promptMessageId
     })
 
     this.pushEvent({
@@ -3822,6 +4239,7 @@ class AcpRuntime {
       sessionId,
       title: 'Generated files',
       runId: artifactRun.runId,
+      promptMessageId: artifactRun.promptMessageId,
       artifactSessionId: artifactRun.artifactSessionId,
       artifactClaimId,
       artifacts
@@ -3922,7 +4340,7 @@ class AcpRuntime {
   private observePermissionToolContext(notification: SessionNotification): void {
     const sessionId = this.agentToAppSessionId.get(notification.sessionId) ?? notification.sessionId
     const framework = this.sessionFrameworks.get(sessionId)
-    if (framework !== 'codex' && framework !== 'opencode') return
+    if (framework !== 'codex' && framework !== 'opencode' && framework !== 'claude-code') return
 
     const routed =
       sessionId === notification.sessionId ? notification : { ...notification, sessionId }
@@ -3950,6 +4368,25 @@ class AcpRuntime {
       return
     }
 
+    if (framework === 'claude-code') {
+      const title = event.title
+      if (!title || !isMcpToolName(title, mcpServerNames) || !isRecord(event.rawInput)) return
+
+      const inputs = this.claudeCodeMcpToolInputs.get(sessionId) ?? new Map()
+      this.setBoundedPermissionToolContext(
+        inputs,
+        event.toolCallId,
+        {
+          title,
+          providerToolName: event.providerToolName ?? title,
+          rawInput: event.rawInput
+        },
+        MAX_CLAUDE_CODE_MCP_TOOL_INPUTS_PER_SESSION
+      )
+      this.claudeCodeMcpToolInputs.set(sessionId, inputs)
+      return
+    }
+
     const update = notification.update
     if (update.sessionUpdate === 'tool_call') {
       const closedToolCalls = this.closedOpenCodeToolCalls.get(sessionId)
@@ -3971,6 +4408,10 @@ class AcpRuntime {
     const canReusePreviousRawInput = event.title == null || event.title === previous?.title
     const next: OpenCodeMcpToolInput = {
       title,
+      // OpenCode may omit _meta.toolName from the later permission request. Retain the identity only
+      // from a preceding MCP-classified tool event with the same toolCallId/title; an isolated
+      // permission title never reaches this cache and therefore cannot obtain an automatic grant.
+      providerToolName: event.providerToolName ?? title,
       ...(hasRawInput
         ? { rawInput }
         : canReusePreviousRawInput && previous?.rawInput !== undefined
@@ -3995,6 +4436,9 @@ class AcpRuntime {
     promptTurn: number | undefined
   ): Promise<RequestPermissionRequest | undefined> {
     const framework = this.sessionFrameworks.get(appSessionId)
+    if (framework === 'claude-code') {
+      return this.restoreClaudeCodeMcpToolInput(params, appSessionId, mcpServerNames)
+    }
     if (framework === 'opencode') {
       const restored = this.restoreOpenCodeMcpToolInput(params, appSessionId, mcpServerNames)
       if (restored !== params || !isMcpToolName(params.toolCall.title, mcpServerNames)) {
@@ -4038,6 +4482,36 @@ class AcpRuntime {
         title: params.toolCall.title ?? identity.title,
         rawInput: params.toolCall.rawInput ?? identity.rawInput,
         _meta: { ...toolMeta, toolName: identity.providerToolName }
+      }
+    }
+  }
+
+  private restoreClaudeCodeMcpToolInput(
+    params: RequestPermissionRequest,
+    appSessionId: string,
+    mcpServerNames: readonly string[]
+  ): RequestPermissionRequest {
+    const title = params.toolCall.title
+    if (!isMcpToolName(title, mcpServerNames)) return params
+
+    const inputs = this.claudeCodeMcpToolInputs.get(appSessionId)
+    const input = inputs?.get(params.toolCall.toolCallId)
+    if (!input || input.title !== title || !isMcpToolName(input.providerToolName, mcpServerNames)) {
+      return params
+    }
+
+    inputs?.delete(params.toolCall.toolCallId)
+    if (inputs?.size === 0) this.claudeCodeMcpToolInputs.delete(appSessionId)
+
+    return {
+      ...params,
+      toolCall: {
+        ...params.toolCall,
+        rawInput: params.toolCall.rawInput ?? input.rawInput,
+        _meta: {
+          ...(isRecord(params.toolCall._meta) ? params.toolCall._meta : {}),
+          toolName: input.providerToolName
+        }
       }
     }
   }
@@ -4144,20 +4618,17 @@ class AcpRuntime {
   ): RequestPermissionRequest {
     const title = params.toolCall.title
     if (!isMcpToolName(title, mcpServerNames)) return params
-    if (isRecord(params.toolCall.rawInput) && Object.keys(params.toolCall.rawInput).length > 0) {
-      return params
-    }
 
     const inputs = this.opencodeMcpToolInputs.get(appSessionId)
     const input = inputs?.get(params.toolCall.toolCallId)
-    if (
-      !input ||
-      input.title !== title ||
-      !isRecord(input.rawInput) ||
-      Object.keys(input.rawInput).length === 0
-    ) {
+    if (!input || input.title !== title || !isMcpToolName(input.providerToolName, mcpServerNames)) {
       return params
     }
+
+    const requestHasInput =
+      isRecord(params.toolCall.rawInput) && Object.keys(params.toolCall.rawInput).length > 0
+    const cachedHasInput = isRecord(input.rawInput) && Object.keys(input.rawInput).length > 0
+    if (!requestHasInput && !cachedHasInput) return params
 
     inputs?.delete(params.toolCall.toolCallId)
     if (inputs?.size === 0) this.opencodeMcpToolInputs.delete(appSessionId)
@@ -4166,7 +4637,11 @@ class AcpRuntime {
       ...params,
       toolCall: {
         ...params.toolCall,
-        rawInput: input.rawInput
+        rawInput: requestHasInput ? params.toolCall.rawInput : input.rawInput,
+        _meta: {
+          ...(isRecord(params.toolCall._meta) ? params.toolCall._meta : {}),
+          toolName: input.providerToolName
+        }
       }
     }
   }
@@ -4188,6 +4663,10 @@ class AcpRuntime {
     const codexIdentities = this.codexMcpToolIdentities.get(sessionId)
     codexIdentities?.delete(toolCallId)
     if (codexIdentities?.size === 0) this.codexMcpToolIdentities.delete(sessionId)
+
+    const claudeCodeInputs = this.claudeCodeMcpToolInputs.get(sessionId)
+    claudeCodeInputs?.delete(toolCallId)
+    if (claudeCodeInputs?.size === 0) this.claudeCodeMcpToolInputs.delete(sessionId)
 
     const opencodeInputs = this.opencodeMcpToolInputs.get(sessionId)
     opencodeInputs?.delete(toolCallId)
@@ -4329,7 +4808,11 @@ class AcpRuntime {
   }
 
   // Normalizes low-level session notifications into runtime/workspace events.
-  private handleSessionUpdate(notification: SessionNotification, appSessionId?: string): void {
+  private handleSessionUpdate(
+    notification: SessionNotification,
+    appSessionId?: string,
+    visible = true
+  ): void {
     // When a session was adopted onto a replaced agent, the agent labels updates with its own id;
     // relabel to the app-facing id so events land in the conversation the renderer tracks.
     const routed =
@@ -4365,6 +4848,8 @@ class AcpRuntime {
       this.emitState()
       return
     }
+
+    if (!visible) return
 
     // Tool results (e.g. WebFetch's claude.ai domain-safety preflight, a failed Bash command) stream as
     // tool_call_update content, which the session-update log omits — so a tool that runs and fails leaves
@@ -4415,7 +4900,7 @@ class AcpRuntime {
         // Attribute stderr to a session only when exactly one prompt is in flight — then it's
         // unambiguously that turn's. With zero or multiple concurrent prompts, omit the sessionId
         // rather than risk pinning it to the wrong conversation's waiting indicator.
-        const inFlight = Array.from(this.promptInFlightSessionIds)
+        const inFlight = this.getInFlightSessionIds()
         this.pushEvent({
           kind: 'system',
           level: 'warning',
@@ -4494,6 +4979,7 @@ class AcpRuntime {
     this.latestSessionConfigOptions.clear()
     this.sessionMcpServerNames.clear()
     this.codexMcpToolIdentities.clear()
+    this.claudeCodeMcpToolInputs.clear()
     this.codexSkillActivity.clear()
     this.clearAllOpenCodePermissionToolContext()
     this.sessionProjectNames.clear()
@@ -4509,6 +4995,7 @@ class AcpRuntime {
     this.connection = undefined
     this.agentProcess = undefined
     this.promptInFlightSessionIds.clear()
+    this.contextCompactionInFlightSessionIds.clear()
     // The connection is already gone, so any ensureConnected caller waiting on
     // the reconnect barrier must unblock now — it will fall through to connect()
     // and pick up the new backend from resolveBackend. A fresh spawn re-provisions
@@ -4559,6 +5046,7 @@ class AcpRuntime {
       timestamp: event.timestamp ?? Date.now(),
       level: event.level ?? 'info',
       kind: event.kind,
+      compactionReason: event.compactionReason,
       recoverable: event.recoverable,
       providerError: event.providerError,
       sessionId: event.sessionId,
@@ -4576,6 +5064,7 @@ class AcpRuntime {
       rawInput: event.rawInput,
       rawOutput: event.rawOutput,
       runId: event.runId,
+      promptMessageId: event.promptMessageId,
       artifactSessionId: event.artifactSessionId,
       artifactClaimId: event.artifactClaimId,
       artifacts: event.artifacts,
@@ -4603,6 +5092,7 @@ class AcpRuntime {
       this.unregisterReviewerBridgeSession(sessionId)
       this.removeReviewerDirectory(reviewerCwd)
       this.codexMcpToolIdentities.delete(sessionId)
+      this.claudeCodeMcpToolInputs.delete(sessionId)
       this.clearOpenCodePermissionToolContext(sessionId)
       this.sessionFrameworks.delete(sessionId)
     }
@@ -4734,6 +5224,7 @@ class AcpRuntime {
     const reviewerBridgeScoped = this.unregisterReviewerBridgeSession(session.sessionId)
     this.sessionMcpServerNames.delete(session.sessionId)
     this.codexMcpToolIdentities.delete(session.sessionId)
+    this.claudeCodeMcpToolInputs.delete(session.sessionId)
     this.clearOpenCodePermissionToolContext(session.sessionId)
     this.sessionFrameworks.delete(session.sessionId)
     this.reviewerRejectedToolCalls.delete(session.sessionId)

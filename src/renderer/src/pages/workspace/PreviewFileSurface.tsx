@@ -1,11 +1,27 @@
-import { Maximize2, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, GitBranch, Maximize2, MoreHorizontal, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { useSessionStore } from '@/stores/session-store'
+import type { ArtifactLineageProvenance } from '../../../../shared/artifact-provenance'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 
+import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
+import {
+  createPreviewFileItemForArtifactVersion,
+  resolveArtifactVersionDescriptor
+} from './preview-file-item'
 import { PreviewFileContent } from './previews/PreviewFileContent'
+import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
 
 type PreviewFileSurfaceProps = {
   item: PreviewFileItem
@@ -14,27 +30,37 @@ type PreviewFileSurfaceProps = {
   tooltipClassName?: string
   onClose: () => void
   onOpenFullScreen?: () => void
+  onOpenProvenance?: () => void
+  provenanceEntry?: 'menu' | 'leading' | 'trailing'
 }
 
-// Keeps the identifying tail and extension visible while the flexible prefix owns the ellipsis.
-const MiddleEllipsisFileName = ({ name }: { name: string }): React.JSX.Element => {
-  const extensionIndex = name.lastIndexOf('.')
-  const extensionLength = extensionIndex > 0 ? name.length - extensionIndex : 0
-  const trailingLength = Math.min(name.length, Math.max(extensionLength + 10, 18))
-  const splitIndex = Math.max(1, name.length - trailingLength)
-
-  return (
-    <span className="flex min-w-0 max-w-full flex-1 items-center overflow-hidden whitespace-nowrap">
-      <span className="min-w-0 truncate">{name.slice(0, splitIndex)}</span>
-      <span
-        data-testid="preview-title-tail"
-        className="min-w-0 max-w-[65%] shrink overflow-hidden text-ellipsis [direction:rtl] [unicode-bidi:plaintext]"
-      >
-        {name.slice(splitIndex)}
-      </span>
-    </span>
-  )
-}
+const PreviewProvenanceButton = ({
+  item,
+  onOpenProvenance,
+  tooltipClassName
+}: {
+  item: PreviewFileItem
+  onOpenProvenance: () => void
+  tooltipClassName?: string
+}): React.JSX.Element => (
+  <TooltipProvider delayDuration={300}>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="text-text-100 hover:text-text-000"
+          aria-label={`Open Provenance for ${item.title}`}
+          onClick={onOpenProvenance}
+        >
+          <GitBranch aria-hidden="true" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent className={tooltipClassName}>Provenance</TooltipContent>
+    </Tooltip>
+  </TooltipProvider>
+)
 
 // The optional callback makes the maximize action available only in the compact workbench panel;
 // the dialog reuses this header without exposing a nested full-screen action.
@@ -42,31 +68,81 @@ const PreviewFileHeader = ({
   item,
   onClose,
   onOpenFullScreen,
+  onOpenProvenance,
+  provenanceEntry = 'menu',
   tooltipClassName
 }: Pick<
   PreviewFileSurfaceProps,
-  'item' | 'onClose' | 'onOpenFullScreen' | 'tooltipClassName'
+  | 'item'
+  | 'onClose'
+  | 'onOpenFullScreen'
+  | 'onOpenProvenance'
+  | 'provenanceEntry'
+  | 'tooltipClassName'
 >): React.JSX.Element => (
   <header
     data-testid="preview-card-header"
     className="flex h-8 shrink-0 items-center gap-1 border-b border-border-300/50 px-2"
   >
+    {onOpenProvenance && provenanceEntry === 'leading' ? (
+      <PreviewProvenanceButton
+        item={item}
+        onOpenProvenance={onOpenProvenance}
+        tooltipClassName={tooltipClassName}
+      />
+    ) : null}
     <TooltipProvider delayDuration={300}>
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="min-w-0 flex-1 text-[12px] font-medium text-text-000">
-            <MiddleEllipsisFileName name={item.name} />
+            <ExtensionPreservingFileName name={item.name} className="flex-1" />
           </span>
         </TooltipTrigger>
         <TooltipContent className={tooltipClassName}>{item.title}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
+    {onOpenProvenance && provenanceEntry === 'trailing' ? (
+      <PreviewProvenanceButton
+        item={item}
+        onOpenProvenance={onOpenProvenance}
+        tooltipClassName={tooltipClassName}
+      />
+    ) : null}
     <ManagedFileDownloadButton
       source={item.source ?? 'artifact'}
       path={item.path}
       suggestedName={item.name}
       className="bg-transparent shadow-none"
     />
+    {item.originSession?.state === 'deleted' ? (
+      <span
+        data-testid="deleted-origin-session"
+        className="shrink-0 rounded bg-warning-100 px-1.5 py-0.5 text-[10px] text-warning-900"
+      >
+        Source session deleted
+      </span>
+    ) : null}
+    {onOpenProvenance && provenanceEntry === 'menu' ? (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="text-text-100 hover:text-text-000"
+            aria-label={`File actions for ${item.title}`}
+          >
+            <MoreHorizontal aria-hidden="true" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="z-[70] min-w-36">
+          <DropdownMenuItem onSelect={onOpenProvenance}>
+            <GitBranch className="mr-2 size-4" aria-hidden="true" />
+            Provenance
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    ) : null}
     {onOpenFullScreen ? (
       <TooltipProvider delayDuration={200}>
         <Tooltip>
@@ -106,6 +182,58 @@ const PreviewFileHeader = ({
   </header>
 )
 
+const ArtifactVersionNavigation = ({
+  lineage,
+  selectedVersionId,
+  onSelect
+}: {
+  lineage: ArtifactLineageProvenance
+  selectedVersionId: string | undefined
+  onSelect: (versionId: string) => void
+}): React.JSX.Element | null => {
+  const selectedIndex = lineage.versions.findIndex(
+    (version) => version.versionId === selectedVersionId
+  )
+  if (selectedIndex < 0) return null
+
+  return (
+    <div
+      data-testid="artifact-preview-version-navigation"
+      className="flex h-9 shrink-0 items-center gap-2 border-b border-border-300/60 px-2"
+    >
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label="Previous Artifact version"
+        disabled={selectedIndex <= 0}
+        onClick={() => {
+          const versionId = lineage.versions[selectedIndex - 1]?.versionId
+          if (versionId) onSelect(versionId)
+        }}
+      >
+        <ChevronLeft aria-hidden="true" />
+      </Button>
+      <span className="text-xs font-medium text-text-100">
+        v{lineage.versions[selectedIndex]?.versionNumber}
+      </span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label="Next Artifact version"
+        disabled={selectedIndex >= lineage.versions.length - 1}
+        onClick={() => {
+          const versionId = lineage.versions[selectedIndex + 1]?.versionId
+          if (versionId) onSelect(versionId)
+        }}
+      >
+        <ChevronRight aria-hidden="true" />
+      </Button>
+    </div>
+  )
+}
+
 // The content slot is shared by both presentations so every supported file type follows the same
 // renderer path. Callers can temporarily suppress it while another surface owns the preview.
 const PreviewFileSurface = ({
@@ -114,19 +242,148 @@ const PreviewFileSurface = ({
   renderContent = true,
   tooltipClassName,
   onClose,
-  onOpenFullScreen
-}: PreviewFileSurfaceProps): React.JSX.Element => (
-  <div className="flex size-full min-h-0 flex-col overflow-hidden">
-    <PreviewFileHeader
-      item={item}
-      onClose={onClose}
-      onOpenFullScreen={onOpenFullScreen}
-      tooltipClassName={tooltipClassName}
-    />
-    <div className="min-h-0 flex-1 overflow-y-auto bg-bg-000">
-      {renderContent ? <PreviewFileContent key={contentKey} item={item} /> : null}
-    </div>
-  </div>
-)
+  onOpenFullScreen,
+  provenanceEntry = 'menu'
+}: PreviewFileSurfaceProps): React.JSX.Element => {
+  const [provenanceTarget, setProvenanceTarget] = useState<string>()
+  const [versionOverride, setVersionOverride] = useState<{
+    key: string
+    item: PreviewFileItem
+  }>()
+  const [lineageResult, setLineageResult] = useState<{
+    key: string
+    value?: ArtifactLineageProvenance
+  }>()
+  const projectId = usePreviewWorkbenchStore((state) => state.activeProjectId)
+  const storedItem = usePreviewWorkbenchStore((state) =>
+    state.items.find((candidate) => candidate.id === item.id)
+  )
+  const itemIdentityKey = `${item.id}:${item.artifactId ?? ''}`
+  const previewItem =
+    storedItem?.type === 'file' && storedItem.artifactId === item.artifactId
+      ? storedItem
+      : versionOverride?.key === itemIdentityKey
+        ? versionOverride.item
+        : item
+  const surfaceKey = item.id
+  const showProvenance = provenanceTarget === surfaceKey
+  const lineageKey = `${projectId ?? ''}:${previewItem.sessionId}:${previewItem.artifactId ?? ''}`
+  // Finalization increments the owning Session's filesRevision even when this already-open preview
+  // remains on an older Version. Include it in the request identity so the version navigator learns
+  // about newly finalized Versions without forcing the user's current selection to change.
+  const sessionFilesRevision = useSessionStore(
+    (state) =>
+      state.sessions.find((session) => session.id === previewItem.sessionId)?.filesRevision ?? 0
+  )
+  // A GENERATED-card click updates selectedVersionId on the stable preview tab. Refetch even when the
+  // Artifact identity is unchanged; the cached lineage may predate that immutable Version.
+  const lineageRequestKey = `${lineageKey}:${sessionFilesRevision}:${previewItem.selectedVersionId ?? ''}`
+  const lineage = lineageResult?.key === lineageKey ? lineageResult.value : undefined
+  const exactSelectedVersion = lineage?.versions.find(
+    (version) => version.versionId === previewItem.selectedVersionId
+  )
+  const newestLoadedVersion = lineage?.versions.at(-1)
+  const selectionIsNewerThanLoadedLineage =
+    typeof previewItem.versionNumber === 'number' &&
+    typeof newestLoadedVersion?.versionNumber === 'number' &&
+    previewItem.versionNumber > newestLoadedVersion.versionNumber
+  const selectedVersion =
+    exactSelectedVersion ??
+    (lineage && !selectionIsNewerThanLoadedLineage
+      ? resolveArtifactVersionDescriptor(lineage, previewItem.selectedVersionId)
+      : undefined)
+  const selectedVersionId = selectedVersion?.versionId ?? previewItem.selectedVersionId
+  const resolvedPreviewItem =
+    selectedVersion && projectId
+      ? createPreviewFileItemForArtifactVersion({
+          item: previewItem,
+          version: selectedVersion,
+          projectId
+        })
+      : previewItem
 
-export { MiddleEllipsisFileName, PreviewFileSurface }
+  useEffect(() => {
+    let active = true
+    if (!projectId || !previewItem.artifactId || previewItem.source === 'upload') return
+
+    void window.api.artifacts
+      .getLineage({
+        projectId,
+        appSessionId: previewItem.sessionId,
+        artifactId: previewItem.artifactId
+      })
+      .then((value) => {
+        if (active) setLineageResult({ key: lineageKey, value })
+      })
+      .catch(() => undefined)
+
+    return () => {
+      active = false
+    }
+  }, [
+    lineageKey,
+    lineageRequestKey,
+    previewItem.artifactId,
+    previewItem.sessionId,
+    previewItem.source,
+    projectId
+  ])
+
+  const applyVersionItem = (nextItem: PreviewFileItem): void => {
+    setVersionOverride({ key: itemIdentityKey, item: nextItem })
+    if (storedItem?.type === 'file' && storedItem.artifactId === item.artifactId) {
+      usePreviewWorkbenchStore.getState().upsertItem(nextItem)
+    }
+  }
+
+  const selectPreviewVersion = (versionId: string): void => {
+    if (!lineage || !projectId) return
+    const version = lineage.versions.find((candidate) => candidate.versionId === versionId)
+    if (!version) return
+
+    applyVersionItem(
+      createPreviewFileItemForArtifactVersion({ item: previewItem, version, projectId })
+    )
+  }
+
+  return (
+    <div className="flex size-full min-h-0 flex-col overflow-hidden">
+      <PreviewFileHeader
+        item={resolvedPreviewItem}
+        onClose={onClose}
+        onOpenFullScreen={onOpenFullScreen}
+        provenanceEntry={provenanceEntry}
+        onOpenProvenance={
+          previewItem.source !== 'upload' && previewItem.artifactId && projectId
+            ? () => setProvenanceTarget(surfaceKey)
+            : undefined
+        }
+        tooltipClassName={tooltipClassName}
+      />
+      {!showProvenance && lineage ? (
+        <ArtifactVersionNavigation
+          lineage={lineage}
+          selectedVersionId={selectedVersionId}
+          onSelect={selectPreviewVersion}
+        />
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-y-auto bg-bg-000">
+        {showProvenance && projectId ? (
+          <ArtifactProvenancePanel
+            item={resolvedPreviewItem}
+            projectId={projectId}
+            onClose={() => setProvenanceTarget(undefined)}
+            onVersionChange={applyVersionItem}
+          />
+        ) : renderContent ? (
+          <PreviewFileContent
+            key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}`}
+            item={resolvedPreviewItem}
+          />
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+export { PreviewFileSurface }

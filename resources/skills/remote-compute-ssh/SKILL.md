@@ -49,7 +49,7 @@ const c = host.compute.create('ssh:<alias>')
 
 // Run a short remote command (throws on approval_denied / host_unreachable / timeout)
 const result = await c.call_command('<shell command>', '<one-line intent for the approval card>', {
-  login_shell: true,   // default: true — loads the login shell so module/conda PATH is visible
+  login_shell: true,   // default: true — runs login profiles, then readable ~/.bashrc, before this command
   timeout_seconds: 60  // optional — the host applies its own default (60s) when omitted
 })
 // result → { exit_code, stdout, stderr, truncated }
@@ -67,6 +67,12 @@ await host.compute.details('ssh:<alias>', {
   old_text: info.doc   // from the read above
 })
 ```
+
+With `login_shell: true`, the remote Bash login profiles run first and then Open Science attempts to
+source `~/.bashrc` when it is readable. A `.bashrc` can deliberately return early for non-interactive
+shells, so variables declared after such a guard are not available. A missing `.bashrc` is a no-op.
+Set `login_shell: false` to run the command without either initialization step. Initialization failures
+are reported through the normal command result/error behavior.
 
 ## API reference (async jobs)
 

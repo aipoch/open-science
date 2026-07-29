@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest'
 import {
   PROVIDER_KINDS,
   createEmptyProviderFormValue,
+  defaultCustomApiEndpoint,
   defaultProviderKindKey,
   getProviderFormErrors,
   hasProviderFormErrors,
+  providerFormApiEndpoints,
   providerKindPatch,
   selectedKindKey
 } from './provider-form-value'
@@ -15,6 +17,18 @@ describe('defaultProviderKindKey', () => {
     expect(defaultProviderKindKey('claude-code')).toBe('official:anthropic')
     expect(defaultProviderKindKey('codex')).toBe('official:openai')
     expect(defaultProviderKindKey('opencode')).toBe('official:deepseek')
+  })
+})
+
+describe('defaultCustomApiEndpoint', () => {
+  it('uses each framework capability set to choose its preferred custom API format', () => {
+    expect(defaultCustomApiEndpoint(['anthropic'])).toBe('anthropic')
+    expect(defaultCustomApiEndpoint(['anthropic', 'openai'])).toBe('openai')
+    expect(defaultCustomApiEndpoint(['responses'])).toBe('responses')
+  })
+
+  it('falls back to the legacy Messages API while framework capabilities are unavailable', () => {
+    expect(defaultCustomApiEndpoint([])).toBe('anthropic')
   })
 })
 
@@ -92,6 +106,23 @@ describe('getProviderFormErrors', () => {
 })
 
 describe('provider-kind helpers', () => {
+  it('uses registry endpoints for official providers and the selected endpoint for custom gateways', () => {
+    expect(
+      providerFormApiEndpoints(
+        createEmptyProviderFormValue({
+          type: 'official',
+          vendorId: 'kimiforcode',
+          apiEndpoint: 'anthropic'
+        })
+      )
+    ).toEqual(['anthropic', 'openai'])
+    expect(
+      providerFormApiEndpoints(
+        createEmptyProviderFormValue({ type: 'custom', apiEndpoint: 'responses' })
+      )
+    ).toEqual(['responses'])
+  })
+
   it('groups each subscription on its own, official vendors under API, and custom under Other', () => {
     const groupKeys = (group: string): string[] =>
       PROVIDER_KINDS.filter((kind) => kind.group === group).map((kind) => kind.key)
@@ -150,10 +181,18 @@ describe('provider-kind helpers', () => {
   it('clears vendor-only fields when picking custom', () => {
     expect(providerKindPatch('custom')).toEqual({
       type: 'custom',
+      apiEndpoint: 'anthropic',
       vendorId: undefined,
       region: undefined,
       model: '',
       contextWindow: ''
+    })
+  })
+
+  it('seeds a custom provider with the active framework API format', () => {
+    expect(providerKindPatch('custom', 'openai')).toMatchObject({
+      type: 'custom',
+      apiEndpoint: 'openai'
     })
   })
 

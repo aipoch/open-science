@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { mkdirSync } from 'node:fs'
-import { homedir, platform } from 'node:os'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { homedir, platform, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -534,11 +535,193 @@ describe('SystemSshRunner', () => {
 
     const callArgs = execFileMock.mock.calls[0]
     expect(callArgs).toBeDefined()
-    // The remote command must be the last positional argument, JSON-quoted and
-    // wrapped so module / conda PATHs load on the remote.
+    // The remote command must be the last positional argument and wrapped so login profiles and
+    // a readable .bashrc load before the user command runs.
     const lastArg = callArgs?.[1]?.[callArgs[1].length - 1] as string
     expect(lastArg.startsWith('bash -lc ')).toBe(true)
     expect(lastArg).toContain('echo $PATH')
+    // Single-quoted, not double-quoted: a double-quoted layer would expand $PATH in the OUTER shell
+    // before bash -lc ever ran it (see the injection test below).
+    expect(lastArg).toBe(
+      "bash -lc 'if [ -r ~/.bashrc ]; then . ~/.bashrc || exit $?; fi; echo $PATH'"
+    )
+  })
+
+  it('initializes a readable remote .bashrc before the command when loginShell=true', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const home = await mkdtemp(join(tmpdir(), 'open-science-ssh-runner-'))
+
+    try {
+      await writeFile(join(home, '.bashrc'), 'export COMPUTE_BASHRC_MARKER=from-bashrc\n')
+      const promise = runner.run(target(), 'printf %s "$COMPUTE_BASHRC_MARKER"', {
+        timeoutMs: 5000,
+        loginShell: true
+      })
+
+      child.emit('close', 0)
+      await promise
+
+      const callArgs = execFileMock.mock.calls[0]
+      const remoteCommand = callArgs?.[1]?.[callArgs[1].length - 1] as string
+      const { execFileSync } =
+        await vi.importActual<typeof import('node:child_process')>('node:child_process')
+      const stdout = execFileSync('/bin/sh', ['-c', remoteCommand], {
+        encoding: 'utf8',
+        env: { ...process.env, HOME: home }
+      })
+
+      expect(stdout).toBe('from-bashrc')
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('treats a missing remote .bashrc as a successful no-op when loginShell=true', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const home = await mkdtemp(join(tmpdir(), 'open-science-ssh-runner-'))
+
+    try {
+      const promise = runner.run(target(), 'printf no-bashrc', {
+        timeoutMs: 5000,
+        loginShell: true
+      })
+
+      child.emit('close', 0)
+      await promise
+
+      const callArgs = execFileMock.mock.calls[0]
+      const remoteCommand = callArgs?.[1]?.[callArgs[1].length - 1] as string
+      const { execFileSync } =
+        await vi.importActual<typeof import('node:child_process')>('node:child_process')
+      const stdout = execFileSync('/bin/sh', ['-c', remoteCommand], {
+        encoding: 'utf8',
+        env: { ...process.env, HOME: home }
+      })
+
+      expect(stdout).toBe('no-bashrc')
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('continues when remote .bashrc returns early for a non-interactive shell', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const home = await mkdtemp(join(tmpdir(), 'open-science-ssh-runner-'))
+
+    try {
+      await writeFile(
+        join(home, '.bashrc'),
+        'case $- in *i*) ;; *) return ;; esac\nexport COMPUTE_BASHRC_MARKER=from-bashrc\n'
+      )
+      const promise = runner.run(target(), 'printf %s "${COMPUTE_BASHRC_MARKER-unset}"', {
+        timeoutMs: 5000,
+        loginShell: true
+      })
+
+      child.emit('close', 0)
+      await promise
+
+      const callArgs = execFileMock.mock.calls[0]
+      const remoteCommand = callArgs?.[1]?.[callArgs[1].length - 1] as string
+      const { execFileSync } =
+        await vi.importActual<typeof import('node:child_process')>('node:child_process')
+      const stdout = execFileSync('/bin/sh', ['-c', remoteCommand], {
+        encoding: 'utf8',
+        env: { ...process.env, HOME: home }
+      })
+
+      expect(stdout).toBe('unset')
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('returns a .bashrc initialization failure as the remote command exit status', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const home = await mkdtemp(join(tmpdir(), 'open-science-ssh-runner-'))
+
+    try {
+      await writeFile(join(home, '.bashrc'), 'return 23\n')
+      const promise = runner.run(target(), 'printf command-must-not-run', {
+        timeoutMs: 5000,
+        loginShell: true
+      })
+
+      child.emit('close', 23)
+      const result = await promise
+
+      const callArgs = execFileMock.mock.calls[0]
+      const remoteCommand = callArgs?.[1]?.[callArgs[1].length - 1] as string
+      const { spawnSync } =
+        await vi.importActual<typeof import('node:child_process')>('node:child_process')
+      const execution = spawnSync('/bin/sh', ['-c', remoteCommand], {
+        encoding: 'utf8',
+        env: { ...process.env, HOME: home }
+      })
+
+      expect(execution.status).toBe(23)
+      expect(execution.stdout).toBe('')
+      expect(result.exitCode).toBe(23)
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('does not initialize a shell when loginShell=false', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+
+    const promise = runner.run(target(), 'printf no-initialization', {
+      timeoutMs: 5000,
+      loginShell: false
+    })
+
+    child.emit('close', 0)
+    await promise
+
+    const callArgs = execFileMock.mock.calls[0]
+    expect(callArgs?.[1]?.[callArgs[1].length - 1]).toBe('printf no-initialization')
+  })
+
+  it('single-quotes the loginShell wrapper so an inner quoted path cannot be re-expanded', async () => {
+    // Regression: the wrapper used to be JSON.stringify (double quotes), which leaves $(...), backticks
+    // and $VAR live for the outer shell. That silently defeated inner single-quoting done by callers
+    // (quoteRemotePath in the provisioning witness), so a spec-supplied cache path could execute a
+    // second command. With single-quoting, the payload stays literal for the outer layer.
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+
+    const malicious = '/data/cache/$(touch /tmp/pwned)/`id`'
+    const promise = runner.run(target(), `test -d '${malicious}'`, {
+      timeoutMs: 5000,
+      loginShell: true
+    })
+
+    child.emit('close', 0)
+    await promise
+
+    const callArgs = execFileMock.mock.calls[0]
+    const lastArg = callArgs?.[1]?.[callArgs[1].length - 1] as string
+    // The whole command is wrapped in single quotes, so the outer shell expands nothing.
+    expect(lastArg.startsWith("bash -lc '")).toBe(true)
+    expect(lastArg.endsWith("'")).toBe(true)
+    // No double-quoted wrapper remains (that was the vector).
+    expect(lastArg.startsWith('bash -lc "')).toBe(false)
+    // Strongest check: hand the quoted argument to a REAL shell with `bash -lc` swapped for `printf`.
+    // What printf receives is exactly what bash -lc would have received, so if the payload survives
+    // byte-for-byte with no expansion, the quoting held.
+    // node:child_process is mocked module-wide (execFile only), so pull the real execFileSync.
+    const { execFileSync } =
+      await vi.importActual<typeof import('node:child_process')>('node:child_process')
+    const asPrintf = lastArg.replace(/^bash -lc /, 'printf %s ')
+    const echoed = execFileSync('/bin/sh', ['-c', asPrintf], { encoding: 'utf8' })
+    expect(echoed).toBe(
+      `if [ -r ~/.bashrc ]; then . ~/.bashrc || exit $?; fi; test -d '${malicious}'`
+    )
   })
 
   it('truncates stream buffers independently when maxOutputBytes is small', async () => {

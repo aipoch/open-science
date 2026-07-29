@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { createLinearConversationGraph } from '../../shared/conversation-graph'
 import type { ReviewWithChecks } from '../../shared/reviewer'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { flagStaleReviews } from './stale-reviews'
@@ -135,6 +136,19 @@ describe('flagStaleReviews', () => {
     expect(result.stale).toBeUndefined()
   })
 
+  it('fails closed when active-session Artifact evidence cannot be recomputed', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'flag-stale-unavailable-'))
+    const session = buildSession()
+    await writeArtifact(storageRoot, 'a,b\n1,2\n')
+    const scope = await resolveTurnScopeWithArtifactDigests(session, 'a1', storageRoot)
+    const review = buildReview(scope)
+    await rm(join(storageRoot, 'artifacts'), { recursive: true, force: true })
+
+    const [result] = await flagStaleReviews([review], session, storageRoot)
+
+    expect(result.stale).toBe(true)
+  })
+
   it('recomputes against scope.turnMessageId, so a fix-loop review is not falsely stale', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'flag-stale-'))
     const session = buildSession()
@@ -149,6 +163,70 @@ describe('flagStaleReviews', () => {
     const [result] = await flagStaleReviews([fixLoopReview], session, storageRoot)
 
     // Correctly resolves the correction turn (a1) and finds it unchanged → explicit not-stale.
+    expect(result.stale).toBe(false)
+  })
+
+  it('recomputes a historical review against its frozen Branch after the active Branch changes', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'flag-stale-historical-branch-'))
+    const session = buildSession()
+    const reviewedMessage = session.messages.find((message) => message.id === 'a1')!
+    reviewedMessage.artifactIds = undefined
+    const graph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: session.messages,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt
+    })
+    session.conversationGraph = graph
+    const scope = await resolveTurnScopeWithArtifactDigests(session, 'a1', storageRoot)
+    const review = buildReview(scope)
+
+    const frame = graph.frames[0]
+    const originalBranch = graph.branches[0]
+    const runtimeSegmentId = graph.runtimeSegments[0].id
+    const editedBranchId = 'edited-branch'
+    graph.branches.push({
+      id: editedBranchId,
+      agentFrameId: frame.id,
+      parentBranchId: originalBranch.id,
+      supersededMessageId: 'u1',
+      headMessageId: 'a1-edited',
+      createdAt: 2000,
+      updatedAt: 2002
+    })
+    graph.messages.push(
+      {
+        id: 'u1-edited',
+        role: 'user',
+        content: 'different prompt',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 2000,
+        updatedAt: 2000,
+        agentFrameId: frame.id,
+        introducedOnBranchId: editedBranchId,
+        revisionRootMessageId: 'u1',
+        supersedesMessageId: 'u1',
+        runtimeSegmentId
+      },
+      {
+        id: 'a1-edited',
+        role: 'agent',
+        content: 'different answer',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 2002,
+        updatedAt: 2002,
+        agentFrameId: frame.id,
+        introducedOnBranchId: editedBranchId,
+        parentMessageId: 'u1-edited',
+        runtimeSegmentId
+      }
+    )
+    frame.activeBranchId = editedBranchId
+
+    const [result] = await flagStaleReviews([review], session, storageRoot)
+
     expect(result.stale).toBe(false)
   })
 })

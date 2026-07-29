@@ -2,6 +2,7 @@ import { ExternalLink, FolderOpen, Globe, Terminal } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { ThemeSegmentedControl } from '@/components/ThemeControls'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
@@ -102,6 +103,22 @@ const GeneralPanel = (): React.JSX.Element => {
   return (
     <div className="space-y-5 p-5">
       <AppVersionSection />
+
+      <SettingsSection
+        title="Appearance"
+        description="Choose how the app looks. System follows your device; light and dark stay fixed. Your choice is remembered on this device."
+        aria-label="Appearance"
+        separated
+      >
+        <SettingsRow
+          label="Theme"
+          description="Follow the system setting, or force light or dark."
+          className="pt-0"
+          controlClassName="flex justify-end"
+        >
+          <ThemeSegmentedControl />
+        </SettingsRow>
+      </SettingsSection>
 
       {window.api.platform === 'win32' && window.api.window?.onCloseConfirmRequest ? (
         <SettingsSection

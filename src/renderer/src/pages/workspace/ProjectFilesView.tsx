@@ -40,6 +40,7 @@ import type {
   ProjectFilesChangedEvent
 } from '../../../../shared/project-files'
 
+import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { ArtifactPreview } from './artifact-preview'
 import {
   ARTIFACT_IMAGE_PREVIEW_BYTES,
@@ -54,7 +55,7 @@ import { FileBrowserModal } from '../settings/FileBrowserModal'
 import { getPreviewThumbnailReadEncoding } from './preview-support'
 import { createKeyedRequestReader } from './project-file-preview-queue'
 import { isUnavailableFileError, FILE_MISSING_TAG } from './previews/preview-errors'
-import { getPreviewFileReader } from './previews/preview-file-reader'
+import { createPreviewRequestScope, getPreviewFileReader } from './previews/preview-file-reader'
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 import {
@@ -109,6 +110,7 @@ type ProjectFilePreviewTarget = {
   source: 'artifact' | 'upload'
   artifact: MessageArtifact
   projectId: string
+  sessionId: string
   cacheKey: string
   encoding?: 'utf8' | 'base64'
 }
@@ -142,7 +144,9 @@ const MONTH_MS = 30 * DAY_MS
 const YEAR_MS = 365 * DAY_MS
 
 const createProjectFilePreviewArtifact = (file: ProjectFileItem): MessageArtifact => ({
-  id: file.sourceFileId,
+  id: file.sourceVersionId ?? file.sourceFileId,
+  artifactId: file.source === 'artifact' ? file.sourceFileId : undefined,
+  versionId: file.sourceVersionId,
   kind: 'managed-file',
   path: file.path,
   name: file.name,
@@ -162,7 +166,10 @@ const getProjectFilePreviewCacheKey = ({
 
 // Builds the source-neutral capability and source-specific read metadata used by File tiles.
 const createProjectFilePreviewTarget = (
-  target: Pick<ProjectFilePreviewTarget, 'id' | 'path' | 'source' | 'artifact' | 'projectId'>
+  target: Pick<
+    ProjectFilePreviewTarget,
+    'id' | 'path' | 'source' | 'artifact' | 'projectId' | 'sessionId'
+  >
 ): ProjectFilePreviewTarget => ({
   ...target,
   cacheKey: getProjectFilePreviewCacheKey(target),
@@ -193,6 +200,12 @@ const readProjectFilePreview = async (
   try {
     const preview = await readPreview({
       path: target.path,
+      ...createPreviewRequestScope({
+        projectId: target.projectId,
+        sessionId: target.sessionId,
+        source: target.source,
+        path: target.path
+      }),
       maxBytes:
         target.encoding === 'base64' ? ARTIFACT_IMAGE_PREVIEW_BYTES : ARTIFACT_PREVIEW_BYTES,
       encoding: target.encoding
@@ -377,17 +390,6 @@ const useInfiniteLoad = (
   return sentinelRef
 }
 
-const formatMiddleEllipsisName = (name: string): string => {
-  if (name.length < 26) return name
-
-  const headLength = 12
-  const tailLength = 11
-
-  if (name.length < headLength + tailLength + 3) return name
-
-  return `${name.slice(0, headLength)}...${name.slice(-tailLength)}`
-}
-
 const formatRelativeFileTime = (timestamp: number | undefined): string | undefined => {
   if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) return undefined
 
@@ -512,6 +514,8 @@ const FileTile = ({
   previewArtifact,
   preview,
   source,
+  projectId,
+  sessionId,
   size,
   timestamp,
   previewLabel,
@@ -521,17 +525,20 @@ const FileTile = ({
   previewArtifact: MessageArtifact
   preview?: ArtifactPreviewResult
   source: 'artifact' | 'upload'
+  projectId: string
+  sessionId: string
   size?: number
   timestamp?: number
   previewLabel: string
   onPreview: () => void
 }): React.JSX.Element => {
   const sizeLabel = formatByteSize(size)
-  const displayName = formatMiddleEllipsisName(name)
   const relativeTimeLabel = formatRelativeFileTime(timestamp)
   const [setTileElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
   const missing = useUnavailablePreviewProbe({
     enabled: isNearViewport,
+    projectId,
+    sessionId,
     path: previewArtifact.path,
     source
   })
@@ -553,7 +560,13 @@ const FileTile = ({
             missing && 'opacity-40'
           )}
         >
-          <ArtifactPreview artifact={previewArtifact} preview={preview} source={source} />
+          <ArtifactPreview
+            artifact={previewArtifact}
+            preview={preview}
+            source={source}
+            projectId={projectId}
+            sessionId={sessionId}
+          />
           {missing ? (
             <span className="absolute left-1.5 top-1.5 rounded bg-text-000/75 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
               {FILE_MISSING_TAG}
@@ -564,9 +577,10 @@ const FileTile = ({
           data-testid="project-file-meta"
           className="flex min-w-0 flex-1 flex-col justify-center gap-0.5 px-2 py-1.5"
         >
-          <span className="block min-w-0 truncate text-[11px] leading-5 text-text-000">
-            {displayName}
-          </span>
+          <ExtensionPreservingFileName
+            name={name}
+            className="text-[11px] leading-5 text-text-000"
+          />
           {sizeLabel || relativeTimeLabel ? (
             <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0 text-[10px] leading-3 text-text-300">
               {sizeLabel ? <span className="shrink-0">{sizeLabel}</span> : null}
@@ -604,6 +618,8 @@ const FileListRow = ({
   const [setRowElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
   const missing = useUnavailablePreviewProbe({
     enabled: isNearViewport,
+    projectId: file.projectId,
+    sessionId: file.sessionId,
     path: file.path,
     source: file.source
   })
@@ -693,6 +709,8 @@ const ProjectFileItems = ({
           previewArtifact={createProjectFilePreviewArtifact(file)}
           preview={previewById.get(file.id)}
           source={file.source}
+          projectId={file.projectId}
+          sessionId={file.sessionId}
           size={file.size}
           timestamp={file.mtimeMs ?? file.sortAtMs}
           previewLabel={previewLabel}
@@ -1060,6 +1078,13 @@ const ProjectFilesViewContent = ({
     showAllSessionOptions && sessionOptionsIndex.groups.items.length > 0
       ? sessionOptionsIndex.groups.items
       : catalogIndex.groups.items
+  const getArtifactGroupTitle = useCallback(
+    (group: ArtifactGroupItem): string => {
+      const title = group.originSession?.title ?? getSessionTitle(group.sessionId)
+      return group.originSession?.state === 'deleted' ? `${title} · Source session deleted` : title
+    },
+    [getSessionTitle]
+  )
   const filterOptions = useMemo<ProjectFilesFilterOption[]>(() => {
     const options: ProjectFilesFilterOption[] = [
       {
@@ -1076,7 +1101,7 @@ const ProjectFilesViewContent = ({
       },
       ...filterGroupItems.map((group) => ({
         id: `session:${group.sessionId}`,
-        label: getSessionTitle(group.sessionId),
+        label: getArtifactGroupTitle(group),
         count: group.artifactCount,
         kind: 'session' as const
       }))
@@ -1098,7 +1123,7 @@ const ProjectFilesViewContent = ({
 
     return options
   }, [
-    getSessionTitle,
+    getArtifactGroupTitle,
     catalogIndex.artifactsBySession,
     catalogIndex.overview,
     filterGroupItems,
@@ -1253,11 +1278,12 @@ const ProjectFilesViewContent = ({
               path: file.path,
               source: file.source,
               artifact: createProjectFilePreviewArtifact(file),
-              projectId: activeProjectId ?? ''
+              projectId: file.projectId,
+              sessionId: file.sessionId
             })
           )
         : [],
-    [activeProjectId, uploadsCollapsed, viewMode, visibleArtifactFiles, visibleUploadFiles]
+    [uploadsCollapsed, viewMode, visibleArtifactFiles, visibleUploadFiles]
   )
   const filePreviews = useProjectFilePreviews(previewTargets, previewReader)
   // A previous version may remain cached while the current path loads; never render it as current.
@@ -1319,13 +1345,17 @@ const ProjectFilesViewContent = ({
     setDialogItem(
       createPreviewFileItem({
         id: file.id,
+        projectId: activeProjectId,
         sessionId: file.sessionId,
         path: file.path,
         name: file.name,
         mimeType: file.mimeType,
         source: file.source === 'upload' ? 'upload' : undefined,
         size: file.size,
-        mtimeMs: file.mtimeMs
+        mtimeMs: file.mtimeMs,
+        artifactId: file.source === 'artifact' ? file.sourceFileId : undefined,
+        selectedVersionId: file.source === 'artifact' ? file.sourceVersionId : undefined,
+        originSession: file.originSession
       })
     )
   }
@@ -1567,7 +1597,7 @@ const ProjectFilesViewContent = ({
               <ProjectArtifactGroupSection
                 key={group.sessionId}
                 group={group}
-                title={getSessionTitle(group.sessionId)}
+                title={getArtifactGroupTitle(group)}
                 page={index.artifactsBySession[group.sessionId]}
                 loadMode={isAllFilter ? 'manual' : 'scroll'}
                 manualVisibleItemLimit={

@@ -118,6 +118,12 @@ gate('r_loop.R', () => {
       const a = await send('40 + 2')
       expect(a.error).toBeNull()
       expect(a.stdout).toContain('42')
+      expect(a.environmentOverlay?.runtimeVersion).toMatch(/^4\./)
+      expect(a.environmentOverlay?.packages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: 'base', loadedState: 'attached', ecosystem: 'r' })
+        ])
+      )
 
       // State survives across requests; issue two requests back-to-back (without awaiting the
       // first) to prove the length-prefixed framing does not desync.

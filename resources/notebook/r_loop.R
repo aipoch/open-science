@@ -17,6 +17,50 @@ emit <- function(obj) {
   flush(stdout())
 }
 
+capture_environment <- function() {
+  loaded <- loadedNamespaces()
+  attached <- sub("^package:", "", grep("^package:", search(), value = TRUE))
+  libraries <- normalizePath(.libPaths(), winslash = "/", mustWork = FALSE)
+  packages <- lapply(sort(unique(loaded)), function(package) {
+    version <- suppressWarnings(try(as.character(utils::packageVersion(package)), silent = TRUE))
+    if (inherits(version, "try-error")) version <- NULL
+    package_path <- suppressWarnings(try(find.package(package, quiet = TRUE), silent = TRUE))
+    library_rank <- NULL
+    if (!inherits(package_path, "try-error") && nzchar(package_path)) {
+      normalized <- normalizePath(package_path, winslash = "/", mustWork = FALSE)
+      matches <- which(vapply(libraries, function(path) {
+        identical(normalized, path) || startsWith(normalized, paste0(path, "/"))
+      }, logical(1)))
+      if (length(matches) > 0L) library_rank <- as.integer(matches[[1L]])
+    }
+    description <- suppressWarnings(try(utils::packageDescription(package), silent = TRUE))
+    priority <- NULL
+    built <- NULL
+    if (!inherits(description, "try-error")) {
+      if (!is.null(description$Priority)) {
+        priority_value <- tolower(description$Priority)
+        priority <- if (priority_value %in% c("base", "recommended")) priority_value else "other"
+      }
+      if (!is.null(description$Built)) built <- description$Built
+    }
+    list(
+      name = package,
+      version = version,
+      version_status = if (is.null(version)) "unavailable" else "known",
+      ecosystem = "r",
+      evidence_sources = list("r-session-info"),
+      loaded_state = if (package %in% attached) "attached" else "loaded",
+      library_rank = library_rank,
+      built_for_runtime = built,
+      priority = priority
+    )
+  })
+  list(
+    runtime_version = paste(R.version$major, R.version$minor, sep = "."),
+    packages = packages
+  )
+}
+
 # Reads one request off the length-prefixed protocol; returns list(req_id, code) or NULL at EOF.
 read_request <- function() {
   header <- readLines(con, n = 1L, warn = FALSE)
@@ -423,9 +467,13 @@ run <- base::local({
     }
     list(stdout = stdout_text, stderr = "", error = if (is.null(error)) NA else error,
          error_line = if (is.na(error_line)) NULL else error_line,
-         result = NA, cwd = getwd(), figures = figures)
+         result = NA, cwd = getwd(), figures = figures,
+         environment = capture_environment())
   }
-}, envir = base::list2env(base::list(figures_dir = figures_dir), parent = base::baseenv()))
+}, envir = base::list2env(
+  base::list(figures_dir = figures_dir, capture_environment = capture_environment),
+  parent = base::baseenv()
+))
 lockEnvironment(environment(run), bindings = TRUE)
 
 repeat {

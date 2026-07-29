@@ -31,7 +31,14 @@ describe('docToText', () => {
     const doc: ComposerDoc = {
       nodes: [
         { type: 'text', text: 'compare ' },
-        { type: 'artifact', id: 'a1', name: 'fig1.png', path: '/p/fig1.png', source: 'artifact' },
+        {
+          type: 'artifact',
+          id: 'a1',
+          name: 'fig1.png',
+          path: '/p/fig1.png',
+          source: 'artifact',
+          mimeType: 'image/png'
+        },
         { type: 'text', text: ' and ' },
         {
           type: 'artifact',
@@ -72,7 +79,14 @@ describe('docToArtifactRefs', () => {
   it('collects artifact refs in order and de-duplicates by path', () => {
     const doc: ComposerDoc = {
       nodes: [
-        { type: 'artifact', id: 'a1', name: 'fig1.png', path: '/p/fig1.png', source: 'artifact' },
+        {
+          type: 'artifact',
+          id: 'a1',
+          name: 'fig1.png',
+          path: '/p/fig1.png',
+          source: 'artifact',
+          mimeType: 'image/png'
+        },
         { type: 'text', text: ' and ' },
         { type: 'artifact', id: 'u1', name: 'notes.md', path: '/u/notes.md', source: 'upload' },
         // Same path as the first, mentioned again with a different chip id — collapsed.
@@ -80,13 +94,50 @@ describe('docToArtifactRefs', () => {
       ]
     }
     expect(docToArtifactRefs(doc)).toEqual([
-      { id: 'a1', name: 'fig1.png', path: '/p/fig1.png', source: 'artifact', versionId: undefined },
-      { id: 'u1', name: 'notes.md', path: '/u/notes.md', source: 'upload', versionId: undefined }
+      {
+        id: 'a1',
+        name: 'fig1.png',
+        path: '/p/fig1.png',
+        source: 'artifact',
+        mimeType: 'image/png',
+        versionId: undefined
+      },
+      {
+        id: 'u1',
+        name: 'notes.md',
+        path: '/u/notes.md',
+        source: 'upload',
+        mimeType: undefined,
+        versionId: undefined
+      }
     ])
   })
 
   it('returns an empty array when there are no artifact nodes', () => {
     expect(docToArtifactRefs(docFromText('plain text'))).toEqual([])
+  })
+
+  it('preserves and de-duplicates linked-folder references by granted root and relative path', () => {
+    const linked = {
+      type: 'artifact' as const,
+      id: 'linked-1',
+      name: 'study.csv',
+      source: 'linked-folder' as const,
+      rootId: 'root-1',
+      relativePath: 'data/study.csv',
+      mimeType: 'text/csv'
+    }
+
+    expect(docToArtifactRefs({ nodes: [linked, { ...linked, id: 'linked-2' }] })).toEqual([
+      {
+        id: 'linked-1',
+        name: 'study.csv',
+        source: 'linked-folder',
+        rootId: 'root-1',
+        relativePath: 'data/study.csv',
+        mimeType: 'text/csv'
+      }
+    ])
   })
 })
 
@@ -234,6 +285,49 @@ describe('applyDocToDom + domToDoc round-trip', () => {
     expect(domToDoc(root)).toEqual(doc)
   })
 
+  it('round-trips a future linked-folder chip without an absolute path', () => {
+    const doc: ComposerDoc = {
+      nodes: [
+        {
+          type: 'artifact',
+          id: 'linked-1',
+          name: 'study.csv',
+          source: 'linked-folder',
+          rootId: 'root-1',
+          relativePath: 'data/study.csv',
+          mimeType: 'text/csv'
+        }
+      ]
+    }
+    const root = document.createElement('div')
+
+    applyDocToDom(root, doc)
+
+    const chip = root.querySelector('span[data-mention-source="linked-folder"]')
+    expect(chip?.getAttribute('data-mention-path')).toBeNull()
+    expect(chip?.getAttribute('data-mention-root-id')).toBe('root-1')
+    expect(chip?.getAttribute('data-mention-relative-path')).toBe('data/study.csv')
+    expect(domToDoc(root)).toEqual(doc)
+  })
+
+  it('keeps the tail and extension visible in a long artifact chip without changing its stored name', () => {
+    const name = 'very_long_experiment_analysis_result_2025.csv'
+    const root = document.createElement('div')
+    const doc: ComposerDoc = {
+      nodes: [{ type: 'artifact', id: 'a1', name, path: `/p/${name}`, source: 'artifact' }]
+    }
+
+    applyDocToDom(root, doc)
+
+    const chip = root.querySelector('span[data-mention-type="artifact"]')
+    expect(chip?.getAttribute('data-mention-filename')).toBe(name)
+    expect(chip?.querySelector('.truncate')?.textContent).toBe(
+      '@very_long_experiment_analysis_result'
+    )
+    expect(chip?.textContent).toBe(`@very_long_experiment_analysis_result_2025.csv`)
+    expect(domToDoc(root)).toEqual(doc)
+  })
+
   it('renders an artifact chip with the green mention attributes and @ label', () => {
     const root = document.createElement('div')
     applyDocToDom(root, {
@@ -302,5 +396,32 @@ describe('docFromMessageParts', () => {
 
   it('returns the empty doc for an empty parts list', () => {
     expect(docFromMessageParts([])).toEqual(emptyDoc)
+  })
+
+  it('restores a linked-folder message part without introducing an absolute path', () => {
+    expect(
+      docFromMessageParts([
+        {
+          type: 'artifact',
+          id: 'linked-1',
+          name: 'study.csv',
+          source: 'linked-folder',
+          rootId: 'root-1',
+          relativePath: 'data/study.csv'
+        }
+      ])
+    ).toEqual({
+      nodes: [
+        {
+          type: 'artifact',
+          id: 'linked-1',
+          name: 'study.csv',
+          source: 'linked-folder',
+          rootId: 'root-1',
+          relativePath: 'data/study.csv',
+          mimeType: undefined
+        }
+      ]
+    })
   })
 })

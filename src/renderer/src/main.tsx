@@ -4,6 +4,10 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import { installStreamdown } from '@/components/streamdown/install-streamdown'
+import { applyTheme, resolveInitialTheme } from '@/lib/theme'
+
+// Apply the saved theme to <html> before the first paint so dark mode doesn't flash light on startup.
+applyTheme(resolveInitialTheme())
 
 // Install before React renders so Streamdown hooks work on first interaction.
 installStreamdown()

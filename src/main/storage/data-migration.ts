@@ -1,4 +1,5 @@
 import { createReadStream, createWriteStream } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { chmod, lstat, mkdir, readdir, readlink, rm, rmdir, stat, symlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -52,6 +53,7 @@ type ScanResult = {
   directories: string[]
   symlinks: string[]
   present: boolean
+  rootFile: boolean
 }
 
 // Recursively lists regular files, nested directories, and symbolic links under `root` (empty lists
@@ -85,13 +87,17 @@ const listEntries = async (root: string): Promise<ScanResult> => {
     info = await lstat(root)
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { files, directories, symlinks, present: false }
+      return { files, directories, symlinks, present: false, rootFile: false }
     }
     throw err
   }
+  if (info.isFile()) {
+    files.push('')
+    return { files, directories, symlinks, present: true, rootFile: true }
+  }
   if (!info.isDirectory()) throw new NonRegularEntryError(basename(root))
   await walk('.')
-  return { files, directories, symlinks, present: true }
+  return { files, directories, symlinks, present: true, rootFile: false }
 }
 
 // Copies a single file, streaming, creating parent dirs as needed.
@@ -101,6 +107,12 @@ const copyFile = async (src: string, dest: string): Promise<void> => {
   // A stream copy creates dest at the default 0o644; re-apply the source mode so an executable
   // runtime/pkgs binary (Rscript, a .dylib) micromamba hard-links into a rebuilt env keeps +x.
   await chmod(dest, (await stat(src)).mode)
+}
+
+const hashFile = async (path: string): Promise<string> => {
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer)
+  return hash.digest('hex')
 }
 
 // Recreates a symbolic link at `dest` pointing at the SAME (verbatim) target as `src` — the link is
@@ -148,12 +160,20 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
       const srcDir = join(from, dir)
       const entries =
         entriesByDir.get(dir) ??
-        ({ files: [], directories: [], symlinks: [], present: false } as ScanResult)
+        ({
+          files: [],
+          directories: [],
+          symlinks: [],
+          present: false,
+          rootFile: false
+        } as ScanResult)
       if (!entries.present) continue
       const destDir = join(to, dir)
       copiedInto.push(destDir)
-      await mkdir(destDir, { recursive: true })
-      for (const rel of entries.directories) await mkdir(join(destDir, rel), { recursive: true })
+      if (!entries.rootFile) {
+        await mkdir(destDir, { recursive: true })
+        for (const rel of entries.directories) await mkdir(join(destDir, rel), { recursive: true })
+      }
       for (const rel of entries.files) {
         checkAbort()
         await copyFile(join(srcDir, rel), join(destDir, rel))
@@ -170,11 +190,18 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
       }
     }
 
-    // Verify every copied file exists at `to` with matching size.
+    // Verify bytes, not only length. Same-size corruption is otherwise invisible and could be
+    // committed as the new authoritative root even though the inventory shape still looks valid.
     for (const dir of dirs) {
       const entries =
         entriesByDir.get(dir) ??
-        ({ files: [], directories: [], symlinks: [], present: false } as ScanResult)
+        ({
+          files: [],
+          directories: [],
+          symlinks: [],
+          present: false,
+          rootFile: false
+        } as ScanResult)
       for (const rel of entries.directories) {
         checkAbort()
         const destStat = await stat(join(to, dir, rel)).catch(() => undefined)
@@ -186,6 +213,13 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
         const destStat = await stat(join(to, dir, rel)).catch(() => undefined)
         if (!destStat || destStat.size !== srcSize) {
           throw new Error(`verification failed for ${join(dir, rel)}`)
+        }
+        const [sourceChecksum, destinationChecksum] = await Promise.all([
+          hashFile(join(from, dir, rel)),
+          hashFile(join(to, dir, rel))
+        ])
+        if (sourceChecksum !== destinationChecksum) {
+          throw new Error(`verification failed for ${join(dir, rel)}: checksum mismatch`)
         }
         onProgress({ phase: 'verify', copiedBytes, totalBytes, currentPath: join(dir, rel) })
       }

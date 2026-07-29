@@ -21,7 +21,7 @@ const HtmlSourceContent = ({
   item,
   topContent
 }: PreviewFileRendererProps & { topContent: React.ReactNode }): React.JSX.Element => {
-  const state = usePreviewFileContent({ path: item.path, source: item.source })
+  const state = usePreviewFileContent(item)
 
   if (state.status === 'loading') return <PreviewLoadingContent />
   if (state.status === 'error' || state.preview.encoding !== 'utf8') {

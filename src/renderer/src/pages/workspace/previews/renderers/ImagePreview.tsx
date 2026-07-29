@@ -96,6 +96,8 @@ export const PreviewImageContent = ({
   path,
   name,
   source = 'artifact',
+  projectId,
+  sessionId,
   mimeType,
   size,
   mtimeMs
@@ -103,15 +105,28 @@ export const PreviewImageContent = ({
   path: string
   name: string
   source?: PreviewFileSource
+  projectId?: string
+  sessionId?: string
   mimeType?: string
   size?: number
   mtimeMs?: number
 }): React.JSX.Element => {
-  const requestKey = createPreviewResourceKey({ source, path, mimeType, size, mtimeMs })
+  const requestKey = createPreviewResourceKey({
+    projectId,
+    sessionId,
+    source,
+    path,
+    mimeType,
+    size,
+    mtimeMs
+  })
   const [failedRequestKey, setFailedRequestKey] = useState<string | undefined>(undefined)
   const hasFailed = failedRequestKey === requestKey
   // A decode failure disables the hook, which releases the protocol capability immediately.
-  const state = useManagedPreviewResource({ path, source, mimeType, size, mtimeMs }, !hasFailed)
+  const state = useManagedPreviewResource(
+    { projectId, sessionId, path, source, mimeType, size, mtimeMs },
+    !hasFailed
+  )
 
   if (state.status === 'loading') return <PreviewLoadingContent />
 
@@ -153,6 +168,8 @@ export const ImagePreviewRenderer = ({ item }: PreviewFileRendererProps): React.
     path={item.path}
     name={item.name}
     source={item.source}
+    projectId={item.projectId}
+    sessionId={item.sessionId}
     mimeType={item.mimeType}
     size={item.size}
     mtimeMs={item.mtimeMs}

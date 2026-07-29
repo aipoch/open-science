@@ -1,4 +1,5 @@
 import { dialog, type App } from 'electron'
+import { AsyncLocalStorage } from 'node:async_hooks'
 
 // Two module-level flags (not parameters) because the quit guard, the migrate IPC handler, and the
 // ACP/notebook write paths live in different modules but must agree on a single truth.
@@ -11,6 +12,7 @@ let copying = false
 let pending = false
 let activeDataRootWriters = 0
 const writerDrainWaiters = new Set<() => void>()
+const dataRootWriteContext = new AsyncLocalStorage<boolean>()
 
 // Marks the start of a migration copy. Sets both flags. Pair with endMigrationCopy() in a finally.
 export const beginMigration = (): void => {
@@ -54,17 +56,36 @@ export const assertNoMigrationPending = (): void => {
   }
 }
 
-export const withDataRootWrite = async <Result>(write: () => Promise<Result>): Promise<Result> => {
+// Acquires one logical writer slot until the returned release callback is invoked. Long-lived
+// multi-call operations (for example a chunked upload) keep this lease across their entire protocol
+// so migration cannot begin in a gap between individual IPC requests. Release is idempotent.
+export const acquireDataRootWriter = (): (() => void) => {
   assertNoMigrationPending()
   activeDataRootWriters += 1
-  try {
-    return await write()
-  } finally {
+
+  let released = false
+  return () => {
+    if (released) return
+    released = true
     activeDataRootWriters -= 1
     if (activeDataRootWriters === 0) {
       for (const resolve of writerDrainWaiters) resolve()
       writerDrainWaiters.clear()
     }
+  }
+}
+
+export const withDataRootWrite = async <Result>(write: () => Promise<Result>): Promise<Result> => {
+  // Higher-level operations compose lower-level repositories that may independently protect their
+  // own write boundary. Treat nested calls in the same async chain as one logical lease: migration
+  // already waits for the outer lease, and rejecting the inner call after `pending` rises would abort
+  // the very in-flight operation that the drain protocol is designed to let finish.
+  if (dataRootWriteContext.getStore()) return write()
+  const release = acquireDataRootWriter()
+  try {
+    return await dataRootWriteContext.run(true, write)
+  } finally {
+    release()
   }
 }
 

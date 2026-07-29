@@ -1,4 +1,7 @@
-name: AI PR Review
+name: AI PR Review (Disabled)
+
+on:
+  workflow_call:
 
 # Authentication defaults to API keys. See .github/action/ai-review.md for the supported API-key
 # and Codex subscription configurations and their security boundaries.
@@ -24,26 +27,8 @@ name: AI PR Review
 # Reviewer agents do not post comments directly. Each writes its schema-validated verdict to a job
 # output, and a separate trusted workflow publishes the comment. Both Codex reviewers use the same
 # read-only reusable workflow but run as independent parallel jobs.
-on:
-  pull_request_target:
-    branches:
-      - main
-    types: [opened, synchronize, reopened]
-  workflow_dispatch:
-    inputs:
-      pull_request_number:
-        description: Pull request number to review
-        required: true
-      reviewer:
-        description: Reviewer to run
-        required: true
-        default: both
-        type: choice
-        options:
-          - both
-          - correctness
-          - architecture
-
+# This retired dual-review workflow has no automatic or manual trigger. It remains callable only so
+# the archived definition stays valid; no workflow calls it. AI PR Review (Single) owns all triggers.
 concurrency:
   group: ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.reviewer || 'both' }}
   cancel-in-progress: true

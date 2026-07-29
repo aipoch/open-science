@@ -26,7 +26,7 @@ export const getOfficePreviewTimeoutMs = (size: number, attempt: number): number
 
 export type OfficePreviewExtension = 'docx' | 'xls' | 'xlsx' | 'pptx'
 export type OfficePreviewRequestedExtension = OfficePreviewExtension | 'spreadsheet'
-export type OfficePreviewSource = 'artifact' | 'upload'
+export type OfficePreviewSource = 'artifact' | 'upload' | 'notebook-input'
 
 export type OfficePreviewOpenRequest = {
   requestId: string

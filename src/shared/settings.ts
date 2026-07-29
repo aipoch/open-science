@@ -24,6 +24,22 @@ export const SETTINGS_FILE_VERSION = 2
 export type ProviderType =
   'custom' | 'claude-shared' | 'claude-isolated' | 'official' | 'codex-shared' | 'codex-isolated'
 
+// The stored Codex subscription always uses the app-owned runtime type. This discriminator preserves
+// which setup choice produced it so editing an imported profile does not masquerade as an isolated
+// sign-in and accidentally discard its imported loopback route.
+export type CodexSubscriptionAuthMode = 'imported' | 'isolated'
+
+// Stored Codex subscriptions share one runtime type, while renderer surfaces still need the setup
+// choice. Legacy codex-shared views have no discriminator, so their type remains the fallback.
+export const resolveCodexSubscriptionType = (provider: {
+  type: ProviderType
+  codexAuthMode?: CodexSubscriptionAuthMode
+}): 'codex-shared' | 'codex-isolated' =>
+  provider.codexAuthMode === 'imported' ||
+  (provider.codexAuthMode === undefined && provider.type === 'codex-shared')
+    ? 'codex-shared'
+    : 'codex-isolated'
+
 export const CODEX_SHARED_PROVIDER_ID = 'builtin-codex-shared'
 export const CODEX_ISOLATED_PROVIDER_ID = 'builtin-codex-isolated'
 export const CODEX_SUBSCRIPTION_PROVIDER_ID = 'builtin-codex-subscription'
@@ -110,6 +126,23 @@ export const isProviderCompatibleWith = (
   frameworkEndpoints: readonly ChatApiEndpoint[]
 ): boolean => endpoints.some((endpoint) => frameworkEndpoints.includes(endpoint))
 
+// Codex can drive a Chat Completions-only provider through the app's local Responses bridge. Keep
+// this contract in one module so compatibility, validation, and runtime setup cannot disagree about
+// which provider/framework pairs depend on bridge behavior.
+export const requiresChatCompletionsBridge = (
+  provider: { apiEndpoints?: readonly ChatApiEndpoint[] },
+  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+): boolean => {
+  const endpoints = providerEndpoints(provider)
+
+  return (
+    framework.id === 'codex' &&
+    framework.supportedApiTypes.includes('responses') &&
+    endpoints.includes('openai') &&
+    !endpoints.includes('responses')
+  )
+}
+
 // Whether a provider can actually drive a given framework. Two axes: endpoint compatibility (above),
 // AND provider-type — a `claude-isolated` provider carries an app-owned Anthropic OAuth token
 // that no other framework can consume, so it is only usable by Claude Code regardless of endpoint.
@@ -126,11 +159,7 @@ export const isProviderUsableByFramework = (
 
   const endpoints = providerEndpoints(provider)
 
-  if (
-    framework.id === 'codex' &&
-    framework.supportedApiTypes.includes('responses') &&
-    endpoints.includes('openai')
-  ) {
+  if (requiresChatCompletionsBridge(provider, framework)) {
     return true
   }
 
@@ -210,6 +239,7 @@ export type ProviderValidationFailure = {
 export type ProviderView = {
   id: string
   type: ProviderType
+  codexAuthMode?: CodexSubscriptionAuthMode
   name: string
   // Which chat APIs this provider's endpoint speaks; drives per-framework availability. Absent ⇒
   // treat as ['anthropic'] (every legacy provider).
@@ -292,10 +322,10 @@ const REASONING_EFFORTS: readonly ReasoningEffort[] = [
 export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
   typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
 
-// The selectable app-icon look. 'light' is the current dotted mark (shipped default); 'dark' is the
-// original Open Science icon from the first release. Both are built-in assets; the choice is applied
-// at runtime to the app window icon (all platforms) and the macOS Dock (the static installed icon in
-// Finder/Explorer/taskbar is baked into the build and never changes).
+// The selectable app-icon look. 'light' is the shipped default; 'dark' is its matching dark variant.
+// Both are built-in assets; the choice is applied at runtime to the app window icon (all platforms)
+// and the macOS Dock (the static installed icon in Finder/Explorer/taskbar is baked into the build and
+// never changes).
 export type AppIconVariant = 'light' | 'dark'
 
 export const DEFAULT_APP_ICON_VARIANT: AppIconVariant = 'light'
@@ -315,8 +345,8 @@ export type AppIconVariantInfo = {
 
 // The ordered icon variants shown in Settings. The default (light) leads.
 export const APP_ICON_VARIANT_INFOS: readonly AppIconVariantInfo[] = [
-  { id: 'light', label: 'Light', description: 'The current light dotted mark.' },
-  { id: 'dark', label: 'Dark', description: 'The original Open Science icon.' }
+  { id: 'light', label: 'Light', description: 'The light Open Science logo.' },
+  { id: 'dark', label: 'Dark', description: 'The dark Open Science logo.' }
 ]
 
 // Renderer-facing descriptor for one selectable agent framework (built from the main registry).
@@ -445,6 +475,9 @@ export type ProviderDraft = {
 // Create/update request: an existing `id` edits in place, otherwise a new provider is created.
 export type UpsertProviderRequest = ProviderDraft & {
   id?: string
+  // Explicitly refreshes an existing imported Codex subscription from the user's CLI profile.
+  // Ordinary edits remain app-owned and never cross that external profile boundary.
+  reimportCodexAuthentication?: boolean
 }
 
 export type DeleteProviderRequest = {

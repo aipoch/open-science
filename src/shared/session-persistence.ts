@@ -1,4 +1,5 @@
-import type { UploadedAttachment } from './uploads'
+import type { PersistedUploadedAttachment } from './uploads'
+import type { FileReference } from './artifacts'
 import {
   MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
@@ -13,9 +14,24 @@ import {
 } from './permission-profiles'
 import type { AgentFrameworkId } from './settings'
 import { sanitizeActivityGroupTitle } from './activity-groups'
+import {
+  createLinearConversationGraph,
+  projectConversationMessage,
+  resolveActiveConversationMessages,
+  synchronizeActiveConversationActivities,
+  synchronizeActiveConversationMessages,
+  validateConversationGraph,
+  type PersistedAgentFrame,
+  type PersistedBranchActivity,
+  type PersistedBranchActivityGroup,
+  type PersistedConversationGraph,
+  type PersistedMessageBranch,
+  type PersistedMessageNode,
+  type PersistedRuntimeSegment
+} from './conversation-graph'
 
 // One JSON file per session (sessions/<projectId>/<sessionId>.json) carries this envelope version.
-export const SESSION_FILE_VERSION = 1
+export const SESSION_FILE_VERSION = 2
 // Small manifest (sessions/manifest.json) that restores the user's last-open project + session.
 export const SESSION_MANIFEST_VERSION = 1
 
@@ -28,6 +44,9 @@ export type PersistedArtifactKind = 'workspace-file' | 'external-file' | 'manage
 // Stores artifact references only; file bytes stay on disk under the managed artifact root.
 export type PersistedArtifact = {
   id: string
+  artifactId?: string
+  versionId?: string
+  versionNumber?: number
   kind: PersistedArtifactKind
   path: string
   fileUrl?: string
@@ -38,8 +57,8 @@ export type PersistedArtifact = {
   sha256?: string
 }
 
-// Stores uploaded file references on the user message that submitted them.
-export type PersistedUploadedAttachment = UploadedAttachment
+// Re-export the path-free Message projection for existing session-store consumers.
+export type { PersistedUploadedAttachment } from './uploads'
 
 export type PersistedMessageImage = AcpMessageImage & {
   id: string
@@ -51,14 +70,7 @@ export type PersistedMessageImage = AcpMessageImage & {
 export type MessagePart =
   | { type: 'text'; text: string }
   | { type: 'skill'; id: string; name: string }
-  | {
-      type: 'artifact'
-      id: string
-      name: string
-      path: string
-      source: 'upload' | 'artifact'
-      versionId?: string
-    }
+  | ({ type: 'artifact' } & FileReference)
 
 export type PersistedChatMessage = {
   id: string
@@ -152,6 +164,8 @@ export type PersistedChatSession = {
   // non-true restores as unpinned; only an explicit true keeps it pinned across restarts.
   pinned?: boolean
   messages: PersistedChatMessage[]
+  // Session JSON v2 authority. Flat messages/activities remain an active-Branch compatibility view.
+  conversationGraph?: PersistedConversationGraph
   activities?: PersistedToolActivity[]
   activityGroups?: PersistedActivityGroup[]
   activeRun?: PersistedActiveRun
@@ -286,6 +300,9 @@ const sanitizeArtifact = (artifact: unknown): PersistedArtifact | undefined => {
   const size = asNumber(artifact.size)
   const mtimeMs = asNumber(artifact.mtimeMs)
   const sha256 = asString(artifact.sha256)
+  const artifactId = asString(artifact.artifactId)
+  const versionId = asString(artifact.versionId)
+  const versionNumber = asNumber(artifact.versionNumber)
 
   if (fileUrl) sanitized.fileUrl = fileUrl
   if (name) sanitized.name = name
@@ -293,34 +310,49 @@ const sanitizeArtifact = (artifact: unknown): PersistedArtifact | undefined => {
   if (size !== undefined) sanitized.size = size
   if (mtimeMs !== undefined) sanitized.mtimeMs = mtimeMs
   if (sha256) sanitized.sha256 = sha256
+  if (artifactId) sanitized.artifactId = artifactId
+  if (versionId) sanitized.versionId = versionId
+  if (versionNumber !== undefined && Number.isInteger(versionNumber) && versionNumber > 0) {
+    sanitized.versionNumber = versionNumber
+  }
 
   return sanitized
 }
 
 // Rebuilds uploaded file references without accepting embedded content or unknown payloads.
 const sanitizeUploadedAttachment = (
-  attachment: unknown
+  attachment: unknown,
+  options: { preserveLegacyPath?: boolean } = {}
 ): PersistedUploadedAttachment | undefined => {
   if (!isRecord(attachment)) return undefined
 
   const id = asString(attachment.id)
   const sessionId = asString(attachment.sessionId)
   const name = asString(attachment.name)
-  const path = asString(attachment.path)
-
-  if (!id || !sessionId || !name || !path) return undefined
+  if (!id || !sessionId || !name) return undefined
 
   const sanitized: PersistedUploadedAttachment = {
     id,
     sessionId,
     name,
     originalName: asString(attachment.originalName) ?? name,
-    path,
     size: asNumber(attachment.size) ?? 0
   }
   const mimeType = asString(attachment.mimeType)
+  const versionId = asString(attachment.versionId)
+  const versionNumber = asNumber(attachment.versionNumber)
+  const createdAt = asString(attachment.createdAt)
+  const sha256 = asString(attachment.sha256) ?? asString(attachment.checksum)
 
   if (mimeType) sanitized.mimeType = mimeType
+  if (versionId) sanitized.versionId = versionId
+  if (versionNumber !== undefined && Number.isInteger(versionNumber) && versionNumber > 0) {
+    sanitized.versionNumber = versionNumber
+  }
+  if (createdAt) sanitized.createdAt = createdAt
+  if (sha256) sanitized.sha256 = sha256
+  const legacyPath = asString(attachment.path)
+  if (!versionId && options.preserveLegacyPath && legacyPath) sanitized.path = legacyPath
 
   return sanitized
 }
@@ -568,15 +600,38 @@ const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
     case 'artifact': {
       const id = asString(part.id)
       const name = asString(part.name)
-      const path = asString(part.path)
       const source = asString(part.source)
 
-      if (!id || !name || !path || (source !== 'upload' && source !== 'artifact')) return undefined
+      if (!id || !name) return undefined
+
+      const mimeType = asString(part.mimeType)
+      if (source === 'linked-folder') {
+        const rootId = asString(part.rootId)
+        const relativePath = asString(part.relativePath)
+        if (!rootId || !relativePath) return undefined
+
+        return {
+          type: 'artifact',
+          id,
+          name,
+          source,
+          rootId,
+          relativePath,
+          ...(mimeType ? { mimeType } : {})
+        }
+      }
+
+      const path = asString(part.path)
+      if (!path || (source !== 'upload' && source !== 'artifact')) return undefined
 
       const sanitized: MessagePart = { type: 'artifact', id, name, path, source }
       const versionId = asString(part.versionId)
 
-      return versionId ? { ...sanitized, versionId } : sanitized
+      return {
+        ...sanitized,
+        ...(mimeType ? { mimeType } : {}),
+        ...(versionId ? { versionId } : {})
+      }
     }
     default:
       return undefined
@@ -612,11 +667,11 @@ export const sanitizeMessageImages = (value: unknown): PersistedMessageImage[] |
 export const sanitizeSessionMessageImages = (
   session: PersistedChatSession
 ): PersistedChatSession => {
-  let totalBytes = 0
-
-  return {
-    ...session,
-    messages: session.messages.map((message) => {
+  const sanitizeMessages = <Message extends PersistedChatMessage>(
+    messages: readonly Message[]
+  ): Message[] => {
+    let totalBytes = 0
+    return messages.map((message) => {
       const images = (sanitizeMessageImages(message.images) ?? []).filter((image) => {
         if (totalBytes + image.byteLength > MAX_ACP_SESSION_IMAGE_BYTES) return false
         totalBytes += image.byteLength
@@ -625,10 +680,56 @@ export const sanitizeSessionMessageImages = (
       return { ...message, images: images.length > 0 ? images : undefined }
     })
   }
+
+  if (!session.conversationGraph) {
+    return { ...session, messages: sanitizeMessages(session.messages) }
+  }
+
+  // The graph is canonical and includes inactive Branches. Sanitize it once under one aggregate
+  // budget, then rebuild the active compatibility projection so duplicate active messages are not
+  // counted twice and hidden Branches cannot bypass the on-disk image boundary.
+  const conversationGraph = {
+    ...session.conversationGraph,
+    messages: sanitizeMessages(session.conversationGraph.messages)
+  }
+  return {
+    ...session,
+    conversationGraph,
+    messages: resolveActiveConversationMessages(conversationGraph).map(projectConversationMessage)
+  }
+}
+
+// Applies the path-free upload boundary immediately before repository serialization without
+// normalizing run/session state. This preserves crash-restoration semantics while ensuring legacy
+// renderer paths and checksum aliases can never leak into newly written Session JSON.
+export const sanitizeSessionUploadedAttachments = (
+  session: PersistedChatSession
+): PersistedChatSession => {
+  const sanitizeUploads = <Message extends PersistedChatMessage>(message: Message): Message => {
+    const uploads = (message.uploads ?? [])
+      .map((upload) => sanitizeUploadedAttachment(upload))
+      .filter((upload): upload is PersistedUploadedAttachment => !!upload)
+    return { ...message, uploads: uploads.length > 0 ? uploads : undefined }
+  }
+  return {
+    ...session,
+    messages: session.messages.map(sanitizeUploads),
+    ...(session.conversationGraph
+      ? {
+          conversationGraph: {
+            ...session.conversationGraph,
+            messages: session.conversationGraph.messages.map(sanitizeUploads)
+          }
+        }
+      : {})
+  }
 }
 
 // Rebuilds a message from durable UI fields and strips unknown renderer payload.
-const sanitizeMessage = (message: unknown): PersistedChatMessage | undefined => {
+const sanitizeMessage = (
+  message: unknown,
+  options: { preserveLegacyUploadPaths?: boolean } = {}
+): PersistedChatMessage | undefined => {
   if (!isRecord(message)) return undefined
 
   const id = asString(message.id)
@@ -651,7 +752,11 @@ const sanitizeMessage = (message: unknown): PersistedChatMessage | undefined => 
   const artifactIds = asStringArray(message.artifactIds)
   const uploads = Array.isArray(message.uploads)
     ? message.uploads
-        .map(sanitizeUploadedAttachment)
+        .map((attachment) =>
+          sanitizeUploadedAttachment(attachment, {
+            preserveLegacyPath: options.preserveLegacyUploadPaths
+          })
+        )
         .filter((item): item is PersistedUploadedAttachment => !!item)
     : []
   const parts = Array.isArray(message.parts)
@@ -669,6 +774,245 @@ const sanitizeMessage = (message: unknown): PersistedChatMessage | undefined => 
   return sanitized
 }
 
+const sanitizeConversationGraph = (
+  value: unknown,
+  options: { preserveLegacyUploadPaths?: boolean } = {}
+): PersistedConversationGraph | undefined => {
+  if (!isRecord(value) || value.schemaVersion !== 1) return undefined
+  const rootFrameId = asString(value.rootFrameId)
+  const activeFrameId = asString(value.activeFrameId)
+  if (!rootFrameId || !activeFrameId) return undefined
+
+  const frames = Array.isArray(value.frames)
+    ? value.frames.flatMap((candidate): PersistedAgentFrame[] => {
+        if (!isRecord(candidate)) return []
+        const id = asString(candidate.id)
+        const activeBranchId = asString(candidate.activeBranchId)
+        const kind = asString(candidate.kind) as PersistedAgentFrame['kind'] | undefined
+        const originBindingState = asString(candidate.originBindingState) as
+          PersistedAgentFrame['originBindingState'] | undefined
+        const status = asString(candidate.status) as PersistedAgentFrame['status'] | undefined
+        const createdAt = asNumber(candidate.createdAt)
+        if (
+          !id ||
+          !activeBranchId ||
+          !kind ||
+          !['root', 'reviewer', 'delegate', 'compatibility'].includes(kind) ||
+          !originBindingState ||
+          !['root', 'validated', 'legacy-unavailable'].includes(originBindingState) ||
+          !status ||
+          !['running', 'completed', 'cancelled', 'error'].includes(status) ||
+          createdAt === undefined
+        ) {
+          return []
+        }
+        return [
+          {
+            id,
+            activeBranchId,
+            kind,
+            originBindingState,
+            status,
+            createdAt,
+            ...(asString(candidate.parentFrameId)
+              ? { parentFrameId: asString(candidate.parentFrameId) }
+              : {}),
+            ...(asString(candidate.originMessageId)
+              ? { originMessageId: asString(candidate.originMessageId) }
+              : {}),
+            ...(asString(candidate.agentName) ? { agentName: asString(candidate.agentName) } : {}),
+            ...(asString(candidate.delegateName)
+              ? { delegateName: asString(candidate.delegateName) }
+              : {}),
+            ...(asString(candidate.linkedReviewId)
+              ? { linkedReviewId: asString(candidate.linkedReviewId) }
+              : {}),
+            ...(asNumber(candidate.completedAt) !== undefined
+              ? { completedAt: asNumber(candidate.completedAt) }
+              : {})
+          }
+        ]
+      })
+    : []
+  const branches = Array.isArray(value.branches)
+    ? value.branches.flatMap((candidate): PersistedMessageBranch[] => {
+        if (!isRecord(candidate)) return []
+        const id = asString(candidate.id)
+        const agentFrameId = asString(candidate.agentFrameId)
+        const createdAt = asNumber(candidate.createdAt)
+        const updatedAt = asNumber(candidate.updatedAt)
+        if (!id || !agentFrameId || createdAt === undefined || updatedAt === undefined) return []
+        return [
+          {
+            id,
+            agentFrameId,
+            createdAt,
+            updatedAt,
+            ...(asString(candidate.parentBranchId)
+              ? { parentBranchId: asString(candidate.parentBranchId) }
+              : {}),
+            ...(asString(candidate.forkMessageId)
+              ? { forkMessageId: asString(candidate.forkMessageId) }
+              : {}),
+            ...(asString(candidate.supersededMessageId)
+              ? { supersededMessageId: asString(candidate.supersededMessageId) }
+              : {}),
+            ...(asString(candidate.headMessageId)
+              ? { headMessageId: asString(candidate.headMessageId) }
+              : {})
+          }
+        ]
+      })
+    : []
+  const messages = Array.isArray(value.messages)
+    ? value.messages.flatMap((candidate): PersistedMessageNode[] => {
+        if (!isRecord(candidate)) return []
+        const message = sanitizeMessage(candidate, options)
+        const agentFrameId = asString(candidate.agentFrameId)
+        const introducedOnBranchId = asString(candidate.introducedOnBranchId)
+        if (!message || !agentFrameId || !introducedOnBranchId) return []
+        return [
+          {
+            ...normalizeMessageAfterRestore(message),
+            agentFrameId,
+            introducedOnBranchId,
+            ...(asString(candidate.parentMessageId)
+              ? { parentMessageId: asString(candidate.parentMessageId) }
+              : {}),
+            ...(asString(candidate.revisionRootMessageId)
+              ? { revisionRootMessageId: asString(candidate.revisionRootMessageId) }
+              : {}),
+            ...(asString(candidate.supersedesMessageId)
+              ? { supersedesMessageId: asString(candidate.supersedesMessageId) }
+              : {}),
+            ...(asString(candidate.runtimeSegmentId)
+              ? { runtimeSegmentId: asString(candidate.runtimeSegmentId) }
+              : {})
+          }
+        ]
+      })
+    : []
+  const runtimeSegments = Array.isArray(value.runtimeSegments)
+    ? value.runtimeSegments.flatMap((candidate): PersistedRuntimeSegment[] => {
+        if (!isRecord(candidate)) return []
+        const id = asString(candidate.id)
+        const agentFrameId = asString(candidate.agentFrameId)
+        const frameworkId = asString(candidate.frameworkId) as AgentFrameworkId | undefined
+        const startedAt = asNumber(candidate.startedAt)
+        if (
+          !id ||
+          !agentFrameId ||
+          !frameworkId ||
+          !AGENT_FRAMEWORK_IDS.has(frameworkId) ||
+          startedAt === undefined
+        ) {
+          return []
+        }
+        return [
+          {
+            id,
+            agentFrameId,
+            frameworkId,
+            startedAt,
+            ...(asString(candidate.backendId) ? { backendId: asString(candidate.backendId) } : {}),
+            ...(asString(candidate.agentName) ? { agentName: asString(candidate.agentName) } : {}),
+            ...(asString(candidate.model) ? { model: asString(candidate.model) } : {}),
+            ...(asNumber(candidate.endedAt) !== undefined
+              ? { endedAt: asNumber(candidate.endedAt) }
+              : {})
+          }
+        ]
+      })
+    : []
+  const activities = Array.isArray(value.activities)
+    ? value.activities.flatMap((candidate): PersistedBranchActivity[] => {
+        if (!isRecord(candidate)) return []
+        const activity = sanitizeToolActivity(candidate)
+        const agentFrameId = asString(candidate.agentFrameId)
+        const messageBranchId = asString(candidate.messageBranchId)
+        const promptMessageId = asString(candidate.promptMessageId)
+        const runtimeSegmentId = asString(candidate.runtimeSegmentId)
+        return activity && agentFrameId && messageBranchId && promptMessageId && runtimeSegmentId
+          ? [
+              {
+                ...normalizeActivityAfterRestore(activity),
+                agentFrameId,
+                messageBranchId,
+                promptMessageId,
+                runtimeSegmentId
+              }
+            ]
+          : []
+      })
+    : []
+  const activityGroups = Array.isArray(value.activityGroups)
+    ? value.activityGroups.flatMap((candidate): PersistedBranchActivityGroup[] => {
+        if (!isRecord(candidate)) return []
+        const group = sanitizeActivityGroup(candidate)
+        const agentFrameId = asString(candidate.agentFrameId)
+        const messageBranchId = asString(candidate.messageBranchId)
+        const promptMessageId = asString(candidate.promptMessageId)
+        return group && agentFrameId && messageBranchId && promptMessageId
+          ? [
+              {
+                ...normalizeActivityGroupAfterRestore(group),
+                agentFrameId,
+                messageBranchId,
+                promptMessageId
+              }
+            ]
+          : []
+      })
+    : []
+  const graph: PersistedConversationGraph = {
+    schemaVersion: 1,
+    rootFrameId,
+    activeFrameId,
+    frames,
+    branches,
+    messages,
+    activities,
+    activityGroups,
+    runtimeSegments
+  }
+  try {
+    validateConversationGraph(graph)
+    return graph
+  } catch {
+    return undefined
+  }
+}
+
+export const materializeSessionConversationGraph = (
+  session: PersistedChatSession
+): PersistedChatSession => {
+  const messageGraph = session.conversationGraph
+    ? synchronizeActiveConversationMessages(
+        session.conversationGraph,
+        session.messages,
+        session.updatedAt
+      )
+    : createLinearConversationGraph({
+        sessionId: session.id,
+        messages: session.messages,
+        frameworkId: session.agentFrameworkId,
+        backendId: session.agentBackendId,
+        model: session.agentModel,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt
+      })
+  const graph = synchronizeActiveConversationActivities(
+    messageGraph,
+    session.activities ?? [],
+    session.activityGroups ?? []
+  )
+  return {
+    ...session,
+    conversationGraph: graph,
+    messages: resolveActiveConversationMessages(graph).map(projectConversationMessage)
+  }
+}
+
 // Keeps the active run pointer only when both its message id and timestamp are valid.
 const sanitizeActiveRun = (activeRun: unknown): PersistedActiveRun | undefined => {
   if (!isRecord(activeRun)) return undefined
@@ -680,7 +1024,10 @@ const sanitizeActiveRun = (activeRun: unknown): PersistedActiveRun | undefined =
 }
 
 // Rebuilds a persisted chat session and normalizes any runtime-only interrupted state.
-const sanitizeSession = (session: unknown): PersistedChatSession | undefined => {
+const sanitizeSession = (
+  session: unknown,
+  options: { preserveLegacyUploadPaths?: boolean } = {}
+): PersistedChatSession | undefined => {
   if (!isRecord(session)) return undefined
 
   const id = asString(session.id)
@@ -702,7 +1049,7 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
         .filter((item): item is PersistedActivityGroup => !!item)
         .map(normalizeActivityGroupAfterRestore)
     : []
-  const sanitized: PersistedChatSession = {
+  let sanitized: PersistedChatSession = {
     id,
     // Content value is a hint; the repository overrides it with the session file's directory on load.
     projectId: asString(session.projectId) ?? '',
@@ -717,7 +1064,9 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
     // explicit true turns it on.
     autoReviewEnabled: session.autoReviewEnabled === true ? true : false,
     messages: Array.isArray(session.messages)
-      ? session.messages.map(sanitizeMessage).filter((item): item is PersistedChatMessage => !!item)
+      ? session.messages
+          .map((message) => sanitizeMessage(message, options))
+          .filter((item): item is PersistedChatMessage => !!item)
       : [],
     createdAt: asNumber(session.createdAt) ?? 0,
     updatedAt: asNumber(session.updatedAt) ?? 0
@@ -753,7 +1102,29 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
   if (activityGroups.length > 0) sanitized.activityGroups = activityGroups
   if (enabledComputeHosts.length > 0) sanitized.enabledComputeHosts = enabledComputeHosts
 
-  return sanitizeSessionMessageImages(normalizeSessionAfterRestore(sanitized))
+  // Normalize interrupted runtime state before constructing a graph for legacy sessions. Otherwise
+  // the compatibility message list becomes an error while the newly-created canonical graph retains
+  // a streaming message and later projects that stale state back into the UI.
+  sanitized = normalizeSessionAfterRestore(sanitized)
+
+  if (session.conversationGraph !== undefined) {
+    const graph = sanitizeConversationGraph(session.conversationGraph, options)
+    if (!graph) return undefined
+    sanitized.conversationGraph = graph
+    sanitized.messages = resolveActiveConversationMessages(graph).map(projectConversationMessage)
+  } else {
+    sanitized.conversationGraph = createLinearConversationGraph({
+      sessionId: sanitized.id,
+      messages: sanitized.messages,
+      frameworkId: sanitized.agentFrameworkId,
+      backendId: sanitized.agentBackendId,
+      model: sanitized.agentModel,
+      createdAt: sanitized.createdAt,
+      updatedAt: sanitized.updatedAt
+    })
+  }
+
+  return sanitizeSessionMessageImages(sanitized)
 }
 
 // ---------------------------------------------------------------------------
@@ -767,19 +1138,25 @@ export type PersistedSessionFile = {
 }
 
 // Wraps a session in the on-disk envelope written per file.
-export const createSessionFile = (session: PersistedChatSession): PersistedSessionFile => ({
-  version: SESSION_FILE_VERSION,
-  session
-})
+export const createSessionFile = (session: PersistedChatSession): PersistedSessionFile => {
+  const materialized = materializeSessionConversationGraph(session)
+  return {
+    version: SESSION_FILE_VERSION,
+    session: sanitizeSessionMessageImages(materialized)
+  }
+}
 
 // Reads one session-file payload, tolerating either the envelope or a bare session object, and applies
 // the same sanitization + interrupted-run normalization used by the legacy whole-state loader.
-export const normalizeSessionFile = (value: unknown): PersistedChatSession | undefined => {
+export const normalizeSessionFile = (
+  value: unknown,
+  options: { preserveLegacyUploadPaths?: boolean } = {}
+): PersistedChatSession | undefined => {
   if (!isRecord(value)) return undefined
 
   const rawSession = isRecord(value.session) ? value.session : value
 
-  return sanitizeSession(rawSession)
+  return sanitizeSession(rawSession, options)
 }
 
 // Tiny app-level pointer restoring the last-open project + session after a restart.

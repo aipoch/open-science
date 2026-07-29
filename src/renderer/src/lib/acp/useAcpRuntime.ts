@@ -61,6 +61,10 @@ const useAcpRuntime = (): {
     projectName?: string,
     permissionProfile?: PermissionProfileId
   ) => Promise<AcpCreateSessionResponse>
+  compactSession: (
+    sessionId: string,
+    reason?: 'manual' | 'overflow-recovery'
+  ) => Promise<AcpStateSnapshot | undefined>
   deleteSession: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
   cancel: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
   sendPrompt: (
@@ -72,7 +76,8 @@ const useAcpRuntime = (): {
     historyPreamble?: AcpPromptRequest['historyPreamble'],
     historyAttachments?: AcpPromptRequest['historyAttachments'],
     historyImages?: AcpPromptRequest['historyImages'],
-    resumeFallback?: AcpPromptRequest['resumeFallback']
+    resumeFallback?: AcpPromptRequest['resumeFallback'],
+    provenanceContext?: AcpPromptRequest['provenanceContext']
   ) => Promise<AcpStateSnapshot>
   respondToPermission: (
     requestId: string,
@@ -249,6 +254,15 @@ const useAcpRuntime = (): {
     [runValueAction]
   )
 
+  // Asks the active agent framework to compact its own session context.
+  const compactSession = useCallback(
+    (sessionId: string, reason?: 'manual' | 'overflow-recovery') =>
+      runSnapshotAction(undefined, () =>
+        window.api.acp.compactSession({ sessionId, ...(reason ? { reason } : {}) })
+      ),
+    [runSnapshotAction]
+  )
+
   // Deletes a runtime session and returns the updated snapshot if it succeeds.
   const deleteSession = useCallback(
     (sessionId: string) =>
@@ -273,7 +287,8 @@ const useAcpRuntime = (): {
       historyPreamble?: AcpPromptRequest['historyPreamble'],
       historyAttachments?: AcpPromptRequest['historyAttachments'],
       historyImages?: AcpPromptRequest['historyImages'],
-      resumeFallback?: AcpPromptRequest['resumeFallback']
+      resumeFallback?: AcpPromptRequest['resumeFallback'],
+      provenanceContext?: AcpPromptRequest['provenanceContext']
     ) =>
       runSendPromptAction(() =>
         window.api.acp.sendPrompt({
@@ -288,7 +303,8 @@ const useAcpRuntime = (): {
           ...(historyPreamble ? { historyPreamble } : {}),
           ...(historyAttachments && historyAttachments.length > 0 ? { historyAttachments } : {}),
           ...(historyImages && historyImages.length > 0 ? { historyImages } : {}),
-          ...(resumeFallback ? { resumeFallback } : {})
+          ...(resumeFallback ? { resumeFallback } : {}),
+          ...(provenanceContext ? { provenanceContext } : {})
         })
       ),
     [runSendPromptAction]
@@ -337,6 +353,7 @@ const useAcpRuntime = (): {
     createSession,
     resumeSession,
     resetSessionContext,
+    compactSession,
     deleteSession,
     cancel,
     sendPrompt,

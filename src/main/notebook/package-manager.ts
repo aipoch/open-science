@@ -4,7 +4,11 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { PROD_SESSION_DIR_NAME } from '../session-persistence/repository'
-import type { NotebookLanguage } from '../../shared/notebook'
+import type {
+  NotebookLanguage,
+  NotebookPackageInstaller,
+  NotebookPackageInstallerAttempt
+} from '../../shared/notebook'
 import {
   caBundleEnv,
   installArgv,
@@ -61,6 +65,8 @@ export type InstallResult = {
   needsRestart: boolean
   log: string
   method?: 'conda' | 'pip' | 'cran'
+  attempts?: NotebookPackageInstallerAttempt[]
+  fallbackUsed?: boolean
   // Absolute env prefix the packages were installed into (<dataRoot>/runtime/envs/<env>), so the
   // UI/agent can see the concrete, env-scoped install location. Set on every real install outcome.
   prefix?: string
@@ -144,10 +150,93 @@ const rCondaNames = (packages: string[]): string[] =>
     pkg.startsWith('r-') || pkg.startsWith('bioconductor-') ? pkg : `r-${pkg}`
   )
 
-// micromamba reports missing packages ("packages to remove not found in the environment", or a
-// per-package "is not installed") on a remove of something it doesn't manage. That's the signal that
-// the package was installed via CRAN install.packages(), so R uninstall falls back to remove.packages().
-const condaReportsNotManaged = (log: string): boolean => /not (found|installed)/i.test(log)
+type CondaFailureClassification = Pick<NotebookPackageInstallerAttempt, 'mutationRisk' | 'reason'>
+
+const parseStructuredCondaResult = (result: SpawnResult): Record<string, unknown> | undefined => {
+  for (const candidate of [result.stdout, result.stderr]) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      // Human-readable output remains diagnostic only and can never authorize a fallback.
+    }
+  }
+  return undefined
+}
+
+const stringValues = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.flatMap(stringValues)
+    : typeof value === 'string'
+      ? [value]
+      : typeof value === 'object' && value !== null
+        ? Object.values(value).flatMap(stringValues)
+        : []
+
+const hasCondaTransactionActions = (value: unknown): boolean => {
+  if (Array.isArray(value)) return value.some(hasCondaTransactionActions)
+  if (typeof value !== 'object' || value === null) return false
+  return Object.entries(value as Record<string, unknown>).some(([key, nested]) => {
+    if (/^(?:link|unlink|fetch|prefix_actions|transaction)$/iu.test(key)) {
+      return Array.isArray(nested) ? nested.length > 0 : Boolean(nested)
+    }
+    return hasCondaTransactionActions(nested)
+  })
+}
+
+// Fallback authorization is derived exclusively from micromamba's JSON response. stderr is retained
+// in the user-facing log, but a localized/proxied diagnostic string cannot start a second installer.
+const classifyCondaFailure = (result: SpawnResult): CondaFailureClassification => {
+  const structured = parseStructuredCondaResult(result)
+  if (!structured) {
+    return {
+      reason: 'unknown',
+      mutationRisk: 'unknown'
+    }
+  }
+  if (hasCondaTransactionActions(structured)) {
+    return {
+      reason: 'unknown',
+      mutationRisk: 'possible'
+    }
+  }
+  const diagnostics = stringValues(structured).join('\n')
+  const reason =
+    /nothing provides|package(?:s)?[^\n]*not found|does not exist|not installed/iu.test(diagnostics)
+      ? ('package-not-found' as const)
+      : /solver|unsatisfiable|conflict/iu.test(diagnostics)
+        ? ('solver-failed' as const)
+        : /permission|access denied/iu.test(diagnostics)
+          ? ('permission' as const)
+          : /network|timeout|tls|ssl|http/iu.test(diagnostics)
+            ? ('network' as const)
+            : ('unknown' as const)
+  return {
+    reason,
+    mutationRisk: 'none'
+  }
+}
+
+const installerAttempt = (
+  groupOrdinal: number,
+  installer: NotebookPackageInstaller,
+  packages: string[],
+  result: SpawnResult,
+  failure?: CondaFailureClassification
+): NotebookPackageInstallerAttempt => ({
+  groupOrdinal,
+  installer,
+  packages: [...packages],
+  status: result.code === 0 ? 'succeeded' : 'failed',
+  mutationRisk: result.code === 0 ? 'confirmed' : (failure?.mutationRisk ?? 'possible'),
+  ...(result.code !== 0 && failure?.reason ? { reason: failure.reason } : {})
+})
+
+const condaFallbackIsAuthorized = (classification: CondaFailureClassification): boolean =>
+  classification.mutationRisk === 'none' &&
+  (classification.reason === 'package-not-found' || classification.reason === 'solver-failed')
 
 // Real spawn wrapper collecting stdout/stderr and the exit code; replaced by an injected spawn in tests.
 // Exported so its fail-closed spawn-intent / kill-on-record-failure branches are directly testable.
@@ -388,6 +477,8 @@ export async function installPackages(
       needsRestart: false,
       log: mergeLog(result),
       method: 'pip',
+      attempts: [installerAttempt(0, 'pip', req.packages, result)],
+      fallbackUsed: false,
       error: result.code === 0 ? undefined : 'pip install failed.'
     }
   }
@@ -458,6 +549,8 @@ export async function installPackages(
         needsRestart: false,
         log: mergeLog(result),
         method: 'pip',
+        attempts: [installerAttempt(0, 'pip', req.packages, result)],
+        fallbackUsed: false,
         prefix,
         error: result.code === 0 ? undefined : 'pip install failed.'
       }
@@ -466,14 +559,48 @@ export async function installPackages(
     const mm = deps.micromamba ?? resolveMicromamba()
     if (!mm) return { ok: false, needsRestart: false, log: '', error: 'micromamba not found.' }
     const argv = installArgv(mm, root, prefix, channels, req.packages, isDefaultEnv)
-    const result = await runConda(argv[0], argv.slice(1))
+    const condaArgs = [...argv.slice(1, 3), '--json', ...argv.slice(3)]
+    const result = await runConda(argv[0], condaArgs)
+    if (result.code === 0) {
+      return {
+        ok: true,
+        needsRestart: false,
+        log: mergeLog(result),
+        method: 'conda',
+        attempts: [installerAttempt(0, 'conda', req.packages, result)],
+        fallbackUsed: false,
+        prefix
+      }
+    }
+    const classification = classifyCondaFailure(result)
+    const condaAttempt = installerAttempt(0, 'conda', req.packages, result, classification)
+    if (condaFallbackIsAuthorized(classification)) {
+      const fallback = await run(pipBin(prefix), [
+        'install',
+        ...(deps.pypiIndex ? ['-i', deps.pypiIndex] : []),
+        ...req.packages
+      ])
+      const ok = fallback.code === 0
+      return {
+        ok,
+        needsRestart: false,
+        log: `${mergeLog(result)}\n${mergeLog(fallback)}`,
+        method: 'pip',
+        attempts: [condaAttempt, installerAttempt(1, 'pip', req.packages, fallback)],
+        fallbackUsed: true,
+        prefix,
+        error: ok ? undefined : 'conda and pip install both failed.'
+      }
+    }
     return {
-      ok: result.code === 0,
+      ok: false,
       needsRestart: false,
       log: mergeLog(result),
       method: 'conda',
+      attempts: [condaAttempt],
+      fallbackUsed: false,
       prefix,
-      error: result.code === 0 ? undefined : condaFailureMessage('install', result)
+      error: condaFailureMessage('install', result)
     }
   }
 
@@ -484,9 +611,33 @@ export async function installPackages(
 
   const condaPkgs = rCondaNames(req.packages)
   const argv = installArgv(mm, root, prefix, channels, condaPkgs, isDefaultEnv)
-  const conda = await runConda(argv[0], argv.slice(1))
+  const conda = await runConda(argv[0], [...argv.slice(1, 3), '--json', ...argv.slice(3)])
   if (conda.code === 0) {
-    return { ok: true, needsRestart: true, log: mergeLog(conda), method: 'conda', prefix }
+    return {
+      ok: true,
+      needsRestart: true,
+      log: mergeLog(conda),
+      method: 'conda',
+      attempts: [installerAttempt(0, 'conda', condaPkgs, conda)],
+      fallbackUsed: false,
+      prefix
+    }
+  }
+
+  const condaLog = mergeLog(conda)
+  const classification = classifyCondaFailure(conda)
+  const condaAttempt = installerAttempt(0, 'conda', condaPkgs, conda, classification)
+  if (!condaFallbackIsAuthorized(classification)) {
+    return {
+      ok: false,
+      needsRestart: false,
+      log: condaLog,
+      method: 'conda',
+      attempts: [condaAttempt],
+      fallbackUsed: false,
+      prefix,
+      error: condaFailureMessage('install', conda)
+    }
   }
 
   const cran = deps.cranMirror ?? DEFAULT_CRAN_MIRROR
@@ -503,11 +654,13 @@ export async function installPackages(
   return {
     ok,
     needsRestart: ok,
-    log: `${mergeLog(conda)}\n${mergeLog(fallback)}`,
+    log: `${condaLog}\n${mergeLog(fallback)}`,
     method: 'cran',
+    attempts: [condaAttempt, installerAttempt(1, 'r-install-packages', req.packages, fallback)],
+    fallbackUsed: true,
     prefix: rLib,
     error:
-      ok || !/Retry failure after MAX_PATH recovery/i.test(mergeLog(conda))
+      ok || !/Retry failure after MAX_PATH recovery/i.test(condaLog)
         ? ok
           ? undefined
           : 'conda and CRAN install both failed.'
@@ -522,6 +675,7 @@ const removeArgv = (mm: string, root: string, prefix: string, pkgs: string[]): s
   mm,
   '--no-rc',
   'remove',
+  '--json',
   '--root-prefix',
   root,
   '--prefix',
@@ -554,6 +708,8 @@ async function uninstallPackages(
         needsRestart: false,
         log: mergeLog(result),
         method: 'pip',
+        attempts: [installerAttempt(0, 'pip', req.packages, result)],
+        fallbackUsed: false,
         prefix,
         error: result.code === 0 ? undefined : 'pip uninstall failed.'
       }
@@ -568,6 +724,16 @@ async function uninstallPackages(
       needsRestart: false,
       log: mergeLog(result),
       method: 'conda',
+      attempts: [
+        installerAttempt(
+          0,
+          'conda',
+          req.packages,
+          result,
+          result.code === 0 ? undefined : classifyCondaFailure(result)
+        )
+      ],
+      fallbackUsed: false,
       prefix,
       error: result.code === 0 ? undefined : condaFailureMessage('remove', result)
     }
@@ -585,18 +751,30 @@ async function uninstallPackages(
   const argv = removeArgv(mm, root, prefix, condaPkgs)
   const conda = await runConda(argv[0], argv.slice(1))
   if (conda.code === 0) {
-    return { ok: true, needsRestart: true, log: mergeLog(conda), method: 'conda', prefix }
+    return {
+      ok: true,
+      needsRestart: true,
+      log: mergeLog(conda),
+      method: 'conda',
+      attempts: [installerAttempt(0, 'conda', condaPkgs, conda)],
+      fallbackUsed: false,
+      prefix
+    }
   }
 
   // A conda remove that failed for any reason OTHER than the package not being in the env is a real
   // error (e.g. a broken env); surface it rather than masking it with a CRAN attempt.
   const condaLog = mergeLog(conda)
-  if (!condaReportsNotManaged(condaLog)) {
+  const classification = classifyCondaFailure(conda)
+  const condaAttempt = installerAttempt(0, 'conda', condaPkgs, conda, classification)
+  if (classification.reason !== 'package-not-found' || classification.mutationRisk !== 'none') {
     return {
       ok: false,
       needsRestart: false,
       log: condaLog,
       method: 'conda',
+      attempts: [condaAttempt],
+      fallbackUsed: false,
       prefix,
       error: condaFailureMessage('remove', conda)
     }
@@ -615,6 +793,8 @@ async function uninstallPackages(
     needsRestart: ok,
     log: `${condaLog}\n${mergeLog(fallback)}`,
     method: 'cran',
+    attempts: [condaAttempt, installerAttempt(1, 'r-install-packages', req.packages, fallback)],
+    fallbackUsed: true,
     prefix: rLib,
     error: ok ? undefined : 'R remove.packages failed.'
   }

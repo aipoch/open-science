@@ -10,9 +10,9 @@
  *             §6 (enumeration), §9 (harvest_failed).
  */
 
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 
 import { describe, expect, it, vi } from 'vitest'
@@ -23,6 +23,7 @@ import type { ScpRunner, ScpResult } from './scp-runner'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import { getJobHarvestDir, harvestJob } from './harvest-engine'
+import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -112,6 +113,16 @@ const makeScpRunner = (failOnCall?: number): ScpRunner & { calls: string[][] } =
   }
 }
 
+const makeWritingScpRunner = (): ScpRunner => ({
+  copy: vi.fn(async (_bin: string, args: string[]): Promise<ScpResult> => {
+    const destination = args.at(-1)
+    if (!destination) throw new Error('scp destination is required')
+    await mkdir(dirname(destination), { recursive: true })
+    await writeFile(destination, 'downloaded')
+    return { exitCode: 0, stderr: '', timedOut: false }
+  })
+})
+
 const makeHostRepo = (host: ReturnType<typeof sampleHost> | null): ComputeHostRepository =>
   ({
     get: vi.fn(() => Promise.resolve(host))
@@ -161,6 +172,45 @@ describe('getJobHarvestDir', () => {
 // ---------------------------------------------------------------------------
 
 describe('harvestJob — clean harvest', () => {
+  it('writes and reports harvest files from the data-root session workspace, never the config root', async () => {
+    const configRoot = await mkTmp()
+    const dataRoot = await mkTmp()
+    const job = makeJob({
+      output_manifest: JSON.stringify(['*.result', { glob: '*.log', visibility: 'hidden' }])
+    })
+    const broadcasts: import('../../shared/compute').JobSummary[] = []
+
+    await harvestJob(job, {
+      sshRunner: makeSshRunner(
+        findOutput([
+          { path: 'stdout', size_bytes: 10 },
+          { path: 'stderr', size_bytes: 10 },
+          { path: 'run.result', size_bytes: 10 },
+          { path: 'debug.log', size_bytes: 10 }
+        ])
+      ),
+      scpRunner: makeWritingScpRunner(),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: makeJobRepo(job).repo,
+      storageRoot: dataRoot,
+      broadcast: (summary) => broadcasts.push(summary)
+    })
+
+    const dataHarvestDir = join(dataRoot, 'notebooks', 'proj-1', 'sess-1', 'hpc', 'job-1')
+    const configHarvestDir = join(configRoot, 'notebooks', 'proj-1', 'sess-1', 'hpc', 'job-1')
+    await expect(readFile(join(dataHarvestDir, 'featured', 'run.result'), 'utf8')).resolves.toBe(
+      'downloaded'
+    )
+    await expect(readFile(join(dataHarvestDir, 'stdout'), 'utf8')).resolves.toBe('downloaded')
+    await expect(readFile(join(dataHarvestDir, 'stderr'), 'utf8')).resolves.toBe('downloaded')
+    await expect(readFile(join(dataHarvestDir, 'hidden', 'debug.log'), 'utf8')).resolves.toBe(
+      'downloaded'
+    )
+    await expect(readdir(configHarvestDir)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(broadcasts).toHaveLength(1)
+    expect(broadcasts[0]?.featured_files).toEqual(['hpc/job-1/featured/run.result'])
+  })
+
   it('downloads featured and hidden files to correct subdirs, sets harvestedAt', async () => {
     const storageRoot = await mkTmp()
     const job = makeJob({
@@ -218,6 +268,32 @@ describe('harvestJob — clean harvest', () => {
     const finalUpdate = updates[0]!.data as Record<string, unknown>
     expect(JSON.parse(finalUpdate.leftOnRemote as string)).toEqual([])
     expect(finalUpdate.harvestError).toBeNull()
+  })
+})
+
+describe('harvestJob — data-root migration gate', () => {
+  it('does not start a harvest while a data-root migration is pending', async () => {
+    const dataRoot = await mkTmp()
+    const job = makeJob()
+    const { repo: jobRepository, updates } = makeJobRepo(job)
+
+    beginMigration()
+    try {
+      await expect(
+        harvestJob(job, {
+          sshRunner: makeSshRunner(''),
+          scpRunner: makeScpRunner(),
+          hostRepository: makeHostRepo(sampleHost()),
+          jobRepository,
+          storageRoot: dataRoot
+        })
+      ).rejects.toThrow('Open Science is moving your data')
+    } finally {
+      clearMigrationPending()
+    }
+
+    expect(updates).toEqual([])
+    expect(await readdir(dataRoot)).toEqual([])
   })
 })
 

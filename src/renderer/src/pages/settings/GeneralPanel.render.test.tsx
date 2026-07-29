@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useUpdateStore } from '@/stores/update-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useThemeStore } from '@/stores/theme-store'
 import { GeneralPanel } from './GeneralPanel'
 
 vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
@@ -190,6 +191,46 @@ describe('GeneralPanel notifications', () => {
 
     expect(settingsApi.setNotificationsEnabled).toHaveBeenCalledWith({ enabled: false })
     expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+  })
+})
+
+describe('GeneralPanel appearance', () => {
+  it('sets the theme preference from the segmented control and reflects it on <html>', async () => {
+    useThemeStore.getState().setPreference('light')
+    document.documentElement.classList.remove('dark')
+
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    const group = container.querySelector('[role="radiogroup"][aria-label="Theme"]')
+    expect(group).not.toBeNull()
+
+    const darkRadio = group?.querySelector(
+      '[role="radio"][aria-label="Dark"]'
+    ) as HTMLButtonElement | null
+    expect(darkRadio).not.toBeNull()
+    expect(darkRadio?.getAttribute('aria-checked')).toBe('false')
+
+    await act(async () => {
+      darkRadio?.click()
+    })
+    await flush()
+
+    expect(useThemeStore.getState().preference).toBe('dark')
+    expect(useThemeStore.getState().resolvedTheme).toBe('dark')
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+
+    const systemRadio = group?.querySelector(
+      '[role="radio"][aria-label="System"]'
+    ) as HTMLButtonElement | null
+    await act(async () => {
+      systemRadio?.click()
+    })
+    await flush()
+
+    expect(useThemeStore.getState().preference).toBe('system')
   })
 })
 

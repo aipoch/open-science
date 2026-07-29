@@ -3,12 +3,14 @@ import { describe, expect, it } from 'vitest'
 import { MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
 
 import {
+  createSessionFile,
   sanitizeActivityGroup,
   normalizeSessionFile,
   sanitizeMessageImages,
   sanitizeToolActivity,
   type PersistedChatSession
 } from './session-persistence'
+import { createLinearConversationGraph } from './conversation-graph'
 
 const createSessionWithActivity = (activity: unknown): Record<string, unknown> => ({
   id: 'session-1',
@@ -24,6 +26,98 @@ const createSessionWithActivity = (activity: unknown): Record<string, unknown> =
 
 const getRestoredActivities = (session: unknown): PersistedChatSession['activities'] =>
   normalizeSessionFile(session)?.activities
+
+describe('message part persistence', () => {
+  it('preserves a linked-folder reference as root id plus relative path', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: '@study.csv',
+          parts: [
+            {
+              type: 'artifact',
+              id: 'linked-1',
+              name: 'study.csv',
+              source: 'linked-folder',
+              rootId: 'root-1',
+              relativePath: 'data/study.csv',
+              path: '/must/not/be/persisted'
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    expect(restored?.messages[0].parts).toEqual([
+      {
+        type: 'artifact',
+        id: 'linked-1',
+        name: 'study.csv',
+        source: 'linked-folder',
+        rootId: 'root-1',
+        relativePath: 'data/study.csv'
+      }
+    ])
+  })
+})
+
+describe('upload message persistence', () => {
+  it('keeps immutable Version identity while removing absolute legacy paths', () => {
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Uploads',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Analyze this',
+          uploads: [
+            {
+              id: 'upload-1',
+              versionId: 'upload-version-1',
+              versionNumber: 1,
+              createdAt: '2026-07-27T12:00:00.000Z',
+              sessionId: 'session-1',
+              name: 'input.csv',
+              originalName: 'input.csv',
+              path: '/Users/private/input.csv',
+              size: 12,
+              checksum: 'a'.repeat(64)
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    })
+
+    expect(restored?.messages[0].uploads).toEqual([
+      {
+        id: 'upload-1',
+        versionId: 'upload-version-1',
+        versionNumber: 1,
+        createdAt: '2026-07-27T12:00:00.000Z',
+        sessionId: 'session-1',
+        name: 'input.csv',
+        originalName: 'input.csv',
+        size: 12,
+        sha256: 'a'.repeat(64)
+      }
+    ])
+    expect(JSON.stringify(restored)).not.toContain('/Users/private/input.csv')
+  })
+})
 
 describe('message image persistence', () => {
   it('keeps only bounded raster images with recomputed byte metadata', () => {
@@ -107,6 +201,78 @@ describe('message image persistence', () => {
     expect(restoredImages.reduce((total, image) => total + image.byteLength, 0)).toBe(
       MAX_ACP_SESSION_IMAGE_BYTES
     )
+  })
+
+  it('sanitizes images that exist only on an inactive conversation branch before writing', () => {
+    const activeMessage = {
+      id: 'active-message',
+      role: 'user' as const,
+      content: 'Active prompt',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [activeMessage],
+      createdAt: 1,
+      updatedAt: 2
+    })
+    const inactiveBranchId = 'message-branch-inactive'
+    const inactiveMessageId = 'inactive-message'
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Images',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [activeMessage],
+      conversationGraph: {
+        ...graph,
+        branches: [
+          ...graph.branches,
+          {
+            id: inactiveBranchId,
+            agentFrameId: graph.rootFrameId,
+            parentBranchId: graph.branches[0].id,
+            headMessageId: inactiveMessageId,
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ],
+        messages: [
+          ...graph.messages,
+          {
+            id: inactiveMessageId,
+            role: 'agent',
+            content: 'Inactive reply',
+            status: 'complete',
+            eventIds: [],
+            images: Array.from({ length: 6 }, (_, index) => ({
+              id: `inactive-image-${index}`,
+              mimeType: 'image/png' as const,
+              data: 'AQID',
+              byteLength: 999
+            })),
+            agentFrameId: graph.rootFrameId,
+            introducedOnBranchId: inactiveBranchId,
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ]
+      },
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    const persisted = createSessionFile(session).session
+    const inactiveImages = persisted.conversationGraph?.messages.find(
+      (message) => message.id === inactiveMessageId
+    )?.images
+
+    expect(inactiveImages).toHaveLength(4)
+    expect(inactiveImages?.every((image) => image.byteLength === 3)).toBe(true)
   })
 })
 
@@ -240,6 +406,61 @@ describe('normalizeSessionFile with activities', () => {
     )
 
     expect(activities?.[0]?.status).toBe('failed')
+  })
+
+  it('restores open conversation graph activities as failed', () => {
+    const persisted = createSessionFile({
+      ...(createSessionWithActivity({
+        id: 'activity-1',
+        kind: 'tool',
+        title: 'downloading',
+        status: 'in_progress',
+        sortIndex: 1,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }) as PersistedChatSession),
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Download it',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    const restored = normalizeSessionFile(persisted)
+
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+  })
+
+  it('builds a legacy conversation graph from normalized interrupted messages', () => {
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Interrupted session',
+      cwd: '/workspace',
+      status: 'running',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'agent',
+          content: 'Partial response',
+          status: 'streaming',
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    })
+
+    expect(restored?.messages[0]?.status).toBe('error')
+    expect(restored?.conversationGraph?.messages[0]?.status).toBe('error')
   })
 
   it('loads sessions that predate persisted activities', () => {

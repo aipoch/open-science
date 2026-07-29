@@ -8,6 +8,7 @@ import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { isUnavailableFileError } from '../preview-errors'
 import { createPreviewResourceKey } from '../preview-resource-key'
+import { createPreviewRequestScope } from '../preview-file-reader'
 import { useNearViewport } from '../useNearViewport'
 
 const THUMBNAIL_WIDTH = 220
@@ -263,6 +264,8 @@ export const PdfThumbnail = ({
   path,
   name,
   source = 'artifact',
+  projectId,
+  sessionId,
   mimeType,
   size,
   mtimeMs
@@ -270,11 +273,21 @@ export const PdfThumbnail = ({
   path: string
   name: string
   source?: PreviewFileSource
+  projectId?: string
+  sessionId?: string
   mimeType?: string
   size?: number
   mtimeMs?: number
 }): React.JSX.Element => {
-  const requestKey = createPreviewResourceKey({ source, path, mimeType, size, mtimeMs })
+  const requestKey = createPreviewResourceKey({
+    projectId,
+    sessionId,
+    source,
+    path,
+    mimeType,
+    size,
+    mtimeMs
+  })
   const [setElement, isNearViewport] = useNearViewport<HTMLDivElement>()
   const [result, setResult] = useState<{ requestKey: string; status: 'ready' | 'error' } | null>(
     null
@@ -291,6 +304,7 @@ export const PdfThumbnail = ({
     const subscription = subscribeThumbnailJob(requestKey, {
       source,
       path,
+      ...createPreviewRequestScope({ projectId, sessionId, source, path }),
       ...(mimeType ? { mimeType } : {})
     })
     let subscribed = true
@@ -309,7 +323,7 @@ export const PdfThumbnail = ({
       subscribed = false
       subscription.unsubscribe()
     }
-  }, [mimeType, path, requestKey, shouldRender, source])
+  }, [mimeType, path, projectId, requestKey, sessionId, shouldRender, source])
 
   return (
     <div ref={setElement} className="size-full">

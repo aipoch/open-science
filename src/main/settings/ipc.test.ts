@@ -257,16 +257,13 @@ describe('settings IPC handlers', () => {
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
   })
 
-  it('does not reconnect when isolated logout times out', async () => {
-    // Reconnecting when the sign-out timed out would re-authenticate with the credential that is
-    // still in place — the opposite of what the user intended. Skip the reconnect so the live
-    // agent keeps its existing session until a retry clears the credential.
+  it('does not reconnect when app-owned isolated logout fails', async () => {
     handlers.clear()
     const service = createFakeService()
     service.logoutIsolatedCodex.mockResolvedValue({
       ok: false,
-      category: 'timeout',
-      message: 'Codex sign-out timed out.'
+      category: 'unknown',
+      message: 'The Open Science Codex login could not be removed.'
     })
     const onActiveProviderChanged = vi.fn()
     registerSettingsIpcHandlers({
@@ -289,20 +286,34 @@ describe('settings IPC handlers', () => {
     })
 
     // Login succeeded and the active provider is still the isolated subscription: reconnect.
+    service.loginIsolatedCodex.mockResolvedValue({ ok: true, category: 'ok', applied: true })
     service.getSettingsView.mockResolvedValue({
       claude: {},
-      providers: [{ id: CODEX_SUBSCRIPTION_PROVIDER_ID, type: 'codex-isolated' }],
+      providers: [
+        {
+          id: CODEX_SUBSCRIPTION_PROVIDER_ID,
+          type: 'codex-isolated',
+          codexAuthMode: 'isolated'
+        }
+      ],
       activeProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID
     })
     await invoke('settings:login-isolated-codex')
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
 
-    // Login succeeded but the provider was switched to shared mid-flow (outcome discarded): the
-    // shared runtime's credentials didn't change, so a reconnect would be redundant.
+    // Login succeeded but the provider was switched to imported auth mid-flow (outcome discarded):
+    // the imported runtime's credentials didn't change, so a reconnect would be redundant.
     onActiveProviderChanged.mockClear()
+    service.loginIsolatedCodex.mockResolvedValue({ ok: true, category: 'ok', applied: false })
     service.getSettingsView.mockResolvedValue({
       claude: {},
-      providers: [{ id: CODEX_SUBSCRIPTION_PROVIDER_ID, type: 'codex-shared' }],
+      providers: [
+        {
+          id: CODEX_SUBSCRIPTION_PROVIDER_ID,
+          type: 'codex-isolated',
+          codexAuthMode: 'imported'
+        }
+      ],
       activeProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID
     })
     await invoke('settings:login-isolated-codex')

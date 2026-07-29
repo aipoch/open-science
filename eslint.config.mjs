@@ -15,6 +15,8 @@ export default defineConfig(
       '**/dist-e2e-*',
       // Runtime kernel loop scripts shipped as raw resources (CommonJS, not part of the TS source tree).
       'resources/notebook/*.js',
+      // Whole-window find overlay: an ES-module page shipped as a raw resource (not part of the TS source tree).
+      'resources/find-overlay/*.js',
       // Git worktrees live under .claude/worktrees and hold full source copies; don't lint duplicates.
       '**/.claude/**',
       // Local subagent scratch (ledgers, briefs, ad-hoc demo scripts) — never shipped.

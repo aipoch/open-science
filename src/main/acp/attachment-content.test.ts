@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 
 import {
   MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
+  buildDatasetAttachmentNotice,
+  buildDeferredMediaNotice,
   buildOversizedAttachmentNotice,
   formatBytes,
   imageAttachmentMimeType,
+  isDatasetAttachment,
   isTabularAttachment,
   isTextLikeAttachment
 } from './attachment-content'
@@ -150,6 +153,40 @@ describe('buildOversizedAttachmentNotice', () => {
 
     expect(notice).toContain('line ranges or sections')
     expect(notice).not.toContain('file continues')
+  })
+})
+
+describe('binary dataset attachments', () => {
+  it('recognizes spreadsheet and columnar scientific data formats', () => {
+    expect(isDatasetAttachment('study.xlsx')).toBe(true)
+    expect(isDatasetAttachment('events.parquet', 'application/octet-stream')).toBe(true)
+    expect(isDatasetAttachment('matrix.h5')).toBe(true)
+    expect(isDatasetAttachment('movie.mp4')).toBe(false)
+  })
+
+  it('steers the agent toward schema inspection and notebook computation', () => {
+    const notice = buildDatasetAttachmentNotice({ name: 'study.xlsx', size: 3_000_000_000 })
+
+    expect(notice).toContain('study.xlsx')
+    expect(notice).toContain('available on disk')
+    expect(notice).toContain('schema')
+    expect(notice).toContain('sample')
+    expect(notice).toContain('notebook')
+    expect(notice).toContain('Do not load the whole file')
+  })
+})
+
+describe('buildDeferredMediaNotice', () => {
+  it.each([
+    ['image', 'microscopy.png'],
+    ['PDF', 'paper.pdf']
+  ] as const)('describes an oversized %s as an on-disk linked resource', (kind, name) => {
+    const notice = buildDeferredMediaNotice({ name, size: 3 * 1024 * 1024 * 1024, kind })
+
+    expect(notice).toContain(name)
+    expect(notice).toContain('3.0 GB')
+    expect(notice).toContain('too large for automatic in-memory processing')
+    expect(notice).toContain('available on disk via the linked resource below')
   })
 })
 

@@ -401,16 +401,17 @@ const registerSettingsIpcHandlers = ({
     const result = await service.loginIsolatedCodex()
 
     // A fresh login changes the credentials the live agent relies on; reconnect so it picks them
-    // up. Skip when the outcome was discarded by a mid-flow switch to shared — reconnecting the
-    // now-shared runtime would be redundant (its credentials didn't change).
-    if (result.ok) {
+    // up. Skip when the outcome was discarded by a mid-flow switch to imported auth — reconnecting
+    // the imported runtime would be redundant (its credentials didn't change).
+    if (result.ok && result.applied !== false) {
       const snapshot = await service.getSettingsView()
       const active = snapshot.providers.find(
         (provider) => provider.id === snapshot.activeProviderId
       )
       if (
         snapshot.activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID &&
-        active?.type === 'codex-isolated'
+        active?.type === 'codex-isolated' &&
+        active.codexAuthMode === 'isolated'
       ) {
         onActiveProviderChanged?.()
       }
@@ -421,9 +422,8 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:logout-isolated-codex', async () => {
     const result = await service.logoutIsolatedCodex()
 
-    // Reconnect only when the sign-out actually cleared the credential. A timed-out sign-out leaves
-    // it in place, so forcing the live agent to reconnect would just re-authenticate against the
-    // credential we failed to remove.
+    // Reconnect only when the app-owned credential was actually removed. If local cleanup fails,
+    // keep the live agent untouched because it may still hold the credential in memory.
     if (result.ok) {
       const snapshot = await service.getSettingsView()
       if (snapshot.activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID) {

@@ -35,10 +35,9 @@ export const encodeSessionDataPaths = (
   cwd: encodeDataPath(session.cwd, dataRoot) as string,
   messages: session.messages.map((message) => ({
     ...message,
-    uploads: message.uploads?.map((upload) => ({
-      ...upload,
-      path: encodeDataPath(upload.path, dataRoot) as string
-    }))
+    uploads: message.uploads?.map((upload) =>
+      upload.path ? { ...upload, path: encodeDataPath(upload.path, dataRoot) as string } : upload
+    )
   })),
   artifacts: session.artifacts?.map((artifact) => encodeArtifact(artifact, dataRoot))
 })
@@ -51,10 +50,9 @@ export const decodeSessionDataPaths = (
   cwd: decodeDataPath(session.cwd, dataRoot) as string,
   messages: session.messages.map((message) => ({
     ...message,
-    uploads: message.uploads?.map((upload) => ({
-      ...upload,
-      path: decodeDataPath(upload.path, dataRoot) as string
-    }))
+    uploads: message.uploads?.map((upload) =>
+      upload.path ? { ...upload, path: decodeDataPath(upload.path, dataRoot) as string } : upload
+    )
   })),
   artifacts: session.artifacts?.map((artifact) => decodeArtifact(artifact, dataRoot))
 })

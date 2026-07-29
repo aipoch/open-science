@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -87,6 +88,76 @@ describe('resolveTurnScopeWithArtifactDigests', () => {
     ): string | undefined => scope.blocks.find((block) => block.sourceId === 'a1')?.contentHash
 
     expect(hashOf(first)).toBe(hashOf(second))
+  })
+
+  it('pins provenance-native Artifact Versions to verified immutable bytes', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'reviewer-native-digest-'))
+    const nativeVersionId = 'native-version-1'
+    const nativePath = join(storageRoot, 'native.csv')
+    const session: PersistedChatSession = {
+      ...buildSession(),
+      messages: [
+        buildSession().messages[0],
+        { ...buildSession().messages[1], artifactIds: [nativeVersionId] }
+      ]
+    }
+    let contents = 'first native version'
+    await writeFile(nativePath, contents)
+    const resolveVersion = async (): Promise<{
+      path: string
+      filename: string
+      checksum: string
+    }> => ({
+      path: nativePath,
+      filename: 'native.csv',
+      checksum: createHash('sha256').update(contents).digest('hex')
+    })
+
+    const before = await resolveTurnScopeWithArtifactDigests(
+      session,
+      'a1',
+      storageRoot,
+      resolveVersion
+    )
+    contents = 'second native version'
+    await writeFile(nativePath, contents)
+    const after = await resolveTurnScopeWithArtifactDigests(
+      session,
+      'a1',
+      storageRoot,
+      resolveVersion
+    )
+
+    expect(after.blocks.find((block) => block.sourceId === 'a1')?.contentHash).not.toBe(
+      before.blocks.find((block) => block.sourceId === 'a1')?.contentHash
+    )
+  })
+
+  it('fails closed when neither Version authority nor legacy bytes can resolve an artifact', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'reviewer-missing-digest-'))
+    const authorityError = new Error('Version authority unavailable')
+
+    await expect(
+      resolveTurnScopeWithArtifactDigests(buildSession(), 'a1', storageRoot, async () => {
+        throw authorityError
+      })
+    ).rejects.toThrow(authorityError.message)
+  })
+
+  it('falls back to legacy managed bytes when no provenance Version exists', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'reviewer-legacy-digest-'))
+    await writeArtifact(storageRoot, 'legacy bytes')
+
+    const scope = await resolveTurnScopeWithArtifactDigests(
+      buildSession(),
+      'a1',
+      storageRoot,
+      async () => {
+        throw new Error('Version not found')
+      }
+    )
+
+    expect(scope.blocks.find((block) => block.sourceId === 'a1')?.contentHash).toBeDefined()
   })
 
   it('streams a large artifact fully (a late-byte edit still changes the hash)', async () => {

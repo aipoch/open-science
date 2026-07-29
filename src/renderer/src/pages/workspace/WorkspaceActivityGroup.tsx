@@ -27,6 +27,8 @@ type WorkspaceActivityGroupProps = {
   onToggleGroup: (groupId: string) => void
   expansionOverrides: ActivityExpansionOverrides
   onToggleRow: (activityId: string, nextExpanded: boolean) => void
+  // Embedded transcript surfaces can supply their own horizontal gutter without changing live chat.
+  contentPaddingClassName?: string
   // Map of job_id → JobSummary for jobs bound to activities in this group.
   jobsByActivityId?: Map<string, JobSummary>
   onOpenJobDetail?: (job: JobSummary) => void
@@ -39,6 +41,7 @@ const WorkspaceActivityGroup = ({
   onToggleGroup,
   expansionOverrides,
   onToggleRow,
+  contentPaddingClassName,
   jobsByActivityId,
   onOpenJobDetail
 }: WorkspaceActivityGroupProps): React.JSX.Element => {
@@ -48,7 +51,7 @@ const WorkspaceActivityGroup = ({
 
   return (
     <MessageScrollerItem key={group.id} messageId={group.id} className="min-w-0">
-      <div className="px-4 pb-1 pt-5 md:px-6">
+      <div className={cn('px-4 pb-1 pt-5 md:px-6', contentPaddingClassName)}>
         <div
           className="w-full overflow-hidden rounded-[14px] bg-bg-200/70 px-1.5 py-1"
           data-testid="tool-group"

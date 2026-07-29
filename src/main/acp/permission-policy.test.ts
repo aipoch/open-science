@@ -15,6 +15,7 @@ const createPermissionRequest = (
   locations?: Array<{ path: string }>,
   overrides?: {
     title?: string
+    providerToolName?: string
     options?: RequestPermissionRequest['options']
     rawInput?: unknown
   }
@@ -25,7 +26,8 @@ const createPermissionRequest = (
     title: overrides?.title ?? 'Tool call',
     kind,
     locations,
-    rawInput: overrides?.rawInput
+    rawInput: overrides?.rawInput,
+    ...(overrides?.providerToolName ? { _meta: { toolName: overrides.providerToolName } } : {})
   },
   options: overrides?.options ?? [
     { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
@@ -178,6 +180,54 @@ describe('permission policy', () => {
       resolveAutomaticPermission(
         createPermissionRequest('other', undefined, { title: 'begin_activity_group' }),
         { profile: 'ask', mcpServerNames: ['open-science-activity'] }
+      )
+    ).toBeUndefined()
+  })
+
+  it('auto-approves only the server-qualified Artifact save capability without prompting', () => {
+    for (const providerToolName of [
+      'mcp__open-science-artifacts__write_artifact_file',
+      'mcp__open_science_artifacts__write_artifact_file',
+      'mcp.open-science-artifacts.write_artifact_file',
+      'open-science-artifacts_write_artifact_file',
+      'write'
+    ]) {
+      expect(
+        resolveAutomaticPermission(
+          createPermissionRequest('other', undefined, { providerToolName }),
+          {
+            profile: 'ask',
+            mcpServerNames: ['open-science-artifacts']
+          }
+        )
+      ).toBe('allow')
+    }
+
+    expect(
+      resolveAutomaticPermission(
+        createPermissionRequest('other', undefined, { title: 'write_artifact_file' }),
+        { profile: 'ask', mcpServerNames: ['open-science-artifacts'] }
+      )
+    ).toBeUndefined()
+
+    // Claude Code's qualified title is still presentation data in isolation. Runtime may only restore
+    // it as provider identity after binding it to a preceding MCP tool_call with the same call id.
+    expect(
+      resolveAutomaticPermission(
+        createPermissionRequest('other', undefined, {
+          title: 'mcp__open-science-artifacts__write_artifact_file'
+        }),
+        { profile: 'ask', mcpServerNames: ['open-science-artifacts'] }
+      )
+    ).toBeUndefined()
+
+    expect(
+      resolveAutomaticPermission(
+        createPermissionRequest('other', undefined, {
+          title: 'mcp__open-science-artifacts__write_artifact_file',
+          providerToolName: 'mcp__third-party__write_artifact_file'
+        }),
+        { profile: 'ask', mcpServerNames: ['open-science-artifacts'] }
       )
     ).toBeUndefined()
   })

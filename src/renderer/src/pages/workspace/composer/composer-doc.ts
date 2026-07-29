@@ -2,19 +2,14 @@
 // chips, and artifact chips. These functions are DOM-free except domToDoc/applyDocToDom, which
 // bridge the model to the contenteditable editor.
 
-import type { ArtifactReference } from '../../../../../shared/artifacts'
+import { getExtensionPreservingFileNameParts } from '../extension-preserving-file-name'
+
+import type { FileReference } from '../../../../../shared/artifacts'
 import type { MessagePart } from '../../../../../shared/session-persistence'
 
-// One artifact/upload reference chip in the composer doc. Mirrors ArtifactReference plus the DOM
-// label; `source` distinguishes a user upload from a generated output for the runtime resolver.
-export type ComposerArtifactNode = {
-  type: 'artifact'
-  id: string
-  name: string
-  path: string
-  source: 'upload' | 'artifact'
-  versionId?: string
-}
+// One file-reference chip in the composer doc. The linked-folder variant deliberately carries only
+// a granted root id plus a relative path, reserving the future source without exposing an absolute path.
+export type ComposerArtifactNode = { type: 'artifact' } & FileReference
 
 export type ComposerNode =
   | { type: 'text'; text: string }
@@ -50,19 +45,37 @@ export const docToSkillIds = (doc: ComposerDoc): string[] => {
 
 // Collect referenced artifacts in document order, de-duplicated by path so the runtime attaches
 // each underlying file once even if the user mentions it twice.
-export const docToArtifactRefs = (doc: ComposerDoc): ArtifactReference[] => {
-  const refs: ArtifactReference[] = []
-  const seenPaths = new Set<string>()
+export const docToArtifactRefs = (doc: ComposerDoc): FileReference[] => {
+  const refs: FileReference[] = []
+  const seenLocations = new Set<string>()
   for (const node of doc.nodes) {
-    if (node.type !== 'artifact' || seenPaths.has(node.path)) continue
-    seenPaths.add(node.path)
-    refs.push({
-      id: node.id,
-      name: node.name,
-      path: node.path,
-      source: node.source,
-      versionId: node.versionId
-    })
+    if (node.type !== 'artifact') continue
+    const location =
+      node.source === 'linked-folder'
+        ? `${node.source}:${node.rootId}:${node.relativePath}`
+        : `${node.source}:${node.path}`
+    if (seenLocations.has(location)) continue
+    seenLocations.add(location)
+
+    if (node.source === 'linked-folder') {
+      refs.push({
+        id: node.id,
+        name: node.name,
+        source: node.source,
+        rootId: node.rootId,
+        relativePath: node.relativePath,
+        mimeType: node.mimeType
+      })
+    } else {
+      refs.push({
+        id: node.id,
+        name: node.name,
+        path: node.path,
+        source: node.source,
+        mimeType: node.mimeType,
+        versionId: node.versionId
+      })
+    }
   }
   return refs
 }
@@ -81,12 +94,24 @@ export const docFromMessageParts = (parts: MessagePart[]): ComposerDoc => {
   const nodes: ComposerNode[] = parts.map((part) => {
     if (part.type === 'text') return { type: 'text', text: part.text }
     if (part.type === 'skill') return { type: 'skill', id: part.id, name: part.name }
+    if (part.source === 'linked-folder') {
+      return {
+        type: 'artifact',
+        id: part.id,
+        name: part.name,
+        source: part.source,
+        rootId: part.rootId,
+        relativePath: part.relativePath,
+        mimeType: part.mimeType
+      }
+    }
     return {
       type: 'artifact',
       id: part.id,
       name: part.name,
       path: part.path,
       source: part.source,
+      mimeType: part.mimeType,
       versionId: part.versionId
     }
   })
@@ -105,13 +130,22 @@ const ARTIFACT_MENTION_TYPE = 'artifact'
 // Read one artifact chip element back into a node; returns null when required attributes are missing.
 const artifactNodeFromEl = (el: HTMLElement): ComposerArtifactNode | null => {
   const id = el.getAttribute('data-mention-id')
-  const path = el.getAttribute('data-mention-path')
-  if (id === null || path === null) return null
-  const source = el.getAttribute('data-mention-source') === 'upload' ? 'upload' : 'artifact'
+  if (id === null) return null
+  const source = el.getAttribute('data-mention-source')
   // Prefer the stored filename; fall back to the visible label with its leading `@` stripped.
   const name = el.getAttribute('data-mention-filename') ?? (el.textContent ?? '').replace(/^@/, '')
+  const mimeType = el.getAttribute('data-mention-mime-type') ?? undefined
+  if (source === 'linked-folder') {
+    const rootId = el.getAttribute('data-mention-root-id')
+    const relativePath = el.getAttribute('data-mention-relative-path')
+    if (rootId === null || relativePath === null) return null
+    return { type: 'artifact', id, name, source, rootId, relativePath, mimeType }
+  }
+
+  const path = el.getAttribute('data-mention-path')
+  if (path === null || (source !== 'upload' && source !== 'artifact')) return null
   const versionId = el.getAttribute('data-mention-version-id') ?? undefined
-  return { type: 'artifact', id, name, path, source, versionId }
+  return { type: 'artifact', id, name, path, source, mimeType, versionId }
 }
 
 // Read a contenteditable root into a doc, mapping chip spans to skill/artifact nodes and collapsing
@@ -153,6 +187,8 @@ export const domToDoc = (root: HTMLElement): ComposerDoc => {
 // domToDoc still reads the full name back from textContent / the stored filename attribute.
 const CHIP_BASE_CLASS =
   'inline-block max-w-[220px] truncate align-middle rounded px-1.5 py-0.5 mx-0.5 text-sm font-medium select-all'
+const ARTIFACT_CHIP_BASE_CLASS =
+  'inline-flex max-w-[220px] align-middle rounded px-1.5 py-0.5 mx-0.5 text-sm font-medium select-all'
 
 // Render a skill chip span: an atomic, non-editable blue mention token. Exported so the mention hook
 // inserts the exact same markup it re-renders here, and the styling can never drift between the two.
@@ -174,13 +210,34 @@ export const createArtifactChip = (node: ComposerArtifactNode): HTMLSpanElement 
   span.setAttribute('contenteditable', 'false')
   span.setAttribute('data-mention-type', ARTIFACT_MENTION_TYPE)
   span.setAttribute('data-mention-id', node.id)
-  span.setAttribute('data-mention-path', node.path)
   span.setAttribute('data-mention-source', node.source)
   span.setAttribute('data-mention-filename', node.name)
-  if (node.versionId) span.setAttribute('data-mention-version-id', node.versionId)
+  if (node.source === 'linked-folder') {
+    span.setAttribute('data-mention-root-id', node.rootId)
+    span.setAttribute('data-mention-relative-path', node.relativePath)
+  } else {
+    span.setAttribute('data-mention-path', node.path)
+  }
+  if (node.mimeType) span.setAttribute('data-mention-mime-type', node.mimeType)
+  if (node.source !== 'linked-folder' && node.versionId) {
+    span.setAttribute('data-mention-version-id', node.versionId)
+  }
   // Green mention pill, distinct from the blue skill chip.
-  span.className = `${CHIP_BASE_CLASS} bg-mention-chip text-mention-chip-foreground`
-  span.textContent = `@${node.name}`
+  span.className = `${ARTIFACT_CHIP_BASE_CLASS} bg-mention-chip text-mention-chip-foreground`
+  span.title = node.name
+  const { head, tail, extension } = getExtensionPreservingFileNameParts(node.name)
+  const headSpan = document.createElement('span')
+  headSpan.className = 'min-w-0 flex-1 truncate'
+  headSpan.textContent = `@${head}`
+  span.append(headSpan)
+
+  for (const segment of [tail, extension]) {
+    if (!segment) continue
+    const segmentSpan = document.createElement('span')
+    segmentSpan.className = 'shrink-0'
+    segmentSpan.textContent = segment
+    span.append(segmentSpan)
+  }
   return span
 }
 

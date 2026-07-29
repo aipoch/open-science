@@ -3,8 +3,27 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
-import type { UploadedAttachment } from '../../../../shared/uploads'
+import { createUploadVersionReference, type UploadedAttachment } from '../../../../shared/uploads'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// pdfjs-dist references DOMMatrix at module load, which jsdom does not provide. This suite exercises
+// click/scroll behavior, not PDF rendering, so stub the library to keep the import graph loadable.
+vi.mock('pdfjs-dist', () => {
+  class PDFDataRangeTransport {
+    requestAllRanges(): void {
+      /* no-op */
+    }
+  }
+  return {
+    getDocument: () => ({
+      promise: Promise.resolve({ numPages: 0, destroy: () => undefined }),
+      destroy: () => undefined
+    }),
+    GlobalWorkerOptions: { workerSrc: '' },
+    PDFDataRangeTransport,
+    version: 'test'
+  }
+})
 
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
@@ -37,6 +56,7 @@ vi.mock('@/lib/utils', () => ({
 }))
 
 const upsertAndActivateItem = vi.fn()
+const announceWindowFindReady = vi.fn(() => () => undefined)
 
 vi.mock('@/stores/preview-workbench-store', () => ({
   usePreviewWorkbenchStore: {
@@ -84,6 +104,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
   beforeEach(() => {
     upsertAndActivateItem.mockClear()
+    announceWindowFindReady.mockClear()
     container = document.createElement('div')
     document.body.appendChild(container)
     window.api = {
@@ -106,6 +127,14 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
           .mockResolvedValue({ content: '', encoding: 'utf8', size: 0, truncated: false }),
         openFile: vi.fn().mockResolvedValue(undefined),
         finalizeRunArtifacts: vi.fn()
+      },
+      uploads: {
+        readPreview: vi
+          .fn()
+          .mockResolvedValue({ content: '', encoding: 'utf8', size: 0, truncated: false })
+      },
+      window: {
+        announceWindowFindReady
       }
     } as unknown as Window['api']
   })
@@ -172,12 +201,31 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       title: 'report.png',
       type: 'file',
       path: '/workspace/report.png',
+      projectId: 'default',
       name: 'report.png',
       format: 'image',
       mimeType: 'image/png',
       size: 2048,
       mtimeMs: 1710000000100
     })
+  })
+
+  it('announces whole-window find readiness to main when the Workspace mounts', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle' })}
+          canEditMessage={false}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    // The find bar is an Electron overlay owned by main; the Workspace's only job is to announce it is
+    // mounted and searchable so main intercepts Cmd/Ctrl+F.
+    expect(announceWindowFindReady).toHaveBeenCalledTimes(1)
   })
 
   it('does not write to the preview store for non-managed-file artifacts', async () => {
@@ -273,11 +321,67 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       type: 'file',
       source: 'upload',
       path: '/Users/example/.open-science/uploads/default-project/session-42/first.png',
+      projectId: 'default',
       name: 'first.png',
       format: 'image',
       mimeType: 'image/png',
       size: 2048
     })
+  })
+
+  it('probes a cross-session upload mention with the source session from its locator', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const path = createUploadVersionReference('upload-version-1', {
+      projectId: 'project-1',
+      sessionId: 'source-session'
+    })
+    const session = createSession({
+      id: 'active-session',
+      projectId: 'project-1',
+      status: 'idle',
+      messages: [
+        createMessage({
+          id: 'prompt-1',
+          content: '@shared.csv',
+          parts: [
+            {
+              type: 'artifact',
+              id: 'upload-version-1',
+              name: 'shared.csv',
+              path,
+              source: 'upload'
+            }
+          ]
+        })
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={session}
+          canEditMessage={false}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    const mention = container.querySelector<HTMLButtonElement>('[aria-label="Preview shared.csv"]')
+    await act(async () => {
+      mention?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.api.uploads.readPreview).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'source-session',
+      path,
+      maxBytes: 1,
+      encoding: 'utf8'
+    })
+    expect(upsertAndActivateItem).toHaveBeenCalledTimes(1)
   })
 
   it('does not read a generated text thumbnail until its card approaches the viewport', async () => {

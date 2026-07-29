@@ -694,6 +694,76 @@ describe('codexFramework', () => {
     expect(env.OPENAI_API_KEY).toBeUndefined()
     expect(env.CODEX_PATH).toBeUndefined()
   })
+
+  it('replaces every inherited proxy shape for a subscription spawn', () => {
+    const spawnProcess = vi.fn().mockReturnValue(fakeChild)
+    const framework = createCodexFramework({
+      sourceEnv: {
+        PATH: '/parent-bin',
+        ALL_PROXY: 'socks5://stale-proxy.example.test:9050',
+        HTTPS_PROXY: 'http://stale-proxy.example.test:3128',
+        NO_PROXY: 'stale-bypass.example.test'
+      },
+      spawnProcess
+    })
+
+    framework.spawn({
+      executablePath: '/usr/local/bin/codex-acp',
+      proxyEnvironmentMode: 'replace',
+      env: {
+        CODEX_HOME: '/data/codex-subscription',
+        HTTP_PROXY: 'http://system-proxy.example.test:3128',
+        HTTPS_PROXY: 'http://system-proxy.example.test:3128',
+        NO_PROXY: 'localhost,127.0.0.1,::1'
+      },
+      args: []
+    })
+
+    const env = spawnProcess.mock.calls[0][2].env as NodeJS.ProcessEnv
+    expect(env).toMatchObject({
+      HTTP_PROXY: 'http://system-proxy.example.test:3128',
+      HTTPS_PROXY: 'http://system-proxy.example.test:3128',
+      NO_PROXY: 'localhost,127.0.0.1,::1'
+    })
+    expect(env.ALL_PROXY).toBeUndefined()
+    expect(env.NO_PROXY).not.toContain('stale-bypass.example.test')
+
+    framework.spawn({
+      executablePath: '/usr/local/bin/codex-acp',
+      proxyEnvironmentMode: 'replace',
+      env: { CODEX_HOME: '/data/codex-subscription' },
+      args: []
+    })
+    const directEnv = spawnProcess.mock.calls[1][2].env as NodeJS.ProcessEnv
+    expect(directEnv.HTTP_PROXY).toBeUndefined()
+    expect(directEnv.HTTPS_PROXY).toBeUndefined()
+    expect(directEnv.ALL_PROXY).toBeUndefined()
+    expect(directEnv.NO_PROXY).toBeUndefined()
+  })
+
+  it('preserves inherited proxies when subscription proxy resolution fails', () => {
+    const spawnProcess = vi.fn().mockReturnValue(fakeChild)
+    const framework = createCodexFramework({
+      sourceEnv: {
+        PATH: '/parent-bin',
+        HTTPS_PROXY: 'http://inherited-proxy.example.test:3128',
+        NO_PROXY: 'inherited-bypass.example.test'
+      },
+      spawnProcess
+    })
+
+    framework.spawn({
+      executablePath: '/usr/local/bin/codex-acp',
+      proxyEnvironmentMode: 'inherit',
+      env: { CODEX_HOME: '/data/codex-subscription' },
+      args: []
+    })
+
+    expect(spawnProcess.mock.calls[0][2].env).toMatchObject({
+      HTTPS_PROXY: 'http://inherited-proxy.example.test:3128',
+      NO_PROXY: 'inherited-bypass.example.test'
+    })
+  })
 })
 
 describe('buildCodexConfig reasoning effort', () => {

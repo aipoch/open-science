@@ -1,5 +1,5 @@
 import { createReadStream, existsSync, type Dirent } from 'node:fs'
-import { lstat, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, readFile, readdir, readlink, rm, stat, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { join, relative } from 'node:path'
 
@@ -17,6 +17,7 @@ export type MigrationMarker = {
   target: string
   createdAt: number
   status: 'copying' | 'verified'
+  migratedDirs?: string[]
   inventory?: { dirs: string[]; fileCount: number; totalBytes: number; digest: string }
 }
 
@@ -34,6 +35,13 @@ const isInventory = (value: unknown): value is NonNullable<MigrationMarker['inve
     /^[a-f0-9]{64}$/.test(inventory.digest)
   )
 }
+
+const isSafeMigrationPath = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.length > 0 &&
+  !value.startsWith('/') &&
+  !/^[A-Za-z]:[\\/]/.test(value) &&
+  value.split(/[\\/]/).every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
 
 // Sync existence check so storage-root's synchronous computeDefaultDataRoot can consult it directly.
 export const hasPendingMigrationMarker = (root: string): boolean =>
@@ -54,6 +62,10 @@ export const readMigrationMarker = async (root: string): Promise<MigrationMarker
       typeof parsed.createdAt !== 'number' ||
       !Number.isFinite(parsed.createdAt) ||
       (parsed.status !== 'copying' && parsed.status !== 'verified') ||
+      (parsed.migratedDirs !== undefined &&
+        (!Array.isArray(parsed.migratedDirs) ||
+          parsed.migratedDirs.some((dir) => !isSafeMigrationPath(dir)) ||
+          new Set(parsed.migratedDirs).size !== parsed.migratedDirs.length)) ||
       (parsed.inventory !== undefined && !isInventory(parsed.inventory))
     ) {
       return null
@@ -80,9 +92,11 @@ export const removeMigrationMarker = async (root: string): Promise<void> => {
 // Fresh migration token, used to tie a staged copy to the source/target pair that created it.
 export const newToken = (): string => randomUUID()
 
-// Recursively counts files and bytes under each of `dirs` beneath `root`, returning the subset of dirs
-// that actually exist. A missing top-level dir is valid, but errors or unsupported entries inside a
-// present dir abort the scan so commit can never accept a partial tally as proof of equivalence.
+// Recursively inventories regular files and symbolic links under each of `dirs` beneath `root`,
+// returning the subset of dirs that actually exist. Links are hashed as links (path + verbatim
+// target) and never followed, matching data-migration's copy contract for Conda package caches. A
+// missing top-level dir is valid, but errors or unsupported entries inside a present dir abort the
+// scan so commit can never accept a partial tally as proof of equivalence.
 export const scanInventory = async (
   root: string,
   dirs: string[]
@@ -100,6 +114,15 @@ export const scanInventory = async (
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue
       throw err
+    }
+    if (topLevelInfo.isFile()) {
+      const fileHash = createHash('sha256')
+      for await (const chunk of createReadStream(topLevel)) fileHash.update(chunk as Buffer)
+      presentDirs.push(dir)
+      fileCount += 1
+      totalBytes += topLevelInfo.size
+      inventoryHash.update(JSON.stringify(['file', dir, topLevelInfo.size, fileHash.digest('hex')]))
+      continue
     }
     if (!topLevelInfo.isDirectory()) {
       throw new Error(`Unsupported inventory entry: ${dir}`)
@@ -124,6 +147,14 @@ export const scanInventory = async (
           totalBytes += info.size
           inventoryHash.update(
             JSON.stringify(['file', relative(root, full), info.size, fileHash.digest('hex')])
+          )
+        } else if (entry.isSymbolicLink()) {
+          const target = await readlink(full)
+          const targetBytes = Buffer.byteLength(target)
+          fileCount += 1
+          totalBytes += targetBytes
+          inventoryHash.update(
+            JSON.stringify(['symlink', relative(root, full), targetBytes, target])
           )
         } else {
           throw new Error(`Unsupported inventory entry: ${full}`)

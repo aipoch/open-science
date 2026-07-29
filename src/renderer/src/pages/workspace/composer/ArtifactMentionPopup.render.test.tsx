@@ -5,77 +5,39 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ArtifactMentionPopup } from './ArtifactMentionPopup'
 import { useNavigationStore } from '@/stores/navigation-store'
-import {
-  createInitialSessionState,
-  type ChatMessage,
-  type ChatSession
-} from '@/stores/session-store'
-import { useSessionStore } from '@/stores/session-store'
+import type { ProjectFileItem } from '../../../../../shared/project-files'
 
 let container: HTMLDivElement
 let root: Root
 
-const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
-  id: 'message-1',
-  role: 'user',
-  content: 'Prompt',
-  status: 'complete',
-  eventIds: [],
-  createdAt: 1710000000000,
-  updatedAt: 1710000000000,
-  ...overrides
-})
-
-const createSession = (overrides: Partial<ChatSession>): ChatSession => ({
-  id: 'session-1',
-  projectId: 'default',
-  title: 'Analysis session',
-  cwd: '/workspace',
-  status: 'idle',
-  messages: [],
-  createdAt: 1710000000000,
-  updatedAt: 1710000000000,
-  ...overrides
-})
-
-// A project with one uploaded file and one generated output artifact.
-const seedProjectFiles = (): void => {
-  useSessionStore.setState({
-    ...createInitialSessionState(),
-    sessions: [
-      createSession({
-        messages: [
-          createMessage({
-            uploads: [
-              {
-                id: 'up-1',
-                sessionId: 'session-1',
-                name: 'safe-sequence.csv',
-                originalName: 'sequence.csv',
-                path: '/uploads/session-1/sequence.csv',
-                mimeType: 'text/csv',
-                size: 2048
-              }
-            ]
-          })
-        ],
-        artifacts: [
-          {
-            id: 'art-1',
-            kind: 'managed-file',
-            path: '/workspace/report.pdf',
-            fileUrl: 'file:///workspace/report.pdf',
-            name: 'report.pdf',
-            mimeType: 'application/pdf',
-            size: 4096,
-            mtimeMs: 1710000002000
-          }
-        ]
-      })
-    ]
-  })
-  useNavigationStore.setState({ activeProjectId: 'default' })
-}
+const defaultProjectFiles: ProjectFileItem[] = [
+  {
+    id: 'upload:up-1',
+    source: 'upload',
+    sourceFileId: 'up-1',
+    sourceVersionId: 'up-1-v1',
+    projectId: 'default',
+    sessionId: 'session-1',
+    name: 'sequence.csv',
+    path: 'upload-version:default/session-1/up-1-v1',
+    mimeType: 'text/csv',
+    size: 2048,
+    sortAtMs: 1710000001000
+  },
+  {
+    id: 'art-1',
+    source: 'artifact',
+    sourceFileId: 'art-1',
+    sourceVersionId: 'art-1-v1',
+    projectId: 'default',
+    sessionId: 'session-1',
+    name: 'report.pdf',
+    path: 'artifact-version:default/session-1/art-1/art-1-v1',
+    mimeType: 'application/pdf',
+    size: 4096,
+    sortAtMs: 1710000002000
+  }
+]
 
 beforeEach(() => {
   // Non-image rows never read previews, but stub the api so an accidental read never throws.
@@ -86,9 +48,15 @@ beforeEach(() => {
     artifacts: {
       listProjectFiles: vi.fn().mockResolvedValue([]),
       readPreview: vi.fn().mockResolvedValue({ content: '', encoding: 'base64', size: 0 })
+    },
+    projectFiles: {
+      listFiles: vi.fn().mockResolvedValue({
+        items: defaultProjectFiles,
+        totalCount: defaultProjectFiles.length
+      })
     }
   }
-  seedProjectFiles()
+  useNavigationStore.setState({ activeProjectId: 'default' })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -109,12 +77,51 @@ const pressKey = (key: string): void => {
   })
 }
 
+const renderPopup = async ({
+  query = '',
+  onSelect = vi.fn(),
+  onClose = vi.fn()
+}: {
+  query?: string
+  onSelect?: (value: unknown) => void
+  onClose?: () => void
+} = {}): Promise<void> => {
+  await act(async () => {
+    root.render(<ArtifactMentionPopup query={query} onSelect={onSelect} onClose={onClose} />)
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
 describe('ArtifactMentionPopup', () => {
-  it('renders both sections with rows and tags', () => {
+  it('owns Enter while project files are still loading', () => {
+    window.api.projectFiles.listFiles = vi.fn(
+      () => new Promise(() => undefined)
+    ) as typeof window.api.projectFiles.listFiles
     act(() => {
-      root.render(<ArtifactMentionPopup query="" onSelect={vi.fn()} onClose={vi.fn()} />)
+      root.render(<ArtifactMentionPopup query="seq" onSelect={vi.fn()} onClose={vi.fn()} />)
+    })
+    const event = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true
     })
 
+    act(() => {
+      document.dispatchEvent(event)
+    })
+
+    expect(event.defaultPrevented).toBe(true)
+  })
+
+  it('renders both sections with rows and tags', async () => {
+    await renderPopup()
+
+    expect(window.api.projectFiles.listFiles).toHaveBeenCalledWith({
+      projectId: 'default',
+      collection: { kind: 'all' },
+      limit: 100
+    })
     expect(options()).toHaveLength(2)
     const text = document.body.textContent ?? ''
     expect(text).toContain('User uploads')
@@ -126,10 +133,142 @@ describe('ArtifactMentionPopup', () => {
     expect(text).toContain('output')
   })
 
-  it('filters rows by a case-insensitive filename query', () => {
-    act(() => {
-      root.render(<ArtifactMentionPopup query="REPORT" onSelect={vi.fn()} onClose={vi.fn()} />)
+  it('uses the preview-tab abbreviation for a long filename while preserving its extension', async () => {
+    const longName = 'very_long_experiment_analysis_result_2025.csv'
+    window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({
+      items: [
+        {
+          ...defaultProjectFiles[1],
+          id: 'long-artifact',
+          sourceFileId: 'long-artifact',
+          name: longName
+        }
+      ],
+      totalCount: 1
     })
+
+    await renderPopup()
+
+    expect(options()[0]?.querySelector('[data-testid="file-name-tail"]')?.textContent).toBe('_2025')
+  })
+
+  it('loads every Project Files page before presenting suggestions', async () => {
+    window.api.projectFiles.listFiles = vi
+      .fn()
+      .mockResolvedValueOnce({
+        items: [defaultProjectFiles[0]],
+        totalCount: 2,
+        nextCursor: 'next-page'
+      })
+      .mockResolvedValueOnce({ items: [defaultProjectFiles[1]], totalCount: 2 })
+
+    await renderPopup()
+
+    expect(options()).toHaveLength(2)
+    expect(window.api.projectFiles.listFiles).toHaveBeenNthCalledWith(2, {
+      projectId: 'default',
+      collection: { kind: 'all' },
+      cursor: 'next-page',
+      limit: 100
+    })
+  })
+
+  it('shows a Project Files query failure instead of a false empty state', async () => {
+    window.api.projectFiles.listFiles = vi.fn().mockRejectedValue(new Error('database unavailable'))
+
+    await renderPopup()
+
+    expect(options()).toHaveLength(0)
+    expect(document.body.textContent).toContain('Could not load project files')
+    expect(document.body.textContent).not.toContain('No artifacts yet')
+  })
+
+  it('rejects a repeated Project Files cursor', async () => {
+    window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({
+      items: [],
+      totalCount: 1,
+      nextCursor: 'repeated-page'
+    })
+
+    await renderPopup()
+
+    expect(window.api.projectFiles.listFiles).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).toContain('Could not load project files')
+  })
+
+  it('shows an upload indexed from another session in the same project', async () => {
+    const onSelect = vi.fn()
+    window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 'upload:shared-csv',
+          source: 'upload',
+          sourceFileId: 'shared-csv',
+          sourceVersionId: 'shared-csv-v1',
+          projectId: 'default',
+          sessionId: 'other-session',
+          name: 'shared-data.csv',
+          path: 'upload-version:default/other-session/shared-csv-v1',
+          mimeType: 'text/csv',
+          size: 2048,
+          sortAtMs: 1710000003000
+        }
+      ],
+      totalCount: 1
+    })
+
+    await renderPopup({ onSelect })
+
+    expect(options()).toHaveLength(1)
+    expect(document.body.textContent).toContain('shared-data.csv')
+    pressKey('Enter')
+    expect(onSelect).toHaveBeenCalledWith({
+      id: 'upload:shared-csv',
+      name: 'shared-data.csv',
+      path: 'upload-version:default/other-session/shared-csv-v1',
+      source: 'upload',
+      versionId: 'shared-csv-v1',
+      mimeType: 'text/csv'
+    })
+  })
+
+  it('uses the Project Files artifact projection instead of Session metadata', async () => {
+    const onSelect = vi.fn()
+    window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 'artifact-lineage-1',
+          source: 'artifact',
+          sourceFileId: 'artifact-lineage-1',
+          sourceVersionId: 'artifact-version-2',
+          projectId: 'default',
+          sessionId: 'other-session',
+          name: 'other-session-result.pdf',
+          path: 'artifact-version:default/other-session/artifact-lineage-1/artifact-version-2',
+          mimeType: 'application/pdf',
+          size: 4096,
+          sortAtMs: 1710000004000
+        }
+      ],
+      totalCount: 1
+    })
+
+    await renderPopup({ onSelect })
+
+    expect(document.body.textContent).toContain('other-session-result.pdf')
+    pressKey('Enter')
+    expect(onSelect).toHaveBeenCalledWith({
+      id: 'artifact-lineage-1',
+      name: 'other-session-result.pdf',
+      path: 'artifact-version:default/other-session/artifact-lineage-1/artifact-version-2',
+      source: 'artifact',
+      versionId: 'artifact-version-2',
+      mimeType: 'application/pdf'
+    })
+  })
+
+  it('filters rows by a case-insensitive filename query', async () => {
+    await renderPopup({ query: 'REPORT' })
 
     const rendered = options()
     expect(rendered).toHaveLength(1)
@@ -137,11 +276,9 @@ describe('ArtifactMentionPopup', () => {
     expect(document.body.textContent).not.toContain('sequence.csv')
   })
 
-  it('selects the highlighted row on Enter with the picked reference shape', () => {
+  it('selects the highlighted row on Enter with the picked reference shape', async () => {
     const onSelect = vi.fn()
-    act(() => {
-      root.render(<ArtifactMentionPopup query="" onSelect={onSelect} onClose={vi.fn()} />)
-    })
+    await renderPopup({ onSelect })
 
     // First row is the upload.
     pressKey('Enter')
@@ -150,17 +287,15 @@ describe('ArtifactMentionPopup', () => {
       expect.objectContaining({
         id: 'upload:up-1',
         name: 'sequence.csv',
-        path: '/uploads/session-1/sequence.csv',
+        path: 'upload-version:default/session-1/up-1-v1',
         source: 'upload'
       })
     )
   })
 
-  it('selects an artifact row on click', () => {
+  it('selects an artifact row on click', async () => {
     const onSelect = vi.fn()
-    act(() => {
-      root.render(<ArtifactMentionPopup query="" onSelect={onSelect} onClose={vi.fn()} />)
-    })
+    await renderPopup({ onSelect })
 
     const artifactRow = options()[1]
     act(() => artifactRow.click())
@@ -168,36 +303,30 @@ describe('ArtifactMentionPopup', () => {
       expect.objectContaining({
         id: 'art-1',
         name: 'report.pdf',
-        path: '/workspace/report.pdf',
+        path: 'artifact-version:default/session-1/art-1/art-1-v1',
         source: 'artifact'
       })
     )
   })
 
-  it('shows an empty state when the project has no artifacts', () => {
-    useSessionStore.setState({ ...createInitialSessionState(), sessions: [] })
-    act(() => {
-      root.render(<ArtifactMentionPopup query="" onSelect={vi.fn()} onClose={vi.fn()} />)
-    })
+  it('shows an empty state when the project has no artifacts', async () => {
+    window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({ items: [], totalCount: 0 })
+    await renderPopup()
 
     expect(options()).toHaveLength(0)
     expect(document.body.textContent).toContain('No artifacts yet')
   })
 
-  it('closes on Escape', () => {
+  it('closes on Escape', async () => {
     const onClose = vi.fn()
-    act(() => {
-      root.render(<ArtifactMentionPopup query="" onSelect={vi.fn()} onClose={onClose} />)
-    })
+    await renderPopup({ onClose })
 
     pressKey('Escape')
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('matches a filename by fuzzy subsequence a substring would miss', () => {
-    act(() => {
-      root.render(<ArtifactMentionPopup query="rpt" onSelect={vi.fn()} onClose={vi.fn()} />)
-    })
+  it('matches a filename by fuzzy subsequence a substring would miss', async () => {
+    await renderPopup({ query: 'rpt' })
 
     // "rpt" is an ordered subsequence of "report.pdf" but not a substring, and matches no upload.
     const rendered = options()
@@ -206,52 +335,39 @@ describe('ArtifactMentionPopup', () => {
     expect(document.body.textContent).not.toContain('sequence.csv')
   })
 
-  it('highlights the matched characters in the filename', () => {
-    act(() => {
-      root.render(<ArtifactMentionPopup query="report" onSelect={vi.fn()} onClose={vi.fn()} />)
-    })
+  it('highlights the matched characters in the filename', async () => {
+    await renderPopup({ query: 'report' })
 
     const marks = Array.from(document.body.querySelectorAll('mark'))
-    expect(marks).toHaveLength(1)
-    expect(marks[0].textContent?.toLowerCase()).toBe('report')
+    expect(
+      marks
+        .map((mark) => mark.textContent)
+        .join('')
+        .toLowerCase()
+    ).toContain('report')
   })
 
-  it('ranks a closer fuzzy match first within a section', () => {
+  it('ranks a closer fuzzy match first within a section', async () => {
     // Two outputs in the same section: a prefix match must outrank a later word-boundary match.
-    useSessionStore.setState({
-      ...createInitialSessionState(),
-      sessions: [
-        createSession({
-          artifacts: [
-            {
-              id: 'art-late',
-              kind: 'managed-file',
-              path: '/workspace/final-report.pdf',
-              fileUrl: 'file:///workspace/final-report.pdf',
-              name: 'final-report.pdf',
-              mimeType: 'application/pdf',
-              size: 4096,
-              mtimeMs: 1710000001000
-            },
-            {
-              id: 'art-early',
-              kind: 'managed-file',
-              path: '/workspace/report.pdf',
-              fileUrl: 'file:///workspace/report.pdf',
-              name: 'report.pdf',
-              mimeType: 'application/pdf',
-              size: 4096,
-              mtimeMs: 1710000002000
-            }
-          ]
-        })
-      ]
+    window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({
+      items: [
+        {
+          ...defaultProjectFiles[1],
+          id: 'art-late',
+          sourceFileId: 'art-late',
+          name: 'final-report.pdf'
+        },
+        {
+          ...defaultProjectFiles[1],
+          id: 'art-early',
+          sourceFileId: 'art-early',
+          name: 'report.pdf'
+        }
+      ],
+      totalCount: 2
     })
-    useNavigationStore.setState({ activeProjectId: 'default' })
 
-    act(() => {
-      root.render(<ArtifactMentionPopup query="report" onSelect={vi.fn()} onClose={vi.fn()} />)
-    })
+    await renderPopup({ query: 'report' })
 
     const rendered = options()
     expect(rendered).toHaveLength(2)

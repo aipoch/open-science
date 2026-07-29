@@ -1002,8 +1002,8 @@ describe('ACP permission broker', () => {
     // classification it would be grouped under the shared Bash category and mislabeled as shell.
     const grant = broker.requestPermission(
       createToolPermissionRequest({
-        title: 'open-science-artifacts_write_artifact_file',
-        kind: 'other',
+        title: 'open-science-artifacts_delete_artifact',
+        kind: 'execute',
         rawInput: {}
       }),
       { profile: 'ask', mcpServerNames }
@@ -1013,9 +1013,9 @@ describe('ACP permission broker', () => {
 
     expect(broker.listGrants('session-1')).toEqual([
       {
-        categoryKey: 'mcp:open-science-artifacts/write_artifact_file',
+        categoryKey: 'mcp:open-science-artifacts/delete_artifact',
         kind: 'mcp',
-        label: 'open-science-artifacts/write_artifact_file',
+        label: 'open-science-artifacts/delete_artifact',
         scope: 'session'
       }
     ])
@@ -1023,8 +1023,8 @@ describe('ACP permission broker', () => {
     // The same MCP tool is now allowed for this Agent session and no longer prompts.
     void broker.requestPermission(
       createToolPermissionRequest({
-        title: 'open-science-artifacts_write_artifact_file',
-        kind: 'other',
+        title: 'open-science-artifacts_delete_artifact',
+        kind: 'execute',
         rawInput: {}
       }),
       { profile: 'ask', mcpServerNames }

@@ -143,6 +143,7 @@ describe('settings repository', () => {
       expect.objectContaining({
         id: 'builtin-codex-subscription',
         type: 'codex-isolated',
+        codexAuthMode: 'isolated',
         name: 'Codex subscription'
       })
     ])
@@ -168,6 +169,7 @@ describe('settings repository', () => {
       expect.objectContaining({
         id: 'builtin-codex-subscription',
         type: 'codex-isolated',
+        codexAuthMode: 'isolated',
         name: 'Codex subscription'
       })
     ])
@@ -175,6 +177,49 @@ describe('settings repository', () => {
     expect(settings.providers[0].lastValidationFailure).toBeUndefined()
     expect(settings.providers[0].expiresAt).toBeUndefined()
     expect(settings.activeProviderId).toBe('builtin-codex-subscription')
+  })
+
+  it('migrates an ambiguous normalized Codex subscription as isolated', () => {
+    const settings = sanitizeSettings({
+      activeProviderId: 'builtin-codex-subscription',
+      providers: [
+        {
+          id: 'builtin-codex-subscription',
+          type: 'codex-isolated',
+          name: 'Codex subscription'
+        }
+      ]
+    })
+
+    expect(settings.providers).toEqual([
+      expect.objectContaining({
+        id: 'builtin-codex-subscription',
+        type: 'codex-isolated',
+        codexAuthMode: 'isolated',
+        name: 'Codex subscription'
+      })
+    ])
+    expect(settings.activeProviderId).toBe('builtin-codex-subscription')
+  })
+
+  it('preserves an explicit imported mode on a normalized Codex subscription', () => {
+    const settings = sanitizeSettings({
+      activeProviderId: 'builtin-codex-subscription',
+      providers: [
+        {
+          id: 'builtin-codex-subscription',
+          type: 'codex-isolated',
+          codexAuthMode: 'imported',
+          name: 'Codex subscription'
+        }
+      ]
+    })
+
+    expect(settings.providers[0]).toMatchObject({
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      codexAuthMode: 'imported'
+    })
   })
 
   it('returns empty settings when nothing is stored yet', async () => {

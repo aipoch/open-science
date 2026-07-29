@@ -3,6 +3,7 @@ import { CirclePlus, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import anthropicLogo from '@/assets/provider-icons/anthropic.svg'
 import claudeLogo from '@/assets/provider-icons/claude.svg'
+import grokLogo from '@/assets/provider-icons/grok.svg'
 import deepseekLogo from '@/assets/provider-icons/deepseek.svg'
 import minimaxLogo from '@/assets/provider-icons/minimax.svg'
 import stepfunLogo from '@/assets/provider-icons/stepfun.svg'
@@ -23,6 +24,7 @@ import type { OfficialVendorId } from '../../../../shared/provider-registry'
 const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   openai: openaiLogo,
   anthropic: anthropicLogo,
+  xai: grokLogo,
   deepseek: deepseekLogo,
   minimax: minimaxLogo,
   stepfun: stepfunLogo,

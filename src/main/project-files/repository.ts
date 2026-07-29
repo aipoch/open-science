@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { realpath, stat } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
-import { Prisma, type ManagedFile, type PrismaClient } from '@prisma/client'
+import { Prisma, type FileOriginSession, type ManagedFile, type PrismaClient } from '@prisma/client'
 
 import type {
   ArtifactGroupPage,
@@ -12,10 +12,17 @@ import type {
   ProjectFileItem,
   ProjectFilesOverview,
   ProjectFilesPage,
-  ProjectFileSource
+  ProjectFileSource,
+  ProjectFileOriginSession
 } from '../../shared/project-files'
+import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { getUploadedAttachmentName, PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
+import {
+  createUploadVersionReference,
+  DEFAULT_UPLOAD_PROJECT_NAME,
+  getUploadedAttachmentName,
+  PENDING_UPLOAD_SESSION_ID
+} from '../../shared/uploads'
 
 const ARTIFACTS_DIR = 'artifacts'
 const UPLOADS_DIR = 'uploads'
@@ -27,7 +34,13 @@ const RETRYABLE_COLLISION_REVISION = -1
 
 type ProjectFilesClient = Pick<
   PrismaClient,
-  'managedFile' | 'managedFileSessionSync' | '$queryRaw' | '$transaction'
+  | 'managedFile'
+  | 'managedFileSessionSync'
+  | 'fileOriginSession'
+  | 'artifactLineage'
+  | 'uploadFile'
+  | '$queryRaw'
+  | '$transaction'
 >
 type ProjectFilesClientProvider = () => Promise<ProjectFilesClient>
 type ProjectFilesClientFactory = (configRoot: string) => Promise<ProjectFilesClient>
@@ -35,6 +48,8 @@ type ProjectFilesClientFactory = (configRoot: string) => Promise<ProjectFilesCli
 type IndexedFileInput = {
   source: ProjectFileSource
   sourceFileId: string
+  sourceVersionId?: string
+  checksum?: string
   projectId: string
   sessionId: string
   messageId?: string
@@ -52,7 +67,7 @@ type IndexedFileCandidate = Omit<IndexedFileInput, 'storageKey' | 'sizeBytes' | 
 
 type FileCursor = {
   version: 2
-  kind: 'uploads' | 'sessionArtifacts'
+  kind: 'all' | 'uploads' | 'sessionArtifacts'
   projectId: string
   sessionId?: string
   queryKey: string
@@ -122,7 +137,8 @@ class ManagedFileIndexRepository {
       if (
         !options.force &&
         currentSync?.filesRevision === revision &&
-        currentSync.deletedAt === null
+        currentSync.deletedAt === null &&
+        (await this.isFileProjectionCurrent(client, session.projectId, session.id))
       ) {
         this.incompleteSessions.delete(sessionKey(session.projectId, session.id))
         return []
@@ -197,6 +213,8 @@ class ManagedFileIndexRepository {
                 where: { seq: existing.seq },
                 data: {
                   sourceFileId: file.sourceFileId,
+                  sourceVersionId: file.sourceVersionId,
+                  checksum: file.checksum,
                   sessionId: file.sessionId,
                   messageId: file.messageId,
                   displayName: file.displayName,
@@ -213,8 +231,12 @@ class ManagedFileIndexRepository {
 
           rowsById.set(idKey, row)
           rowsByPath.set(pathKey, row)
-          retainedSeqs.add(row.seq)
-          retainedSources.set(row.seq, file.source)
+          // Cross-Session references preserve the source owner's row, but they are not members of the
+          // referencing Session's ledger or Artifact group.
+          if (file.sessionId === session.id) {
+            retainedSeqs.add(row.seq)
+            retainedSources.set(row.seq, file.source)
+          }
           acceptedFiles.push(file)
         }
 
@@ -390,9 +412,17 @@ class ManagedFileIndexRepository {
       const indexedSessions = await client.managedFileSessionSync.findMany({
         select: { projectId: true, sessionId: true, deletedAt: true }
       })
+      const retainedOrigins = await client.fileOriginSession.findMany({
+        where: { state: { in: ['deleting', 'deleted'] } },
+        select: { projectId: true, sessionId: true }
+      })
+      const retainedKeys = new Set(
+        retainedOrigins.map((origin) => sessionKey(origin.projectId, origin.sessionId))
+      )
 
       for (const indexed of indexedSessions) {
-        const isActive = activeKeys.has(sessionKey(indexed.projectId, indexed.sessionId))
+        const key = sessionKey(indexed.projectId, indexed.sessionId)
+        const isActive = activeKeys.has(key) || retainedKeys.has(key)
 
         if (isActive && indexed.deletedAt !== null) {
           // A complete scan proves that JSON survived an interrupted deletion. Restore all metadata for
@@ -419,6 +449,9 @@ class ManagedFileIndexRepository {
           await this.softDeleteSession(indexed.projectId, indexed.sessionId)
         }
       }
+      for (const origin of retainedOrigins) {
+        await this.rebuildRetainedOriginProjection(client, origin.projectId, origin.sessionId)
+      }
       // A first sync can fail before a ledger row exists. Once a complete scan proves that JSON is
       // gone, its transient failure marker must not keep the project permanently incomplete.
       for (const key of this.incompleteSessions.keys()) {
@@ -429,6 +462,137 @@ class ManagedFileIndexRepository {
       this.isReconciliationIncomplete = true
       throw error
     }
+  }
+
+  // Reconstructs Files metadata from SQLite authority when a deleted Session JSON can no longer be
+  // used for repair. Missing content bytes do not erase the row: opening it can still show the
+  // captured Provenance and an explicit content-unavailable state.
+  private async rebuildRetainedOriginProjection(
+    client: ProjectFilesClient,
+    projectId: string,
+    sessionId: string
+  ): Promise<void> {
+    const [lineages, uploads] = await Promise.all([
+      client.artifactLineage.findMany({
+        where: { projectId, sessionId },
+        include: {
+          versions: {
+            where: { state: 'finalized' },
+            orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
+            take: 1
+          }
+        }
+      }),
+      client.uploadFile.findMany({
+        where: { projectId, sessionId },
+        include: {
+          versions: {
+            where: { state: 'ready' },
+            orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
+            take: 1
+          }
+        }
+      })
+    ])
+    const artifactFiles: IndexedFileInput[] = lineages.flatMap((lineage) => {
+      const version = lineage.versions[0]
+      return version
+        ? [
+            {
+              source: 'artifact' as const,
+              sourceFileId: lineage.id,
+              sourceVersionId: version.id,
+              checksum: version.checksum,
+              projectId,
+              sessionId,
+              messageId: version.messageId ?? undefined,
+              displayName: lineage.filename,
+              storageKey: version.contentStorageKey,
+              mimeType: version.contentType ?? undefined,
+              sizeBytes: version.sizeBytes,
+              mtimeMs: BigInt(version.createdAt.getTime()),
+              sortAtMs: BigInt(version.createdAt.getTime())
+            }
+          ]
+        : []
+    })
+    const uploadFiles: IndexedFileInput[] = uploads.flatMap((upload) => {
+      const version = upload.versions[0]
+      const createdAt = version?.createdAt ?? version?.registeredAt
+      return version && createdAt
+        ? [
+            {
+              source: 'upload' as const,
+              sourceFileId: upload.id,
+              sourceVersionId: version.id,
+              checksum: version.checksum,
+              projectId,
+              sessionId,
+              displayName: version.filename,
+              storageKey: version.contentStorageKey,
+              mimeType: version.contentType ?? undefined,
+              sizeBytes: version.sizeBytes,
+              mtimeMs: BigInt(createdAt.getTime()),
+              sortAtMs: BigInt(createdAt.getTime())
+            }
+          ]
+        : []
+    })
+    const files = [...artifactFiles, ...uploadFiles]
+    // Legacy retained origins may predate ArtifactVersion/UploadVersion authority while their
+    // existing ManagedFile projection is still valid. Do not erase that projection during upgrade.
+    if (files.length === 0) return
+    const groupSortAtMs = files.reduce(
+      (latest, file) => (file.sortAtMs > latest ? file.sortAtMs : latest),
+      BigInt(0)
+    )
+
+    await client.$transaction(async (tx) => {
+      for (const file of files) {
+        await tx.managedFile.upsert({
+          where: {
+            projectId_source_sourceFileId: {
+              projectId,
+              source: file.source,
+              sourceFileId: file.sourceFileId
+            }
+          },
+          create: file,
+          update: {
+            sourceVersionId: file.sourceVersionId,
+            checksum: file.checksum,
+            sessionId,
+            messageId: file.messageId,
+            displayName: file.displayName,
+            storageKey: file.storageKey,
+            mimeType: file.mimeType,
+            sizeBytes: file.sizeBytes,
+            mtimeMs: file.mtimeMs,
+            sortAtMs: file.sortAtMs,
+            deletedAt: null,
+            deleteOperationId: null
+          }
+        })
+      }
+      await tx.managedFileSessionSync.upsert({
+        where: { projectId_sessionId: { projectId, sessionId } },
+        create: {
+          projectId,
+          sessionId,
+          filesRevision: 0,
+          groupSortAtMs,
+          artifactCount: artifactFiles.length,
+          uploadCount: uploadFiles.length
+        },
+        update: {
+          groupSortAtMs,
+          artifactCount: artifactFiles.length,
+          uploadCount: uploadFiles.length,
+          deletedAt: null,
+          deleteOperationId: null
+        }
+      })
+    })
   }
 
   // A partial filesystem scan cannot identify which project was omitted, so this marker is global
@@ -479,7 +643,9 @@ class ManagedFileIndexRepository {
     requireIdentifier(request.projectId, 'projectId')
     const collection = request.collection as { kind?: unknown; sessionId?: unknown }
     let normalizedCollection: ListProjectFilesRequest['collection']
-    if (collection.kind === 'uploads') {
+    if (collection.kind === 'all') {
+      normalizedCollection = { kind: 'all' }
+    } else if (collection.kind === 'uploads') {
       normalizedCollection = { kind: 'uploads' }
     } else if (collection.kind === 'sessionArtifacts' && typeof collection.sessionId === 'string') {
       requireIdentifier(collection.sessionId, 'sessionId')
@@ -491,13 +657,18 @@ class ManagedFileIndexRepository {
     const client = await this.getClient()
     const limit = normalizeLimit(request.limit)
     const search = normalizeSearch(request.search)
-    const source = normalizedCollection.kind === 'uploads' ? 'upload' : 'artifact'
+    const source =
+      normalizedCollection.kind === 'all'
+        ? undefined
+        : normalizedCollection.kind === 'uploads'
+          ? 'upload'
+          : 'artifact'
     const sessionId =
       normalizedCollection.kind === 'sessionArtifacts' ? normalizedCollection.sessionId : undefined
     const cursor = request.cursor ? decodeFileCursor(request.cursor, normalizedRequest) : undefined
     const where: Prisma.ManagedFileWhereInput = {
       projectId: request.projectId,
-      source,
+      ...(source ? { source } : {}),
       deletedAt: null,
       ...(sessionId !== undefined ? { sessionId } : {}),
       ...(cursor
@@ -528,7 +699,7 @@ class ManagedFileIndexRepository {
           client.managedFile.count({
             where: {
               projectId: request.projectId,
-              source,
+              ...(source ? { source } : {}),
               deletedAt: null,
               ...(sessionId !== undefined ? { sessionId } : {})
             }
@@ -536,9 +707,18 @@ class ManagedFileIndexRepository {
         ])
     const pageRows = rows.slice(0, limit)
     const lastRow = pageRows.at(-1)
+    const origins = await client.fileOriginSession.findMany({
+      where: {
+        projectId: request.projectId,
+        sessionId: { in: [...new Set(pageRows.map((row) => row.sessionId))] }
+      }
+    })
+    const originsBySession = new Map(origins.map((origin) => [origin.sessionId, origin]))
 
     return {
-      items: pageRows.map((row) => toProjectFileItem(row, this.dataRoot)),
+      items: pageRows.map((row) =>
+        toProjectFileItem(row, this.dataRoot, originsBySession.get(row.sessionId))
+      ),
       totalCount,
       nextCursor:
         rows.length > limit && lastRow
@@ -593,11 +773,19 @@ class ManagedFileIndexRepository {
         ])
     const pageRows = rows.slice(0, limit)
     const lastRow = pageRows.at(-1)
+    const origins = await client.fileOriginSession.findMany({
+      where: {
+        projectId: request.projectId,
+        sessionId: { in: pageRows.map((row) => row.sessionId) }
+      }
+    })
+    const originsBySession = new Map(origins.map((origin) => [origin.sessionId, origin]))
 
     return {
       items: pageRows.map((row) => ({
         sessionId: row.sessionId,
-        artifactCount: toSafeCount(row.artifactCount, 'artifact group count')
+        artifactCount: toSafeCount(row.artifactCount, 'artifact group count'),
+        ...toOriginProjection(originsBySession.get(row.sessionId))
       })),
       totalCount,
       nextCursor:
@@ -617,12 +805,14 @@ class ManagedFileIndexRepository {
   private async listMatchingFiles(
     client: ProjectFilesClient,
     projectId: string,
-    source: ProjectFileSource,
+    source: ProjectFileSource | undefined,
     sessionId: string | undefined,
     search: NormalizedSearch,
     cursor: FileCursor | undefined,
     limit: number
   ): Promise<[ManagedFile[], number]> {
+    const sourcePredicate =
+      source === undefined ? Prisma.empty : Prisma.sql`AND "source" = ${source}`
     const sessionPredicate =
       sessionId === undefined ? Prisma.empty : Prisma.sql`AND "sessionId" = ${sessionId}`
     const cursorPredicate = cursor
@@ -631,12 +821,13 @@ class ManagedFileIndexRepository {
     const [rows, totalCount] = await Promise.all([
       client.$queryRaw<ManagedFile[]>(Prisma.sql`
         SELECT
-          "seq", "source", "sourceFileId", "projectId", "sessionId", "messageId",
+          "seq", "source", "sourceFileId", "sourceVersionId", "checksum",
+          "projectId", "sessionId", "messageId",
           "displayName", "storageKey", "mimeType", "sizeBytes", "mtimeMs", "sortAtMs",
           "createdAt", "updatedAt", "deletedAt", "deleteOperationId"
         FROM "ManagedFile"
         WHERE "projectId" = ${projectId}
-          AND "source" = ${source}
+          ${sourcePredicate}
           AND "deletedAt" IS NULL
           ${sessionPredicate}
           AND ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}
@@ -651,6 +842,76 @@ class ManagedFileIndexRepository {
 
   // Extracts finalized uploads and managed artifacts from authoritative session JSON. Identity is
   // deduplicated first by source id and then by storage key to normalize legacy duplicate metadata.
+  private async isFileProjectionCurrent(
+    client: ProjectFilesClient,
+    projectId: string,
+    sessionId: string
+  ): Promise<boolean> {
+    const [lineages, rows] = await Promise.all([
+      client.artifactLineage.findMany({
+        where: { projectId, sessionId },
+        include: {
+          versions: {
+            where: { state: 'finalized' },
+            orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
+            take: 1
+          }
+        }
+      }),
+      client.managedFile.findMany({
+        where: { projectId, sessionId, deletedAt: null },
+        select: {
+          source: true,
+          sourceFileId: true,
+          sourceVersionId: true,
+          sessionId: true,
+          storageKey: true
+        }
+      })
+    ])
+    const expectedArtifacts = new Map(
+      lineages.flatMap((lineage) => {
+        const version = lineage.versions[0]
+        return version ? [[lineage.id, version.id] as const] : []
+      })
+    )
+    const projectedArtifacts = rows.filter(
+      (row) => row.source === 'artifact' && row.sourceVersionId !== null
+    )
+    if (
+      projectedArtifacts.length !== expectedArtifacts.size ||
+      projectedArtifacts.some(
+        (row) => expectedArtifacts.get(row.sourceFileId) !== row.sourceVersionId
+      )
+    ) {
+      return false
+    }
+
+    const hasMismatchedLegacyUploadOwner = rows.some((row) => {
+      if (row.source !== 'upload' || row.sourceVersionId !== null) return false
+      const storageSessionId = getLegacyUploadStorageSessionId(row.storageKey)
+      return storageSessionId !== undefined && storageSessionId !== row.sessionId
+    })
+    if (hasMismatchedLegacyUploadOwner) return false
+
+    // A native Upload row is owned by its source Session, even when another Session references it.
+    // Detect old derived rows that copied the referencing Session so one startup sync repairs their
+    // locator scope instead of repeatedly sending unauthorized preview requests.
+    const nativeUploadIds = [
+      ...new Set(
+        rows
+          .filter((row) => row.source === 'upload' && row.sourceVersionId !== null)
+          .map((row) => row.sourceFileId)
+      )
+    ]
+    if (nativeUploadIds.length === 0) return true
+    const ownedUploads = await client.uploadFile.findMany({
+      where: { id: { in: nativeUploadIds }, projectId, sessionId },
+      select: { id: true }
+    })
+    return ownedUploads.length === nativeUploadIds.length
+  }
+
   private async extractSessionFiles(
     session: PersistedChatSession
   ): Promise<{ files: IndexedFileInput[]; errors: string[] }> {
@@ -668,7 +929,17 @@ class ManagedFileIndexRepository {
       }
     }
 
-    for (const message of session.messages) {
+    // Project Files is a Project-scoped library, not an active-conversation projection. Preserve
+    // files referenced by every immutable Message Branch so switching revisions cannot hide an Upload
+    // or Artifact from this Session or from another Session's @ picker. Active messages are applied
+    // last because their streamed/finalized payload may be newer than the persisted graph node.
+    const messagesById = new Map(
+      [...(session.conversationGraph?.messages ?? []), ...session.messages].map((message) => [
+        message.id,
+        message
+      ])
+    )
+    for (const message of messagesById.values()) {
       for (const artifactId of message.artifactIds ?? []) {
         artifactMessageIds.set(artifactId, message.id)
       }
@@ -676,11 +947,57 @@ class ManagedFileIndexRepository {
       if (message.role !== 'user') continue
       for (const upload of message.uploads ?? []) {
         if (upload.sessionId === PENDING_UPLOAD_SESSION_ID) continue
+        if (upload.versionId) {
+          try {
+            const client = await this.getClient()
+            const file = await client.uploadFile.findFirst({
+              where: {
+                id: upload.id,
+                projectId: session.projectId,
+                sessionId: upload.sessionId
+              },
+              include: {
+                versions: {
+                  where: { id: upload.versionId, state: 'ready' },
+                  take: 1
+                }
+              }
+            })
+            const version = file?.versions[0]
+            if (!file || !version) {
+              throw new Error(`Upload Version is unavailable: ${upload.versionId}`)
+            }
+            files.push({
+              source: 'upload',
+              sourceFileId: file.id,
+              sourceVersionId: version.id,
+              checksum: version.checksum,
+              projectId: session.projectId,
+              sessionId: upload.sessionId,
+              messageId: message.id,
+              displayName: version.originalFilename || version.filename,
+              storageKey: version.contentStorageKey,
+              mimeType: version.contentType ?? undefined,
+              sizeBytes: version.sizeBytes,
+              mtimeMs: version.createdAt ? BigInt(version.createdAt.getTime()) : undefined,
+              sortAtMs: BigInt(message.updatedAt || message.createdAt)
+            })
+          } catch (error) {
+            errors.push(describeError(error))
+          }
+          continue
+        }
+        if (!upload.path) {
+          errors.push(`Legacy upload identity is unavailable: ${upload.id}`)
+          continue
+        }
         await collectFile({
           source: 'upload',
           sourceFileId: upload.id,
+          sourceVersionId: upload.versionId,
+          checksum: upload.sha256 ?? upload.checksum,
           projectId: session.projectId,
-          sessionId: session.id,
+          sessionId: upload.sessionId,
           messageId: message.id,
           displayName: getUploadedAttachmentName(upload),
           path: upload.path,
@@ -690,8 +1007,58 @@ class ManagedFileIndexRepository {
       }
     }
 
+    // Native Artifact identity and version order live in SQLite. Session JSON is intentionally a
+    // compatibility projection and can lag a newly finalized Version or retain an older branch's
+    // descriptor, so it must not choose the Files tile content for a provenance lineage.
+    const authoritativeArtifactIds = new Set<string>()
+    try {
+      const client = await this.getClient()
+      const lineages = await client.artifactLineage.findMany({
+        where: { projectId: session.projectId, sessionId: session.id },
+        include: {
+          versions: {
+            where: { state: 'finalized' },
+            orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
+            take: 1
+          }
+        }
+      })
+
+      for (const lineage of lineages) {
+        authoritativeArtifactIds.add(lineage.id)
+        const version = lineage.versions[0]
+        if (!version) continue
+        const createdAtMs = BigInt(version.createdAt.getTime())
+        files.push({
+          source: 'artifact',
+          sourceFileId: lineage.id,
+          sourceVersionId: version.id,
+          checksum: version.checksum,
+          projectId: session.projectId,
+          sessionId: session.id,
+          messageId: version.messageId ?? undefined,
+          displayName: version.filename || lineage.filename,
+          storageKey: version.contentStorageKey,
+          mimeType: version.contentType ?? undefined,
+          sizeBytes: version.sizeBytes,
+          mtimeMs: createdAtMs,
+          sortAtMs: createdAtMs
+        })
+      }
+    } catch (error) {
+      errors.push(`Artifact Version catalog is unavailable: ${describeError(error)}`)
+    }
+
     for (const artifact of session.artifacts ?? []) {
       if (artifact.kind !== 'managed-file' || isPendingArtifactPath(artifact.path)) continue
+      if (artifact.artifactId || artifact.versionId) {
+        if (!artifact.artifactId || !authoritativeArtifactIds.has(artifact.artifactId)) {
+          errors.push(
+            `Artifact Version identity is unavailable: ${artifact.versionId ?? artifact.id}`
+          )
+        }
+        continue
+      }
       const artifactSortAtMs = artifact.mtimeMs ?? session.updatedAt
       if (!Number.isFinite(artifactSortAtMs)) {
         errors.push('Managed artifact modification time must be finite.')
@@ -699,7 +1066,9 @@ class ManagedFileIndexRepository {
       }
       await collectFile({
         source: 'artifact',
-        sourceFileId: artifact.id,
+        sourceFileId: artifact.artifactId ?? artifact.id,
+        sourceVersionId: artifact.versionId,
+        checksum: artifact.sha256,
         projectId: session.projectId,
         sessionId: session.id,
         messageId: artifactMessageIds.get(artifact.id),
@@ -777,6 +1146,8 @@ class ManagedFileIndexRepository {
     return {
       source: input.source,
       sourceFileId: input.sourceFileId,
+      sourceVersionId: input.sourceVersionId,
+      checksum: input.checksum,
       projectId: input.projectId,
       sessionId: input.sessionId,
       messageId: input.messageId,
@@ -956,6 +1327,8 @@ const sessionKey = (projectId: string, sessionId: string): string => `${projectI
 const getFileProjectionKey = (file: ManagedFile | IndexedFileInput): string =>
   JSON.stringify([
     file.sourceFileId,
+    file.sourceVersionId ?? null,
+    file.checksum ?? null,
     file.messageId ?? null,
     file.displayName,
     file.storageKey,
@@ -1019,6 +1392,15 @@ const isPathInsideRoot = (root: string, filePath: string): boolean => {
 
 const isPendingArtifactPath = (path: string): boolean =>
   path.split(/[\\/]+/).includes(PENDING_ARTIFACT_DIR)
+
+const getLegacyUploadStorageSessionId = (storageKey: string): string | undefined => {
+  const segments = storageKey.split('/')
+  return segments[0] === UPLOADS_DIR &&
+    segments[1] === DEFAULT_UPLOAD_PROJECT_NAME &&
+    segments.length >= 4
+    ? segments[2]
+    : undefined
+}
 
 const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
@@ -1102,19 +1484,52 @@ const toSafeCount = (value: bigint | number, field: string): number =>
 
 // Reconstructs an absolute managed path only after a storageKey has been produced by trusted indexing.
 // Bigint fields are range-checked before crossing Electron IPC, which serializes the numeric DTO.
-const toProjectFileItem = (row: ManagedFile, dataRoot: string): ProjectFileItem => ({
+const toOriginProjection = (
+  origin: FileOriginSession | undefined
+): { originSession?: ProjectFileOriginSession } =>
+  origin
+    ? {
+        originSession: {
+          state: origin.state as ProjectFileOriginSession['state'],
+          ...(origin.titleSnapshot ? { title: origin.titleSnapshot } : {}),
+          ...(origin.deletedAt ? { deletedAt: origin.deletedAt.toISOString() } : {})
+        }
+      }
+    : {}
+
+const toProjectFileItem = (
+  row: ManagedFile,
+  dataRoot: string,
+  origin?: FileOriginSession
+): ProjectFileItem => ({
   id: row.source === 'upload' ? `upload:${row.sourceFileId}` : row.sourceFileId,
   source: row.source as ProjectFileSource,
   sourceFileId: row.sourceFileId,
+  sourceVersionId: row.sourceVersionId ?? undefined,
+  checksum: row.checksum ?? undefined,
   projectId: row.projectId,
   sessionId: row.sessionId,
   messageId: row.messageId ?? undefined,
   name: row.displayName,
-  path: join(dataRoot, ...row.storageKey.split('/')),
+  path:
+    row.source === 'upload' && row.sourceVersionId
+      ? createUploadVersionReference(row.sourceVersionId, {
+          projectId: row.projectId,
+          sessionId: row.sessionId
+        })
+      : row.source === 'artifact' && row.sourceVersionId
+        ? createArtifactVersionLocator({
+            projectId: row.projectId,
+            appSessionId: row.sessionId,
+            artifactId: row.sourceFileId,
+            versionId: row.sourceVersionId
+          })
+        : join(dataRoot, ...row.storageKey.split('/')),
   mimeType: row.mimeType ?? undefined,
   size: toSafeNumber(row.sizeBytes, 'size'),
   mtimeMs: row.mtimeMs === null ? undefined : toSafeNumber(row.mtimeMs, 'mtime'),
-  sortAtMs: toSafeNumber(row.sortAtMs, 'sort time')
+  sortAtMs: toSafeNumber(row.sortAtMs, 'sort time'),
+  ...toOriginProjection(origin)
 })
 
 export { createManagedFileIndexRepository, ManagedFileIndexRepository }

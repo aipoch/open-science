@@ -11,6 +11,7 @@ import {
   NOTEBOOK_RPC_TOOLS,
   NOTEBOOK_SYSTEM_PROMPT_APPEND,
   callNotebookRpc,
+  compactManagePackagesResult,
   compactRestartResult,
   createNotebookMcpServerConfig,
   truncateNotebookRunResult
@@ -69,6 +70,9 @@ describe('notebook MCP server config', () => {
     // must steer the model to the saved relative filename — not to a rebuilt absolute path. Guard the
     // old "use an ABSOLUTE path" / "will not resolve a bare relative name" wording from regressing.
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('the SAME relative filename you saved with')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain(
+      'producerRunId` set to the exact `runId` returned by the execution'
+    )
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('use an ABSOLUTE path')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')
   })
@@ -79,6 +83,8 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('notebook_execute')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('append code deltas')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('finish the cell')
+    const executeTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_execute')
+    expect(executeTool?.description).toContain('producerRunId')
   })
 
   it('exposes only the single-step execute tool for writing and running code', () => {
@@ -309,6 +315,7 @@ describe('manage_packages tool', () => {
   it('registers manage_packages backed by the managePackages RPC method', () => {
     expect(tool).toBeDefined()
     expect(tool?.method).toBe('managePackages')
+    expect(tool?.mapResult).toBe(compactManagePackagesResult)
     expect(Object.keys(tool?.inputSchema ?? {})).toEqual(
       expect.arrayContaining(['language', 'packages', 'usePip', 'channels'])
     )
@@ -371,6 +378,60 @@ describe('manage_packages tool', () => {
 
   it('points the notebook system prompt at manage_packages as the only install path', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('manage_packages')
+  })
+})
+
+describe('compactManagePackagesResult', () => {
+  it('keeps the package outcome while omitting verbose installer diagnostics', () => {
+    const compact = compactManagePackagesResult({
+      ok: true,
+      needsRestart: true,
+      method: 'conda',
+      prefix: '/runtime/envs/default-r',
+      fallbackUsed: false,
+      log: JSON.stringify({
+        actions: {
+          FETCH: [{ name: 'r-dplyr', depends: Array.from({ length: 100 }, () => 'dependency') }],
+          LINK: [{ name: 'r-dplyr' }]
+        }
+      }),
+      attempts: [
+        {
+          groupOrdinal: 0,
+          installer: 'conda',
+          packages: ['r-dplyr'],
+          status: 'succeeded',
+          mutationRisk: 'confirmed'
+        }
+      ]
+    }) as Record<string, unknown>
+
+    expect(compact).toEqual({
+      ok: true,
+      needsRestart: true,
+      method: 'conda',
+      prefix: '/runtime/envs/default-r',
+      fallbackUsed: false
+    })
+    expect(JSON.stringify(compact)).not.toContain('FETCH')
+    expect(JSON.stringify(compact)).not.toContain('r-dplyr')
+  })
+
+  it('retains a concise failure reason and passes through non-object results', () => {
+    expect(
+      compactManagePackagesResult({
+        ok: false,
+        needsRestart: false,
+        log: 'very verbose diagnostics',
+        error: 'Package installation could not be verified: dplyr.'
+      })
+    ).toEqual({
+      ok: false,
+      needsRestart: false,
+      error: 'Package installation could not be verified: dplyr.'
+    })
+    expect(compactManagePackagesResult(null)).toBeNull()
+    expect(compactManagePackagesResult('x')).toBe('x')
   })
 })
 

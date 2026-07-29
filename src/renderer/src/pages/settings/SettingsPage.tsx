@@ -15,11 +15,15 @@ import {
 import { Dialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
-import type { ProviderView, UpsertProviderRequest } from '../../../../shared/settings'
+import {
+  resolveCodexSubscriptionType,
+  type ProviderView,
+  type UpsertProviderRequest
+} from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { useSettingsStore } from '@/stores/settings-store'
+import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import type { SettingsPanelId } from './settings-navigation'
 import { useComputeStore } from '@/stores/compute-store'
 import { AgentPanel } from './AgentPanel'
@@ -40,9 +44,11 @@ import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ProviderForm } from './ProviderForm'
 import {
   createEmptyProviderFormValue,
+  defaultCustomApiEndpoint,
   defaultProviderKindKey,
   getProviderFormErrors,
   hasProviderFormErrors,
+  providerFormApiEndpoints,
   providerKindPatch,
   type ProviderFormValue
 } from './provider-form-value'
@@ -58,7 +64,10 @@ type ModelView = { kind: 'list' } | { kind: 'create' } | { kind: 'edit'; provide
 // Builds a form value from an existing provider (never carrying the plaintext key).
 const toFormValue = (provider: ProviderView): ProviderFormValue =>
   createEmptyProviderFormValue({
-    type: provider.type,
+    type:
+      provider.type === 'codex-shared' || provider.type === 'codex-isolated'
+        ? resolveCodexSubscriptionType(provider)
+        : provider.type,
     name: provider.name,
     baseUrl: provider.baseUrl ?? '',
     model: provider.model ?? '',
@@ -86,7 +95,7 @@ const toUpsertRequest = (
         ? Number(value.contextWindow)
         : null
       : undefined,
-  apiEndpoints: [value.apiEndpoint],
+  apiEndpoints: providerFormApiEndpoints(value),
   supportsImageInput: value.supportsImageInput,
   reasoningEffortPreset: value.type === 'custom' ? value.reasoningEffortPreset : undefined,
   reasoningEffortTransport: value.type === 'custom' ? value.reasoningEffortTransport : undefined,
@@ -161,6 +170,8 @@ const INITIAL_LOCATION: NavLocation = {
 const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element => {
   const providers = useSettingsStore((state) => state.providers)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
+  const customApiEndpoint = defaultCustomApiEndpoint(frameworkEndpoints)
   const opencode = useSettingsStore((state) => state.opencode)
   const isDetectingOpencode = useSettingsStore((state) => state.isDetectingOpencode)
   const detectOpencode = useSettingsStore((state) => state.detectOpencode)
@@ -828,6 +839,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                       showClaudeIsolated={
                         agentFrameworkId === 'claude-code' && editingProvider === undefined
                       }
+                      defaultCustomApiEndpoint={customApiEndpoint}
                     />
                     {statusMessage ? (
                       <p

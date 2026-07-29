@@ -4,6 +4,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ProviderView } from '../../../../shared/settings'
+import {
+  reasoningEffortProfile,
+  resolveReasoningEffortControl
+} from '../../../../shared/reasoning-effort'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { incompatibilityReason } from './composer-model-picker-utils'
@@ -86,6 +90,14 @@ const flush = async (): Promise<void> => {
   })
 }
 
+// Radix's RovingFocusGroup defers the focus move to a macrotask (setTimeout), so a microtask
+// flush isn't enough — drain real timers after each arrow key.
+const flushTimers = async (): Promise<void> => {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+}
+
 const openMenu = async (trigger: Element): Promise<void> => {
   // Radix DropdownMenuTrigger toggles open on Enter/Space keydown; this is the interaction jsdom
   // supports most reliably and it mounts the portaled content.
@@ -95,8 +107,37 @@ const openMenu = async (trigger: Element): Promise<void> => {
   await flush()
 }
 
+// A Radix SubTrigger opens its submenu on ArrowRight (LTR) when the keydown originates on the
+// trigger itself; focusing first mirrors where roving focus would have put the user.
+const openSubmenu = async (subTrigger: HTMLElement): Promise<void> => {
+  act(() => {
+    subTrigger.focus()
+    subTrigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+  })
+  await flushTimers()
+}
+
+const arrowKey = async (key: 'ArrowDown' | 'ArrowUp'): Promise<void> => {
+  const target = (document.activeElement as Element | null) ?? document.body
+  act(() => {
+    target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+  })
+  await flushTimers()
+}
+
 const menuItems = (): HTMLElement[] =>
   Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+
+const radioItems = (): HTMLElement[] =>
+  Array.from(document.querySelectorAll<HTMLElement>('[role="menuitemradio"]'))
+
+const subTriggers = (): HTMLElement[] =>
+  Array.from(document.querySelectorAll<HTMLElement>('[data-slot="dropdown-menu-sub-trigger"]'))
+
+// The Model row's visible text is the current pick (provider + model), not a fixed label, so
+// tests locate it via its stable test id.
+const modelRowTrigger = (): HTMLElement | undefined =>
+  subTriggers().find((el) => el.getAttribute('data-testid') === 'model-row')
 
 describe('ComposerModelPicker', () => {
   it('renders nothing when there is a single selectable option', () => {
@@ -146,13 +187,19 @@ describe('ComposerModelPicker', () => {
     const trigger = container.querySelector('[aria-label="Select model"]')
     expect(trigger).not.toBeNull()
     await openMenu(trigger!)
+    // The catalog itself lives in the Model submenu; open it before asserting on its rows.
+    const modelRow = modelRowTrigger()
+    expect(modelRow, 'expected the "Model" subtrigger').toBeDefined()
+    await openSubmenu(modelRow!)
+    expect(document.body.textContent).toContain('ds2')
     expect(document.body.textContent).not.toContain('not supported over the Codex')
   })
 
   it('exposes each incompatible provider reason as a focusable, non-actionable menu item', async () => {
     // Claude Code (anthropic-only) + only OpenAI-speaking providers: the menu must state why each
     // provider is unavailable in an item roving focus can reach (not a label or a disabled item, both
-    // keyboard-unreachable), keep it unselectable, and still offer a way out to Settings.
+    // keyboard-unreachable), keep it unselectable, and still offer a way out to Settings. The reason
+    // row now lives inside the "Model" submenu; "Open Settings" stays on the first level.
     const openSettings = vi.fn()
     const setActiveProvider = vi.fn()
     useSettingsStore.setState({
@@ -189,9 +236,25 @@ describe('ComposerModelPicker', () => {
     // 1. Open the dropdown.
     await openMenu(trigger!)
 
-    // 2. The reason lives in a real menu item (reached by arrow-key roving focus). The full reason is
-    // exposed to assistive tech via aria-label/title while the visible label stays compact, and the
-    // item is marked unselectable.
+    // 2. With no active provider there is no effort row, so roving focus lands on the "Model"
+    // subtrigger first; ArrowDown/ArrowUp step between it and the first-level "Open Settings".
+    const modelRow = modelRowTrigger()
+    expect(modelRow, 'expected the "Model" subtrigger').toBeDefined()
+    expect(
+      document.activeElement,
+      'keyboard-open should place roving focus on the first (Model) item'
+    ).toBe(modelRow)
+    await arrowKey('ArrowDown')
+    expect((document.activeElement as HTMLElement | null)?.textContent).toContain('Open Settings')
+    await arrowKey('ArrowUp')
+    expect(document.activeElement, 'ArrowUp must return roving focus to the Model row').toBe(
+      modelRow
+    )
+
+    // 3. Open the Model submenu: the reason lives in a real menu item there (reached by arrow-key
+    // roving focus). The full reason is exposed to assistive tech via aria-label/title while the
+    // visible label stays compact, and the item is marked unselectable.
+    await openSubmenu(modelRow!)
     const reasonItem = menuItems().find((el) => el.getAttribute('aria-label') === expectedReason)
     expect(reasonItem, 'expected a menu item carrying the incompatibility reason').toBeDefined()
     expect(reasonItem?.getAttribute('aria-label')).toContain('OpenAI Gateway')
@@ -203,52 +266,20 @@ describe('ComposerModelPicker', () => {
     // keyboard user can land on it — proven by the absence of the data-disabled marker.
     expect(reasonItem?.hasAttribute('data-disabled')).toBe(false)
 
-    // 2b. Prove keyboard ARROW roving focus can actually land on the reason item — the point of
-    // leaving it aria-disabled rather than Radix-`disabled`. Absence of data-disabled alone only
-    // shows the `disabled` prop was avoided; a Radix-`disabled` item would be dropped from the
-    // roving-focus ring entirely and never reachable by arrow keys. Here we drive the real
-    // ArrowDown/ArrowUp roving focus and assert document.activeElement moves off, then back ONTO,
-    // the reason item via the arrow keys.
-    const content = document.querySelector<HTMLElement>('[role="menu"]')
-    expect(content, 'expected the portaled menu content to be mounted').not.toBeNull()
-    // Radix's RovingFocusGroup defers the focus move to a macrotask (setTimeout), so a microtask
-    // flush isn't enough — drain real timers after each arrow key.
-    const flushTimers = async (): Promise<void> => {
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0))
-      })
-    }
-    const arrowKey = async (key: 'ArrowDown' | 'ArrowUp'): Promise<void> => {
-      const target = (document.activeElement as Element | null) ?? content!
-      act(() => {
-        target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
-      })
-      await flushTimers()
-    }
-    // Keyboard-opening the menu lands roving focus on the first item, which is the reason item.
-    expect(
-      document.activeElement,
-      'keyboard-open should place roving focus on the first (reason) item'
-    ).toBe(reasonItem)
-    // Step off it with ArrowDown (onto the next real item), then back onto it with ArrowUp — proving
-    // arrow-key navigation genuinely traverses to the reason item rather than skipping it.
+    // 3b. Prove roving focus can actually land on the reason item: it is the submenu's only item,
+    // so an ArrowDown from wherever focus settled must move (or loop) onto it — a Radix-`disabled`
+    // item would be dropped from the roving-focus ring entirely and never reached.
     await arrowKey('ArrowDown')
     expect(
       document.activeElement,
-      'ArrowDown must move roving focus off the reason item onto the next item'
-    ).not.toBe(reasonItem)
-    expect((document.activeElement as HTMLElement | null)?.textContent).toContain('Open Settings')
-    await arrowKey('ArrowUp')
-    expect(
-      document.activeElement,
-      'ArrowUp must bring roving focus back onto the incompatibility reason item'
+      'ArrowDown inside the Model submenu must land on the reason item'
     ).toBe(reasonItem)
 
-    // 3. Activating the reason item must not switch the model (it is informational only).
+    // 4. Activating the reason item must not switch the model (it is informational only).
     act(() => reasonItem!.click())
     expect(setActiveProvider).not.toHaveBeenCalled()
 
-    // 4. Open Settings still works as the escape hatch.
+    // 5. Open Settings still works as the escape hatch, from the first level.
     const openSettingsItem = menuItems().find((el) => el.textContent?.includes('Open Settings'))
     expect(openSettingsItem, 'expected an "Open Settings" menu item').toBeDefined()
     act(() => openSettingsItem!.click())
@@ -338,5 +369,295 @@ describe('ComposerModelPicker', () => {
 
     const trigger = container.querySelector('[aria-label="Select model"]')
     expect(trigger?.textContent).toContain('my-model')
+  })
+
+  it('suffixes the trigger with the effort label when a non-default effort is set and supported', () => {
+    // gpt-5.2 is not in the bundled OpenAI catalog, so it resolves to the vendor-level profile
+    // (low-medium-high-xhigh) — supported, with the stored 'high' intent mapping to the High rung.
+    useSettingsStore.setState({
+      providers: [
+        provider({
+          id: 'off',
+          type: 'official',
+          vendorId: 'openai',
+          name: 'OpenAI',
+          models: ['gpt-5.2', 'gpt-5.5']
+        })
+      ],
+      activeProviderId: 'off',
+      activeModel: 'gpt-5.2',
+      reasoningEffort: 'high'
+    })
+    render()
+
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger).not.toBeNull()
+    expect(trigger?.textContent).toContain('gpt-5.2')
+    expect(trigger?.textContent).toContain('· High')
+    // The provider name no longer appears on the trigger — the effort suffix replaced it.
+    expect(trigger?.textContent).not.toContain('OpenAI')
+  })
+
+  it('keeps the effort suffix fully visible and ellipsizes only the model name on the trigger', () => {
+    // Long model names must not swallow the effort suffix: the model span truncates, the suffix
+    // span is shrink-protected and never wraps.
+    useSettingsStore.setState({
+      providers: [
+        provider({
+          id: 'off',
+          type: 'official',
+          vendorId: 'openai',
+          name: 'OpenAI',
+          models: ['gpt-5.2-with-a-very-long-model-name', 'gpt-5.5']
+        })
+      ],
+      activeProviderId: 'off',
+      activeModel: 'gpt-5.2-with-a-very-long-model-name',
+      reasoningEffort: 'high'
+    })
+    render()
+
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger).not.toBeNull()
+    expect(trigger?.textContent).toContain('· High')
+    const suffix = Array.from(trigger!.querySelectorAll('span')).find(
+      (el) => el.textContent?.trim() === '· High'
+    )
+    expect(suffix?.className).toContain('shrink-0')
+    expect(suffix?.className).not.toContain('truncate')
+    const modelName = Array.from(trigger!.querySelectorAll('span')).find(
+      (el) => el.textContent === 'gpt-5.2-with-a-very-long-model-name'
+    )
+    expect(modelName?.className).toContain('truncate')
+  })
+
+  it('shows no effort suffix on the trigger when the effort intent is default', () => {
+    useSettingsStore.setState({
+      providers: [
+        provider({
+          id: 'off',
+          type: 'official',
+          vendorId: 'openai',
+          name: 'OpenAI',
+          models: ['gpt-5.2', 'gpt-5.5']
+        })
+      ],
+      activeProviderId: 'off',
+      activeModel: 'gpt-5.2',
+      reasoningEffort: 'default'
+    })
+    render()
+
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger?.textContent).toContain('gpt-5.2')
+    expect(trigger?.textContent).not.toContain('·')
+  })
+
+  it('hides the effort row and suffix when the active model does not support reasoning effort', async () => {
+    // claude-haiku-4-5-20251001 is statically marked effort-unsupported in the vendor catalog, so
+    // neither the trigger suffix nor the "Reasoning effort" row may appear.
+    useSettingsStore.setState({
+      providers: [
+        provider({
+          id: 'ant',
+          type: 'official',
+          vendorId: 'anthropic',
+          name: 'Anthropic',
+          models: ['claude-haiku-4-5-20251001']
+        }),
+        provider({ id: 'p2', name: 'Gateway', models: ['gm'] })
+      ],
+      activeProviderId: 'ant',
+      activeModel: 'claude-haiku-4-5-20251001',
+      reasoningEffort: 'high'
+    })
+    render()
+
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger).not.toBeNull()
+    expect(trigger?.textContent).not.toContain('· High')
+
+    await openMenu(trigger!)
+    expect(
+      subTriggers().find((el) => el.textContent?.includes('Reasoning effort')),
+      'expected no "Reasoning effort" subtrigger for an unsupported model'
+    ).toBeUndefined()
+    expect(modelRowTrigger(), 'expected the "Model" subtrigger to remain').toBeDefined()
+  })
+
+  it('lists the profile effort levels in the effort submenu and applies the picked intent', async () => {
+    // DeepSeek's catalog profile is none-high-max: the submenu offers Default plus that profile's
+    // rungs, and picking one stores the intent the profile maps the rung to.
+    const setReasoningEffort = vi.fn()
+    useSettingsStore.setState({
+      providers: [
+        provider({
+          id: 'ds',
+          type: 'official',
+          vendorId: 'deepseek',
+          name: 'DeepSeek',
+          models: ['deepseek-v4-pro', 'deepseek-v4-flash']
+        })
+      ],
+      activeProviderId: 'ds',
+      activeModel: 'deepseek-v4-pro',
+      setReasoningEffort
+    })
+    render()
+
+    const control = resolveReasoningEffortControl(
+      'default',
+      reasoningEffortProfile('none-high-max')
+    )
+    expect(control.options.map((option) => option.label)).toEqual(['None', 'High', 'Max'])
+
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger).not.toBeNull()
+    await openMenu(trigger!)
+
+    const effortRow = subTriggers().find((el) => el.textContent?.includes('Reasoning effort'))
+    expect(effortRow, 'expected the "Reasoning effort" subtrigger').toBeDefined()
+    // With the stored intent at default, the first-level capsule echoes "Default".
+    expect(effortRow?.textContent).toContain('Default')
+    await openSubmenu(effortRow!)
+
+    const effortOptions = radioItems()
+    expect(effortOptions.map((el) => el.textContent)).toEqual([
+      'Defaultprovider default',
+      'None',
+      'High',
+      'Max'
+    ])
+
+    // Default is the stored intent, so its row carries the selected marker (aria-checked + Check).
+    const defaultItem = effortOptions.find((el) => el.textContent === 'Defaultprovider default')
+    expect(defaultItem?.getAttribute('aria-checked')).toBe('true')
+    expect(defaultItem?.querySelector('svg.text-primary')).not.toBeNull()
+
+    const highItem = effortOptions.find((el) => el.textContent === 'High')
+    const highOption = control.options.find((option) => option.label === 'High')
+    act(() => highItem!.click())
+    expect(setReasoningEffort).toHaveBeenCalledWith(highOption?.intent)
+  })
+
+  it('summarizes the current pick in the Model row as provider line over model name', async () => {
+    useSettingsStore.setState({
+      providers: [
+        provider({
+          id: 'off',
+          type: 'official',
+          vendorId: 'openai',
+          name: 'OpenAI',
+          models: ['gpt-5.2', 'gpt-5.5']
+        })
+      ],
+      activeProviderId: 'off',
+      activeModel: 'gpt-5.2'
+    })
+    render()
+
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger).not.toBeNull()
+    await openMenu(trigger!)
+
+    // Two-line summary: the small bold provider line (with the provider's icon) sits above the
+    // model name — no `model · provider` capsule anymore.
+    const modelRow = modelRowTrigger()
+    expect(modelRow, 'expected the "Model" subtrigger').toBeDefined()
+    expect(modelRow?.textContent).toContain('OpenAI')
+    expect(modelRow?.textContent).toContain('gpt-5.2')
+    expect(modelRow?.textContent).not.toContain('·')
+  })
+
+  it('adapts the effort submenu to the standard-5 profile and echoes the current effort in the row capsule', async () => {
+    // A model absent from the Anthropic catalog resolves to the vendor default (standard-5): five
+    // distinct rungs. The stored 'medium' intent checks the rung the profile maps it to, and the
+    // first-level row capsule shows that rung's label.
+    useSettingsStore.setState({
+      providers: [
+        provider({
+          id: 'ant',
+          type: 'official',
+          vendorId: 'anthropic',
+          name: 'Anthropic',
+          models: ['claude-next', 'claude-next-mini']
+        }),
+        provider({ id: 'p2', name: 'Gateway', models: ['gm'] })
+      ],
+      activeProviderId: 'ant',
+      activeModel: 'claude-next',
+      reasoningEffort: 'medium'
+    })
+    render()
+
+    const control = resolveReasoningEffortControl('medium', reasoningEffortProfile('standard-5'))
+    expect(control.options).toHaveLength(5)
+    const selectedLabel = control.options.find(
+      (option) => option.value === control.selectedValue
+    )?.label
+
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger).not.toBeNull()
+    await openMenu(trigger!)
+
+    const effortRow = subTriggers().find((el) => el.textContent?.includes('Reasoning effort'))
+    expect(effortRow, 'expected the "Reasoning effort" subtrigger').toBeDefined()
+    expect(effortRow?.textContent).toContain(selectedLabel!)
+
+    await openSubmenu(effortRow!)
+    const effortOptions = radioItems()
+    expect(effortOptions.map((el) => el.textContent)).toEqual([
+      'Defaultprovider default',
+      ...control.options.map((option) => option.label)
+    ])
+
+    // The rung the stored intent maps onto carries the selected marker (aria-checked + Check).
+    const checkedItem = effortOptions.find((el) => el.getAttribute('aria-checked') === 'true')
+    expect(checkedItem?.textContent).toBe(selectedLabel)
+    expect(checkedItem?.querySelector('svg.text-primary')).not.toBeNull()
+  })
+
+  it('keeps the grouped provider catalog in the Model submenu and switches on pick', async () => {
+    const setActiveProvider = vi.fn()
+    useSettingsStore.setState({
+      providers: [
+        provider({
+          id: 'off',
+          type: 'official',
+          vendorId: 'openai',
+          name: 'OpenAI',
+          models: ['gpt-5.2', 'gpt-5.5']
+        }),
+        provider({ id: 'gw', name: 'Gateway', models: ['gm'] })
+      ],
+      activeProviderId: 'off',
+      activeModel: 'gpt-5.2',
+      setActiveProvider
+    })
+    render()
+
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger).not.toBeNull()
+    await openMenu(trigger!)
+
+    const modelRow = modelRowTrigger()
+    expect(modelRow, 'expected the "Model" subtrigger').toBeDefined()
+    await openSubmenu(modelRow!)
+
+    // Both provider groups render under their own heading, with every catalog model listed.
+    expect(document.body.textContent).toContain('OpenAI')
+    expect(document.body.textContent).toContain('Gateway')
+    expect(document.body.textContent).toContain('gpt-5.5')
+
+    // The active model row is the one carrying the selected marker (aria-checked + Check).
+    const activeModelItem = radioItems().find((el) => el.textContent === 'gpt-5.2')
+    expect(activeModelItem, 'expected the active model menu item').toBeDefined()
+    expect(activeModelItem?.getAttribute('aria-checked')).toBe('true')
+    expect(activeModelItem?.querySelector('svg.text-primary')).not.toBeNull()
+
+    const gatewayModel = radioItems().find((el) => el.textContent === 'gm')
+    expect(gatewayModel, 'expected the Gateway model menu item').toBeDefined()
+    act(() => gatewayModel!.click())
+    expect(setActiveProvider).toHaveBeenCalledWith('gw', 'gm')
   })
 })

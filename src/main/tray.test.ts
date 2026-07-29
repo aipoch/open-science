@@ -35,6 +35,9 @@ let trayShouldThrow = false
 // Toggles for the nativeImage doubles, driving the macOS template branch and its fallbacks.
 let sourceEmpty = false
 let bitmapThrows = false
+let sourceBitmap = Buffer.alloc(4 * 4 * 4, 200)
+let templateBitmap: Buffer | undefined
+let createdFromPaths: string[] = []
 
 const makeImage = (kind: 'path' | 'bitmap'): FakeImage => {
   const image: FakeImage = {
@@ -44,7 +47,7 @@ const makeImage = (kind: 'path' | 'bitmap'): FakeImage => {
     getSize: () => ({ width: 4, height: 4 }),
     toBitmap: () => {
       if (bitmapThrows) throw new Error('toBitmap failed')
-      return Buffer.alloc(4 * 4 * 4, 200)
+      return Buffer.from(sourceBitmap)
     },
     resize: () => image,
     setTemplateImage: (value: boolean) => {
@@ -97,8 +100,14 @@ vi.mock('electron', () => ({
     }
   },
   nativeImage: {
-    createFromPath: () => makeImage('path'),
-    createFromBitmap: () => makeImage('bitmap')
+    createFromPath: (path: string) => {
+      createdFromPaths.push(path)
+      return makeImage('path')
+    },
+    createFromBitmap: (bitmap: Buffer) => {
+      templateBitmap = Buffer.from(bitmap)
+      return makeImage('bitmap')
+    }
   },
   screen: {
     getCursorScreenPoint: () => ({ x: 1200, y: 800 })
@@ -134,6 +143,9 @@ describe('createAppTray', () => {
     trayShouldThrow = false
     sourceEmpty = false
     bitmapThrows = false
+    sourceBitmap = Buffer.alloc(4 * 4 * 4, 200)
+    templateBitmap = undefined
+    createdFromPaths = []
     // Default the shared cases to a non-darwin platform (full-color icon path).
     setPlatform('linux')
   })
@@ -295,6 +307,56 @@ describe('createAppTray', () => {
 
       expect(lastTray?.icon.kind).toBe('bitmap')
       expect(lastTray?.icon.isTemplate).toBe(true)
+    })
+
+    it('uses a dedicated image source for the monochrome template', () => {
+      createAppTray({
+        iconPath: '/icons/app.png',
+        templateIconPath: '/icons/app-dark.png',
+        onShow: vi.fn(),
+        onHide: vi.fn(),
+        onQuit: vi.fn()
+      })
+
+      expect(createdFromPaths[0]).toBe('/icons/app-dark.png')
+    })
+
+    it('preserves source transparency when deriving template alpha', () => {
+      sourceBitmap = Buffer.alloc(4 * 4 * 4)
+      for (let offset = 0; offset < sourceBitmap.length; offset += 4) {
+        sourceBitmap.set([20, 20, 20, 255], offset)
+      }
+      sourceBitmap.set([240, 240, 240, 255], 0)
+      sourceBitmap.set([240, 240, 240, 0], 8)
+      sourceBitmap.set([240, 240, 240, 128], 12)
+
+      createAppTray({
+        iconPath: '/icons/app.png',
+        onShow: vi.fn(),
+        onHide: vi.fn(),
+        onQuit: vi.fn()
+      })
+
+      expect(templateBitmap?.subarray(0, 16)).toEqual(
+        Buffer.from([
+          0,
+          0,
+          0,
+          255, // Opaque bright glyph.
+          0,
+          0,
+          0,
+          0, // Opaque dark container.
+          0,
+          0,
+          0,
+          0, // Fully transparent bright padding.
+          0,
+          0,
+          0,
+          128 // Half-transparent bright antialiasing.
+        ])
+      )
     })
 
     it('falls back to the color icon when the template cannot be built', () => {

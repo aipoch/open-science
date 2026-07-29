@@ -232,13 +232,16 @@ export const REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND = [
   '                  the 33 the agent reported in msg[2]."',
   '                  Example (fail): "Agent stated 42 samples (msg[0]). I parsed artifact-csv',
   '                  with read_artifact and found 33 rows."',
-  '      - locator:  Optional block-level pointer { blockRef: { blockIndex: N }, contentHash: "..." }.',
-  '                  Provide for warn/fail checks (points to the claim being flagged).',
+  '      - locator:  Block-level pointer { blockRef: { blockIndex: N }, contentHash: "..." }.',
+  '                  Required for warn/fail checks (points to the claim being flagged).',
   '                  May be omitted for pass checks.',
   '      - artifactVersionId: Optional — include when the check relates to a specific artifact.',
+  'Before submitting, call read_turn. For an activity locator, also query that exact execution log.',
+  'For artifactVersionId, first read that exact Artifact Version with read_artifact.',
   'Record pass checks CONSOLIDATED: one per area you verified, never one per value traced. A',
   'system-info report whose fields all match its tool output is ONE pass check ("traced all reported',
   'metrics to the host output; all match"), not one card per metric.',
   'If you find no issues, still submit a few consolidated pass checks describing what you verified.',
+  'An empty checks array is invalid and never means pass.',
   '</reviewer_instructions>'
 ].join('\n')

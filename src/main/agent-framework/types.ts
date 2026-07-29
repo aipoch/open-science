@@ -98,20 +98,43 @@ export type SessionSetup = {
   promptPrefix?: string
 }
 
+export type ProxyEnvironmentMode = 'inherit' | 'replace'
+
 // Already-resolved spawn inputs: env and args come from prepareModelConfig merged over the base
 // process env; configFiles are written by the runtime before this call.
 export type AgentSpawnInput = {
   executablePath: string
   env: Record<string, string>
   args: string[]
+  // `replace` means the host resolved an explicit proxy or DIRECT decision and inherited proxy
+  // variables must not override it. `inherit` preserves them after a host resolver failure.
+  proxyEnvironmentMode?: ProxyEnvironmentMode
   debug?: boolean
 }
+
+// How a framework keeps long-running sessions inside their context window. A native command makes
+// manual compaction available over ACP session/prompt. `triggerAtPercent` is present only when the host
+// also owns automatic triggering; frameworks that compact automatically themselves omit it.
+export type ContextCompactionStrategy =
+  | {
+      kind: 'native-command'
+      command: string
+      triggerAtPercent?: number
+      // Some ACP adapters report a failed control turn only through assistant output, then return
+      // end_turn. The runtime suppresses that output but uses this prefix to preserve failure state.
+      failureTextPrefix?: string
+    }
+  | { kind: 'framework-managed' }
 
 // One switchable agent backend. The ACP runtime stays generic and delegates only the framework-coupled
 // decisions to this interface. See docs/internal/pluggable-agent-framework-feasibility.md.
 export interface AgentFramework {
   readonly id: AgentFrameworkId
   readonly displayName: string
+
+  // Keeps slash-command details at the framework seam so the generic runtime only asks for native
+  // compaction and never branches on framework ids.
+  readonly contextCompaction: ContextCompactionStrategy
 
   // Launch the ACP agent subprocess (stdio JSON-RPC), wrapping the per-framework binary + args.
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams
@@ -158,6 +181,7 @@ export type ResolvedAgentBackend = {
   executablePath: string
   env: Record<string, string>
   args?: string[]
+  proxyEnvironmentMode?: ProxyEnvironmentMode
   // Framework-native session options retained by the runtime and passed through buildSessionSetup.
   sessionOptions?: Record<string, unknown>
   // Backend-resolved guidance appended to every session. Connector conventions use this channel for

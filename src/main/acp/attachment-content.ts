@@ -73,6 +73,35 @@ const TEXT_LIKE_EXTENSIONS = new Set([
 // Column-oriented formats, so the reading hint can name rows/columns rather than generic ranges.
 const TABULAR_EXTENSIONS = new Set(['csv', 'tsv', 'tab', 'psv'])
 
+// Structured data formats that are best inspected with a dataframe/database tool. Text members of
+// this set still take the bounded-preview path; binary members use an on-disk notice plus link.
+const DATASET_EXTENSIONS = new Set([
+  ...TABULAR_EXTENSIONS,
+  'xls',
+  'xlsx',
+  'xlsb',
+  'ods',
+  'parquet',
+  'arrow',
+  'feather',
+  'h5',
+  'hdf',
+  'hdf5',
+  'nc',
+  'netcdf',
+  'sav',
+  'dta',
+  'sas7bdat'
+])
+
+const DATASET_MIME_TYPES = new Set([
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.oasis.opendocument.spreadsheet',
+  'application/vnd.apache.arrow.file',
+  'application/vnd.apache.parquet'
+])
+
 // Lower-cased extension after the final dot, or '' when the name has none.
 const fileExtension = (name: string): string => {
   const dot = name.lastIndexOf('.')
@@ -126,6 +155,14 @@ export const isTabularAttachment = (name: string, mimeType?: string): boolean =>
   if (essence === 'text/csv' || essence === 'text/tab-separated-values') return true
 
   return TABULAR_EXTENSIONS.has(fileExtension(name))
+}
+
+export const isDatasetAttachment = (name: string, mimeType?: string): boolean => {
+  const essence = mimeEssence(mimeType)
+  return (
+    DATASET_EXTENSIONS.has(fileExtension(name)) ||
+    (essence ? DATASET_MIME_TYPES.has(essence) : false)
+  )
 }
 
 // Raster image extensions that vision-capable agents can read as pixels, mapped to the MIME type to
@@ -196,3 +233,18 @@ export const buildOversizedAttachmentNotice = (input: {
     trailer
   ].join('\n')
 }
+
+// Binary spreadsheets and scientific containers cannot provide a useful UTF-8 preview. Give the
+// agent an explicit analysis contract alongside the resource link instead of a context-free URI.
+export const buildDatasetAttachmentNotice = (input: { name: string; size: number }): string =>
+  [
+    `[Attached dataset "${input.name}" (${formatBytes(input.size)}) is available on disk via the linked resource below.`,
+    'Do not load the whole file into the conversation. Inspect its schema and a small sample first, then use the notebook or a streaming/query tool to compute over the full dataset.]'
+  ].join('\n')
+
+export const buildDeferredMediaNotice = (input: {
+  name: string
+  size: number
+  kind: 'image' | 'PDF'
+}): string =>
+  `[Attached ${input.kind} "${input.name}" (${formatBytes(input.size)}) is too large for automatic in-memory processing and is available on disk via the linked resource below.]`

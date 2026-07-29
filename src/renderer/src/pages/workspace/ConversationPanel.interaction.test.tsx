@@ -112,6 +112,7 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         actionError={null}
         isPreviewPanelCollapsed={false}
         attachments={[]}
+        attachmentTransfers={[]}
         isUploadingAttachments={false}
         notebookReference={undefined}
         pendingPermissions={[]}
@@ -124,6 +125,7 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         onSendMessage={vi.fn()}
         onStageAttachmentFiles={onStageAttachmentFiles}
         onRemoveAttachment={vi.fn()}
+        onCancelAttachmentTransfer={vi.fn()}
         onCancelRun={vi.fn()}
         onResumeSession={vi.fn().mockResolvedValue(undefined)}
         onOpenNotebook={vi.fn()}
@@ -197,6 +199,52 @@ afterEach(() => {
 })
 
 describe('ConversationPanel composer intake', () => {
+  it('shows file type and per-file size behavior before selection', () => {
+    renderPanel()
+
+    expect(container.querySelector('[data-testid="attachment-limits"]')?.textContent).toContain(
+      'Any file type · 10 GB per file. Large files are linked, not embedded.'
+    )
+  })
+
+  it('shows per-file progress and cancels only the selected transfer', () => {
+    const onCancelAttachmentTransfer = vi.fn()
+    const transfer = {
+      transferId: 'transfer-1',
+      name: 'large.csv',
+      mimeType: 'text/csv',
+      receivedBytes: 25,
+      totalBytes: 100,
+      status: 'uploading' as const
+    }
+    renderPanel({
+      attachmentTransfers: [transfer],
+      isUploadingAttachments: true,
+      onCancelAttachmentTransfer
+    })
+
+    const progress = container.querySelector('[role="progressbar"]')
+    const cancel = container.querySelector(
+      'button[aria-label="Cancel attachment large.csv"]'
+    ) as HTMLButtonElement | null
+
+    expect(progress?.getAttribute('aria-valuenow')).toBe('25')
+    expect(container.textContent).toContain('25% of 100 B')
+    expect(cancel).not.toBeNull()
+    act(() => cancel?.click())
+    expect(onCancelAttachmentTransfer).toHaveBeenCalledWith(transfer)
+  })
+
+  it('uses a flat border without a card shadow', () => {
+    renderPanel()
+
+    const composerForm = getComposerForm()
+
+    expect(composerForm.classList.contains('border')).toBe(true)
+    expect(composerForm.classList.contains('border-border-200')).toBe(true)
+    expect(composerForm.classList.contains('shadow-card-opaque')).toBe(false)
+  })
+
   it('stages a pasted non-image file', () => {
     renderPanel()
     const pdf = new File(['%PDF'], 'report.pdf', { type: 'application/pdf' })
@@ -484,15 +532,21 @@ describe('ConversationPanel compacting state', () => {
   }
 
   it('shows a neutral compacting note and hides the overflow error during recovery', () => {
+    const onCancelRun = vi.fn()
     // The raw overflow error is still present as a global actionError, but must be suppressed while the
     // session is compacting so the user sees the recovery affordance, not a dead-end.
     renderPanel({
       activeSession: compactingSession,
-      actionError: 'Internal error: Request too large (max 32MB).'
+      actionError: 'Internal error: Request too large (max 32MB).',
+      onCancelRun
     })
 
     expect(container.textContent).toContain('Compacting conversation to fit the context limit')
     expect(container.textContent).not.toContain('Request too large')
+    const cancelButton = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
+    expect(cancelButton).not.toBeNull()
+    act(() => cancelButton.click())
+    expect(onCancelRun).toHaveBeenCalledOnce()
   })
 })
 
@@ -507,6 +561,16 @@ describe('ConversationPanel notebook bar', () => {
     createdAt: Date.now(),
     updatedAt: Date.now()
   }
+  const notebookReference = {
+    notebookId: 'nb-1',
+    sessionId: 'session-bar',
+    projectName: 'proj',
+    workspaceCwd: '/workspace',
+    notebookSessionRoot: '/nb',
+    dataRoot: '/data',
+    runtimeRoot: '/rt',
+    runJsonPath: '/run.json'
+  }
 
   it('hides the notebook bar when there is no notebookReference and no running job', () => {
     mockHasRunningJobs = false
@@ -518,20 +582,28 @@ describe('ConversationPanel notebook bar', () => {
 
   it('shows only the Notebook button when notebookReference exists and no running job', () => {
     mockHasRunningJobs = false
-    const ref = {
-      notebookId: 'nb-1',
-      sessionId: 'session-bar',
-      projectName: 'proj',
-      workspaceCwd: '/workspace',
-      notebookSessionRoot: '/nb',
-      dataRoot: '/data',
-      runtimeRoot: '/rt',
-      runJsonPath: '/run.json'
-    }
-    renderPanel({ activeSession: session, notebookReference: ref })
+    renderPanel({ activeSession: session, notebookReference })
 
     expect(container.querySelector('[aria-label="Open notebook"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
+  })
+
+  it('animates the notebook bar upward when it appears', () => {
+    renderPanel({ activeSession: session, notebookReference })
+
+    const notebookBar = container.querySelector('[aria-label="Open notebook"]')?.parentElement
+
+    expect(notebookBar?.className).toContain('motion-safe:animate-in')
+    expect(notebookBar?.className).toContain('motion-safe:fade-in-0')
+    expect(notebookBar?.className).toContain('motion-safe:slide-in-from-bottom-1')
+  })
+
+  it('shows a pointer cursor over the Notebook button', () => {
+    renderPanel({ activeSession: session, notebookReference })
+
+    const notebookButton = container.querySelector('[aria-label="Open notebook"]')
+
+    expect(notebookButton?.className).toContain('cursor-pointer')
   })
 
   it('shows only the job badge when there is no notebookReference but there are running jobs', () => {
@@ -543,20 +615,43 @@ describe('ConversationPanel notebook bar', () => {
     expect(container.querySelector('[data-testid="remote-job-badge"]')).not.toBeNull()
   })
 
+  it('keeps the job-only bar compact and static', () => {
+    mockAllJobs = [{ job_id: 'job-1', status: 'running', created_at: Date.now() }]
+    renderPanel({ activeSession: session, notebookReference: undefined })
+
+    const jobBar = container.querySelector('[data-testid="remote-job-badge"]')?.parentElement
+
+    expect(jobBar?.classList.contains('min-h-9')).toBe(true)
+    expect(jobBar?.classList.contains('bg-bg-000')).toBe(true)
+    expect(jobBar?.classList.contains('motion-safe:animate-in')).toBe(false)
+  })
+
+  it('remounts the bar when a Notebook appears after jobs', () => {
+    mockAllJobs = [{ job_id: 'job-1', status: 'running', created_at: Date.now() }]
+    renderPanel({ activeSession: session, notebookReference: undefined })
+    const jobBar = container.querySelector('[data-testid="remote-job-badge"]')?.parentElement
+
+    renderPanel({ activeSession: session, notebookReference })
+    const notebookBar = container.querySelector('[aria-label="Open notebook"]')?.parentElement
+
+    expect(notebookBar).not.toBe(jobBar)
+    expect(notebookBar?.classList.contains('motion-safe:animate-in')).toBe(true)
+  })
+
+  it('does not layer card shadows behind the composer border', () => {
+    renderPanel({ activeSession: session, notebookReference })
+
+    const notebookBar = container.querySelector('[aria-label="Open notebook"]')?.parentElement
+    const composerBackdrop = getComposerForm().previousElementSibling
+
+    expect(notebookBar?.classList.contains('shadow-card')).toBe(false)
+    expect(composerBackdrop?.classList.contains('shadow-card')).toBe(false)
+  })
+
   it('shows both the Notebook button and the job badge when both are present', () => {
     mockHasRunningJobs = true
     mockAllJobs = [{ job_id: 'job-1', status: 'running', created_at: Date.now() }]
-    const ref = {
-      notebookId: 'nb-1',
-      sessionId: 'session-bar',
-      projectName: 'proj',
-      workspaceCwd: '/workspace',
-      notebookSessionRoot: '/nb',
-      dataRoot: '/data',
-      runtimeRoot: '/rt',
-      runJsonPath: '/run.json'
-    }
-    renderPanel({ activeSession: session, notebookReference: ref })
+    renderPanel({ activeSession: session, notebookReference })
 
     expect(container.querySelector('[aria-label="Open notebook"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="remote-job-badge"]')).not.toBeNull()
@@ -567,8 +662,8 @@ describe('ConversationPanel notebook bar', () => {
     mockAllJobs = [{ job_id: 'job-1', status: 'done', created_at: Date.now() }]
     renderPanel({ activeSession: session, notebookReference: undefined })
 
-    // Bar should be visible (the container that wraps badge/notebook button)
-    const notebookBar = container.querySelector('.mb-2.flex.min-h-9')
+    // The badge's parent is the shared notebook/job bar.
+    const notebookBar = container.querySelector('[data-testid="remote-job-badge"]')?.parentElement
     expect(notebookBar).not.toBeNull()
     // Badge should be visible even though no jobs are running
     expect(container.querySelector('[data-testid="remote-job-badge"]')).not.toBeNull()

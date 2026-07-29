@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { getUploadedAttachmentPath } from '../../../shared/uploads'
+
 import {
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
@@ -114,6 +116,7 @@ describe('preview workbench store', () => {
     store.activateProject('project-a')
     store.upsertAndActivateItem({
       id: 'upload:upload-a',
+      projectId: 'project-a',
       sessionId: '.pending',
       type: 'file',
       source: 'upload',
@@ -125,6 +128,7 @@ describe('preview workbench store', () => {
     store.activateProject('project-b')
     store.upsertAndActivateItem({
       id: 'upload:upload-b',
+      projectId: 'project-b',
       sessionId: '.pending',
       type: 'file',
       source: 'upload',
@@ -137,6 +141,7 @@ describe('preview workbench store', () => {
     usePreviewWorkbenchStore.getState().reconcileFinalizedUploads([
       {
         id: 'upload-a',
+        versionId: 'version-a',
         sessionId: 'session-a',
         name: 'a.csv',
         originalName: 'a.csv',
@@ -146,6 +151,7 @@ describe('preview workbench store', () => {
       },
       {
         id: 'upload-b',
+        versionId: 'version-b',
         sessionId: 'session-b',
         name: 'b.csv',
         originalName: 'b.csv',
@@ -155,6 +161,7 @@ describe('preview workbench store', () => {
       },
       {
         id: 'upload-never-opened',
+        versionId: 'version-hidden',
         sessionId: 'session-b',
         name: 'hidden.csv',
         originalName: 'hidden.csv',
@@ -168,7 +175,10 @@ describe('preview workbench store', () => {
       {
         id: 'upload:upload-b',
         sessionId: 'session-b',
-        path: '/uploads/default-project/session-b/b.csv'
+        path: getUploadedAttachmentPath(
+          { versionId: 'version-b', sessionId: 'session-b' },
+          'project-b'
+        )
       }
     ])
 
@@ -177,7 +187,10 @@ describe('preview workbench store', () => {
       {
         id: 'upload:upload-a',
         sessionId: 'session-a',
-        path: '/uploads/default-project/session-a/a.csv'
+        path: getUploadedAttachmentPath(
+          { versionId: 'version-a', sessionId: 'session-a' },
+          'project-a'
+        )
       }
     ])
     expect(
@@ -387,6 +400,26 @@ describe('preview workbench store', () => {
     expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
   })
 
+  it('adds the active project scope to file tabs when callers omit it', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-a')
+    store.upsertAndActivateItem({
+      id: 'upload:upload-a',
+      sessionId: 'session-a',
+      type: 'file',
+      source: 'upload',
+      title: 'a.csv',
+      path: 'upload-version:version-a',
+      format: 'csv',
+      name: 'a.csv'
+    })
+
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      projectId: 'project-a',
+      sessionId: 'session-a'
+    })
+  })
+
   it('seeds a project slice from restored persistence on first activation', () => {
     usePreviewWorkbenchStore.getState().activateProject('project-a', {
       panelState: 'open',
@@ -408,7 +441,13 @@ describe('preview workbench store', () => {
       activeProjectId: 'project-a',
       panelState: 'open',
       activeItemId: 'file:session-1:/workspace/project/report.md',
-      items: [{ id: 'file:session-1:/workspace/project/report.md', createdAt: Date.now() }]
+      items: [
+        {
+          id: 'file:session-1:/workspace/project/report.md',
+          projectId: 'project-a',
+          createdAt: Date.now()
+        }
+      ]
     })
   })
 

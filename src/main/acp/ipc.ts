@@ -7,6 +7,7 @@ import { app, ipcMain } from 'electron'
 
 import type {
   AcpCancelPromptRequest,
+  AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
   AcpRuntimeEvent,
@@ -25,6 +26,7 @@ import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { installAgentShutdownGuard } from './shutdown-guard'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository } from '../artifacts/repository'
+import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import type { ArtifactRunRegistry } from '../artifacts/run-registry'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
@@ -42,13 +44,22 @@ const log = createLogger('acp')
 type AcpIpcArtifacts = {
   repository: ArtifactRepository
   runRegistry: ArtifactRunRegistry
+  provenanceRepository?: Pick<
+    ArtifactProvenanceRepository,
+    'listRunVersions' | 'writeAppGeneratedVersion'
+  > &
+    Partial<Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>>
 }
 
 type AcpIpcOptions = AcpIpcArtifacts & {
   mcpEntryPath: string
   uploadRepository: UploadRepository
   notebookRpcServer: NotebookLocalRpcServer
-  authorizeSkillImportReferencedUploads: (sessionId: string, paths: string[]) => Promise<() => void>
+  authorizeSkillImportReferencedUploads: (
+    projectId: string,
+    sessionId: string,
+    paths: string[]
+  ) => Promise<() => void>
   // Drives the agent spawn env from the active provider so switching takes effect on reconnect.
   settingsService: SettingsService
   initializationBarrier?: Promise<unknown>
@@ -87,6 +98,7 @@ const createRuntime = ({
   mcpEntryPath,
   repository,
   runRegistry,
+  provenanceRepository,
   uploadRepository,
   notebookRpcServer,
   authorizeSkillImportReferencedUploads,
@@ -144,7 +156,11 @@ const createRuntime = ({
           projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
           mcpEntryPath,
           repository,
-          runRegistry
+          runRegistry,
+          provenance: provenanceRepository,
+          getRpcConnection: () => notebookRpcServer.ensureStarted(),
+          issueRpcCapability: (binding) => notebookRpcServer.issueArtifactRunCapability(binding),
+          revokeRpcCapability: (token) => notebookRpcServer.revokeArtifactRunCapability(token)
         },
         uploads: { repository: uploadRepository },
         notebook: {
@@ -152,7 +168,10 @@ const createRuntime = ({
           mcpEntryPath,
           getRpcConnection: () => notebookRpcServer.ensureStarted(),
           registerSessionAlias: (aliasSessionId, sessionId) =>
-            notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId)
+            notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
+          setArtifactProvenanceContext: (sessionId, context) =>
+            notebookRpcServer.setArtifactProvenanceContext(sessionId, context),
+          registerTurnInputs: (request) => notebookRpcServer.registerNotebookTurnInputs(request)
         },
         skillImport: {
           mcpEntryPath,
@@ -223,6 +242,9 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator =
   )
   ipcMain.handle('acp:reset-session-context', (_event, request: AcpResumeSessionRequest) =>
     runtime.resetSessionContext(request)
+  )
+  ipcMain.handle('acp:compact-session', (_event, request: AcpCompactSessionRequest) =>
+    runtime.compactSession(request)
   )
   // Prompt calls wait for the turn to stop, then return the latest snapshot.
   ipcMain.handle('acp:send-prompt', async (_event, request: AcpPromptRequest) => {

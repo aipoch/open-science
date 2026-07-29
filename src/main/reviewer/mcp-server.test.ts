@@ -1,15 +1,20 @@
 // Tests for the reviewer MCP server's check-to-scope mapping. The key invariant (design.md:114):
-// a check's locator.contentHash is back-filled from the referenced scope block, never trusted
-// from model input, and out-of-scope locators are rejected.
+// a check's locator.contentHash must agree with the referenced frozen scope block, and out-of-scope
+// or stale locators are rejected.
 //
 // v2 (issue 12): submit_findings accepts checks[] (status pass|warn|fail) not findings[]+severity.
 // summary is no longer accepted (strict schema). Pass checks may omit their locator.
 
 import { describe, it, expect, vi } from 'vitest'
 
-import { mapChecksToScope, submitFindingsInputSchema, ReviewerMcpServer } from './mcp-server'
+import {
+  mapChecksToScope,
+  submitFindingsInputSchema,
+  validateReviewerEvidenceAccess,
+  ReviewerMcpServer
+} from './mcp-server'
 import type { TurnScope } from '../../shared/reviewer'
-import type { ArtifactContent, ExecRecord, OrderedBlock } from './host-sdk'
+import type { ArtifactContent, ExecRecord, OrderedBlock, ReviewerHostServer } from './host-sdk'
 
 const scope: TurnScope = {
   turnMessageId: 'msg-2',
@@ -32,26 +37,66 @@ const scope: TurnScope = {
   artifactVersionIds: ['artifact-csv']
 }
 
-describe('mapChecksToScope', () => {
-  it('back-fills contentHash from the referenced scope block, ignoring the model-supplied value', () => {
-    const mapped = mapChecksToScope(
-      [
-        {
-          status: 'fail',
-          claim: 'wrong count',
-          evidence: 'block 0 says 32',
-          locator: {
-            blockRef: { messageId: 'msg-2', blockIndex: 0 },
-            // Hallucinated/stale hash supplied by the model — must be overwritten.
-            contentHash: 'model-supplied-garbage'
-          }
-        }
-      ],
-      scope
-    )
+type ReviewerEvidence = Pick<ReviewerHostServer, 'readTurn' | 'queryExecutionLog' | 'readArtifact'>
 
-    expect(mapped).toHaveLength(1)
-    expect(mapped[0]!.locator!.contentHash).toBe('real-hash-msg-2')
+const createReviewerEvidence = (): ReviewerEvidence => ({
+  readTurn: vi.fn<() => OrderedBlock[]>().mockReturnValue([
+    {
+      blockIndex: 0,
+      id: 'message:msg-2',
+      kind: 'message',
+      sourceId: 'msg-2',
+      contentHash: 'real-hash-msg-2',
+      role: 'agent',
+      content: '42 results'
+    },
+    {
+      blockIndex: 1,
+      id: 'activity:act-9',
+      kind: 'activity',
+      sourceId: 'act-9',
+      contentHash: 'real-hash-act-9',
+      title: 'analysis',
+      status: 'completed'
+    }
+  ]),
+  queryExecutionLog: vi
+    .fn<(activityId?: string) => ExecRecord[]>()
+    .mockReturnValue([
+      { activityId: 'act-9', title: 'analysis', status: 'completed', terminalExitCode: 0 }
+    ]),
+  readArtifact: vi.fn<(id: string) => Promise<ArtifactContent>>().mockResolvedValue({
+    id: 'artifact-csv',
+    kind: 'tabular',
+    columns: { value: ['42'] },
+    rowCount: 1
+  })
+})
+
+const passingCheck = {
+  status: 'pass' as const,
+  claim: 'The audited turn is supported',
+  evidence: 'The frozen turn content was read and verified.'
+}
+
+describe('mapChecksToScope', () => {
+  it('rejects a locator whose contentHash is stale or hallucinated', () => {
+    expect(() =>
+      mapChecksToScope(
+        [
+          {
+            status: 'fail',
+            claim: 'wrong count',
+            evidence: 'block 0 says 32',
+            locator: {
+              blockRef: { messageId: 'msg-2', blockIndex: 0 },
+              contentHash: 'model-supplied-garbage'
+            }
+          }
+        ],
+        scope
+      )
+    ).toThrow(/content hash.*does not match/i)
   })
 
   it('resolves the block by blockIndex for activity references too', () => {
@@ -63,7 +108,7 @@ describe('mapChecksToScope', () => {
           evidence: 'act-9',
           locator: {
             blockRef: { activityId: 'act-9', blockIndex: 1 },
-            contentHash: 'whatever'
+            contentHash: 'real-hash-act-9'
           }
         }
       ],
@@ -97,7 +142,10 @@ describe('mapChecksToScope', () => {
           claim: 'mismatched id',
           evidence: 'x',
           // blockIndex 0 is msg-2, but the model claims a different (hallucinated) id.
-          locator: { blockRef: { messageId: 'msg-999', blockIndex: 0 }, contentHash: 'x' }
+          locator: {
+            blockRef: { messageId: 'msg-999', blockIndex: 0 },
+            contentHash: 'real-hash-msg-2'
+          }
         }
       ],
       scope
@@ -117,7 +165,10 @@ describe('mapChecksToScope', () => {
           claim: 'suspicious tool call',
           evidence: 'act-9',
           // Model mislabels an activity block as a message; the id kind is corrected from the block.
-          locator: { blockRef: { messageId: 'act-9', blockIndex: 1 }, contentHash: 'x' }
+          locator: {
+            blockRef: { messageId: 'act-9', blockIndex: 1 },
+            contentHash: 'real-hash-act-9'
+          }
         }
       ],
       scope
@@ -134,13 +185,13 @@ describe('mapChecksToScope', () => {
           status: 'warn',
           claim: 'a',
           evidence: 'a',
-          locator: { blockRef: { blockIndex: 1 }, contentHash: 'x' }
+          locator: { blockRef: { blockIndex: 1 }, contentHash: 'real-hash-act-9' }
         },
         {
           status: 'fail',
           claim: 'b',
           evidence: 'b',
-          locator: { blockRef: { blockIndex: 0 }, contentHash: 'y' }
+          locator: { blockRef: { blockIndex: 0 }, contentHash: 'real-hash-msg-2' }
         }
       ],
       scope
@@ -213,9 +264,9 @@ describe('submitFindingsInputSchema — v3 unified checks[] (no reasoning)', () 
     expect(parsed.success).toBe(false)
   })
 
-  it('accepts an empty checks array (pure pass)', () => {
+  it('rejects an empty checks array instead of manufacturing a pass', () => {
     const parsed = submitFindingsInputSchema.safeParse({ checks: [] })
-    expect(parsed.success).toBe(true)
+    expect(parsed.success).toBe(false)
   })
 
   it('rejects unknown status values (inconclusive no longer valid)', () => {
@@ -223,6 +274,15 @@ describe('submitFindingsInputSchema — v3 unified checks[] (no reasoning)', () 
       checks: [{ status: 'inconclusive', claim: 'x', evidence: 'y' }]
     })
     expect(parsed.success).toBe(false)
+  })
+
+  it('requires a locator for warn and fail checks', () => {
+    for (const status of ['warn', 'fail'] as const) {
+      const parsed = submitFindingsInputSchema.safeParse({
+        checks: [{ status, claim: 'unsupported claim', evidence: 'contradiction found' }]
+      })
+      expect(parsed.success).toBe(false)
+    }
   })
 
   it('rejects a summary field (v2 no longer accepts summary)', () => {
@@ -285,6 +345,103 @@ describe('submitFindingsInputSchema — v3 unified checks[] (no reasoning)', () 
       expect(check.locator?.blockRef.blockIndex).toBe(1)
       expect(check.locator?.contentHash).toBe('deadbeef')
     }
+  })
+})
+
+describe('validateReviewerEvidenceAccess', () => {
+  it('rejects checks submitted without reading the frozen turn', () => {
+    const checks = submitFindingsInputSchema.parse({
+      checks: [{ status: 'pass', claim: 'turn is correct', evidence: 'looks correct' }]
+    }).checks
+
+    expect(() =>
+      validateReviewerEvidenceAccess(checks, scope, {
+        turnRead: false,
+        allExecutionLogsRead: false,
+        executionLogActivityIds: new Set(),
+        artifactVersionIds: new Set()
+      })
+    ).toThrow(/must read the frozen turn/i)
+  })
+
+  it('does not let an Artifact or execution-log read replace the frozen turn read', () => {
+    const checks = submitFindingsInputSchema.parse({
+      checks: [{ status: 'pass', claim: 'turn is correct', evidence: 'artifact looks correct' }]
+    }).checks
+
+    for (const access of [
+      {
+        turnRead: false,
+        allExecutionLogsRead: true,
+        executionLogActivityIds: new Set<string>(),
+        artifactVersionIds: new Set<string>()
+      },
+      {
+        turnRead: false,
+        allExecutionLogsRead: false,
+        executionLogActivityIds: new Set<string>(),
+        artifactVersionIds: new Set(['artifact-csv'])
+      }
+    ]) {
+      expect(() => validateReviewerEvidenceAccess(checks, scope, access)).toThrow(
+        /must read the frozen turn/i
+      )
+    }
+  })
+
+  it('requires the referenced activity execution log to have been read', () => {
+    const checks = submitFindingsInputSchema.parse({
+      checks: [
+        {
+          status: 'warn',
+          claim: 'activity output is incomplete',
+          evidence: 'the command stopped early',
+          locator: {
+            blockRef: { blockIndex: 1 },
+            contentHash: 'real-hash-act-9'
+          }
+        }
+      ]
+    }).checks
+
+    expect(() =>
+      validateReviewerEvidenceAccess(checks, scope, {
+        turnRead: true,
+        allExecutionLogsRead: false,
+        executionLogActivityIds: new Set(),
+        artifactVersionIds: new Set()
+      })
+    ).toThrow(/execution log.*was not read/i)
+  })
+
+  it('requires the exact Artifact Version to have been read before it can be bound', () => {
+    const checks = submitFindingsInputSchema.parse({
+      checks: [
+        {
+          status: 'pass',
+          claim: 'artifact row count matches',
+          evidence: 'counted one row',
+          artifactVersionId: 'artifact-csv'
+        }
+      ]
+    }).checks
+
+    expect(() =>
+      validateReviewerEvidenceAccess(checks, scope, {
+        turnRead: true,
+        allExecutionLogsRead: false,
+        executionLogActivityIds: new Set(),
+        artifactVersionIds: new Set()
+      })
+    ).toThrow(/artifact.*was not read/i)
+    expect(() =>
+      validateReviewerEvidenceAccess(checks, scope, {
+        turnRead: true,
+        allExecutionLogsRead: false,
+        executionLogActivityIds: new Set(),
+        artifactVersionIds: new Set(['artifact-csv'])
+      })
+    ).not.toThrow()
   })
 })
 
@@ -361,7 +518,7 @@ describe('ReviewerMcpServer HTTP transport', () => {
   }
 
   it('reuses the session transport for the GET SSE stream and still serves tool calls', async () => {
-    const server = new ReviewerMcpServer(scope, async () => undefined)
+    const server = new ReviewerMcpServer(scope, async () => undefined, createReviewerEvidence())
     const { endpoint, token } = await server.start()
 
     const authHeaders = { authorization: `Bearer ${token}`, accept: MCP_ACCEPT }
@@ -409,7 +566,6 @@ describe('ReviewerMcpServer HTTP transport', () => {
       await sseResponse.body?.cancel().catch(() => undefined)
 
       // 3. A tool call after the GET still works — the channel was not broken by the SSE open.
-      // v2: submit_findings uses checks[] not findings[]
       const toolResponse = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -421,7 +577,7 @@ describe('ReviewerMcpServer HTTP transport', () => {
           jsonrpc: '2.0',
           id: 2,
           method: 'tools/call',
-          params: { name: 'submit_findings', arguments: { checks: [] } }
+          params: { name: 'read_turn', arguments: {} }
         })
       })
       expect(toolResponse.status).toBe(200)
@@ -455,33 +611,9 @@ describe('ReviewerMcpServer HTTP transport', () => {
   })
 
   it('exposes evidence only through the scope-bounded reviewer MCP tools', async () => {
-    const readTurn = vi.fn<() => OrderedBlock[]>().mockReturnValue([
-      {
-        blockIndex: 0,
-        id: 'message:msg-2',
-        kind: 'message',
-        sourceId: 'msg-2',
-        contentHash: 'real-hash-msg-2',
-        role: 'agent',
-        content: '42 results'
-      }
-    ])
-    const queryExecutionLog = vi
-      .fn<(activityId?: string) => ExecRecord[]>()
-      .mockReturnValue([
-        { activityId: 'act-9', title: 'analysis', status: 'completed', terminalExitCode: 0 }
-      ])
-    const readArtifact = vi.fn<(id: string) => Promise<ArtifactContent>>().mockResolvedValue({
-      id: 'artifact-csv',
-      kind: 'tabular',
-      columns: { value: ['42'] },
-      rowCount: 1
-    })
-    const server = new ReviewerMcpServer(scope, async () => undefined, {
-      readTurn,
-      queryExecutionLog,
-      readArtifact
-    })
+    const evidence = createReviewerEvidence()
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    const server = new ReviewerMcpServer(scope, onSubmit, evidence)
     const { endpoint, token } = await server.start()
 
     try {
@@ -503,18 +635,38 @@ describe('ReviewerMcpServer HTTP transport', () => {
         { id: 'artifact-csv' },
         4
       )
+      const submitted = await callTool(
+        endpoint,
+        sessionId,
+        headers,
+        'submit_findings',
+        {
+          checks: [
+            {
+              ...passingCheck,
+              artifactVersionId: 'artifact-csv'
+            }
+          ]
+        },
+        5
+      )
 
       expect(JSON.parse(turn.result?.content?.[0]?.text ?? 'null')).toEqual(
-        readTurn.mock.results[0]?.value
+        expect.arrayContaining([
+          expect.objectContaining({ sourceId: 'msg-2' }),
+          expect.objectContaining({ sourceId: 'act-9' })
+        ])
       )
-      expect(JSON.parse(execution.result?.content?.[0]?.text ?? 'null')).toEqual(
-        queryExecutionLog.mock.results[0]?.value
-      )
+      expect(JSON.parse(execution.result?.content?.[0]?.text ?? 'null')).toEqual([
+        expect.objectContaining({ activityId: 'act-9', status: 'completed' })
+      ])
       expect(JSON.parse(artifact.result?.content?.[0]?.text ?? 'null')).toEqual(
-        await readArtifact.mock.results[0]?.value
+        expect.objectContaining({ id: 'artifact-csv', kind: 'tabular', rowCount: 1 })
       )
-      expect(queryExecutionLog).toHaveBeenCalledWith('act-9')
-      expect(readArtifact).toHaveBeenCalledWith('artifact-csv')
+      expect(evidence.queryExecutionLog).toHaveBeenCalledWith('act-9')
+      expect(evidence.readArtifact).toHaveBeenCalledWith('artifact-csv')
+      expect(submitted.result?.isError).not.toBe(true)
+      expect(onSubmit).toHaveBeenCalledOnce()
     } finally {
       await server.stop()
     }
@@ -522,13 +674,14 @@ describe('ReviewerMcpServer HTTP transport', () => {
 
   it('requires exactly one stable disposition per tracked finding and rejects duplicate submission', async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined)
-    const server = new ReviewerMcpServer(scope, onSubmit, undefined, ['finding-1'])
+    const server = new ReviewerMcpServer(scope, onSubmit, createReviewerEvidence(), ['finding-1'])
     const { endpoint, token } = await server.start()
 
     try {
       const { sessionId, headers } = await initialize(endpoint, token)
+      await callTool(endpoint, sessionId, headers, 'read_turn', {})
       const missing = await callTool(endpoint, sessionId, headers, 'submit_findings', {
-        checks: []
+        checks: [passingCheck]
       })
       expect(missing.result?.isError).toBe(true)
       expect(missing.result?.content?.[0]?.text).toContain('Missing disposition')
@@ -591,7 +744,7 @@ describe('ReviewerMcpServer HTTP transport', () => {
               status: 'fail',
               claim: 'Paraphrased description of the same unresolved defect',
               evidence: 'The corrected output is still contradictory',
-              locator: { blockRef: { blockIndex: 0 }, contentHash: 'ignored' }
+              locator: { blockRef: { blockIndex: 0 }, contentHash: 'real-hash-msg-2' }
             }
           ]
         },
@@ -629,6 +782,38 @@ describe('ReviewerMcpServer HTTP transport', () => {
     }
   })
 
+  it('drops a model-invented sourceFindingId during an initial review', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    const server = new ReviewerMcpServer(scope, onSubmit, createReviewerEvidence())
+    const { endpoint, token } = await server.start()
+
+    try {
+      const { sessionId, headers } = await initialize(endpoint, token)
+      await callTool(endpoint, sessionId, headers, 'read_turn', {})
+      const result = await callTool(endpoint, sessionId, headers, 'submit_findings', {
+        checks: [
+          {
+            sourceFindingId: 'review-r-sine-plot-execution',
+            status: 'pass',
+            claim: 'The plotted curve matches the executed code',
+            evidence: 'The execution block evaluates sin(x) over one period.'
+          }
+        ]
+      })
+
+      expect(result.result?.isError).not.toBe(true)
+      expect(onSubmit).toHaveBeenCalledOnce()
+      expect(onSubmit.mock.calls[0]?.[0]).toEqual([
+        expect.objectContaining({
+          sourceFindingId: undefined,
+          claim: 'The plotted curve matches the executed code'
+        })
+      ])
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('accepts exactly one of two concurrent submit_findings calls', async () => {
     let submissionsStarted = 0
     let releaseSubmission: (() => void) | undefined
@@ -641,14 +826,15 @@ describe('ReviewerMcpServer HTTP transport', () => {
       if (submissionsStarted === 2) releaseSubmission?.()
       await submissionGate
     })
-    const server = new ReviewerMcpServer(scope, onSubmit)
+    const server = new ReviewerMcpServer(scope, onSubmit, createReviewerEvidence())
     const { endpoint, token } = await server.start()
 
     try {
       const { sessionId, headers } = await initialize(endpoint, token)
+      await callTool(endpoint, sessionId, headers, 'read_turn', {})
       const calls = await Promise.all([
-        callTool(endpoint, sessionId, headers, 'submit_findings', { checks: [] }, 2),
-        callTool(endpoint, sessionId, headers, 'submit_findings', { checks: [] }, 3)
+        callTool(endpoint, sessionId, headers, 'submit_findings', { checks: [passingCheck] }, 2),
+        callTool(endpoint, sessionId, headers, 'submit_findings', { checks: [passingCheck] }, 3)
       ])
 
       expect(calls.map((call) => call.result?.isError === true).sort()).toEqual([false, true])
@@ -668,17 +854,18 @@ describe('ReviewerMcpServer HTTP transport', () => {
       .fn()
       .mockRejectedValueOnce(new Error('persistence failed'))
       .mockResolvedValueOnce(undefined)
-    const server = new ReviewerMcpServer(scope, onSubmit)
+    const server = new ReviewerMcpServer(scope, onSubmit, createReviewerEvidence())
     const { endpoint, token } = await server.start()
 
     try {
       const { sessionId, headers } = await initialize(endpoint, token)
+      await callTool(endpoint, sessionId, headers, 'read_turn', {})
       const failed = await callTool(
         endpoint,
         sessionId,
         headers,
         'submit_findings',
-        { checks: [] },
+        { checks: [passingCheck] },
         2
       )
       expect(failed.result?.isError).toBe(true)
@@ -688,7 +875,7 @@ describe('ReviewerMcpServer HTTP transport', () => {
         sessionId,
         headers,
         'submit_findings',
-        { checks: [] },
+        { checks: [passingCheck] },
         3
       )
       expect(retry.result?.isError).not.toBe(true)

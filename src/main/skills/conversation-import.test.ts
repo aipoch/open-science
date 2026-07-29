@@ -6,7 +6,9 @@ import { deflateRawSync } from 'node:zlib'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import { UploadRepository } from '../uploads/repository'
+import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import {
   ConversationSkillImporter,
   SkillImportApprovalBroker,
@@ -15,9 +17,11 @@ import {
 import { UserSkillRepository } from './user-skill-repository'
 
 const roots: string[] = []
+const disconnects: Array<() => Promise<void>> = []
 
 afterEach(async () => {
   vi.useRealTimers()
+  await Promise.all(disconnects.splice(0).map((disconnect) => disconnect()))
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
@@ -103,7 +107,7 @@ describe('ConversationSkillImporter', () => {
         )
       }
     ])
-    const [staged] = await uploads.stageFiles({
+    const [staged] = await stageUploadFixtures(uploads, {
       files: [
         {
           name: 'paper-finder.skill',
@@ -151,6 +155,157 @@ describe('ConversationSkillImporter', () => {
     expect(onSkillsChanged).toHaveBeenCalledOnce()
   })
 
+  it('imports a native project-scoped Upload Version using its verified Session ownership', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+    roots.push(root)
+    const client = createProjectDbClient(root)
+    disconnects.push(() => client.$disconnect())
+    await ensureProjectSchema(client)
+    const uploads = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
+    const skills = new UserSkillRepository(root)
+    const [staged] = await stageUploadFixtures(uploads, {
+      files: [
+        {
+          name: 'project-skill.zip',
+          content: buildNamedSkillZip('Project Skill').toString('base64'),
+          mimeType: 'application/zip'
+        }
+      ]
+    })
+    const [attachment] = await uploads.finalizePendingSessionUploads(
+      'session-1',
+      [staged],
+      'project-1'
+    )
+    const broker = new SkillImportApprovalBroker({
+      generateId: () => 'approval-project-upload',
+      broadcast: (request) =>
+        broker.respond({
+          id: request.id,
+          items: request.previews.map((preview) => ({ subPath: preview.subPath }))
+        })
+    })
+    const importer = new ConversationSkillImporter({
+      uploads,
+      createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
+        broker.createCancellationGuard(sessionId, turnToken, attachmentUri),
+      previewBundle: (bundle) => skills.previewZip(bundle),
+      importBundle: (bundle, items) => skills.importFromZipBatch(bundle, items),
+      requestApproval: (request, cancellation) => broker.request(request, cancellation)
+    })
+    const attachmentUri = pathToFileURL(attachment.path).href
+    broker.beginSessionTurn('session-1', 'turn-1')
+    broker.allowSessionTurnAttachment('session-1', 'turn-1', attachmentUri)
+
+    await expect(
+      importer.request({
+        sessionId: 'session-1',
+        turnToken: 'turn-1',
+        attachmentUri
+      })
+    ).resolves.toEqual({
+      status: 'imported',
+      skills: [{ id: 'imported-project-skill', name: 'Project Skill', status: 'imported' }]
+    })
+  })
+
+  it('imports an explicitly referenced legacy upload from another Session', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+    roots.push(root)
+    const legacyUploads = new UploadRepository(root)
+    const skills = new UserSkillRepository(root)
+    const [staged] = await stageUploadFixtures(legacyUploads, {
+      files: [
+        {
+          name: 'shared-skill.zip',
+          content: buildNamedSkillZip('Shared Skill').toString('base64'),
+          mimeType: 'application/zip'
+        }
+      ]
+    })
+    const [attachment] = await legacyUploads.finalizePendingSessionUploads('source-session', [
+      staged
+    ])
+    const client = createProjectDbClient(root)
+    disconnects.push(() => client.$disconnect())
+    await ensureProjectSchema(client)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'source-session' }
+    })
+    const uploads = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
+    const broker = new SkillImportApprovalBroker({
+      generateId: () => 'approval-cross-session-upload',
+      broadcast: (request) =>
+        broker.respond({
+          id: request.id,
+          items: request.previews.map((preview) => ({ subPath: preview.subPath }))
+        })
+    })
+    const importer = new ConversationSkillImporter({
+      uploads,
+      createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
+        broker.createCancellationGuard(sessionId, turnToken, attachmentUri),
+      previewBundle: (bundle) => skills.previewZip(bundle),
+      importBundle: (bundle, items) => skills.importFromZipBatch(bundle, items),
+      requestApproval: (request, cancellation) => broker.request(request, cancellation)
+    })
+    const attachmentUri = pathToFileURL(attachment.path).href
+
+    const disposeGrant = await importer.authorizeReferencedUploads('project-1', 'target-session', [
+      attachment.path
+    ])
+    broker.beginSessionTurn('target-session', 'turn-1')
+    broker.allowSessionTurnAttachment('target-session', 'turn-1', attachmentUri)
+
+    await expect(
+      importer.request({
+        sessionId: 'target-session',
+        turnToken: 'turn-1',
+        attachmentUri
+      })
+    ).resolves.toEqual({
+      status: 'imported',
+      skills: [{ id: 'imported-shared-skill', name: 'Shared Skill', status: 'imported' }]
+    })
+    disposeGrant()
+  })
+
+  it('rejects a referenced upload owned by another Project before granting Skill import access', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+    roots.push(root)
+    const legacyUploads = new UploadRepository(root)
+    const [staged] = await stageUploadFixtures(legacyUploads, {
+      files: [
+        {
+          name: 'private-skill.zip',
+          content: buildNamedSkillZip('Private Skill').toString('base64'),
+          mimeType: 'application/zip'
+        }
+      ]
+    })
+    const [attachment] = await legacyUploads.finalizePendingSessionUploads('private-session', [
+      staged
+    ])
+    const client = createProjectDbClient(root)
+    disconnects.push(() => client.$disconnect())
+    await ensureProjectSchema(client)
+    await client.fileOriginSession.create({
+      data: { projectId: 'private-project', sessionId: 'private-session' }
+    })
+    const uploads = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
+    const importer = new ConversationSkillImporter({
+      uploads,
+      createCancellationGuard: createActiveCancellationGuard,
+      previewBundle: vi.fn(),
+      importBundle: vi.fn(),
+      requestApproval: vi.fn()
+    })
+
+    await expect(
+      importer.authorizeReferencedUploads('current-project', 'current-session', [attachment.path])
+    ).rejects.toThrow(/different project or session/i)
+  })
+
   it('rejects an attachment owned by another conversation before showing approval', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)
@@ -162,7 +317,7 @@ describe('ConversationSkillImporter', () => {
         content: Buffer.from('---\nname: Private Skill\n---\nDo the thing.', 'utf8')
       }
     ])
-    const [staged] = await uploads.stageFiles({
+    const [staged] = await stageUploadFixtures(uploads, {
       files: [{ name: 'private.skill', content: zip.toString('base64') }]
     })
     const [attachment] = await uploads.finalizePendingSessionUploads('session-2', [staged])
@@ -181,7 +336,7 @@ describe('ConversationSkillImporter', () => {
         turnToken: 'turn-1',
         attachmentUri: pathToFileURL(attachment.path).href
       })
-    ).rejects.toThrow('different session')
+    ).rejects.toThrow(/different (?:project or )?session/)
     expect(requestApproval).not.toHaveBeenCalled()
   })
 
@@ -189,7 +344,7 @@ describe('ConversationSkillImporter', () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)
     const uploads = new UploadRepository(root)
-    const [staged] = await uploads.stageFiles({
+    const [staged] = await stageUploadFixtures(uploads, {
       files: [
         {
           name: 'ordinary-data.zip',
@@ -226,7 +381,7 @@ describe('ConversationSkillImporter', () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)
     const uploads = new UploadRepository(root)
-    const [staged] = await uploads.stageFiles({
+    const [staged] = await stageUploadFixtures(uploads, {
       files: [
         {
           name: 'older-turn.skill',
@@ -269,7 +424,7 @@ describe('ConversationSkillImporter', () => {
     roots.push(root)
     const uploads = new UploadRepository(root)
     const skills = new UserSkillRepository(root)
-    const [staged] = await uploads.stageFiles({
+    const [staged] = await stageUploadFixtures(uploads, {
       files: [
         {
           name: 'slow-preview.skill',
@@ -339,7 +494,7 @@ describe('ConversationSkillImporter', () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)
     const uploads = new UploadRepository(root)
-    const [staged] = await uploads.stageFiles({
+    const [staged] = await stageUploadFixtures(uploads, {
       files: [
         {
           name: 'duplicate-targets.skill',
@@ -402,7 +557,7 @@ describe('ConversationSkillImporter', () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)
     const uploads = new UploadRepository(root)
-    const [staged] = await uploads.stageFiles({
+    const [staged] = await stageUploadFixtures(uploads, {
       files: [
         {
           name: 'replacement.skill',

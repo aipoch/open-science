@@ -61,6 +61,11 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     { electronApp },
     { default: icon },
     { default: iconDark },
+    { default: iconWindows },
+    { default: iconDarkWindows },
+    { default: trayMacTemplate },
+    { default: trayWindows },
+    { default: trayLinux },
     { acquireSingleInstanceLock },
     { orchestrateAppStartup }
   ] = await Promise.all([
@@ -68,14 +73,23 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     import('@electron-toolkit/utils'),
     import('../../resources/icon.png?asset'),
     import('../../resources/icon-dark.png?asset'),
+    import('../../resources/icon-light.ico?asset'),
+    import('../../resources/icon-dark.ico?asset'),
+    import('../../resources/trayTemplate.png?asset'),
+    import('../../resources/tray.ico?asset'),
+    import('../../resources/tray.png?asset'),
     import('./single-instance'),
     import('./app-startup')
   ])
 
-  // The bundled asset path for each selectable icon variant (light = current shipped default, dark =
-  // the original Open Science icon). Resolved once here and reused by the icon controller and the
-  // Settings preview builder.
-  const iconVariantPaths = { light: icon, dark: iconDark }
+  // Windows gets multi-resolution ICOs for title-bar and Alt-Tab fidelity; macOS Dock and Linux use
+  // lossless 1024px PNGs. The settings preview is built from the same platform-specific source.
+  const iconVariantPaths =
+    process.platform === 'win32'
+      ? { light: iconWindows, dark: iconDarkWindows }
+      : { light: icon, dark: iconDark }
+  const trayIconPath =
+    process.platform === 'win32' ? trayWindows : process.platform === 'linux' ? trayLinux : icon
 
   // Ordered startup: the single-instance lock is acquired FIRST (UI path only — the MCP stdio server
   // modes never reach startElectronApp), so a secondary launch quits before prepare() imports any
@@ -243,7 +257,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           const webPort = ctx.webController.runningPort()
           const headlessWeb = ctx.webMode.headless && webPort !== undefined
           return ctx.createAppTray({
-            iconPath: icon,
+            iconPath: trayIconPath,
+            templateIconPath: process.platform === 'darwin' ? trayMacTemplate : undefined,
             ...handlers,
             ...(headlessWeb
               ? {

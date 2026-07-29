@@ -22,6 +22,7 @@ import { AcpRuntime } from '../acp/runtime'
 import { ReviewRepository } from './repository'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import { runReview } from './orchestrator'
+import { callSubmitFindingsAfterReadingEvidence as callSubmitFindings } from './reviewer-mcp-test-client'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 
 // ---------------------------------------------------------------------------
@@ -78,93 +79,6 @@ const makeSession = (overrides: Partial<PersistedChatSession> = {}): PersistedCh
   updatedAt: 2000,
   ...overrides
 })
-
-// ---------------------------------------------------------------------------
-// MCP HTTP helpers — v2 schema: submit_findings accepts checks[] not findings[]
-// ---------------------------------------------------------------------------
-
-const MCP_ACCEPT = 'application/json, text/event-stream'
-
-const parseMcpSseBody = (body: string): { result?: unknown; error?: { message?: string } } => {
-  const dataLine = body.split('\n').find((line) => line.startsWith('data:'))
-  const json = dataLine ? dataLine.slice('data:'.length).trim() : body.trim()
-  return json ? (JSON.parse(json) as { result?: unknown; error?: { message?: string } }) : {}
-}
-
-const callSubmitFindings = async (
-  mcpBaseUrl: string,
-  token: string,
-  // v2: checks[] with status (pass|warn|fail)
-  checks: Array<{
-    status: 'pass' | 'warn' | 'fail'
-    claim: string
-    evidence: string
-    locator?: {
-      blockRef: { messageId?: string; activityId?: string; blockIndex: number }
-      contentHash: string
-    }
-  }>
-): Promise<void> => {
-  const initResponse = await fetch(mcpBaseUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: MCP_ACCEPT,
-      authorization: `Bearer ${token}`
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: { name: 'test-client', version: '1.0' }
-      }
-    })
-  })
-
-  if (!initResponse.ok) throw new Error(`MCP initialize failed: ${initResponse.status}`)
-
-  const initJson = parseMcpSseBody(await initResponse.text())
-  const sessionId = initResponse.headers.get('mcp-session-id')
-  if (!sessionId || !initJson.result) throw new Error('MCP initialize did not return a session id')
-
-  await fetch(mcpBaseUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: MCP_ACCEPT,
-      authorization: `Bearer ${token}`,
-      'mcp-session-id': sessionId
-    },
-    body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })
-  })
-
-  // v2: use `checks` key, not `findings`
-  const toolResponse = await fetch(mcpBaseUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: MCP_ACCEPT,
-      authorization: `Bearer ${token}`,
-      'mcp-session-id': sessionId
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 2,
-      method: 'tools/call',
-      params: { name: 'submit_findings', arguments: { checks } }
-    })
-  })
-
-  if (!toolResponse.ok) throw new Error(`submit_findings call failed: ${toolResponse.status}`)
-
-  const toolJson = parseMcpSseBody(await toolResponse.text())
-  if (toolJson.error) {
-    throw new Error(`submit_findings returned an error: ${toolJson.error.message ?? 'unknown'}`)
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Fake agent that handles both reviewer session and main-session correction
@@ -287,7 +201,17 @@ const startFakeAgent = (
             reviewerMcp.headers
               ?.find((h) => h.name === 'authorization')
               ?.value?.replace('Bearer ', '') ?? ''
-          await callSubmitFindings(reviewerMcp.url, token, options.checksToSubmit ?? [])
+          await callSubmitFindings(
+            reviewerMcp.url,
+            token,
+            options.checksToSubmit ?? [
+              {
+                status: 'pass',
+                claim: 'The audited turn is supported',
+                evidence: 'The frozen turn was read and no contradiction was found.'
+              }
+            ]
+          )
         }
       }
 
@@ -341,7 +265,7 @@ describe('reviewer app lifecycle integration', () => {
       startFakeAgent(process, {
         reviewerSessionId: 'reviewer-session-1',
         mainSessionId: 'main-session-1',
-        // An explicit empty submission is a valid pass.
+        // The fake Reviewer submits one explicit consolidated pass check by default.
         simulateFindingsViaHttp: true
       })
 
@@ -377,7 +301,8 @@ describe('reviewer app lifecycle integration', () => {
       expect(review.outcome).toBe('pass')
       expect(review.model).toBe('claude-opus-4-5')
       // v2: checks (not findings)
-      expect(review.checks).toHaveLength(0)
+      expect(review.checks).toHaveLength(1)
+      expect(review.checks[0]?.status).toBe('pass')
 
       // Persisted: reload from DB confirms the review row was written.
       const stored = await repository.getReviewsForSession('session-1')
