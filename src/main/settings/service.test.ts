@@ -239,6 +239,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
   await rm(storageRoot, { recursive: true, force: true })
 })
 
@@ -3124,9 +3125,9 @@ describe('SettingsService: official vendors', () => {
   })
 
   it('carries the upstream model through the Claude backend for context tokenization', async () => {
-    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'claude-code')
     const service = createService()
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setAgentFramework('claude-code')
     const provider = (
       await service.upsertProvider({
         type: 'official',
@@ -4490,6 +4491,7 @@ describe('SettingsService: reasoning effort', () => {
       managedCodexAdapterPath: adapterPath,
       managedCodexNativePath: execPath
     })
+    await repository.setAgentFramework('codex')
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
       version: '1.1.4',
