@@ -111,7 +111,8 @@ import { terminateProcessTree } from '../process-tree'
 import {
   EnvironmentManifestPublicationError,
   EnvironmentStateTracker,
-  type EnvironmentCaptureTarget
+  type EnvironmentCaptureTarget,
+  type PackageMutationVerification
 } from './environment-state-tracker'
 import { startWorkingFileObservation } from './working-file-observer'
 
@@ -2592,24 +2593,33 @@ class NotebookRuntimeService {
             }
           })
         } finally {
-          const verification = await this.environmentStateTracker
-            .refreshAfterPackageMutation(environmentTarget, {
-              ...mutation,
-              result: installResult?.ok ? 'success' : 'failure',
-              attempts: installResult?.attempts ?? [],
-              fallbackUsed: installResult?.fallbackUsed ?? false
-            })
-            .catch(() => undefined)
+          let inventoryRefreshError: unknown
+          const verification: PackageMutationVerification | undefined =
+            await this.environmentStateTracker
+              .refreshAfterPackageMutation(environmentTarget, {
+                ...mutation,
+                result: installResult?.ok ? 'success' : 'failure',
+                attempts: installResult?.attempts ?? [],
+                fallbackUsed: installResult?.fallbackUsed ?? false
+              })
+              .catch((error: unknown) => {
+                inventoryRefreshError = error
+                return { result: 'failure' as const, reason: 'inventory-refresh-failed' as const }
+              })
           if (installResult?.ok && verification?.result === 'failure') {
             const packages =
-              verification.unsatisfiedPackages?.join(', ') || request.packages.join(', ')
+              verification?.unsatisfiedPackages?.join(', ') || request.packages.join(', ')
+            const inventoryFailure =
+              verification?.reason === 'inventory-refresh-failed' || inventoryRefreshError
             installResult = {
               ...installResult,
               ok: false,
               needsRestart: false,
-              error:
-                `Package installation could not be verified in the target runtime: ${packages}. ` +
-                'The installer exited successfully, but the refreshed environment inventory does not show the requested package(s).'
+              error: inventoryFailure
+                ? `Package installation could not be verified in the target runtime: ${packages}. ` +
+                  'The installer exited successfully, but the environment inventory refresh failed.'
+                : `Package installation could not be verified in the target runtime: ${packages}. ` +
+                  'The installer exited successfully, but the refreshed environment inventory does not show the requested package(s).'
             }
           }
         }

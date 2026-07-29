@@ -135,14 +135,15 @@ export const createPreviewFileItemForArtifactVersion = ({
   mtimeMs: version.mtimeMs
 })
 
-// A persisted preview may briefly carry an obsolete Version id after overwrite/finalization.
-// Lineage is authoritative: keep a valid selection, otherwise use its newest finalized Version.
+// An omitted selection opens the newest finalized Version. An explicit selection is immutable
+// evidence: if it no longer resolves, callers must show it as unavailable rather than substitute bytes.
 export const resolveArtifactVersionDescriptor = (
   lineage: ArtifactLineageProvenance,
   selectedVersionId: string | undefined
 ): ArtifactVersionDescriptor | undefined =>
-  lineage.versions.find((version) => version.versionId === selectedVersionId) ??
-  lineage.versions.at(-1)
+  selectedVersionId === undefined
+    ? lineage.versions.at(-1)
+    : lineage.versions.find((version) => version.versionId === selectedVersionId)
 
 // Converts a sent user upload into the same preview shape used by message attachment clicks.
 export const createPreviewFileItemFromUpload = (

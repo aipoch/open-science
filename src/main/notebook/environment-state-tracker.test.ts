@@ -306,6 +306,37 @@ describe('EnvironmentStateTracker', () => {
     )
   })
 
+  it('fails verification when the post-install inventory cannot be refreshed', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-refresh-failure-'))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi.fn().mockRejectedValue(new Error('inventory unavailable')),
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python')
+    })
+    const pythonTarget = {
+      language: 'python' as const,
+      environmentName: 'default-python',
+      runtimeSource: 'managed' as const,
+      command: '/runtime/default-python/bin/python',
+      args: []
+    }
+
+    await tracker.markPackageMutationDirty(pythonTarget, {
+      operationId: 'operation-inventory-failed',
+      operation: 'install',
+      packages: ['numpy']
+    })
+
+    await expect(
+      tracker.refreshAfterPackageMutation(pythonTarget, {
+        operationId: 'operation-inventory-failed',
+        operation: 'install',
+        packages: ['numpy'],
+        result: 'success'
+      })
+    ).resolves.toEqual({ result: 'failure', reason: 'inventory-refresh-failed' })
+  })
+
   it('forces a terminal rescan and marks evidence partial when package state changes during a run', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-fingerprint-'))
     const inspectInstalled = vi.fn().mockResolvedValue({

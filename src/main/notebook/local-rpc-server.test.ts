@@ -659,6 +659,12 @@ describe('notebook local RPC server', () => {
       dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
+      environmentStateTracker: {
+        prepareRun: vi.fn(),
+        captureCompletedRun: vi.fn(),
+        markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+        refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'success' })
+      },
       installPackagesImpl: async (request) => {
         calls.push(request)
         return { ok: true, needsRestart: false, log: 'installed' }

@@ -49,6 +49,7 @@ type PackageMutationOutcome = PackageMutationIntent & {
 type PackageMutationVerification = {
   result: NotebookEnvironmentOperation['result']
   unsatisfiedPackages?: string[]
+  reason?: 'inventory-refresh-failed'
 }
 
 type EnvironmentInventoryBindingCache = {
@@ -698,6 +699,7 @@ class EnvironmentStateTracker {
         ]
         if (operation) await this.removeOperation(target, operation.operationId)
       } catch (error) {
+        verification = { result: 'failure', reason: 'inventory-refresh-failed' }
         const failedAttempt: NotebookInventoryRefreshAttempt = {
           attempt: baseLogEntry.inventoryRefreshAttempts.length + 1,
           trigger: 'terminal',

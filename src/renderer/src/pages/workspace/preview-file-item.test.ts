@@ -7,7 +7,8 @@ import {
   createPreviewFileItem,
   createPreviewFileItemFromArtifact,
   createPreviewFileItemFromMention,
-  createPreviewFileItemFromUpload
+  createPreviewFileItemFromUpload,
+  resolveArtifactVersionDescriptor
 } from './preview-file-item'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
@@ -49,6 +50,36 @@ const createMentionPart = (overrides: Partial<ArtifactMentionPart> = {}): Artifa
 })
 
 describe('preview file item helpers', () => {
+  it('does not replace an explicitly missing Artifact Version with the latest Version', () => {
+    const latest = {
+      id: 'artifact-version-2',
+      artifactId: 'artifact-lineage-1',
+      versionId: 'artifact-version-2',
+      versionNumber: 2,
+      checksum: 'checksum-2',
+      createdAt: '2026-07-27T20:00:00.000Z',
+      state: 'finalized' as const,
+      projectName: 'project-1',
+      sessionId: 'session-1',
+      runId: 'artifact-run-2',
+      name: 'result.png',
+      path: '/managed/result-v2.png',
+      fileUrl: 'file:///managed/result-v2.png',
+      size: 20,
+      mtimeMs: 2,
+      updatedAt: 2
+    }
+    const lineage = {
+      artifactId: 'artifact-lineage-1',
+      filename: 'result.png',
+      originSession: { sessionId: 'session-1', state: 'active' as const },
+      versions: [latest]
+    }
+
+    expect(resolveArtifactVersionDescriptor(lineage, undefined)).toBe(latest)
+    expect(resolveArtifactVersionDescriptor(lineage, 'missing-version')).toBeUndefined()
+  })
+
   it('preserves a deleted origin notice on Project File previews', () => {
     expect(
       createPreviewFileItem({

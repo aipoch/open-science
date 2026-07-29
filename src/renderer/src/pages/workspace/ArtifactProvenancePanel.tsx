@@ -403,9 +403,11 @@ const ArtifactProvenancePanel = ({
     selectedVersion && selectedVersion.artifactId === item.artifactId
       ? selectedVersion.versionId
       : item.selectedVersionId
-  const selectedVersionId = lineage
-    ? resolveArtifactVersionDescriptor(lineage, requestedVersionId)?.versionId
-    : requestedVersionId
+  const selectedVersionDescriptor = lineage
+    ? resolveArtifactVersionDescriptor(lineage, requestedVersionId)
+    : undefined
+  const selectedVersionId = lineage ? selectedVersionDescriptor?.versionId : requestedVersionId
+  const selectedVersionUnavailable = Boolean(lineage && requestedVersionId && !selectedVersionId)
   const provenanceKey = `${lineageKey}:${selectedVersionId ?? ''}`
   const provenance = provenanceResult?.key === provenanceKey ? provenanceResult.value : undefined
   const showAllPackages = showAllPackagesKey === provenanceKey
@@ -414,6 +416,7 @@ const ArtifactProvenancePanel = ({
   const codeActionError =
     codeActionFailure?.key === provenanceKey ? codeActionFailure.message : undefined
   const error =
+    (selectedVersionUnavailable ? 'The selected Artifact version is unavailable.' : undefined) ??
     (lineageResult?.key === lineageKey ? lineageResult.error : undefined) ??
     (provenanceResult?.key === provenanceKey ? provenanceResult.error : undefined)
 
@@ -622,10 +625,13 @@ const ArtifactProvenancePanel = ({
           checks: [...reviewProjection.selectedVersionChecks, ...reviewProjection.turnLevelChecks]
         }
       : undefined
-  const executionKernel = [...rawExecutionRuns]
-    .reverse()
-    .map((run) => asString(asRecord(run)?.kernelKind))
-    .find((kernel): kernel is 'python' | 'r' => kernel === 'python' || kernel === 'r')
+  const executionKernels = [
+    ...new Set(
+      rawExecutionRuns
+        .map((run) => asString(asRecord(run)?.kernelKind))
+        .filter((kernel): kernel is 'python' | 'r' => kernel === 'python' || kernel === 'r')
+    )
+  ]
   const reproductionCode = provenance?.evidence.reproduction_code
   const producerInputs: NotebookInputFileSummary[] = (provenance?.evidence.inputs ?? []).map(
     (input) => ({
@@ -667,28 +673,34 @@ const ArtifactProvenancePanel = ({
   }
 
   const downloadExecutionNotebook = async (): Promise<void> => {
-    if (!executionKernel || !item.artifactId || !selectedVersionId) return
+    if (executionKernels.length === 0 || !item.artifactId || !selectedVersionId) return
     setExportingNotebook(true)
     setNotebookExportFailure(undefined)
     try {
-      const notebook = buildExecutionNotebook(rawExecutionRuns, executionKernel, {
-        artifactId: item.artifactId,
-        versionId: selectedVersionId,
-        producerRunId: asString(producer?.producer_run_id),
-        runtimeVersion: asString(environment?.runtime_version)
-      })
-      const bytes = new TextEncoder().encode(`${JSON.stringify(notebook, null, 2)}\n`)
-      const data = bytes.buffer.slice(
-        bytes.byteOffset,
-        bytes.byteOffset + bytes.byteLength
-      ) as ArrayBuffer
       const baseName = item.name.replace(/\.[^.]+$/u, '') || 'artifact'
       const versionNumber = lineage?.versions[selectedIndex]?.versionNumber ?? 1
-      await window.api.saveBlobFile({
-        suggestedName: `${baseName}-v${versionNumber}.ipynb`,
-        mimeType: 'application/x-ipynb+json',
-        data
-      })
+      for (const kernel of executionKernels) {
+        const notebook = buildExecutionNotebook(rawExecutionRuns, kernel, {
+          artifactId: item.artifactId,
+          versionId: selectedVersionId,
+          producerRunId: asString(producer?.producer_run_id),
+          runtimeVersion:
+            asString(environment?.kernel_kind) === kernel
+              ? asString(environment?.runtime_version)
+              : undefined
+        })
+        const bytes = new TextEncoder().encode(`${JSON.stringify(notebook, null, 2)}\n`)
+        const data = bytes.buffer.slice(
+          bytes.byteOffset,
+          bytes.byteOffset + bytes.byteLength
+        ) as ArrayBuffer
+        const kernelSuffix = executionKernels.length > 1 ? `-${kernel}` : ''
+        await window.api.saveBlobFile({
+          suggestedName: `${baseName}-v${versionNumber}${kernelSuffix}.ipynb`,
+          mimeType: 'application/x-ipynb+json',
+          data
+        })
+      }
     } catch (failure) {
       setNotebookExportFailure({
         key: provenanceKey,
@@ -904,7 +916,7 @@ const ArtifactProvenancePanel = ({
                 <Button
                   type="button"
                   size="sm"
-                  disabled={!executionKernel || exportingNotebook}
+                  disabled={executionKernels.length === 0 || exportingNotebook}
                   onClick={() => void downloadExecutionNotebook()}
                 >
                   {exportingNotebook ? (
@@ -912,7 +924,11 @@ const ArtifactProvenancePanel = ({
                   ) : (
                     <Download aria-hidden="true" />
                   )}
-                  {exportingNotebook ? 'Preparing…' : 'Download notebook'}
+                  {exportingNotebook
+                    ? 'Preparing…'
+                    : executionKernels.length > 1
+                      ? 'Download notebooks'
+                      : 'Download notebook'}
                 </Button>
               </div>
               {notebookExportError ? (

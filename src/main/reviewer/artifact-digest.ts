@@ -41,9 +41,10 @@ export const resolveTurnScopeWithArtifactDigests = async (
   session: PersistedChatSession,
   turnMessageId: string,
   artifactStorageRoot: string,
-  resolveArtifactVersion?: ArtifactVersionContentResolver
+  resolveArtifactVersion?: ArtifactVersionContentResolver,
+  messageBranchId?: string
 ): Promise<TurnScope> => {
-  const structural = resolveTurnScope(session, turnMessageId)
+  const structural = resolveTurnScope(session, turnMessageId, new Map(), messageBranchId)
   const digests = new Map<string, string>()
   const ids = structural.artifactVersionIds
 
@@ -75,5 +76,5 @@ export const resolveTurnScopeWithArtifactDigests = async (
     )
   }
 
-  return resolveTurnScope(session, turnMessageId, digests)
+  return resolveTurnScope(session, turnMessageId, digests, messageBranchId)
 }

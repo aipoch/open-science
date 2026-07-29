@@ -109,7 +109,8 @@ const projectBranchActivity = (
 // projection and may briefly lag after a Branch switch, so audit scope must never read them first.
 export const resolveReviewTurnProjection = (
   session: PersistedChatSession,
-  turnMessageId: string
+  turnMessageId: string,
+  messageBranchId?: string
 ): ReviewTurnProjection => {
   const graph = session.conversationGraph
   if (!graph) {
@@ -122,7 +123,11 @@ export const resolveReviewTurnProjection = (
     : undefined
   if (!target || !frame) return { messages: [], activities: [] }
 
-  const path = resolveMessageBranchPath(graph, frame.activeBranchId)
+  const resolvedBranchId = messageBranchId ?? frame.activeBranchId
+  const branch = graph.branches.find((candidate) => candidate.id === resolvedBranchId)
+  if (!branch || branch.agentFrameId !== frame.id) return { messages: [], activities: [] }
+
+  const path = resolveMessageBranchPath(graph, resolvedBranchId)
   if (!path.some((message) => message.id === target.id)) return { messages: [], activities: [] }
 
   const messageIds = new Set(path.map((message) => message.id))
@@ -134,7 +139,7 @@ export const resolveReviewTurnProjection = (
       )
       .map(projectBranchActivity),
     agentFrameId: frame.id,
-    messageBranchId: frame.activeBranchId
+    messageBranchId: resolvedBranchId
   }
 }
 
@@ -173,9 +178,10 @@ const isUserMessage = (item: TurnItem): boolean =>
 export const resolveTurnScope = (
   session: PersistedChatSession,
   turnMessageId: string,
-  artifactDigests: ReadonlyMap<string, string> = new Map()
+  artifactDigests: ReadonlyMap<string, string> = new Map(),
+  messageBranchId?: string
 ): TurnScope => {
-  const projection = resolveReviewTurnProjection(session, turnMessageId)
+  const projection = resolveReviewTurnProjection(session, turnMessageId, messageBranchId)
   const items = buildOrderedItems(projection.messages, projection.activities)
   const targetIndex = items.findIndex((item) => item.sourceId === turnMessageId)
 

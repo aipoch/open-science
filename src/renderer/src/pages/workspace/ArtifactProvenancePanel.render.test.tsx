@@ -460,7 +460,7 @@ describe('ArtifactProvenancePanel', () => {
     expect(getVersionProvenance).not.toHaveBeenCalled()
   })
 
-  it('falls back to the latest lineage Version when the preview selection is stale', async () => {
+  it('reports an explicitly unavailable Version instead of displaying the latest Version', async () => {
     await act(async () =>
       root.render(
         <ArtifactProvenancePanel
@@ -472,10 +472,10 @@ describe('ArtifactProvenancePanel', () => {
     )
     await flush()
 
-    const versionLabel = container.querySelector(
-      'button[aria-label="Next Artifact version"]'
-    )?.previousElementSibling
-    expect(versionLabel?.textContent).toBe('v2')
+    expect(container.textContent).toContain('The selected Artifact version is unavailable.')
+    expect(getVersionProvenance).not.toHaveBeenCalledWith(
+      expect.objectContaining({ versionId: 'version-2' })
+    )
   })
 
   it('loads tab-specific evidence only when that tab is opened', async () => {
@@ -730,6 +730,42 @@ describe('ArtifactProvenancePanel', () => {
       cells: Array<{ source: string[] }>
     }
     expect(notebook.cells[0]?.source.join('')).toContain('np.sin(0)')
+  })
+
+  it('exports each kernel separately when the Execution Log contains mixed kernels', async () => {
+    const execution = provenance().execution!
+    getVersionExecution.mockResolvedValue({
+      execution: {
+        ...execution,
+        runs: [
+          ...execution.runs,
+          {
+            ...execution.runs[0],
+            runId: 'notebook-run-r',
+            runIndex: 1,
+            kernelKind: 'r',
+            script: 'plot(sin(0))'
+          }
+        ]
+      }
+    })
+
+    await clickTab('Execution Log')
+    await flush()
+    const download = [...container.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Download notebook')
+    )
+    await act(async () => download?.click())
+
+    expect(saveBlobFile).toHaveBeenCalledTimes(2)
+    expect(saveBlobFile).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ suggestedName: 'sin-v1-python.ipynb' })
+    )
+    expect(saveBlobFile).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ suggestedName: 'sin-v1-r.ipynb' })
+    )
   })
 
   it('discloses bounded execution evidence instead of presenting it as complete', async () => {

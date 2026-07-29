@@ -48,7 +48,8 @@ const flagOne = async (
       session,
       review.scope.turnMessageId,
       artifactStorageRoot,
-      resolveArtifactVersion
+      resolveArtifactVersion,
+      review.scope.messageBranchId
     )
     return { ...review, stale: isTurnScopeStale(review.scope, current) }
   } catch {

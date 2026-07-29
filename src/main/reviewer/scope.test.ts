@@ -182,6 +182,19 @@ describe('resolveTurnScope', () => {
     expect(scope.blocks.some((block) => block.sourceId === 'u2')).toBe(false)
   })
 
+  it('resolves an explicitly frozen historical Branch instead of the active Branch', () => {
+    const session = buildBranchedSession()
+    const originalBranchId = session.conversationGraph!.branches[0].id
+    const scope = resolveTurnScope(session, 'a2', new Map(), originalBranchId)
+
+    expect(scope).toMatchObject({
+      turnMessageId: 'a2',
+      messageBranchId: originalBranchId
+    })
+    expect(scope.blocks.map((block) => block.sourceId)).toEqual(['u2', 'old-branch-activity', 'a2'])
+    expect(scope.blocks.some((block) => block.sourceId === 'a2-edited')).toBe(false)
+  })
+
   it('collects artifact version ids produced in the turn', () => {
     expect(resolveTurnScope(buildSession(), 'a1').artifactVersionIds).toEqual(['art-1'])
     expect(resolveTurnScope(buildSession(), 'a2').artifactVersionIds).toEqual([])

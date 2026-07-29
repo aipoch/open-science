@@ -2299,6 +2299,39 @@ describe('notebook runtime service', () => {
       expect(result.error).toMatch(/could not be verified/i)
     })
 
+    it('reports failure when the post-install inventory refresh throws', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentStateTracker: {
+          prepareRun: vi.fn(),
+          captureCompletedRun: vi.fn(),
+          markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+          refreshAfterPackageMutation: vi.fn().mockRejectedValue(new Error('scan failed'))
+        },
+        executorFactory: () => ({
+          execute: async () => {
+            throw new Error('not used')
+          },
+          shutdown: async () => ({ reaped: true })
+        }),
+        installPackagesImpl: vi.fn().mockResolvedValue({
+          ok: true,
+          needsRestart: true,
+          log: 'installer succeeded',
+          method: 'conda'
+        })
+      })
+
+      const result = await service.managePackages({ language: 'python', packages: ['numpy'] })
+
+      expect(result).toMatchObject({ ok: false, needsRestart: false, method: 'conda' })
+      expect(result.error).toMatch(/inventory refresh failed/i)
+    })
+
     it('resolves the effective mirror from the injected getPackageMirror + locale and forwards it as installPackages deps', async () => {
       const root = await createStorageRoot()
       const calls: Array<[InstallRequestForTest, Partial<InstallDepsForTest> | undefined]> = []
@@ -2308,6 +2341,12 @@ describe('notebook runtime service', () => {
         dataRoot: root,
         projectName: 'default-project',
         repository: new NotebookRunRepository(root),
+        environmentStateTracker: {
+          prepareRun: vi.fn(),
+          captureCompletedRun: vi.fn(),
+          markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+          refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'success' })
+        },
         executorFactory: () => ({
           execute: async () => {
             throw new Error('not used')
@@ -3016,6 +3055,12 @@ describe('notebook runtime service', () => {
         dataRoot: root,
         projectName: 'default-project',
         repository: new NotebookRunRepository(root),
+        environmentStateTracker: {
+          prepareRun: vi.fn(),
+          captureCompletedRun: vi.fn(),
+          markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+          refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'success' })
+        },
         executorFactory: () => ({
           execute: async (request): Promise<NotebookExecutionResult> => ({
             status: 'completed',
