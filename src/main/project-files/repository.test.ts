@@ -6,6 +6,10 @@ import { dirname, join, relative } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  createLinearConversationGraph,
+  forkEditedConversationMessage
+} from '../../shared/conversation-graph'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
@@ -260,6 +264,134 @@ describe('ManagedFileIndexRepository', () => {
         })
       ]
     })
+  })
+
+  it('keeps file Versions visible after their Message Branch becomes inactive', async () => {
+    const uploadPath = join(
+      storageRoot,
+      'uploads',
+      PROJECT_ID,
+      SESSION_ID,
+      'upload-inactive',
+      'versions',
+      'upload-version-inactive',
+      'content'
+    )
+    const artifactPath = join(
+      storageRoot,
+      'artifacts',
+      PROJECT_ID,
+      SESSION_ID,
+      'artifact-lineage-inactive',
+      'versions',
+      'artifact-version-inactive',
+      'content'
+    )
+    const content = 'sample,value\na,1'
+    await Promise.all([
+      writeManagedFile(uploadPath, content),
+      writeManagedFile(artifactPath, 'inactive artifact')
+    ])
+    await client.fileOriginSession.create({
+      data: { projectId: PROJECT_ID, sessionId: SESSION_ID }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-inactive',
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        filename: 'inactive.csv',
+        originalFilename: 'inactive.csv',
+        versions: {
+          create: {
+            id: 'upload-version-inactive',
+            versionNumber: 1,
+            state: 'ready',
+            contentStorageKey: relative(storageRoot, uploadPath).split('/').join('/'),
+            filename: 'inactive.csv',
+            originalFilename: 'inactive.csv',
+            contentType: 'text/csv',
+            sizeBytes: BigInt(Buffer.byteLength(content)),
+            checksum: createHash('sha256').update(content).digest('hex')
+          }
+        }
+      }
+    })
+    const inactiveMessage = {
+      id: 'message-inactive-upload',
+      role: 'user' as const,
+      content: 'Analyze the upload',
+      status: 'complete' as const,
+      eventIds: [],
+      artifactIds: ['artifact-version-inactive'],
+      uploads: [
+        {
+          id: 'upload-inactive',
+          sessionId: SESSION_ID,
+          name: 'inactive.csv',
+          originalName: 'inactive.csv',
+          mimeType: 'text/csv',
+          size: Buffer.byteLength(content),
+          versionId: 'upload-version-inactive'
+        }
+      ],
+      createdAt: 1_710_000_000_100,
+      updatedAt: 1_710_000_000_200
+    }
+    const originalGraph = createLinearConversationGraph({
+      sessionId: SESSION_ID,
+      messages: [inactiveMessage],
+      createdAt: 1_710_000_000_000,
+      updatedAt: 1_710_000_000_200
+    })
+    const activeGraph = forkEditedConversationMessage(
+      originalGraph,
+      inactiveMessage.id,
+      'message-branch-active',
+      1_710_000_000_300
+    )
+
+    await repository.syncSession(
+      createSession({
+        messages: [],
+        conversationGraph: activeGraph,
+        artifacts: [
+          {
+            id: 'artifact-version-inactive',
+            artifactId: 'artifact-lineage-inactive',
+            versionId: 'artifact-version-inactive',
+            versionNumber: 1,
+            kind: 'managed-file',
+            path: artifactPath,
+            name: 'inactive-result.txt',
+            mimeType: 'text/plain'
+          }
+        ],
+        filesRevision: 2
+      })
+    )
+
+    const files = await repository.listFiles({
+      projectId: PROJECT_ID,
+      collection: { kind: 'all' },
+      limit: 24
+    })
+    expect(files.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'upload',
+          sourceVersionId: 'upload-version-inactive',
+          name: 'inactive.csv'
+        }),
+        expect.objectContaining({
+          source: 'artifact',
+          sourceFileId: 'artifact-lineage-inactive',
+          sourceVersionId: 'artifact-version-inactive',
+          name: 'inactive-result.txt'
+        })
+      ])
+    )
+    expect(files.totalCount).toBe(2)
   })
 
   it('keeps the SQLite config root separate from the relocatable data root', async () => {

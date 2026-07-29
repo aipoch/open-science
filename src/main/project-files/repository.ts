@@ -770,7 +770,17 @@ class ManagedFileIndexRepository {
       }
     }
 
-    for (const message of session.messages) {
+    // Project Files is a Project-scoped library, not an active-conversation projection. Preserve
+    // files referenced by every immutable Message Branch so switching revisions cannot hide an Upload
+    // or Artifact from this Session or from another Session's @ picker. Active messages are applied
+    // last because their streamed/finalized payload may be newer than the persisted graph node.
+    const messagesById = new Map(
+      [...(session.conversationGraph?.messages ?? []), ...session.messages].map((message) => [
+        message.id,
+        message
+      ])
+    )
+    for (const message of messagesById.values()) {
       for (const artifactId of message.artifactIds ?? []) {
         artifactMessageIds.set(artifactId, message.id)
       }
