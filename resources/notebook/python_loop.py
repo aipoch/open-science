@@ -18,7 +18,7 @@ _figures_dir = os.environ.get("OPEN_SCIENCE_KERNEL_FIGURES_DIR", "")
 # NO outbound connector access: host.mcp lives only in the control-plane REPL kernel, and connector
 # data reaches python via the ./handoff channel. The namespace intentionally exposes no `host` symbol.
 _BOOTSTRAP = r'''
-import os, re, sys, warnings
+import os, re, shlex, sys, warnings
 warnings.filterwarnings("ignore", message=".*is non-interactive, and thus cannot be shown")
 
 def _guard_path(value):
@@ -65,12 +65,122 @@ def _blocked_environment_mutation(*_args, **_kwargs):
         "Package/environment mutation is not allowed in a Python cell; use manage_packages."
     )
 
-def _command_writes_managed_runtime(command):
-    text = _command_text(command)
-    comparable = os.path.normcase(text).replace("\\", "/")
+def _command_name(value):
+    return os.path.basename(str(value).strip("\"'")).casefold()
+
+def _text_references_managed_runtime(text):
+    comparable = os.path.normcase(str(text)).replace("\\", "/")
     root = os.path.normcase(_managed_runtime_dir).replace("\\", "/")
-    references_runtime = bool(root and root in comparable) or "OPEN_SCIENCE_RUNTIME_DIR" in text
-    return references_runtime and bool(_runtime_write_command.search(text))
+    return bool(root and root in comparable) or "OPEN_SCIENCE_RUNTIME_DIR" in str(text)
+
+def _runtime_target_is_managed(value):
+    text = str(value).strip().strip("\"'")
+    if _text_references_managed_runtime(text):
+        return True
+    try:
+        resolved = _guard_path(text)
+    except (TypeError, ValueError):
+        return False
+    return bool(_managed_runtime_dir) and (
+        resolved == _managed_runtime_dir or resolved.startswith(_managed_runtime_dir + os.sep)
+    )
+
+def _runtime_write_targets(words, redirections=()):
+    if not words:
+        return None
+    executable = _command_name(words[0])
+    args = [str(value) for value in words[1:]]
+    supported = {
+        "rm", "mv", "cp", "install", "mkdir", "touch", "truncate", "chmod", "chown",
+        "ln", "tee", "sed", "perl", "dd",
+    }
+    if executable.removesuffix(".exe") not in supported:
+        return None
+    executable = executable.removesuffix(".exe")
+    target_directory = next(
+        (value.split("=", 1)[1] for value in args if value.startswith("--target-directory=")),
+        None,
+    )
+    if target_directory:
+        return [*redirections, target_directory]
+    if "-t" in args and args.index("-t") + 1 < len(args):
+        return [*redirections, args[args.index("-t") + 1]]
+    if executable == "dd":
+        return [*redirections, *(value[3:] for value in args if value.startswith("of="))]
+    positional = [value for value in args if not value.startswith("-")]
+    if executable == "ln":
+        return [*redirections, *positional]
+    if executable in ("cp", "install"):
+        return [*redirections, *positional[-1:]]
+    if executable == "mv":
+        return [*redirections, *positional]
+    if executable in ("chmod", "chown"):
+        return [*redirections, *positional[1:]]
+    if executable in ("sed", "perl"):
+        return [*redirections, *positional[-1:]] if any(
+            value.startswith("-") and "i" in value for value in args
+        ) else list(redirections)
+    return [*redirections, *positional]
+
+def _shell_writes_managed_runtime(source):
+    lexer = shlex.shlex(str(source), posix=True, punctuation_chars=";&|>")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    commands, current = [], []
+    for token in lexer:
+        if token in (";", "&&", "||", "|"):
+            if current:
+                commands.append(current)
+                current = []
+        else:
+            current.append(token)
+    if current:
+        commands.append(current)
+    for words in commands:
+        redirections, argv, index = [], [], 0
+        while index < len(words):
+            token = words[index]
+            if token.startswith(">"):
+                if token == ">" or set(token) == {">"}:
+                    if index + 1 < len(words):
+                        redirections.append(words[index + 1])
+                        index += 2
+                        continue
+                else:
+                    redirections.append(token.lstrip(">"))
+                    index += 1
+                    continue
+            argv.append(token)
+            index += 1
+        targets = _runtime_write_targets(argv, redirections)
+        if targets is not None:
+            if any(_runtime_target_is_managed(target) for target in targets):
+                return True
+            if _text_references_managed_runtime(" ".join(words)) and any(
+                "$" in str(target) or "%" in str(target) for target in targets
+            ):
+                return True
+            continue
+        text = " ".join(words)
+        if _text_references_managed_runtime(text) and _runtime_write_command.search(text):
+            return True
+    return False
+
+def _command_writes_managed_runtime(command):
+    if isinstance(command, (list, tuple)):
+        words = [part.decode(errors="replace") if isinstance(part, bytes) else str(part) for part in command]
+        if not words:
+            return False
+        executable = _command_name(words[0]).removesuffix(".exe")
+        if executable in ("sh", "bash", "zsh") and "-c" in words:
+            index = words.index("-c")
+            return _shell_writes_managed_runtime(words[index + 1] if index + 1 < len(words) else "")
+        targets = _runtime_write_targets(words)
+        if targets is not None:
+            return any(_runtime_target_is_managed(target) for target in targets)
+        text = _command_text(words)
+        return _text_references_managed_runtime(text) and bool(_runtime_write_command.search(text))
+    return _shell_writes_managed_runtime(_command_text(command))
 
 def _protected_paths_audit(event, args):
     if event in ("subprocess.Popen", "os.system", "os.posix_spawn", "os.exec") and args:

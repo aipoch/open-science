@@ -143,6 +143,135 @@ assert_runtime_write_allowed <- function(targets) {
   invisible(NULL)
 }
 
+runtime_command_name <- function(value) {
+  name <- basename(gsub("^[\"']|[\"']$", "", as.character(value)[[1L]]))
+  tolower(sub("\\.exe$", "", name, ignore.case = TRUE))
+}
+
+runtime_text_references_managed <- function(text) {
+  comparable <- if (.Platform$OS.type == "windows") tolower(text) else text
+  comparable <- chartr("\\", "/", comparable)
+  roots <- c(managed_runtime_dir, managed_runtime_source)
+  grepl("OPEN_SCIENCE_RUNTIME_DIR", text, fixed = TRUE) ||
+    any(vapply(roots, function(candidate) {
+      !is.null(candidate) && nzchar(candidate) && grepl(candidate, comparable, fixed = TRUE)
+    }, logical(1)))
+}
+
+runtime_target_is_managed <- function(value) {
+  if (!is.character(value) || length(value) != 1L || !nzchar(value)) return(FALSE)
+  text <- gsub("^[\"']|[\"']$", "", trimws(value))
+  if (runtime_text_references_managed(text)) return(TRUE)
+  resolved <- canonical_runtime_path(text)
+  root <- managed_runtime_dir
+  !is.null(root) && !is.null(resolved) &&
+    (identical(resolved, root) || startsWith(resolved, paste0(root, "/")))
+}
+
+runtime_write_targets <- function(words, redirections = character()) {
+  if (length(words) == 0L) return(NULL)
+  executable <- runtime_command_name(words[[1L]])
+  supported <- c(
+    "rm", "mv", "cp", "install", "mkdir", "touch", "truncate", "chmod", "chown",
+    "ln", "tee", "sed", "perl", "dd"
+  )
+  if (!executable %in% supported) return(NULL)
+  args <- as.character(words[-1L])
+  target_directory <- grep("^--target-directory=", args, value = TRUE)
+  if (length(target_directory) > 0L) {
+    return(c(redirections, sub("^[^=]*=", "", target_directory[[1L]])))
+  }
+  short_target <- match("-t", args)
+  if (!is.na(short_target) && short_target < length(args)) {
+    return(c(redirections, args[[short_target + 1L]]))
+  }
+  if (identical(executable, "dd")) {
+    return(c(redirections, sub("^of=", "", grep("^of=", args, value = TRUE))))
+  }
+  positional <- args[!startsWith(args, "-")]
+  if (identical(executable, "ln")) return(c(redirections, positional))
+  if (executable %in% c("cp", "install")) {
+    destination <- if (length(positional) > 0L) positional[[length(positional)]] else character()
+    return(c(redirections, destination))
+  }
+  if (identical(executable, "mv")) return(c(redirections, positional))
+  if (executable %in% c("chmod", "chown")) {
+    return(c(redirections, if (length(positional) > 1L) positional[-1L] else character()))
+  }
+  if (executable %in% c("sed", "perl")) {
+    inplace <- any(grepl("^-.*i", args))
+    target <- if (length(positional) > 0L) positional[[length(positional)]] else character()
+    return(if (inplace) c(redirections, target) else redirections)
+  }
+  c(redirections, positional)
+}
+
+runtime_text_has_write_primitive <- function(text) {
+  grepl(
+    paste0(
+      "\\b(rm|mv|cp|install|mkdir|touch|truncate|chmod|chown|ln|tee|sed|perl|dd)\\b|",
+      "\\b(open|write_text|write_bytes|writeFile|writeFileSync|mkdtemp|mkdtempSync)\\s*\\(|",
+      "\\b(os|shutil)\\.(remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|",
+      "chmod|chown|copy|copy2|copytree|move|rmtree)\\s*\\(|",
+      "\\b(unlink|file\\.remove|file\\.rename|file\\.link|file\\.symlink|file\\.create|",
+      "dir\\.create|writeLines|writeBin|save|saveRDS)\\s*\\(|",
+      "\\b(New-Item|Remove-Item|Set-Content|Add-Content|Clear-Content|Out-File)\\b"
+    ),
+    text,
+    ignore.case = TRUE,
+    perl = TRUE
+  )
+}
+
+runtime_shell_words <- function(command) {
+  pattern <- "\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|[^[:space:]]+"
+  matches <- gregexpr(pattern, command, perl = TRUE)[[1L]]
+  if (identical(matches[[1L]], -1L)) return(character())
+  words <- regmatches(command, list(matches))[[1L]]
+  gsub("^([\"'])(.*)\\1$", "\\2", words, perl = TRUE)
+}
+
+runtime_shell_redirections <- function(command) {
+  pattern <- ">{1,2}[[:space:]]*(\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|[^[:space:];&|]+)"
+  matches <- gregexpr(pattern, command, perl = TRUE)[[1L]]
+  if (identical(matches[[1L]], -1L)) return(character())
+  values <- regmatches(command, list(matches))[[1L]]
+  values <- sub("^>{1,2}[[:space:]]*", "", values)
+  gsub("^([\"'])(.*)\\1$", "\\2", values, perl = TRUE)
+}
+
+runtime_shell_writes_managed <- function(source) {
+  segments <- strsplit(source, "(?:&&|\\|\\||[;\\r\\n])", perl = TRUE)[[1L]]
+  for (segment in segments) {
+    words <- runtime_shell_words(segment)
+    targets <- runtime_write_targets(words, runtime_shell_redirections(segment))
+    if (!is.null(targets)) {
+      if (any(vapply(targets, runtime_target_is_managed, logical(1)))) return(TRUE)
+      next
+    }
+    if (runtime_text_references_managed(segment) && runtime_text_has_write_primitive(segment)) {
+      return(TRUE)
+    }
+  }
+  FALSE
+}
+
+runtime_process_writes_managed <- function(command, args = character()) {
+  if (length(args) == 0L) return(runtime_shell_writes_managed(as.character(command)[[1L]]))
+  words <- c(as.character(command)[[1L]], as.character(args))
+  executable <- runtime_command_name(words[[1L]])
+  shell_flag <- match("-c", words)
+  if (executable %in% c("sh", "bash", "zsh") && !is.na(shell_flag)) {
+    payload <- if (shell_flag < length(words)) words[[shell_flag + 1L]] else ""
+    payload <- gsub("^([\"'])(.*)\\1$", "\\2", payload, perl = TRUE)
+    return(runtime_shell_writes_managed(payload))
+  }
+  targets <- runtime_write_targets(words)
+  if (!is.null(targets)) return(any(vapply(targets, runtime_target_is_managed, logical(1))))
+  text <- paste(words, collapse = " ")
+  runtime_text_references_managed(text) && runtime_text_has_write_primitive(text)
+}
+
 assert_runtime_process_allowed <- function(command, args = character()) {
   text <- paste(c(command, args), collapse = " ")
   package_mutation <- grepl(
@@ -164,30 +293,7 @@ assert_runtime_process_allowed <- function(command, args = character()) {
       call. = FALSE
     )
   }
-  root <- managed_runtime_dir
-  if (is.null(root)) return(invisible(NULL))
-  comparable <- if (.Platform$OS.type == "windows") tolower(text) else text
-  comparable <- chartr("\\", "/", comparable)
-  roots <- c(root, managed_runtime_source)
-  references_runtime <- grepl("OPEN_SCIENCE_RUNTIME_DIR", text, fixed = TRUE) ||
-    any(vapply(roots, function(candidate) {
-      !is.null(candidate) && nzchar(candidate) && grepl(candidate, comparable, fixed = TRUE)
-    }, logical(1)))
-  write_primitive <- grepl(
-    paste0(
-      "\\b(rm|mv|cp|install|mkdir|touch|truncate|chmod|chown|ln|tee|sed|perl|dd)\\b|",
-      "\\b(open|write_text|write_bytes|writeFile|writeFileSync|mkdtemp|mkdtempSync)\\s*\\(|",
-      "\\b(os|shutil)\\.(remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|",
-      "chmod|chown|copy|copy2|copytree|move|rmtree)\\s*\\(|",
-      "\\b(unlink|file\\.remove|file\\.rename|file\\.link|file\\.symlink|file\\.create|dir\\.create|writeLines|",
-      "writeBin|save|saveRDS)\\s*\\(|",
-      "\\b(New-Item|Remove-Item|Set-Content|Add-Content|Clear-Content|Out-File)\\b"
-    ),
-    text,
-    ignore.case = TRUE,
-    perl = TRUE
-  )
-  if (references_runtime && write_primitive) {
+  if (!is.null(managed_runtime_dir) && runtime_process_writes_managed(command, args)) {
     stop(
       "Managed runtime files are read-only in an R child process; use manage_packages for changes.",
       call. = FALSE
@@ -306,6 +412,15 @@ make_runtime_write_guard <- function(binding_name) {
 for (helper in c(
   "canonical_runtime_path",
   "assert_runtime_write_allowed",
+  "runtime_command_name",
+  "runtime_text_references_managed",
+  "runtime_target_is_managed",
+  "runtime_write_targets",
+  "runtime_text_has_write_primitive",
+  "runtime_shell_words",
+  "runtime_shell_redirections",
+  "runtime_shell_writes_managed",
+  "runtime_process_writes_managed",
   "assert_runtime_process_allowed",
   "runtime_argument",
   "runtime_symlink_source",
@@ -344,6 +459,15 @@ for (binding_name in runtime_write_bindings) {
 rm(
   canonical_runtime_path,
   assert_runtime_write_allowed,
+  runtime_command_name,
+  runtime_text_references_managed,
+  runtime_target_is_managed,
+  runtime_write_targets,
+  runtime_text_has_write_primitive,
+  runtime_shell_words,
+  runtime_shell_redirections,
+  runtime_shell_writes_managed,
+  runtime_process_writes_managed,
   assert_runtime_process_allowed,
   runtime_argument,
   runtime_symlink_source,

@@ -1931,6 +1931,26 @@ describe('notebook runtime service', () => {
       expect(settled.kernelStatus).toBe('idle')
     })
 
+    it('keeps the kernel idle when the runtime mutation policy rejects before execution', async () => {
+      const root = await createStorageRoot()
+      let executorStarted = false
+      const service = holdingService(root, () => {
+        executorStarted = true
+      })
+
+      const run = await service.execute({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: `open(os.path.join(os.environ["OPEN_SCIENCE_RUNTIME_DIR"], "blocked"), "w")`
+      })
+
+      expect(run.status).toBe('failed')
+      expect(run.text.traceback).toMatch(/MANAGED_RUNTIME_MUTATION_BLOCKED/)
+      expect(executorStarted).toBe(false)
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(state.kernelStatus).toBe('idle')
+    })
+
     it('runs python and r concurrently while serializing same-language runs (G5)', async () => {
       const root = await createStorageRoot()
       let active = 0

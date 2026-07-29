@@ -1890,11 +1890,15 @@ class NotebookRuntimeService {
       )
     }
 
-    // Kernel-level 'running' status for the live run (§4 [running]); clear any stale terminated flag
-    // for this process key so a completing run of it can settle back to 'idle'. No notify: the run
+    // A policy/binding/interpreter rejection never reaches the kernel, so preserve its current
+    // lifecycle status instead of briefly publishing a false 'running'. For a viable dispatch, clear
+    // any stale terminated flag so a completing run can settle back to 'idle'. No notify: the run
     // record's own appendRun notify (in persistRun below) surfaces the fresh status to the renderer.
-    session.terminatedKernels.delete(processKey)
-    await this.persistKernelStatus(session, 'running', processKey)
+    const kernelMarkedRunning = interpreterResolveError === undefined
+    if (kernelMarkedRunning) {
+      session.terminatedKernels.delete(processKey)
+      await this.persistKernelStatus(session, 'running', processKey)
+    }
 
     // Every execution result, including errors, is normalized into data for agent analysis. The
     // connector RPC connection is NOT threaded here: data kernels (python/r) have no host.mcp and no
@@ -1902,6 +1906,7 @@ class NotebookRuntimeService {
     // hand data to python/r through the ./handoff channel. The execute runs as a shared reader of the
     // per-ENV lock, so it can never overlap an install into that same env (§5, G2/D5).
     let executedOnLiveKernel = true
+    let reachedExecutor = false
     const { run } = await this.persistRun(
       session,
       runningRun,
@@ -1946,6 +1951,7 @@ class NotebookRuntimeService {
             executedOnLiveKernel = false
             return errorToExecutionResult(error, cwdBefore)
           }
+          reachedExecutor = true
           const result = await session.executor
             .execute({
               code: cell.code,
@@ -2012,12 +2018,13 @@ class NotebookRuntimeService {
       }
     )
 
-    // A run that actually reached the executor (rather than failing to even start) proves the kernel
-    // is alive — settle back to 'idle', clearing a stale 'terminated'/'restarting' left by an idle
-    // shutdown or unrelated restart, the same way restart() itself settles back to 'idle'. Skip it
-    // when this run's kernel was lost mid-flight (crash/hard-timeout): its 'terminated' status must
-    // survive until the next clean run of that process key.
-    if (executedOnLiveKernel && !session.terminatedKernels.has(processKey)) {
+    // A run that completed through the executor proves the kernel is alive. A dispatch that was
+    // marked running but failed during a post-lock preflight never touched the kernel and must also
+    // settle back to idle. Preserve a mid-flight crash/hard-timeout's explicit terminated status.
+    if (
+      !session.terminatedKernels.has(processKey) &&
+      (executedOnLiveKernel || (kernelMarkedRunning && !reachedExecutor))
+    ) {
       await this.markKernelStatusIdle(session, processKey)
     }
 

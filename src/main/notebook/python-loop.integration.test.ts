@@ -135,6 +135,46 @@ gate('python_loop.py', () => {
       rmSync(workspace, { recursive: true, force: true })
     }
   }, 60_000)
+
+  it.skipIf(process.platform === 'win32')(
+    'uses subprocess write targets so copy-out and workspace writes remain allowed',
+    async () => {
+      const runtimeRoot = mkdtempSync(join(tmpdir(), 'os-python-child-runtime-'))
+      const workspace = mkdtempSync(join(tmpdir(), 'os-python-child-output-'))
+      const source = join(runtimeRoot, 'source.txt')
+      const copied = join(workspace, 'copied.txt')
+      const outputDir = join(workspace, 'created')
+      writeFileSync(source, 'runtime input')
+      const { child, send } = startLoop(pyBin as string, {
+        OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot
+      })
+      try {
+        const copyOut = await send(
+          `import subprocess; subprocess.run(["cp", ${JSON.stringify(source)}, ${JSON.stringify(copied)}], check=True)`
+        )
+        expect(copyOut.error).toBeNull()
+        expect(readFileSync(copied, 'utf8')).toBe('runtime input')
+
+        const workspaceWrite = await send(
+          `subprocess.run(["sh", "-c", ` +
+            `${JSON.stringify(`printf '%s' "$OPEN_SCIENCE_RUNTIME_DIR" >/dev/null; mkdir ${JSON.stringify(outputDir)}`)}], check=True)`
+        )
+        expect(workspaceWrite.error).toBeNull()
+        expect(existsSync(outputDir)).toBe(true)
+
+        const blocked = await send(
+          `subprocess.run(["cp", ${JSON.stringify(copied)}, ` +
+            `${JSON.stringify(join(runtimeRoot, 'blocked.txt'))}], check=True)`
+        )
+        expect(blocked.error).toMatch(/manage_packages/)
+      } finally {
+        child.kill()
+        rmSync(runtimeRoot, { recursive: true, force: true })
+        rmSync(workspace, { recursive: true, force: true })
+      }
+    },
+    60_000
+  )
 })
 
 gate('python_loop.py data-kernel isolation', () => {

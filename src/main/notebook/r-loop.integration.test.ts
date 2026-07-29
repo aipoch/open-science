@@ -173,6 +173,48 @@ gate('r_loop.R', () => {
     60_000
   )
 
+  it.skipIf(process.platform === 'win32')(
+    'uses system2 write targets so copy-out and workspace writes remain allowed',
+    async () => {
+      const runtimeRoot = mkdtempSync(join(tmpdir(), 'os-r-child-runtime-'))
+      const workspace = mkdtempSync(join(tmpdir(), 'os-r-child-output-'))
+      const source = join(runtimeRoot, 'source.txt')
+      const copied = join(workspace, 'copied.txt')
+      const outputDir = join(workspace, 'created')
+      writeFileSync(source, 'runtime input')
+      const { child, send } = startLoop(rscriptBin(), {
+        OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot
+      })
+      try {
+        const copyOut = await send(
+          `system2("cp", c(${JSON.stringify(source)}, ${JSON.stringify(copied)}))`
+        )
+        expect(copyOut.error).toBeNull()
+        expect(readFileSync(copied, 'utf8')).toBe('runtime input')
+
+        const shellPayload =
+          `printf '%s' "$OPEN_SCIENCE_RUNTIME_DIR" >/dev/null; ` +
+          `mkdir ${JSON.stringify(outputDir)}`
+        const workspaceWrite = await send(
+          `system2("sh", c("-c", shQuote(${JSON.stringify(shellPayload)})))`
+        )
+        expect(workspaceWrite.error).toBeNull()
+        expect(existsSync(outputDir)).toBe(true)
+
+        const blocked = await send(
+          `system2("cp", c(${JSON.stringify(copied)}, ` +
+            `${JSON.stringify(join(runtimeRoot, 'blocked.txt'))}))`
+        )
+        expect(blocked.error).toMatch(/manage_packages/)
+      } finally {
+        child.kill()
+        rmSync(runtimeRoot, { recursive: true, force: true })
+        rmSync(workspace, { recursive: true, force: true })
+      }
+    },
+    60_000
+  )
+
   it('proves back-to-back requests written without waiting stay aligned', async () => {
     const { child, send } = startLoop(rscriptBin(), {})
     try {
