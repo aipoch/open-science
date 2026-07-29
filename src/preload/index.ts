@@ -510,7 +510,9 @@ type OpenScienceAPI = {
     openFile: (request: OpenArtifactFileRequest) => Promise<void>
     // Reads a bounded text preview from managed generated files.
     readPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
-    getLineage: (request: GetArtifactLineageRequest) => Promise<ArtifactLineageProvenance>
+    getLineage: (
+      request: GetArtifactLineageRequest
+    ) => Promise<ArtifactLineageProvenance | undefined>
     getVersionProvenance: (
       request: GetArtifactVersionProvenanceRequest
     ) => Promise<ArtifactVersionProvenance>
@@ -1080,7 +1082,9 @@ const api: OpenScienceAPI = {
     readPreview: (request) =>
       ipcRenderer.invoke('artifacts:read-preview', request) as Promise<ArtifactPreviewResult>,
     getLineage: (request) =>
-      ipcRenderer.invoke('artifacts:get-lineage', request) as Promise<ArtifactLineageProvenance>,
+      ipcRenderer.invoke('artifacts:get-lineage', request) as Promise<
+        ArtifactLineageProvenance | undefined
+      >,
     getVersionProvenance: (request) =>
       ipcRenderer.invoke(
         'artifacts:get-version-provenance',

@@ -39,7 +39,7 @@ import { FileBrowserModal } from '../settings/FileBrowserModal'
 import { getPreviewThumbnailReadEncoding } from './preview-support'
 import { createKeyedRequestReader } from './project-file-preview-queue'
 import { isUnavailableFileError, FILE_MISSING_TAG } from './previews/preview-errors'
-import { getPreviewFileReader } from './previews/preview-file-reader'
+import { createPreviewRequestScope, getPreviewFileReader } from './previews/preview-file-reader'
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 import { FILE_PAGE_SIZE, useProjectFilesIndex, type PageState } from './use-project-files-index'
@@ -145,8 +145,12 @@ const readProjectFilePreview = async (
   try {
     const preview = await readPreview({
       path: target.path,
-      projectId: target.projectId,
-      sessionId: target.sessionId,
+      ...createPreviewRequestScope({
+        projectId: target.projectId,
+        sessionId: target.sessionId,
+        source: target.source,
+        path: target.path
+      }),
       maxBytes:
         target.encoding === 'base64' ? ARTIFACT_IMAGE_PREVIEW_BYTES : ARTIFACT_PREVIEW_BYTES,
       encoding: target.encoding

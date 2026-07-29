@@ -1201,6 +1201,7 @@ describe('artifact provenance repository', () => {
       originSession: { sessionId: 'session-1', state: 'active' },
       versions: [{ versionId: version.versionId, versionNumber: 1 }]
     })
+    if (!lineage) throw new Error('Expected Artifact lineage.')
     expect(lineage.versions[0]).not.toHaveProperty('path')
     expect(lineage.versions[0]).not.toHaveProperty('fileUrl')
     await expect(
@@ -1209,7 +1210,14 @@ describe('artifact provenance repository', () => {
         appSessionId: 'different-session',
         artifactId: version.artifactId
       })
-    ).rejects.toThrow(`Artifact lineage not found: ${version.artifactId}`)
+    ).resolves.toBeUndefined()
+    await expect(
+      repository.getLineage({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: 'session-1:message-1:sin.png'
+      })
+    ).resolves.toBeUndefined()
     await expect(
       repository.getVersionProvenance({
         projectId: 'project-1',

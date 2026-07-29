@@ -459,7 +459,7 @@ interface OpenScienceAPI {
     reconcilePendingArtifacts(request: ReconcilePendingArtifactsRequest): Promise<ArtifactFile[]>
     openFile(request: OpenArtifactFileRequest): Promise<void>
     readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
-    getLineage(request: GetArtifactLineageRequest): Promise<ArtifactLineageProvenance>
+    getLineage(request: GetArtifactLineageRequest): Promise<ArtifactLineageProvenance | undefined>
     getVersionProvenance(
       request: GetArtifactVersionProvenanceRequest
     ): Promise<ArtifactVersionProvenance>

@@ -1,9 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
 const repoRoot = join(__dirname, '..')
+const appBuilderLibRoot = dirname(
+  createRequire(import.meta.url).resolve('app-builder-lib/package.json')
+)
 
 describe('packaging config', () => {
   it('ships the exec-loop scripts unpacked from the asar', () => {
@@ -163,7 +167,7 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     // assertion above stays green. Guard the integration contract itself so such an upgrade
     // fails here instead of silently reverting to the fatal dialog.
     const installUtil = readFileSync(
-      join(repoRoot, 'node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh'),
+      join(appBuilderLibRoot, 'templates/nsis/include/installUtil.nsh'),
       'utf8'
     )
     expect(installUtil).toContain('!ifmacrodef customUnInstallCheck')
@@ -177,7 +181,7 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     // in .onInit. Losing that insertion point leaves the HKCU hook with an always-empty cache —
     // the exact fatal-path regression the cache fixed — while every source-text test stays green.
     const installerNsi = readFileSync(
-      join(repoRoot, 'node_modules/app-builder-lib/templates/nsis/installer.nsi'),
+      join(appBuilderLibRoot, 'templates/nsis/installer.nsi'),
       'utf8'
     )
     expect(installerNsi).toContain('!ifmacrodef customInit')

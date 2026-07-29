@@ -114,7 +114,8 @@ class ManagedFileIndexRepository {
       if (
         !options.force &&
         currentSync?.filesRevision === revision &&
-        currentSync.deletedAt === null
+        currentSync.deletedAt === null &&
+        (await this.isFileProjectionCurrent(client, session.projectId, session.id))
       ) {
         this.incompleteSessions.delete(sessionKey(session.projectId, session.id))
         return []
@@ -207,8 +208,12 @@ class ManagedFileIndexRepository {
 
           rowsById.set(idKey, row)
           rowsByPath.set(pathKey, row)
-          retainedSeqs.add(row.seq)
-          retainedSources.set(row.seq, file.source)
+          // Cross-Session references preserve the source owner's row, but they are not members of the
+          // referencing Session's ledger or Artifact group.
+          if (file.sessionId === session.id) {
+            retainedSeqs.add(row.seq)
+            retainedSources.set(row.seq, file.source)
+          }
           acceptedFiles.push(file)
         }
 
@@ -753,6 +758,63 @@ class ManagedFileIndexRepository {
 
   // Extracts finalized uploads and managed artifacts from authoritative session JSON. Identity is
   // deduplicated first by source id and then by storage key to normalize legacy duplicate metadata.
+  private async isFileProjectionCurrent(
+    client: ProjectFilesClient,
+    projectId: string,
+    sessionId: string
+  ): Promise<boolean> {
+    const [lineages, rows] = await Promise.all([
+      client.artifactLineage.findMany({
+        where: { projectId, sessionId },
+        include: {
+          versions: {
+            where: { state: 'finalized' },
+            orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
+            take: 1
+          }
+        }
+      }),
+      client.managedFile.findMany({
+        where: { projectId, sessionId, deletedAt: null },
+        select: { source: true, sourceFileId: true, sourceVersionId: true }
+      })
+    ])
+    const expectedArtifacts = new Map(
+      lineages.flatMap((lineage) => {
+        const version = lineage.versions[0]
+        return version ? [[lineage.id, version.id] as const] : []
+      })
+    )
+    const projectedArtifacts = rows.filter(
+      (row) => row.source === 'artifact' && row.sourceVersionId !== null
+    )
+    if (
+      projectedArtifacts.length !== expectedArtifacts.size ||
+      projectedArtifacts.some(
+        (row) => expectedArtifacts.get(row.sourceFileId) !== row.sourceVersionId
+      )
+    ) {
+      return false
+    }
+
+    // A native Upload row is owned by its source Session, even when another Session references it.
+    // Detect old derived rows that copied the referencing Session so one startup sync repairs their
+    // locator scope instead of repeatedly sending unauthorized preview requests.
+    const nativeUploadIds = [
+      ...new Set(
+        rows
+          .filter((row) => row.source === 'upload' && row.sourceVersionId !== null)
+          .map((row) => row.sourceFileId)
+      )
+    ]
+    if (nativeUploadIds.length === 0) return true
+    const ownedUploads = await client.uploadFile.findMany({
+      where: { id: { in: nativeUploadIds }, projectId, sessionId },
+      select: { id: true }
+    })
+    return ownedUploads.length === nativeUploadIds.length
+  }
+
   private async extractSessionFiles(
     session: PersistedChatSession
   ): Promise<{ files: IndexedFileInput[]; errors: string[] }> {
@@ -848,8 +910,58 @@ class ManagedFileIndexRepository {
       }
     }
 
+    // Native Artifact identity and version order live in SQLite. Session JSON is intentionally a
+    // compatibility projection and can lag a newly finalized Version or retain an older branch's
+    // descriptor, so it must not choose the Files tile content for a provenance lineage.
+    const authoritativeArtifactIds = new Set<string>()
+    try {
+      const client = await this.getClient()
+      const lineages = await client.artifactLineage.findMany({
+        where: { projectId: session.projectId, sessionId: session.id },
+        include: {
+          versions: {
+            where: { state: 'finalized' },
+            orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
+            take: 1
+          }
+        }
+      })
+
+      for (const lineage of lineages) {
+        authoritativeArtifactIds.add(lineage.id)
+        const version = lineage.versions[0]
+        if (!version) continue
+        const createdAtMs = BigInt(version.createdAt.getTime())
+        files.push({
+          source: 'artifact',
+          sourceFileId: lineage.id,
+          sourceVersionId: version.id,
+          checksum: version.checksum,
+          projectId: session.projectId,
+          sessionId: session.id,
+          messageId: version.messageId ?? undefined,
+          displayName: version.filename || lineage.filename,
+          storageKey: version.contentStorageKey,
+          mimeType: version.contentType ?? undefined,
+          sizeBytes: version.sizeBytes,
+          mtimeMs: createdAtMs,
+          sortAtMs: createdAtMs
+        })
+      }
+    } catch (error) {
+      errors.push(`Artifact Version catalog is unavailable: ${describeError(error)}`)
+    }
+
     for (const artifact of session.artifacts ?? []) {
       if (artifact.kind !== 'managed-file' || isPendingArtifactPath(artifact.path)) continue
+      if (artifact.artifactId || artifact.versionId) {
+        if (!artifact.artifactId || !authoritativeArtifactIds.has(artifact.artifactId)) {
+          errors.push(
+            `Artifact Version identity is unavailable: ${artifact.versionId ?? artifact.id}`
+          )
+        }
+        continue
+      }
       const artifactSortAtMs = artifact.mtimeMs ?? session.updatedAt
       if (!Number.isFinite(artifactSortAtMs)) {
         errors.push('Managed artifact modification time must be finite.')

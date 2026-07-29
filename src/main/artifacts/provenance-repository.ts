@@ -2858,10 +2858,19 @@ class ArtifactProvenanceRepository {
     return matches.length === 1 ? matches[0] : undefined
   }
 
-  async getLineage(request: GetArtifactLineageRequest): Promise<ArtifactLineageProvenance> {
+  async getLineage(
+    request: GetArtifactLineageRequest
+  ): Promise<ArtifactLineageProvenance | undefined> {
     const projectId = assertSafeSegment(request.projectId, 'project id')
     const appSessionId = assertSafeSegment(request.appSessionId, 'app session id')
-    const artifactId = assertSafeSegment(request.artifactId, 'artifact id')
+    let artifactId: string
+    try {
+      artifactId = assertSafeSegment(request.artifactId, 'artifact id')
+    } catch {
+      // Legacy managed-file ids can contain Session/message/filename segments. They never identify a
+      // native lineage, so absence is the compatible result rather than an IPC-visible validation error.
+      return undefined
+    }
     const client = await this.options.getClient()
     let lineage = await client.artifactLineage.findFirst({
       where: { id: artifactId, projectId, sessionId: appSessionId },
@@ -2886,7 +2895,7 @@ class ArtifactProvenanceRepository {
         }
       })
     }
-    if (!lineage) throw new Error(`Artifact lineage not found: ${artifactId}`)
+    if (!lineage) return undefined
 
     const versions = await Promise.all(
       lineage.versions.map(async (version) =>

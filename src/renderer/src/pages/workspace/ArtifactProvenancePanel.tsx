@@ -370,6 +370,7 @@ const ArtifactProvenancePanel = ({
   const [lineageResult, setLineageResult] = useState<{
     key: string
     value?: ArtifactLineageProvenance
+    unavailable?: boolean
     error?: string
   }>()
   const [selectedVersion, setSelectedVersion] = useState<{
@@ -397,6 +398,7 @@ const ArtifactProvenancePanel = ({
     message: string
   }>()
   const lineage = lineageResult?.key === lineageKey ? lineageResult.value : undefined
+  const lineageUnavailable = lineageResult?.key === lineageKey && lineageResult.unavailable === true
   const requestedVersionId =
     selectedVersion && selectedVersion.artifactId === item.artifactId
       ? selectedVersion.versionId
@@ -430,7 +432,7 @@ const ArtifactProvenancePanel = ({
       .getLineage({ projectId, appSessionId: item.sessionId, artifactId: item.artifactId })
       .then((value) => {
         if (!active) return
-        setLineageResult({ key: lineageKey, value })
+        setLineageResult({ key: lineageKey, value, unavailable: value === undefined })
       })
       .catch((failure: unknown) => {
         if (active) {
@@ -447,7 +449,7 @@ const ArtifactProvenancePanel = ({
 
   useEffect(() => {
     let active = true
-    if (!item.artifactId || !selectedVersionId) return
+    if (!item.artifactId || !selectedVersionId || !lineage) return
     void window.api.artifacts
       .getVersionProvenance({
         projectId,
@@ -469,7 +471,7 @@ const ArtifactProvenancePanel = ({
     return () => {
       active = false
     }
-  }, [item.artifactId, item.sessionId, projectId, provenanceKey, selectedVersionId])
+  }, [item.artifactId, item.sessionId, lineage, projectId, provenanceKey, selectedVersionId])
 
   const reviewReloadKey = activeTab === 'review' ? reviewRevision : 0
   const deferredTab = (
@@ -814,7 +816,12 @@ const ArtifactProvenancePanel = ({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {error ? <p className="p-5 text-sm text-danger-000">{error}</p> : null}
-        {!error && !provenance ? (
+        {!error && lineageUnavailable ? (
+          <p className="p-5 text-sm text-text-300">
+            Provenance is not available for this legacy file.
+          </p>
+        ) : null}
+        {!error && !lineageUnavailable && !provenance ? (
           <div className="flex h-full items-center justify-center text-text-300">
             <LoaderCircle className="size-4 animate-spin" aria-label="Loading Provenance" />
           </div>

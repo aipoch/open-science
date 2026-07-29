@@ -433,6 +433,33 @@ afterEach(() => {
 })
 
 describe('ArtifactProvenancePanel', () => {
+  it('shows an empty legacy state without requesting Version provenance', async () => {
+    act(() => root.unmount())
+    container.replaceChildren()
+    root = createRoot(container)
+    vi.mocked(window.api.artifacts.getLineage).mockResolvedValue(undefined)
+    getVersionProvenance.mockClear()
+
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{
+            ...item,
+            id: 'session-1:message-1:sin.png',
+            artifactId: 'session-1:message-1:sin.png',
+            selectedVersionId: undefined
+          }}
+          projectId="project-1"
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await flush()
+
+    expect(container.textContent).toContain('Provenance is not available for this legacy file.')
+    expect(getVersionProvenance).not.toHaveBeenCalled()
+  })
+
   it('falls back to the latest lineage Version when the preview selection is stale', async () => {
     await act(async () =>
       root.render(

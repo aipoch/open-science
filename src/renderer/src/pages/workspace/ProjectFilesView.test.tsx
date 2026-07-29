@@ -17,7 +17,11 @@ import {
 } from '@/stores/session-store'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProjectFilesChangedEvent, ProjectFileItem } from '../../../../shared/project-files'
-import { getUploadedAttachmentPath, type UploadedAttachment } from '../../../../shared/uploads'
+import {
+  createUploadVersionReference,
+  getUploadedAttachmentPath,
+  type UploadedAttachment
+} from '../../../../shared/uploads'
 
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
   id: 'message-1',
@@ -1975,6 +1979,47 @@ describe('ProjectFilesView', () => {
       )
     )
     expect(container.textContent).toContain('1 rows · 2 columns')
+  })
+
+  it('reads a project upload preview with the source Session encoded by its Version locator', async () => {
+    const sourceSessionId = 'source-session'
+    const versionId = 'upload-version-cross-session'
+    const path = createUploadVersionReference(versionId, {
+      projectId: 'default',
+      sessionId: sourceSessionId
+    })
+    await renderView([
+      createSession({
+        id: 'current-session',
+        messages: [
+          createMessage({
+            uploads: [
+              createUpload({
+                id: 'upload-cross-session',
+                versionId,
+                sessionId: sourceSessionId,
+                path: undefined,
+                name: 'cross-session.csv',
+                originalName: 'cross-session.csv',
+                mimeType: 'text/csv'
+              })
+            ]
+          })
+        ]
+      })
+    ])
+
+    await vi.waitFor(() => {
+      const thumbnailRequest = vi
+        .mocked(window.api.uploads.readPreview)
+        .mock.calls.map(([request]) => request)
+        .find((request) => request.maxBytes !== 1)
+      expect(thumbnailRequest).toMatchObject({
+        path,
+        projectId: 'default',
+        sessionId: sourceSessionId
+      })
+    })
   })
 
   it('hides a stale thumbnail while a new file version is loading', async () => {
