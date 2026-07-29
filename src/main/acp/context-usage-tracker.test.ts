@@ -441,7 +441,9 @@ describe('ContextUsageTracker', () => {
   it('deduplicates a pre-counted Codex Skill when the same SKILL.md is read', () => {
     const tracker = new ContextUsageTracker(wordCounter)
     tracker.beginSession('s1', { frameworkId: 'codex', model: 'gpt-5.6-sol' })
-    tracker.recordSkillDocument('s1', '/codex/skills/pdf/SKILL.md', 'skill content here')
+    tracker.replacePromptSkillDocuments('s1', [
+      { path: '/codex/skills/pdf/SKILL.md', text: 'skill content here' }
+    ])
     tracker.observeSessionUpdate(
       's1',
       {
@@ -461,6 +463,38 @@ describe('ContextUsageTracker', () => {
     expect(tracker.compare('s1', 5, 'reconciled')?.categories).toEqual([
       { key: 'skills', tokens: 3, estimated: true },
       { key: 'other', tokens: 2, estimated: false }
+    ])
+  })
+
+  it('counts later explicit reads of the same SKILL.md as separate history entries', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    const skillPath = '/codex/skills/pdf/SKILL.md'
+    tracker.beginSession('s1', { frameworkId: 'codex', model: 'gpt-5.6-sol' })
+    tracker.replacePromptSkillDocuments('s1', [{ path: skillPath, text: 'skill content here' }])
+
+    const observeRead = (toolCallId: string): void => {
+      tracker.observeSessionUpdate(
+        's1',
+        {
+          sessionId: 's1',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId,
+            title: 'Read',
+            status: 'completed',
+            content: [{ type: 'content', content: { type: 'text', text: 'skill content here' } }]
+          }
+        },
+        { toolCategory: 'skills', skillFilePath: skillPath }
+      )
+    }
+
+    observeRead('read-1')
+    observeRead('read-1')
+    observeRead('read-2')
+
+    expect(tracker.estimate('s1')?.categories).toEqual([
+      { key: 'skills', tokens: 6, estimated: true }
     ])
   })
 

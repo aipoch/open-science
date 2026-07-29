@@ -26,6 +26,7 @@ type SessionEstimate = {
   totals: Record<EstimatedCategoryKey, number>
   keyedSections: Map<string, { category: EstimatedCategoryKey; tokens: number }>
   toolObservations: Map<string, SessionUpdateObservation>
+  skillSectionsByToolCallId: Map<string, string>
   canonicalRawOutputSections: Set<string>
   promptSkillSectionIds: Set<string>
   pendingAssistantText: string
@@ -77,6 +78,7 @@ const cloneSessionEstimate = (state: SessionEstimate): SessionEstimate => ({
   totals: { ...state.totals },
   keyedSections: new Map(state.keyedSections),
   toolObservations: new Map(state.toolObservations),
+  skillSectionsByToolCallId: new Map(state.skillSectionsByToolCallId),
   canonicalRawOutputSections: new Set(state.canonicalRawOutputSections),
   promptSkillSectionIds: new Set(state.promptSkillSectionIds),
   pendingAssistantText: state.pendingAssistantText,
@@ -320,6 +322,7 @@ class ContextUsageTracker {
       totals: emptyTotals(),
       keyedSections: new Map(),
       toolObservations: new Map(),
+      skillSectionsByToolCallId: new Map(),
       canonicalRawOutputSections: new Set(),
       promptSkillSectionIds: new Set(),
       pendingAssistantText: '',
@@ -391,10 +394,24 @@ class ContextUsageTracker {
     state.pendingAssistantTokens = 0
   }
 
-  recordSkillDocument(sessionId: string, path: string, text: string): void {
-    const sectionId = skillFileSectionId(path)
+  private recordSkillDocument(
+    sessionId: string,
+    toolCallId: string,
+    path: string,
+    text: string
+  ): void {
+    const state = this.sessions.get(sessionId)
+    if (!state) return
+
+    const promptSectionId = skillFileSectionId(path)
+    const sectionId =
+      state.skillSectionsByToolCallId.get(toolCallId) ??
+      (state.promptSkillSectionIds.has(promptSectionId)
+        ? promptSectionId
+        : `tool:${toolCallId}:document`)
+    state.skillSectionsByToolCallId.set(toolCallId, sectionId)
     this.replaceText(sessionId, sectionId, 'skills', text)
-    this.sessions.get(sessionId)?.promptSkillSectionIds.delete(sectionId)
+    state.promptSkillSectionIds.delete(promptSectionId)
   }
 
   replacePromptSkillDocuments(
@@ -478,7 +495,12 @@ class ContextUsageTracker {
             ? boundedJsonText(update.rawOutput, budget)
             : ''
       if (output) {
-        this.recordSkillDocument(sessionId, effectiveObservation.skillFilePath, output)
+        this.recordSkillDocument(
+          sessionId,
+          update.toolCallId,
+          effectiveObservation.skillFilePath,
+          output
+        )
       }
       return
     }
