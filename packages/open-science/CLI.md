@@ -204,8 +204,9 @@ open-science rollback-to-0.7.3 --yes \
 Use `--json` to print the rollback manifest as one JSON object. The same manifest is written to
 `rollback-to-0.7.3.json` in both the activated Config Root and rollback Data Root. It records the
 preserved newer Config Root and Data Root paths needed to return to the newer application.
-An adjacent durable cutover marker lets the same command finish activation after a process or power
-interruption; do not delete timestamped staging or preserved directories while that recovery runs.
+Adjacent durable preparation and cutover markers let the same command clean or finish an interrupted
+conversion after a process or power interruption; do not delete timestamped staging or preserved
+directories while that recovery runs.
 
 The 0.7.3 copy contains only the active branch of each conversation. Inactive branches, Artifact
 version history, reviews, and provenance snapshots remain preserved in the newer roots but are not

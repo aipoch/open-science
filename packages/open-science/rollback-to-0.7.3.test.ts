@@ -24,6 +24,7 @@ const temporaryRoot = async (): Promise<string> => {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   const { rm } = await import('node:fs/promises')
   await Promise.all(
     temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
@@ -509,6 +510,193 @@ describe('rollback-to-0.7.3', () => {
     await expect(stat(`${configRoot}.rollback-to-0.7.3.pending.json`)).rejects.toMatchObject({
       code: 'ENOENT'
     })
+  })
+
+  it('cleans an interrupted preparation and safely reuses its explicit output', async () => {
+    const root = await temporaryRoot()
+    const configRoot = join(root, '.open-science')
+    const dataRoot = join(root, 'OpenScience')
+    const rollbackDataRoot = join(root, 'OpenScience-Rollback-0.7.3')
+    const stamp = '20260729T010203Z'
+    const preservedConfigRoot = `${configRoot}.before-rollback-${stamp}`
+    const stagingConfigRoot = `${configRoot}.rollback-staging-${stamp}`
+    const markerPath = `${configRoot}.rollback-to-0.7.3.pending.json`
+    await mkdir(configRoot, { recursive: true })
+    await mkdir(dataRoot, { recursive: true })
+    await mkdir(stagingConfigRoot, { recursive: true })
+    await mkdir(rollbackDataRoot, { recursive: true })
+    await writeFile(join(configRoot, 'settings.json'), JSON.stringify({ version: 2, dataRoot }))
+    await writeFile(join(stagingConfigRoot, 'partial.txt'), 'partial-config')
+    await writeFile(join(rollbackDataRoot, 'partial.txt'), 'partial-data')
+    new DatabaseSync(join(configRoot, 'open-science.db')).close()
+    await writeFile(
+      markerPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        phase: 'preparing',
+        configRoot,
+        preservedConfigRoot,
+        stagingConfigRoot,
+        rollbackDataRoot
+      })
+    )
+
+    await expect(
+      runRollbackToV073({
+        configRoot,
+        dataRoot,
+        output: rollbackDataRoot,
+        confirm: true,
+        now: () => Date.UTC(2026, 6, 29, 1, 2, 3)
+      })
+    ).resolves.toMatchObject({ targetVersion: '0.7.3', rollbackDataRoot })
+
+    await expect(stat(join(configRoot, 'partial.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(join(rollbackDataRoot, 'partial.txt'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(stat(markerPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('revalidates prepared Version bytes before recovering a cutover', async () => {
+    const root = await temporaryRoot()
+    const configRoot = join(root, '.open-science')
+    const rollbackDataRoot = join(root, 'OpenScience-Rollback-0.7.3')
+    const preservedConfigRoot = `${configRoot}.before-rollback-20260729T010203Z`
+    const stagingConfigRoot = `${configRoot}.rollback-staging-20260729T010203Z`
+    const markerPath = `${configRoot}.rollback-to-0.7.3.pending.json`
+    const marker = {
+      schemaVersion: 1,
+      configRoot,
+      preservedConfigRoot,
+      stagingConfigRoot,
+      rollbackDataRoot
+    }
+    const manifest = {
+      schemaVersion: 1,
+      targetVersion: '0.7.3',
+      originalConfigRoot: configRoot,
+      preservedConfigRoot,
+      originalDataRoot: join(root, 'OpenScience'),
+      preservedDataRoot: join(root, 'OpenScience'),
+      rollbackDataRoot,
+      sessionsConverted: 0
+    }
+    await mkdir(configRoot, { recursive: true })
+    await mkdir(stagingConfigRoot, { recursive: true })
+    await mkdir(rollbackDataRoot, { recursive: true })
+    await writeFile(join(stagingConfigRoot, 'rollback-to-0.7.3.json'), JSON.stringify(manifest))
+    await writeFile(join(rollbackDataRoot, 'rollback-to-0.7.3.json'), JSON.stringify(manifest))
+    const database = new DatabaseSync(join(stagingConfigRoot, 'open-science.db'))
+    database.exec(`
+      CREATE TABLE UploadVersion (
+        id TEXT PRIMARY KEY,
+        state TEXT NOT NULL,
+        contentStorageKey TEXT NOT NULL,
+        sizeBytes BIGINT NOT NULL,
+        checksum TEXT NOT NULL
+      );
+    `)
+    database
+      .prepare('INSERT INTO UploadVersion VALUES (?, ?, ?, ?, ?)')
+      .run(
+        'upload-version-1',
+        'ready',
+        'uploads/project-1/session-1/upload-version-1/content',
+        9,
+        sha256('csv-bytes')
+      )
+    database.close()
+    await writeFile(markerPath, JSON.stringify({ ...marker, phase: 'preparing' }))
+    await writeFile(`${markerPath}.prepared`, JSON.stringify({ ...marker, phase: 'prepared' }))
+
+    await expect(
+      runRollbackToV073({ configRoot, output: rollbackDataRoot, confirm: true })
+    ).rejects.toThrow('Prepared Upload Version content is missing: upload-version-1')
+
+    await expect(stat(configRoot)).resolves.toBeDefined()
+    await expect(stat(stagingConfigRoot)).resolves.toBeDefined()
+    await expect(stat(preservedConfigRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(markerPath)).resolves.toBeDefined()
+  })
+
+  it('rechecks that Open Science is closed immediately before cutover', async () => {
+    const root = await temporaryRoot()
+    const configRoot = join(root, '.open-science')
+    const dataRoot = join(root, 'OpenScience')
+    const rollbackDataRoot = join(root, 'OpenScience-Rollback-0.7.3')
+    await mkdir(configRoot, { recursive: true })
+    await mkdir(dataRoot, { recursive: true })
+    await writeFile(join(configRoot, 'settings.json'), JSON.stringify({ version: 2, dataRoot }))
+    new DatabaseSync(join(configRoot, 'open-science.db')).close()
+
+    await expect(
+      runRollbackToV073({
+        configRoot,
+        dataRoot,
+        output: rollbackDataRoot,
+        confirm: true,
+        syncPrepared: async () => {
+          await writeFile(
+            join(configRoot, 'web-service.json'),
+            JSON.stringify({ pid: process.pid })
+          )
+        }
+      })
+    ).rejects.toThrow('Open Science is still running')
+
+    await expect(stat(configRoot)).resolves.toBeDefined()
+    await expect(stat(rollbackDataRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rechecks offline state after validating an interrupted prepared copy', async () => {
+    const root = await temporaryRoot()
+    const configRoot = join(root, '.open-science')
+    const rollbackDataRoot = join(root, 'OpenScience-Rollback-0.7.3')
+    const preservedConfigRoot = `${configRoot}.before-rollback-20260729T010203Z`
+    const stagingConfigRoot = `${configRoot}.rollback-staging-20260729T010203Z`
+    const markerPath = `${configRoot}.rollback-to-0.7.3.pending.json`
+    const marker = {
+      schemaVersion: 1,
+      configRoot,
+      preservedConfigRoot,
+      stagingConfigRoot,
+      rollbackDataRoot
+    }
+    const manifest = {
+      schemaVersion: 1,
+      targetVersion: '0.7.3',
+      originalConfigRoot: configRoot,
+      preservedConfigRoot,
+      originalDataRoot: join(root, 'OpenScience'),
+      preservedDataRoot: join(root, 'OpenScience'),
+      rollbackDataRoot,
+      sessionsConverted: 0
+    }
+    await mkdir(configRoot, { recursive: true })
+    await mkdir(stagingConfigRoot, { recursive: true })
+    await mkdir(rollbackDataRoot, { recursive: true })
+    await writeFile(join(configRoot, 'web-service.json'), JSON.stringify({ pid: 424242 }))
+    await writeFile(join(stagingConfigRoot, 'rollback-to-0.7.3.json'), JSON.stringify(manifest))
+    await writeFile(join(rollbackDataRoot, 'rollback-to-0.7.3.json'), JSON.stringify(manifest))
+    new DatabaseSync(join(stagingConfigRoot, 'open-science.db')).close()
+    await writeFile(markerPath, JSON.stringify({ ...marker, phase: 'preparing' }))
+    await writeFile(`${markerPath}.prepared`, JSON.stringify({ ...marker, phase: 'prepared' }))
+    vi.spyOn(process, 'kill')
+      .mockImplementationOnce(() => {
+        const error = new Error('not running') as NodeJS.ErrnoException
+        error.code = 'ESRCH'
+        throw error
+      })
+      .mockReturnValueOnce(true)
+
+    await expect(
+      runRollbackToV073({ configRoot, output: rollbackDataRoot, confirm: true })
+    ).rejects.toThrow('Open Science is still running')
+
+    await expect(stat(configRoot)).resolves.toBeDefined()
+    await expect(stat(stagingConfigRoot)).resolves.toBeDefined()
+    await expect(stat(preservedConfigRoot)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('does not resume an interrupted cutover while Open Science is running', async () => {

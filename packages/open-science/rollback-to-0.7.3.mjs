@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import {
@@ -32,6 +32,7 @@ import {
 const TARGET_VERSION = '0.7.3'
 const ROLLBACK_MANIFEST = 'rollback-to-0.7.3.json'
 const CUTOVER_MARKER_SUFFIX = '.rollback-to-0.7.3.pending.json'
+const PREPARED_MARKER_SUFFIX = '.prepared'
 const DATA_DIRECTORIES = ['artifacts', 'notebooks', 'uploads', 'workspaces']
 const CONFIG_EXCLUDED_DIRECTORIES = new Set([...DATA_DIRECTORIES, 'runtime'])
 const TRANSIENT_CONFIG_FILES = new Set([
@@ -381,45 +382,103 @@ const readActivatedRollback = async (configRoot, requestedOutput) => {
 
 const cutoverMarkerPath = (configRoot) => `${configRoot}${CUTOVER_MARKER_SUFFIX}`
 
+const preparedMarkerPath = (configRoot) =>
+  `${cutoverMarkerPath(configRoot)}${PREPARED_MARKER_SUFFIX}`
+
 const writeDurableJson = async (path, value) => {
-  const handle = await open(path, 'wx', 0o600)
+  const temporaryPath = `${path}.tmp-${process.pid}-${randomUUID()}`
+  const handle = await open(temporaryPath, 'wx', 0o600)
   try {
-    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, 'utf8')
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
-  if (process.platform !== 'win32') {
-    const directory = await open(dirname(path), 'r')
     try {
-      await directory.sync()
+      await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, 'utf8')
+      await handle.sync()
     } finally {
-      await directory.close()
+      await handle.close()
     }
+    if (await exists(path)) throw new Error(`Rollback marker already exists: ${path}`)
+    await rename(temporaryPath, path)
+    if (process.platform !== 'win32') {
+      const directory = await open(dirname(path), 'r')
+      try {
+        await directory.sync()
+      } finally {
+        await directory.close()
+      }
+    }
+  } catch (error) {
+    await rm(temporaryPath, { force: true }).catch(() => undefined)
+    throw error
   }
+}
+
+const syncTree = async (root) => {
+  const metadata = await lstat(root)
+  if (metadata.isSymbolicLink()) {
+    throw new Error(`Rollback durability check found a symbolic link or junction: ${root}`)
+  }
+  if (metadata.isDirectory()) {
+    for (const entry of await readdir(root)) await syncTree(join(root, entry))
+    if (process.platform !== 'win32') {
+      const directory = await open(root, 'r')
+      try {
+        await directory.sync()
+      } finally {
+        await directory.close()
+      }
+    }
+    return
+  }
+  if (!metadata.isFile()) {
+    throw new Error(`Rollback durability check found an unsupported entry: ${root}`)
+  }
+  const file = await open(root, 'r')
+  try {
+    await file.sync()
+  } finally {
+    await file.close()
+  }
+}
+
+const validateCutoverMarker = (marker, configRoot, path, expectedPhase) => {
+  const phase = marker?.phase ?? 'prepared'
+  if (
+    !isRecord(marker) ||
+    phase !== expectedPhase ||
+    typeof marker.configRoot !== 'string' ||
+    !samePath(marker.configRoot, configRoot) ||
+    typeof marker.preservedConfigRoot !== 'string' ||
+    typeof marker.stagingConfigRoot !== 'string' ||
+    typeof marker.rollbackDataRoot !== 'string' ||
+    dirname(marker.preservedConfigRoot) !== dirname(configRoot) ||
+    dirname(marker.stagingConfigRoot) !== dirname(configRoot) ||
+    !basename(marker.preservedConfigRoot).startsWith(`${basename(configRoot)}.before-rollback-`) ||
+    !basename(marker.stagingConfigRoot).startsWith(`${basename(configRoot)}.rollback-staging-`)
+  ) {
+    throw new Error(`Invalid rollback cutover marker: ${path}`)
+  }
+  return marker
 }
 
 const readCutoverMarker = async (configRoot) => {
   const path = cutoverMarkerPath(configRoot)
+  const preparedPath = preparedMarkerPath(configRoot)
+  try {
+    const marker = JSON.parse(await readFile(preparedPath, 'utf8'))
+    return {
+      path,
+      preparedPath,
+      ...validateCutoverMarker(marker, configRoot, preparedPath, 'prepared')
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+  }
   try {
     const marker = JSON.parse(await readFile(path, 'utf8'))
-    if (
-      !isRecord(marker) ||
-      typeof marker.configRoot !== 'string' ||
-      !samePath(marker.configRoot, configRoot) ||
-      typeof marker.preservedConfigRoot !== 'string' ||
-      typeof marker.stagingConfigRoot !== 'string' ||
-      typeof marker.rollbackDataRoot !== 'string' ||
-      dirname(marker.preservedConfigRoot) !== dirname(configRoot) ||
-      dirname(marker.stagingConfigRoot) !== dirname(configRoot) ||
-      !basename(marker.preservedConfigRoot).startsWith(
-        `${basename(configRoot)}.before-rollback-`
-      ) ||
-      !basename(marker.stagingConfigRoot).startsWith(`${basename(configRoot)}.rollback-staging-`)
-    ) {
+    const phase = marker?.phase ?? 'prepared'
+    if (phase !== 'preparing' && phase !== 'prepared') {
       throw new Error(`Invalid rollback cutover marker: ${path}`)
     }
-    return { path, ...marker }
+    return { path, preparedPath, ...validateCutoverMarker(marker, configRoot, path, phase) }
   } catch (error) {
     if (error?.code === 'ENOENT') return undefined
     throw error
@@ -429,20 +488,45 @@ const readCutoverMarker = async (configRoot) => {
 const recoverInterruptedCutover = async (configRoot, requestedOutput) => {
   const marker = await readCutoverMarker(configRoot)
   if (!marker) return undefined
+  if (requestedOutput && !samePath(marker.rollbackDataRoot, requestedOutput)) {
+    throw new Error(
+      `An interrupted 0.7.3 rollback already targets ${marker.rollbackDataRoot}; finish it before choosing another output.`
+    )
+  }
   const active = await readActivatedRollback(configRoot, requestedOutput)
   if (active) {
-    await rm(marker.path, { force: true }).catch(() => undefined)
+    await Promise.all([
+      rm(marker.path, { force: true }),
+      rm(marker.preparedPath, { force: true })
+    ]).catch(() => undefined)
     return active
   }
 
   const configExists = await exists(configRoot)
   const preservedExists = await exists(marker.preservedConfigRoot)
   const stagingExists = await exists(marker.stagingConfigRoot)
+  if (marker.phase === 'preparing') {
+    await assertOffline(configRoot)
+    if (!configExists || preservedExists) {
+      throw new Error(
+        `Interrupted rollback preparation has an unexpected Config Root state. Inspect ${configRoot} and ${marker.preservedConfigRoot} before continuing.`
+      )
+    }
+    await Promise.all([
+      rm(marker.stagingConfigRoot, { recursive: true, force: true }),
+      rm(marker.rollbackDataRoot, { recursive: true, force: true }),
+      rm(marker.path, { force: true }),
+      rm(marker.preparedPath, { force: true })
+    ])
+    return undefined
+  }
   if (!stagingExists) {
     throw new Error(
       `Interrupted rollback has no prepared Config Root. Restore ${marker.preservedConfigRoot} to ${configRoot} before continuing.`
     )
   }
+  await assertOffline(configExists ? configRoot : marker.preservedConfigRoot)
+  await validatePreparedRollback(marker)
   await assertOffline(configExists ? configRoot : marker.preservedConfigRoot)
   if (configExists) {
     if (preservedExists) {
@@ -466,7 +550,7 @@ const recoverInterruptedCutover = async (configRoot, requestedOutput) => {
   const recovered = await readActivatedRollback(configRoot, requestedOutput)
   if (!recovered)
     throw new Error('Interrupted rollback activation did not produce a valid manifest.')
-  await rm(marker.path, { force: true })
+  await Promise.all([rm(marker.path, { force: true }), rm(marker.preparedPath, { force: true })])
   return recovered
 }
 
@@ -637,6 +721,34 @@ const validateConvertedSessions = async (stagingConfigRoot, rollbackDataRoot) =>
   }
 }
 
+const validatePreparedRollback = async (marker) => {
+  const configManifest = JSON.parse(
+    await readFile(join(marker.stagingConfigRoot, ROLLBACK_MANIFEST), 'utf8')
+  )
+  const dataManifest = JSON.parse(
+    await readFile(join(marker.rollbackDataRoot, ROLLBACK_MANIFEST), 'utf8')
+  )
+  for (const manifest of [configManifest, dataManifest]) {
+    if (
+      !isRecord(manifest) ||
+      manifest.targetVersion !== TARGET_VERSION ||
+      typeof manifest.originalConfigRoot !== 'string' ||
+      typeof manifest.preservedConfigRoot !== 'string' ||
+      typeof manifest.rollbackDataRoot !== 'string' ||
+      !samePath(manifest.originalConfigRoot, marker.configRoot) ||
+      !samePath(manifest.preservedConfigRoot, marker.preservedConfigRoot) ||
+      !samePath(manifest.rollbackDataRoot, marker.rollbackDataRoot)
+    ) {
+      throw new Error('Prepared rollback manifest does not match its cutover marker.')
+    }
+  }
+  validateCopiedDatabase(join(marker.stagingConfigRoot, 'open-science.db'))
+  const indexes = readVersionIndexes(join(marker.stagingConfigRoot, 'open-science.db'))
+  await validateVersionContents(indexes, marker.rollbackDataRoot, 'Prepared')
+  await validateConvertedSessions(marker.stagingConfigRoot, marker.rollbackDataRoot)
+  return configManifest
+}
+
 export const runRollbackToV073 = async (options = {}) => {
   if (options.confirm !== true) {
     throw new Error(
@@ -659,6 +771,7 @@ export const runRollbackToV073 = async (options = {}) => {
   const stagingConfigRoot = `${configRoot}.rollback-staging-${stamp}`
   const preservedConfigRoot = `${configRoot}.before-rollback-${stamp}`
   const markerPath = cutoverMarkerPath(configRoot)
+  const preparedPath = preparedMarkerPath(configRoot)
   const removeMarker = options.removeMarker ?? ((path) => rm(path, { force: true }))
 
   if (!(await exists(join(configRoot, 'open-science.db')))) {
@@ -697,9 +810,18 @@ export const runRollbackToV073 = async (options = {}) => {
   await assertOffline(configRoot)
   const indexes = readVersionIndexes(join(configRoot, 'open-science.db'))
   const context = { sourceDataRoot: dataRoot, rollbackDataRoot, ...indexes }
+  const preparingMarker = {
+    schemaVersion: 1,
+    phase: 'preparing',
+    configRoot,
+    preservedConfigRoot,
+    stagingConfigRoot,
+    rollbackDataRoot
+  }
 
   let activationCommitted = false
   try {
+    await writeDurableJson(markerPath, preparingMarker)
     await validateVersionContents(indexes, dataRoot, 'Source')
     await copyRollbackData(dataRoot, rollbackDataRoot)
     await validateVersionContents(indexes, rollbackDataRoot, 'Copied')
@@ -727,13 +849,17 @@ export const runRollbackToV073 = async (options = {}) => {
     const serializedManifest = `${JSON.stringify(manifest, null, 2)}\n`
     await writeFile(join(stagingConfigRoot, ROLLBACK_MANIFEST), serializedManifest, 'utf8')
     await writeFile(join(rollbackDataRoot, ROLLBACK_MANIFEST), serializedManifest, 'utf8')
-    await writeDurableJson(markerPath, {
-      schemaVersion: 1,
-      configRoot,
-      preservedConfigRoot,
-      stagingConfigRoot,
-      rollbackDataRoot
-    })
+    const syncPrepared =
+      options.syncPrepared ??
+      (async () => {
+        await syncTree(rollbackDataRoot)
+        await syncTree(stagingConfigRoot)
+      })
+    await syncPrepared()
+    await validatePreparedRollback(preparingMarker)
+    await assertOffline(configRoot)
+    await writeDurableJson(preparedPath, { ...preparingMarker, phase: 'prepared' })
+    await assertOffline(configRoot)
 
     await activateRollbackConfig({
       configRoot,
@@ -742,14 +868,15 @@ export const runRollbackToV073 = async (options = {}) => {
       renamePath: options.renamePath
     })
     activationCommitted = true
-    await removeMarker(markerPath).catch(() => undefined)
+    await Promise.all([removeMarker(markerPath), removeMarker(preparedPath)]).catch(() => undefined)
     return manifest
   } catch (error) {
     if (!activationCommitted && !error?.preserveRollbackState) {
       await Promise.all([
         rm(stagingConfigRoot, { recursive: true, force: true }),
         rm(rollbackDataRoot, { recursive: true, force: true }),
-        rm(markerPath, { force: true })
+        rm(markerPath, { force: true }),
+        rm(preparedPath, { force: true })
       ]).catch(() => undefined)
     }
     throw error
