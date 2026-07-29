@@ -806,13 +806,18 @@ class EnvironmentStateTracker {
       }
       // A mutation delta is only meaningful with a readable pre-mutation inventory. Capture it here,
       // inside the environment's install lock and before publishing the durable dirty marker, so the
-      // first manage_packages call can report installed/updated/unchanged/removed instead of "observed".
+      // first manage_packages call can usually report an exact change. Keep this best-effort: a runtime
+      // whose metadata probe is broken may need the installer itself to repair it.
       if (!beforeInventoryChecksum) {
-        const baseline = await this.captureInventory(target)
-        beforeInventoryChecksum = this.inventoryChecksum(baseline)
-        cache.inventoryChecksum = beforeInventoryChecksum
-        cache.stateFingerprint = await this.tryCaptureFingerprint(target)
-        cache.verifiedAt = this.now().toISOString()
+        try {
+          const baseline = await this.captureInventory(target)
+          beforeInventoryChecksum = this.inventoryChecksum(baseline)
+          cache.inventoryChecksum = beforeInventoryChecksum
+          cache.stateFingerprint = await this.tryCaptureFingerprint(target)
+          cache.verifiedAt = this.now().toISOString()
+        } catch {
+          beforeInventoryChecksum = undefined
+        }
       }
       cache.generation += 1
       cache.state = 'dirty'

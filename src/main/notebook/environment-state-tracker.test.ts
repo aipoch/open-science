@@ -187,6 +187,57 @@ describe('EnvironmentStateTracker', () => {
     ])
   })
 
+  it('keeps the first package mutation repairable when the baseline inventory is unavailable', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-unavailable-baseline-'))
+    const inspectInstalled = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('runtime metadata is temporarily unavailable'))
+      .mockResolvedValueOnce({
+        runtimeVersion: '3.13.2',
+        packages: [
+          {
+            name: 'numpy',
+            version: '2.2.0',
+            versionStatus: 'known',
+            ecosystem: 'python',
+            evidenceSources: ['python-importlib-metadata']
+          }
+        ]
+      })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled,
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python')
+    })
+
+    await expect(
+      tracker.markPackageMutationDirty(target, {
+        operationId: 'operation-repair-install',
+        operation: 'install',
+        packages: ['numpy']
+      })
+    ).resolves.toBeUndefined()
+    const verification = await tracker.refreshAfterPackageMutation(target, {
+      operationId: 'operation-repair-install',
+      operation: 'install',
+      packages: ['numpy'],
+      result: 'success'
+    })
+
+    expect(inspectInstalled).toHaveBeenCalledTimes(2)
+    expect(verification).toMatchObject({
+      result: 'success',
+      packageChanges: [
+        expect.objectContaining({
+          name: 'numpy',
+          relationship: 'requested',
+          change: 'observed',
+          afterVersion: '2.2.0'
+        })
+      ]
+    })
+  })
+
   it('reuses immutable installed inventory while capturing fresh live-Kernel state per run', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-state-'))
     const inspectInstalled = vi.fn().mockResolvedValue({
