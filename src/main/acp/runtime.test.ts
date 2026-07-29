@@ -5024,7 +5024,8 @@ describe('ACP runtime session management', () => {
             server: 'open-science-notebook',
             tool: 'notebook_execute',
             arguments: { code: `print(${index})` }
-          }
+          },
+          _meta: { is_mcp_tool_call: true }
         }
       })
     }
