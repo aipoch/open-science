@@ -112,6 +112,7 @@ import {
   EnvironmentManifestPublicationError,
   EnvironmentStateTracker,
   type EnvironmentCaptureTarget,
+  type PackageInspectionResult,
   type PackageMutationVerification
 } from './environment-state-tracker'
 import { startWorkingFileObservation } from './working-file-observer'
@@ -243,6 +244,19 @@ type NotebookShellResult = {
   exitCode: number | null
 }
 
+type InspectPackagesRequest = NotebookSessionRequest & {
+  language: NotebookLanguage
+  packages: string[]
+}
+
+type InspectPackagesResult = PackageInspectionResult & {
+  language: NotebookLanguage
+  environmentName: string
+  runtimeSource: 'managed' | 'external'
+  runtimeId?: string
+  runtimeLabel?: string
+}
+
 type NotebookExecutor = {
   execute: (request: NotebookExecutionRequest) => Promise<NotebookExecutionResult>
   // Returns { reaped }: true only when every kernel tree was cleanly reaped, so shutdownAll can gate
@@ -356,6 +370,7 @@ type NotebookRuntimeServiceOptions = {
     EnvironmentStateTracker,
     | 'prepareRun'
     | 'captureCompletedRun'
+    | 'inspectPackages'
     | 'markPackageMutationDirty'
     | 'refreshAfterPackageMutation'
   >
@@ -1038,6 +1053,7 @@ class NotebookRuntimeService {
     EnvironmentStateTracker,
     | 'prepareRun'
     | 'captureCompletedRun'
+    | 'inspectPackages'
     | 'markPackageMutationDirty'
     | 'refreshAfterPackageMutation'
   >
@@ -2316,6 +2332,67 @@ class NotebookRuntimeService {
     return this.state(request)
   }
 
+  // Reads installed package metadata from the exact runtime bound to this session. The shared env slot
+  // prevents the inventory scan from overlapping a package mutation, while still allowing ordinary
+  // notebook runs to proceed. This is deliberately separate from managePackages: it never invokes an
+  // installer and therefore never requires a package-install authorization for an external runtime.
+  async inspectPackages(request: InspectPackagesRequest): Promise<InspectPackagesResult> {
+    await this.ensureRecovered()
+    const session = await this.ensureSession(request)
+    const binding = session.runtimeBindings.get(request.language)
+    const envName = this.resolveRunEnv(session, request.language)
+    const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
+    const isExternal = binding?.source === 'external'
+    const prefixBlocked =
+      !isExternal && this.isPrefixRecoveryBlocked(envPrefix(runtimeRoot, envName))
+
+    if (
+      (binding?.runtimeId && this.blockedRuntimeIds.has(binding.runtimeId)) ||
+      prefixBlocked ||
+      (isExternal && this.recoveryCorrupt)
+    ) {
+      throw new Error(
+        `RUNTIME_RECOVERY_BLOCKED: the ${request.language} environment is recovering from an ` +
+          'interrupted operation whose process could not be confirmed stopped. Restart the app to ' +
+          're-check and recover it before inspecting packages.'
+      )
+    }
+    if (binding && (binding.status ?? 'active') !== 'active') {
+      throw new Error(
+        `RUNTIME_BINDING_UNAVAILABLE: the bound ${request.language} runtime is ${binding.status}` +
+          (binding.reason ? ` (${binding.reason})` : '') +
+          '. Switch to another runtime (list_notebook_runtimes → notebook_switch_runtime) before ' +
+          'inspecting packages.'
+      )
+    }
+    if (!binding && (await this.isDefaultEnvDisabled(request.language, runtimeRoot))) {
+      throw new Error(
+        `No enabled ${request.language} runtime: the app-managed default is disabled and no runtime ` +
+          'is bound. Enable a runtime in Settings → Runtimes, or bind one with ' +
+          'list_notebook_runtimes then notebook_bind_runtime, before inspecting packages.'
+      )
+    }
+
+    const target = this.environmentCaptureTarget(
+      request.language,
+      envName,
+      binding,
+      binding?.resolvedInterpreter,
+      runtimeRoot
+    )
+    const inspection = await this.envLock.withRun(envName, () =>
+      this.environmentStateTracker.inspectPackages(target, request.packages)
+    )
+    return {
+      language: request.language,
+      environmentName: envName,
+      runtimeSource: target.runtimeSource,
+      ...(binding?.runtimeId ? { runtimeId: binding.runtimeId } : {}),
+      ...(binding?.label ? { runtimeLabel: binding.label } : {}),
+      ...inspection
+    }
+  }
+
   // Installs packages into the shared global environments (never inside a session/kernel). Resolves
   // the effective package mirror (configured override, else the region default) and forwards it as
   // installPackages' deps, so the conda/pip/CRAN install actually hits the configured mirror. Runs as
@@ -2606,6 +2683,14 @@ class NotebookRuntimeService {
                 inventoryRefreshError = error
                 return { result: 'failure' as const, reason: 'inventory-refresh-failed' as const }
               })
+          if (installResult && verification?.packageChanges) {
+            installResult = {
+              ...installResult,
+              packageChanges: verification.packageChanges.filter(
+                (change) => change.relationship === 'requested'
+              )
+            }
+          }
           if (installResult?.ok && verification?.result === 'failure') {
             const packages =
               verification?.unsatisfiedPackages?.join(', ') || request.packages.join(', ')
@@ -3446,6 +3531,8 @@ export type {
   NotebookExecutionResult,
   NotebookControlResult,
   NotebookShellResult,
+  InspectPackagesRequest,
+  InspectPackagesResult,
   NotebookExecutor,
   NotebookEnvironmentManager,
   NotebookRuntimeServiceCallbacks,

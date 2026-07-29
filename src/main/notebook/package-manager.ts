@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import { PROD_SESSION_DIR_NAME } from '../session-persistence/repository'
 import type {
+  NotebookEnvironmentPackageChange,
   NotebookLanguage,
   NotebookPackageInstaller,
   NotebookPackageInstallerAttempt
@@ -67,6 +68,9 @@ export type InstallResult = {
   method?: 'conda' | 'pip' | 'cran'
   attempts?: NotebookPackageInstallerAttempt[]
   fallbackUsed?: boolean
+  // Verified changes for the explicitly requested packages only. Transitive dependency changes stay
+  // in the immutable operation manifest so the agent-facing result remains compact.
+  packageChanges?: NotebookEnvironmentPackageChange[]
   // Absolute env prefix the packages were installed into (<dataRoot>/runtime/envs/<env>), so the
   // UI/agent can see the concrete, env-scoped install location. Set on every real install outcome.
   prefix?: string

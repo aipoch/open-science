@@ -721,6 +721,23 @@ const getManagedPackageList = (activity: ToolActivity): string | undefined => {
   return names.length > 0 ? names.join(', ') : undefined
 }
 
+const formatPackageChange = (value: unknown): string | undefined => {
+  if (!isRecord(value)) return undefined
+  const name = getRecordString(value, 'name')
+  const change = getRecordString(value, 'change')
+  const before = getRecordString(value, 'beforeVersion')
+  const after = getRecordString(value, 'afterVersion')
+  if (!name || !change) return undefined
+
+  if (change === 'updated') return `${name}: ${before ?? 'unknown'} → ${after ?? 'unknown'}`
+  if (change === 'installed' || change === 'observed') {
+    return `${name}: ${change}${after ? ` ${after}` : ''}`
+  }
+  if (change === 'removed') return `${name}: removed${before ? ` ${before}` : ''}`
+  if (change === 'unchanged') return `${name}: unchanged${after ? ` at ${after}` : ''}`
+  return `${name}: ${change}`
+}
+
 // Summarizes a package install: which packages, the installer used, and a cleaned collapsible log —
 // instead of dumping the raw { ok, needsRestart, log, method } JSON envelope into the transcript.
 const buildManagePackagesDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
@@ -743,6 +760,9 @@ const buildManagePackagesDetails = (activity: ToolActivity): ToolActivityDetails
   const prefix = typeof result.prefix === 'string' ? trimDetail(result.prefix) : undefined
   const log = typeof result.log === 'string' ? cleanInstallLog(result.log) : ''
   const error = typeof result.error === 'string' ? trimDetail(result.error) : undefined
+  const packageChanges = Array.isArray(result.packageChanges)
+    ? result.packageChanges.map(formatPackageChange).filter((change): change is string => !!change)
+    : []
   const metaLabel = [ok === false ? 'failed' : method, needsRestart ? 'restart needed' : undefined]
     .filter(Boolean)
     .join(' · ')
@@ -766,6 +786,9 @@ const buildManagePackagesDetails = (activity: ToolActivity): ToolActivityDetails
   const commandSection = createCodeSection('Command', commandText)
 
   if (commandSection) sections.push(commandSection)
+
+  const packagesSection = createCodeSection('Packages', packageChanges.join('\n'))
+  if (packagesSection) sections.push(packagesSection)
 
   if (error) {
     const errorSection = createCodeSection('Error', error)

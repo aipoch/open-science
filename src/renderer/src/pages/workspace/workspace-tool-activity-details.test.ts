@@ -494,6 +494,53 @@ describe('workspace tool activity details', () => {
     expect(details?.metaLabel).toBe('conda · restart needed')
   })
 
+  it('shows verified requested-package version changes from manage_packages', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__manage_packages',
+      toolKind: 'other',
+      rawInput: { language: 'python', packages: ['numpy', 'pandas'] },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              ok: true,
+              needsRestart: false,
+              method: 'conda',
+              packageChanges: [
+                {
+                  name: 'numpy',
+                  change: 'updated',
+                  beforeVersion: '2.1.0',
+                  afterVersion: '2.2.0'
+                },
+                {
+                  name: 'pandas',
+                  change: 'unchanged',
+                  beforeVersion: '2.2.3',
+                  afterVersion: '2.2.3'
+                }
+              ]
+            })
+          }
+        }
+      ]
+    })
+
+    const details = buildToolActivityDetails(activity)
+    const packagesSection = details?.sections.find(
+      (section) => section.kind === 'code' && section.label === 'Packages'
+    )
+
+    expect(packagesSection?.kind === 'code' && packagesSection.text).toContain(
+      'numpy: 2.1.0 → 2.2.0'
+    )
+    expect(packagesSection?.kind === 'code' && packagesSection.text).toContain(
+      'pandas: unchanged at 2.2.3'
+    )
+  })
+
   it('renders an image artifact-write result as an inline preview section', () => {
     const activity = createActivity({
       providerToolName: 'write_artifact_file',

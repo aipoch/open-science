@@ -669,6 +669,10 @@ class NotebookLocalRpcServer {
         this.service.restart(request as Parameters<NotebookRuntimeService['restart']>[0]),
       shutdown: (request) =>
         this.service.shutdown(request as Parameters<NotebookRuntimeService['shutdown']>[0]),
+      inspectPackages: (request) =>
+        this.service.inspectPackages(
+          request as unknown as Parameters<NotebookRuntimeService['inspectPackages']>[0]
+        ),
       managePackages: (request) =>
         this.service.managePackages(
           request as unknown as Parameters<NotebookRuntimeService['managePackages']>[0]

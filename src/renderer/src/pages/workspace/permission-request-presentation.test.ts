@@ -69,6 +69,22 @@ describe('describePermissionRequest', () => {
     })
   })
 
+  it('describes package inspection as read-only and separately from package management', () => {
+    expect(
+      describePermissionRequest(
+        request({
+          title: 'mcp__open-science-notebook__inspect_packages',
+          isMcp: true,
+          mcpIdentity: 'open-science-notebook/inspect_packages'
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'View notebook packages?',
+      categoryLabel: 'Notebook control',
+      description: 'Reads installed package names and versions without changing the environment.'
+    })
+  })
+
   it.each([
     [request({ toolKind: 'read' }), 'File access'],
     [request({ toolKind: 'fetch' }), 'Network access'],

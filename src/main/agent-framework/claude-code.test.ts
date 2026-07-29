@@ -35,6 +35,7 @@ describe('claudeCodeFramework', () => {
 
     expect(systemPrompt.append).toContain('`mcp__open-science-notebook__notebook_execute`')
     expect(systemPrompt.append).toContain('`mcp__open-science-notebook__repl_execute`')
+    expect(systemPrompt.append).toContain('`mcp__open-science-notebook__inspect_packages`')
     expect(systemPrompt.append).toContain('`mcp__open-science-notebook__manage_packages`')
     expect(systemPrompt.append).toContain('`mcp__open-science-artifacts__write_artifact_file`')
     expect(systemPrompt.append).not.toMatch(/`notebook_execute`/)

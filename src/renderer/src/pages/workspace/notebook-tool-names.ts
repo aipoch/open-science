@@ -12,6 +12,7 @@ const NOTEBOOK_CONTROL_TOOL_SUFFIXES = [
   'notebook_switch_runtime',
   'notebook_restart',
   'notebook_shutdown',
+  'inspect_packages',
   'manage_packages',
   'manage_environments'
 ] as const

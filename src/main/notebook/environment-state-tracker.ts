@@ -56,6 +56,23 @@ type PackageMutationVerification = {
   result: NotebookEnvironmentOperation['result']
   unsatisfiedPackages?: string[]
   reason?: 'inventory-refresh-failed'
+  packageChanges?: NotebookEnvironmentPackageChange[]
+}
+
+type InspectedPackage = Partial<NotebookEnvironmentPackage> & {
+  requested: string
+  name: string
+  status: 'installed' | 'missing' | 'unknown'
+}
+
+type PackageInspectionResult = {
+  inventory: {
+    capturedAt?: string
+    source: 'full-scan' | 'cache-reused' | 'unavailable'
+    validation: 'full-scan' | 'best-effort' | 'unavailable'
+  }
+  packages: InspectedPackage[]
+  warnings?: string[]
 }
 
 type EnvironmentInventoryBindingCache = {
@@ -239,6 +256,27 @@ const packageNameFromSpec = (value: string, language: NotebookLanguage): string 
   if (lowerName.startsWith('r-')) return name.slice(2)
   if (lowerName.startsWith('bioconductor-')) return name.slice('bioconductor-'.length)
   return name
+}
+
+const inspectRequestedPackage = (
+  target: EnvironmentCaptureTarget,
+  requested: string,
+  installed: NotebookEnvironmentPackage[] | undefined
+): InspectedPackage => {
+  const requestedName = packageNameFromSpec(requested, target.language)
+  if (!requestedName || !installed) {
+    return {
+      requested,
+      name: requestedName ?? requested.trim(),
+      status: 'unknown'
+    }
+  }
+  const match = installed.find(
+    (pkg) => requestedPackageKey(pkg.name) === requestedPackageKey(requestedName)
+  )
+  return match
+    ? { requested, ...match, status: 'installed' }
+    : { requested, name: requestedName, status: 'missing' }
 }
 
 const verifyPackageMutation = (
@@ -555,6 +593,46 @@ class EnvironmentStateTracker {
     }
   }
 
+  async inspectPackages(
+    target: EnvironmentCaptureTarget,
+    requestedPackages: string[]
+  ): Promise<PackageInspectionResult> {
+    const prepared = await this.prepareRun(target)
+    return this.serializeTarget(target, async () => {
+      const cache = await this.readBinding(target)
+      const warnings = [...prepared.warnings]
+      let inventory: StoredInventory | undefined
+      if (cache.state === 'clean' && cache.inventoryChecksum) {
+        try {
+          inventory = await this.readInventory(target, cache.inventoryChecksum)
+        } catch (error) {
+          warnings.push(`Installed package inventory unavailable: ${describeError(error)}`)
+        }
+      }
+      const source = inventory
+        ? prepared.inventoryRefreshed
+          ? 'full-scan'
+          : 'cache-reused'
+        : 'unavailable'
+      return {
+        inventory: {
+          ...(inventory ? { capturedAt: inventory.capturedAt } : {}),
+          source,
+          validation:
+            source === 'full-scan'
+              ? 'full-scan'
+              : source === 'cache-reused'
+                ? 'best-effort'
+                : 'unavailable'
+        },
+        packages: requestedPackages.map((requested) =>
+          inspectRequestedPackage(target, requested, inventory?.packages)
+        ),
+        ...(warnings.length > 0 ? { warnings } : {})
+      }
+    })
+  }
+
   async prepareRun(target: EnvironmentCaptureTarget): Promise<EnvironmentRunCaptureStart> {
     return this.serializeTarget(target, async () => {
       const cache = await this.readBinding(target)
@@ -719,6 +797,23 @@ class EnvironmentStateTracker {
   ): Promise<void> {
     await this.serializeTarget(target, async () => {
       const cache = await this.readBinding(target)
+      let beforeInventoryChecksum = cache.inventoryChecksum
+      if (beforeInventoryChecksum) {
+        const baselineReadable = await this.readInventory(target, beforeInventoryChecksum)
+          .then(() => true)
+          .catch(() => false)
+        if (!baselineReadable) beforeInventoryChecksum = undefined
+      }
+      // A mutation delta is only meaningful with a readable pre-mutation inventory. Capture it here,
+      // inside the environment's install lock and before publishing the durable dirty marker, so the
+      // first manage_packages call can report installed/updated/unchanged/removed instead of "observed".
+      if (!beforeInventoryChecksum) {
+        const baseline = await this.captureInventory(target)
+        beforeInventoryChecksum = this.inventoryChecksum(baseline)
+        cache.inventoryChecksum = beforeInventoryChecksum
+        cache.stateFingerprint = await this.tryCaptureFingerprint(target)
+        cache.verifiedAt = this.now().toISOString()
+      }
       cache.generation += 1
       cache.state = 'dirty'
       cache.dirtyOperationId = intent.operationId
@@ -734,7 +829,7 @@ class EnvironmentStateTracker {
         attempts: [],
         fallbackUsed: false,
         inventoryRefreshAttempts: [],
-        ...(cache.inventoryChecksum ? { beforeInventoryChecksum: cache.inventoryChecksum } : {})
+        beforeInventoryChecksum
       })
       await this.writeBinding(target, cache)
     })
@@ -775,18 +870,22 @@ class EnvironmentStateTracker {
           timestamp: this.now().toISOString(),
           result: inventoryRefresh
         }
-        verification = verifyPackageMutation(target, outcome, inventory.packages)
+        const packageChanges = packageChangesForOperation({
+          language: target.language,
+          before: beforeInventory?.packages,
+          after: inventory.packages,
+          requestedPackages: outcome.packages
+        })
+        verification = {
+          ...verifyPackageMutation(target, outcome, inventory.packages),
+          ...(packageChanges.length > 0 ? { packageChanges } : {})
+        }
         const publishedEntry: NotebookEnvironmentOperation = {
           ...baseLogEntry,
           result: verification.result,
           inventoryRefresh,
           inventoryRefreshAttempts: [...baseLogEntry.inventoryRefreshAttempts, publishedAttempt],
-          packageChanges: packageChangesForOperation({
-            language: target.language,
-            before: beforeInventory?.packages,
-            after: inventory.packages,
-            requestedPackages: outcome.packages
-          })
+          packageChanges
         }
         cache.inventoryChecksum = nextInventoryChecksum
         cache.state = 'clean'
@@ -1160,6 +1259,8 @@ export type {
   EnvironmentCaptureTarget,
   EnvironmentStateTrackerOptions,
   InstalledEnvironmentInventory,
+  InspectedPackage,
+  PackageInspectionResult,
   PackageMutationIntent,
   PackageMutationVerification,
   PackageMutationOutcome

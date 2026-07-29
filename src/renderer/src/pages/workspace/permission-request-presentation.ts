@@ -112,6 +112,12 @@ const notebookControlPresentation = (tool: string): PermissionPresentation => {
         categoryLabel: 'Notebook control',
         description: 'Changes the runtime used by the current notebook session.'
       }
+    case 'inspect_packages':
+      return {
+        actionTitle: 'View notebook packages?',
+        categoryLabel: 'Notebook control',
+        description: 'Reads installed package names and versions without changing the environment.'
+      }
     case 'manage_packages':
       return {
         actionTitle: 'Manage notebook packages?',

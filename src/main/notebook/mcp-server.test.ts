@@ -4,6 +4,7 @@ import { z } from 'zod'
 import {
   BASH_EXECUTE_DOC,
   buildShellExecuteDoc,
+  INSPECT_PACKAGES_DOC,
   MANAGE_ENVIRONMENTS_DOC,
   MANAGE_PACKAGES_DOC,
   NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT,
@@ -381,6 +382,28 @@ describe('manage_packages tool', () => {
   })
 })
 
+describe('inspect_packages tool', () => {
+  const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'inspect_packages')
+
+  it('registers a targeted read-only package query for the session-bound runtime', () => {
+    expect(tool).toBeDefined()
+    expect(tool?.method).toBe('inspectPackages')
+    expect(tool?.description).toBe(INSPECT_PACKAGES_DOC)
+    expect(Object.keys(tool?.inputSchema ?? {})).toEqual(['language', 'packages'])
+
+    const schema = z.object(tool?.inputSchema ?? {})
+    expect(schema.parse({ language: 'python', packages: ['numpy'] })).toEqual({
+      language: 'python',
+      packages: ['numpy']
+    })
+    expect(() => schema.parse({ language: 'python', packages: [] })).toThrow()
+    expect(schema.parse({ language: 'r', packages: ['dplyr'], environment: 'other' })).toEqual({
+      language: 'r',
+      packages: ['dplyr']
+    })
+  })
+})
+
 describe('compactManagePackagesResult', () => {
   it('keeps the package outcome while omitting verbose installer diagnostics', () => {
     const compact = compactManagePackagesResult({
@@ -389,6 +412,16 @@ describe('compactManagePackagesResult', () => {
       method: 'conda',
       prefix: '/runtime/envs/default-r',
       fallbackUsed: false,
+      packageChanges: [
+        {
+          name: 'dplyr',
+          ecosystem: 'r',
+          relationship: 'requested',
+          change: 'unchanged',
+          beforeVersion: '1.1.4',
+          afterVersion: '1.1.4'
+        }
+      ],
       log: JSON.stringify({
         actions: {
           FETCH: [{ name: 'r-dplyr', depends: Array.from({ length: 100 }, () => 'dependency') }],
@@ -411,7 +444,17 @@ describe('compactManagePackagesResult', () => {
       needsRestart: true,
       method: 'conda',
       prefix: '/runtime/envs/default-r',
-      fallbackUsed: false
+      fallbackUsed: false,
+      packageChanges: [
+        {
+          name: 'dplyr',
+          ecosystem: 'r',
+          relationship: 'requested',
+          change: 'unchanged',
+          beforeVersion: '1.1.4',
+          afterVersion: '1.1.4'
+        }
+      ]
     })
     expect(JSON.stringify(compact)).not.toContain('FETCH')
     expect(JSON.stringify(compact)).not.toContain('r-dplyr')

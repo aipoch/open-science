@@ -121,6 +121,66 @@ describe('notebook local RPC server', () => {
     }
   })
 
+  it('dispatches read-only package inspection calls to the runtime service', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      environmentStateTracker: {
+        prepareRun: vi.fn(),
+        captureCompletedRun: vi.fn(),
+        inspectPackages: vi.fn().mockResolvedValue({
+          inventory: { source: 'full-scan', validation: 'full-scan' },
+          packages: [
+            {
+              requested: 'numpy',
+              name: 'numpy',
+              status: 'installed',
+              version: '2.2.0',
+              versionStatus: 'known'
+            }
+          ]
+        }),
+        markPackageMutationDirty: vi.fn(),
+        refreshAfterPackageMutation: vi.fn()
+      }
+    })
+    const server = new NotebookLocalRpcServer(service, { token: 'secret-token' })
+    const connection = await server.ensureStarted()
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer secret-token',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'inspectPackages',
+          params: {
+            projectName: 'default-project',
+            sessionId: 'session-1',
+            workspaceCwd: root,
+            language: 'python',
+            packages: ['numpy']
+          }
+        })
+      })
+      const payload = (await response.json()) as {
+        result: { packages: Array<{ name: string; status: string; version?: string }> }
+      }
+
+      expect(response.status).toBe(200)
+      expect(payload.result.packages).toEqual([
+        expect.objectContaining({ name: 'numpy', status: 'installed', version: '2.2.0' })
+      ])
+    } finally {
+      await server.close()
+    }
+  })
+
   it('maps pre-start notebook session aliases to the final ACP session id', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
@@ -662,6 +722,7 @@ describe('notebook local RPC server', () => {
       environmentStateTracker: {
         prepareRun: vi.fn(),
         captureCompletedRun: vi.fn(),
+        inspectPackages: vi.fn(),
         markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
         refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'success' })
       },

@@ -34,6 +34,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Use inline `content` only for small generated text that is already in memory.',
   'Artifact file paths are returned in `artifacts[]`; notebook working file paths are returned in `workingFiles[]`.',
   'The user does not need to click a button to send results back; use MCP return values and notebook state as the execution facts.',
+  'When the user asks whether a Python/R package is installed or which version is present, or when code depends on a specific package version, use the `inspect_packages` tool. It reads distribution metadata without importing or changing packages. Do NOT call it as a mandatory preflight after a clear missing-package error.',
   'When a run fails on a missing package, dependency, or module (ImportError / ModuleNotFoundError / "there is no package called"), install it with the `manage_packages` tool — Python vs R by language — and do NOT install packages from inside a cell (%pip, !pip, install.packages()) or with OS installers.',
   'A named environment is a SEPARATE persistent conda environment (its own process + namespace) from the default python/r environment and from every other named environment. Create one with manage_environments, then BIND it with notebook_bind_runtime to run in it — one runtime per language per session, with no shared variables/imports across environments. Move data between environments through ./handoff/ just like between kernels.',
   '</open_science_notebook_instructions>'
@@ -83,6 +84,12 @@ const managePackagesToolSchema = {
   operation: z.enum(['install', 'uninstall']).optional()
 }
 
+const inspectPackagesToolSchema = {
+  language: z.enum(['python', 'r']),
+  packages: z.array(z.string().min(1)).min(1)
+  // No `environment`: packages are inspected in the session's bound runtime.
+}
+
 const manageEnvironmentsToolSchema = {
   action: z.enum(['create', 'list', 'remove']),
   language: z.enum(['python', 'r']).optional(),
@@ -99,6 +106,14 @@ const bindRuntimeToolSchema = {
 
 // Install contract embedded as the manage_packages description so the agent always sees it (spec §8.2).
 // Soft constraint this phase; the hard guarantee is the phase-3 network-isolation sandbox.
+const INSPECT_PACKAGES_DOC = [
+  "Inspect installed package metadata in the session's bound runtime without changing the environment or importing the packages.",
+  'Pass Python distribution names or R package names. Each result reports installed, missing, or unknown and includes the installed version when available.',
+  'Use this when the user asks which version is installed or when code depends on a specific package version. Do NOT make it a mandatory preflight after a clear missing-package error — call manage_packages directly in that recovery path.',
+  "There is NO per-call environment argument. The query uses the session's bound runtime, or the app-managed default when nothing is bound.",
+  'Installed metadata does not prove that an import/library() call will succeed; use notebook_execute when importability itself must be tested.'
+].join('\n')
+
 const MANAGE_PACKAGES_DOC = [
   'Install packages into the shared notebook environment through THIS tool only — it runs the install in the trusted main process, never in the kernel.',
   'Route by language: Python packages → manage_packages(language="python"); R packages → manage_packages(language="r"). For a PyPI-only Python package pass usePip=true; pass channels only when a package needs a non-default conda channel.',
@@ -107,6 +122,7 @@ const MANAGE_PACKAGES_DOC = [
   'The DEFAULT environments (default-python / default-r) are ADDITIVE-ONLY: they accept only a bare package name or an exact "name==version" pin, and REFUSE uninstall, version ranges, git/URL specs, extras, and flags. If you need to remove/downgrade a package or use richer specs (ranges, git+https, wheels), create a named environment with manage_environments(action:"create") and install there.',
   "If the default runtime is the user's OWN interpreter (BYO/external), package installs may be read-only: an install can come back refused with an actionable message — surface it to the user rather than retrying, and do not try to install another way.",
   'Pass operation:"uninstall" to remove the listed packages (default operation is install); uninstall is only allowed on a named/created env (not the additive-only defaults), is env-scoped, and never touches system/global packages.',
+  'The result includes verified packageChanges for the packages you requested, with installed/updated/unchanged/removed state and observed before/after versions when available. Dependencies remain in provenance instead of bloating the tool result.',
   'After a successful install you can import/library()-load the package in the SAME kernel right away — the running kernel picks up a newly-installed package on its next import (no restart needed). Only call notebook_restart if you installed a newer version of a package that was ALREADY imported/loaded this session and you need the running kernel to use the new version.',
   'Do NOT install any other way: no apt / brew / yum, no sudo, no curl | bash, no downloading installers, no subprocess hand-rolled installs, and no in-cell %pip / !pip / install.packages() (those run in the kernel and bypass this gate).',
   'Do NOT route around a missing package by swapping in a different library that does roughly the same thing; install the package the task actually needs.',
@@ -479,6 +495,7 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
     ...(result.method !== undefined ? { method: result.method } : {}),
     ...(result.prefix !== undefined ? { prefix: result.prefix } : {}),
     ...(result.fallbackUsed !== undefined ? { fallbackUsed: result.fallbackUsed } : {}),
+    ...(result.packageChanges !== undefined ? { packageChanges: result.packageChanges } : {}),
     ...(result.error !== undefined ? { error: result.error } : {})
   }
 }
@@ -553,6 +570,13 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     inputSchema: {}
   },
   {
+    name: 'inspect_packages',
+    title: 'Inspect notebook packages',
+    description: INSPECT_PACKAGES_DOC,
+    method: 'inspectPackages',
+    inputSchema: inspectPackagesToolSchema
+  },
+  {
     name: 'manage_packages',
     title: 'Install notebook packages',
     description: MANAGE_PACKAGES_DOC,
@@ -595,6 +619,7 @@ const runNotebookMcpServer = async (
 }
 
 export {
+  INSPECT_PACKAGES_DOC,
   MANAGE_ENVIRONMENTS_DOC,
   MANAGE_PACKAGES_DOC,
   REPL_EXECUTE_DOC,

@@ -76,6 +76,9 @@ describe('isNotebookExecuteToolName', () => {
     expect(matchNotebookControlTool('open_science_notebook_notebook_shutdown')).toBe(
       'notebook_shutdown'
     )
+    expect(matchNotebookControlTool('mcp__open-science-notebook__inspect_packages')).toBe(
+      'inspect_packages'
+    )
     expect(matchNotebookControlTool('mcp__acme-db__notebook_restart')).toBeUndefined()
   })
 

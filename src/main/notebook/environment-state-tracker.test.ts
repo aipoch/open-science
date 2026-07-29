@@ -38,6 +38,155 @@ const readBinding = async (
 }
 
 describe('EnvironmentStateTracker', () => {
+  it('inspects requested packages from the current installed inventory without importing them', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-inspect-'))
+    const inspectInstalled = vi.fn().mockResolvedValue({
+      runtimeVersion: '3.13.2',
+      packages: [
+        {
+          name: 'NumPy',
+          version: '2.2.0',
+          versionStatus: 'known',
+          ecosystem: 'python',
+          evidenceSources: ['python-importlib-metadata']
+        }
+      ]
+    })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled,
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python')
+    })
+
+    const first = await tracker.inspectPackages(target, ['numpy', 'pandas'])
+    const second = await tracker.inspectPackages(target, ['numpy'])
+
+    expect(first).toMatchObject({
+      inventory: { source: 'full-scan', validation: 'full-scan' },
+      packages: [
+        {
+          requested: 'numpy',
+          name: 'NumPy',
+          status: 'installed',
+          version: '2.2.0',
+          versionStatus: 'known'
+        },
+        { requested: 'pandas', name: 'pandas', status: 'missing' }
+      ]
+    })
+    expect(second.inventory).toMatchObject({ source: 'cache-reused', validation: 'best-effort' })
+    expect(inspectInstalled).toHaveBeenCalledOnce()
+  })
+
+  it('reports unknown instead of missing when installed inventory cannot be read', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-inspect-unavailable-'))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi.fn().mockRejectedValue(new Error('interpreter unavailable')),
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python')
+    })
+
+    const result = await tracker.inspectPackages(target, ['numpy'])
+
+    expect(result).toMatchObject({
+      inventory: { source: 'unavailable', validation: 'unavailable' },
+      packages: [{ requested: 'numpy', name: 'numpy', status: 'unknown' }]
+    })
+    expect(result.warnings?.join('\n')).toContain('interpreter unavailable')
+  })
+
+  it('captures a baseline before the first package mutation so installs have a verified change', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-first-mutation-'))
+    const inspectInstalled = vi
+      .fn()
+      .mockResolvedValueOnce({ runtimeVersion: '3.13.2', packages: [] })
+      .mockResolvedValueOnce({
+        runtimeVersion: '3.13.2',
+        packages: [
+          {
+            name: 'numpy',
+            version: '2.2.0',
+            versionStatus: 'known',
+            ecosystem: 'python',
+            evidenceSources: ['python-importlib-metadata']
+          }
+        ]
+      })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled,
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python')
+    })
+
+    await tracker.markPackageMutationDirty(target, {
+      operationId: 'operation-first-install',
+      operation: 'install',
+      packages: ['numpy']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(target, {
+      operationId: 'operation-first-install',
+      operation: 'install',
+      packages: ['numpy'],
+      result: 'success'
+    })
+
+    expect(inspectInstalled).toHaveBeenCalledTimes(2)
+    expect(verification.packageChanges).toEqual([
+      expect.objectContaining({
+        name: 'numpy',
+        relationship: 'requested',
+        change: 'installed',
+        afterVersion: '2.2.0'
+      })
+    ])
+  })
+
+  it('captures a baseline before the first package mutation so uninstalls have a verified change', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-first-uninstall-'))
+    const inspectInstalled = vi
+      .fn()
+      .mockResolvedValueOnce({
+        runtimeVersion: '3.13.2',
+        packages: [
+          {
+            name: 'numpy',
+            version: '2.2.0',
+            versionStatus: 'known',
+            ecosystem: 'python',
+            evidenceSources: ['python-importlib-metadata']
+          }
+        ]
+      })
+      .mockResolvedValueOnce({ runtimeVersion: '3.13.2', packages: [] })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled,
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python')
+    })
+
+    await tracker.markPackageMutationDirty(target, {
+      operationId: 'operation-first-uninstall',
+      operation: 'uninstall',
+      packages: ['numpy']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(target, {
+      operationId: 'operation-first-uninstall',
+      operation: 'uninstall',
+      packages: ['numpy'],
+      result: 'success'
+    })
+
+    expect(inspectInstalled).toHaveBeenCalledTimes(2)
+    expect(verification.packageChanges).toEqual([
+      expect.objectContaining({
+        name: 'numpy',
+        relationship: 'requested',
+        change: 'removed',
+        beforeVersion: '2.2.0'
+      })
+    ])
+  })
+
   it('reuses immutable installed inventory while capturing fresh live-Kernel state per run', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-state-'))
     const inspectInstalled = vi.fn().mockResolvedValue({
@@ -185,7 +334,7 @@ describe('EnvironmentStateTracker', () => {
       operation: 'install',
       packages: ['ggplot2']
     })
-    await tracker.refreshAfterPackageMutation(rTarget, {
+    const verification = await tracker.refreshAfterPackageMutation(rTarget, {
       operationId: 'operation-1',
       operation: 'install',
       packages: ['ggplot2'],
@@ -212,6 +361,23 @@ describe('EnvironmentStateTracker', () => {
     const capture = await tracker.captureCompletedRun(rTarget)
 
     expect(inspectInstalled).toHaveBeenCalledTimes(2)
+    expect(verification.packageChanges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'ggplot2',
+          relationship: 'requested',
+          change: 'installed',
+          afterVersion: '3.5.2'
+        }),
+        expect.objectContaining({
+          name: 'rlang',
+          relationship: 'unattributed',
+          change: 'updated',
+          beforeVersion: '1.1.4',
+          afterVersion: '1.1.5'
+        })
+      ])
+    )
     expect(capture.manifest.packages).toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'ggplot2', version: '3.5.2' })])
     )
@@ -443,7 +609,10 @@ describe('EnvironmentStateTracker', () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-refresh-failure-'))
     const tracker = new EnvironmentStateTracker({
       dataRoot,
-      inspectInstalled: vi.fn().mockRejectedValue(new Error('inventory unavailable')),
+      inspectInstalled: vi
+        .fn()
+        .mockResolvedValueOnce({ runtimeVersion: '3.13.2', packages: [] })
+        .mockRejectedValueOnce(new Error('inventory unavailable')),
       captureFingerprint: vi.fn().mockResolvedValue('stable-python')
     })
     const pythonTarget = {

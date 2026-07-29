@@ -1,6 +1,6 @@
 ---
 name: env-management
-description: Use when a notebook run fails on a missing package (ImportError, ModuleNotFoundError, "there is no package called"), or when you need to install, add, or manage Python or R packages for the notebook runtime. Covers routing Python vs R through the manage_packages tool, why in-cell %pip/!pip/install.packages() and OS installers are forbidden, restarting the kernel after an install, and when to stop and ask the user.
+description: Use when a notebook run fails on a missing package (ImportError, ModuleNotFoundError, "there is no package called"), when you need to inspect an installed package version, or when you need to install, add, or manage Python or R packages for the notebook runtime. Covers inspect_packages, routing Python vs R through manage_packages, why in-cell %pip/!pip/install.packages() and OS installers are forbidden, restarting the kernel after an install, and when to stop and ask the user.
 license: Apache-2.0
 ---
 
@@ -11,6 +11,12 @@ The notebook runs against the session's **bound runtime**: the app-managed defau
 ## When a package is missing
 
 A run that fails with `ImportError` / `ModuleNotFoundError` (Python) or `Error in library(x): there is no package called 'x'` (R) means the package is not in the environment yet. The fix is one `manage_packages` call, not a code change. Do not rewrite the cell to use a different library that "does roughly the same thing" — install the package the task actually needs. Do not fall back to reading data or computing results a worse way to dodge the missing import.
+
+## Check an installed version
+
+Use `inspect_packages(language, packages)` when the user asks whether a package is installed or which version is present, or when your code depends on a version-specific feature. It reads package metadata from the session's bound runtime without importing the package or changing the environment. An `installed` result does not prove the import will succeed; use `notebook_execute` when importability itself is the question.
+
+Do not use inspection as a mandatory preflight for every install. For a clear missing-package error, call `manage_packages` directly; installation is the recovery action, while inspection is for explicit version and compatibility questions.
 
 ## Route by language
 
@@ -23,7 +29,7 @@ Every install lands in the session's bound runtime and persists — there is no 
 
 ## Restart the kernel after an install when told to
 
-`manage_packages` returns `{ ok, needsRestart, log, error }`. When `needsRestart` is `true` (always true for R, because the running kernel holds the old library state), call `notebook_restart` before you `import` or `library()`-load the new package, then re-run the cell. For Python, a fresh `import` usually sees the new package without a restart; if an earlier failed import was cached, restart and retry. Read `log` when `ok` is `false` to see why the install failed.
+`manage_packages` returns a compact result with `ok`, `needsRestart`, the installer `method`, the target `prefix`, verified `packageChanges`, and an actionable `error` on failure. A requested package change reports `installed`, `updated`, `unchanged`, or `removed` plus its observed before/after version when available. When `needsRestart` is `true` (always true for R, because the running kernel holds the old library state), call `notebook_restart` before you `import` or `library()`-load the new package, then re-run the cell. For Python, a fresh `import` usually sees the new package without a restart; if an earlier failed import was cached, restart and retry.
 
 ## Never install any other way
 
