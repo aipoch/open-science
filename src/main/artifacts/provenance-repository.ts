@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto'
 import {
   copyFile,
   mkdir,
-  open,
   readFile,
   readdir,
   realpath,
@@ -37,6 +36,7 @@ import type {
   ReplayArtifactVersionRequest
 } from '../../shared/artifact-provenance'
 import { ArtifactCompatibilityScanIncompleteError, ArtifactRepository } from './repository'
+import { defaultArtifactDurability, type ArtifactDurability } from './durability'
 import { NotebookRunRepository } from '../notebook/repository'
 import type {
   NotebookEnvironmentManifest,
@@ -113,11 +113,6 @@ type ArtifactProvenanceRepositoryOptions = {
   durability?: ArtifactDurability
 }
 
-type ArtifactDurability = {
-  syncFile: (path: string) => Promise<void>
-  syncDirectory: (path: string) => Promise<void>
-}
-
 type CompatibilityRoutingPublicationOptions = {
   allowRoutingReplacement?: boolean
   replaceUnroutedBytes?: boolean
@@ -127,37 +122,6 @@ type PublishCompatibilityRouting = (
   version: PersistedVersionFileRecord,
   options?: CompatibilityRoutingPublicationOptions
 ) => Promise<void>
-
-const syncOpenPath = async (path: string): Promise<void> => {
-  const handle = await open(path, 'r')
-  try {
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
-}
-
-const defaultArtifactDurability: ArtifactDurability = {
-  syncFile: syncOpenPath,
-  syncDirectory: async (path) => {
-    try {
-      await syncOpenPath(path)
-    } catch (error) {
-      // Node cannot open directory handles on Windows. File barriers still protect the immutable
-      // payloads there; POSIX platforms additionally make directory entry publication durable.
-      if (
-        process.platform === 'win32' &&
-        typeof error === 'object' &&
-        error !== null &&
-        'code' in error &&
-        ['EISDIR', 'EPERM', 'EINVAL', 'ENOTSUP'].includes(String(error.code))
-      ) {
-        return
-      }
-      throw error
-    }
-  }
-}
 
 export type WriteAppGeneratedArtifactVersionRequest = Omit<
   CreateArtifactVersionRequest,

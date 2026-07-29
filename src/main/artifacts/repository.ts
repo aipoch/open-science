@@ -28,6 +28,10 @@ import type {
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
 import { createLogger } from '../logger'
 import { validateArtifactContentType } from './content-type'
+import {
+  defaultArtifactDurability,
+  type ArtifactDurability as ArtifactRepositoryDurability
+} from './durability'
 
 const log = createLogger('artifacts:repository')
 
@@ -102,39 +106,9 @@ type BindPendingArtifactVersionRouting = (
   sourcePath: string
 ) => Promise<void>
 
-export type ArtifactRepositoryDurability = {
-  syncFile: (path: string) => Promise<void>
-  syncDirectory: (path: string) => Promise<void>
-}
+export type { ArtifactRepositoryDurability }
 
-const syncOpenPath = async (path: string): Promise<void> => {
-  const handle = await open(path, 'r')
-  try {
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
-}
-
-const defaultArtifactRepositoryDurability: ArtifactRepositoryDurability = {
-  syncFile: syncOpenPath,
-  syncDirectory: async (path) => {
-    try {
-      await syncOpenPath(path)
-    } catch (error) {
-      if (
-        process.platform === 'win32' &&
-        typeof error === 'object' &&
-        error !== null &&
-        'code' in error &&
-        ['EISDIR', 'EPERM', 'EINVAL', 'ENOTSUP'].includes(String(error.code))
-      ) {
-        return
-      }
-      throw error
-    }
-  }
-}
+const defaultArtifactRepositoryDurability = defaultArtifactDurability
 
 // Accepts only path segments that cannot escape the managed artifact layout.
 const assertSafePathSegment = (segment: string): string => {

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -164,7 +164,7 @@ describe('rollback-to-0.7.3', () => {
     ])
     expect(converted.session.messages[0].uploads?.[0]).not.toHaveProperty('versionId')
     expect(converted.session.messages[0].parts?.[0]).toMatchObject({
-      path: join(
+      path: resolve(
         '/rollback',
         'artifacts/project-1/session-1/.provenance/artifact-1/versions/artifact-version-1/content'
       )
@@ -403,7 +403,9 @@ describe('rollback-to-0.7.3', () => {
       })
     ).rejects.toThrow('Cannot materialize upload Version missing-version')
 
-    expect(await readFile(join(configRoot, 'settings.json'), 'utf8')).toContain(dataRoot)
+    expect(JSON.parse(await readFile(join(configRoot, 'settings.json'), 'utf8'))).toMatchObject({
+      dataRoot
+    })
     await expect(stat(rollbackDataRoot)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(stat(`${configRoot}.before-rollback-20260729T010203Z`)).rejects.toMatchObject({
       code: 'ENOENT'

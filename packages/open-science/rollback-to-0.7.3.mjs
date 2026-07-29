@@ -431,7 +431,8 @@ const syncTree = async (root) => {
   if (!metadata.isFile()) {
     throw new Error(`Rollback durability check found an unsupported entry: ${root}`)
   }
-  const file = await open(root, 'r')
+  // FlushFileBuffers on Windows requires a write-capable handle for ordinary files.
+  const file = await open(root, 'r+')
   try {
     await file.sync()
   } finally {
