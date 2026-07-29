@@ -493,9 +493,9 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Image / document preview area: `flex-1 min-h-0 overflow-auto bg-card`.
 - Empty preview panel shell and scroll body use `bg-bg-10`.
 - File library search: `Input` or `CommandInput`, with focus using `ring-ring`.
-- File library view switch: `ToggleGroup type="single"`.
-- File row: `h-9 rounded-md px-2 hover:bg-accent hover:text-accent-foreground`.
-- File card: `rounded-lg border bg-card p-2 shadow-sm hover:bg-accent/50`.
+- File library view switch: `ToggleGroup type="single"`; inactive hover uses `bg-muted`, and the selected item uses `bg-bg-400 text-text-000`. Keep these states neutral rather than using `accent`.
+- File row: `h-9 rounded-md px-2 hover:bg-bg-200`; keep the text color unchanged on hover.
+- File card: `rounded-lg border bg-card p-2 shadow-sm hover:border-border-200 hover:bg-bg-100`.
 
 ## Page Guidelines
 
@@ -615,8 +615,8 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 | Viewer            | Tab                                  | `TabsTrigger`                                                                            |
 | Viewer            | More / fullscreen / download / close | `Button ghost icon` + `Tooltip`                                                          |
 | File library      | Search                               | `Input` / `CommandInput`                                                                 |
-| File library      | Grid/list switch                     | `ToggleGroup type="single"`                                                              |
-| File library      | File card / file row                 | `Card` / button row + hover `bg-accent`                                                  |
+| File library      | Grid/list switch                     | `ToggleGroup type="single"`; hover `bg-muted`, selected `bg-bg-400`                      |
+| File library      | File card / file row                 | `Card` / button row + neutral hover `bg-bg-100` / `bg-bg-200`                            |
 
 ## Language Guidelines
 
