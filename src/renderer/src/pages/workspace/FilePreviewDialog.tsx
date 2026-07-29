@@ -114,7 +114,7 @@ const FilePreviewDialog = ({ item, onClose }: FilePreviewDialogProps): React.JSX
                 <PreviewFileSurface
                   item={dialogItem}
                   onClose={onClose}
-                  provenanceEntry="leading"
+                  provenanceEntry="trailing"
                   tooltipClassName="z-[70]"
                 />
               ) : null}

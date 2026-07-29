@@ -349,6 +349,7 @@ const PreviewFilePanel = ({
           contentKey={contentKey}
           onClose={isFullScreenOpen ? closeFullScreen : () => onClose(item.id)}
           onOpenFullScreen={isFullScreenOpen ? undefined : openFullScreen}
+          provenanceEntry={isFullScreenOpen ? 'trailing' : 'menu'}
         />
       </section>
     </>

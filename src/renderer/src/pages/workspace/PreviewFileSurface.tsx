@@ -31,8 +31,36 @@ type PreviewFileSurfaceProps = {
   onClose: () => void
   onOpenFullScreen?: () => void
   onOpenProvenance?: () => void
-  provenanceEntry?: 'menu' | 'leading'
+  provenanceEntry?: 'menu' | 'leading' | 'trailing'
 }
+
+const PreviewProvenanceButton = ({
+  item,
+  onOpenProvenance,
+  tooltipClassName
+}: {
+  item: PreviewFileItem
+  onOpenProvenance: () => void
+  tooltipClassName?: string
+}): React.JSX.Element => (
+  <TooltipProvider delayDuration={300}>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="text-text-100 hover:text-text-000"
+          aria-label={`Open Provenance for ${item.title}`}
+          onClick={onOpenProvenance}
+        >
+          <GitBranch aria-hidden="true" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent className={tooltipClassName}>Provenance</TooltipContent>
+    </Tooltip>
+  </TooltipProvider>
+)
 
 // The optional callback makes the maximize action available only in the compact workbench panel;
 // the dialog reuses this header without exposing a nested full-screen action.
@@ -56,24 +84,14 @@ const PreviewFileHeader = ({
     data-testid="preview-card-header"
     className="flex h-8 shrink-0 items-center gap-1 border-b border-border-300/50 px-2"
   >
+    {onOpenProvenance && provenanceEntry === 'leading' ? (
+      <PreviewProvenanceButton
+        item={item}
+        onOpenProvenance={onOpenProvenance}
+        tooltipClassName={tooltipClassName}
+      />
+    ) : null}
     <TooltipProvider delayDuration={300}>
-      {onOpenProvenance && provenanceEntry === 'leading' ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              className="text-text-100 hover:text-text-000"
-              aria-label={`Open Provenance for ${item.title}`}
-              onClick={onOpenProvenance}
-            >
-              <GitBranch aria-hidden="true" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent className={tooltipClassName}>Provenance</TooltipContent>
-        </Tooltip>
-      ) : null}
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="min-w-0 flex-1 text-[12px] font-medium text-text-000">
@@ -83,6 +101,13 @@ const PreviewFileHeader = ({
         <TooltipContent className={tooltipClassName}>{item.title}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
+    {onOpenProvenance && provenanceEntry === 'trailing' ? (
+      <PreviewProvenanceButton
+        item={item}
+        onOpenProvenance={onOpenProvenance}
+        tooltipClassName={tooltipClassName}
+      />
+    ) : null}
     <ManagedFileDownloadButton
       source={item.source ?? 'artifact'}
       path={item.path}

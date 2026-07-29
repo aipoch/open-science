@@ -111,11 +111,11 @@ describe('FilePreviewDialog closing lifecycle', () => {
     expect(preventDefault).toHaveBeenCalledOnce()
   })
 
-  it('places a direct Provenance entry in the modal header', () => {
+  it('places a direct Provenance entry in the modal header actions', () => {
     act(() => root.render(<FilePreviewDialog item={item} onClose={vi.fn()} />))
 
     expect(previewSurfaceSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ provenanceEntry: 'leading' })
+      expect.objectContaining({ provenanceEntry: 'trailing' })
     )
   })
 
