@@ -89,6 +89,7 @@ export type FinalizeArtifactVersionsRequest = {
   projectId: string
   appSessionId: string
   artifactRunId: string
+  artifactVersionIds: string[]
   rootFrameId: string
   agentFrameId: string
   messageBranchId: string

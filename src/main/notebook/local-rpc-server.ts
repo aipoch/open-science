@@ -107,6 +107,8 @@ type NotebookRpcPayload = {
 type ArtifactRpcCapability = Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'> & {
   allowedMethods: Set<ArtifactRpcMethod>
   expiresAt: number
+  inFlightRequests: number
+  drainWaiters: Set<() => void>
 }
 
 class RpcHttpError extends Error {
@@ -176,6 +178,7 @@ class NotebookLocalRpcServer {
   private readonly activeInputRunLeases = new Map<string, Set<NotebookInputRunLease>>()
   private readonly inputRunLeaseIds = new WeakMap<NotebookInputRunLease, string>()
   private readonly artifactRpcCapabilities = new Map<string, ArtifactRpcCapability>()
+  private readonly drainingArtifactRpcCapabilities = new Map<string, Promise<void>>()
 
   constructor(
     private readonly service: NotebookRuntimeService,
@@ -208,13 +211,31 @@ class NotebookLocalRpcServer {
       allowedMethods: new Set(
         binding.allowedMethods ?? ['artifactCreateVersion', 'artifactReplayVersion']
       ),
-      expiresAt: this.now() + ttlMs
+      expiresAt: this.now() + ttlMs,
+      inFlightRequests: 0,
+      drainWaiters: new Set()
     })
     return token
   }
 
-  revokeArtifactRunCapability(token: string): void {
+  revokeArtifactRunCapability(token: string): Promise<void> {
+    const draining = this.drainingArtifactRpcCapabilities.get(token)
+    if (draining) return draining
+
+    const capability = this.artifactRpcCapabilities.get(token)
     this.artifactRpcCapabilities.delete(token)
+    if (!capability || capability.inFlightRequests === 0) return Promise.resolve()
+
+    const drain = new Promise<void>((resolve) => {
+      capability.drainWaiters.add(resolve)
+    })
+    this.drainingArtifactRpcCapabilities.set(token, drain)
+    void drain.then(() => {
+      if (this.drainingArtifactRpcCapabilities.get(token) === drain) {
+        this.drainingArtifactRpcCapabilities.delete(token)
+      }
+    })
+    return drain
   }
 
   // Starts the server once on an ephemeral port and returns the connection details for MCP env.
@@ -289,15 +310,17 @@ class NotebookLocalRpcServer {
     this.activeTurnProjectIds.set(request.appSessionId, request.projectId)
   }
 
-  private bindArtifactRpcParams(
+  private acquireArtifactRpcRequest(
     method: ArtifactRpcMethod,
     token: string,
     params: Record<string, unknown>
-  ): Record<string, unknown> {
+  ): { params: Record<string, unknown>; release: () => void } {
     const capability = this.artifactRpcCapabilities.get(token)
     if (!capability) throw new RpcHttpError(401, 'Invalid Artifact RPC capability.')
     if (capability.expiresAt <= this.now()) {
-      this.artifactRpcCapabilities.delete(token)
+      // Expiry closes admission just like an explicit runtime revoke. Keep the shared drain promise
+      // reachable so a later turn teardown still waits for requests that acquired before expiry.
+      void this.revokeArtifactRunCapability(token)
       throw new RpcHttpError(401, 'Artifact RPC capability expired.')
     }
     if (!capability.allowedMethods.has(method)) {
@@ -325,14 +348,14 @@ class NotebookLocalRpcServer {
       }
     }
 
-    const trustedParams = { ...params }
-    delete trustedParams.messageBranchAncestry
-    delete trustedParams.messageAncestry
-    delete trustedParams.agentName
-    delete trustedParams.notebookSessionId
+    const sanitizedParams = { ...params }
+    delete sanitizedParams.messageBranchAncestry
+    delete sanitizedParams.messageAncestry
+    delete sanitizedParams.agentName
+    delete sanitizedParams.notebookSessionId
 
-    return {
-      ...trustedParams,
+    const trustedParams = {
+      ...sanitizedParams,
       projectId: capability.projectId,
       appSessionId: capability.appSessionId,
       artifactStorageSessionId: capability.artifactStorageSessionId,
@@ -355,6 +378,20 @@ class NotebookLocalRpcServer {
           }
         : {})
     }
+    capability.inFlightRequests += 1
+    let released = false
+    return {
+      params: trustedParams,
+      release: () => {
+        if (released) return
+        released = true
+        capability.inFlightRequests -= 1
+        if (capability.inFlightRequests === 0) {
+          for (const resolve of capability.drainWaiters) resolve()
+          capability.drainWaiters.clear()
+        }
+      }
+    }
   }
 
   // Authenticates one HTTP request, dispatches it, and serializes either result or error.
@@ -364,6 +401,7 @@ class NotebookLocalRpcServer {
       return
     }
 
+    let releaseArtifactRequest: (() => void) | undefined
     try {
       const payload = await readJsonBody(request)
       const method = typeof payload.method === 'string' ? payload.method : ''
@@ -373,7 +411,9 @@ class NotebookLocalRpcServer {
         ? authorization.slice('Bearer '.length)
         : ''
       if (isArtifactRpcMethod(method)) {
-        params = this.bindArtifactRpcParams(method, bearerToken, params)
+        const acquired = this.acquireArtifactRpcRequest(method, bearerToken, params)
+        params = acquired.params
+        releaseArtifactRequest = acquired.release
       } else if (authorization !== `Bearer ${this.token}`) {
         throw new RpcHttpError(401, 'Invalid notebook RPC token.')
       }
@@ -387,6 +427,8 @@ class NotebookLocalRpcServer {
       writeJson(response, error instanceof RpcHttpError ? error.statusCode : 500, {
         error: message
       })
+    } finally {
+      releaseArtifactRequest?.()
     }
   }
 

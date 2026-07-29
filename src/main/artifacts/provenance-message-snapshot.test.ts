@@ -150,6 +150,7 @@ describe('Provenance Message snapshots', () => {
       projectId: 'project-1',
       appSessionId: 'session-1',
       artifactRunId: 'artifact-run-1',
+      artifactVersionIds: [version.versionId],
       messageId: 'message-1',
       ...context
     })

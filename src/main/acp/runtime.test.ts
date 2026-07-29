@@ -39,6 +39,9 @@ import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import { MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES } from '../uploads/attachment-media'
 import { ConversationSkillImporter, SkillImportApprovalBroker } from '../skills/conversation-import'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
+import { NotebookRuntimeService } from '../notebook/runtime-service'
+import { NotebookRunRepository } from '../notebook/repository'
 import {
   beginMigration,
   clearMigrationPending,
@@ -3110,7 +3113,9 @@ describe('ACP runtime session management', () => {
           issuedBindings.push(binding)
           return 'run-capability-1'
         },
-        revokeRpcCapability: (token) => revokedTokens.push(token)
+        revokeRpcCapability: (token) => {
+          revokedTokens.push(token)
+        }
       }
     })
 
@@ -7780,6 +7785,271 @@ describe('ACP runtime session management', () => {
         artifactCount: 1
       }
     ])
+    await expect(
+      repository.findRunFinalizationMarker('default-project', events[0].runId!)
+    ).resolves.toMatchObject({
+      sourceSessionId: getEnvValue(
+        fakeAgent.newSessions[0].mcpServers[0],
+        'OPEN_SCIENCE_ARTIFACT_SESSION_ID'
+      ),
+      sessionId: 'remote-session-1',
+      provenanceContext: {
+        promptMessageId: events[0].promptMessageId
+      }
+    })
+    await expect(
+      repository.findRunFinalizationMarker('default-project', events[0].runId!)
+    ).resolves.not.toHaveProperty('messageId')
+  })
+
+  it('drains an accepted app-side Artifact write before freezing the claim and marker', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const client = createProjectDbClient(storageRoot)
+    temporaryDisconnections.push(() => client.$disconnect())
+    await ensureProjectSchema(client)
+    const repository = new ArtifactRepository(storageRoot)
+    const durableProvenance = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository: repository
+    })
+    const writeStarted = createDeferred()
+    const releaseWrite = createDeferred()
+    const closeStarted = createDeferred()
+    const listRunVersions = vi.fn((request) => durableProvenance.listRunVersions(request))
+    let appWrite: ReturnType<AcpRuntime['writeArtifactForCurrentRun']> | undefined
+    let artifactClaimId: string | undefined
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: async ({ sessionId }) => {
+        appWrite = runtime.writeArtifactForCurrentRun(sessionId, {
+          filename: 'late.txt',
+          content: 'accepted before stop',
+          mimeType: 'text/plain'
+        })
+        await writeStarted.promise
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        configRoot: storageRoot,
+        dataRoot: storageRoot,
+        projectName: 'project-1',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository,
+        provenance: {
+          listRunVersions,
+          writeAppGeneratedVersion: async (request) => {
+            writeStarted.resolve()
+            await releaseWrite.promise
+            return durableProvenance.writeAppGeneratedVersion(request)
+          }
+        },
+        issueRpcCapability: () => 'run-capability-1',
+        revokeRpcCapability: async () => {
+          closeStarted.resolve()
+        }
+      },
+      callbacks: {
+        onEvent: (event) => {
+          if (event.kind === 'artifact') artifactClaimId = event.artifactClaimId
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    const prompt = runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'save late.txt',
+      provenanceContext: {
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'agent-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
+    })
+
+    await closeStarted.promise
+    expect(listRunVersions).not.toHaveBeenCalled()
+    expect(artifactClaimId).toBeUndefined()
+    await expect(
+      runtime.writeArtifactForCurrentRun(session.sessionId, {
+        filename: 'too-late.txt',
+        content: 'must be rejected'
+      })
+    ).rejects.toThrow(/No active assistant turn/i)
+
+    releaseWrite.resolve()
+    await appWrite
+    await prompt
+
+    expect(artifactClaimId).toBeTruthy()
+    const claim = resolveArtifactRunClaim(runtime, artifactClaimId!)
+    const version = await client.artifactVersion.findFirstOrThrow({
+      where: { artifactRunId: claim.runId }
+    })
+    expect(claim.artifactVersionIds).toEqual([version.id])
+    await expect(
+      repository.findRunFinalizationMarker('project-1', claim.runId)
+    ).resolves.toMatchObject({ artifactVersionIds: [version.id] })
+  })
+
+  it('drains an authorized Artifact RPC write before freezing the claim and marker', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const client = createProjectDbClient(storageRoot)
+    temporaryDisconnections.push(() => client.$disconnect())
+    await ensureProjectSchema(client)
+    const repository = new ArtifactRepository(storageRoot)
+    const durableProvenance = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository: repository
+    })
+    const rpcWriteStarted = createDeferred()
+    const releaseRpcWrite = createDeferred()
+    const closeStarted = createDeferred()
+    const notebookService = new NotebookRuntimeService({
+      configRoot: storageRoot,
+      dataRoot: storageRoot,
+      projectName: 'project-1',
+      repository: new NotebookRunRepository(storageRoot)
+    })
+    const rpcServer = new NotebookLocalRpcServer(notebookService, {
+      artifactProvenance: {
+        createVersion: async (request) => {
+          rpcWriteStarted.resolve()
+          await releaseRpcWrite.promise
+          return durableProvenance.createVersion(request)
+        }
+      }
+    })
+    const rpcConnection = await rpcServer.ensureStarted()
+    const listRunVersions = vi.fn((request) => durableProvenance.listRunVersions(request))
+    let rpcWrite: Promise<Response> | undefined
+    let artifactClaimId: string | undefined
+    let currentRunFile = ''
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: async ({ sessionId }) => {
+        const context = JSON.parse(await readFile(currentRunFile, 'utf8')) as {
+          artifactRunId: string
+          appSessionId: string
+          rootFrameId: string
+          agentFrameId: string
+          messageBranchId: string
+          runtimeSegmentId: string
+          promptMessageId: string
+          rpcCapabilityToken: string
+        }
+        const artifactStorageSessionId = getEnvValue(
+          fakeAgent.newSessions[0].mcpServers[0],
+          'OPEN_SCIENCE_ARTIFACT_SESSION_ID'
+        )
+        await repository.writePendingFile({
+          projectName: 'project-1',
+          sessionId: artifactStorageSessionId,
+          runId: context.artifactRunId,
+          filename: 'rpc-late.txt',
+          source: { kind: 'inline', content: 'accepted RPC bytes', encoding: 'utf8' }
+        })
+        rpcWrite = fetch(rpcConnection.endpoint, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${context.rpcCapabilityToken}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'artifactCreateVersion',
+            params: {
+              projectId: 'project-1',
+              appSessionId: sessionId,
+              artifactStorageSessionId,
+              artifactRunId: context.artifactRunId,
+              writeOperationId: 'write-rpc-late',
+              writeRequestChecksum: 'c'.repeat(64),
+              rootFrameId: context.rootFrameId,
+              agentFrameId: context.agentFrameId,
+              messageBranchId: context.messageBranchId,
+              runtimeSegmentId: context.runtimeSegmentId,
+              promptMessageId: context.promptMessageId,
+              filename: 'rpc-late.txt',
+              contentType: 'text/plain'
+            }
+          })
+        })
+        await rpcWriteStarted.promise
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        configRoot: storageRoot,
+        dataRoot: storageRoot,
+        projectName: 'project-1',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository,
+        provenance: {
+          listRunVersions,
+          writeAppGeneratedVersion: (request) => durableProvenance.writeAppGeneratedVersion(request)
+        },
+        getRpcConnection: () => Promise.resolve(rpcConnection),
+        issueRpcCapability: (binding) => rpcServer.issueArtifactRunCapability(binding),
+        revokeRpcCapability: async (token) => {
+          closeStarted.resolve()
+          await rpcServer.revokeArtifactRunCapability(token)
+        }
+      },
+      callbacks: {
+        onEvent: (event) => {
+          if (event.kind === 'artifact') artifactClaimId = event.artifactClaimId
+        }
+      }
+    })
+
+    try {
+      const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+      currentRunFile = getEnvValue(
+        fakeAgent.newSessions[0].mcpServers[0],
+        'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE'
+      )
+      const prompt = runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'save through RPC',
+        provenanceContext: {
+          rootFrameId: 'root-frame-1',
+          agentFrameId: 'agent-frame-1',
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'runtime-1',
+          promptMessageId: 'prompt-1'
+        }
+      })
+
+      await closeStarted.promise
+      expect(listRunVersions).not.toHaveBeenCalled()
+      expect(artifactClaimId).toBeUndefined()
+
+      releaseRpcWrite.resolve()
+      await expect(rpcWrite!.then((response) => response.status)).resolves.toBe(200)
+      await prompt
+
+      expect(artifactClaimId).toBeTruthy()
+      const claim = resolveArtifactRunClaim(runtime, artifactClaimId!)
+      const version = await client.artifactVersion.findFirstOrThrow({
+        where: { artifactRunId: claim.runId }
+      })
+      expect(claim.artifactVersionIds).toEqual([version.id])
+      await expect(
+        repository.findRunFinalizationMarker('project-1', claim.runId)
+      ).resolves.toMatchObject({ artifactVersionIds: [version.id] })
+    } finally {
+      releaseRpcWrite.resolve()
+      await rpcServer.close()
+    }
   })
 
   it('finalizes an Artifact after a restored branch supplies ancestor-only provenance context', async () => {
@@ -7849,6 +8119,10 @@ describe('ACP runtime session management', () => {
     if (writeError) throw writeError
     expect(artifactClaimId).toBeTruthy()
     const claim = resolveArtifactRunClaim(runtime, artifactClaimId!)
+    const claimedVersion = await client.artifactVersion.findFirstOrThrow({
+      where: { artifactRunId: claim.runId }
+    })
+    expect(claim.artifactVersionIds).toEqual([claimedVersion.id])
     const createdAt = Date.now()
     const conversationGraph = {
       schemaVersion: 1 as const,
@@ -7968,6 +8242,7 @@ describe('ACP runtime session management', () => {
       projectId: claim.projectName,
       appSessionId: claim.sessionId,
       artifactRunId: claim.runId,
+      artifactVersionIds: claim.artifactVersionIds!,
       rootFrameId: claim.rootFrameId!,
       agentFrameId: claim.agentFrameId!,
       messageBranchId: claim.messageBranchId!,
@@ -8086,7 +8361,9 @@ describe('ACP runtime session management', () => {
         mcpCommand: '/usr/bin/electron',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'global' }),
         issueRpcCapability: () => 'activation-capability',
-        revokeRpcCapability: (token) => revokedTokens.push(token)
+        revokeRpcCapability: (token) => {
+          revokedTokens.push(token)
+        }
       },
       callbacks: {
         onEvent: (event) => events.push({ kind: event.kind, text: event.text })

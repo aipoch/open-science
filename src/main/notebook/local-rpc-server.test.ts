@@ -23,6 +23,17 @@ const createStorageRoot = async (): Promise<string> => {
   return storageRoot
 }
 
+const createDeferred = <Value = void>(): {
+  promise: Promise<Value>
+  resolve: (value: Value) => void
+} => {
+  let resolve!: (value: Value) => void
+  const promise = new Promise<Value>((promiseResolve) => {
+    resolve = promiseResolve
+  })
+  return { promise, resolve }
+}
+
 const registeredInput = {
   inputFileVersionId: 'upload-version-1',
   sourceKind: 'upload-version' as const,
@@ -326,6 +337,98 @@ describe('notebook local RPC server', () => {
         }
       ])
     } finally {
+      await server.close()
+    }
+  })
+
+  it('revokes new Artifact requests while draining one already-authorized write', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const createStarted = createDeferred()
+    const releaseCreate = createDeferred()
+    let now = 1_000
+    const server = new NotebookLocalRpcServer(service, {
+      token: 'secret-token',
+      now: () => now,
+      artifactProvenance: {
+        createVersion: async () => {
+          createStarted.resolve()
+          await releaseCreate.promise
+          return {
+            id: 'version-1',
+            artifactId: 'artifact-1',
+            versionId: 'version-1',
+            versionNumber: 1,
+            checksum: 'a'.repeat(64),
+            createdAt: '2026-07-27T00:00:00.000Z',
+            projectName: 'project-1',
+            sessionId: 'session-1',
+            runId: 'artifact-run-1',
+            name: 'sin.png',
+            path: '/managed/content',
+            fileUrl: 'file:///managed/content',
+            mimeType: 'image/png',
+            size: 12,
+            mtimeMs: 1
+          }
+        }
+      }
+    })
+    const connection = await server.ensureStarted()
+    const token = server.issueArtifactRunCapability(artifactCapabilityBinding, 100)
+    const call = (): Promise<Response> =>
+      fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'artifactCreateVersion',
+          params: {
+            ...artifactCapabilityBinding,
+            writeOperationId: 'write-drain',
+            writeRequestChecksum: 'a'.repeat(64),
+            filename: 'sin.png'
+          }
+        })
+      })
+
+    try {
+      const acceptedRequest = call()
+      await createStarted.promise
+      now = 1_101
+      const expiredRequest = await call()
+      expect(expiredRequest.status).toBe(401)
+      await expect(expiredRequest.json()).resolves.toEqual({
+        error: 'Artifact RPC capability expired.'
+      })
+
+      let drained = false
+      const firstDrain = Promise.resolve(server.revokeArtifactRunCapability(token)).then(() => {
+        drained = true
+      })
+      const repeatedDrain = Promise.resolve(server.revokeArtifactRunCapability(token))
+      await Promise.resolve()
+      expect(drained).toBe(false)
+
+      const rejectedRequest = await call()
+      expect(rejectedRequest.status).toBe(401)
+
+      releaseCreate.resolve()
+      await expect(acceptedRequest.then((response) => response.status)).resolves.toBe(200)
+      await expect(Promise.all([firstDrain, repeatedDrain])).resolves.toEqual([
+        undefined,
+        undefined
+      ])
+      expect(drained).toBe(true)
+    } finally {
+      releaseCreate.resolve()
       await server.close()
     }
   })

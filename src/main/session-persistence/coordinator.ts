@@ -1,7 +1,9 @@
 import type { ProjectFilesChangedEvent } from '../../shared/project-files'
 import type { ProjectFileSource } from '../../shared/project-files'
+import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
 import type {
   LoadAllSessionsResult,
+  PersistedArtifact,
   PersistedChatSession,
   SaveSessionManifestRequest
 } from '../../shared/session-persistence'
@@ -9,6 +11,7 @@ import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
 import type { ProjectSessionDeletionState } from './repository'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
 import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
+import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
 import {
   OrphanLegacyUploadAuthorityMissingError,
   UnsafeLegacyUploadResidualError
@@ -80,19 +83,135 @@ type SessionUploadPersistence = {
   ): Promise<PersistedChatSession>
 }
 
+type RecoveredMessageArtifacts = { messageId: string; artifacts: ArtifactVersionFile[] }
+
 type ArtifactStorageReconciler = {
+  prepareProjectReconciliation(projectId: string): Promise<ArtifactProjectReconciliationSnapshot>
   reconcileSession(
     projectId: string,
     sessionId: string,
     durableSession: PersistedChatSession,
-    options?: { removeOrphanStaging?: boolean }
-  ): Promise<unknown>
+    options?: {
+      removeOrphanStaging?: boolean
+      projectReconciliation?: ArtifactProjectReconciliationSnapshot
+    }
+  ): Promise<
+    | {
+        recoveredMessageArtifacts: RecoveredMessageArtifacts[]
+      }
+    | undefined
+  >
 }
 
 const hasLegacySessionUpload = (session: PersistedChatSession): boolean =>
   [...session.messages, ...(session.conversationGraph?.messages ?? [])].some((message) =>
     message.uploads?.some((upload) => !upload.versionId)
   )
+
+const toPersistedArtifact = (artifact: ArtifactVersionFile): PersistedArtifact => ({
+  id: artifact.id,
+  artifactId: artifact.artifactId,
+  versionId: artifact.versionId,
+  versionNumber: artifact.versionNumber,
+  kind: 'managed-file',
+  path: artifact.path,
+  fileUrl: artifact.fileUrl,
+  name: artifact.name,
+  mimeType: artifact.mimeType,
+  size: artifact.size,
+  mtimeMs: artifact.mtimeMs,
+  sha256: artifact.checksum
+})
+
+const persistedArtifactsEqual = (left: PersistedArtifact, right: PersistedArtifact): boolean =>
+  Object.entries(right).every(([field, value]) => left[field as keyof PersistedArtifact] === value)
+
+const appendUnique = (existing: string[] | undefined, incoming: readonly string[]): string[] => {
+  const result = [...(existing ?? [])]
+  const seen = new Set(result)
+  for (const value of incoming) {
+    if (seen.has(value)) continue
+    seen.add(value)
+    result.push(value)
+  }
+  return result
+}
+
+// Reattach native Versions through the Session authority, preserving graph-only inactive Branches.
+const attachRecoveredMessageArtifacts = (
+  session: PersistedChatSession,
+  recoveries: RecoveredMessageArtifacts[]
+): PersistedChatSession => {
+  if (recoveries.length === 0) return session
+
+  const materialized = materializeSessionConversationGraph(session)
+  const messageIds = new Set([
+    ...materialized.messages.map((message) => message.id),
+    ...(materialized.conversationGraph?.messages.map((message) => message.id) ?? [])
+  ])
+  const recoveredByMessage = new Map<string, Map<string, PersistedArtifact>>()
+  for (const recovery of recoveries) {
+    if (!messageIds.has(recovery.messageId)) continue
+    const artifacts = recoveredByMessage.get(recovery.messageId) ?? new Map()
+    for (const artifact of recovery.artifacts) {
+      artifacts.set(artifact.id, toPersistedArtifact(artifact))
+    }
+    if (artifacts.size > 0) recoveredByMessage.set(recovery.messageId, artifacts)
+  }
+  if (recoveredByMessage.size === 0) return session
+
+  const nextArtifacts = [...(materialized.artifacts ?? [])]
+  const artifactIndexes = new Map(nextArtifacts.map((artifact, index) => [artifact.id, index]))
+  let artifactsChanged = false
+  for (const artifacts of recoveredByMessage.values()) {
+    for (const artifact of artifacts.values()) {
+      const index = artifactIndexes.get(artifact.id)
+      if (index === undefined) {
+        artifactIndexes.set(artifact.id, nextArtifacts.length)
+        nextArtifacts.push(artifact)
+        artifactsChanged = true
+      } else if (!persistedArtifactsEqual(nextArtifacts[index], artifact)) {
+        nextArtifacts[index] = artifact
+        artifactsChanged = true
+      }
+    }
+  }
+
+  const now = Date.now()
+  let flatMessagesChanged = false
+  const messages = materialized.messages.map((message) => {
+    const artifacts = recoveredByMessage.get(message.id)
+    if (!artifacts) return message
+    const artifactIds = appendUnique(message.artifactIds, [...artifacts.keys()])
+    if (artifactIds.length === (message.artifactIds?.length ?? 0)) return message
+    flatMessagesChanged = true
+    return { ...message, artifactIds, updatedAt: now }
+  })
+  let graphMessagesChanged = false
+  const conversationGraph = materialized.conversationGraph
+    ? {
+        ...materialized.conversationGraph,
+        messages: materialized.conversationGraph.messages.map((message) => {
+          const artifacts = recoveredByMessage.get(message.id)
+          if (!artifacts) return message
+          const artifactIds = appendUnique(message.artifactIds, [...artifacts.keys()])
+          if (artifactIds.length === (message.artifactIds?.length ?? 0)) return message
+          graphMessagesChanged = true
+          return { ...message, artifactIds, updatedAt: now }
+        })
+      }
+    : undefined
+
+  if (!artifactsChanged && !flatMessagesChanged && !graphMessagesChanged) return session
+  return {
+    ...materialized,
+    artifacts: nextArtifacts,
+    messages,
+    conversationGraph,
+    filesRevision: (materialized.filesRevision ?? 0) + 1,
+    updatedAt: now
+  }
+}
 
 // Serializes authoritative session JSON and derived file-index mutations through one queue. This is
 // the consistency boundary that prevents a late save from racing or reviving a durable deletion.
@@ -123,19 +242,20 @@ class SessionPersistenceCoordinator {
       const mayRunDestructiveStartupCleanup = this.destructiveStartupWindowOpen
       this.destructiveStartupWindowOpen = false
       const scan = await this.repository.loadAllWithDiagnostics()
+      let result = scan.result
+      let sessions = scan.result.sessions
 
       if (!scan.isComplete) {
         // Without the full active-session set, syncing could let a readable duplicate steal a row from
         // a soft-deleted owner whose JSON was merely unreadable during this scan.
         this.fileIndex.markReconciliationIncomplete()
-        return scan.result
+        return result
       }
 
-      let durableResult = scan.result
       try {
         if (this.uploads) {
-          const reconciledSessions = [...scan.result.sessions]
-          for (const [index, session] of scan.result.sessions.entries()) {
+          for (let index = 0; index < sessions.length; index += 1) {
+            const session = sessions[index]
             const requiresProjectionWrite = hasLegacySessionUpload(session)
             if (requiresProjectionWrite) {
               // Build the complete immutable projection without consuming any source. Promise.all
@@ -145,8 +265,10 @@ class SessionPersistenceCoordinator {
               })
               // Advance hydration before attempting the JSON write so a save failure still hands
               // callers the readable immutable projection produced by the completed live-save.
-              reconciledSessions[index] = upgradedSession
-              durableResult = { ...scan.result, sessions: [...reconciledSessions] }
+              sessions = sessions.map((candidate, candidateIndex) =>
+                candidateIndex === index ? upgradedSession : candidate
+              )
+              result = { ...result, sessions }
               // Persist every immutable identity before startup reconciliation can consume a legacy
               // source. A failed write remains retryable because live-save preserved every source.
               await this.repository.saveSession(upgradedSession)
@@ -163,28 +285,59 @@ class SessionPersistenceCoordinator {
           }
         }
 
-        await this.provenance?.reconcileSessionDeletions(durableResult.sessions)
-        for (const session of durableResult.sessions) {
-          await this.artifactStorage?.reconcileSession(session.projectId, session.id, session, {
-            removeOrphanStaging: mayRunDestructiveStartupCleanup
-          })
+        await this.provenance?.reconcileSessionDeletions(sessions)
+        const projectReconciliations = new Map<string, ArtifactProjectReconciliationSnapshot>()
+        if (this.artifactStorage) {
+          for (const projectId of new Set(sessions.map((session) => session.projectId))) {
+            projectReconciliations.set(
+              projectId,
+              await this.artifactStorage.prepareProjectReconciliation(projectId)
+            )
+          }
+        }
+        for (let index = 0; index < sessions.length; index += 1) {
+          const session = sessions[index]
+          const artifactRecovery = await this.artifactStorage?.reconcileSession(
+            session.projectId,
+            session.id,
+            session,
+            {
+              // Only the first process-level load is a startup boundary. Later renderer/task readers
+              // may inspect recovery state but cannot destructively clean storage held by live clients.
+              removeOrphanStaging: mayRunDestructiveStartupCleanup,
+              projectReconciliation: projectReconciliations.get(session.projectId)!
+            }
+          )
+          const recoveredSession = attachRecoveredMessageArtifacts(
+            session,
+            artifactRecovery?.recoveredMessageArtifacts ?? []
+          )
+          if (recoveredSession !== session) {
+            sessions = sessions.map((candidate, candidateIndex) =>
+              candidateIndex === index ? recoveredSession : candidate
+            )
+            result = { ...result, sessions }
+            // Capture immutable Message evidence before JSON. If either write fails, the unchanged
+            // Session remains an attachment witness on the next startup and the whole sequence retries.
+            await this.provenance?.captureFinalizedMessages(recoveredSession)
+            await this.repository.saveSession(recoveredSession)
+          }
         }
         // Reconciliation restores active owners left soft-deleted by an interrupted delete before any
         // scan-order-dependent sync can offer their canonical rows to another session.
-        await this.fileIndex.reconcileActiveSessions(durableResult.sessions)
+        await this.fileIndex.reconcileActiveSessions(sessions)
       } catch (error) {
         this.fileIndex.markReconciliationIncomplete()
         console.error('[session-persistence] startup reconciliation failed', error)
-        // Hydrate every Session whose immutable upgrade completed; later entries retain the scan
-        // projection. Files remains explicitly incomplete and the durable writes retry next startup.
-        return durableResult
+        // Keep chat hydration available while Files remains explicitly incomplete and retryable.
+        return result
       }
 
-      for (const session of durableResult.sessions) {
+      for (const session of sessions) {
         await this.fileIndex.syncSession(session).catch(() => undefined)
       }
 
-      return durableResult
+      return result
     })
   }
 

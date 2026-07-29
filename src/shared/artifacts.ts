@@ -117,6 +117,7 @@ export type MovePendingRunArtifactsRequest = {
   sourceSessionId?: string
   runId: string
   messageId: string
+  artifactVersionIds?: string[]
   provenanceContext?: {
     rootFrameId: string
     agentFrameId: string

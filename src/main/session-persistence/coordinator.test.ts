@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
+import {
+  materializeSessionConversationGraph,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
+import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import {
   OrphanLegacyUploadAuthorityMissingError,
@@ -13,7 +18,8 @@ import {
 import {
   SessionPersistenceCoordinator,
   type SessionFileIndex,
-  type SessionMutationRepository
+  type SessionMutationRepository,
+  type SessionProvenancePersistence
 } from './coordinator'
 
 const createSession = (overrides: Partial<PersistedChatSession> = {}): PersistedChatSession => ({
@@ -71,6 +77,30 @@ const toVersionedUploadSession = (session: PersistedChatSession): PersistedChatS
   ]
   return upgraded
 }
+
+const createRecoveredArtifact = (
+  overrides: Partial<ArtifactVersionFile> = {}
+): ArtifactVersionFile => ({
+  id: 'artifact-version-1',
+  artifactId: 'artifact-lineage-1',
+  versionId: 'artifact-version-1',
+  versionNumber: 1,
+  checksum: 'a'.repeat(64),
+  createdAt: '2026-07-29T00:00:00.000Z',
+  projectName: 'project-1',
+  sessionId: 'session-1',
+  runId: 'artifact-run-1',
+  name: 'result.csv',
+  path: '/managed/.provenance/artifact-lineage-1/versions/artifact-version-1/content',
+  fileUrl: 'file:///managed/result.csv',
+  mimeType: 'text/csv',
+  size: 12,
+  mtimeMs: 3,
+  ...overrides
+})
+
+const createProjectReconciliationSnapshot = (): ArtifactProjectReconciliationSnapshot =>
+  ({}) as ArtifactProjectReconciliationSnapshot
 
 describe('SessionPersistenceCoordinator', () => {
   it('serializes a pending save before deletion and rejects saves after the tombstone', async () => {
@@ -404,7 +434,11 @@ describe('SessionPersistenceCoordinator', () => {
       loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
     })
     const fileIndex = createFileIndex()
-    const artifactStorage = { reconcileSession: vi.fn().mockResolvedValue(undefined) }
+    const projectReconciliation = createProjectReconciliationSnapshot()
+    const artifactStorage = {
+      prepareProjectReconciliation: vi.fn().mockResolvedValue(projectReconciliation),
+      reconcileSession: vi.fn().mockResolvedValue(undefined)
+    }
     const coordinator = new SessionPersistenceCoordinator(
       repository,
       fileIndex,
@@ -420,7 +454,8 @@ describe('SessionPersistenceCoordinator', () => {
       'session-1',
       session,
       {
-        removeOrphanStaging: true
+        removeOrphanStaging: true,
+        projectReconciliation
       }
     )
     expect(fileIndex.syncSession).toHaveBeenCalledWith(session)
@@ -690,7 +725,11 @@ describe('SessionPersistenceCoordinator', () => {
     const uploads = {
       upgradeLegacySessionUploads: vi.fn().mockResolvedValue(upgradedSession)
     }
-    const artifactStorage = { reconcileSession: vi.fn().mockResolvedValue(undefined) }
+    const projectReconciliation = createProjectReconciliationSnapshot()
+    const artifactStorage = {
+      prepareProjectReconciliation: vi.fn().mockResolvedValue(projectReconciliation),
+      reconcileSession: vi.fn().mockResolvedValue(undefined)
+    }
     const coordinator = new SessionPersistenceCoordinator(
       repository,
       createFileIndex(),
@@ -715,7 +754,7 @@ describe('SessionPersistenceCoordinator', () => {
       'project-1',
       'session-1',
       upgradedSession,
-      { removeOrphanStaging: false }
+      { removeOrphanStaging: false, projectReconciliation }
     )
   })
 
@@ -822,6 +861,393 @@ describe('SessionPersistenceCoordinator', () => {
     expect(loaded.sessions).toEqual([upgradedSession])
     expect(repository.saveSession).toHaveBeenCalledWith(upgradedSession)
     expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+    expect(fileIndex.syncSession).not.toHaveBeenCalled()
+  })
+
+  it('prepares one Artifact reconciliation snapshot for sessions in the same Project', async () => {
+    const sessions = [createSession(), createSession({ id: 'session-2' })]
+    const result = { sessions, manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const projectSnapshot = createProjectReconciliationSnapshot()
+    const artifactStorage = {
+      prepareProjectReconciliation: vi.fn().mockResolvedValue(projectSnapshot),
+      reconcileSession: vi.fn().mockResolvedValue(undefined)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      artifactStorage
+    )
+
+    await coordinator.loadAll()
+
+    expect(artifactStorage.prepareProjectReconciliation).toHaveBeenCalledOnce()
+    expect(artifactStorage.prepareProjectReconciliation).toHaveBeenCalledWith('project-1')
+    expect(artifactStorage.reconcileSession).toHaveBeenCalledTimes(2)
+    for (const session of sessions) {
+      expect(artifactStorage.reconcileSession).toHaveBeenCalledWith(
+        'project-1',
+        session.id,
+        session,
+        {
+          removeOrphanStaging: true,
+          projectReconciliation: projectSnapshot
+        }
+      )
+    }
+  })
+
+  it('prepares separate Artifact reconciliation snapshots for different Projects', async () => {
+    const sessions = [
+      createSession(),
+      createSession({ id: 'session-2' }),
+      createSession({ id: 'session-3', projectId: 'project-2' })
+    ]
+    const result = { sessions, manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const snapshots = new Map<string, ArtifactProjectReconciliationSnapshot>([
+      ['project-1', createProjectReconciliationSnapshot()],
+      ['project-2', createProjectReconciliationSnapshot()]
+    ])
+    const artifactStorage = {
+      prepareProjectReconciliation: vi.fn(async (projectId: string) => snapshots.get(projectId)!),
+      reconcileSession: vi.fn().mockResolvedValue(undefined)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      artifactStorage
+    )
+
+    await coordinator.loadAll()
+
+    expect(artifactStorage.prepareProjectReconciliation).toHaveBeenCalledTimes(2)
+    expect(artifactStorage.prepareProjectReconciliation).toHaveBeenCalledWith('project-1')
+    expect(artifactStorage.prepareProjectReconciliation).toHaveBeenCalledWith('project-2')
+    for (const session of sessions) {
+      expect(artifactStorage.reconcileSession).toHaveBeenCalledWith(
+        session.projectId,
+        session.id,
+        session,
+        {
+          removeOrphanStaging: true,
+          projectReconciliation: snapshots.get(session.projectId)
+        }
+      )
+    }
+  })
+
+  it('marks Files incomplete when Project reconciliation preparation fails', async () => {
+    const session = createSession()
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const markReconciliationIncomplete = vi.fn()
+    const fileIndex = createFileIndex({ markReconciliationIncomplete })
+    const artifactStorage = {
+      prepareProjectReconciliation: vi.fn().mockRejectedValue(new Error('scan failed')),
+      reconcileSession: vi.fn().mockResolvedValue(undefined)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      undefined,
+      artifactStorage
+    )
+
+    await expect(coordinator.loadAll()).resolves.toBe(result)
+
+    expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+    expect(artifactStorage.reconcileSession).not.toHaveBeenCalled()
+    expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
+  })
+
+  it('persists recovered Artifact Versions on their owning message without replay churn', async () => {
+    const originalSession = materializeSessionConversationGraph(
+      createSession({
+        filesRevision: 4,
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'result',
+            status: 'streaming',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 2
+          }
+        ]
+      })
+    )
+    let durableSession = originalSession
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn(async () => ({
+        result: { sessions: [durableSession], manifest: { version: 1 as const } },
+        isComplete: true
+      })),
+      saveSession: vi.fn(async (session) => {
+        durableSession = structuredClone(session)
+      })
+    })
+    const recoveredArtifact = createRecoveredArtifact()
+    const artifactStorage = {
+      prepareProjectReconciliation: vi
+        .fn()
+        .mockResolvedValue(createProjectReconciliationSnapshot()),
+      reconcileSession: vi.fn().mockResolvedValue({
+        recoveredMessageArtifacts: [
+          { messageId: 'message-1', artifacts: [recoveredArtifact, recoveredArtifact] }
+        ]
+      })
+    }
+    const fileIndex = createFileIndex()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      undefined,
+      artifactStorage
+    )
+
+    const first = await coordinator.loadAll()
+    const recoveredSession = first.sessions[0]
+
+    // Message associations use ArtifactFile.id (the Artifact Version id), not lineage artifactId.
+    expect(recoveredSession.messages[0].artifactIds).toEqual(['artifact-version-1'])
+    expect(recoveredSession.conversationGraph?.messages[0].artifactIds).toEqual([
+      'artifact-version-1'
+    ])
+    expect(recoveredSession.artifacts).toEqual([
+      expect.objectContaining({
+        id: 'artifact-version-1',
+        artifactId: 'artifact-lineage-1',
+        versionId: 'artifact-version-1',
+        versionNumber: 1,
+        sha256: 'a'.repeat(64)
+      })
+    ])
+    expect(recoveredSession.filesRevision).toBe(5)
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+    expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([recoveredSession])
+    expect(fileIndex.syncSession).toHaveBeenCalledWith(recoveredSession)
+
+    const replayed = await coordinator.loadAll()
+    expect(replayed.sessions[0].messages[0].artifactIds).toEqual(['artifact-version-1'])
+    expect(replayed.sessions[0].artifacts).toHaveLength(1)
+    expect(replayed.sessions[0].filesRevision).toBe(5)
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+  })
+
+  it('returns the recovered Session view and retries when its JSON save fails', async () => {
+    const session = materializeSessionConversationGraph(
+      createSession({
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'result',
+            status: 'streaming',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 2
+          }
+        ]
+      })
+    )
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true }),
+      saveSession: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('session json is read-only'))
+        .mockResolvedValueOnce(undefined)
+    })
+    const markReconciliationIncomplete = vi.fn()
+    const fileIndex = createFileIndex({ markReconciliationIncomplete })
+    const provenance = createProvenancePersistence()
+    const artifactStorage = {
+      prepareProjectReconciliation: vi
+        .fn()
+        .mockResolvedValue(createProjectReconciliationSnapshot()),
+      reconcileSession: vi.fn().mockResolvedValue({
+        recoveredMessageArtifacts: [
+          {
+            messageId: 'message-1',
+            artifacts: [
+              createRecoveredArtifact({
+                checksum: 'b'.repeat(64),
+                name: 'result.txt',
+                path: '/managed/result.txt',
+                fileUrl: 'file:///managed/result.txt',
+                size: 6
+              })
+            ]
+          }
+        ]
+      })
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      provenance,
+      undefined,
+      artifactStorage
+    )
+
+    const loaded = await coordinator.loadAll()
+
+    expect(loaded.sessions[0].messages[0].artifactIds).toEqual(['artifact-version-1'])
+    expect(loaded.sessions[0].conversationGraph?.messages[0].artifactIds).toEqual([
+      'artifact-version-1'
+    ])
+    expect(loaded.sessions[0].artifacts?.[0]).toMatchObject({ id: 'artifact-version-1' })
+    expect(loaded.sessions[0].filesRevision).toBe(2)
+    expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+    expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
+    expect(fileIndex.syncSession).not.toHaveBeenCalled()
+
+    const retried = await coordinator.loadAll()
+    expect(retried.sessions[0].messages[0].artifactIds).toEqual(['artifact-version-1'])
+    expect(provenance.captureFinalizedMessages).toHaveBeenCalledTimes(2)
+    expect(repository.saveSession).toHaveBeenCalledTimes(2)
+    expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledOnce()
+    expect(fileIndex.syncSession).toHaveBeenCalledOnce()
+  })
+
+  it('retries the attachment without saving JSON when Message snapshot capture fails', async () => {
+    const session = materializeSessionConversationGraph(
+      createSession({
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'result',
+            status: 'streaming',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 2
+          }
+        ]
+      })
+    )
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+        result: { sessions: [session], manifest: { version: 1 as const } },
+        isComplete: true
+      })
+    })
+    const markReconciliationIncomplete = vi.fn()
+    const fileIndex = createFileIndex({ markReconciliationIncomplete })
+    const provenance = createProvenancePersistence({
+      captureFinalizedMessages: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('snapshot storage is read-only'))
+        .mockResolvedValueOnce(undefined)
+    })
+    const artifactStorage = {
+      prepareProjectReconciliation: vi
+        .fn()
+        .mockResolvedValue(createProjectReconciliationSnapshot()),
+      reconcileSession: vi.fn().mockResolvedValue({
+        recoveredMessageArtifacts: [
+          { messageId: 'message-1', artifacts: [createRecoveredArtifact()] }
+        ]
+      })
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      provenance,
+      undefined,
+      artifactStorage
+    )
+
+    const first = await coordinator.loadAll()
+    expect(first.sessions[0].messages[0].artifactIds).toEqual(['artifact-version-1'])
+    expect(repository.saveSession).not.toHaveBeenCalled()
+    expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+
+    const retried = await coordinator.loadAll()
+    expect(retried.sessions[0].messages[0].artifactIds).toEqual(['artifact-version-1'])
+    expect(provenance.captureFinalizedMessages).toHaveBeenCalledTimes(2)
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+    expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledOnce()
+    expect(fileIndex.syncSession).toHaveBeenCalledOnce()
+  })
+
+  it('keeps earlier recovered Sessions when a later reconciliation fails', async () => {
+    const firstSession = materializeSessionConversationGraph(
+      createSession({
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'first result',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 2
+          }
+        ]
+      })
+    )
+    const secondSession = createSession({ id: 'session-2', title: 'Second Session' })
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+        result: { sessions: [firstSession, secondSession], manifest: { version: 1 as const } },
+        isComplete: true
+      })
+    })
+    const markReconciliationIncomplete = vi.fn()
+    const fileIndex = createFileIndex({ markReconciliationIncomplete })
+    const artifactStorage = {
+      prepareProjectReconciliation: vi
+        .fn()
+        .mockResolvedValue(createProjectReconciliationSnapshot()),
+      reconcileSession: vi
+        .fn()
+        .mockResolvedValueOnce({
+          recoveredMessageArtifacts: [
+            { messageId: 'message-1', artifacts: [createRecoveredArtifact()] }
+          ]
+        })
+        .mockRejectedValueOnce(new Error('artifact database unavailable'))
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      undefined,
+      artifactStorage
+    )
+
+    const loaded = await coordinator.loadAll()
+
+    expect(loaded.sessions[0].messages[0].artifactIds).toEqual(['artifact-version-1'])
+    expect(loaded.sessions[0].conversationGraph?.messages[0].artifactIds).toEqual([
+      'artifact-version-1'
+    ])
+    expect(loaded.sessions[1]).toBe(secondSession)
+    expect(repository.saveSession).toHaveBeenCalledWith(loaded.sessions[0])
+    expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+    expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
     expect(fileIndex.syncSession).not.toHaveBeenCalled()
   })
 
@@ -1574,6 +2000,19 @@ const createFileIndex = (overrides: Partial<SessionFileIndex> = {}): SessionFile
   softDeleteProject: vi.fn().mockResolvedValue('delete-project-operation'),
   reconcileActiveSessions: vi.fn().mockResolvedValue(undefined),
   markReconciliationIncomplete: vi.fn(),
+  ...overrides
+})
+
+const createProvenancePersistence = (
+  overrides: Partial<SessionProvenancePersistence> = {}
+): SessionProvenancePersistence => ({
+  captureFinalizedMessages: vi.fn().mockResolvedValue(undefined),
+  reconcileSessionDeletions: vi.fn().mockResolvedValue(undefined),
+  prepareSessionDeletion: vi
+    .fn()
+    .mockResolvedValue({ kind: 'ordinary', projectId: 'project-1', sessionId: 'session-1' }),
+  completeSessionDeletion: vi.fn().mockResolvedValue(undefined),
+  abortSessionDeletion: vi.fn().mockResolvedValue(undefined),
   ...overrides
 })
 

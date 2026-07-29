@@ -36,7 +36,11 @@ import type {
   ProvenanceExecutionInputFile,
   ReplayArtifactVersionRequest
 } from '../../shared/artifact-provenance'
-import { ArtifactCompatibilityScanIncompleteError, ArtifactRepository } from './repository'
+import {
+  ArtifactCompatibilityScanIncompleteError,
+  ArtifactRepository,
+  type PendingArtifactRunPublication
+} from './repository'
 import { defaultArtifactDurability, type ArtifactDurability } from './durability'
 import { NotebookRunRepository } from '../notebook/repository'
 import type {
@@ -195,6 +199,20 @@ type ProducerCapture =
 type ArtifactStorageReconciliationResult = {
   recoveredVersionIds: string[]
   quarantinedVersionIds: string[]
+  recoveredMessageArtifacts: Array<{ messageId: string; artifacts: ArtifactVersionFile[] }>
+}
+
+type ArtifactProjectReconciliationState = {
+  readonly projectId: string
+  readonly unfinishedCompatibilityPublications: readonly PendingArtifactRunPublication[]
+}
+
+const artifactProjectReconciliationState = Symbol('artifactProjectReconciliationState')
+
+// Opaque outside this module: callers may route a Project-scoped snapshot but cannot inspect or
+// construct its publication state. This keeps compatibility layout knowledge inside Provenance.
+export type ArtifactProjectReconciliationSnapshot = {
+  readonly [artifactProjectReconciliationState]: ArtifactProjectReconciliationState
 }
 
 type ArtifactFinalizationContext = Pick<
@@ -206,6 +224,33 @@ type ArtifactFinalizationContext = Pick<
   | 'promptMessageId'
   | 'messageId'
 >
+
+type PreparedArtifactFinalizationContext = Omit<ArtifactFinalizationContext, 'messageId'>
+
+class ArtifactFinalizationProofError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause })
+    this.name = 'ArtifactFinalizationProofError'
+  }
+}
+
+type ArtifactFinalizationProofRequest = FinalizeArtifactVersionsRequest
+
+type ArtifactFinalizationProofVersion = PersistedVersionFileRecord & {
+  messageId: string | null
+  rootFrameId: string
+  agentFrameId: string
+  messageBranchId: string
+  runtimeSegmentId: string
+  promptMessageId: string
+  notebookSessionId: string | null
+  producerRunIndex: number | null
+  executionSnapshotChecksum: string | null
+  executionSnapshotStorageKey: string | null
+  executionSnapshotSchemaVersion: number | null
+  evidenceJson: string
+  artifact: { projectId: string; sessionId: string }
+}
 
 const validateDurableMessageOwnership = (
   session: PersistedChatSession,
@@ -264,6 +309,63 @@ const validateDurableMessageOwnership = (
   }
 }
 
+// Resolves the one agent message produced by the prepared prompt turn. It deliberately considers only
+// messages before the next user prompt on the declared Branch and Runtime Segment; choosing a latest
+// message (or accepting multiple candidates) could attach a crashed run to a later turn.
+const inferDurableFinalizationMessageId = (
+  session: PersistedChatSession,
+  context: PreparedArtifactFinalizationContext
+): string | undefined => {
+  const graph = materializeSessionConversationGraph(session).conversationGraph!
+  if (graph.rootFrameId !== context.rootFrameId) return undefined
+  const frame = graph.frames.find((candidate) => candidate.id === context.agentFrameId)
+  const branch = graph.branches.find((candidate) => candidate.id === context.messageBranchId)
+  const segment = graph.runtimeSegments.find(
+    (candidate) =>
+      candidate.id === context.runtimeSegmentId && candidate.agentFrameId === context.agentFrameId
+  )
+  if (!frame || !branch || branch.agentFrameId !== frame.id || !segment) return undefined
+
+  const path = resolveMessageBranchPath(graph, context.messageBranchId)
+  const promptIndex = path.findIndex((message) => message.id === context.promptMessageId)
+  if (promptIndex < 0) return undefined
+  const followingUserOffset = path
+    .slice(promptIndex + 1)
+    .findIndex((message) => message.role === 'user')
+  const turnEnd = followingUserOffset < 0 ? path.length : promptIndex + 1 + followingUserOffset
+  const candidates = path
+    .slice(promptIndex + 1, turnEnd)
+    .filter(
+      (message) =>
+        message.role === 'agent' &&
+        message.agentFrameId === context.agentFrameId &&
+        message.introducedOnBranchId === context.messageBranchId &&
+        message.runtimeSegmentId === context.runtimeSegmentId
+    )
+  if (candidates.length !== 1) return undefined
+
+  validateDurableMessageOwnership(session, { ...context, messageId: candidates[0].id })
+  return candidates[0].id
+}
+
+// Require Session metadata and every persisted owner projection to carry ArtifactFile.id.
+const isArtifactLinkedToDurableMessage = (
+  session: PersistedChatSession,
+  messageId: string,
+  versionId: string
+): boolean => {
+  const owners = [
+    session.messages.find((message) => message.id === messageId),
+    session.conversationGraph?.messages.find((message) => message.id === messageId)
+  ].filter((message): message is NonNullable<typeof message> => !!message)
+
+  return (
+    owners.length > 0 &&
+    owners.every((message) => message.artifactIds?.includes(versionId)) &&
+    !!session.artifacts?.some((artifact) => artifact.id === versionId)
+  )
+}
+
 type CanonicalJson =
   null | boolean | number | string | CanonicalJson[] | { [key: string]: CanonicalJson }
 
@@ -305,6 +407,168 @@ const canonicalize = (value: CanonicalJson): CanonicalJson => {
 const canonicalJson = (value: CanonicalJson): string => JSON.stringify(canonicalize(value))
 
 const sha256 = (value: Buffer | string): string => createHash('sha256').update(value).digest('hex')
+
+const normalizeArtifactFinalizationProofRequest = (
+  request: ArtifactFinalizationProofRequest
+): ArtifactFinalizationProofRequest => {
+  if (!Array.isArray(request.artifactVersionIds) || request.artifactVersionIds.length === 0) {
+    throw new ArtifactFinalizationProofError('Artifact Version ids are required for finalization.')
+  }
+  const artifactVersionIds = request.artifactVersionIds.map((versionId) =>
+    assertSafeSegment(versionId, 'artifact version id')
+  )
+  if (new Set(artifactVersionIds).size !== artifactVersionIds.length) {
+    throw new ArtifactFinalizationProofError('Artifact Version ids must be unique.')
+  }
+
+  return {
+    ...request,
+    artifactVersionIds,
+    projectId: assertSafeSegment(request.projectId, 'project id'),
+    appSessionId: assertSafeSegment(request.appSessionId, 'session id'),
+    artifactRunId: assertSafeSegment(request.artifactRunId, 'artifact run id'),
+    rootFrameId: assertSafeSegment(request.rootFrameId, 'root frame id'),
+    agentFrameId: assertSafeSegment(request.agentFrameId, 'agent frame id'),
+    messageBranchId: assertSafeSegment(request.messageBranchId, 'message branch id'),
+    runtimeSegmentId: assertSafeSegment(request.runtimeSegmentId, 'runtime segment id'),
+    promptMessageId: assertSafeSegment(request.promptMessageId, 'prompt message id'),
+    messageId: assertSafeSegment(request.messageId, 'message id')
+  }
+}
+
+const loadArtifactFinalizationProofVersions = async (
+  client: Pick<PrismaClient, 'artifactVersion'>,
+  request: ArtifactFinalizationProofRequest
+): Promise<ArtifactFinalizationProofVersion[]> =>
+  client.artifactVersion.findMany({
+    where: {
+      artifactRunId: request.artifactRunId,
+      rootFrameId: request.rootFrameId,
+      agentFrameId: request.agentFrameId,
+      messageBranchId: request.messageBranchId,
+      runtimeSegmentId: request.runtimeSegmentId,
+      promptMessageId: request.promptMessageId,
+      state: { in: ['pending', 'finalized'] },
+      artifact: { is: { projectId: request.projectId, sessionId: request.appSessionId } }
+    },
+    include: { artifact: true },
+    orderBy: [{ artifactId: 'asc' }, { versionNumber: 'asc' }]
+  })
+
+const validateArtifactFinalizationProof = (
+  matching: readonly ArtifactFinalizationProofVersion[],
+  request: ArtifactFinalizationProofRequest
+): void => {
+  const matchingIds = new Set(matching.map((version) => version.id))
+  const expectedIds = new Set(request.artifactVersionIds)
+  const missingExpectedVersionId = request.artifactVersionIds.find(
+    (versionId) => !matchingIds.has(versionId)
+  )
+  if (missingExpectedVersionId) {
+    throw new ArtifactFinalizationProofError(
+      `Artifact Version is no longer eligible for finalization: ${missingExpectedVersionId}`
+    )
+  }
+  const unexpectedMatchingVersion = matching.find((version) => !expectedIds.has(version.id))
+  if (unexpectedMatchingVersion) {
+    throw new ArtifactFinalizationProofError(
+      `Artifact Version was omitted from the finalization claim: ${unexpectedMatchingVersion.id}`
+    )
+  }
+
+  const conflicting = matching.find(
+    (version) => version.messageId && version.messageId !== request.messageId
+  )
+  if (conflicting) {
+    throw new ArtifactFinalizationProofError(
+      `Artifact Version ${conflicting.id} is already finalized to a different message.`
+    )
+  }
+
+  const durableBranchIds = new Set(request.messageBranchAncestry ?? [request.messageBranchId])
+  const durableMessageIds = new Set(
+    request.messageAncestry ?? [request.promptMessageId, request.messageId]
+  )
+  for (const version of matching) {
+    try {
+      const parsedEvidence = JSON.parse(version.evidenceJson) as Partial<ArtifactVersionEvidence>
+      if (
+        !parsedEvidence ||
+        typeof parsedEvidence !== 'object' ||
+        (parsedEvidence.producer?.state !== 'available' &&
+          parsedEvidence.producer?.state !== 'unavailable')
+      ) {
+        throw new ArtifactFinalizationProofError(
+          `Artifact Version evidence is invalid: ${version.id}`
+        )
+      }
+      const evidence = parsedEvidence as ArtifactVersionEvidence
+
+      if (!version.executionSnapshotJson) {
+        const hasProducerOrExecutionFields =
+          version.notebookSessionId !== null ||
+          version.producerRunId !== null ||
+          version.producerRunIndex !== null ||
+          version.executionSnapshotChecksum !== null ||
+          version.executionSnapshotStorageKey !== null ||
+          version.executionSnapshotSchemaVersion !== null
+        const isProvenUnavailableWithoutExecution =
+          evidence.producer.state === 'unavailable' &&
+          evidence.execution_status?.state === 'unavailable' &&
+          Array.isArray(evidence.inputs) &&
+          evidence.inputs.length === 0 &&
+          evidence.execution_snapshot_checksum === undefined &&
+          evidence.reproduction_code === undefined
+        if (hasProducerOrExecutionFields || !isProvenUnavailableWithoutExecution) {
+          throw new ArtifactFinalizationProofError(
+            `Artifact Version execution snapshot is missing: ${version.id}`
+          )
+        }
+        continue
+      }
+
+      if (
+        !version.executionSnapshotChecksum ||
+        sha256(version.executionSnapshotJson) !== version.executionSnapshotChecksum
+      ) {
+        throw new ArtifactFinalizationProofError(
+          `Artifact Version execution snapshot is corrupt: ${version.id}`
+        )
+      }
+      const snapshot = parseArtifactExecutionSnapshot(version.executionSnapshotJson)
+      validateArtifactExecutionSnapshot(snapshot, {
+        rootFrameId: version.rootFrameId,
+        agentFrameId: version.agentFrameId,
+        messageBranchId: version.messageBranchId,
+        promptMessageId: version.promptMessageId,
+        producerRunId: version.producerRunId,
+        producerRunIndex: version.producerRunIndex,
+        executionSnapshotChecksum: version.executionSnapshotChecksum,
+        evidence
+      })
+      const outsideDurableAncestry = snapshot.runs.some(
+        (run) =>
+          !durableBranchIds.has(run.messageBranchId) ||
+          (run.promptMessageId
+            ? !durableMessageIds.has(run.promptMessageId)
+            : run.messageBranchId !== request.messageBranchId)
+      )
+      if (outsideDurableAncestry) {
+        throw new ArtifactFinalizationProofError(
+          `Artifact Version execution snapshot is outside the durable Branch ancestry: ${version.id}`
+        )
+      }
+    } catch (error) {
+      if (error instanceof ArtifactFinalizationProofError) throw error
+      throw new ArtifactFinalizationProofError(
+        error instanceof Error
+          ? error.message
+          : `Artifact Version execution snapshot is invalid: ${version.id}`,
+        error
+      )
+    }
+  }
+}
 
 const storageKey = (...segments: string[]): string => segments.join('/')
 
@@ -2140,83 +2404,22 @@ class ArtifactProvenanceRepository {
   }
 
   private async finalizeVerifiedRun(
-    request: FinalizeArtifactVersionsRequest
+    request: ArtifactFinalizationProofRequest
   ): Promise<ArtifactVersionFile[]> {
-    const projectId = assertSafeSegment(request.projectId, 'project id')
-    const appSessionId = assertSafeSegment(request.appSessionId, 'session id')
-    const artifactRunId = assertSafeSegment(request.artifactRunId, 'artifact run id')
-    const rootFrameId = assertSafeSegment(request.rootFrameId, 'root frame id')
-    const agentFrameId = assertSafeSegment(request.agentFrameId, 'agent frame id')
-    const messageBranchId = assertSafeSegment(request.messageBranchId, 'message branch id')
-    const runtimeSegmentId = assertSafeSegment(request.runtimeSegmentId, 'runtime segment id')
-    const promptMessageId = assertSafeSegment(request.promptMessageId, 'prompt message id')
-    const messageId = assertSafeSegment(request.messageId, 'message id')
+    const normalizedRequest = normalizeArtifactFinalizationProofRequest(request)
     const client = await this.options.getClient()
     const versions = await client.$transaction(async (transaction) => {
-      const matching = await transaction.artifactVersion.findMany({
-        where: {
-          artifactRunId,
-          rootFrameId,
-          agentFrameId,
-          messageBranchId,
-          runtimeSegmentId,
-          promptMessageId,
-          state: { in: ['pending', 'finalized'] },
-          artifact: { is: { projectId, sessionId: appSessionId } }
-        },
-        include: { artifact: true },
-        orderBy: [{ artifactId: 'asc' }, { versionNumber: 'asc' }]
-      })
-      const conflicting = matching.find(
-        (version) => version.messageId && version.messageId !== messageId
-      )
-      if (conflicting) {
-        throw new Error(
-          `Artifact Version ${conflicting.id} is already finalized to a different message.`
-        )
-      }
-
-      const durableBranchIds = new Set(request.messageBranchAncestry ?? [messageBranchId])
-      const durableMessageIds = new Set(request.messageAncestry ?? [promptMessageId, messageId])
-      for (const version of matching) {
-        if (!version.executionSnapshotJson) continue
-        if (
-          !version.executionSnapshotChecksum ||
-          sha256(version.executionSnapshotJson) !== version.executionSnapshotChecksum
-        ) {
-          throw new Error(`Artifact Version execution snapshot is corrupt: ${version.id}`)
-        }
-        const snapshot = parseArtifactExecutionSnapshot(version.executionSnapshotJson)
-        validateArtifactExecutionSnapshot(snapshot, {
-          rootFrameId: version.rootFrameId,
-          agentFrameId: version.agentFrameId,
-          messageBranchId: version.messageBranchId,
-          promptMessageId: version.promptMessageId,
-          producerRunId: version.producerRunId,
-          producerRunIndex: version.producerRunIndex,
-          executionSnapshotChecksum: version.executionSnapshotChecksum,
-          evidence: JSON.parse(version.evidenceJson) as ArtifactVersionEvidence
-        })
-        const outsideDurableAncestry = snapshot.runs.some(
-          (run) =>
-            !durableBranchIds.has(run.messageBranchId) ||
-            (run.promptMessageId
-              ? !durableMessageIds.has(run.promptMessageId)
-              : run.messageBranchId !== messageBranchId)
-        )
-        if (outsideDurableAncestry) {
-          throw new Error(
-            `Artifact Version execution snapshot is outside the durable Branch ancestry: ${version.id}`
-          )
-        }
-      }
+      const matching = await loadArtifactFinalizationProofVersions(transaction, normalizedRequest)
+      // Validate the complete proof from the same transaction that commits message ownership. Recovery
+      // does not touch compatibility storage until this transaction succeeds.
+      validateArtifactFinalizationProof(matching, normalizedRequest)
 
       await transaction.artifactVersion.updateMany({
         where: {
           id: { in: matching.map((version) => version.id) },
           state: 'pending'
         },
-        data: { state: 'finalized', messageId }
+        data: { state: 'finalized', messageId: normalizedRequest.messageId }
       })
 
       return transaction.artifactVersion.findMany({
@@ -2260,21 +2463,49 @@ class ArtifactProvenanceRepository {
     )
   }
 
+  async prepareProjectReconciliation(
+    projectIdInput: string
+  ): Promise<ArtifactProjectReconciliationSnapshot> {
+    const projectId = assertSafeSegment(projectIdInput, 'project id')
+    const unfinishedCompatibilityPublications = this.options.compatibilityRepository
+      ? await this.options.compatibilityRepository.listPendingRunPublications(projectId)
+      : []
+    return {
+      [artifactProjectReconciliationState]: {
+        projectId,
+        unfinishedCompatibilityPublications
+      }
+    }
+  }
+
   async reconcileSession(
     projectIdInput: string,
     appSessionIdInput: string,
     durableSession?: PersistedChatSession,
-    options?: { removeOrphanStaging?: boolean }
+    options?: {
+      removeOrphanStaging?: boolean
+      projectReconciliation?: ArtifactProjectReconciliationSnapshot
+    }
   ): Promise<ArtifactStorageReconciliationResult> {
     const projectId = assertSafeSegment(projectIdInput, 'project id')
     const appSessionId = assertSafeSegment(appSessionIdInput, 'app session id')
+    const preparedProjectReconciliation = options?.projectReconciliation
+      ? options.projectReconciliation[artifactProjectReconciliationState]
+      : undefined
+    if (options?.projectReconciliation && !preparedProjectReconciliation) {
+      throw new Error('Artifact Project reconciliation snapshot is invalid.')
+    }
+    if (preparedProjectReconciliation && preparedProjectReconciliation.projectId !== projectId) {
+      throw new Error('Artifact Project reconciliation snapshot belongs to another Project.')
+    }
     const provenanceRoot = resolveStorageKey(
       this.options.storageRoot,
       storageKey('artifacts', projectId, appSessionId, '.provenance')
     )
     const result: ArtifactStorageReconciliationResult = {
       recoveredVersionIds: [],
-      quarantinedVersionIds: []
+      quarantinedVersionIds: [],
+      recoveredMessageArtifacts: []
     }
     const lineageEntries = await readdir(provenanceRoot, { withFileTypes: true }).catch(
       (error: unknown) => {
@@ -2386,30 +2617,63 @@ class ArtifactProvenanceRepository {
       }
     }
 
-    // Compatibility finalization publishes its marker before moving files. If the process exits after
-    // that commit but before SQLite finalization, replay only when the marker context and the durable
-    // conversation graph independently prove the same Branch/message ownership.
+    // Runtime publication first records a durable intent, then renderer finalization upgrades it with
+    // the terminal message before moving compatibility bytes. Recover either crash window only when
+    // the marker context and durable graph independently prove the same Branch/message ownership.
     if (
       durableSession &&
       durableSession.projectId === projectId &&
       durableSession.id === appSessionId &&
       this.options.compatibilityRepository
     ) {
-      const pendingVersions = await client.artifactVersion.findMany({
+      const allFinalizationVersions = await client.artifactVersion.findMany({
         where: {
-          state: 'pending',
+          state: { in: ['pending', 'finalized'] },
           artifact: { is: { projectId, sessionId: appSessionId } }
         }
       })
-      const runIds = [...new Set(pendingVersions.map((version) => version.artifactRunId))]
+      const candidateVersions = allFinalizationVersions.filter(
+        (version) =>
+          version.state === 'pending' ||
+          (version.messageId !== null &&
+            !isArtifactLinkedToDurableMessage(durableSession, version.messageId, version.id))
+      )
+      // Native Session linkage proves only that immutable Provenance content is attached. A single
+      // project scan adds the much narrower set whose compatibility publication is physically
+      // unfinished, without replaying every historical finalized run or rescanning Sessions per run.
+      // Direct callers deliberately get a fresh scan. Startup supplies one opaque Project snapshot
+      // to every Session, avoiding repeated scans without persisting stale repository state.
+      const unfinishedCompatibilityPublications =
+        preparedProjectReconciliation?.unfinishedCompatibilityPublications ??
+        (await this.options.compatibilityRepository.listPendingRunPublications(projectId))
+      const publicationByRunId = new Map(
+        unfinishedCompatibilityPublications.map((publication) => [publication.runId, publication])
+      )
+      const runIds = [
+        ...new Set([
+          ...candidateVersions.map((version) => version.artifactRunId),
+          ...unfinishedCompatibilityPublications.map((publication) => publication.runId)
+        ])
+      ]
       for (const artifactRunId of runIds) {
-        const marker = await this.options.compatibilityRepository.findRunFinalizationMarker(
-          projectId,
-          artifactRunId
-        )
+        const unfinishedPublication = publicationByRunId.get(artifactRunId)
+        const marker = unfinishedPublication
+          ? unfinishedPublication.marker
+            ? {
+                ...unfinishedPublication.marker,
+                sourceSessionId: unfinishedPublication.sourceSessionId
+              }
+            : undefined
+          : await this.options.compatibilityRepository.findRunFinalizationMarker(
+              projectId,
+              artifactRunId
+            )
         const markerContext = marker?.provenanceContext
         if (!marker || marker.sessionId !== appSessionId || !markerContext) continue
-        const runVersions = pendingVersions.filter(
+        // Exact-set proof covers the whole pending/finalized run, including Versions already linked
+        // to Session JSON. The candidate subset decides whether recovery is needed, not what the run
+        // owns; otherwise a partially linked run would look like it contained unexpected Versions.
+        const runVersions = allFinalizationVersions.filter(
           (version) => version.artifactRunId === artifactRunId
         )
         if (
@@ -2425,25 +2689,78 @@ class ArtifactProvenanceRepository {
         ) {
           continue
         }
+        let proof:
+          | {
+              messageId: string
+              ancestry: ReturnType<typeof validateDurableMessageOwnership>
+            }
+          | undefined
         try {
-          const ancestry = validateDurableMessageOwnership(durableSession, {
-            ...markerContext,
-            messageId: marker.messageId
-          })
-          const finalized = await this.finalizeRunWithDurableSession(
-            {
-              projectId,
-              appSessionId,
-              artifactRunId,
-              ...markerContext,
-              messageId: marker.messageId,
-              ...ancestry
-            },
-            durableSession
-          )
-          result.recoveredVersionIds.push(...finalized.map((version) => version.versionId!))
+          const messageId =
+            marker.messageId ?? inferDurableFinalizationMessageId(durableSession, markerContext)
+          if (messageId) {
+            proof = {
+              messageId,
+              ancestry: validateDurableMessageOwnership(durableSession, {
+                ...markerContext,
+                messageId
+              })
+            }
+          }
         } catch {
           // Leave the pending Version visible and retryable; an unproven marker is never guessed.
+        }
+        if (!proof) continue
+
+        const pendingVersionIds = new Set(
+          runVersions.filter((version) => version.state === 'pending').map((version) => version.id)
+        )
+        // Markers created before exact-set publication shipped have no frozen ids. Preserve that
+        // on-disk compatibility by deriving the whole run once; every new marker carries ids and is
+        // consumed verbatim, so recovery can never widen or narrow a modern runtime claim.
+        const markerVersionIds =
+          marker.artifactVersionIds ?? runVersions.map((version) => version.id)
+        const finalizationRequest: ArtifactFinalizationProofRequest = {
+          projectId,
+          appSessionId,
+          artifactRunId,
+          ...markerContext,
+          messageId: proof.messageId,
+          ...proof.ancestry,
+          artifactVersionIds: markerVersionIds
+        }
+        let finalized: ArtifactVersionFile[]
+        try {
+          // Commit complete ownership and execution proof before the irreversible compatibility move.
+          // A crash or I/O failure after this point leaves a finalized-but-unlinked Version, which the
+          // candidate selector above deliberately retries on the next startup.
+          finalized = await this.finalizeVerifiedRun(finalizationRequest)
+        } catch (error) {
+          if (error instanceof ArtifactFinalizationProofError) continue
+          throw error
+        }
+        // Replay unconditionally after the durable Version commit: a bound marker may have survived a
+        // crash before pending bytes moved. Operational compatibility failures escape and keep startup
+        // incomplete without exposing the not-yet-attached Version in Session JSON.
+        await this.options.compatibilityRepository.finalizeRunArtifacts({
+          projectName: projectId,
+          sourceSessionId: marker.sourceSessionId,
+          sessionId: appSessionId,
+          runId: artifactRunId,
+          messageId: proof.messageId,
+          artifactVersionIds: markerVersionIds,
+          provenanceContext: markerContext
+        })
+        result.recoveredVersionIds.push(
+          ...finalized
+            .filter((version) => pendingVersionIds.has(version.versionId!))
+            .map((version) => version.versionId!)
+        )
+        if (finalized.length > 0) {
+          result.recoveredMessageArtifacts.push({
+            messageId: proof.messageId,
+            artifacts: finalized
+          })
         }
       }
     }

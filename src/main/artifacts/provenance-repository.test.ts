@@ -67,7 +67,11 @@ describe('artifact provenance repository', () => {
       repository.reconcileSession('project-1', 'session-1', undefined, {
         removeOrphanStaging: true
       })
-    ).resolves.toEqual({ recoveredVersionIds: [], quarantinedVersionIds: [] })
+    ).resolves.toEqual({
+      recoveredVersionIds: [],
+      quarantinedVersionIds: [],
+      recoveredMessageArtifacts: []
+    })
     await expect(stat(stagingDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
@@ -737,7 +741,8 @@ describe('artifact provenance repository', () => {
 
     await expect(repository.reconcileSession('project-1', 'session-1')).resolves.toEqual({
       recoveredVersionIds: [versionId],
-      quarantinedVersionIds: [corruptVersionId]
+      quarantinedVersionIds: [corruptVersionId],
+      recoveredMessageArtifacts: []
     })
     await expect(
       readFile(join(storageRoot, ...contentStorageKey.split('/')), 'utf8')
@@ -2011,6 +2016,7 @@ describe('artifact provenance repository', () => {
         projectId: 'project-1',
         appSessionId: 'session-1',
         artifactRunId: 'artifact-run-1',
+        artifactVersionIds: [version.versionId],
         ...context,
         messageId: 'message-forged',
         messageBranchAncestry: [branch.id],
@@ -2025,6 +2031,7 @@ describe('artifact provenance repository', () => {
         projectId: 'project-1',
         appSessionId: 'session-1',
         artifactRunId: 'artifact-run-1',
+        artifactVersionIds: [version.versionId],
         ...context,
         messageId: assistant.id
       })
@@ -2040,6 +2047,7 @@ describe('artifact provenance repository', () => {
         projectId: 'project-1',
         appSessionId: 'session-1',
         artifactRunId: 'artifact-run-1',
+        artifactVersionIds: [version.versionId],
         ...context,
         messageId: assistant.id
       })
@@ -2133,11 +2141,16 @@ describe('artifact provenance repository', () => {
       where: { id: interrupted.id },
       data: { state: 'staging' }
     })
+    const finalizableVersions = await client.artifactVersion.findMany({
+      where: { artifactRunId: common.artifactRunId, state: 'pending' },
+      orderBy: { versionNumber: 'asc' }
+    })
 
     const finalizeRequest = {
       projectId: common.projectId,
       appSessionId: common.appSessionId,
       artifactRunId: common.artifactRunId,
+      artifactVersionIds: finalizableVersions.map((version) => version.id),
       rootFrameId: common.rootFrameId,
       agentFrameId: common.agentFrameId,
       messageBranchId: common.messageBranchId,
@@ -2145,6 +2158,21 @@ describe('artifact provenance repository', () => {
       promptMessageId: common.promptMessageId,
       messageId: 'message-1'
     }
+    await expect(
+      repository.finalizeRun({ ...finalizeRequest, artifactVersionIds: [] })
+    ).rejects.toThrow(/Artifact Version ids/i)
+    await expect(
+      repository.finalizeRun({
+        ...finalizeRequest,
+        artifactVersionIds: [finalizeRequest.artifactVersionIds[0]]
+      })
+    ).rejects.toThrow(/omitted from the finalization claim/i)
+    await expect(
+      repository.finalizeRun({
+        ...finalizeRequest,
+        artifactVersionIds: [...finalizeRequest.artifactVersionIds, 'version-not-in-run']
+      })
+    ).rejects.toThrow(/no longer eligible/i)
     const ancestryProbe = await client.artifactVersion.findFirstOrThrow({
       where: { artifactRunId: common.artifactRunId, versionNumber: 1 }
     })
@@ -2250,13 +2278,38 @@ describe('artifact provenance repository', () => {
       getClient: () => Promise.resolve(client),
       compatibilityRepository
     })
+    const prompt = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'draw',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const message = {
+      id: 'message-1',
+      role: 'agent' as const,
+      content: 'done',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const conversationGraph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [prompt, message],
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 2
+    })
     const context = {
-      rootFrameId: 'root-frame-1',
-      agentFrameId: 'root-frame-1',
-      messageBranchId: 'branch-1',
-      runtimeSegmentId: 'runtime-segment-1',
-      promptMessageId: 'prompt-1'
-    } as const
+      rootFrameId: conversationGraph.rootFrameId,
+      agentFrameId: conversationGraph.activeFrameId,
+      messageBranchId: conversationGraph.branches[0].id,
+      runtimeSegmentId: conversationGraph.runtimeSegments[0].id,
+      promptMessageId: prompt.id
+    }
     const request = {
       projectId: 'project-1',
       appSessionId: 'session-1',
@@ -2297,24 +2350,6 @@ describe('artifact provenance repository', () => {
       provenanceContext: context
     })
 
-    const prompt = {
-      id: 'prompt-1',
-      role: 'user' as const,
-      content: 'draw',
-      status: 'complete' as const,
-      eventIds: [],
-      createdAt: 1,
-      updatedAt: 1
-    }
-    const message = {
-      id: 'message-1',
-      role: 'agent' as const,
-      content: 'done',
-      status: 'complete' as const,
-      eventIds: [],
-      createdAt: 2,
-      updatedAt: 2
-    }
     const session: PersistedChatSession = {
       id: 'session-1',
       projectId: 'project-1',
@@ -2322,58 +2357,7 @@ describe('artifact provenance repository', () => {
       cwd: '/workspace',
       status: 'idle',
       messages: [prompt, message],
-      conversationGraph: {
-        schemaVersion: 1,
-        rootFrameId: context.rootFrameId,
-        activeFrameId: context.agentFrameId,
-        frames: [
-          {
-            id: context.agentFrameId,
-            originBindingState: 'root',
-            kind: 'root',
-            status: 'completed',
-            activeBranchId: context.messageBranchId,
-            createdAt: 1,
-            completedAt: 2
-          }
-        ],
-        branches: [
-          {
-            id: context.messageBranchId,
-            agentFrameId: context.agentFrameId,
-            headMessageId: message.id,
-            createdAt: 1,
-            updatedAt: 2
-          }
-        ],
-        messages: [
-          {
-            ...prompt,
-            agentFrameId: context.agentFrameId,
-            introducedOnBranchId: context.messageBranchId,
-            revisionRootMessageId: prompt.id,
-            runtimeSegmentId: context.runtimeSegmentId
-          },
-          {
-            ...message,
-            agentFrameId: context.agentFrameId,
-            introducedOnBranchId: context.messageBranchId,
-            parentMessageId: prompt.id,
-            runtimeSegmentId: context.runtimeSegmentId
-          }
-        ],
-        activities: [],
-        activityGroups: [],
-        runtimeSegments: [
-          {
-            id: context.runtimeSegmentId,
-            agentFrameId: context.agentFrameId,
-            frameworkId: 'codex',
-            startedAt: 1,
-            endedAt: 2
-          }
-        ]
-      },
+      conversationGraph,
       createdAt: 1,
       updatedAt: 2
     }
@@ -2401,6 +2385,265 @@ describe('artifact provenance repository', () => {
     await expect(
       client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
     ).resolves.toMatchObject({ state: 'finalized', messageId: 'message-1' })
+  })
+
+  it('recovers a prepared run only to its unique durable turn message', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-intent-recovery-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const compatibilityRepository = new ArtifactRepository(storageRoot)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository
+    })
+    const prompt = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'draw',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const message = {
+      id: 'message-1',
+      role: 'agent' as const,
+      content: 'done',
+      // Renderer lifecycle persistence may lag the provider stop that prepared the durable handoff.
+      status: 'streaming' as const,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const conversationGraph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [prompt, message],
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 2
+    })
+    const context = {
+      rootFrameId: conversationGraph.rootFrameId,
+      agentFrameId: conversationGraph.activeFrameId,
+      messageBranchId: conversationGraph.branches[0].id,
+      runtimeSegmentId: conversationGraph.runtimeSegments[0].id,
+      promptMessageId: prompt.id
+    }
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-before-renderer-finalize',
+      writeOperationId: 'write-before-renderer-finalize',
+      writeRequestChecksum: 'e'.repeat(64),
+      ...context,
+      filename: 'prepared.png'
+    } as const
+    await compatibilityRepository.writePendingFile({
+      projectName: request.projectId,
+      sessionId: request.artifactStorageSessionId,
+      runId: request.artifactRunId,
+      filename: request.filename,
+      source: createPngInlineSource('prepared-window')
+    })
+    const version = await repository.createVersion(request)
+    const session: PersistedChatSession = {
+      id: request.appSessionId,
+      projectId: request.projectId,
+      title: 'Prepared recovery',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [prompt, message],
+      conversationGraph,
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    // A streaming node plus pending Version alone does not prove that the runtime ended the turn and
+    // chose to publish it; a crash before the prepared witness must remain pending.
+    await expect(
+      repository.reconcileSession(request.projectId, request.appSessionId, session)
+    ).resolves.toMatchObject({ recoveredVersionIds: [], recoveredMessageArtifacts: [] })
+
+    // Simulate exit after the runtime durably prepared the handoff but before the renderer finalized it.
+    // The witness proves turn termination; the renderer-owned message status is allowed to lag.
+    await compatibilityRepository.prepareRunFinalization({
+      projectName: request.projectId,
+      sourceSessionId: request.artifactStorageSessionId,
+      sessionId: request.appSessionId,
+      runId: request.artifactRunId,
+      provenanceContext: context
+    })
+    const sessionWithoutTerminalMessage: PersistedChatSession = {
+      ...session,
+      messages: [prompt],
+      conversationGraph: {
+        ...session.conversationGraph!,
+        branches: session.conversationGraph!.branches.map((branch) => ({
+          ...branch,
+          headMessageId: prompt.id
+        })),
+        messages: session.conversationGraph!.messages.slice(0, 1)
+      }
+    }
+    await expect(
+      repository.reconcileSession(
+        request.projectId,
+        request.appSessionId,
+        sessionWithoutTerminalMessage
+      )
+    ).resolves.toMatchObject({ recoveredVersionIds: [], recoveredMessageArtifacts: [] })
+
+    const wrongBranchSession: PersistedChatSession = {
+      ...session,
+      conversationGraph: {
+        ...session.conversationGraph!,
+        branches: [
+          {
+            ...session.conversationGraph!.branches[0],
+            headMessageId: prompt.id
+          },
+          {
+            id: 'branch-other',
+            agentFrameId: context.agentFrameId,
+            headMessageId: message.id,
+            createdAt: 1,
+            updatedAt: 2
+          }
+        ],
+        messages: session.conversationGraph!.messages.map((node) =>
+          node.id === message.id ? { ...node, introducedOnBranchId: 'branch-other' } : node
+        )
+      }
+    }
+    await expect(
+      repository.reconcileSession(request.projectId, request.appSessionId, wrongBranchSession)
+    ).resolves.toMatchObject({ recoveredVersionIds: [], recoveredMessageArtifacts: [] })
+
+    const ambiguousMessage = {
+      ...message,
+      id: 'message-ambiguous',
+      content: 'later agent output',
+      createdAt: 3,
+      updatedAt: 3
+    }
+    const ambiguousSession: PersistedChatSession = {
+      ...session,
+      messages: [prompt, message, ambiguousMessage],
+      conversationGraph: {
+        ...session.conversationGraph!,
+        branches: session.conversationGraph!.branches.map((branch) => ({
+          ...branch,
+          headMessageId: ambiguousMessage.id,
+          updatedAt: 3
+        })),
+        messages: [
+          ...session.conversationGraph!.messages,
+          {
+            ...ambiguousMessage,
+            agentFrameId: context.agentFrameId,
+            introducedOnBranchId: context.messageBranchId,
+            parentMessageId: message.id,
+            runtimeSegmentId: context.runtimeSegmentId
+          }
+        ]
+      }
+    }
+    await expect(
+      repository.reconcileSession(request.projectId, request.appSessionId, ambiguousSession)
+    ).resolves.toMatchObject({ recoveredVersionIds: [], recoveredMessageArtifacts: [] })
+    await expect(
+      client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    ).resolves.toMatchObject({ state: 'pending', messageId: null })
+
+    const recovered = await repository.reconcileSession(
+      request.projectId,
+      request.appSessionId,
+      session
+    )
+    expect(recovered).toMatchObject({
+      recoveredVersionIds: expect.arrayContaining([version.versionId]),
+      recoveredMessageArtifacts: [
+        {
+          messageId: message.id,
+          artifacts: [
+            expect.objectContaining({
+              id: version.versionId,
+              versionId: version.versionId,
+              artifactId: version.artifactId
+            })
+          ]
+        }
+      ]
+    })
+    await expect(
+      client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    ).resolves.toMatchObject({ state: 'finalized', messageId: message.id })
+    await expect(
+      compatibilityRepository.findRunFinalizationMarker(request.projectId, request.artifactRunId)
+    ).resolves.toMatchObject({ messageId: message.id, provenanceContext: context })
+
+    // A failed Session JSON save retries the attachment even though SQLite is already finalized.
+    const attachmentRetry = await repository.reconcileSession(
+      request.projectId,
+      request.appSessionId,
+      session
+    )
+    expect(attachmentRetry).toMatchObject({
+      recoveredVersionIds: [],
+      recoveredMessageArtifacts: [
+        {
+          messageId: message.id,
+          artifacts: [expect.objectContaining({ id: version.versionId })]
+        }
+      ]
+    })
+
+    const messageLinkedSession: PersistedChatSession = {
+      ...session,
+      messages: session.messages.map((item) =>
+        item.id === message.id ? { ...item, artifactIds: [version.versionId] } : item
+      ),
+      conversationGraph: {
+        ...session.conversationGraph!,
+        messages: session.conversationGraph!.messages.map((item) =>
+          item.id === message.id ? { ...item, artifactIds: [version.versionId] } : item
+        )
+      }
+    }
+    await expect(
+      repository.reconcileSession(request.projectId, request.appSessionId, messageLinkedSession)
+    ).resolves.toMatchObject({
+      recoveredVersionIds: [],
+      recoveredMessageArtifacts: [
+        { messageId: message.id, artifacts: [expect.objectContaining({ id: version.versionId })] }
+      ]
+    })
+
+    const linkedSession: PersistedChatSession = {
+      ...messageLinkedSession,
+      artifacts: [
+        {
+          id: version.versionId,
+          artifactId: version.artifactId,
+          versionId: version.versionId,
+          versionNumber: version.versionNumber,
+          kind: 'managed-file',
+          path: version.path,
+          fileUrl: version.fileUrl,
+          name: version.name,
+          mimeType: version.mimeType,
+          size: version.size,
+          mtimeMs: version.mtimeMs,
+          sha256: version.checksum
+        }
+      ]
+    }
+    await expect(
+      repository.reconcileSession(request.projectId, request.appSessionId, linkedSession)
+    ).resolves.toMatchObject({ recoveredVersionIds: [], recoveredMessageArtifacts: [] })
   })
 
   it('withholds saved Review conclusions when an active source Session cannot be loaded', async () => {
@@ -2680,6 +2923,7 @@ describe('artifact provenance repository', () => {
       projectId: request.projectId,
       appSessionId: request.appSessionId,
       artifactRunId: request.artifactRunId,
+      artifactVersionIds: [version.versionId],
       rootFrameId: request.rootFrameId,
       agentFrameId: request.agentFrameId,
       messageBranchId: request.messageBranchId,
@@ -2743,7 +2987,11 @@ describe('artifact provenance repository', () => {
 
     await expect(
       repository.reconcileSession(request.projectId, request.appSessionId)
-    ).resolves.toEqual({ recoveredVersionIds: [version.versionId], quarantinedVersionIds: [] })
+    ).resolves.toEqual({
+      recoveredVersionIds: [version.versionId],
+      quarantinedVersionIds: [],
+      recoveredMessageArtifacts: []
+    })
     await expect(
       client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
     ).resolves.toMatchObject({
@@ -2812,7 +3060,11 @@ describe('artifact provenance repository', () => {
 
     await expect(
       repository.reconcileSession(request.projectId, request.appSessionId)
-    ).resolves.toEqual({ recoveredVersionIds: [version.versionId], quarantinedVersionIds: [] })
+    ).resolves.toEqual({
+      recoveredVersionIds: [version.versionId],
+      quarantinedVersionIds: [],
+      recoveredMessageArtifacts: []
+    })
     await expect(
       client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
     ).resolves.toMatchObject({
@@ -2882,7 +3134,11 @@ describe('artifact provenance repository', () => {
 
     await expect(
       repository.reconcileSession(request.projectId, request.appSessionId)
-    ).resolves.toEqual({ recoveredVersionIds: [], quarantinedVersionIds: [] })
+    ).resolves.toEqual({
+      recoveredVersionIds: [],
+      quarantinedVersionIds: [],
+      recoveredMessageArtifacts: []
+    })
     await expect(readFile(version.path)).resolves.toBeTruthy()
     await expect(
       client.artifactVersion.findUnique({ where: { id: version.versionId } })
@@ -2891,7 +3147,11 @@ describe('artifact provenance repository', () => {
     await rm(corruptMetadataPath)
     await expect(
       repository.reconcileSession(request.projectId, request.appSessionId)
-    ).resolves.toEqual({ recoveredVersionIds: [version.versionId], quarantinedVersionIds: [] })
+    ).resolves.toEqual({
+      recoveredVersionIds: [version.versionId],
+      quarantinedVersionIds: [],
+      recoveredMessageArtifacts: []
+    })
   })
 
   it('quarantines an unindexed Version when no immutable lifecycle proof exists', async () => {
@@ -2983,7 +3243,11 @@ describe('artifact provenance repository', () => {
 
     await expect(
       repository.reconcileSession(request.projectId, request.appSessionId)
-    ).resolves.toEqual({ recoveredVersionIds: [], quarantinedVersionIds: [version.versionId] })
+    ).resolves.toEqual({
+      recoveredVersionIds: [],
+      quarantinedVersionIds: [version.versionId],
+      recoveredMessageArtifacts: []
+    })
     await expect(readFile(version.path)).rejects.toMatchObject({ code: 'ENOENT' })
     const quarantineRoot = join(
       storageRoot,

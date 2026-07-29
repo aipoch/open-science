@@ -59,7 +59,6 @@ type ArtifactHandlerDependencies = {
   provenance?: Pick<
     ArtifactProvenanceRepository,
     | 'finalizeRun'
-    | 'validateFinalizationOwnership'
     | 'getLineage'
     | 'getVersionProvenance'
     | 'getVersionCore'
@@ -182,7 +181,7 @@ const finalizeRunArtifacts = async (
   repository: ArtifactRepository,
   runRegistry: ArtifactRunRegistry,
   request: FinalizeRunArtifactsRequest,
-  provenance?: Pick<ArtifactProvenanceRepository, 'finalizeRun' | 'validateFinalizationOwnership'>
+  provenance?: Pick<ArtifactProvenanceRepository, 'finalizeRun'>
 ): Promise<ArtifactFile[]> => {
   const claim = runRegistry.resolve(request.claimId)
 
@@ -203,18 +202,24 @@ const finalizeRunArtifacts = async (
 
   let provenanceArtifacts: ArtifactFile[] | undefined
   let provenanceRequest: Parameters<ArtifactProvenanceRepository['finalizeRun']>[0] | undefined
-  if (
-    provenance &&
-    claim.rootFrameId &&
-    claim.agentFrameId &&
-    claim.messageBranchId &&
-    claim.runtimeSegmentId &&
-    claim.promptMessageId
-  ) {
+  if (provenance) {
+    if (
+      !claim.rootFrameId ||
+      !claim.agentFrameId ||
+      !claim.messageBranchId ||
+      !claim.runtimeSegmentId ||
+      !claim.promptMessageId
+    ) {
+      throw new Error('Artifact run claim is missing complete provenance context.')
+    }
+    if (!claim.artifactVersionIds || claim.artifactVersionIds.length === 0) {
+      throw new Error('Artifact run claim is missing exact Artifact Version ids.')
+    }
     provenanceRequest = {
       projectId: claim.projectName,
       appSessionId: claim.sessionId,
       artifactRunId: claim.runId,
+      artifactVersionIds: [...claim.artifactVersionIds],
       rootFrameId: claim.rootFrameId,
       agentFrameId: claim.agentFrameId,
       messageBranchId: claim.messageBranchId,
@@ -222,19 +227,20 @@ const finalizeRunArtifacts = async (
       promptMessageId: claim.promptMessageId,
       messageId: request.messageId
     }
-    // Preflight the renderer-provided terminal message against the durable conversation graph before
-    // touching compatibility storage. The same proof is repeated when SQLite ownership commits.
-    await provenance.validateFinalizationOwnership(provenanceRequest)
+    // Commit the complete provenance proof and immutable message ownership before compatibility bytes
+    // move. A later compatibility failure is retryable because the prepared marker remains durable.
+    provenanceArtifacts = await provenance.finalizeRun(provenanceRequest)
   }
 
-  // Publish the durable compatibility marker and move first. If SQLite finalization then fails or the
-  // process crashes, startup recovery can replay from this marker; the reverse order is unrecoverable.
+  // Publish compatibility bytes only after the complete provenance transaction succeeds. The move is
+  // idempotent, so a finalized-but-unlinked run can replay here or during prepared-marker recovery.
   const artifacts = await repository.finalizeRunArtifacts({
     projectName: claim.projectName,
     sourceSessionId: claim.artifactSessionId,
     sessionId: claim.sessionId,
     runId: claim.runId,
     messageId: request.messageId,
+    ...(claim.artifactVersionIds ? { artifactVersionIds: claim.artifactVersionIds } : {}),
     ...(claim.rootFrameId &&
     claim.agentFrameId &&
     claim.messageBranchId &&
@@ -251,10 +257,6 @@ const finalizeRunArtifacts = async (
         }
       : {})
   })
-
-  if (provenance && provenanceRequest) {
-    provenanceArtifacts = await provenance.finalizeRun(provenanceRequest)
-  }
 
   runRegistry.markFinalized(request.claimId, request.messageId)
 
@@ -273,7 +275,6 @@ const registerArtifactIpcHandlers = (
   provenance?: Pick<
     ArtifactProvenanceRepository,
     | 'finalizeRun'
-    | 'validateFinalizationOwnership'
     | 'getLineage'
     | 'getVersionProvenance'
     | 'getVersionCore'

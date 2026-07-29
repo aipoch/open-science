@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { ArtifactWriteSource } from '../../shared/artifacts'
 import { createPngBytes, createPngInlineSource } from './artifact-test-fixtures'
 import {
+  ArtifactCompatibilityScanIncompleteError,
   ArtifactRepository,
   getArtifactCurrentRunFilePath,
   getProjectArtifactDir
@@ -412,6 +413,226 @@ describe('artifact repository', () => {
     await expect(
       readdir(join(root, 'artifacts', 'default-project', 'session-1', '.pending'))
     ).resolves.not.toContain('run-1')
+  })
+
+  it('durably prepares a run for finalization before its terminal message is known', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    const provenanceContext = {
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1'
+    }
+
+    await repository.prepareRunFinalization({
+      projectName: 'default-project',
+      sourceSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      artifactVersionIds: ['version-1', 'version-2'],
+      provenanceContext
+    })
+
+    await expect(
+      repository.findRunFinalizationMarker('default-project', 'run-1')
+    ).resolves.toMatchObject({
+      sourceSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      provenanceContext,
+      artifactVersionIds: ['version-1', 'version-2']
+    })
+    await expect(
+      repository.findRunFinalizationMarker('default-project', 'run-1')
+    ).resolves.not.toHaveProperty('messageId')
+
+    await repository.finalizeRunArtifacts({
+      projectName: 'default-project',
+      sourceSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      messageId: 'message-1'
+    })
+
+    await expect(
+      repository.findRunFinalizationMarker('default-project', 'run-1')
+    ).resolves.toMatchObject({
+      sourceSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      provenanceContext,
+      artifactVersionIds: ['version-1', 'version-2']
+    })
+    await expect(
+      repository.prepareRunFinalization({
+        projectName: 'default-project',
+        sourceSessionId: 'artifact-session-1',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        artifactVersionIds: ['version-2', 'version-1'],
+        provenanceContext
+      })
+    ).resolves.toBeUndefined()
+    await expect(
+      repository.finalizeRunArtifacts({
+        projectName: 'default-project',
+        sourceSessionId: 'artifact-session-1',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        messageId: 'message-1',
+        artifactVersionIds: ['version-1']
+      })
+    ).rejects.toThrow(/Version ids conflict/i)
+    await expect(
+      repository.prepareRunFinalization({
+        projectName: 'default-project',
+        sourceSessionId: 'artifact-session-1',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        artifactVersionIds: ['version-1', 'version-2'],
+        provenanceContext: { ...provenanceContext, messageBranchId: 'branch-other' }
+      })
+    ).rejects.toThrow(/context conflicts/i)
+  })
+
+  it('discovers an unmarked pending publication as ownerless', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'storage-session-1',
+      runId: 'run-ownerless',
+      filename: 'draft.txt',
+      source: createInlineSource('draft')
+    })
+    await mkdir(
+      join(
+        root,
+        'artifacts',
+        'default-project',
+        'storage-session-1',
+        '.pending',
+        'run-empty',
+        '.metadata'
+      ),
+      { recursive: true }
+    )
+    const handoff = getArtifactCurrentRunFilePath(root, 'default-project', 'storage-session-1')
+    await writeFile(handoff, JSON.stringify({ runId: 'run-ownerless' }), 'utf8')
+
+    await expect(repository.listPendingRunPublications('default-project')).resolves.toEqual([
+      {
+        sourceSessionId: 'storage-session-1',
+        runId: 'run-ownerless'
+      }
+    ])
+  })
+
+  it('discovers a pending publication whose byte moved before its metadata sidecar', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    const pending = await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'storage-session-1',
+      runId: 'run-metadata-only',
+      filename: 'result.txt',
+      mimeType: 'text/plain',
+      source: createInlineSource('result')
+    })
+    await rm(pending.path)
+
+    await expect(repository.listPendingRunPublications('default-project')).resolves.toEqual([
+      {
+        sourceSessionId: 'storage-session-1',
+        runId: 'run-metadata-only'
+      }
+    ])
+  })
+
+  it('marks a corrupt pending publication marker as an incomplete scan', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'storage-session-1',
+      runId: 'run-corrupt',
+      filename: 'result.txt',
+      source: createInlineSource('result')
+    })
+    const markerPath = join(
+      root,
+      'artifacts',
+      'default-project',
+      'storage-session-1',
+      '.runs',
+      'run-corrupt.json'
+    )
+    await mkdir(dirname(markerPath), { recursive: true })
+    await writeFile(markerPath, '{not-json', 'utf8')
+
+    await expect(repository.listPendingRunPublications('default-project')).rejects.toBeInstanceOf(
+      ArtifactCompatibilityScanIncompleteError
+    )
+  })
+
+  it('marks duplicate project-scoped pending run ids as an incomplete scan', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    for (const sessionId of ['storage-session-1', 'storage-session-2']) {
+      await repository.writePendingFile({
+        projectName: 'default-project',
+        sessionId,
+        runId: 'run-duplicate',
+        filename: 'result.txt',
+        source: createInlineSource(sessionId)
+      })
+    }
+
+    await expect(repository.listPendingRunPublications('default-project')).rejects.toBeInstanceOf(
+      ArtifactCompatibilityScanIncompleteError
+    )
+  })
+
+  it('marks pending publication marker I/O failure as an incomplete scan', async () => {
+    const root = await createStorageRoot()
+    let failMarkerRead = false
+    const repository = new ArtifactRepository(root, {
+      syncFile: async () => undefined,
+      syncDirectory: async () => undefined,
+      readMarkerFile: async (path) => {
+        if (failMarkerRead && path.endsWith('run-io.json')) {
+          throw Object.assign(new Error('marker read failed'), { code: 'EIO' })
+        }
+        return readFile(path, 'utf8')
+      }
+    })
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'storage-session-1',
+      runId: 'run-io',
+      filename: 'result.txt',
+      source: createInlineSource('result')
+    })
+    await repository.prepareRunFinalization({
+      projectName: 'default-project',
+      sourceSessionId: 'storage-session-1',
+      sessionId: 'session-1',
+      runId: 'run-io',
+      artifactVersionIds: ['version-1'],
+      provenanceContext: {
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'agent-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-segment-1',
+        promptMessageId: 'prompt-1'
+      }
+    })
+    failMarkerRead = true
+
+    await expect(repository.listPendingRunPublications('default-project')).rejects.toBeInstanceOf(
+      ArtifactCompatibilityScanIncompleteError
+    )
   })
 
   it('does not move files until the durable run marker directory barrier succeeds', async () => {

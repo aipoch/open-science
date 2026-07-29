@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import type { ArtifactFile, ArtifactWriteSource } from '../../shared/artifacts'
+import { createLinearConversationGraph } from '../../shared/conversation-graph'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createPngBytes, createPngInlineSource } from './artifact-test-fixtures'
+import { ArtifactProvenanceRepository } from './provenance-repository'
 import { ArtifactRepository } from './repository'
 import {
   createArtifactHandlers,
@@ -18,6 +21,7 @@ import {
   clearMigrationPending,
   waitForDataRootWriters
 } from '../storage/migration-state'
+import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 
 // Capture every ipcMain.handle registration so registerArtifactIpcHandlers can be verified directly.
 // The mock is set up here (before importing the IPC module) so registering handlers in tests is
@@ -167,9 +171,6 @@ describe('artifact IPC handlers', () => {
       })
     } as unknown as ArtifactRepository
     const provenance = {
-      validateFinalizationOwnership: vi.fn(async () => {
-        callOrder.push('preflight')
-      }),
       finalizeRun: vi.fn(async () => {
         callOrder.push('sqlite')
         return [finalizedArtifact]
@@ -196,7 +197,8 @@ describe('artifact IPC handlers', () => {
       messageBranchAncestry: ['branch-parent', 'branch-1'],
       messageAncestry: ['prompt-1', 'message-1'],
       runtimeSegmentId: 'runtime-1',
-      promptMessageId: 'prompt-1'
+      promptMessageId: 'prompt-1',
+      artifactVersionIds: ['version-1']
     })
     const handlers = createArtifactHandlers(repository, registry, {
       provenance: provenance as never,
@@ -206,11 +208,12 @@ describe('artifact IPC handlers', () => {
     await handlers.finalizeRunArtifacts({ claimId, messageId: 'message-1' })
 
     expect(mutationScopes).toEqual([{ projectId: 'default-project', sessionId: 'session-1' }])
-    expect(callOrder).toEqual(['preflight', 'compatibility', 'sqlite'])
+    expect(callOrder).toEqual(['sqlite', 'compatibility'])
     expect(provenance.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         messageId: 'message-1',
-        promptMessageId: 'prompt-1'
+        promptMessageId: 'prompt-1',
+        artifactVersionIds: ['version-1']
       })
     )
     expect(provenance.finalizeRun).not.toHaveBeenCalledWith(
@@ -218,15 +221,12 @@ describe('artifact IPC handlers', () => {
     )
   })
 
-  it('does not move compatibility files when durable provenance ownership is rejected', async () => {
+  it('does not move compatibility files when the complete provenance proof is rejected', async () => {
     const repository = {
       finalizeRunArtifacts: vi.fn()
     } as unknown as ArtifactRepository
     const provenance = {
-      validateFinalizationOwnership: vi
-        .fn()
-        .mockRejectedValue(new Error('durable Session graph rejected message')),
-      finalizeRun: vi.fn()
+      finalizeRun: vi.fn().mockRejectedValue(new Error('corrupt Artifact Version proof'))
     }
     const registry = new ArtifactRunRegistry()
     const claimId = registry.register({
@@ -238,7 +238,8 @@ describe('artifact IPC handlers', () => {
       agentFrameId: 'agent-frame-1',
       messageBranchId: 'branch-1',
       runtimeSegmentId: 'runtime-1',
-      promptMessageId: 'prompt-1'
+      promptMessageId: 'prompt-1',
+      artifactVersionIds: ['version-1']
     })
     const handlers = createArtifactHandlers(repository, registry, {
       provenance: provenance as never
@@ -246,20 +247,173 @@ describe('artifact IPC handlers', () => {
 
     await expect(
       handlers.finalizeRunArtifacts({ claimId, messageId: 'message-forged' })
-    ).rejects.toThrow(/durable Session graph/i)
+    ).rejects.toThrow(/corrupt Artifact Version proof/i)
     expect(repository.finalizeRunArtifacts).not.toHaveBeenCalled()
-    expect(provenance.finalizeRun).not.toHaveBeenCalled()
+    expect(provenance.finalizeRun).toHaveBeenCalledOnce()
     expect(registry.resolve(claimId).finalizedMessageId).toBeUndefined()
   })
 
-  it('leaves a recoverable compatibility marker when SQLite finalization fails', async () => {
+  it('does not bypass provenance when a claim is missing part of its durable context', async () => {
+    const repository = {
+      finalizeRunArtifacts: vi.fn()
+    } as unknown as ArtifactRepository
+    const provenance = { finalizeRun: vi.fn() }
+    const registry = new ArtifactRunRegistry()
+    const claimId = registry.register({
+      projectName: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      artifactVersionIds: ['version-1'],
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1'
+    })
+    const handlers = createArtifactHandlers(repository, registry, {
+      provenance: provenance as never
+    })
+
+    await expect(
+      handlers.finalizeRunArtifacts({ claimId, messageId: 'message-1' })
+    ).rejects.toThrow(/complete provenance context/i)
+    expect(provenance.finalizeRun).not.toHaveBeenCalled()
+    expect(repository.finalizeRunArtifacts).not.toHaveBeenCalled()
+  })
+
+  it('keeps pending bytes in place when normal IPC encounters a corrupt provenance proof', async () => {
+    const root = await createStorageRoot()
+    const client = createProjectDbClient(root)
+    await ensureProjectSchema(client)
+    try {
+      const prompt = {
+        id: 'prompt-1',
+        role: 'user' as const,
+        content: 'draw',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const message = {
+        id: 'message-1',
+        role: 'agent' as const,
+        content: 'done',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 2,
+        updatedAt: 2
+      }
+      const conversationGraph = createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [prompt, message],
+        frameworkId: 'codex',
+        createdAt: 1,
+        updatedAt: 2
+      })
+      const session: PersistedChatSession = {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'IPC proof',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: [prompt, message],
+        conversationGraph,
+        createdAt: 1,
+        updatedAt: 2
+      }
+      const context = {
+        rootFrameId: conversationGraph.rootFrameId,
+        agentFrameId: conversationGraph.activeFrameId,
+        messageBranchId: conversationGraph.branches[0].id,
+        runtimeSegmentId: conversationGraph.runtimeSegments[0].id,
+        promptMessageId: prompt.id
+      }
+      const compatibility = new ArtifactRepository(root)
+      const provenance = new ArtifactProvenanceRepository({
+        storageRoot: root,
+        getClient: () => Promise.resolve(client),
+        compatibilityRepository: compatibility,
+        loadSession: async () => session
+      })
+      await compatibility.writePendingFile({
+        projectName: 'project-1',
+        sessionId: 'artifact-session-1',
+        runId: 'run-1',
+        filename: 'result.png',
+        source: createPngInlineSource('result bytes')
+      })
+      const version = await provenance.createVersion({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'run-1',
+        writeOperationId: 'write-1',
+        writeRequestChecksum: 'a'.repeat(64),
+        ...context,
+        filename: 'result.png'
+      })
+      await client.artifactVersion.update({
+        where: { id: version.versionId },
+        data: {
+          executionSnapshotJson: '{"schemaVersion":2}',
+          executionSnapshotChecksum: '0'.repeat(64)
+        }
+      })
+      await compatibility.prepareRunFinalization({
+        projectName: 'project-1',
+        sourceSessionId: 'artifact-session-1',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        artifactVersionIds: [version.versionId],
+        provenanceContext: context
+      })
+      const registry = new ArtifactRunRegistry()
+      const claimId = registry.register({
+        projectName: 'project-1',
+        artifactSessionId: 'artifact-session-1',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        artifactVersionIds: [version.versionId],
+        ...context
+      })
+      const handlers = createArtifactHandlers(compatibility, registry, { provenance })
+
+      await expect(
+        handlers.finalizeRunArtifacts({ claimId, messageId: message.id })
+      ).rejects.toThrow(/execution snapshot is corrupt/i)
+      await expect(
+        compatibility.listPendingRunFiles({
+          projectName: 'project-1',
+          sessionId: 'artifact-session-1',
+          runId: 'run-1'
+        })
+      ).resolves.toEqual([expect.objectContaining({ name: 'result.png' })])
+      await expect(
+        compatibility.listMessageFiles({
+          projectName: 'project-1',
+          sessionId: 'session-1',
+          messageId: message.id
+        })
+      ).resolves.toEqual([])
+      await expect(
+        client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+      ).resolves.toMatchObject({ state: 'pending', messageId: null })
+    } finally {
+      await client.$disconnect()
+    }
+  })
+
+  it('retries compatibility publication after provenance finalized but the first move failed', async () => {
     const finalizedArtifact = createFinalizedArtifact()
     const repository = {
-      finalizeRunArtifacts: vi.fn().mockResolvedValue([finalizedArtifact])
+      finalizeRunArtifacts: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('compatibility storage unavailable'))
+        .mockResolvedValue([finalizedArtifact])
     } as unknown as ArtifactRepository
     const provenance = {
-      validateFinalizationOwnership: vi.fn().mockResolvedValue(undefined),
-      finalizeRun: vi.fn().mockRejectedValue(new Error('SQLite unavailable'))
+      finalizeRun: vi.fn().mockResolvedValue([finalizedArtifact])
     }
     const registry = new ArtifactRunRegistry()
     const claimId = registry.register({
@@ -271,7 +425,8 @@ describe('artifact IPC handlers', () => {
       agentFrameId: 'agent-frame-1',
       messageBranchId: 'branch-1',
       runtimeSegmentId: 'runtime-1',
-      promptMessageId: 'prompt-1'
+      promptMessageId: 'prompt-1',
+      artifactVersionIds: ['version-1']
     })
     const handlers = createArtifactHandlers(repository, registry, {
       provenance: provenance as never
@@ -279,10 +434,17 @@ describe('artifact IPC handlers', () => {
 
     await expect(
       handlers.finalizeRunArtifacts({ claimId, messageId: 'message-1' })
-    ).rejects.toThrow(/SQLite unavailable/)
+    ).rejects.toThrow(/compatibility storage unavailable/)
     expect(repository.finalizeRunArtifacts).toHaveBeenCalledOnce()
     expect(provenance.finalizeRun).toHaveBeenCalledOnce()
     expect(registry.resolve(claimId).finalizedMessageId).toBeUndefined()
+
+    await expect(
+      handlers.finalizeRunArtifacts({ claimId, messageId: 'message-1' })
+    ).resolves.toEqual([finalizedArtifact])
+    expect(repository.finalizeRunArtifacts).toHaveBeenCalledTimes(2)
+    expect(provenance.finalizeRun).toHaveBeenCalledTimes(2)
+    expect(registry.resolve(claimId).finalizedMessageId).toBe('message-1')
   })
 
   it('keeps migration drain pending until an artifact finalization already in progress finishes', async () => {

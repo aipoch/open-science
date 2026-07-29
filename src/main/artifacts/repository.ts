@@ -38,7 +38,7 @@ const log = createLogger('artifacts:repository')
 const ARTIFACTS_DIR = 'artifacts'
 const PENDING_DIR = '.pending'
 const METADATA_DIR = '.metadata'
-// Per-run markers recording which app session + message a finalized run moved into, keyed by run id.
+// Per-run publication markers: prepared ownership context, later upgraded with the final message id.
 const RUNS_DIR = '.runs'
 // Handoff file (directly under a session's .pending) naming the in-flight turn's run id for MCP writes.
 const CURRENT_RUN_FILE = 'current-run.json'
@@ -74,10 +74,26 @@ export class ArtifactCompatibilityScanIncompleteError extends Error {
   }
 }
 
-type ArtifactRunFinalizationMarker = {
+export type ArtifactRunFinalizationMarker = {
   sessionId: string
-  messageId: string
+  messageId?: string
+  artifactVersionIds?: string[]
   provenanceContext?: NonNullable<MovePendingRunArtifactsRequest['provenanceContext']>
+}
+
+export type PendingArtifactRunPublication = {
+  sourceSessionId: string
+  runId: string
+  marker?: ArtifactRunFinalizationMarker
+}
+
+type PrepareArtifactRunFinalizationRequest = {
+  projectName: string
+  sourceSessionId: string
+  sessionId: string
+  runId: string
+  artifactVersionIds?: string[]
+  provenanceContext: NonNullable<MovePendingRunArtifactsRequest['provenanceContext']>
 }
 
 type ArtifactRepositoryWriteOptions = {
@@ -106,6 +122,10 @@ type BindPendingArtifactVersionRouting = (
   sourcePath: string
 ) => Promise<void>
 
+type ArtifactRepositoryStorage = ArtifactRepositoryDurability & {
+  readMarkerFile?: (path: string) => Promise<string>
+}
+
 export type { ArtifactRepositoryDurability }
 
 const defaultArtifactRepositoryDurability = defaultArtifactDurability
@@ -121,6 +141,19 @@ const assertSafePathSegment = (segment: string): string => {
   }
 
   return segment
+}
+
+const normalizeArtifactVersionIds = (versionIds: readonly string[]): string[] => {
+  if (!Array.isArray(versionIds) || versionIds.length === 0) {
+    throw new Error('Artifact run marker requires Artifact Version ids.')
+  }
+  const normalized = versionIds
+    .map(assertSafePathSegment)
+    .sort((left, right) => left.localeCompare(right))
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error('Artifact run marker Artifact Version ids must be unique.')
+  }
+  return normalized
 }
 
 // Allows display-friendly filenames while rejecting separators, reserved metadata names, and shell-hostile input.
@@ -294,7 +327,7 @@ class ArtifactRepository {
 
   constructor(
     private readonly storageRoot: string,
-    private readonly durability: ArtifactRepositoryDurability = defaultArtifactRepositoryDurability
+    private readonly durability: ArtifactRepositoryStorage = defaultArtifactRepositoryDurability
   ) {}
 
   // Writes a generated file into the run's pending directory before it is attached to a message.
@@ -686,6 +719,9 @@ class ArtifactRepository {
     const sourceSessionId = assertSafePathSegment(request.sourceSessionId ?? request.sessionId)
     const runId = assertSafePathSegment(request.runId)
     const messageId = assertSafePathSegment(request.messageId)
+    const artifactVersionIds = request.artifactVersionIds
+      ? normalizeArtifactVersionIds(request.artifactVersionIds)
+      : undefined
     const pendingDir = this.getPendingRunDir(projectName, sourceSessionId, runId)
     const messageDir = this.getMessageDir(projectName, sessionId, messageId)
     const entries = await this.readFileEntries(pendingDir)
@@ -695,6 +731,7 @@ class ArtifactRepository {
     await this.writeRunMarker(projectName, sourceSessionId, runId, {
       sessionId,
       messageId,
+      ...(artifactVersionIds ? { artifactVersionIds } : {}),
       ...(request.provenanceContext ? { provenanceContext: request.provenanceContext } : {})
     })
 
@@ -716,6 +753,33 @@ class ArtifactRepository {
     await rm(pendingDir, { recursive: true, force: true })
 
     return this.listMessageFiles({ projectName, sessionId, messageId })
+  }
+
+  // Durably records that the runtime has ended this turn and chosen to publish its run. The renderer
+  // does not know the terminal message id yet, so finalization later upgrades this intent in place.
+  // Publishing the intent before the event closes the process-crash gap without treating every pending
+  // write (including a mid-turn crash) as a completed handoff.
+  async prepareRunFinalization(request: PrepareArtifactRunFinalizationRequest): Promise<void> {
+    const projectName = assertSafePathSegment(request.projectName)
+    const sourceSessionId = assertSafePathSegment(request.sourceSessionId)
+    const sessionId = assertSafePathSegment(request.sessionId)
+    const runId = assertSafePathSegment(request.runId)
+    const artifactVersionIds = request.artifactVersionIds
+      ? normalizeArtifactVersionIds(request.artifactVersionIds)
+      : undefined
+    const provenanceContext = {
+      rootFrameId: assertSafePathSegment(request.provenanceContext.rootFrameId),
+      agentFrameId: assertSafePathSegment(request.provenanceContext.agentFrameId),
+      messageBranchId: assertSafePathSegment(request.provenanceContext.messageBranchId),
+      runtimeSegmentId: assertSafePathSegment(request.provenanceContext.runtimeSegmentId),
+      promptMessageId: assertSafePathSegment(request.provenanceContext.promptMessageId)
+    }
+
+    await this.writeRunMarker(projectName, sourceSessionId, runId, {
+      sessionId,
+      ...(artifactVersionIds ? { artifactVersionIds } : {}),
+      provenanceContext
+    })
   }
 
   // Lists files that have been written by the agent but not yet owned by a renderer message.
@@ -897,6 +961,57 @@ class ArtifactRepository {
     return files
   }
 
+  // Discovers only compatibility publications that still have direct artifact bytes or metadata
+  // sidecars under a run's `.pending` directory. A byte can already be in its message directory when
+  // a crash leaves its sidecar behind. The project scan establishes the unique source Session once,
+  // so recovery does not rescan every Session for every run. Missing markers remain ownerless;
+  // corrupt, duplicate, or unreadable publication state makes the scan incomplete instead of guessing.
+  async listPendingRunPublications(
+    projectNameValue: string
+  ): Promise<PendingArtifactRunPublication[]> {
+    const projectName = assertSafePathSegment(projectNameValue)
+    const projectDirectory = getProjectArtifactDir(this.storageRoot, projectName)
+    const publications: PendingArtifactRunPublication[] = []
+    const observedRunIds = new Set<string>()
+
+    try {
+      for (const sourceSessionId of await this.readSubdirectoryNames(projectDirectory)) {
+        if (!SAFE_SEGMENT_PATTERN.test(sourceSessionId)) continue
+        const pendingDirectory = join(projectDirectory, sourceSessionId, PENDING_DIR)
+        for (const runId of await this.readSubdirectoryNames(pendingDirectory)) {
+          if (!SAFE_SEGMENT_PATTERN.test(runId)) continue
+          const runDirectory = join(pendingDirectory, runId)
+          const files = await this.readFileEntries(runDirectory)
+          const metadataFiles =
+            files.length === 0 ? await this.readFileEntries(join(runDirectory, METADATA_DIR)) : []
+          if (files.length === 0 && metadataFiles.length === 0) continue
+          if (observedRunIds.has(runId)) {
+            throw new Error(
+              `Artifact pending publication run is ambiguous across compatibility storage: ${runId}`
+            )
+          }
+          observedRunIds.add(runId)
+
+          const markerResult = await this.readRunMarker(
+            this.getRunMarkerPath(projectName, sourceSessionId, runId)
+          )
+          if (markerResult.present && !markerResult.marker) {
+            throw new Error(`Artifact pending publication marker is corrupt: ${runId}`)
+          }
+          publications.push({
+            sourceSessionId,
+            runId,
+            ...(markerResult.marker ? { marker: markerResult.marker } : {})
+          })
+        }
+      }
+    } catch (error) {
+      throw new ArtifactCompatibilityScanIncompleteError(error)
+    }
+
+    return publications
+  }
+
   // Resolves a renderer-provided artifact path only after canonical root and symlink checks pass.
   async resolveManagedFilePath(request: OpenArtifactFileRequest): Promise<string> {
     if (
@@ -992,6 +1107,11 @@ class ArtifactRepository {
         log.warn('artifact recovery skipped: run marker present but unreadable', { requestedPath })
         return undefined
       }
+      if (!markerResult.marker.messageId) {
+        // A prepared run has not been bound to a durable message yet. Only Provenance startup recovery
+        // may infer that owner from the conversation graph; path recovery must never guess it.
+        return undefined
+      }
       const projectDir = dirname(sourceSessionDir)
       const candidate = join(
         projectDir,
@@ -1033,8 +1153,9 @@ class ArtifactRepository {
     )
   }
 
-  // Locates the single durable finalization marker for a run across compatibility storage Sessions.
-  // ArtifactRun ids are process-generated and project-scoped; duplicate/corrupt markers fail closed.
+  // Locates the single durable publication marker for a run across compatibility storage Sessions.
+  // It may be prepared (context only) or finalized (message-bound). ArtifactRun ids are process-
+  // generated and project-scoped; duplicate/corrupt markers fail closed.
   async findRunFinalizationMarker(
     projectNameValue: string,
     runIdValue: string
@@ -1059,10 +1180,10 @@ class ArtifactRepository {
     return matches.length === 1 ? matches[0] : undefined
   }
 
-  // Persists the app session + message a run finalized into. Written atomically (temp + rename) so a
-  // crash mid-write never leaves a half-written marker that would later read as corrupt. Publication is
-  // part of finalization: if it fails, no file move begins, preserving a retryable pending run rather
-  // than creating an unprovable compatibility/provenance split-brain.
+  // Persists a prepared run intent or its later app-session/message binding. Written atomically (temp +
+  // rename) so a crash mid-write never leaves a half-written marker that would later read as corrupt.
+  // If a finalize upgrade fails, no file move begins, preserving a retryable pending run rather than
+  // creating an unprovable compatibility/provenance split-brain.
   private async writeRunMarker(
     projectName: string,
     sourceSessionId: string,
@@ -1071,6 +1192,7 @@ class ArtifactRepository {
   ): Promise<void> {
     const markerPath = this.getRunMarkerPath(projectName, sourceSessionId, runId)
     const temporaryPath = `${markerPath}.${Date.now()}-${randomUUID()}.tmp`
+    let markerToWrite = marker
     try {
       const markerDirectory = dirname(markerPath)
       await mkdir(markerDirectory, { recursive: true })
@@ -1080,14 +1202,19 @@ class ArtifactRepository {
       const existing = await this.readRunMarker(markerPath)
       if (existing.present) {
         if (!existing.marker) throw new Error('Existing Artifact run marker is corrupt.')
+        if (existing.marker.sessionId !== marker.sessionId) {
+          throw new Error('Artifact run marker is already owned by a different message.')
+        }
         if (
-          existing.marker.sessionId !== marker.sessionId ||
+          existing.marker.messageId &&
+          marker.messageId &&
           existing.marker.messageId !== marker.messageId
         ) {
           throw new Error('Artifact run marker is already owned by a different message.')
         }
         if (
           existing.marker.provenanceContext &&
+          marker.provenanceContext &&
           JSON.stringify(existing.marker.provenanceContext) !==
             JSON.stringify(marker.provenanceContext)
         ) {
@@ -1095,15 +1222,39 @@ class ArtifactRepository {
             'Artifact run marker Provenance context conflicts with an existing commit.'
           )
         }
-        // Exact replay is already durable. A legacy context-free marker for the same owner is upgraded
-        // below so future startup recovery can prove the cross-store commit.
-        if (existing.marker.provenanceContext || !marker.provenanceContext) {
+        if (
+          existing.marker.artifactVersionIds &&
+          marker.artifactVersionIds &&
+          JSON.stringify(existing.marker.artifactVersionIds) !==
+            JSON.stringify(marker.artifactVersionIds)
+        ) {
+          throw new Error('Artifact run marker Version ids conflict with an existing commit.')
+        }
+        // Merge upgrades in either order so a generic pending-path replay retains the prepared context,
+        // while a late prepare replay can never erase an already-bound message id.
+        markerToWrite = {
+          sessionId: marker.sessionId,
+          ...(marker.messageId || existing.marker.messageId
+            ? { messageId: marker.messageId ?? existing.marker.messageId }
+            : {}),
+          ...(marker.provenanceContext || existing.marker.provenanceContext
+            ? {
+                provenanceContext: marker.provenanceContext ?? existing.marker.provenanceContext
+              }
+            : {}),
+          ...(marker.artifactVersionIds || existing.marker.artifactVersionIds
+            ? {
+                artifactVersionIds: marker.artifactVersionIds ?? existing.marker.artifactVersionIds
+              }
+            : {})
+        }
+        if (JSON.stringify(existing.marker) === JSON.stringify(markerToWrite)) {
           await this.durability.syncFile(markerPath)
           await this.durability.syncDirectory(markerDirectory)
           return
         }
       }
-      await writeFile(temporaryPath, `${JSON.stringify(marker)}\n`, 'utf8')
+      await writeFile(temporaryPath, `${JSON.stringify(markerToWrite)}\n`, 'utf8')
       await this.durability.syncFile(temporaryPath)
       await rename(temporaryPath, markerPath)
       await this.durability.syncDirectory(markerDirectory)
@@ -1115,20 +1266,20 @@ class ArtifactRepository {
 
   // Reads a run marker, distinguishing three states so recovery can act safely:
   //   { present: false }            — no marker file (legacy artifact, or a marker write that failed).
-  //   { present: true }             — a marker file exists but is unreadable/corrupt/invalid.
-  //   { present: true, marker }     — a valid marker pinning the run's app session + message.
-  // The present-but-invalid case must NOT fall back to a same-name scan: the run WAS marked, so a
-  // damaged marker means "cannot resolve", not "guess among other runs' files".
+  //   { present: true }             — marker contents are corrupt or invalid.
+  //   { present: true, marker }     — a valid prepared or message-bound marker.
+  // Storage I/O failures propagate so startup can mark reconciliation incomplete; only ENOENT is absent.
   private async readRunMarker(
     markerPath: string
   ): Promise<{ present: boolean; marker?: ArtifactRunFinalizationMarker }> {
     let raw: string
     try {
-      raw = await readFile(markerPath, 'utf8')
+      raw = this.durability.readMarkerFile
+        ? await this.durability.readMarkerFile(markerPath)
+        : await readFile(markerPath, 'utf8')
     } catch (error) {
       if (isMissingFileError(error)) return { present: false }
-      // Present but unreadable (e.g. permissions): treat as a damaged marker, not absent.
-      return { present: true }
+      throw error
     }
 
     try {
@@ -1136,16 +1287,35 @@ class ArtifactRepository {
       if (
         typeof parsed === 'object' &&
         parsed !== null &&
-        typeof (parsed as { sessionId?: unknown }).sessionId === 'string' &&
-        typeof (parsed as { messageId?: unknown }).messageId === 'string'
+        typeof (parsed as { sessionId?: unknown }).sessionId === 'string'
       ) {
-        const { sessionId, messageId, provenanceContext } = parsed as {
+        const { sessionId, messageId, artifactVersionIds, provenanceContext } = parsed as {
           sessionId: string
-          messageId: string
-          provenanceContext?: Record<string, unknown>
+          messageId?: unknown
+          artifactVersionIds?: unknown
+          provenanceContext?: unknown
         }
-        if (SAFE_SEGMENT_PATTERN.test(sessionId) && SAFE_SEGMENT_PATTERN.test(messageId)) {
-          if (provenanceContext) {
+        if (
+          SAFE_SEGMENT_PATTERN.test(sessionId) &&
+          (messageId === undefined ||
+            (typeof messageId === 'string' && SAFE_SEGMENT_PATTERN.test(messageId)))
+        ) {
+          let normalizedArtifactVersionIds: string[] | undefined
+          if (artifactVersionIds !== undefined) {
+            if (!Array.isArray(artifactVersionIds)) return { present: true }
+            try {
+              normalizedArtifactVersionIds = normalizeArtifactVersionIds(
+                artifactVersionIds as string[]
+              )
+            } catch {
+              return { present: true }
+            }
+          }
+          if (
+            typeof provenanceContext === 'object' &&
+            provenanceContext !== null &&
+            !Array.isArray(provenanceContext)
+          ) {
             const keys = [
               'rootFrameId',
               'agentFrameId',
@@ -1156,8 +1326,10 @@ class ArtifactRepository {
             if (
               keys.some(
                 (key) =>
-                  typeof provenanceContext[key] !== 'string' ||
-                  !SAFE_SEGMENT_PATTERN.test(provenanceContext[key] as string)
+                  typeof (provenanceContext as Record<string, unknown>)[key] !== 'string' ||
+                  !SAFE_SEGMENT_PATTERN.test(
+                    (provenanceContext as Record<string, unknown>)[key] as string
+                  )
               )
             ) {
               return { present: true }
@@ -1166,14 +1338,28 @@ class ArtifactRepository {
               present: true,
               marker: {
                 sessionId,
-                messageId,
+                ...(typeof messageId === 'string' ? { messageId } : {}),
+                ...(normalizedArtifactVersionIds
+                  ? { artifactVersionIds: normalizedArtifactVersionIds }
+                  : {}),
                 provenanceContext: Object.fromEntries(
-                  keys.map((key) => [key, provenanceContext[key]])
+                  keys.map((key) => [key, (provenanceContext as Record<string, unknown>)[key]])
                 ) as ArtifactRunFinalizationMarker['provenanceContext']
               }
             }
           }
-          return { present: true, marker: { sessionId, messageId } }
+          if (typeof messageId === 'string' && provenanceContext === undefined) {
+            return {
+              present: true,
+              marker: {
+                sessionId,
+                messageId,
+                ...(normalizedArtifactVersionIds
+                  ? { artifactVersionIds: normalizedArtifactVersionIds }
+                  : {})
+              }
+            }
+          }
         }
       }
       return { present: true }

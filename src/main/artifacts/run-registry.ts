@@ -4,6 +4,7 @@ type ArtifactRunClaim = {
   artifactSessionId: string
   sessionId: string
   runId: string
+  artifactVersionIds?: string[]
   rootFrameId?: string
   agentFrameId?: string
   messageBranchId?: string
@@ -19,6 +20,7 @@ type RegisterArtifactRunClaimRequest = {
   artifactSessionId: string
   sessionId: string
   runId: string
+  artifactVersionIds?: string[]
   rootFrameId?: string
   agentFrameId?: string
   messageBranchId?: string
@@ -40,7 +42,8 @@ class ArtifactRunRegistry {
 
     this.claims.set(claimId, {
       claimId,
-      ...request
+      ...request,
+      artifactVersionIds: request.artifactVersionIds ? [...request.artifactVersionIds] : undefined
     })
 
     return claimId

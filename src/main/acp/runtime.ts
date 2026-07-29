@@ -241,7 +241,7 @@ type AcpRuntimeArtifactOptions = {
   runRegistry?: ArtifactRunRegistry
   getRpcConnection?: () => Promise<NotebookRpcConnection>
   issueRpcCapability?: (binding: ArtifactRpcCapabilityBinding) => string
-  revokeRpcCapability?: (token: string) => void
+  revokeRpcCapability?: (token: string) => Promise<void> | void
   provenance?: Pick<
     import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
     'listRunVersions' | 'writeAppGeneratedVersion'
@@ -272,6 +272,9 @@ type ActiveArtifactRun = {
   promptMessageId: string
   agentName: string
   rpcCapabilityToken?: string
+  writesClosed: boolean
+  inFlightAppWrites: Set<Promise<unknown>>
+  writeDrainPromise?: Promise<void>
 }
 
 type AcpRuntimeNotebookOptions = {
@@ -4056,7 +4059,9 @@ class AcpRuntime {
       runtimeSegmentId:
         provenanceContext?.runtimeSegmentId ?? `runtime-segment-${this.runtimeInstanceId}`,
       promptMessageId,
-      agentName: this.framework.displayName
+      agentName: this.framework.displayName,
+      writesClosed: false,
+      inFlightAppWrites: new Set()
     }
     // Notebook kernels are keyed by the FINAL ACP session id (the notebook RPC layer rewrites the
     // pre-start alias to it before touching disk). This handoff runs per turn with that final id, so
@@ -4134,19 +4139,34 @@ class AcpRuntime {
       return artifactRun
     } catch (error) {
       if (artifactRun.rpcCapabilityToken) {
-        this.artifactOptions.revokeRpcCapability?.(artifactRun.rpcCapabilityToken)
+        await this.artifactOptions.revokeRpcCapability?.(artifactRun.rpcCapabilityToken)
       }
       throw error
     }
+  }
+
+  // Seals both Artifact write entrances synchronously, then drains operations that already crossed
+  // either entrance. Every emit/cleanup path shares this promise so repeated teardown cannot observe
+  // a partially drained run or bypass an earlier revoke.
+  private closeArtifactRunWrites(artifactRun: ActiveArtifactRun): Promise<void> {
+    if (artifactRun.writeDrainPromise) return artifactRun.writeDrainPromise
+
+    artifactRun.writesClosed = true
+    const rpcDrain = artifactRun.rpcCapabilityToken
+      ? Promise.resolve(this.artifactOptions?.revokeRpcCapability?.(artifactRun.rpcCapabilityToken))
+      : Promise.resolve()
+    artifactRun.writeDrainPromise = (async () => {
+      await rpcDrain
+      await Promise.allSettled([...artifactRun.inFlightAppWrites])
+    })()
+    return artifactRun.writeDrainPromise
   }
 
   // Clears the handoff file after the prompt so late MCP writes cannot attach to a completed turn.
   private async clearArtifactRun(artifactRun: ActiveArtifactRun | undefined): Promise<void> {
     if (!artifactRun) return
 
-    if (artifactRun.rpcCapabilityToken) {
-      this.artifactOptions?.revokeRpcCapability?.(artifactRun.rpcCapabilityToken)
-    }
+    await this.closeArtifactRunWrites(artifactRun)
     await writeFile(artifactRun.currentRunFile, `${JSON.stringify({})}\n`, 'utf8')
     this.notebookOptions?.setArtifactProvenanceContext?.(artifactRun.appSessionId, undefined)
   }
@@ -4166,40 +4186,44 @@ class AcpRuntime {
     // session id — never a global "current" run, so a parallel session's in-flight turn cannot capture
     // this file. Fail closed when the session has no active run.
     const run = sessionId ? this.activeArtifactRuns.get(sessionId) : undefined
-    if (!run || !this.artifactRepository) {
+    if (!run || run.writesClosed || !this.artifactRepository) {
       throw new Error('No active assistant turn to attach a generated file to.')
     }
 
     const projectName = this.resolveSessionProjectName(sessionId)
     const provenance = this.artifactOptions?.provenance
-    if (provenance) {
-      return provenance.writeAppGeneratedVersion({
-        projectId: projectName,
-        appSessionId: sessionId,
-        artifactStorageSessionId: run.artifactSessionId,
-        artifactRunId: run.runId,
-        rootFrameId: run.rootFrameId,
-        agentFrameId: run.agentFrameId,
-        messageBranchId: run.messageBranchId,
-        messageBranchAncestry: run.messageBranchAncestry,
-        messageAncestry: run.messageAncestry,
-        runtimeSegmentId: run.runtimeSegmentId,
-        promptMessageId: run.promptMessageId,
-        agentName: run.agentName,
-        filename: input.filename,
-        content: input.content,
-        contentType: input.mimeType
-      })
-    }
-
-    return this.artifactRepository.writePendingFile({
-      projectName,
-      sessionId: run.artifactSessionId,
-      runId: run.runId,
-      filename: input.filename,
-      mimeType: input.mimeType,
-      source: { kind: 'inline', content: input.content, encoding: 'utf8' }
-    })
+    const write = provenance
+      ? provenance.writeAppGeneratedVersion({
+          projectId: projectName,
+          appSessionId: sessionId,
+          artifactStorageSessionId: run.artifactSessionId,
+          artifactRunId: run.runId,
+          rootFrameId: run.rootFrameId,
+          agentFrameId: run.agentFrameId,
+          messageBranchId: run.messageBranchId,
+          messageBranchAncestry: run.messageBranchAncestry,
+          messageAncestry: run.messageAncestry,
+          runtimeSegmentId: run.runtimeSegmentId,
+          promptMessageId: run.promptMessageId,
+          agentName: run.agentName,
+          filename: input.filename,
+          content: input.content,
+          contentType: input.mimeType
+        })
+      : this.artifactRepository.writePendingFile({
+          projectName,
+          sessionId: run.artifactSessionId,
+          runId: run.runId,
+          filename: input.filename,
+          mimeType: input.mimeType,
+          source: { kind: 'inline', content: input.content, encoding: 'utf8' }
+        })
+    run.inFlightAppWrites.add(write)
+    void write.then(
+      () => run.inFlightAppWrites.delete(write),
+      () => run.inFlightAppWrites.delete(write)
+    )
+    return write
   }
 
   // Publishes pending files as a claim event; the renderer later supplies the final message id.
@@ -4207,35 +4231,59 @@ class AcpRuntime {
     sessionId: string,
     artifactRun: ActiveArtifactRun | undefined
   ): Promise<void> {
-    if (
-      !this.artifactOptions ||
-      !this.artifactRepository ||
-      !this.artifactRunRegistry ||
-      !artifactRun
-    ) {
+    if (!artifactRun) return
+    await this.closeArtifactRunWrites(artifactRun)
+
+    if (!this.artifactOptions || !this.artifactRepository || !this.artifactRunRegistry) {
       return
     }
 
     const sessionProjectName = this.resolveSessionProjectName(sessionId)
-    const artifacts = this.artifactOptions.provenance
-      ? await this.artifactOptions.provenance.listRunVersions({
-          projectId: sessionProjectName,
-          appSessionId: sessionId,
-          artifactRunId: artifactRun.runId
-        })
-      : await this.artifactRepository.listPendingRunFiles({
-          projectName: sessionProjectName,
-          sessionId: artifactRun.artifactSessionId,
-          runId: artifactRun.runId
-        })
+    let artifacts: ArtifactFile[]
+    let artifactVersionIds: string[] | undefined
+    if (this.artifactOptions.provenance) {
+      const versions = await this.artifactOptions.provenance.listRunVersions({
+        projectId: sessionProjectName,
+        appSessionId: sessionId,
+        artifactRunId: artifactRun.runId
+      })
+      artifacts = versions
+      artifactVersionIds = versions.map((version) => version.versionId)
+    } else {
+      artifacts = await this.artifactRepository.listPendingRunFiles({
+        projectName: sessionProjectName,
+        sessionId: artifactRun.artifactSessionId,
+        runId: artifactRun.runId
+      })
+    }
 
     if (artifacts.length === 0) return
+
+    // Commit the runtime's decision to publish this completed run before exposing an in-memory claim.
+    // If the process exits before the renderer supplies its terminal message id, startup recovery can
+    // still prove this handoff against the durable conversation graph. A run that crashes mid-turn
+    // never reaches this point and therefore cannot be mistaken for a completed handoff.
+    await this.artifactRepository.prepareRunFinalization({
+      projectName: sessionProjectName,
+      sourceSessionId: artifactRun.artifactSessionId,
+      sessionId,
+      runId: artifactRun.runId,
+      ...(artifactVersionIds ? { artifactVersionIds } : {}),
+      provenanceContext: {
+        rootFrameId: artifactRun.rootFrameId,
+        agentFrameId: artifactRun.agentFrameId,
+        messageBranchId: artifactRun.messageBranchId,
+        runtimeSegmentId: artifactRun.runtimeSegmentId,
+        promptMessageId: artifactRun.promptMessageId
+      }
+    })
 
     const artifactClaimId = this.artifactRunRegistry.register({
       projectName: sessionProjectName,
       artifactSessionId: artifactRun.artifactSessionId,
       sessionId,
       runId: artifactRun.runId,
+      artifactVersionIds,
       rootFrameId: artifactRun.rootFrameId,
       agentFrameId: artifactRun.agentFrameId,
       messageBranchId: artifactRun.messageBranchId,
