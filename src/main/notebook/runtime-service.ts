@@ -1194,6 +1194,29 @@ class NotebookRuntimeService {
     return this.defaultEnvNameFor(language)
   }
 
+  // Current managed repair state is keyed by env name, but releases before that migration used the
+  // discovered interpreter id. Include both raw and canonical interpreter paths so an unbound default
+  // session still honors a durable legacy marker instead of starting a quarantined runtime.
+  private repairRegistryKeys(
+    language: NotebookLanguage,
+    env: string,
+    binding: InternalRuntimeBinding | undefined,
+    runtimeRootDir: string
+  ): string[] {
+    if (binding?.source === 'external') return [binding.runtimeId]
+    const keys = new Set<string>([env])
+    if (binding?.source === 'managed') keys.add(binding.runtimeId)
+    const prefix = envPrefix(runtimeRootDir, env)
+    const interpreter = language === 'r' ? rBin(prefix) : pythonBin(prefix)
+    keys.add(interpreter)
+    try {
+      keys.add(realpathSync(interpreter))
+    } catch {
+      // The runtime may not be materialized yet; the raw interpreter path still covers old markers.
+    }
+    return [...keys]
+  }
+
   private environmentCaptureTarget(
     language: NotebookLanguage,
     environmentName: string,
@@ -1744,12 +1767,11 @@ class NotebookRuntimeService {
     // Managed repair state is keyed by the canonical conda env name, so an explicit binding and an
     // unbound/default session cannot refer to the same prefix under two different registry keys.
     // External runtimes have no app-owned prefix and remain keyed by their discovered runtime id.
-    const repairKey = binding?.source === 'external' ? binding.runtimeId : env
     const repairRegistryRoot = getRuntimeRoot(this.options.dataRoot)
+    const repairKeys = this.repairRegistryKeys(cell.language, env, binding, repairRegistryRoot)
     const repairRequired =
       this.repairBlockedEnvs.has(dataProcessKey(cell.language, env)) ||
-      isRepairRequired(repairRegistryRoot, repairKey) ||
-      (binding?.source === 'managed' && isRepairRequired(repairRegistryRoot, binding.runtimeId))
+      repairKeys.some((key) => isRepairRequired(repairRegistryRoot, key))
     if (
       (binding?.runtimeId && this.blockedRuntimeIds.has(binding.runtimeId)) ||
       prefixBlocked ||
@@ -1821,7 +1843,8 @@ class NotebookRuntimeService {
     const blockedMutation = detectManagedRuntimeMutation({
       source: cell.code,
       surface: cell.language,
-      runtimeRoot: session.runtimeRoot
+      runtimeRoot: session.runtimeRoot,
+      cwd: session.cwd
     })
     if (blockedMutation && interpreterResolveError === undefined) {
       interpreterResolveError = new Error(
@@ -1889,9 +1912,7 @@ class NotebookRuntimeService {
           // quarantined this env while we waited cannot release the lock and let a stale decision spawn it.
           const repairRequiredAfterLock =
             this.repairBlockedEnvs.has(dataProcessKey(cell.language, env)) ||
-            isRepairRequired(repairRegistryRoot, repairKey) ||
-            (binding?.source === 'managed' &&
-              isRepairRequired(repairRegistryRoot, binding.runtimeId))
+            repairKeys.some((key) => isRepairRequired(repairRegistryRoot, key))
           if (repairRequiredAfterLock) {
             executedOnLiveKernel = false
             return errorToExecutionResult(
@@ -2080,7 +2101,8 @@ class NotebookRuntimeService {
     const blockedMutation = detectManagedRuntimeMutation({
       source: request.code,
       surface: 'repl',
-      runtimeRoot: session.runtimeRoot
+      runtimeRoot: session.runtimeRoot,
+      cwd: session.cwd
     })
     // Only a request that reaches the live control process may transition its kernel to `running`.
     // A source-policy rejection still records a failed run below, but must leave the live kernel state
@@ -2179,7 +2201,8 @@ class NotebookRuntimeService {
       const blockedMutation = detectManagedRuntimeMutation({
         source: request.command,
         surface: this.options.platform === 'win32' ? 'powershell' : 'bash',
-        runtimeRoot: session.runtimeRoot
+        runtimeRoot: session.runtimeRoot,
+        cwd: session.cwd
       })
       const shellResult = await (
         blockedMutation

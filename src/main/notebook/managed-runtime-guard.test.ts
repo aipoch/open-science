@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import { detectManagedRuntimeMutation, protectManagedRuntimeWrites } from './managed-runtime-guard'
@@ -82,6 +86,10 @@ describe('detectManagedRuntimeMutation', () => {
     ['bash', 'target="$OPEN_SCIENCE_RUNTIME_DIR/x"; printf x >> "$target"'],
     ['bash', 'target="$OPEN_SCIENCE_RUNTIME_DIR/x"; touch "$target"'],
     ['bash', 'root=$(printf %s /tmp/open-science/runtime); touch "$root/conda-meta/pwn.json"'],
+    [
+      'bash',
+      'ln -s "$OPEN_SCIENCE_RUNTIME_DIR" runtime-link; touch runtime-link/conda-meta/pwn.json'
+    ],
     ['bash', 'cd "$OPEN_SCIENCE_RUNTIME_DIR" && touch conda-meta/pwn.json'],
     ['bash', `cd "$OPEN_SCIENCE_RUNTIME_DIR"; sh -c 'touch conda-meta/inherited-cwd.json'`],
     ['powershell', 'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; New-Item conda-meta\\pwn.json'],
@@ -137,6 +145,27 @@ describe('detectManagedRuntimeMutation', () => {
         runtimeRoot: 'C:\\OpenScience\\runtime'
       })?.message
     ).toMatch(/manage_packages/)
+  })
+
+  it('rejects a shell write through an existing runtime symlink or junction', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'os-runtime-alias-'))
+    const runtimeRoot = join(cwd, 'managed-runtime')
+    const alias = join(cwd, 'runtime-link')
+    try {
+      await mkdir(runtimeRoot, { recursive: true })
+      await symlink(runtimeRoot, alias, process.platform === 'win32' ? 'junction' : 'dir')
+
+      expect(
+        detectManagedRuntimeMutation({
+          source: 'touch runtime-link/conda-meta/pwn.json',
+          surface: 'bash',
+          runtimeRoot,
+          cwd
+        })?.message
+      ).toMatch(/manage_packages/)
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
   })
 })
 

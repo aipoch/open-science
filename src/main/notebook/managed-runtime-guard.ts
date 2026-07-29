@@ -1,5 +1,5 @@
 import { realpathSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 
@@ -82,7 +82,39 @@ const RUNTIME_WRITE_RULES: Record<NotebookExecutionSurface, RegExp> = {
   repl: /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|rm|rmSync|unlink|unlinkSync|rename|renameSync|mkdir|mkdirSync|mkdtemp|mkdtempSync|copyFile|copyFileSync)\s*\(/iu
 }
 
-const referencesManagedRuntimePath = (source: string, runtimeRoot: string): boolean => {
+const canonicalGuardPath = (value: string, cwd: string): string | undefined => {
+  const raw = value.trim().replace(/^(?:(["']))([\s\S]*)\1$/u, '$2')
+  if (!raw || /[$%`<>|;&\r\n]/u.test(raw)) return undefined
+  const absolute = resolve(cwd, raw)
+  let cursor = absolute
+  const suffix: string[] = []
+  while (true) {
+    try {
+      return resolve(realpathSync(cursor), ...suffix)
+    } catch {
+      const parent = dirname(cursor)
+      if (parent === cursor) return absolute
+      suffix.unshift(basename(cursor))
+      cursor = parent
+    }
+  }
+}
+
+const canonicalPathIsWithin = (candidate: string, root: string): boolean => {
+  const normalizedCandidate = process.platform === 'win32' ? candidate.toLowerCase() : candidate
+  const normalizedRoot = process.platform === 'win32' ? root.toLowerCase() : root
+  const pathFromRoot = relative(normalizedRoot, normalizedCandidate)
+  return (
+    pathFromRoot === '' ||
+    (pathFromRoot !== '..' && !pathFromRoot.startsWith(`..${sep}`) && !isAbsolute(pathFromRoot))
+  )
+}
+
+const referencesManagedRuntimePath = (
+  source: string,
+  runtimeRoot: string,
+  cwd: string
+): boolean => {
   const canonical = resolve(runtimeRoot)
   const variants = new Set([
     canonical,
@@ -106,7 +138,14 @@ const referencesManagedRuntimePath = (source: string, runtimeRoot: string): bool
       if (startsAtPathBoundary && endsAtDirectoryBoundary) return true
     }
   }
-  return /(?:^|[^A-Za-z0-9_])OPEN_SCIENCE_RUNTIME_DIR(?:$|[^A-Za-z0-9_])/u.test(source)
+  if (/(?:^|[^A-Za-z0-9_])OPEN_SCIENCE_RUNTIME_DIR(?:$|[^A-Za-z0-9_])/u.test(source)) {
+    return true
+  }
+  const canonicalTarget = canonicalGuardPath(source, cwd)
+  const canonicalRoot = canonicalGuardPath(runtimeRoot, cwd)
+  return Boolean(
+    canonicalTarget && canonicalRoot && canonicalPathIsWithin(canonicalTarget, canonicalRoot)
+  )
 }
 
 // Replaces quoted literals and comments with spaces while preserving line/column positions. Direct
@@ -491,7 +530,12 @@ const shellRuntimeWriteTargets = (command: string): string[] => {
     ]
   }
   const positional = args.filter((arg) => !arg.startsWith('-'))
-  if (/^(?:cp|install|ln)(?:\.exe)?$/iu.test(executable)) {
+  if (/^ln(?:\.exe)?$/iu.test(executable)) {
+    // A link outside the runtime can become a durable write alias back into it, so protect both the
+    // source and destination instead of treating only the newly-created link path as a write target.
+    return [...redirections, ...positional]
+  }
+  if (/^(?:cp|install)(?:\.exe)?$/iu.test(executable)) {
     return [...redirections, ...positional.slice(-1)]
   }
   if (/^mv(?:\.exe)?$/iu.test(executable)) return [...redirections, ...positional]
@@ -516,6 +560,7 @@ const commandName = (word: string | undefined): string =>
 const shellSequenceWritesRuntime = (
   source: string,
   runtimeRoot: string,
+  cwd: string,
   inheritedRuntimeCwd = false,
   depth = 0
 ): boolean => {
@@ -525,25 +570,26 @@ const shellSequenceWritesRuntime = (
     const executable = commandName(words[0])
     if (executable === 'cd') {
       const target = words.find((word, index) => index > 0 && !word.startsWith('-'))
-      if (target && referencesManagedRuntimePath(target, runtimeRoot)) insideRuntime = true
+      if (target && referencesManagedRuntimePath(target, runtimeRoot, cwd)) insideRuntime = true
       else if (target && /^(?:[A-Za-z]:)?[\\/]/u.test(target.replace(/^['"]|['"]$/gu, ''))) {
         insideRuntime = false
       }
     }
     const targets = shellRuntimeWriteTargets(command)
-    if (targets.some((target) => referencesManagedRuntimePath(target, runtimeRoot))) return true
+    if (targets.some((target) => referencesManagedRuntimePath(target, runtimeRoot, cwd)))
+      return true
     if (insideRuntime && targets.length > 0) return true
     if (insideRuntime && depth < 8) {
       const payload = invocationPayload(words)
       if (
         payload?.surface === 'bash' &&
-        shellSequenceWritesRuntime(payload.source, runtimeRoot, true, depth + 1)
+        shellSequenceWritesRuntime(payload.source, runtimeRoot, cwd, true, depth + 1)
       ) {
         return true
       }
       if (
         payload?.surface === 'powershell' &&
-        powerShellSequenceWritesRuntime(payload.source, runtimeRoot, true, depth + 1)
+        powerShellSequenceWritesRuntime(payload.source, runtimeRoot, cwd, true, depth + 1)
       ) {
         return true
       }
@@ -594,14 +640,18 @@ const powerShellRuntimeWriteTargets = (command: string): string[] => {
   return redirections
 }
 
-const powerShellDotNetWritesRuntime = (source: string, runtimeRoot: string): boolean => {
+const powerShellDotNetWritesRuntime = (
+  source: string,
+  runtimeRoot: string,
+  cwd: string
+): boolean => {
   const pattern =
     /\[(?:System\.)?IO\.(?:File|Directory)\]::(?:WriteAllText|AppendAllText|WriteAllBytes|Create|CreateText|AppendText|Move|Replace|Delete|CreateDirectory)\s*\(/giu
   for (let match = pattern.exec(source); match; match = pattern.exec(source)) {
     const openIndex = match.index + match[0].lastIndexOf('(')
     const call = matchingCall(source, match.index, openIndex)
     const target = call ? callArguments(call, openIndex - match.index)[0] : undefined
-    if (target && referencesManagedRuntimePath(target, runtimeRoot)) return true
+    if (target && referencesManagedRuntimePath(target, runtimeRoot, cwd)) return true
   }
   return false
 }
@@ -609,6 +659,7 @@ const powerShellDotNetWritesRuntime = (source: string, runtimeRoot: string): boo
 const powerShellSequenceWritesRuntime = (
   source: string,
   runtimeRoot: string,
+  cwd: string,
   inheritedRuntimeCwd = false,
   depth = 0
 ): boolean => {
@@ -622,25 +673,26 @@ const powerShellSequenceWritesRuntime = (
         pathFlag >= 0
           ? words[pathFlag + 1]
           : words.find((word, index) => index > 0 && !word.startsWith('-'))
-      if (target && referencesManagedRuntimePath(target, runtimeRoot)) insideRuntime = true
+      if (target && referencesManagedRuntimePath(target, runtimeRoot, cwd)) insideRuntime = true
       else if (target && /^(?:[A-Za-z]:)?[\\/]/u.test(target.replace(/^['"]|['"]$/gu, ''))) {
         insideRuntime = false
       }
     }
     const targets = powerShellRuntimeWriteTargets(command)
-    if (targets.some((target) => referencesManagedRuntimePath(target, runtimeRoot))) return true
+    if (targets.some((target) => referencesManagedRuntimePath(target, runtimeRoot, cwd)))
+      return true
     if (insideRuntime && targets.length > 0) return true
     if (insideRuntime && depth < 8) {
       const payload = invocationPayload(words)
       if (
         payload?.surface === 'bash' &&
-        shellSequenceWritesRuntime(payload.source, runtimeRoot, true, depth + 1)
+        shellSequenceWritesRuntime(payload.source, runtimeRoot, cwd, true, depth + 1)
       ) {
         return true
       }
       if (
         payload?.surface === 'powershell' &&
-        powerShellSequenceWritesRuntime(payload.source, runtimeRoot, true, depth + 1)
+        powerShellSequenceWritesRuntime(payload.source, runtimeRoot, cwd, true, depth + 1)
       ) {
         return true
       }
@@ -847,12 +899,13 @@ const findPackageMutationRule = (
 const hasDirectManagedRuntimeWrite = (
   source: string,
   surface: NotebookExecutionSurface,
-  runtimeRoot: string
+  runtimeRoot: string,
+  cwd: string
 ): boolean => {
   if (surface === 'bash') {
     const executableSource = stripShellComments(source)
     return [executableSource, resolveShellLiteralAssignments(executableSource)].some((candidate) =>
-      shellSequenceWritesRuntime(candidate, runtimeRoot)
+      shellSequenceWritesRuntime(candidate, runtimeRoot, cwd)
     )
   }
 
@@ -860,8 +913,8 @@ const hasDirectManagedRuntimeWrite = (
     const executableSource = stripShellComments(source)
     return [executableSource, resolvePowerShellLiteralAssignments(executableSource)].some(
       (candidate) =>
-        powerShellSequenceWritesRuntime(candidate, runtimeRoot) ||
-        powerShellDotNetWritesRuntime(candidate, runtimeRoot)
+        powerShellSequenceWritesRuntime(candidate, runtimeRoot, cwd) ||
+        powerShellDotNetWritesRuntime(candidate, runtimeRoot, cwd)
     )
   }
 
@@ -882,7 +935,7 @@ const hasDirectManagedRuntimeWrite = (
         call,
         source.slice(match.index, openIndex + 1),
         openIndex - match.index
-      ).some((target) => referencesManagedRuntimePath(target, runtimeRoot))
+      ).some((target) => referencesManagedRuntimePath(target, runtimeRoot, cwd))
     ) {
       return true
     }
@@ -895,12 +948,13 @@ const hasManagedRuntimeWrite = (
   source: string,
   surface: NotebookExecutionSurface,
   runtimeRoot: string,
+  cwd: string,
   depth = 0
 ): boolean =>
-  hasDirectManagedRuntimeWrite(source, surface, runtimeRoot) ||
+  hasDirectManagedRuntimeWrite(source, surface, runtimeRoot, cwd) ||
   (depth < 8 &&
     executionPayloads(source, surface).some((payload) =>
-      hasManagedRuntimeWrite(payload.source, payload.surface, runtimeRoot, depth + 1)
+      hasManagedRuntimeWrite(payload.source, payload.surface, runtimeRoot, cwd, depth + 1)
     ))
 
 // Single policy seam shared by data-cell and shell execution. This is intentionally independent from
@@ -908,11 +962,13 @@ const hasManagedRuntimeWrite = (
 export const detectManagedRuntimeMutation = ({
   source,
   surface,
-  runtimeRoot
+  runtimeRoot,
+  cwd = process.cwd()
 }: {
   source: string
   surface: NotebookExecutionSurface
   runtimeRoot: string
+  cwd?: string
 }): ManagedRuntimeMutation | undefined => {
   const rule = findPackageMutationRule(source, surface)
   if (rule) {
@@ -924,7 +980,7 @@ export const detectManagedRuntimeMutation = ({
     }
   }
 
-  if (hasManagedRuntimeWrite(source, surface, runtimeRoot)) {
+  if (hasManagedRuntimeWrite(source, surface, runtimeRoot, cwd)) {
     return {
       installer: 'direct managed-runtime write',
       message:

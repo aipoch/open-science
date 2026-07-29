@@ -46,6 +46,7 @@ import {
   envPrefix,
   isRepairRequired,
   pythonBin,
+  rBin,
   repairRegistryPath,
   writeReadyMarker,
   writeRReadyMarker
@@ -5062,6 +5063,32 @@ describe('v4 runtime bindings & agent tools', () => {
       expect(run.status).toBe('failed')
       expect(run.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
     }
+    expect(executions).toHaveLength(0)
+  })
+
+  it('honors a legacy managed runtimeId repair marker for an unbound default session', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const interpreterPath = rBin(envPrefix(runtimeRoot, DEFAULT_R_ENV))
+    const discovered: DiscoveredInterpreter = {
+      ...managedR,
+      envId: interpreterPath,
+      interpreterPath
+    }
+    const executions: NotebookExecutionRequest[] = []
+    addRepairRequired(runtimeRoot, interpreterPath)
+    const service = bindingService(root, { discovered: [discovered], executions })
+
+    await service.state({ sessionId: 'unbound', workspaceCwd: root })
+    const run = await service.execute({
+      sessionId: 'unbound',
+      workspaceCwd: root,
+      language: 'r',
+      code: 'R.version.string'
+    })
+
+    expect(run.status).toBe('failed')
+    expect(run.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
     expect(executions).toHaveLength(0)
   })
 
