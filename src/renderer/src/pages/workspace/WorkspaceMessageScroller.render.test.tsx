@@ -925,6 +925,86 @@ describe('WorkspaceMessageScroller loading render', () => {
   })
 })
 
+describe('WorkspaceMessageScroller agent markdown copy', () => {
+  it('shows a left-aligned copy button for every completed agent reply', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'running',
+        messages: [
+          createMessage({ id: 'prompt-1', content: 'First question' }),
+          createMessage({
+            id: 'thinking-1',
+            role: 'agent',
+            content: 'Intermediate reasoning',
+            responseToMessageId: 'prompt-1',
+            createdAt: 1710000000001,
+            updatedAt: 1710000000001
+          }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'Final reply for the first question',
+            responseToMessageId: 'prompt-1',
+            createdAt: 1710000000002,
+            updatedAt: 1710000000002
+          }),
+          createMessage({
+            id: 'prompt-2',
+            content: 'Follow-up question',
+            createdAt: 1710000000003,
+            updatedAt: 1710000000003
+          }),
+          createMessage({
+            id: 'reply-2',
+            role: 'agent',
+            content: 'Latest completed reply',
+            responseToMessageId: 'prompt-2',
+            createdAt: 1710000000004,
+            updatedAt: 1710000000004
+          }),
+          createMessage({
+            id: 'prompt-3',
+            content: 'One more question',
+            createdAt: 1710000000005,
+            updatedAt: 1710000000005
+          }),
+          createMessage({
+            id: 'reply-3',
+            role: 'agent',
+            content: 'Still streaming',
+            status: 'streaming',
+            responseToMessageId: 'prompt-3',
+            createdAt: 1710000000006,
+            updatedAt: 1710000000006
+          }),
+          createMessage({
+            id: 'reply-4',
+            role: 'agent',
+            content: 'Failed reply',
+            status: 'error',
+            responseToMessageId: 'prompt-3',
+            createdAt: 1710000000007,
+            updatedAt: 1710000000007
+          })
+        ]
+      })
+    )
+
+    const copyButtons = html.match(/aria-label="Copy as Markdown"/g) ?? []
+    const thinkingStart = html.indexOf('data-message-id="thinking-1"')
+    const earlierReplyStart = html.indexOf('data-message-id="reply-1"')
+    const latestReplyStart = html.indexOf('data-message-id="reply-2"')
+    const streamingReplyStart = html.indexOf('data-message-id="reply-3"')
+
+    expect(copyButtons).toHaveLength(2)
+    expect(html).toContain('mt-2 flex justify-start')
+    expect(html.slice(thinkingStart, earlierReplyStart)).not.toContain('Copy as Markdown')
+    expect(html.slice(earlierReplyStart, latestReplyStart)).toContain('Copy as Markdown')
+    expect(html.slice(latestReplyStart, streamingReplyStart)).toContain('Copy as Markdown')
+    expect(html.slice(streamingReplyStart)).not.toContain('Copy as Markdown')
+  })
+})
+
 describe('WorkspaceMessageScroller agent images', () => {
   it('renders bounded ACP message images as data URLs alongside text', async () => {
     const html = await renderScroller(

@@ -1,5 +1,6 @@
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn, formatByteSize } from '@/lib/utils'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
@@ -45,6 +46,8 @@ type WorkspaceMessageItemProps = {
   onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
   // Number of user turns after this message; drives the destructive-resend warning threshold.
   subsequentTurns?: number
+  // The scroller enables this for each completed user turn's final agent reply.
+  canCopyMarkdown?: boolean
 }
 
 const ARTIFACT_GALLERY_VISIBLE_COUNT = 5
@@ -368,6 +371,7 @@ const WorkspaceMessageItem = ({
   canEditMessage = false,
   onSendEditedMessage,
   subsequentTurns = 0,
+  canCopyMarkdown = false,
   artifacts = []
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const isUserMessage = message.role === 'user'
@@ -389,13 +393,18 @@ const WorkspaceMessageItem = ({
     []
   )
 
-  // Copies the prompt text and briefly swaps the icon to confirm the clipboard write succeeded.
+  // Copies raw message text and briefly swaps the icon only after a successful clipboard write.
   const handleCopyMessage = (): void => {
-    void navigator.clipboard.writeText(message.content).then(() => {
-      setCopied(true)
-      if (copyResetTimeoutRef.current !== null) window.clearTimeout(copyResetTimeoutRef.current)
-      copyResetTimeoutRef.current = window.setTimeout(() => setCopied(false), 2000)
-    })
+    if (!navigator.clipboard?.writeText) return
+
+    void navigator.clipboard
+      .writeText(message.content)
+      .then(() => {
+        setCopied(true)
+        if (copyResetTimeoutRef.current !== null) window.clearTimeout(copyResetTimeoutRef.current)
+        copyResetTimeoutRef.current = window.setTimeout(() => setCopied(false), 2000)
+      })
+      .catch(() => {})
   }
 
   // Opens the inline editor with the prompt rebuilt as a composer doc (mention chips restored when
@@ -530,6 +539,29 @@ const WorkspaceMessageItem = ({
             ) : null}
             <MessageImageList images={message.images ?? []} />
             <MessageArtifactList onPreviewArtifact={onPreviewArtifact} artifacts={artifacts} />
+            {canCopyMarkdown && message.content ? (
+              <div className="mt-2 flex justify-start">
+                <TooltipProvider delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className={userMessageActionButtonClassName}
+                        aria-label={copied ? 'Markdown copied' : 'Copy as Markdown'}
+                        onClick={handleCopyMessage}
+                      >
+                        {copied ? (
+                          <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                        ) : (
+                          <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Copy as Markdown</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+            ) : null}
           </div>
         )}
       </div>
