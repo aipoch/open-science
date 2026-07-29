@@ -121,6 +121,7 @@ describe('storage IPC handlers', () => {
     for (const channel of [
       'storage:get-info',
       'storage:reveal-app-storage',
+      'storage:reveal-data-storage',
       'storage:detect-active',
       'storage:pick-directory',
       'storage:migrate',
@@ -143,6 +144,15 @@ describe('storage IPC handlers', () => {
     expect(openPath).toHaveBeenCalledWith(join('/home/user', '.open-science'))
   })
 
+  it('reveals the main-resolved data root without accepting a renderer path', async () => {
+    registerStorageIpcHandlers(fakeDeps())
+
+    await expect(invoke('storage:reveal-data-storage', '/untrusted/path')).resolves.toEqual({
+      revealed: true
+    })
+    expect(openPath).toHaveBeenCalledWith(join('/home/user', 'OpenScience'))
+  })
+
   it('converts a rejected reveal into a renderer-safe failure result', async () => {
     openPath.mockRejectedValueOnce(new Error('shell unavailable'))
     registerStorageIpcHandlers(fakeDeps())
@@ -158,6 +168,7 @@ describe('storage IPC handlers', () => {
     registerStorageIpcHandlers(fakeDeps())
 
     const info = (await invoke('storage:get-info')) as {
+      configRoot: string
       dataRoot: string
       isDefault: boolean
       defaultDataRoot: string
@@ -165,6 +176,7 @@ describe('storage IPC handlers', () => {
     }
 
     expect(info.isDefault).toBe(true)
+    expect(info.configRoot).toBe(join('/home/user', '.open-science'))
     // The default root is `<home>/OpenScience` (home mocked to /home/user), reproducible from home.
     // Derive with join so the assertion holds on Windows (backslashes), not just POSIX.
     expect(info.defaultDataRoot).toBe(join('/home/user', 'OpenScience'))

@@ -201,6 +201,18 @@ Provider vendors, available models, and regional endpoints can evolve independen
 
 Open Science stores project data and settings on the local computer. API Keys are kept locally and use the operating system's secure credential storage when it is available. Logs are local and are not uploaded automatically.
 
+### Downgrading safely
+
+Installing an older Open Science application does not downgrade data that a newer version has
+already written. Before testing an upgrade, close Open Science and make complete copies of both the
+**Config Root** and **Data Root** shown in **Settings → Storage → Safe downgrade**.
+
+To roll back, close Open Science, restore both matching pre-upgrade copies, and only then install and
+open the older application. Replacing only the application binary is not a safe rollback. Without
+matching backups, treat the older version as view-only: do not send or edit messages, delete
+projects, generate files, or migrate the Data Root, because an older writer may silently discard
+newer Session, Upload, and Provenance records.
+
 External data flow is still possible and should be reviewed:
 
 - Model requests send the prompt and necessary context to the selected model provider.

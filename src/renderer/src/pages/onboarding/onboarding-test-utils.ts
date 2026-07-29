@@ -76,6 +76,7 @@ const codexReadyState = (): Partial<ReturnType<typeof createInitialSettingsState
 })
 
 const storageInfo = (overrides: Partial<StorageInfo> = {}): StorageInfo => ({
+  configRoot: '/home/u/.open-science',
   dataRoot: DEFAULT_DATA_ROOT,
   isDefault: true,
   defaultDataRoot: DEFAULT_DATA_ROOT,

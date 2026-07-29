@@ -7,6 +7,9 @@ export type UsageCategory = { key: UsageCategoryKey; bytes: number; children?: U
 export type StorageUsage = { categories: UsageCategory[]; totalBytes: number }
 
 export type StorageInfo = {
+  // Fixed application state (SQLite, Sessions, settings, and credentials metadata). This root is
+  // intentionally separate from the relocatable data root and both are needed for a safe rollback.
+  configRoot: string
   dataRoot: string
   isDefault: boolean
   // The default data root and the parent that reproduces it. `defaultParent` is fed to the same

@@ -124,6 +124,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
     }
 
     return {
+      configRoot: resolveConfigRoot(),
       dataRoot,
       isDefault: samePath(dataRoot, computeDefaultDataRoot()),
       defaultDataRoot: computeDefaultDataRoot(),
@@ -144,6 +145,19 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
       return {
         revealed: false,
         error: error instanceof Error ? error.message : 'Could not reveal application storage.'
+      }
+    }
+  })
+
+  ipcMain.handle('storage:reveal-data-storage', async (): Promise<RevealAppStorageResult> => {
+    // Resolve the active root in main instead of accepting a renderer-supplied filesystem path.
+    try {
+      const error = await shell.openPath(resolveDataRoot())
+      return error ? { revealed: false, error } : { revealed: true }
+    } catch (error) {
+      return {
+        revealed: false,
+        error: error instanceof Error ? error.message : 'Could not reveal data storage.'
       }
     }
   })
