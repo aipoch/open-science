@@ -1008,6 +1008,29 @@ describe('notebook runtime service', () => {
       expect(result.stderr).toMatch(/managed runtime is read-only/i)
     })
 
+    it.each([
+      'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; New-Item conda-meta\\pwn.json',
+      'Remove-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\conda-meta\\history"'
+    ])('uses the PowerShell runtime-write policy on Windows: %s', async (command) => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        platform: 'win32'
+      })
+
+      const result = await service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command
+      })
+
+      expect(result).toMatchObject({ stdout: '', exitCode: 1 })
+      expect(result.stderr).toMatch(/managed runtime is read-only/i)
+    })
+
     it.skipIf(process.platform === 'win32')(
       'records a shell-created file as a working file for provenance',
       async () => {

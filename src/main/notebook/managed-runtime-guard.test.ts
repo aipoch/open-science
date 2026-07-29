@@ -33,6 +33,9 @@ describe('detectManagedRuntimeMutation', () => {
     ['bash', 'echo "$OPEN_SCIENCE_RUNTIME_DIR"; touch report.txt'],
     ['bash', 'cp "$OPEN_SCIENCE_RUNTIME_DIR/x" ./copy.txt'],
     ['bash', 'printf x > report.txt'],
+    ['bash', 'cd /tmp; touch report.txt'],
+    ['powershell', 'Write-Output $env:OPEN_SCIENCE_RUNTIME_DIR; New-Item report.txt'],
+    ['powershell', 'Copy-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\source.txt" ".\\copy.txt"'],
     ['r', 'cat(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR")); writeLines("ok", "report.txt")'],
     ['r', 'writeLines(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "report.txt")'],
     [
@@ -68,6 +71,10 @@ describe('detectManagedRuntimeMutation', () => {
     ['bash', 'cat > "$OPEN_SCIENCE_RUNTIME_DIR/x"'],
     ['bash', 'target="$OPEN_SCIENCE_RUNTIME_DIR/x"; printf x >> "$target"'],
     ['bash', 'target="$OPEN_SCIENCE_RUNTIME_DIR/x"; touch "$target"'],
+    ['bash', 'cd "$OPEN_SCIENCE_RUNTIME_DIR" && touch conda-meta/pwn.json'],
+    ['powershell', 'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; New-Item conda-meta\\pwn.json'],
+    ['powershell', 'Remove-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\conda-meta\\history"'],
+    ['powershell', "$target = Join-Path $env:OPEN_SCIENCE_RUNTIME_DIR 'pwn.txt'; New-Item $target"],
     ['r', 'writeLines("x", file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "x"))'],
     ['repl', 'writeFileSync(process.env.OPEN_SCIENCE_RUNTIME_DIR + "/x", "x")'],
     ['repl', 'copyFileSync("report.txt", process.env.OPEN_SCIENCE_RUNTIME_DIR + "/x")']

@@ -2160,7 +2160,7 @@ class NotebookRuntimeService {
       let workingFiles: NotebookWorkingFile[] = []
       const blockedMutation = detectManagedRuntimeMutation({
         source: request.command,
-        surface: 'bash',
+        surface: this.options.platform === 'win32' ? 'powershell' : 'bash',
         runtimeRoot: session.runtimeRoot
       })
       const shellResult = await (
