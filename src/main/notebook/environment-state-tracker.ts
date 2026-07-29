@@ -313,13 +313,13 @@ const R_FINGERPRINT_SCRIPT = [
   'for (root in sort(unique(.libPaths()))) {',
   '  info <- file.info(root)',
   '  if (is.na(info$mtime)) { cat("UNWATCHABLE\\t", root, "\\n", sep=""); next }',
-  '  cat("ROOT\\t", root, "\\t", as.numeric(info$mtime), "\\t", info$size, "\\n", sep="")',
+  '  cat("ROOT\\t", root, "\\t", sprintf("%.9f", as.numeric(info$mtime)), "\\t", info$size, "\\n", sep="")',
   '  packages <- sort(list.dirs(root, recursive=FALSE, full.names=TRUE))',
   '  for (pkg in packages) {',
   '    description <- file.path(pkg, "DESCRIPTION")',
   '    target <- if (file.exists(description)) description else pkg',
   '    pkgInfo <- file.info(target)',
-  '    cat("PACKAGE\\t", basename(pkg), "\\t", as.numeric(pkgInfo$mtime), "\\t", pkgInfo$size, "\\n", sep="")',
+  '    cat("PACKAGE\\t", basename(pkg), "\\t", sprintf("%.9f", as.numeric(pkgInfo$mtime)), "\\t", pkgInfo$size, "\\n", sep="")',
   '  }',
   '}'
 ].join('\n')

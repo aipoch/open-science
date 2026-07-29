@@ -623,6 +623,28 @@ describe('ArtifactProvenancePanel', () => {
     expect(notebook.cells[0]?.source.join('')).toContain('np.sin(0)')
   })
 
+  it('discloses bounded execution evidence instead of presenting it as complete', async () => {
+    const execution = provenance().execution!
+    getVersionExecution.mockResolvedValue({
+      execution: {
+        ...execution,
+        truncation: {
+          reason: 'payload-limit',
+          omittedLeadingRunCount: 3,
+          omittedOutputCount: 17,
+          omittedInputCount: 2
+        }
+      }
+    })
+
+    await clickTab('Execution Log')
+    await flush()
+
+    expect(container.textContent).toContain(
+      'Execution evidence was bounded for storage: omitted 3 earlier runs, 17 outputs, and 2 inputs.'
+    )
+  })
+
   it('surfaces a segmented evidence loading failure instead of silently showing empty evidence', async () => {
     getVersionExecution.mockRejectedValueOnce(new Error('execution snapshot unavailable'))
 

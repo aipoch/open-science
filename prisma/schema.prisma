@@ -231,6 +231,7 @@ model ArtifactVersion {
   id                             String          @id
   artifactId                     String
   versionNumber                  Int
+  filename                       String
   artifactRunId                  String
   writeOperationId               String?         @unique
   writeRequestChecksum           String?

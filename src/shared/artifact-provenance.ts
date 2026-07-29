@@ -342,6 +342,7 @@ export type ProvenanceNotebookRun = {
   kernelKind: NotebookKernelKind
   environmentName?: string
   script: string
+  scriptTruncated?: true
   status: NotebookRunStatus
   executionCount?: number
   startedAt: string
@@ -352,6 +353,8 @@ export type ProvenanceNotebookRun = {
     inputFileVersionId: string
   }>
   hasOmittedFiles?: true
+  hasOmittedInputs?: true
+  omittedOutputCount?: number
 }
 
 export type ArtifactExecutionInputAvailability =
@@ -378,6 +381,12 @@ export type PersistedArtifactExecutionSnapshot = {
   createdAt: string
   inputFiles: NotebookRunInputFile[]
   runs: ProvenanceNotebookRun[]
+  truncation?: {
+    reason: 'payload-limit'
+    omittedLeadingRunCount: number
+    omittedOutputCount: number
+    omittedInputCount: number
+  }
 }
 
 // Renderer-safe execution projection. Input storage keys are resolved in main and replaced with the

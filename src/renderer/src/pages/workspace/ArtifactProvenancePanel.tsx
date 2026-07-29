@@ -574,6 +574,7 @@ const ArtifactProvenancePanel = ({
     () => (provenance?.execution?.runs ?? []).map(toNotebookRun),
     [provenance]
   )
+  const executionTruncation = provenance?.execution?.truncation
   const reviewProjection =
     provenance?.review.state === 'available' ? provenance.review.value : undefined
   const reviewUnavailableReason =
@@ -841,6 +842,14 @@ const ArtifactProvenancePanel = ({
         {provenance && activeTab === 'execution' ? (
           executionRuns.length > 0 ? (
             <div>
+              {executionTruncation ? (
+                <p className="border-b border-warning-100/50 bg-warning-100/10 px-4 py-2 text-xs text-text-200">
+                  Execution evidence was bounded for storage: omitted{' '}
+                  {executionTruncation.omittedLeadingRunCount} earlier runs,{' '}
+                  {executionTruncation.omittedOutputCount} outputs, and{' '}
+                  {executionTruncation.omittedInputCount} inputs.
+                </p>
+              ) : null}
               <div className="flex items-center border-b border-border-300/50 px-4 py-2">
                 <Button
                   type="button"

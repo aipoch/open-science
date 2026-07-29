@@ -259,6 +259,7 @@ describe('project prisma client (integration)', () => {
         id: 'artifact-version-1',
         artifactId: 'artifact-1',
         versionNumber: 1,
+        filename: 'result.png',
         artifactRunId: 'artifact-run-1',
         rootFrameId: 'root-1',
         agentFrameId: 'agent-1',
@@ -400,6 +401,84 @@ describe('project prisma client (integration)', () => {
     ).rejects.toThrow()
   })
 
+  it('backfills and freezes filenames when upgrading legacy Artifact Versions', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-filename-migration-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await ensureProjectSchema(client)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.artifactLineage.create({
+      data: {
+        id: 'artifact-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        normalizedFilename: 'result.png',
+        filename: 'Result.png'
+      }
+    })
+    await client.artifactVersion.create({
+      data: {
+        id: 'artifact-version-1',
+        artifactId: 'artifact-1',
+        versionNumber: 1,
+        filename: 'Result.png',
+        artifactRunId: 'artifact-run-1',
+        rootFrameId: 'root-1',
+        agentFrameId: 'agent-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1',
+        state: 'pending',
+        contentStorageKey: 'artifacts/result.png',
+        evidenceStorageKey: 'artifacts/evidence.json',
+        sizeBytes: 3n,
+        checksum: 'a'.repeat(64),
+        evidenceJson: '{}',
+        evidenceChecksum: 'b'.repeat(64)
+      }
+    })
+
+    const versionColumns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+      `PRAGMA table_info('ArtifactVersion')`
+    )
+    const legacyColumnList = versionColumns
+      .map((column) => column.name)
+      .filter((column) => column !== 'filename')
+      .map((column) => `"${column.replaceAll('"', '""')}"`)
+      .join(', ')
+    await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
+    await client.$executeRawUnsafe(
+      `CREATE TABLE "ArtifactVersionLegacy" AS SELECT ${legacyColumnList} FROM "ArtifactVersion"`
+    )
+    await client.$executeRawUnsafe('DROP TABLE "ArtifactVersion"')
+    await client.$executeRawUnsafe(
+      'ALTER TABLE "ArtifactVersionLegacy" RENAME TO "ArtifactVersion"'
+    )
+    await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+
+    await ensureProjectSchema(client)
+
+    await expect(
+      client.artifactVersion.findUniqueOrThrow({ where: { id: 'artifact-version-1' } })
+    ).resolves.toMatchObject({ filename: 'Result.png' })
+    const migratedColumns = await client.$queryRawUnsafe<
+      Array<{ name: string; notnull: bigint | number }>
+    >(`PRAGMA table_info('ArtifactVersion')`)
+    expect(migratedColumns.find((column) => column.name === 'filename')).toMatchObject({
+      notnull: 1n
+    })
+    await expect(
+      client.artifactVersion.update({
+        where: { id: 'artifact-version-1' },
+        data: { filename: '' }
+      })
+    ).rejects.toThrow()
+  })
+
   it('does not hide additive migration failures when the requested column remains absent', async () => {
     const migrationFailure = new Error('simulated SQLite disk I/O failure')
     const client = {
@@ -486,6 +565,7 @@ describe('project prisma client (integration)', () => {
         id: 'version-1',
         artifactId: 'artifact-1',
         versionNumber: 1,
+        filename: 'sin.png',
         artifactRunId: 'artifact-run-1',
         writeOperationId: 'write-1',
         writeRequestChecksum: 'a'.repeat(64),

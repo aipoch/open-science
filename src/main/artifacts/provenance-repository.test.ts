@@ -172,21 +172,24 @@ describe('artifact provenance repository', () => {
       writeRequestChecksum: 'a'.repeat(64)
     })
 
+    const replacementFilename = 'SIN.PNG'
     await compatibilityRepository.writePendingFile({
       projectName: common.projectId,
       sessionId: common.artifactStorageSessionId,
       runId: common.artifactRunId,
-      filename: common.filename,
+      filename: replacementFilename,
       mimeType: common.contentType,
       source: createPngInlineSource('version two')
     })
     const second = await repository.createVersion({
       ...common,
+      filename: replacementFilename,
       writeOperationId: 'write-2',
       writeRequestChecksum: 'b'.repeat(64)
     })
     const third = await repository.createVersion({
       ...common,
+      filename: replacementFilename,
       writeOperationId: 'write-3',
       writeRequestChecksum: 'c'.repeat(64)
     })
@@ -221,6 +224,8 @@ describe('artifact provenance repository', () => {
     expect(separateLineage.versionNumber).toBe(1)
     expect(await readFile(first.path)).toEqual(createPngBytes('version one'))
     expect(await readFile(second.path)).toEqual(createPngBytes('version two'))
+    expect(first.name).toBe(common.filename)
+    expect(second.name).toBe(replacementFilename)
     await expect(
       repository.resolveVersionContent({
         projectId: common.projectId,
@@ -247,6 +252,11 @@ describe('artifact provenance repository', () => {
       orderBy: { versionNumber: 'asc' }
     })
     expect(versions.map((version) => version.versionNumber)).toEqual([1, 2, 3])
+    expect(versions.map((version) => version.filename)).toEqual([
+      common.filename,
+      replacementFilename,
+      replacementFilename
+    ])
   })
 
   it('publishes app-generated compatibility bytes and an immutable Version together', async () => {
@@ -658,6 +668,7 @@ describe('artifact provenance repository', () => {
         id: versionId,
         artifactId: 'artifact-1',
         versionNumber: 1,
+        filename: 'sin.png',
         artifactRunId: 'artifact-run-1',
         writeOperationId: 'write-1',
         writeRequestChecksum: 'a'.repeat(64),
@@ -703,6 +714,7 @@ describe('artifact provenance repository', () => {
         id: corruptVersionId,
         artifactId: 'artifact-corrupt',
         versionNumber: 1,
+        filename: 'corrupt.png',
         artifactRunId: 'artifact-run-corrupt',
         writeOperationId: 'write-corrupt',
         writeRequestChecksum: 'b'.repeat(64),
@@ -1127,6 +1139,22 @@ describe('artifact provenance repository', () => {
         ]
       }
     ])
+    const evidenceMirrorPath = join(storageRoot, ...row.evidenceStorageKey.split('/'))
+    const executionMirrorPath = join(
+      storageRoot,
+      ...String(row.executionSnapshotStorageKey).split('/')
+    )
+    await Promise.all([rm(evidenceMirrorPath), rm(executionMirrorPath)])
+    await expect(
+      repository.getVersionExecution({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: version.artifactId,
+        versionId: version.versionId
+      })
+    ).resolves.toMatchObject({ execution: { producerRunId: 'notebook-run-2' } })
+    await expect(stat(evidenceMirrorPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(executionMirrorPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await rm(inputPath)
     await expect(
       repository.getVersionExecution({
@@ -1162,10 +1190,6 @@ describe('artifact provenance repository', () => {
         strongestAssociation: 'resolver-accessed'
       })
     ])
-    await expect(
-      readFile(join(storageRoot, ...String(row.executionSnapshotStorageKey).split('/')), 'utf8')
-    ).resolves.toBe(row.executionSnapshotJson)
-
     const lineage = await repository.getLineage({
       projectId: 'project-1',
       appSessionId: 'session-1',
@@ -1532,6 +1556,134 @@ describe('artifact provenance repository', () => {
         contentType: 'image/png'
       })
     ).resolves.toMatchObject({ versionId: version.versionId })
+  })
+
+  it('bounds execution evidence while retaining the producer run', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-bounded-execution-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+
+    const compatibilityRepository = new ArtifactRepository(storageRoot)
+    const notebookRepository = new NotebookRunRepository(storageRoot)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository,
+      notebookRepository
+    })
+    const graph = {
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1'
+    }
+    const document = await notebookRepository.loadOrCreate({
+      projectName: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+    const sourcePath = join(document.notebookSessionRoot, 'data', 'bounded.png')
+    const content = createPngBytes('bounded execution')
+    await mkdir(dirname(sourcePath), { recursive: true })
+    await writeFile(sourcePath, content)
+    const sourceStat = await stat(sourcePath)
+    const producerRunId = 'notebook-run-129'
+
+    for (let index = 0; index < 130; index += 1) {
+      const runId = `notebook-run-${index}`
+      await notebookRepository.appendRun({
+        projectName: 'project-1',
+        sessionId: 'session-1',
+        run: {
+          runId,
+          cellId: `cell-${index}`,
+          source: 'agent',
+          kernelKind: 'python',
+          status: 'completed',
+          startedAt: sourceStat.mtimeMs - 1_000 + index,
+          endedAt: sourceStat.mtimeMs - 999 + index,
+          script: index === 129 ? 'save_plot("bounded.png")' : `step(${index})`,
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: Array.from({ length: 3 }, (_, outputIndex) => ({
+            type: 'stream' as const,
+            name: 'stdout' as const,
+            text: `run ${index} output ${outputIndex}`
+          })),
+          artifacts: [],
+          workingFiles:
+            index === 129
+              ? [
+                  {
+                    path: sourcePath,
+                    relativePath: 'data/bounded.png',
+                    kind: 'other' as const,
+                    size: sourceStat.size,
+                    mtimeMs: sourceStat.mtimeMs,
+                    createdByRunId: producerRunId
+                  }
+                ]
+              : [],
+          inputFiles: [],
+          ...graph
+        }
+      })
+    }
+    await compatibilityRepository.writePendingFile({
+      projectName: 'project-1',
+      sessionId: 'artifact-session-1',
+      runId: 'artifact-run-1',
+      filename: 'bounded.png',
+      source: { kind: 'inline', content: content.toString('base64'), encoding: 'base64' }
+    })
+
+    const version = await repository.createVersion({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      writeOperationId: 'write-bounded-execution',
+      writeRequestChecksum: 'e'.repeat(64),
+      ...graph,
+      messageBranchAncestry: ['branch-1'],
+      messageAncestry: ['prompt-1'],
+      notebookSessionId: 'session-1',
+      producerRunId,
+      sourceFileObservation: {
+        path: await realpath(sourcePath),
+        sizeBytes: sourceStat.size,
+        mtimeMs: sourceStat.mtimeMs
+      },
+      filename: 'bounded.png',
+      contentType: 'image/png'
+    })
+    const row = await client.artifactVersion.findUniqueOrThrow({
+      where: { id: version.versionId }
+    })
+    const executionJson = row.executionSnapshotJson ?? ''
+    const execution = JSON.parse(executionJson) as {
+      producerRunId: string
+      runs: Array<{ runId: string; outputs: unknown[] }>
+      truncation: {
+        reason: string
+        omittedLeadingRunCount: number
+        omittedOutputCount: number
+        omittedInputCount: number
+      }
+    }
+
+    expect(Buffer.byteLength(executionJson, 'utf8')).toBeLessThanOrEqual(4 * 1024 * 1024)
+    expect(execution.producerRunId).toBe(producerRunId)
+    expect(execution.runs).toHaveLength(128)
+    expect(execution.runs.at(-1)?.runId).toBe(producerRunId)
+    expect(execution.runs.reduce((count, run) => count + run.outputs.length, 0)).toBe(256)
+    expect(execution.truncation).toEqual({
+      reason: 'payload-limit',
+      omittedLeadingRunCount: 2,
+      omittedOutputCount: 128,
+      omittedInputCount: 0
+    })
   })
 
   it('uses exact observed ownership and scope-validates an inline producer declaration', async () => {
@@ -1977,6 +2129,72 @@ describe('artifact provenance repository', () => {
       promptMessageId: common.promptMessageId,
       messageId: 'message-1'
     }
+    const ancestryProbe = await client.artifactVersion.findFirstOrThrow({
+      where: { artifactRunId: common.artifactRunId, versionNumber: 1 }
+    })
+    const forgedExecution = JSON.stringify({
+      schemaVersion: 2,
+      rootFrameId: common.rootFrameId,
+      agentFrameId: common.agentFrameId,
+      messageBranchId: common.messageBranchId,
+      terminalPromptMessageId: common.promptMessageId,
+      producerRunId: 'notebook-run-sibling',
+      producerRunIndex: 0,
+      createdAt: '2026-07-27T12:00:00.000Z',
+      inputFiles: [],
+      runs: [
+        {
+          runId: 'notebook-run-sibling',
+          runIndex: 0,
+          agentFrameId: common.agentFrameId,
+          messageBranchId: 'sibling-branch',
+          runtimeSegmentId: common.runtimeSegmentId,
+          promptMessageId: 'sibling-prompt',
+          kernelKind: 'python',
+          script: 'forged_sibling_evidence()',
+          status: 'completed',
+          startedAt: '2026-07-27T11:59:00.000Z',
+          outputs: [],
+          inputFileVersionKeys: []
+        }
+      ]
+    })
+    const forgedExecutionChecksum = createHash('sha256').update(forgedExecution).digest('hex')
+    const forgedEvidence = JSON.stringify({
+      producer: {
+        state: 'available',
+        producer_run_id: 'notebook-run-sibling',
+        run_index: 0
+      },
+      execution_snapshot_checksum: forgedExecutionChecksum
+    })
+    await client.artifactVersion.update({
+      where: { id: ancestryProbe.id },
+      data: {
+        producerRunId: 'notebook-run-sibling',
+        producerRunIndex: 0,
+        executionSnapshotJson: forgedExecution,
+        executionSnapshotChecksum: forgedExecutionChecksum,
+        executionSnapshotSchemaVersion: 2,
+        evidenceJson: forgedEvidence,
+        evidenceChecksum: createHash('sha256').update(forgedEvidence).digest('hex')
+      }
+    })
+    await expect(repository.finalizeRun(finalizeRequest)).rejects.toThrow(
+      /durable Branch ancestry/i
+    )
+    await client.artifactVersion.update({
+      where: { id: ancestryProbe.id },
+      data: {
+        producerRunId: ancestryProbe.producerRunId,
+        producerRunIndex: ancestryProbe.producerRunIndex,
+        executionSnapshotJson: ancestryProbe.executionSnapshotJson,
+        executionSnapshotChecksum: ancestryProbe.executionSnapshotChecksum,
+        executionSnapshotSchemaVersion: ancestryProbe.executionSnapshotSchemaVersion,
+        evidenceJson: ancestryProbe.evidenceJson,
+        evidenceChecksum: ancestryProbe.evidenceChecksum
+      }
+    })
     const finalized = await repository.finalizeRun(finalizeRequest)
     const replayed = await repository.finalizeRun(finalizeRequest)
 
@@ -2369,7 +2587,7 @@ describe('artifact provenance repository', () => {
     })
     await expect(
       readFile(join(storageRoot, ...versionRow.evidenceStorageKey.split('/')), 'utf8')
-    ).resolves.toBe(versionRow.evidenceJson)
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('reconstructs a missing finalized SQLite Version only from exact Message-snapshot ownership', async () => {

@@ -648,6 +648,55 @@ describe('Provenance Message snapshots', () => {
     ).resolves.toBeNull()
   })
 
+  it('republishes a staging Review scope snapshot before Session deletion reconciliation', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-review-snapshot-recovery-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const reviews = new ReviewRepository(() => Promise.resolve(client), {
+      snapshotStorageRoot: storageRoot
+    })
+    const review = await reviews.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'prompt-1',
+      scope: { turnMessageId: 'prompt-1', blocks: [], artifactVersionIds: [] },
+      scopeSnapshot: []
+    })
+    const scopeSnapshot = await client.reviewScopeSnapshot.findUniqueOrThrow({
+      where: { reviewId: review.id }
+    })
+    await rm(join(storageRoot, ...scopeSnapshot.storageKey.split('/')))
+    await client.reviewScopeSnapshot.update({
+      where: { id: scopeSnapshot.id },
+      data: { state: 'staging' }
+    })
+    const snapshots = new ProvenanceMessageSnapshotRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+
+    await snapshots.reconcileSessionDeletions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Active',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ])
+
+    await expect(
+      client.reviewScopeSnapshot.findUniqueOrThrow({ where: { id: scopeSnapshot.id } })
+    ).resolves.toMatchObject({ state: 'ready' })
+    await expect(
+      readFile(join(storageRoot, ...scopeSnapshot.storageKey.split('/')), 'utf8')
+    ).resolves.toBe(scopeSnapshot.snapshotJson)
+  })
+
   it('recovers a deleting origin from authoritative Session JSON presence', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-delete-recovery-'))
     const client = createProjectDbClient(storageRoot)

@@ -31,6 +31,7 @@ import type {
   GetArtifactLineageRequest,
   GetArtifactVersionProvenanceRequest,
   PersistedArtifactExecutionSnapshot,
+  ProvenanceNotebookRun,
   ProvenanceNotebookOutput,
   ProvenanceExecutionInputFile,
   ReplayArtifactVersionRequest
@@ -69,6 +70,11 @@ const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const ORPHAN_STAGING_GRACE_MS = 60 * 60 * 1_000
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const VERSION_ALLOCATION_MAX_ATTEMPTS = 3
+const MAX_EXECUTION_SNAPSHOT_BYTES = 4 * 1024 * 1024
+const MAX_EXECUTION_SNAPSHOT_RUNS = 128
+const MAX_EXECUTION_SNAPSHOT_OUTPUTS = 256
+const MAX_EXECUTION_SNAPSHOT_INPUTS = 256
+const MAX_EXECUTION_OUTPUT_BYTES = 64 * 1024
 
 const isRetryableLineageVersionConflict = (error: unknown): boolean => {
   if (typeof error !== 'object' || error === null || !('code' in error) || error.code !== 'P2002') {
@@ -143,6 +149,7 @@ type PersistedVersionFileRecord = {
   id: string
   artifactId: string
   versionNumber: number
+  filename: string
   artifactRunId: string
   contentStorageKey: string
   contentType: string | null
@@ -351,7 +358,7 @@ const moveDirectoryIfPresent = async (source: string, destination: string): Prom
 const clipText = (value: string, maxLength = 16_000): string =>
   value.length <= maxLength ? value : `${value.slice(0, maxLength)}\n…[truncated]`
 
-const provenanceTextOutput = (value: string): CanonicalJson => {
+const provenanceTextOutput = (value: string): ProvenanceNotebookOutput => {
   const clipped = clipText(value)
   return {
     type: 'text',
@@ -435,6 +442,7 @@ const normalizeStoredProvenanceOutput = (value: unknown): ProvenanceNotebookOutp
 const parseArtifactExecutionSnapshot = (value: string): PersistedArtifactExecutionSnapshot => {
   const parsed = JSON.parse(value) as unknown
   const snapshot = recordValue(parsed)
+  const truncation = recordValue(snapshot?.truncation)
   if (
     snapshot?.schemaVersion !== 2 ||
     typeof snapshot.rootFrameId !== 'string' ||
@@ -447,6 +455,15 @@ const parseArtifactExecutionSnapshot = (value: string): PersistedArtifactExecuti
     typeof snapshot.createdAt !== 'string' ||
     !Array.isArray(snapshot.inputFiles) ||
     !Array.isArray(snapshot.runs) ||
+    (snapshot.truncation !== undefined &&
+      (!truncation ||
+        truncation.reason !== 'payload-limit' ||
+        !Number.isSafeInteger(truncation.omittedLeadingRunCount) ||
+        Number(truncation.omittedLeadingRunCount) < 0 ||
+        !Number.isSafeInteger(truncation.omittedOutputCount) ||
+        Number(truncation.omittedOutputCount) < 0 ||
+        !Number.isSafeInteger(truncation.omittedInputCount) ||
+        Number(truncation.omittedInputCount) < 0)) ||
     snapshot.runs.some((run) => {
       const candidate = recordValue(run)
       return (
@@ -613,7 +630,7 @@ const tableCell = (value: unknown): CanonicalJson => {
   return serialized === undefined ? null : clipText(serialized, 2_000)
 }
 
-const tabularJsonOutput = (value: unknown): CanonicalJson | undefined => {
+const tabularJsonOutput = (value: unknown): ProvenanceNotebookOutput | undefined => {
   if (!Array.isArray(value) || value.length === 0 || value.some((row) => !recordValue(row))) {
     return undefined
   }
@@ -633,7 +650,16 @@ const omittedMediaByteLength = (mimeType: string, value: string): number =>
     ? Buffer.from(value, 'base64').byteLength
     : Buffer.byteLength(value)
 
-const sanitizeOutput = (output: NotebookOutput): CanonicalJson[] => {
+const boundExecutionOutput = (output: ProvenanceNotebookOutput): ProvenanceNotebookOutput =>
+  Buffer.byteLength(JSON.stringify(output), 'utf8') <= MAX_EXECUTION_OUTPUT_BYTES
+    ? output
+    : {
+        type: 'text',
+        text: '[output omitted because it exceeded the execution evidence limit]',
+        truncated: true
+      }
+
+const sanitizeOutput = (output: NotebookOutput): ProvenanceNotebookOutput[] => {
   if (output.type === 'display') {
     const entries = Object.entries(output.data)
     return [
@@ -644,7 +670,7 @@ const sanitizeOutput = (output: NotebookOutput): CanonicalJson[] => {
       ...entries
         .filter(([mimeType]) => !mimeType.startsWith('text/'))
         .sort(([left], [right]) => left.localeCompare(right))
-        .map(([mimeType, value]) => ({
+        .map<ProvenanceNotebookOutput>(([mimeType, value]) => ({
           type: 'omitted-media',
           mimeType,
           byteLength: omittedMediaByteLength(mimeType, value)
@@ -670,27 +696,35 @@ const sanitizeOutput = (output: NotebookOutput): CanonicalJson[] => {
   return [provenanceTextOutput(output.text)]
 }
 
-const sanitizeRun = (run: NotebookRunRecord, runIndex: number): CanonicalJson => ({
-  runId: run.runId,
-  runIndex,
-  agentFrameId: run.agentFrameId ?? '',
-  messageBranchId: run.messageBranchId ?? '',
-  runtimeSegmentId: run.runtimeSegmentId ?? '',
-  promptMessageId: run.promptMessageId ?? '',
-  kernelKind: run.kernelKind,
-  ...(run.environment ? { environmentName: run.environment } : {}),
-  script: run.script,
-  status: run.status,
-  ...(run.executionCount !== undefined ? { executionCount: run.executionCount } : {}),
-  startedAt: new Date(run.startedAt).toISOString(),
-  ...(run.endedAt !== undefined ? { completedAt: new Date(run.endedAt).toISOString() } : {}),
-  outputs: run.outputs.flatMap(sanitizeOutput),
-  inputFileVersionKeys: (run.inputFiles ?? []).map((input) => ({
-    sourceKind: input.sourceKind,
-    inputFileVersionId: input.inputFileVersionId
-  })),
-  ...(run.workingFiles.length > 0 ? { hasOmittedFiles: true } : {})
-})
+const sanitizeRun = (
+  run: NotebookRunRecord,
+  runIndex: number,
+  outputs: ProvenanceNotebookOutput[] = run.outputs.flatMap(sanitizeOutput)
+): ProvenanceNotebookRun => {
+  const script = clipText(run.script)
+  return {
+    runId: run.runId,
+    runIndex,
+    agentFrameId: run.agentFrameId ?? '',
+    messageBranchId: run.messageBranchId ?? '',
+    runtimeSegmentId: run.runtimeSegmentId ?? '',
+    promptMessageId: run.promptMessageId ?? '',
+    kernelKind: run.kernelKind,
+    ...(run.environment ? { environmentName: run.environment } : {}),
+    script,
+    ...(script !== run.script ? { scriptTruncated: true } : {}),
+    status: run.status,
+    ...(run.executionCount !== undefined ? { executionCount: run.executionCount } : {}),
+    startedAt: new Date(run.startedAt).toISOString(),
+    ...(run.endedAt !== undefined ? { completedAt: new Date(run.endedAt).toISOString() } : {}),
+    outputs,
+    inputFileVersionKeys: (run.inputFiles ?? []).map((input) => ({
+      sourceKind: input.sourceKind,
+      inputFileVersionId: input.inputFileVersionId
+    })),
+    ...(run.workingFiles.length > 0 ? { hasOmittedFiles: true } : {})
+  }
+}
 
 const mergeExecutionInputs = (
   runs: Array<{ run: NotebookRunRecord; runIndex: number }>
@@ -710,6 +744,100 @@ const mergeExecutionInputs = (
     }
   }
   return [...inputs.values()]
+}
+
+const buildBoundedExecutionSnapshot = (
+  base: Omit<PersistedArtifactExecutionSnapshot, 'inputFiles' | 'runs' | 'truncation'>,
+  eligibleRuns: Array<{ run: NotebookRunRecord; runIndex: number }>
+): PersistedArtifactExecutionSnapshot => {
+  let omittedLeadingRunCount = Math.max(0, eligibleRuns.length - MAX_EXECUTION_SNAPSHOT_RUNS)
+  let omittedOutputCount = 0
+  const selectedRuns = eligibleRuns.slice(-MAX_EXECUTION_SNAPSHOT_RUNS)
+  let remainingOutputs = MAX_EXECUTION_SNAPSHOT_OUTPUTS
+  const runs = selectedRuns.map(({ run, runIndex }) => ({
+    run,
+    runIndex,
+    outputs: [] as ProvenanceNotebookOutput[]
+  }))
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    const candidate = runs[index]!
+    const outputs = candidate.run.outputs.flatMap(sanitizeOutput).map(boundExecutionOutput)
+    const retainedCount = Math.min(outputs.length, remainingOutputs)
+    candidate.outputs = outputs.slice(0, retainedCount)
+    const omittedForRun = outputs.length - retainedCount
+    omittedOutputCount += omittedForRun
+    remainingOutputs -= retainedCount
+  }
+
+  const allInputs = mergeExecutionInputs(eligibleRuns)
+  let inputFiles = allInputs.slice(0, MAX_EXECUTION_SNAPSHOT_INPUTS)
+  let omittedInputCount = allInputs.length - inputFiles.length
+  const materializedRuns = runs.map(({ run, runIndex, outputs }) => {
+    const materialized = sanitizeRun(run, runIndex, outputs)
+    const omittedForRun = run.outputs.flatMap(sanitizeOutput).length - outputs.length
+    if (omittedForRun > 0) materialized.omittedOutputCount = omittedForRun
+    return materialized
+  })
+
+  const retainedInputKeys = (): Set<string> =>
+    new Set(inputFiles.map((input) => `${input.sourceKind}\0${input.inputFileVersionId}`))
+  const filterRunInputKeys = (): void => {
+    const retained = retainedInputKeys()
+    for (const run of materializedRuns) {
+      const filtered = run.inputFileVersionKeys.filter((input) =>
+        retained.has(`${input.sourceKind}\0${input.inputFileVersionId}`)
+      )
+      if (filtered.length !== run.inputFileVersionKeys.length) run.hasOmittedInputs = true
+      run.inputFileVersionKeys = filtered
+    }
+  }
+  filterRunInputKeys()
+
+  const snapshot = (): PersistedArtifactExecutionSnapshot => ({
+    ...base,
+    inputFiles,
+    runs: materializedRuns,
+    ...(omittedLeadingRunCount > 0 || omittedOutputCount > 0 || omittedInputCount > 0
+      ? {
+          truncation: {
+            reason: 'payload-limit' as const,
+            omittedLeadingRunCount,
+            omittedOutputCount,
+            omittedInputCount
+          }
+        }
+      : {})
+  })
+  const snapshotBytes = (): number =>
+    Buffer.byteLength(canonicalJson(snapshot() as unknown as CanonicalJson), 'utf8')
+
+  while (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES && materializedRuns.length > 1) {
+    materializedRuns.shift()
+    omittedLeadingRunCount += 1
+  }
+  while (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES) {
+    const runWithOutput = materializedRuns.find((run) => run.outputs.length > 0)
+    if (!runWithOutput) break
+    runWithOutput.outputs.pop()
+    runWithOutput.omittedOutputCount = (runWithOutput.omittedOutputCount ?? 0) + 1
+    omittedOutputCount += 1
+  }
+  while (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES && inputFiles.length > 0) {
+    inputFiles = inputFiles.slice(0, Math.floor(inputFiles.length / 2))
+    omittedInputCount = allInputs.length - inputFiles.length
+    filterRunInputKeys()
+  }
+  if (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES) {
+    const producer = materializedRuns.at(-1)
+    if (producer) {
+      producer.script = clipText(producer.script, 1_000)
+      producer.scriptTruncated = true
+    }
+  }
+  if (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES) {
+    throw new Error('Artifact execution evidence exceeds the bounded snapshot limit.')
+  }
+  return snapshot()
 }
 
 const inputEvidence = (
@@ -1087,7 +1215,7 @@ class ArtifactProvenanceRepository {
         { replaceUnroutedBytes: true }
       )
     }
-    return this.toArtifactVersionFile(existing, projectId, appSessionId, request.filename)
+    return this.toArtifactVersionFile(existing, projectId, appSessionId)
   }
 
   private async createVersionSerialized(
@@ -1143,7 +1271,7 @@ class ArtifactProvenanceRepository {
       if (existing.state === 'pending') {
         await publishCompatibilityRouting(existing, { replaceUnroutedBytes: true })
       }
-      return this.toArtifactVersionFile(existing, projectId, appSessionId, request.filename)
+      return this.toArtifactVersionFile(existing, projectId, appSessionId)
     }
 
     const pendingFiles = await this.compatibilityRepository.listPendingRunFiles({
@@ -1332,6 +1460,7 @@ class ArtifactProvenanceRepository {
               id: versionId,
               artifactId: lineage.id,
               versionNumber,
+              filename: request.filename,
               artifactRunId,
               writeOperationId,
               writeRequestChecksum,
@@ -1431,7 +1560,7 @@ class ArtifactProvenanceRepository {
           data: { state: 'pending' }
         })
       })
-      return this.toArtifactVersionFile(finalized, projectId, appSessionId, request.filename)
+      return this.toArtifactVersionFile(finalized, projectId, appSessionId)
     } catch (error) {
       // Once SQLite owns the staging row, its copied bytes are recovery state for an idempotent
       // transport retry. Removing them here would force a retry to reread a mutable pending source.
@@ -1550,7 +1679,7 @@ class ArtifactProvenanceRepository {
         data: { state: 'pending' }
       })
     })
-    return this.toArtifactVersionFile(recovered, projectId, appSessionId, requestedFilename)
+    return this.toArtifactVersionFile(recovered, projectId, appSessionId)
   }
 
   private async ensureCanonicalMirror(
@@ -1576,6 +1705,23 @@ class ArtifactProvenanceRepository {
     } else {
       bytes = await this.syncAndVerifyFile(path, checksum, corruptMessage)
     }
+    const value = bytes.toString('utf8')
+    if (value !== canonical || sha256(bytes) !== checksum) throw new Error(corruptMessage)
+    return value
+  }
+
+  // SQLite is the normal read authority. A missing reconciliation mirror must not turn a GET into a
+  // filesystem mutation (or make a read-only/Windows volume fail); an existing mirror is still
+  // checked byte-for-byte so conflicting durable evidence remains fail-closed.
+  private async readCanonicalMirror(
+    path: string,
+    canonical: string,
+    checksum: string,
+    corruptMessage: string
+  ): Promise<string> {
+    if (sha256(canonical) !== checksum) throw new Error(corruptMessage)
+    const bytes = await readOptionalFile(path)
+    if (!bytes) return canonical
     const value = bytes.toString('utf8')
     if (value !== canonical || sha256(bytes) !== checksum) throw new Error(corruptMessage)
     return value
@@ -1696,20 +1842,22 @@ class ArtifactProvenanceRepository {
               : run.messageBranchId === request.messageBranchId
             : true)
       )
-    const inputFiles = mergeExecutionInputs(eligibleRuns)
+    const executionSnapshot = buildBoundedExecutionSnapshot(
+      {
+        schemaVersion: 2,
+        rootFrameId: request.rootFrameId,
+        agentFrameId: request.agentFrameId,
+        messageBranchId: request.messageBranchId,
+        terminalPromptMessageId: request.promptMessageId,
+        producerRunId,
+        producerRunIndex,
+        createdAt: createdAt.toISOString()
+      },
+      eligibleRuns
+    )
+    const inputFiles = executionSnapshot.inputFiles
     await this.validateInputReferences(request.projectId, inputFiles)
-    const executionJson = canonicalJson({
-      schemaVersion: 2,
-      rootFrameId: request.rootFrameId,
-      agentFrameId: request.agentFrameId,
-      messageBranchId: request.messageBranchId,
-      terminalPromptMessageId: request.promptMessageId,
-      producerRunId,
-      producerRunIndex,
-      createdAt: createdAt.toISOString(),
-      inputFiles: inputFiles.map((input) => ({ ...input })),
-      runs: eligibleRuns.map(({ run, runIndex }) => sanitizeRun(run, runIndex))
-    })
+    const executionJson = canonicalJson(executionSnapshot as unknown as CanonicalJson)
     const environment = resolveRunEnvironmentCapture(producerRun)
 
     return {
@@ -2018,6 +2166,41 @@ class ArtifactProvenanceRepository {
         )
       }
 
+      const durableBranchIds = new Set(request.messageBranchAncestry ?? [messageBranchId])
+      const durableMessageIds = new Set(request.messageAncestry ?? [promptMessageId, messageId])
+      for (const version of matching) {
+        if (!version.executionSnapshotJson) continue
+        if (
+          !version.executionSnapshotChecksum ||
+          sha256(version.executionSnapshotJson) !== version.executionSnapshotChecksum
+        ) {
+          throw new Error(`Artifact Version execution snapshot is corrupt: ${version.id}`)
+        }
+        const snapshot = parseArtifactExecutionSnapshot(version.executionSnapshotJson)
+        validateArtifactExecutionSnapshot(snapshot, {
+          rootFrameId: version.rootFrameId,
+          agentFrameId: version.agentFrameId,
+          messageBranchId: version.messageBranchId,
+          promptMessageId: version.promptMessageId,
+          producerRunId: version.producerRunId,
+          producerRunIndex: version.producerRunIndex,
+          executionSnapshotChecksum: version.executionSnapshotChecksum,
+          evidence: JSON.parse(version.evidenceJson) as ArtifactVersionEvidence
+        })
+        const outsideDurableAncestry = snapshot.runs.some(
+          (run) =>
+            !durableBranchIds.has(run.messageBranchId) ||
+            (run.promptMessageId
+              ? !durableMessageIds.has(run.promptMessageId)
+              : run.messageBranchId !== messageBranchId)
+        )
+        if (outsideDurableAncestry) {
+          throw new Error(
+            `Artifact Version execution snapshot is outside the durable Branch ancestry: ${version.id}`
+          )
+        }
+      }
+
       await transaction.artifactVersion.updateMany({
         where: {
           id: { in: matching.map((version) => version.id) },
@@ -2038,12 +2221,7 @@ class ArtifactProvenanceRepository {
 
     return Promise.all(
       versions.map((version) =>
-        this.toArtifactVersionFile(
-          version,
-          version.artifact.projectId,
-          version.artifact.sessionId,
-          version.artifact.filename
-        )
+        this.toArtifactVersionFile(version, version.artifact.projectId, version.artifact.sessionId)
       )
     )
   }
@@ -2068,9 +2246,7 @@ class ArtifactProvenanceRepository {
     })
 
     return Promise.all(
-      versions.map((version) =>
-        this.toArtifactVersionFile(version, projectId, appSessionId, version.artifact.filename)
-      )
+      versions.map((version) => this.toArtifactVersionFile(version, projectId, appSessionId))
     )
   }
 
@@ -2116,12 +2292,7 @@ class ArtifactProvenanceRepository {
     // final state update. Resume those rows from SQLite authority before scanning unindexed folders.
     for (const version of stagingVersions) {
       try {
-        await this.recoverStagingVersion(
-          version,
-          projectId,
-          appSessionId,
-          version.artifact.filename
-        )
+        await this.recoverStagingVersion(version, projectId, appSessionId, version.filename)
         result.recoveredVersionIds.push(version.id)
       } catch (error) {
         // A transient/unrelated compatibility I/O error proves only that the scan was incomplete.
@@ -2555,6 +2726,7 @@ class ArtifactProvenanceRepository {
           id: input.versionId,
           artifactId: input.artifactId,
           versionNumber: versionNumber!,
+          filename,
           artifactRunId: pendingRoute?.artifactRunId ?? `recovered-${input.versionId}`,
           rootFrameId,
           agentFrameId,
@@ -2718,7 +2890,7 @@ class ArtifactProvenanceRepository {
 
     const versions = await Promise.all(
       lineage.versions.map(async (version) =>
-        this.toDescriptor(version, projectId, lineage.sessionId, lineage.filename)
+        this.toDescriptor(version, projectId, lineage.sessionId)
       )
     )
     return {
@@ -2779,7 +2951,7 @@ class ArtifactProvenanceRepository {
     if (!version) throw new Error(`Artifact Version not found: ${versionId}`)
 
     const evidencePath = resolveStorageKey(this.options.storageRoot, version.evidenceStorageKey)
-    const evidenceMirror = await this.ensureCanonicalMirror(
+    const evidenceMirror = await this.readCanonicalMirror(
       evidencePath,
       version.evidenceJson,
       version.evidenceChecksum,
@@ -2812,7 +2984,7 @@ class ArtifactProvenanceRepository {
       version.executionSnapshotChecksum &&
       version.executionSnapshotStorageKey
     ) {
-      const executionMirror = await this.ensureCanonicalMirror(
+      const executionMirror = await this.readCanonicalMirror(
         resolveStorageKey(this.options.storageRoot, version.executionSnapshotStorageKey),
         version.executionSnapshotJson,
         version.executionSnapshotChecksum,
@@ -3028,12 +3200,7 @@ class ArtifactProvenanceRepository {
     }
 
     return {
-      descriptor: await this.toDescriptor(
-        version,
-        projectId,
-        version.artifact.sessionId,
-        version.artifact.filename
-      ),
+      descriptor: await this.toDescriptor(version, projectId, version.artifact.sessionId),
       contentStatus,
       evidence,
       execution,
@@ -3120,7 +3287,7 @@ class ArtifactProvenanceRepository {
     }
     return {
       path,
-      filename: version.artifact.filename,
+      filename: version.filename,
       contentType: version.contentType ?? undefined,
       checksum: version.checksum
     }
@@ -3168,8 +3335,7 @@ class ArtifactProvenanceRepository {
   private async toArtifactVersionFile(
     version: PersistedVersionFileRecord,
     projectId: string,
-    appSessionId: string,
-    filename: string
+    appSessionId: string
   ): Promise<ArtifactVersionFile> {
     const filePath = resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
     const fileMtimeMs = await stat(filePath)
@@ -3207,7 +3373,7 @@ class ArtifactProvenanceRepository {
       projectName: projectId,
       sessionId: appSessionId,
       runId: version.artifactRunId,
-      name: filename,
+      name: version.filename,
       path: filePath,
       fileUrl: pathToFileURL(filePath).toString(),
       mimeType: version.contentType ?? undefined,
@@ -3219,10 +3385,9 @@ class ArtifactProvenanceRepository {
   private async toDescriptor(
     version: PersistedVersionFileRecord & { state: string; messageId: string | null },
     projectId: string,
-    appSessionId: string,
-    filename: string
+    appSessionId: string
   ): Promise<ArtifactVersionDescriptor> {
-    const file = await this.toArtifactVersionFile(version, projectId, appSessionId, filename)
+    const file = await this.toArtifactVersionFile(version, projectId, appSessionId)
     const { path, fileUrl, ...relocatableFile } = file
     void path
     void fileUrl

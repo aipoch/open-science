@@ -102,6 +102,7 @@ const createArtifact = async (input: {
         create: {
           id: input.versionId,
           versionNumber: 1,
+          filename: input.filename,
           artifactRunId: 'artifact-run-source',
           rootFrameId: 'root-source',
           agentFrameId: 'agent-source',

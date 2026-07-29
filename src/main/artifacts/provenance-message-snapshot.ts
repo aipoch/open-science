@@ -33,6 +33,18 @@ type SessionDeletionReceipt =
 
 const storageKey = (...segments: string[]): string => segments.join('/')
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
+const readOptionalText = async (path: string): Promise<string | undefined> =>
+  readFile(path, 'utf8').catch((error: unknown) => {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: unknown }).code === 'ENOENT'
+    ) {
+      return undefined
+    }
+    throw error
+  })
 const resolveStorageKey = (root: string, key: string): string => {
   if (!key || isAbsolute(key) || key.includes('\\')) {
     throw new Error('Invalid Provenance Message storage key.')
@@ -340,6 +352,7 @@ class ProvenanceMessageSnapshotRepository {
   async reconcileSessionDeletions(activeSessions: PersistedChatSession[]): Promise<void> {
     const client = await this.options.getClient()
     await this.recoverStagingMessageSnapshots()
+    await this.recoverStagingReviewScopeSnapshots()
     const activeKeys = new Set(
       activeSessions.map((session) => `${session.projectId}\0${session.id}`)
     )
@@ -463,6 +476,76 @@ class ProvenanceMessageSnapshotRepository {
           }).catch(() => undefined),
           rm(stagingPath, { force: true }).catch(() => undefined)
         ])
+      }
+    }
+  }
+
+  private async recoverStagingReviewScopeSnapshots(): Promise<void> {
+    const client = await this.options.getClient()
+    const staging = await client.reviewScopeSnapshot.findMany({
+      where: { state: 'staging' },
+      include: { review: true }
+    })
+    for (const snapshot of staging) {
+      const expectedStorageKey = storageKey(
+        'artifacts',
+        encodeURIComponent(snapshot.projectId),
+        encodeURIComponent(snapshot.sessionId),
+        '.provenance',
+        'review-scope-snapshots',
+        `${snapshot.id}.json`
+      )
+      const targetPath = resolveStorageKey(this.options.storageRoot, snapshot.storageKey)
+      const temporaryPath = `${targetPath}.${snapshot.id}.tmp`
+      try {
+        const payload = JSON.parse(snapshot.snapshotJson) as Record<string, unknown>
+        if (
+          snapshot.storageKey !== expectedStorageKey ||
+          sha256(snapshot.snapshotJson) !== snapshot.checksum ||
+          payload.schemaVersion !== snapshot.schemaVersion ||
+          payload.snapshotId !== snapshot.id ||
+          payload.reviewId !== snapshot.reviewId ||
+          payload.projectId !== snapshot.projectId ||
+          payload.sessionId !== snapshot.sessionId ||
+          snapshot.review.projectId !== snapshot.projectId ||
+          snapshot.review.sessionId !== snapshot.sessionId ||
+          snapshot.review.turnMessageId !== snapshot.scopeTurnMessageId ||
+          !Array.isArray(payload.blocks) ||
+          payload.blocks.length !== snapshot.blockCount
+        ) {
+          throw new Error(`Review scope snapshot recovery proof failed: ${snapshot.id}`)
+        }
+        const existing = await readOptionalText(targetPath)
+        if (existing === undefined) {
+          await mkdir(dirname(targetPath), { recursive: true })
+          await rm(temporaryPath, { force: true })
+          await writeFile(temporaryPath, snapshot.snapshotJson, { encoding: 'utf8', flag: 'wx' })
+          await rename(temporaryPath, targetPath)
+        } else if (existing !== snapshot.snapshotJson || sha256(existing) !== snapshot.checksum) {
+          throw new Error(`Review scope snapshot mirror is corrupt: ${snapshot.id}`)
+        }
+        const promoted = await client.reviewScopeSnapshot.updateMany({
+          where: { id: snapshot.id, state: 'staging' },
+          data: { state: 'ready' }
+        })
+        if (promoted.count !== 1) {
+          throw new Error(`Review scope snapshot recovery raced: ${snapshot.id}`)
+        }
+      } catch (error) {
+        await client.$transaction(async (transaction) => {
+          await transaction.review.updateMany({
+            where: { id: snapshot.reviewId },
+            data: {
+              lifecycle: 'error',
+              outcome: null,
+              errorMessage: error instanceof Error ? error.message : String(error)
+            }
+          })
+          await transaction.reviewScopeSnapshot.deleteMany({
+            where: { id: snapshot.id, state: 'staging' }
+          })
+        })
+        await rm(temporaryPath, { force: true }).catch(() => undefined)
       }
     }
   }

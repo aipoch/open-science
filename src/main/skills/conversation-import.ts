@@ -240,7 +240,7 @@ class ConversationSkillImporter {
     paths: string[]
   ): Promise<() => void> {
     const managedUploads = await Promise.all(
-      paths.map((path) => this.options.uploads.resolveManagedUpload({ path }))
+      paths.map((path) => this.options.uploads.resolveManagedUpload({ path }, { projectId }))
     )
     const grant = {
       projectId,

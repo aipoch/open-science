@@ -334,24 +334,30 @@ const writeArtifactFileForCurrentRun = async (
   // Old handoff files remain writable during migration. New production handoffs always include the
   // graph locators and RPC capability; only that complete trusted envelope may create a durable
   // Version in SQLite.
-  if (
-    !environment.rpcEndpoint ||
-    !context.rpcCapabilityToken ||
-    !context.appSessionId ||
-    !context.rootFrameId ||
-    !context.agentFrameId ||
-    !context.messageBranchId ||
-    !context.runtimeSegmentId ||
-    !context.promptMessageId
-  ) {
+  const missingProvenanceContext = [
+    !environment.rpcEndpoint ? 'rpcEndpoint' : undefined,
+    !context.rpcCapabilityToken ? 'rpcCapabilityToken' : undefined,
+    !context.appSessionId ? 'appSessionId' : undefined,
+    !context.rootFrameId ? 'rootFrameId' : undefined,
+    !context.agentFrameId ? 'agentFrameId' : undefined,
+    !context.messageBranchId ? 'messageBranchId' : undefined,
+    !context.runtimeSegmentId ? 'runtimeSegmentId' : undefined,
+    !context.promptMessageId ? 'promptMessageId' : undefined
+  ].filter((field): field is string => field !== undefined)
+  if (missingProvenanceContext.length > 0) {
+    console.warn('[artifacts:mcp] writing a legacy pending file without durable Provenance', {
+      artifactRunId: context.artifactRunId,
+      missingContext: missingProvenanceContext
+    })
     return repository.writePendingFile(writeRequest, writeOptions)
   }
-  const appSessionId = context.appSessionId
-  const rootFrameId = context.rootFrameId
-  const agentFrameId = context.agentFrameId
-  const messageBranchId = context.messageBranchId
-  const runtimeSegmentId = context.runtimeSegmentId
-  const promptMessageId = context.promptMessageId
+  const rpcCapabilityToken = context.rpcCapabilityToken!
+  const appSessionId = context.appSessionId!
+  const rootFrameId = context.rootFrameId!
+  const agentFrameId = context.agentFrameId!
+  const messageBranchId = context.messageBranchId!
+  const runtimeSegmentId = context.runtimeSegmentId!
+  const promptMessageId = context.promptMessageId!
   const writeOperationId =
     invocation.writeOperationId ??
     (invocation.requestId !== undefined
@@ -371,7 +377,7 @@ const writeArtifactFileForCurrentRun = async (
   // app-owned operation already committed before copying or reading that path. Inline content remains
   // byte-checked below so reusing an operation with different inline bytes is still a hard conflict.
   if (source.kind === 'localPath') {
-    const replay = await callArtifactReplayRpc(environment, context.rpcCapabilityToken, {
+    const replay = await callArtifactReplayRpc(environment, rpcCapabilityToken, {
       projectId: environment.projectName,
       appSessionId,
       artifactStorageSessionId: environment.sessionId,
@@ -404,7 +410,7 @@ const writeArtifactFileForCurrentRun = async (
         )
         .digest('hex')
 
-      return callArtifactRpc(environment, context.rpcCapabilityToken!, {
+      return callArtifactRpc(environment, rpcCapabilityToken, {
         projectId: environment.projectName,
         appSessionId,
         artifactStorageSessionId: environment.sessionId,

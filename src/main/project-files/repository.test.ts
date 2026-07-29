@@ -1273,6 +1273,7 @@ describe('ManagedFileIndexRepository', () => {
         id: 'artifact-version-1',
         artifactId: 'artifact-lineage-1',
         versionNumber: 1,
+        filename: 'result.txt',
         artifactRunId: 'artifact-run-1',
         writeOperationId: 'write-1',
         writeRequestChecksum: 'b'.repeat(64),

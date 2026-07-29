@@ -90,6 +90,115 @@ describe('validateProvenanceMigrationState', () => {
     await expect(validateProvenanceMigrationState(dataRoot, authorityRoot)).resolves.toBeUndefined()
   })
 
+  it('accepts an Upload input whose frozen name is the original pre-sanitized filename', async () => {
+    const client = createProjectDbClient(root)
+    await ensureProjectSchema(client)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    const uploadContent = 'group\nA\n'
+    const uploadChecksum = sha256(uploadContent)
+    const uploadKey = 'uploads/project-1/session-1/upload-1/versions/upload-version-1/content'
+    await mkdir(join(root, 'uploads/project-1/session-1/upload-1/versions/upload-version-1'), {
+      recursive: true
+    })
+    await writeFile(join(root, uploadKey), uploadContent)
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename: 'groups_.csv',
+        originalFilename: 'groups?.csv',
+        versions: {
+          create: {
+            id: 'upload-version-1',
+            versionNumber: 1,
+            state: 'ready',
+            contentStorageKey: uploadKey,
+            filename: 'groups_.csv',
+            originalFilename: 'groups?.csv',
+            contentType: 'text/csv',
+            sizeBytes: BigInt(Buffer.byteLength(uploadContent)),
+            checksum: uploadChecksum
+          }
+        }
+      }
+    })
+    await client.artifactLineage.create({
+      data: {
+        id: 'artifact-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        normalizedFilename: 'result.txt',
+        filename: 'result.txt'
+      }
+    })
+    const artifactContent = 'result'
+    const artifactChecksum = sha256(artifactContent)
+    const versionRoot =
+      'artifacts/project-1/session-1/.provenance/artifact-1/versions/artifact-version-1'
+    const evidence = JSON.stringify({
+      schema_version: 1,
+      project_id: 'project-1',
+      app_session_id: 'session-1',
+      artifact_id: 'artifact-1',
+      version_id: 'artifact-version-1',
+      size_bytes: Buffer.byteLength(artifactContent),
+      checksum: artifactChecksum,
+      execution_status: { state: 'unavailable' }
+    })
+    await mkdir(join(root, versionRoot), { recursive: true })
+    await Promise.all([
+      writeFile(join(root, versionRoot, 'content'), artifactContent),
+      writeFile(join(root, versionRoot, 'evidence.json'), evidence)
+    ])
+    await client.artifactVersion.create({
+      data: {
+        id: 'artifact-version-1',
+        artifactId: 'artifact-1',
+        versionNumber: 1,
+        filename: 'result.txt',
+        artifactRunId: 'artifact-run-1',
+        rootFrameId: 'root-1',
+        agentFrameId: 'agent-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1',
+        state: 'pending',
+        contentStorageKey: `${versionRoot}/content`,
+        evidenceStorageKey: `${versionRoot}/evidence.json`,
+        contentType: 'text/plain',
+        sizeBytes: BigInt(Buffer.byteLength(artifactContent)),
+        checksum: artifactChecksum,
+        evidenceJson: evidence,
+        evidenceChecksum: sha256(evidence),
+        inputs: {
+          create: {
+            id: 'input-1',
+            ordinal: 0,
+            inputFileVersionId: 'upload-version-1',
+            sourceKind: 'upload-version',
+            sourceFileId: 'upload-1',
+            sourceUploadVersionId: 'upload-version-1',
+            sourceVersionNumber: 1,
+            sourceProjectId: 'project-1',
+            sourceSessionId: 'session-1',
+            filename: 'groups?.csv',
+            contentType: 'text/csv',
+            sizeBytes: BigInt(Buffer.byteLength(uploadContent)),
+            checksum: uploadChecksum,
+            storageKey: uploadKey,
+            strongestAssociation: 'turn-attached'
+          }
+        }
+      }
+    })
+    await client.$disconnect()
+
+    await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
+  })
+
   it('rejects Artifact bytes whose storage key is not owned by their lineage and Version', async () => {
     const authorityRoot = join(root, 'config')
     const dataRoot = join(root, 'data')
@@ -117,6 +226,7 @@ describe('validateProvenanceMigrationState', () => {
         id: 'version-1',
         artifactId: 'artifact-1',
         versionNumber: 1,
+        filename: 'result.txt',
         artifactRunId: 'artifact-run-1',
         rootFrameId: 'root-1',
         agentFrameId: 'agent-1',

@@ -212,9 +212,9 @@ describe('ConversationSkillImporter', () => {
   it('imports an explicitly referenced legacy upload from another Session', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)
-    const uploads = new UploadRepository(root)
+    const legacyUploads = new UploadRepository(root)
     const skills = new UserSkillRepository(root)
-    const [staged] = await stageUploadFixtures(uploads, {
+    const [staged] = await stageUploadFixtures(legacyUploads, {
       files: [
         {
           name: 'shared-skill.zip',
@@ -223,7 +223,16 @@ describe('ConversationSkillImporter', () => {
         }
       ]
     })
-    const [attachment] = await uploads.finalizePendingSessionUploads('source-session', [staged])
+    const [attachment] = await legacyUploads.finalizePendingSessionUploads('source-session', [
+      staged
+    ])
+    const client = createProjectDbClient(root)
+    disconnects.push(() => client.$disconnect())
+    await ensureProjectSchema(client)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'source-session' }
+    })
+    const uploads = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const broker = new SkillImportApprovalBroker({
       generateId: () => 'approval-cross-session-upload',
       broadcast: (request) =>
@@ -259,6 +268,42 @@ describe('ConversationSkillImporter', () => {
       skills: [{ id: 'imported-shared-skill', name: 'Shared Skill', status: 'imported' }]
     })
     disposeGrant()
+  })
+
+  it('rejects a referenced upload owned by another Project before granting Skill import access', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+    roots.push(root)
+    const legacyUploads = new UploadRepository(root)
+    const [staged] = await stageUploadFixtures(legacyUploads, {
+      files: [
+        {
+          name: 'private-skill.zip',
+          content: buildNamedSkillZip('Private Skill').toString('base64'),
+          mimeType: 'application/zip'
+        }
+      ]
+    })
+    const [attachment] = await legacyUploads.finalizePendingSessionUploads('private-session', [
+      staged
+    ])
+    const client = createProjectDbClient(root)
+    disconnects.push(() => client.$disconnect())
+    await ensureProjectSchema(client)
+    await client.fileOriginSession.create({
+      data: { projectId: 'private-project', sessionId: 'private-session' }
+    })
+    const uploads = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
+    const importer = new ConversationSkillImporter({
+      uploads,
+      createCancellationGuard: createActiveCancellationGuard,
+      previewBundle: vi.fn(),
+      importBundle: vi.fn(),
+      requestApproval: vi.fn()
+    })
+
+    await expect(
+      importer.authorizeReferencedUploads('current-project', 'current-session', [attachment.path])
+    ).rejects.toThrow(/different project or session/i)
   })
 
   it('rejects an attachment owned by another conversation before showing approval', async () => {

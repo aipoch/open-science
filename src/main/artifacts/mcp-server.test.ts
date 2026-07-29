@@ -38,6 +38,7 @@ const createEnvironment = async (
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   if (storageRoot) {
     await rm(storageRoot, { recursive: true, force: true })
@@ -50,6 +51,7 @@ describe('artifact MCP server', () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
     const environment = await createEnvironment(root)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     const artifact = await writeArtifactFileForCurrentRun(repository, environment, {
       filename: 'plot.svg',
@@ -70,6 +72,22 @@ describe('artifact MCP server', () => {
       join(root, 'artifacts', 'default-project', 'session-1', '.pending', 'run-1', 'plot.svg')
     )
     await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<svg />')
+    expect(warn).toHaveBeenCalledWith(
+      '[artifacts:mcp] writing a legacy pending file without durable Provenance',
+      {
+        artifactRunId: 'run-1',
+        missingContext: [
+          'rpcEndpoint',
+          'rpcCapabilityToken',
+          'appSessionId',
+          'rootFrameId',
+          'agentFrameId',
+          'messageBranchId',
+          'runtimeSegmentId',
+          'promptMessageId'
+        ]
+      }
+    )
   })
 
   it('writes localPath artifact sources for the current run', async () => {

@@ -524,7 +524,7 @@ const validateSqliteStore = async (dataRoot: string, authorityRoot: string): Pro
           uploadSource === null &&
           input.sourceArtifactVersionId === artifactSource.id &&
           commonMatches(
-            { ...artifactSource, filename: artifactSource.artifact.filename },
+            artifactSource,
             artifactSource.artifactId,
             artifactSource.artifact.projectId,
             artifactSource.artifact.sessionId
@@ -535,7 +535,10 @@ const validateSqliteStore = async (dataRoot: string, authorityRoot: string): Pro
           artifactSource === null &&
           input.sourceUploadVersionId === uploadSource.id &&
           commonMatches(
-            uploadSource,
+            {
+              ...uploadSource,
+              filename: uploadSource.originalFilename || uploadSource.filename
+            },
             uploadSource.uploadFileId,
             uploadSource.uploadFile.projectId,
             uploadSource.uploadFile.sessionId

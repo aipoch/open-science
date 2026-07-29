@@ -230,6 +230,7 @@ const ARTIFACT_VERSION_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ArtifactVersion"
     "id" TEXT NOT NULL PRIMARY KEY,
     "artifactId" TEXT NOT NULL,
     "versionNumber" INTEGER NOT NULL,
+    "filename" TEXT NOT NULL,
     "artifactRunId" TEXT NOT NULL,
     "writeOperationId" TEXT,
     "writeRequestChecksum" TEXT,
@@ -259,9 +260,12 @@ const ARTIFACT_VERSION_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ArtifactVersion"
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "ArtifactVersion_state_check" CHECK ("state" IN ('staging', 'pending', 'finalized')),
+    CONSTRAINT "ArtifactVersion_filename_check" CHECK (length("filename") > 0),
     CONSTRAINT "ArtifactVersion_artifactId_fkey" FOREIGN KEY ("artifactId") REFERENCES "ArtifactLineage" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "ArtifactVersion_messageSnapshotId_fkey" FOREIGN KEY ("messageSnapshotId") REFERENCES "ArtifactMessageSnapshot" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );`
+
+const ARTIFACT_VERSION_ADD_FILENAME_DDL = `ALTER TABLE "ArtifactVersion" ADD COLUMN "filename" TEXT`
 
 const ARTIFACT_VERSION_INPUT_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ArtifactVersionInput" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -349,7 +353,7 @@ const PROVENANCE_CHECK_CONSTRAINT_MIGRATIONS: readonly SqliteCheckConstraintMigr
   {
     tableName: 'ArtifactVersion',
     columnName: 'state',
-    constraintNames: ['ArtifactVersion_state_check'],
+    constraintNames: ['ArtifactVersion_state_check', 'ArtifactVersion_filename_check'],
     allowedValues: ['staging', 'pending', 'finalized'],
     canonicalTableDdl: ARTIFACT_VERSION_TABLE_DDL
   },
@@ -582,6 +586,10 @@ const ensureProjectSchema = async (client: PrismaClient): Promise<void> => {
     ARTIFACT_MESSAGE_SNAPSHOT_ADD_CHECKSUM_DDL
   )
   await client.$executeRawUnsafe(ARTIFACT_VERSION_TABLE_DDL)
+  await addColumnIfMissing(client, 'ArtifactVersion', 'filename', ARTIFACT_VERSION_ADD_FILENAME_DDL)
+  await client.$executeRawUnsafe(
+    `UPDATE "ArtifactVersion" SET "filename" = (SELECT "filename" FROM "ArtifactLineage" WHERE "ArtifactLineage"."id" = "ArtifactVersion"."artifactId") WHERE "filename" IS NULL OR "filename" = ''`
+  )
   await client.$executeRawUnsafe(ARTIFACT_VERSION_INPUT_TABLE_DDL)
   await client.$executeRawUnsafe(REVIEW_FINDING_DISPOSITION_TABLE_DDL)
   await client.$executeRawUnsafe(REVIEW_SCOPE_SNAPSHOT_TABLE_DDL)
