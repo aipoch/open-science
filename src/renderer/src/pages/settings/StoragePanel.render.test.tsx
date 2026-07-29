@@ -78,14 +78,12 @@ beforeEach(() => {
   ;(window as unknown as { api: unknown }).api = {
     storage: {
       getInfo: vi.fn().mockResolvedValue({
-        configRoot: '/home/u/.open-science',
         dataRoot: '/home/u/.open-science',
         isDefault: true,
         usage: { categories: [], totalBytes: 35_600_000 },
         availableBytes: 500_000_000_000
       }),
       revealAppStorage: vi.fn().mockResolvedValue({ revealed: true }),
-      revealDataStorage: vi.fn().mockResolvedValue({ revealed: true }),
       pickDirectory: vi.fn().mockResolvedValue(null),
       inspectDataRoot: vi
         .fn()
@@ -107,26 +105,6 @@ afterEach(() => {
 })
 
 describe('StoragePanel', () => {
-  it('shows the two-root rollback contract and reveals only trusted roots', async () => {
-    await act(async () => root.render(<StoragePanel />))
-    await act(async () => Promise.resolve())
-
-    const rollback = container.querySelector<HTMLElement>('[aria-label="Safe downgrade"]')
-    expect(rollback?.textContent).toContain('restore both matching backups')
-    expect(rollback?.textContent).toContain('/home/u/.open-science')
-    expect(rollback?.textContent).toContain('Do not send or edit messages')
-    expect(rollback?.textContent).toContain('generate files, or migrate the Data Root')
-
-    const revealButtons = Array.from(
-      rollback?.querySelectorAll<HTMLButtonElement>('button') ?? []
-    ).filter((button) => button.textContent?.includes('Reveal'))
-    await act(async () => revealButtons[0]?.click())
-    await act(async () => revealButtons[1]?.click())
-
-    expect(window.api.storage.revealAppStorage).toHaveBeenCalledWith()
-    expect(window.api.storage.revealDataStorage).toHaveBeenCalledWith()
-  })
-
   it('uses shared settings dialog chrome for data-location confirmations', async () => {
     ;(
       window as unknown as { api: { storage: { pickDirectory: ReturnType<typeof vi.fn> } } }

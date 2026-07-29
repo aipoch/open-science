@@ -17,7 +17,7 @@ terminal after updating PATH. Choose **Uninstall command** in the same panel to 
 
 ### From npm
 
-The npm package requires Node.js 22 or later and an installed Open Science desktop application.
+The npm package requires Node.js 22.5 or later and an installed Open Science desktop application.
 Install it globally after the package is published:
 
 ```bash
@@ -167,6 +167,51 @@ open-science artifacts download <artifact-id> --output ./report.md --json
 ```
 
 Artifact output paths are resolved relative to the current working directory.
+
+## Rollback to 0.7.3
+
+The current Session and file formats contain fields that Open Science 0.7.3 cannot safely write.
+Replacing only the application binary can therefore discard newer Upload, conversation-branch, and
+Artifact provenance data. Prepare a compatible copy before installing 0.7.3:
+
+1. Quit Open Science completely.
+2. Run `open-science rollback-to-0.7.3 --yes`.
+3. Keep the paths printed by the command, then install and start Open Science 0.7.3.
+
+No pre-upgrade backup is required. The command is offline and does not rewrite the newer data: it
+copies Uploads, Artifacts, Notebooks, and workspaces into a new rollback Data Root; converts each
+Session's active message branch to the 0.7.3 envelope; moves the newer Config Root to a timestamped
+sibling; and activates a converted Config Root at the original location. If the old Config Root and
+Data Root share one directory, the preserved newer Data Root moves with that directory. The command
+does not copy runtime environments, which 0.7.3 rebuilds.
+
+By default, the rollback Data Root is a timestamped sibling of the current Data Root. Choose another
+empty location with `--output`:
+
+```bash
+open-science rollback-to-0.7.3 --yes --output /path/to/OpenScience-0.7.3
+```
+
+Development and recovery workflows can override both source roots explicitly:
+
+```bash
+open-science rollback-to-0.7.3 --yes \
+  --config-root /path/to/.open-science \
+  --data-root /path/to/OpenScience \
+  --output /path/to/OpenScience-0.7.3
+```
+
+Use `--json` to print the rollback manifest as one JSON object. The same manifest is written to
+`rollback-to-0.7.3.json` in both the activated Config Root and rollback Data Root. It records the
+preserved newer Config Root and Data Root paths needed to return to the newer application.
+An adjacent durable cutover marker lets the same command finish activation after a process or power
+interruption; do not delete timestamped staging or preserved directories while that recovery runs.
+
+The 0.7.3 copy contains only the active branch of each conversation. Inactive branches, Artifact
+version history, reviews, and provenance snapshots remain preserved in the newer roots but are not
+visible to 0.7.3. The command refuses to run while Open Science appears active, when a source path is
+missing or aliases storage through a symbolic link/junction, when a Version's size or checksum does
+not match SQLite, or when a rollback target already exists.
 
 ## Current scope
 

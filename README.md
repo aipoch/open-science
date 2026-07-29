@@ -204,14 +204,17 @@ Open Science stores project data and settings on the local computer. API Keys ar
 ### Downgrading safely
 
 Installing an older Open Science application does not downgrade data that a newer version has
-already written. Before testing an upgrade, close Open Science and make complete copies of both the
-**Config Root** and **Data Root** shown in **Settings → Storage → Safe downgrade**.
+already written. To prepare a compatible, isolated copy for Open Science 0.7.3, quit the app and run:
 
-To roll back, close Open Science, restore both matching pre-upgrade copies, and only then install and
-open the older application. Replacing only the application binary is not a safe rollback. Without
-matching backups, treat the older version as view-only: do not send or edit messages, delete
-projects, generate files, or migrate the Data Root, because an older writer may silently discard
-newer Session, Upload, and Provenance records.
+```bash
+open-science rollback-to-0.7.3 --yes
+```
+
+The command preserves the newer Config Root and data without rewriting them, converts the active
+Session branches into the 0.7.3 format, and activates a separate rollback Data Root. It does not
+require a backup made before the upgrade. Install and start 0.7.3 only after the command succeeds.
+See [the CLI downgrade guide](packages/open-science/CLI.md#rollback-to-073) for retained data,
+limitations, custom paths, and recovery locations.
 
 External data flow is still possible and should be reviewed:
 

@@ -33,11 +33,13 @@ Commands:
   session status <session-id>
   artifacts list <session-id>
   artifacts download <artifact-id> --output <path>
+  rollback-to-0.7.3 --yes [--output <path>]
 
 Options:
   --port <port>          Web service port (default: 44100)
   --app-path <path>      Installed Open Science executable
   --config-root <path>   Config directory override
+  --data-root <path>     Current Data Root override (rollback only)
   --project <id-or-name> Project id or exact name
   --session <id>         Resume an existing session
   --prompt <text>        Prompt text (or read stdin when omitted)
@@ -48,6 +50,7 @@ Options:
   --timeout-ms <ms>      Stop waiting after this many milliseconds
   --jsonl                With run --wait, stream one machine-readable event per line
   --output <path>        Artifact download destination
+  --yes                  Confirm the offline rollback conversion
   --no-open              Do not open the browser after start
   --no-sandbox           Disable Chromium's process sandbox (security risk; start only)
   --json                 Emit one machine-readable result
@@ -59,6 +62,7 @@ const VALUE_OPTIONS = {
   '--port': 'port',
   '--app-path': 'appPath',
   '--config-root': 'configRoot',
+  '--data-root': 'dataRoot',
   '--project': 'project',
   '--session': 'session',
   '--prompt': 'prompt',
@@ -100,6 +104,7 @@ export const parseCliArgs = (argv) => {
     if (arg === '--no-open') options.open = false
     else if (arg === '--no-sandbox') options.noSandbox = true
     else if (arg === '--json') options.json = true
+    else if (arg === '--yes') options.yes = true
     else if (arg === '--jsonl') options.jsonl = true
     else if (arg === '--wait') options.wait = true
     else if (arg === '--skill') {
@@ -145,6 +150,12 @@ export const parseCliArgs = (argv) => {
   }
   if (options.noSandbox && command !== 'start') {
     throw new CliUsageError('--no-sandbox requires start.')
+  }
+  if (options.yes && command !== 'rollback-to-0.7.3') {
+    throw new CliUsageError('--yes requires rollback-to-0.7.3.')
+  }
+  if (options.dataRoot && command !== 'rollback-to-0.7.3') {
+    throw new CliUsageError('--data-root requires rollback-to-0.7.3.')
   }
   return {
     command,
@@ -551,6 +562,37 @@ const outputValue = (value, options, deps) => {
   }
 }
 
+export const rollbackCommand = async (options, dependencies = {}) => {
+  const defaultRunRollback = async (rollbackOptions) => {
+    const { runRollbackToV073 } = await import('./rollback-to-0.7.3.mjs')
+    return runRollbackToV073(rollbackOptions)
+  }
+  const deps = {
+    runRollback: defaultRunRollback,
+    log: (...args) => console.log(...args),
+    ...dependencies
+  }
+  if (!options.json) {
+    deps.log('Validating and copying rollback data. Keep this terminal open until it completes...')
+  }
+  const manifest = await deps.runRollback({
+    configRoot: options.configRoot,
+    dataRoot: options.dataRoot,
+    output: options.output,
+    confirm: options.yes === true
+  })
+  if (options.json) {
+    deps.log(JSON.stringify(manifest))
+    return
+  }
+  deps.log(`Prepared an isolated Open Science ${manifest.targetVersion} rollback.`)
+  deps.log(`Rollback Data Root: ${manifest.rollbackDataRoot}`)
+  deps.log(`Preserved newer Config Root: ${manifest.preservedConfigRoot}`)
+  deps.log(`Preserved newer Data Root: ${manifest.preservedDataRoot}`)
+  deps.log(`Converted Sessions: ${manifest.sessionsConverted}`)
+  deps.log(`You can now install and start Open Science ${manifest.targetVersion}.`)
+}
+
 const readPrompt = async (options, deps) => {
   const sources = [options.prompt !== undefined, options.promptFile !== undefined].filter(Boolean)
   if (sources.length > 1) throw new CliUsageError('Use only one of --prompt or --prompt-file.')
@@ -729,6 +771,7 @@ export const runCli = async (argv = process.argv.slice(2)) => {
   else if (command === 'stop') await stopCommand(options)
   else if (command === 'status') await statusCommand(options)
   else if (command === 'url') await urlCommand(options)
+  else if (command === 'rollback-to-0.7.3') await rollbackCommand(options)
   else if (TASK_COMMANDS.has(command)) await runTaskCommand(parsed)
   else throw new CliUsageError(`Unknown command: ${command}\n\n${usage}`)
 }

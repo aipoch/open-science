@@ -82,7 +82,6 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   const [hasRecheckedStorage, setHasRecheckedStorage] = useState(false)
   const [isCheckingStorage, setIsCheckingStorage] = useState(false)
   const [revealError, setRevealError] = useState<string | undefined>()
-  const [rollbackRevealError, setRollbackRevealError] = useState<string | undefined>()
   const [newPath, setNewPath] = useState('')
   // The classification of `newPath` (a PARENT the user typed/picked), keyed by the exact path it
   // was computed for so a stale response for an already-superseded path never drives the action
@@ -131,23 +130,6 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     } catch (error) {
       setRevealError(
         error instanceof Error ? error.message : 'Could not reveal application storage.'
-      )
-    }
-  }
-
-  const handleRevealRollbackRoot = async (root: 'config' | 'data'): Promise<void> => {
-    setRollbackRevealError(undefined)
-    try {
-      const result =
-        root === 'config'
-          ? await window.api.storage.revealAppStorage()
-          : await window.api.storage.revealDataStorage()
-      if (!result.revealed) {
-        setRollbackRevealError(result.error ?? `Could not reveal ${root} storage.`)
-      }
-    } catch (error) {
-      setRollbackRevealError(
-        error instanceof Error ? error.message : `Could not reveal ${root} storage.`
       )
     }
   }
@@ -560,80 +542,6 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
               <span className="tabular-nums">{formatBytes(info.availableBytes)}</span>
             </div>
           </div>
-        </SettingsSection>
-      ) : null}
-
-      {info !== null ? (
-        <SettingsSection
-          title="Safe downgrade"
-          description="How to return to an older Open Science version without rewriting newer data in an incompatible format."
-          aria-label="Safe downgrade"
-          separated
-        >
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
-            <div className="flex items-start gap-2">
-              <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden="true" />
-              <div className="min-w-0 space-y-2 text-xs text-muted-foreground">
-                <p className="font-medium text-foreground">
-                  Installing an older app does not downgrade data written by this version.
-                </p>
-                <ol className="list-decimal space-y-1 pl-4">
-                  <li>Before testing an upgrade, quit Open Science and copy both roots below.</li>
-                  <li>
-                    To roll back, quit Open Science, restore both matching backups, then install and
-                    open the older version.
-                  </li>
-                </ol>
-                <p>
-                  Without matching pre-upgrade backups, use the older version for viewing only. Do
-                  not send or edit messages, delete projects, generate files, or migrate the Data
-                  Root; those actions can silently discard newer Session, Upload, and Provenance
-                  records.
-                </p>
-                {info.configRoot === info.dataRoot ? (
-                  <p>These roots currently share one folder, so one complete copy covers both.</p>
-                ) : null}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <div className="min-w-0">
-              <span className="text-xs font-medium text-muted-foreground">Config Root</span>
-              <pre className={cn('mt-1', PATH_PILL)} aria-label="Config root path">
-                {info.configRoot}
-              </pre>
-              <Button
-                type="button"
-                variant="outline"
-                className="mt-2"
-                onClick={() => void handleRevealRollbackRoot('config')}
-              >
-                <FolderOpen className="size-4" aria-hidden="true" />
-                Reveal Config Root
-              </Button>
-            </div>
-            <div className="min-w-0">
-              <span className="text-xs font-medium text-muted-foreground">Data Root</span>
-              <pre className={cn('mt-1', PATH_PILL)} aria-label="Rollback data root path">
-                {info.dataRoot}
-              </pre>
-              <Button
-                type="button"
-                variant="outline"
-                className="mt-2"
-                onClick={() => void handleRevealRollbackRoot('data')}
-              >
-                <FolderOpen className="size-4" aria-hidden="true" />
-                Reveal Data Root
-              </Button>
-            </div>
-          </div>
-          {rollbackRevealError ? (
-            <p className="mt-2 text-xs text-destructive" role="alert">
-              {rollbackRevealError}
-            </p>
-          ) : null}
         </SettingsSection>
       ) : null}
 
