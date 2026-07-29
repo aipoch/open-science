@@ -135,7 +135,8 @@ function normalizeNct(id: unknown): string {
 
 // ── Essie expression builders (query.term / filter.advanced) ─────────────────
 
-const quotePhrase = (text: string): string => '"' + text.replace(/"/g, '\\"') + '"'
+const quotePhrase = (text: string): string =>
+  '"' + text.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'
 const areaPhrase = (area: string, phrase: string): string => `AREA[${area}]${quotePhrase(phrase)}`
 const areaTerm = (area: string, term: string): string => `AREA[${area}]${term}`
 const areaRange = (area: string, lo: string | null, hi: string | null): string =>

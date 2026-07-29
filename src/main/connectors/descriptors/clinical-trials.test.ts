@@ -251,6 +251,21 @@ describe('search_by_sponsor', () => {
     expect(params.countTotal).toBe('true')
     expect(out.total).toBe(7)
   })
+
+  it('keeps backslashes and quotes inside the LeadSponsorName phrase', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ studies: [] }))
+
+    await call(
+      'search_by_sponsor',
+      { sponsor_name: 'Acme\\" OR AREA[Phase]PHASE4 OR "' },
+      fetchImpl
+    )
+
+    const { params } = parseUrl(fetchImpl.mock.calls[0][0] as string)
+    expect(params['filter.advanced']).toBe(
+      String.raw`(AREA[LeadSponsorName]"Acme\\\" OR AREA[Phase]PHASE4 OR \"")`
+    )
+  })
 })
 
 describe('search_investigators', () => {
