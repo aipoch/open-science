@@ -92,10 +92,16 @@ describe('detectManagedRuntimeMutation', () => {
     ],
     ['bash', 'cd "$OPEN_SCIENCE_RUNTIME_DIR" && touch conda-meta/pwn.json'],
     ['bash', `cd "$OPEN_SCIENCE_RUNTIME_DIR"; sh -c 'touch conda-meta/inherited-cwd.json'`],
+    ['bash', `cd "$OPEN_SCIENCE_RUNTIME_DIR"; python -c 'open("python-relative", "w")'`],
+    ['bash', `cd "$OPEN_SCIENCE_RUNTIME_DIR"; Rscript -e 'writeLines("x", "r-relative")'`],
     ['powershell', 'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; New-Item conda-meta\\pwn.json'],
     [
       'powershell',
       `Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; powershell -Command 'New-Item conda-meta\\inherited-cwd.json'`
+    ],
+    [
+      'powershell',
+      `Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; node -e 'require("fs").writeFileSync("node-relative", "x")'`
     ],
     ['powershell', 'Remove-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\conda-meta\\history"'],
     ['powershell', "$target = Join-Path $env:OPEN_SCIENCE_RUNTIME_DIR 'pwn.txt'; New-Item $target"],

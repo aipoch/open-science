@@ -5066,7 +5066,7 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(executions).toHaveLength(0)
   })
 
-  it('honors a legacy managed runtimeId repair marker for an unbound default session', async () => {
+  it('honors and clears a legacy managed runtimeId marker for an unbound default session', async () => {
     const root = await createStorageRoot()
     const runtimeRoot = getRuntimeRoot(root)
     const interpreterPath = rBin(envPrefix(runtimeRoot, DEFAULT_R_ENV))
@@ -5077,7 +5077,11 @@ describe('v4 runtime bindings & agent tools', () => {
     }
     const executions: NotebookExecutionRequest[] = []
     addRepairRequired(runtimeRoot, interpreterPath)
-    const service = bindingService(root, { discovered: [discovered], executions })
+    const service = bindingService(root, {
+      discovered: [discovered],
+      executions,
+      installPackagesImpl: async () => ({ ok: true, needsRestart: false, log: 'repaired' })
+    })
 
     await service.state({ sessionId: 'unbound', workspaceCwd: root })
     const run = await service.execute({
@@ -5090,6 +5094,19 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(run.status).toBe('failed')
     expect(run.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
     expect(executions).toHaveLength(0)
+
+    const repaired = await service.managePackages({ language: 'r', packages: ['dplyr'] })
+    expect(repaired.ok).toBe(true)
+    expect(isRepairRequired(runtimeRoot, interpreterPath)).toBe(false)
+
+    const afterRepair = await service.execute({
+      sessionId: 'unbound',
+      workspaceCwd: root,
+      language: 'r',
+      code: 'R.version.string'
+    })
+    expect(afterRepair.status).toBe('completed')
+    expect(executions).toHaveLength(1)
   })
 
   it('clears a legacy managed runtimeId marker when an unbound session repairs the env', async () => {

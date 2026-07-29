@@ -593,6 +593,20 @@ const shellSequenceWritesRuntime = (
       ) {
         return true
       }
+      if (
+        payload &&
+        payload.surface !== 'bash' &&
+        payload.surface !== 'powershell' &&
+        hasManagedRuntimeWrite(
+          payload.source,
+          payload.surface,
+          runtimeRoot,
+          canonicalGuardPath(runtimeRoot, cwd) ?? resolve(cwd, runtimeRoot),
+          depth + 1
+        )
+      ) {
+        return true
+      }
     }
   }
   return false
@@ -693,6 +707,20 @@ const powerShellSequenceWritesRuntime = (
       if (
         payload?.surface === 'powershell' &&
         powerShellSequenceWritesRuntime(payload.source, runtimeRoot, cwd, true, depth + 1)
+      ) {
+        return true
+      }
+      if (
+        payload &&
+        payload.surface !== 'bash' &&
+        payload.surface !== 'powershell' &&
+        hasManagedRuntimeWrite(
+          payload.source,
+          payload.surface,
+          runtimeRoot,
+          canonicalGuardPath(runtimeRoot, cwd) ?? resolve(cwd, runtimeRoot),
+          depth + 1
+        )
       ) {
         return true
       }

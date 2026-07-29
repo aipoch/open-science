@@ -2908,8 +2908,22 @@ class NotebookRuntimeService {
     // rebind/reload. Restore every matching binding to active and refresh its UI so the repaired runtime
     // is usable immediately, everywhere.
     if (result.ok) {
+      const managedRepair = binding?.source !== 'external'
       clearRepairRequired(runtimeRoot, repairRuntimeId)
       if (binding?.source === 'managed') clearRepairRequired(runtimeRoot, binding.runtimeId)
+      if (managedRepair) {
+        for (const language of ['python', 'r'] as const) {
+          const languageBinding = language === request.language ? binding : undefined
+          for (const key of this.repairRegistryKeys(
+            language,
+            envName,
+            languageBinding,
+            runtimeRoot
+          )) {
+            clearRepairRequired(runtimeRoot, key)
+          }
+        }
+      }
       // A pre-canonicalization registry may still key this same managed prefix by an interpreter path.
       // Clear every loaded binding alias for the repaired env even when the repair caller was unbound.
       for (const session of this.sessions.values()) {
@@ -2919,7 +2933,6 @@ class NotebookRuntimeService {
           }
         }
       }
-      const managedRepair = binding?.source !== 'external'
       const repairedLanguages: readonly NotebookLanguage[] = managedRepair
         ? ['python', 'r']
         : [request.language]
