@@ -8,7 +8,7 @@ export const resolveWindowsPowerShellExecutable = (
 ): string => {
   const windowsRoot = env.SystemRoot || env.WINDIR
   if (!windowsRoot) {
-    throw new Error('Cannot resolve Windows PowerShell: SystemRoot and WINDIR are unavailable')
+    return 'powershell.exe'
   }
   return win32.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
 }

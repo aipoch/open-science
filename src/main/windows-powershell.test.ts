@@ -18,9 +18,7 @@ describe('resolveWindowsPowerShellExecutable', () => {
     )
   })
 
-  it('fails when neither Windows root variable is available', () => {
-    expect(() => resolveWindowsPowerShellExecutable({})).toThrow(
-      'SystemRoot and WINDIR are unavailable'
-    )
+  it('falls back to PATH lookup when neither Windows root variable is available', () => {
+    expect(resolveWindowsPowerShellExecutable({})).toBe('powershell.exe')
   })
 })
