@@ -25,6 +25,7 @@ type SessionEstimate = {
   model?: string
   totals: Record<EstimatedCategoryKey, number>
   keyedSections: Map<string, { category: EstimatedCategoryKey; tokens: number }>
+  toolObservations: Map<string, SessionUpdateObservation>
   canonicalRawOutputSections: Set<string>
   promptSkillSectionIds: Set<string>
   pendingAssistantText: string
@@ -75,12 +76,15 @@ const cloneSessionEstimate = (state: SessionEstimate): SessionEstimate => ({
   ...(state.model ? { model: state.model } : {}),
   totals: { ...state.totals },
   keyedSections: new Map(state.keyedSections),
+  toolObservations: new Map(state.toolObservations),
   canonicalRawOutputSections: new Set(state.canonicalRawOutputSections),
   promptSkillSectionIds: new Set(state.promptSkillSectionIds),
   pendingAssistantText: state.pendingAssistantText,
   pendingAssistantTokens: state.pendingAssistantTokens
 })
 
+// Tokenizers are stateless and intentionally shared across tracker/runtime instances; constructing
+// their encoding tables per session would add avoidable startup and memory cost.
 let o200kTokenizer: Tiktoken | undefined
 let cl100kTokenizer: Tiktoken | undefined
 let anthropicTokenizer: ReturnType<typeof getAnthropicTokenizer> | undefined
@@ -115,15 +119,20 @@ const tokenizerProfileFor = (
   frameworkId: AgentFrameworkId,
   model: string | undefined
 ): TokenizerProfile => {
-  const normalized = model?.trim().toLowerCase().split('/').pop() ?? ''
+  const normalized = model?.trim().toLowerCase().split('/').filter(Boolean).at(-1) ?? ''
   // The framework describes the ACP transport, not necessarily the upstream model. Claude Code can
   // drive DeepSeek/GLM/Kimi through an Anthropic-compatible endpoint, while Codex can bridge those
   // same models through Responses. Therefore an explicit model always wins; framework defaults are
   // only safe when the agent did not expose or receive a model id.
   if (normalized) {
-    if (normalized.startsWith('claude')) return 'anthropic'
+    // Provider-qualified ids are not uniform: OpenRouter commonly uses a slash, Azure a colon, and
+    // Bedrock a dotted vendor prefix. Match a supported family only at one of those boundaries so an
+    // unrelated model containing the same word does not silently select the wrong encoding.
+    if (/(?:^|[.:])claude(?:[-_.]|$)/.test(normalized)) return 'anthropic'
     if (
-      /^(?:gpt-(?:4(?:[.o-]|$)|5(?:[.-]|$))|chatgpt-4o(?:-|$)|o[134](?:-|$)|codex)/.test(normalized)
+      /(?:^|[.:])(?:gpt-(?:4(?:[.o-]|$)|5(?:[.-]|$))|chatgpt-4o(?:-|$)|o[134](?:-|$)|codex(?:[-_.]|$))/.test(
+        normalized
+      )
     ) {
       return 'o200k_base'
     }
@@ -310,6 +319,7 @@ class ContextUsageTracker {
       ...(input.model ? { model: input.model } : {}),
       totals: emptyTotals(),
       keyedSections: new Map(),
+      toolObservations: new Map(),
       canonicalRawOutputSections: new Set(),
       promptSkillSectionIds: new Set(),
       pendingAssistantText: '',
@@ -443,6 +453,10 @@ class ContextUsageTracker {
     if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return
     const state = this.sessions.get(sessionId)
     if (!state) return
+    if (observation.toolCategory || observation.skillFilePath) {
+      state.toolObservations.set(update.toolCallId, observation)
+    }
+    const effectiveObservation = state.toolObservations.get(update.toolCallId) ?? observation
     // An assistant segment emitted before a tool call becomes input to the Agent's next internal
     // model request in this same user turn. Commit it at the observable tool boundary; the final
     // assistant segment remains buffered until the next user prompt.
@@ -451,12 +465,12 @@ class ContextUsageTracker {
     const nativeSkill = isNativeSkillToolUpdate(update)
     const category: EstimatedCategoryKey = nativeSkill
       ? 'skills'
-      : (observation.toolCategory ?? 'tools')
+      : (effectiveObservation.toolCategory ?? 'tools')
     const budget: ToolTextBudget = {
       chars: MAX_TOOL_ESTIMATE_CHARS,
       nodes: MAX_TOOL_ESTIMATE_NODES
     }
-    if (observation.skillFilePath) {
+    if (effectiveObservation.skillFilePath) {
       const output =
         update.content !== undefined
           ? toolContentText(update.content, budget)
@@ -464,9 +478,7 @@ class ContextUsageTracker {
             ? boundedJsonText(update.rawOutput, budget)
             : ''
       if (output) {
-        const sectionId = skillFileSectionId(observation.skillFilePath)
-        this.replaceText(sessionId, sectionId, 'skills', output)
-        state.promptSkillSectionIds.delete(sectionId)
+        this.recordSkillDocument(sessionId, effectiveObservation.skillFilePath, output)
       }
       return
     }

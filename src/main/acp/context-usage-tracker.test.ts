@@ -25,6 +25,11 @@ describe('ContextUsageTracker', () => {
     expect(tokenizerProfileFor('opencode', 'gpt-4.5-preview')).toBe('o200k_base')
     expect(tokenizerProfileFor('opencode', 'chatgpt-4o-latest')).toBe('o200k_base')
     expect(tokenizerProfileFor('opencode', 'openai/gpt-5')).toBe('o200k_base')
+    expect(tokenizerProfileFor('opencode', 'azure:openai:gpt-4.5-preview')).toBe('o200k_base')
+    expect(tokenizerProfileFor('opencode', 'openai.codex-mini-latest')).toBe('o200k_base')
+    expect(tokenizerProfileFor('opencode', 'bedrock/us.anthropic.claude-3-7-sonnet-v1:0')).toBe(
+      'anthropic'
+    )
     expect(tokenizerProfileFor('opencode', 'deepseek-v4')).toBe('cl100k_base')
   })
 
@@ -401,6 +406,36 @@ describe('ContextUsageTracker', () => {
       { key: 'mcp', tokens: 3, estimated: true },
       { key: 'other', tokens: 2, estimated: false }
     ])
+  })
+
+  it('keeps an MCP tool classified when a later result update omits its identity', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.observeSessionUpdate(
+      's1',
+      {
+        sessionId: 's1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'mcp-1',
+          title: 'open-science-notebook_notebook_execute',
+          status: 'in_progress',
+          rawInput: 'run notebook cell'
+        }
+      },
+      { toolCategory: 'mcp' }
+    )
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'mcp-1',
+        status: 'completed',
+        rawOutput: 'notebook result data'
+      }
+    })
+
+    expect(tracker.estimate('s1')?.categories).toEqual([{ key: 'mcp', tokens: 6, estimated: true }])
   })
 
   it('deduplicates a pre-counted Codex Skill when the same SKILL.md is read', () => {

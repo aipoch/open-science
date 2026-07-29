@@ -15,6 +15,7 @@ import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime'
+import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
 import type {
   AcpContextUsage,
   AcpPermissionRequest,
@@ -6555,6 +6556,84 @@ describe('ACP runtime session management', () => {
         expect.objectContaining({ key: 'system', estimated: true }),
         expect.objectContaining({ key: 'messages', estimated: true })
       ])
+    })
+  })
+
+  it('keeps an MCP tool category across result-only ACP updates', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'mcp-1',
+        kind: 'other',
+        title: 'mcp__open-science-notebook__notebook_execute',
+        status: 'in_progress',
+        rawInput: 'run notebook cell'
+      }
+    })
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'mcp-1',
+        kind: 'other',
+        status: 'completed',
+        rawOutput: 'notebook result data'
+      }
+    })
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 100, size: 128_000 }
+    })
+
+    const categories = runtime.getSnapshot().contextUsageBySession.s1.breakdown?.categories
+    expect(categories).toContainEqual(expect.objectContaining({ key: 'mcp', estimated: true }))
+    expect(categories).not.toContainEqual(expect.objectContaining({ key: 'tools' }))
+  })
+
+  it('estimates the exact Claude system prompt after MCP tool-name rewriting', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'])
+    const counter: TokenCounter = {
+      count: (text) => {
+        if (text.includes('Call mcp__open-science-notebook__notebook_execute exactly')) return 101
+        if (text.includes('Call notebook_execute exactly')) return 17
+        return 0
+      }
+    }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      contextUsageTracker: new ContextUsageTracker(counter),
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/claude-agent-acp',
+        env: {},
+        systemPromptAppends: ['Call notebook_execute exactly']
+      }),
+      framework: claudeCodeFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 150, size: 128_000 }
+    })
+
+    expect(runtime.getSnapshot().contextUsageBySession.s1.breakdown?.categories).toContainEqual({
+      key: 'system',
+      tokens: 101,
+      estimated: true
     })
   })
 

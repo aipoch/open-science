@@ -93,9 +93,12 @@ export type SessionSetupContext = {
 // Framework-specific session configuration returned to the runtime. `meta` becomes the ACP `_meta`
 // on session/new and session/resume. `promptPrefix` is prepended to prompt content when the framework
 // cannot carry appends in session meta, or when a session-level append needs a per-turn reminder.
+// `persistentSystemPrompt` exposes the exact transformed text delivered through framework-specific
+// metadata so context accounting never has to inspect that opaque transport shape.
 export type SessionSetup = {
   meta?: Record<string, unknown>
   promptPrefix?: string
+  persistentSystemPrompt?: string
 }
 
 export type ProxyEnvironmentMode = 'inherit' | 'replace'

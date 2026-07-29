@@ -90,11 +90,15 @@ export const claudeCodeFramework: AgentFramework = {
       }
     }
 
-    if (ctx.systemPromptAppends.length > 0) {
+    const persistentSystemPrompt = ctx.systemPromptAppends
+      .map(renderClaudeMcpToolNames)
+      .filter(Boolean)
+      .join('\n\n')
+    if (persistentSystemPrompt) {
       meta.systemPrompt = {
         type: 'preset',
         preset: 'claude_code',
-        append: ctx.systemPromptAppends.map(renderClaudeMcpToolNames).join('\n\n')
+        append: persistentSystemPrompt
       }
     }
 
@@ -103,7 +107,11 @@ export const claudeCodeFramework: AgentFramework = {
       .filter(Boolean)
       .join('\n\n')
 
-    return { meta, ...(promptPrefix ? { promptPrefix } : {}) }
+    return {
+      meta,
+      ...(persistentSystemPrompt ? { persistentSystemPrompt } : {}),
+      ...(promptPrefix ? { promptPrefix } : {})
+    }
   },
 
   mapPermissionProfile(

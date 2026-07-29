@@ -122,7 +122,11 @@ import type { ResponsesBridgeSkillCandidate } from '../settings/responses-bridge
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
 import { CodexSkillActivityProjector } from './codex-skill-activity'
-import { ContextUsageTracker, type SessionEstimateInput } from './context-usage-tracker'
+import {
+  ContextUsageTracker,
+  type SessionEstimateInput,
+  type SessionUpdateObservation
+} from './context-usage-tracker'
 import { contextUsageMcpSections } from './context-usage-static-context'
 import {
   createManagedFileReferenceResolver,
@@ -4982,6 +4986,10 @@ class AcpRuntime {
 
   private contextUsageEstimateInput(sessionId?: string): SessionEstimateInput {
     const { model } = this.contextUsageSelectionFor(sessionId)
+    const sessionSetup = this.framework.buildSessionSetup({
+      systemPromptAppends: this.getSystemPromptAppends(),
+      sessionOptions: this.pendingSessionOptions
+    })
     const persistentSections = contextUsageMcpSections({
       activity: Boolean(this.activityGroupOptions && this.framework.acceptsStdioMcp),
       artifacts: this.artifactToolingAvailable(),
@@ -4992,8 +5000,8 @@ class AcpRuntime {
     return {
       frameworkId: this.framework.id,
       ...(model ? { model } : {}),
-      ...(this.framework.id === 'claude-code'
-        ? { persistentSystemPrompt: this.getSystemPromptAppends() }
+      ...(sessionSetup.persistentSystemPrompt
+        ? { persistentSystemPrompt: [sessionSetup.persistentSystemPrompt] }
         : {}),
       ...(persistentSections.length > 0 ? { persistentSections } : {})
     }
@@ -5093,13 +5101,18 @@ class AcpRuntime {
         const isMcp =
           isMcpToolName(routed.update.title, mcpServerNames) ||
           isMcpToolName(providerToolName, mcpServerNames)
-        this.contextUsageTracker.observeSessionUpdate(
-          routed.sessionId,
-          routed,
-          projection.skillFile
-            ? { toolCategory: 'skills', skillFilePath: projection.skillFile.path }
-            : { toolCategory: isMcp ? 'mcp' : 'tools' }
-        )
+        const hasReportedToolIdentity =
+          routed.update.sessionUpdate === 'tool_call' ||
+          Boolean(routed.update.title) ||
+          Boolean(providerToolName)
+        const observation: SessionUpdateObservation = projection.skillFile
+          ? { toolCategory: 'skills', skillFilePath: projection.skillFile.path }
+          : isMcp
+            ? { toolCategory: 'mcp' }
+            : hasReportedToolIdentity
+              ? { toolCategory: 'tools' }
+              : {}
+        this.contextUsageTracker.observeSessionUpdate(routed.sessionId, routed, observation)
       } else {
         this.contextUsageTracker.observeSessionUpdate(routed.sessionId, routed)
       }

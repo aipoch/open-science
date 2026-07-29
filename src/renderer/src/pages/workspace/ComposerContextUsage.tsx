@@ -1,8 +1,3 @@
-/* Hallmark · component: context-usage popover · genre: modern-minimal · theme: app tokens
- * states: default · hover · focus · active · disabled · loading; error/success not applicable
- * contrast: inherited from semantic app tokens
- * pre-emit critique: P5 H5 E4 S5 R5 V4
- */
 // Composer context-usage indicator: a compact "% of context window" pill with a hover breakdown,
 // mirroring Claude Code's /context. During generation the numerator is the local request estimate; an
 // ACP usage_update replaces it with the Agent's authoritative input total. The denominator is bound to
