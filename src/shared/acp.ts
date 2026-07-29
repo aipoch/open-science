@@ -122,14 +122,17 @@ export type AcpContextUsageBreakdown = {
   categories: AcpContextUsageCategory[]
 }
 
-// Current agent-context usage projected onto its logical app session. While `breakdown.status` is
-// `preflight`, `used` is the local input estimate; once reconciled it is the Agent's model input plus
-// cache-read tokens. Output/completion and cache-write tokens are excluded. `size` is the selected
-// model window bound to that same agent-context generation. Both expire when that context disconnects
-// or is replaced. Monetary cost is deliberately excluded: context tracking does not calculate billing.
+// Current agent-context usage projected onto its logical app session. `used` remains the latest Agent
+// model-input total once one exists; before the first Agent report it is the local preflight estimate.
+// During later preflight updates, `agentUsed` preserves that latest authoritative reading while the
+// independent breakdown keeps changing. Output/completion and cache-write tokens are excluded. `size`
+// is omitted until the selected model window is known, then remains bound to that same agent-context
+// generation. Both expire when that context disconnects or is replaced. Monetary cost is deliberately
+// excluded.
 export type AcpContextUsage = {
   used: number
-  size: number
+  agentUsed?: number
+  size?: number
   breakdown?: AcpContextUsageBreakdown
 }
 

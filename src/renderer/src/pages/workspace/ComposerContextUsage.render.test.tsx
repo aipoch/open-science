@@ -164,6 +164,80 @@ describe('ComposerContextUsage', () => {
     expect(document.body.textContent).not.toContain('Δ')
   })
 
+  it('shows a token-only local estimate before the model window is known', async () => {
+    act(() =>
+      root.render(
+        <ComposerContextUsage
+          contextUsage={{
+            used: 20_600,
+            breakdown: {
+              source: 'estimated',
+              tokenizer: 'o200k_base',
+              estimatedTokens: 20_600,
+              difference: 0,
+              status: 'preflight',
+              categories: [{ key: 'messages', tokens: 20_600, estimated: true }]
+            }
+          }}
+        />
+      )
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Estimated context: 21k"]'
+    )
+    await act(async () => {
+      trigger?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Context window21kLocal estimate')
+    expect(document.body.textContent).not.toContain('/ undefined')
+    expect(
+      document.body.querySelector('[aria-label="Estimated category distribution: 20.6k tokens"]')
+    ).not.toBeNull()
+  })
+
+  it('keeps the latest Agent total visible while preflight categories update', async () => {
+    act(() =>
+      root.render(
+        <ComposerContextUsage
+          contextUsage={{
+            used: 96_000,
+            agentUsed: 96_000,
+            size: 128_000,
+            breakdown: {
+              source: 'estimated',
+              tokenizer: 'anthropic',
+              model: 'claude-sonnet-4-5',
+              estimatedTokens: 38_300,
+              difference: 0,
+              status: 'preflight',
+              categories: [
+                { key: 'system', tokens: 2_400, estimated: true },
+                { key: 'messages', tokens: 17_800, estimated: true },
+                { key: 'mcp', tokens: 18_100, estimated: true }
+              ]
+            }
+          }}
+        />
+      )
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Context used: 75%"]')
+    await act(async () => {
+      trigger?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Agent used 96k / 128k')
+    expect(document.body.textContent).toContain('Local 38.3k · Latest Agent 96k')
+    expect(document.body.textContent).toContain(
+      'Estimating · Anthropic approx. · claude-sonnet-4-5'
+    )
+    expect(document.body.textContent).not.toContain('Δ')
+  })
+
   it('does not offer compaction from a high local estimate before Agent reconciliation', async () => {
     act(() =>
       root.render(

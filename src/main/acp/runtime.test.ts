@@ -6679,6 +6679,88 @@ describe('ACP runtime session management', () => {
     await prompt
   })
 
+  it('publishes a token-only preflight estimate when the model window is unknown', async () => {
+    const process = new FakeAgentProcess()
+    const finishPrompt = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['s1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      onPrompt: () => finishPrompt.promise
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {}
+      }),
+      framework: codexFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'estimate before first usage' })
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+
+    expect(runtime.getSnapshot().contextUsageBySession.s1).toMatchObject({
+      used: expect.any(Number),
+      breakdown: {
+        status: 'preflight',
+        estimatedTokens: expect.any(Number)
+      }
+    })
+    expect(runtime.getSnapshot().contextUsageBySession.s1.size).toBeUndefined()
+
+    finishPrompt.resolve()
+    await prompt
+  })
+
+  it('keeps the latest Agent total authoritative while preflight refreshes categories', async () => {
+    const process = new FakeAgentProcess()
+    const finishPrompt = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['s1'], {
+      onPrompt: () => finishPrompt.promise
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 96_000, size: 128_000 }
+    })
+
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'continue from this context' })
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+
+    const usageWhileGenerating = runtime.getSnapshot().contextUsageBySession.s1
+    expect(usageWhileGenerating.used).toBe(96_000)
+    expect(usageWhileGenerating.size).toBe(128_000)
+    expect(usageWhileGenerating.breakdown).toMatchObject({
+      status: 'preflight',
+      estimatedTokens: expect.any(Number)
+    })
+    expect(usageWhileGenerating.breakdown?.estimatedTokens).not.toBe(96_000)
+
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        messageId: 'live-estimate',
+        content: { type: 'text', text: 'streamed output updates the local breakdown' }
+      }
+    })
+    const refreshedUsage = runtime.getSnapshot().contextUsageBySession.s1
+    expect(refreshedUsage.used).toBe(96_000)
+    expect(refreshedUsage.agentUsed).toBe(96_000)
+
+    finishPrompt.resolve()
+    await prompt
+  })
+
   it('restores the last reconciled usage when a turn stops without a fresh usage update', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['s1'])

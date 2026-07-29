@@ -1,7 +1,7 @@
 // Composer context-usage indicator: a compact "% of context window" pill with a hover breakdown,
-// mirroring Claude Code's /context. During generation the numerator is the local request estimate; an
-// ACP usage_update replaces it with the Agent's authoritative input total. The denominator is bound to
-// the selected model and agent-context generation by the main process.
+// mirroring Claude Code's /context. During generation the local request estimate updates independently;
+// once an Agent total exists it remains the numerator until a fresher usage_update arrives. The
+// denominator is bound to the selected model and agent-context generation when that window is known.
 
 import { Gauge, Minimize2 } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type FocusEvent } from 'react'
@@ -32,7 +32,7 @@ const CATEGORY_PRESENTATION: Record<AcpContextUsageCategoryKey, { label: string;
   }
 
 const TOKENIZER_LABELS = {
-  anthropic: 'Anthropic',
+  anthropic: 'Anthropic approx.',
   o200k_base: 'o200k_base',
   cl100k_base: 'cl100k_base'
 } as const
@@ -101,12 +101,14 @@ const ComposerContextUsage = ({
 
   const size = contextUsage.size
   const used = contextUsage.used
-  const usagePercent = size && size > 0 ? Math.min(100, (used / size) * 100) : undefined
+  const hasKnownSize = size !== undefined && size > 0
+  const usagePercent = hasKnownSize ? Math.min(100, (used / size) * 100) : undefined
   const percent = usagePercent !== undefined ? Math.round(usagePercent) : undefined
 
   const label = percent !== undefined ? `${percent}%` : formatTokens(used)
   const breakdown = contextUsage.breakdown
   const estimating = breakdown?.status === 'preflight'
+  const hasAgentTotal = !estimating || contextUsage.agentUsed !== undefined
   const showCompactAction =
     compacting ||
     (!estimating && usagePercent !== undefined && usagePercent >= COMPACT_ACTION_THRESHOLD_PERCENT)
@@ -114,8 +116,10 @@ const ComposerContextUsage = ({
   const compactHint = !compacting && compactUnavailable ? compactDisabledReason : undefined
   const categories = breakdown?.categories.filter((category) => category.tokens > 0) ?? []
   const categoryTotal = categories.reduce((sum, category) => sum + category.tokens, 0)
-  const visualUsed = Math.max(used, categoryTotal)
-  const visualPercent = size > 0 ? Math.min(100, (visualUsed / size) * 100) : 100
+  const visualUsed = estimating
+    ? (breakdown?.estimatedTokens ?? categoryTotal)
+    : Math.max(used, categoryTotal)
+  const visualPercent = hasKnownSize ? Math.min(100, (visualUsed / size) * 100) : 100
 
   const compactButton = (
     <button
@@ -138,7 +142,7 @@ const ComposerContextUsage = ({
           ref={triggerRef}
           type="button"
           className="flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-text-000 outline-none transition-colors duration-150 motion-reduce:transition-none hover:bg-bg-200 focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-bg-300"
-          aria-label={`${estimating ? 'Estimated context' : 'Context used'}: ${label}`}
+          aria-label={`${hasAgentTotal ? 'Context used' : 'Estimated context'}: ${label}`}
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-controls={open ? contentId : undefined}
@@ -190,8 +194,10 @@ const ComposerContextUsage = ({
                 {usagePercent !== undefined ? `${usagePercent.toFixed(1)}%` : formatTokens(used)}
               </span>
               <span className="min-w-0 truncate text-muted-foreground tabular-nums">
-                {estimating ? 'Local estimate' : 'Agent used'} {formatDetailedTokens(used)} /{' '}
-                {formatDetailedTokens(size)}
+                {hasAgentTotal ? 'Agent used' : 'Local estimate'}
+                {hasKnownSize
+                  ? ` ${formatDetailedTokens(used)} / ${formatDetailedTokens(size)}`
+                  : null}
               </span>
             </div>
           </div>
@@ -199,7 +205,11 @@ const ComposerContextUsage = ({
             <>
               <div
                 className="flex h-2 overflow-hidden rounded-full bg-bg-200"
-                aria-label={`Estimated category occupancy: ${formatDetailedTokens(visualUsed)} of ${formatDetailedTokens(size)} tokens`}
+                aria-label={
+                  hasKnownSize
+                    ? `Estimated category occupancy: ${formatDetailedTokens(visualUsed)} of ${formatDetailedTokens(size)} tokens`
+                    : `Estimated category distribution: ${formatDetailedTokens(visualUsed)} tokens`
+                }
               >
                 {categories.map((category) => {
                   const presentation = CATEGORY_PRESENTATION[category.key]
@@ -240,11 +250,18 @@ const ComposerContextUsage = ({
                 className="space-y-0.5 border-t border-border pt-2 text-[11px] leading-4 text-muted-foreground"
                 title={
                   estimating
-                    ? 'Local estimate updates while the Agent is generating.'
+                    ? contextUsage.agentUsed === undefined
+                      ? 'Local estimate updates while the Agent is generating.'
+                      : 'The latest Agent total remains authoritative while local categories update.'
                     : 'Agent total is authoritative; category values are local estimates.'
                 }
               >
-                {estimating ? null : (
+                {estimating && contextUsage.agentUsed !== undefined ? (
+                  <div className="whitespace-nowrap tabular-nums">
+                    Local {formatDetailedTokens(breakdown.estimatedTokens)} · Latest Agent{' '}
+                    {formatDetailedTokens(contextUsage.agentUsed)}
+                  </div>
+                ) : estimating ? null : (
                   <div className="whitespace-nowrap tabular-nums">
                     Local {formatDetailedTokens(breakdown.estimatedTokens)} · Agent{' '}
                     {formatDetailedTokens(used)} · Δ {breakdown.difference > 0 ? '+' : ''}
@@ -260,8 +277,8 @@ const ComposerContextUsage = ({
             </>
           ) : (
             <div className="whitespace-nowrap text-muted-foreground tabular-nums">
-              {formatTokens(used)} / {formatTokens(size)} tokens
-              {percent !== undefined ? ` (${percent}%)` : ''}
+              {hasKnownSize ? `${formatTokens(used)} / ${formatTokens(size)}` : formatTokens(used)}{' '}
+              tokens{percent !== undefined ? ` (${percent}%)` : ''}
             </div>
           )}
           {showCompactAction ? (

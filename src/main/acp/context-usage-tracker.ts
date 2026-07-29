@@ -89,6 +89,8 @@ const cloneSessionEstimate = (state: SessionEstimate): SessionEstimate => ({
 // their encoding tables per session would add avoidable startup and memory cost.
 let o200kTokenizer: Tiktoken | undefined
 let cl100kTokenizer: Tiktoken | undefined
+// Anthropic documents its public tokenizer as a rough approximation for Claude 3+. Keep category
+// values explicitly estimated and let the Agent-reported total remain authoritative.
 let anthropicTokenizer: ReturnType<typeof getAnthropicTokenizer> | undefined
 
 const tiktoken = (profile: Extract<TokenizerProfile, 'o200k_base' | 'cl100k_base'>): Tiktoken => {

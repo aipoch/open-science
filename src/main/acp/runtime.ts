@@ -1681,7 +1681,7 @@ class AcpRuntime {
     if (strategy.kind !== 'native-command' || strategy.triggerAtPercent === undefined) return false
 
     const usage = this.contextUsageBySession.get(sessionId)
-    if (!usage || usage.size <= 0 || usage.used < 0) return false
+    if (!usage || usage.size === undefined || usage.size <= 0 || usage.used < 0) return false
     if (usage.breakdown?.status === 'preflight') return false
 
     return (usage.used / usage.size) * 100 >= strategy.triggerAtPercent
@@ -4934,7 +4934,7 @@ class AcpRuntime {
 
     this.contextUsageBySession.set(sessionId, {
       used,
-      size: current.size,
+      ...(current.size === undefined ? {} : { size: current.size }),
       breakdown: this.contextUsageTracker.compare(sessionId, used, 'reconciled')
     })
     this.emitState()
@@ -5024,10 +5024,13 @@ class AcpRuntime {
     if (status === 'preflight') {
       const breakdown = this.contextUsageTracker.estimate(sessionId)
       const size = this.selectedContextWindowFor(sessionId) ?? current?.size
-      if (!breakdown || !size || size <= 0) return false
+      if (!breakdown) return false
+      const agentUsed =
+        current?.breakdown?.status === 'preflight' ? current.agentUsed : current?.used
       this.contextUsageBySession.set(sessionId, {
-        used: breakdown.estimatedTokens,
-        size,
+        used: agentUsed ?? breakdown.estimatedTokens,
+        ...(agentUsed === undefined ? {} : { agentUsed }),
+        ...(size === undefined ? {} : { size }),
         breakdown
       })
       return true
