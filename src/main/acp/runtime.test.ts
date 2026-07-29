@@ -706,6 +706,37 @@ describe('ACP runtime migration write-gate', () => {
     )
   })
 
+  it('does not tokenize against an optional model that the Agent could not apply', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['fallback-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...opencodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/opencode-acp',
+        env: {},
+        sessionModel: 'claude-sonnet-4-5'
+      }),
+      framework: opencodeFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    handleSessionUpdate(runtime, {
+      sessionId: 'fallback-session',
+      update: { sessionUpdate: 'usage_update', used: 15, size: 128000 }
+    })
+
+    expect(
+      runtime.getSnapshot().contextUsageBySession['fallback-session']?.breakdown
+    ).toMatchObject({
+      tokenizer: 'cl100k_base'
+    })
+    expect(
+      runtime.getSnapshot().contextUsageBySession['fallback-session']?.breakdown
+    ).not.toHaveProperty('model')
+  })
+
   it('rejects session creation when a required subscription model cannot be applied', async () => {
     const process = new FakeAgentProcess()
     const configOptions = [
@@ -9097,6 +9128,7 @@ describe('ACP runtime Codex Skill activity projection', () => {
         env: NodeJS.ProcessEnv
       }) => void
       handleSessionUpdate: (notification: SessionNotification) => void
+      sessions: Map<string, { sessionId: string }>
     }
     internal.applyResolvedBackend({
       framework: codexFramework,
@@ -9104,6 +9136,7 @@ describe('ACP runtime Codex Skill activity projection', () => {
       executablePath: '/data/codex-acp',
       env: { CODEX_HOME: codexHome }
     })
+    internal.sessions.set('session-1', { sessionId: 'session-1' })
 
     internal.handleSessionUpdate({
       sessionId: 'session-1',
@@ -9125,6 +9158,10 @@ describe('ACP runtime Codex Skill activity projection', () => {
         rawOutput: { formatted_output: 'FULL SKILL BODY', exit_code: 0 }
       }
     })
+    internal.handleSessionUpdate({
+      sessionId: 'session-1',
+      update: { sessionUpdate: 'usage_update', used: 100, size: 128000 }
+    })
 
     expect(events).toHaveLength(2)
     expect(events.map((event) => event.title)).toEqual([
@@ -9133,6 +9170,10 @@ describe('ACP runtime Codex Skill activity projection', () => {
     ])
     expect(JSON.stringify(events)).not.toContain(skillPath)
     expect(JSON.stringify(events)).not.toContain('FULL SKILL BODY')
+    const categories =
+      runtime.getSnapshot().contextUsageBySession['session-1']?.breakdown?.categories
+    expect(categories).toContainEqual(expect.objectContaining({ key: 'skills', estimated: true }))
+    expect(categories).not.toContainEqual(expect.objectContaining({ key: 'tools' }))
   })
 })
 

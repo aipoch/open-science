@@ -1,5 +1,6 @@
 import { countTokens as countAnthropicTokens } from '@anthropic-ai/tokenizer'
 import type { ContentBlock, SessionNotification } from '@agentclientprotocol/sdk'
+import { resolve } from 'node:path'
 import { Tiktoken } from 'js-tiktoken/lite'
 import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
 import o200kBase from 'js-tiktoken/ranks/o200k_base'
@@ -30,6 +31,11 @@ type SessionEstimateInput = {
   frameworkId: AgentFrameworkId
   model?: string
   persistentSystemPrompt?: readonly string[]
+}
+
+type SessionUpdateObservation = {
+  toolCategory?: Extract<EstimatedCategoryKey, 'tools' | 'mcp' | 'skills'>
+  skillFilePath?: string
 }
 
 const ESTIMATED_CATEGORY_KEYS: EstimatedCategoryKey[] = [
@@ -120,6 +126,8 @@ const jsonText = (value: unknown): string => {
   }
 }
 
+const skillFileSectionId = (path: string): string => `skill-file:${resolve(path)}`
+
 type ToolUpdate = Extract<
   SessionNotification['update'],
   { sessionUpdate: 'tool_call' | 'tool_call_update' }
@@ -183,6 +191,10 @@ class ContextUsageTracker {
     state.totals.messages += tokens
   }
 
+  recordSkillDocument(sessionId: string, path: string, text: string): void {
+    this.replaceText(sessionId, skillFileSectionId(path), 'skills', text)
+  }
+
   replaceText(
     sessionId: string,
     sectionId: string,
@@ -202,7 +214,7 @@ class ContextUsageTracker {
   observeSessionUpdate(
     sessionId: string,
     notification: SessionNotification,
-    toolCategory: Extract<EstimatedCategoryKey, 'tools' | 'mcp'> = 'tools'
+    observation: SessionUpdateObservation = {}
   ): void {
     const update = notification.update
     if (update.sessionUpdate === 'agent_message_chunk') {
@@ -211,7 +223,22 @@ class ContextUsageTracker {
     }
     if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return
 
-    const category: EstimatedCategoryKey = isNativeSkillToolUpdate(update) ? 'skills' : toolCategory
+    const category: EstimatedCategoryKey = isNativeSkillToolUpdate(update)
+      ? 'skills'
+      : (observation.toolCategory ?? 'tools')
+    if (observation.skillFilePath) {
+      const output =
+        update.content !== undefined
+          ? toolContentText(update.content)
+          : update.rawOutput !== undefined
+            ? jsonText(update.rawOutput)
+            : ''
+      if (output) {
+        this.replaceText(sessionId, skillFileSectionId(observation.skillFilePath), 'skills', output)
+      }
+      return
+    }
+
     const prefix = `tool:${update.toolCallId}`
     if (update.rawInput !== undefined) {
       this.replaceText(sessionId, `${prefix}:input`, category, jsonText(update.rawInput))
@@ -264,4 +291,4 @@ class ContextUsageTracker {
 }
 
 export { ContextUsageTracker, tokenizerProfileFor }
-export type { EstimatedCategoryKey, SessionEstimateInput, TokenCounter }
+export type { EstimatedCategoryKey, SessionEstimateInput, SessionUpdateObservation, TokenCounter }

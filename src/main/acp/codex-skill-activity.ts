@@ -11,7 +11,17 @@ const isSafeSkillName = (value: string): boolean =>
     return codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)
   })
 
-const exactSkillName = (skillsRoot: string, event: AcpRuntimeEvent): string | undefined => {
+type CodexSkillFile = {
+  name: string
+  path: string
+}
+
+type CodexSkillProjection = {
+  event: AcpRuntimeEvent
+  skillFile?: CodexSkillFile
+}
+
+const exactSkillFile = (skillsRoot: string, event: AcpRuntimeEvent): CodexSkillFile | undefined => {
   if (
     event.kind !== 'tool' ||
     event.toolKind !== 'read' ||
@@ -24,13 +34,14 @@ const exactSkillName = (skillsRoot: string, event: AcpRuntimeEvent): string | un
   const location = event.toolLocations[0]?.path
   if (!location || !isAbsolute(location)) return undefined
 
-  const relativePath = relative(skillsRoot, resolve(location))
+  const resolvedPath = resolve(location)
+  const relativePath = relative(skillsRoot, resolvedPath)
   const parts = relativePath.split(sep)
   if (parts.length !== 2 || parts[1] !== 'SKILL.md' || !parts[0] || !isSafeSkillName(parts[0])) {
     return undefined
   }
 
-  return parts[0]
+  return { name: parts[0], path: resolvedPath }
 }
 
 const projectNameOnly = (event: AcpRuntimeEvent, skillName: string): AcpRuntimeEvent => {
@@ -57,7 +68,7 @@ const lifecycleKey = (event: AcpRuntimeEvent): string =>
 // Connector; it only replaces the exact app-owned SKILL.md read lifecycle with a name-only activity.
 class CodexSkillActivityProjector {
   private skillsRoot: string | undefined
-  private readonly activeSkills = new Map<string, string>()
+  private readonly activeSkills = new Map<string, CodexSkillFile>()
 
   constructor(skillsRoot?: string) {
     this.skillsRoot = skillsRoot ? resolve(skillsRoot) : undefined
@@ -76,21 +87,26 @@ class CodexSkillActivityProjector {
   }
 
   project(event: AcpRuntimeEvent): AcpRuntimeEvent {
-    if (event.kind !== 'tool' || !event.toolCallId || !this.skillsRoot) return event
+    return this.projectWithContext(event).event
+  }
+
+  projectWithContext(event: AcpRuntimeEvent): CodexSkillProjection {
+    if (event.kind !== 'tool' || !event.toolCallId || !this.skillsRoot) return { event }
 
     const key = lifecycleKey(event)
-    const detectedName = exactSkillName(this.skillsRoot, event)
-    if (detectedName) this.activeSkills.set(key, detectedName)
+    const detectedSkill = exactSkillFile(this.skillsRoot, event)
+    if (detectedSkill) this.activeSkills.set(key, detectedSkill)
 
-    const skillName = detectedName ?? this.activeSkills.get(key)
-    if (!skillName) return event
+    const skillFile = detectedSkill ?? this.activeSkills.get(key)
+    if (!skillFile) return { event }
 
     if (event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') {
       this.activeSkills.delete(key)
     }
 
-    return projectNameOnly(event, skillName)
+    return { event: projectNameOnly(event, skillFile.name), skillFile }
   }
 }
 
 export { CodexSkillActivityProjector }
+export type { CodexSkillFile, CodexSkillProjection }

@@ -730,6 +730,9 @@ class AcpRuntime {
   // switch (which disconnects) can still tell that an existing session belongs to the other framework
   // and skip a doomed resume. Cleaned per-session on delete.
   private readonly sessionFrameworks = new Map<string, string>()
+  // Model that ACP confirmed for this live session. Optional model requests that cannot be applied are
+  // deliberately absent, so diagnostics never claim or tokenize against a model the Agent did not use.
+  private readonly appliedSessionModels = new Map<string, string>()
   // Like sessionFrameworks, retained across disconnects. A provider/profile switch can keep the same
   // framework while moving to a different on-disk session store, where the old id is not resumable.
   private readonly sessionBackendIds = new Map<string, string>()
@@ -979,6 +982,7 @@ class AcpRuntime {
   private async applySessionModel(
     session: ActiveSession
   ): Promise<SessionConfigOption[] | null | undefined> {
+    this.appliedSessionModels.delete(session.sessionId)
     if (!this.pendingSessionModel || !this.connection) return undefined
 
     const configOptions = (
@@ -1006,6 +1010,7 @@ class AcpRuntime {
         sessionId: session.sessionId,
         model: selection.value
       })
+      this.appliedSessionModels.set(session.sessionId, selection.value)
       return configOptions ?? null
     }
 
@@ -1019,6 +1024,7 @@ class AcpRuntime {
         }
       )) as { configOptions?: SessionConfigOption[] | null }
       log.info('session model applied', { sessionId: session.sessionId, model: selection.value })
+      this.appliedSessionModels.set(session.sessionId, selection.value)
       // The model switch rebuilds the agent's options (effort rungs are model-dependent). The
       // caller commits the fresh set to latestSessionConfigOptions once the session is registered,
       // so the map never holds an entry for a session that failed to attach.
@@ -1494,6 +1500,10 @@ class AcpRuntime {
   ): void {
     this.sessions.set(appSessionId, session)
 
+    const appliedModel = this.appliedSessionModels.get(session.sessionId)
+    if (appliedModel) this.appliedSessionModels.set(appSessionId, appliedModel)
+    else this.appliedSessionModels.delete(appSessionId)
+
     if (session.sessionId !== appSessionId) {
       this.agentToAppSessionId.set(session.sessionId, appSessionId)
     }
@@ -1584,6 +1594,7 @@ class AcpRuntime {
     if (attached) {
       attached.dispose()
       this.agentToAppSessionId.delete(attached.sessionId)
+      this.appliedSessionModels.delete(attached.sessionId)
       this.sessions.delete(request.sessionId)
       this.latestSessionConfigOptions.delete(attached.sessionId)
       this.latestSessionConfigOptions.delete(request.sessionId)
@@ -1595,6 +1606,7 @@ class AcpRuntime {
     // previous context size into the fresh conversation before its first usage_update arrives.
     this.contextUsageBySession.delete(request.sessionId)
     this.contextUsageTracker.deleteSession(request.sessionId)
+    this.appliedSessionModels.delete(request.sessionId)
 
     // Release the failed turn's in-flight lock now. Its own `finally` clears it too, but that runs only
     // after async artifact cleanup, so the recovery resend that follows this reset would otherwise race
@@ -1716,7 +1728,10 @@ class AcpRuntime {
           if (this.contextUsageBySession.get(appSessionId) === contextUsageBeforeCompaction) {
             this.contextUsageBySession.delete(appSessionId)
           } else {
-            this.contextUsageTracker.resetSession(appSessionId, this.contextUsageEstimateInput())
+            this.contextUsageTracker.resetSession(
+              appSessionId,
+              this.contextUsageEstimateInput(appSessionId)
+            )
             this.refreshEstimatedContextUsage(appSessionId, 'reconciled')
           }
           this.sessionInlineImageBytes.delete(appSessionId)
@@ -2025,6 +2040,7 @@ class AcpRuntime {
     this.connection = undefined
     this.killAgentProcess()
     this.contextUsageTracker.clear()
+    this.appliedSessionModels.clear()
     void this.closeMcpHttpHost()
     void this.releaseResponsesBridgeLease()
   }
@@ -2095,6 +2111,7 @@ class AcpRuntime {
     if (this.contextUsageBySession.size > 0) {
       this.contextUsageBySession.clear()
       this.contextUsageTracker.clear()
+      this.appliedSessionModels.clear()
       this.emitState()
     }
 
@@ -2254,6 +2271,7 @@ class AcpRuntime {
       // replay history into a fresh one; only that generation's own usage_update can repopulate it.
       this.contextUsageBySession.clear()
       this.contextUsageTracker.clear()
+      this.appliedSessionModels.clear()
 
       for (const session of this.sessions.values()) {
         session.dispose()
@@ -2940,6 +2958,7 @@ class AcpRuntime {
       this.agentToAppSessionId.delete(session.sessionId)
       // The options cache is keyed by the agent session id (differs from the app id when adopted).
       this.latestSessionConfigOptions.delete(session.sessionId)
+      this.appliedSessionModels.delete(session.sessionId)
     }
 
     // App-session-keyed cleanup runs whether or not a live session is attached. A framework switch
@@ -2969,6 +2988,7 @@ class AcpRuntime {
     this.sessionBackendIds.delete(request.sessionId)
     this.contextUsageBySession.delete(request.sessionId)
     this.contextUsageTracker.deleteSession(request.sessionId)
+    this.appliedSessionModels.delete(request.sessionId)
     this.permissionProfiles.delete(request.sessionId)
     this.artifactSessionIds.delete(request.sessionId)
     this.notebookRoutingIds.delete(request.sessionId)
@@ -4847,14 +4867,19 @@ class AcpRuntime {
     this.emitState()
   }
 
-  private contextUsageEstimateInput(): {
+  private contextUsageEstimateInput(sessionId?: string): {
     frameworkId: AgentFrameworkId
     model?: string
     persistentSystemPrompt?: readonly string[]
   } {
+    const activeSession = sessionId ? this.sessions.get(sessionId) : undefined
+    const appliedModel = sessionId
+      ? (this.appliedSessionModels.get(sessionId) ??
+        (activeSession ? this.appliedSessionModels.get(activeSession.sessionId) : undefined))
+      : undefined
     return {
       frameworkId: this.framework.id,
-      ...(this.pendingSessionModel ? { model: this.pendingSessionModel } : {}),
+      ...(appliedModel ? { model: appliedModel } : {}),
       ...(this.framework.id === 'claude-code'
         ? { persistentSystemPrompt: this.getSystemPromptAppends() }
         : {})
@@ -4863,7 +4888,7 @@ class AcpRuntime {
 
   private ensureContextUsageTracking(sessionId: string): void {
     if (!this.sessions.has(sessionId)) return
-    this.contextUsageTracker.beginSession(sessionId, this.contextUsageEstimateInput())
+    this.contextUsageTracker.beginSession(sessionId, this.contextUsageEstimateInput(sessionId))
   }
 
   private refreshEstimatedContextUsage(
@@ -4892,7 +4917,11 @@ class AcpRuntime {
     await Promise.all(
       codexSkillInputs.map(async ({ path }) => {
         try {
-          this.contextUsageTracker.appendText(sessionId, 'skills', await readFile(path, 'utf8'))
+          this.contextUsageTracker.recordSkillDocument(
+            sessionId,
+            path,
+            await readFile(path, 'utf8')
+          )
         } catch (error) {
           log.warn('context estimate could not read Codex Skill input', {
             sessionId,
@@ -4917,6 +4946,10 @@ class AcpRuntime {
       appSessionId && appSessionId !== notification.sessionId
         ? { ...notification, sessionId: appSessionId }
         : notification
+    const projection = this.codexSkillActivity.projectWithContext(
+      toAcpRuntimeEvent(routed, this.nextEventId())
+    )
+    const event = projection.event
 
     this.ensureContextUsageTracking(routed.sessionId)
     if (
@@ -4931,7 +4964,9 @@ class AcpRuntime {
       this.contextUsageTracker.observeSessionUpdate(
         routed.sessionId,
         routed,
-        isMcp ? 'mcp' : 'tools'
+        projection.skillFile
+          ? { toolCategory: 'skills', skillFilePath: projection.skillFile.path }
+          : { toolCategory: isMcp ? 'mcp' : 'tools' }
       )
     } else {
       this.contextUsageTracker.observeSessionUpdate(routed.sessionId, routed)
@@ -4948,8 +4983,6 @@ class AcpRuntime {
         this.emitState()
       }
     }
-
-    const event = this.codexSkillActivity.project(toAcpRuntimeEvent(routed, this.nextEventId()))
 
     // usage_update carries the session's context-window usage, not conversation content: record it per
     // session and emit state so the indicator updates, but never push it as a visible event.
@@ -5110,6 +5143,7 @@ class AcpRuntime {
     this.sessionProjectNames.clear()
     this.contextUsageBySession.clear()
     this.contextUsageTracker.clear()
+    this.appliedSessionModels.clear()
     this.artifactSessionIds.clear()
     this.notebookRoutingIds.clear()
     this.skillImportRoutingIds.clear()

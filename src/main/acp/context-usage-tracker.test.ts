@@ -151,11 +151,37 @@ describe('ContextUsageTracker', () => {
           rawInput: 'run notebook cell'
         }
       },
-      'mcp'
+      { toolCategory: 'mcp' }
     )
 
     expect(tracker.compare('s1', 5, 'reconciled')?.categories).toEqual([
       { key: 'mcp', tokens: 3, estimated: true },
+      { key: 'other', tokens: 2, estimated: false }
+    ])
+  })
+
+  it('deduplicates a pre-counted Codex Skill when the same SKILL.md is read', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'codex', model: 'gpt-5.6-sol' })
+    tracker.recordSkillDocument('s1', '/codex/skills/pdf/SKILL.md', 'skill content here')
+    tracker.observeSessionUpdate(
+      's1',
+      {
+        sessionId: 's1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'read-1',
+          title: 'Read',
+          status: 'completed',
+          rawInput: { path: '/codex/skills/pdf/SKILL.md' },
+          content: [{ type: 'content', content: { type: 'text', text: 'skill content here' } }]
+        }
+      },
+      { toolCategory: 'skills', skillFilePath: '/codex/skills/pdf/SKILL.md' }
+    )
+
+    expect(tracker.compare('s1', 5, 'reconciled')?.categories).toEqual([
+      { key: 'skills', tokens: 3, estimated: true },
       { key: 'other', tokens: 2, estimated: false }
     ])
   })
