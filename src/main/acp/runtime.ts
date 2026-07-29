@@ -4993,22 +4993,22 @@ class AcpRuntime {
     this.contextUsageTracker.appendText(sessionId, 'system', promptPrefix ?? '')
     this.contextUsageTracker.appendPromptContent(sessionId, promptContent, promptPrefix)
 
-    await Promise.all(
-      codexSkillInputs.map(async ({ path }) => {
-        try {
-          this.contextUsageTracker.recordSkillDocument(
-            sessionId,
-            path,
-            await readFile(path, 'utf8')
-          )
-        } catch (error) {
-          log.warn('context estimate could not read Codex Skill input', {
-            sessionId,
-            ...errorLogFields(error)
-          })
-        }
-      })
-    )
+    const promptSkillDocuments = (
+      await Promise.all(
+        codexSkillInputs.map(async ({ path }) => {
+          try {
+            return { path, text: await readFile(path, 'utf8') }
+          } catch (error) {
+            log.warn('context estimate could not read Codex Skill input', {
+              sessionId,
+              ...errorLogFields(error)
+            })
+            return undefined
+          }
+        })
+      )
+    ).filter((document): document is { path: string; text: string } => document !== undefined)
+    this.contextUsageTracker.replacePromptSkillDocuments(sessionId, promptSkillDocuments)
 
     if (this.refreshEstimatedContextUsage(sessionId, 'preflight')) this.emitState()
   }

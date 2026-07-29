@@ -6658,6 +6658,56 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('removes a prompt-scoped Codex Skill estimate when the next turn omits it', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-context-skill-'))
+    const skillPath = join(temporaryRoot, 'skills', 'research', 'SKILL.md')
+    await mkdir(join(temporaryRoot, 'skills', 'research'), { recursive: true })
+    await writeFile(skillPath, 'research skill instructions')
+
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      skills: {
+        needForceLoad: vi.fn(async () => []),
+        namesForIds: vi.fn(async (ids: string[]) => ids),
+        descriptorsForIds: vi.fn(async (ids: string[]) =>
+          ids.includes('research') ? [{ name: 'research', path: skillPath }] : []
+        ),
+        catalogForCodexHome: vi.fn(async () => [])
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: 's1',
+      text: 'use the research skill',
+      forcedSkillIds: ['research']
+    })
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 100, size: 128_000 }
+    })
+    expect(runtime.getSnapshot().contextUsageBySession.s1.breakdown?.categories).toContainEqual(
+      expect.objectContaining({ key: 'skills' })
+    )
+
+    await runtime.sendPrompt({ sessionId: 's1', text: 'continue without a skill' })
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 120, size: 128_000 }
+    })
+
+    expect(runtime.getSnapshot().contextUsageBySession.s1.breakdown?.categories).not.toContainEqual(
+      expect.objectContaining({ key: 'skills' })
+    )
+  })
+
   it('tokenizes context with the upstream model instead of the ACP framework default', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['s1'])

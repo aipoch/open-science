@@ -26,6 +26,7 @@ type SessionEstimate = {
   totals: Record<EstimatedCategoryKey, number>
   keyedSections: Map<string, { category: EstimatedCategoryKey; tokens: number }>
   canonicalRawOutputSections: Set<string>
+  promptSkillSectionIds: Set<string>
   pendingAssistantText: string
   pendingAssistantTokens: number
 }
@@ -75,6 +76,7 @@ const cloneSessionEstimate = (state: SessionEstimate): SessionEstimate => ({
   totals: { ...state.totals },
   keyedSections: new Map(state.keyedSections),
   canonicalRawOutputSections: new Set(state.canonicalRawOutputSections),
+  promptSkillSectionIds: new Set(state.promptSkillSectionIds),
   pendingAssistantText: state.pendingAssistantText,
   pendingAssistantTokens: state.pendingAssistantTokens
 })
@@ -120,7 +122,9 @@ const tokenizerProfileFor = (
   // only safe when the agent did not expose or receive a model id.
   if (normalized) {
     if (normalized.startsWith('claude')) return 'anthropic'
-    if (/^(gpt-5|gpt-4o|gpt-4\.1|o[134](?:-|$)|codex)/.test(normalized)) {
+    if (
+      /^(?:gpt-(?:4(?:[.o-]|$)|5(?:[.-]|$))|chatgpt-4o(?:-|$)|o[134](?:-|$)|codex)/.test(normalized)
+    ) {
       return 'o200k_base'
     }
     return 'cl100k_base'
@@ -307,6 +311,7 @@ class ContextUsageTracker {
       totals: emptyTotals(),
       keyedSections: new Map(),
       canonicalRawOutputSections: new Set(),
+      promptSkillSectionIds: new Set(),
       pendingAssistantText: '',
       pendingAssistantTokens: 0
     }
@@ -377,7 +382,28 @@ class ContextUsageTracker {
   }
 
   recordSkillDocument(sessionId: string, path: string, text: string): void {
-    this.replaceText(sessionId, skillFileSectionId(path), 'skills', text)
+    const sectionId = skillFileSectionId(path)
+    this.replaceText(sessionId, sectionId, 'skills', text)
+    this.sessions.get(sessionId)?.promptSkillSectionIds.delete(sectionId)
+  }
+
+  replacePromptSkillDocuments(
+    sessionId: string,
+    documents: ReadonlyArray<{ path: string; text: string }>
+  ): void {
+    const state = this.sessions.get(sessionId)
+    if (!state) return
+
+    for (const sectionId of state.promptSkillSectionIds) this.deleteSection(state, sectionId)
+    state.promptSkillSectionIds.clear()
+    for (const document of documents) {
+      const sectionId = skillFileSectionId(document.path)
+      // A prior explicit file read promoted this document into persistent conversation history.
+      // Re-attaching the same Skill for one turn must not make that persistent section removable.
+      if (state.keyedSections.has(sectionId)) continue
+      this.replaceText(sessionId, sectionId, 'skills', document.text)
+      state.promptSkillSectionIds.add(sectionId)
+    }
   }
 
   replaceText(
@@ -394,6 +420,13 @@ class ContextUsageTracker {
     const tokens = this.counter.count(text, state.profile)
     state.keyedSections.set(sectionId, { category, tokens })
     state.totals[category] += tokens
+  }
+
+  private deleteSection(state: SessionEstimate, sectionId: string): void {
+    const previous = state.keyedSections.get(sectionId)
+    if (!previous) return
+    state.totals[previous.category] -= previous.tokens
+    state.keyedSections.delete(sectionId)
   }
 
   observeSessionUpdate(
@@ -431,7 +464,9 @@ class ContextUsageTracker {
             ? boundedJsonText(update.rawOutput, budget)
             : ''
       if (output) {
-        this.replaceText(sessionId, skillFileSectionId(observation.skillFilePath), 'skills', output)
+        const sectionId = skillFileSectionId(observation.skillFilePath)
+        this.replaceText(sessionId, sectionId, 'skills', output)
+        state.promptSkillSectionIds.delete(sectionId)
       }
       return
     }

@@ -22,6 +22,8 @@ describe('ContextUsageTracker', () => {
     expect(tokenizerProfileFor('codex', 'gpt-5.6-sol')).toBe('o200k_base')
     expect(tokenizerProfileFor('codex', 'claude-sonnet-4-5')).toBe('anthropic')
     expect(tokenizerProfileFor('opencode', 'gpt-4.1-mini')).toBe('o200k_base')
+    expect(tokenizerProfileFor('opencode', 'gpt-4.5-preview')).toBe('o200k_base')
+    expect(tokenizerProfileFor('opencode', 'chatgpt-4o-latest')).toBe('o200k_base')
     expect(tokenizerProfileFor('opencode', 'openai/gpt-5')).toBe('o200k_base')
     expect(tokenizerProfileFor('opencode', 'deepseek-v4')).toBe('cl100k_base')
   })
@@ -425,5 +427,55 @@ describe('ContextUsageTracker', () => {
       { key: 'skills', tokens: 3, estimated: true },
       { key: 'other', tokens: 2, estimated: false }
     ])
+  })
+
+  it('replaces prompt-scoped Codex Skill documents on the next turn', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'codex', model: 'gpt-5.6-sol' })
+    tracker.replacePromptSkillDocuments('s1', [
+      { path: '/codex/skills/pdf/SKILL.md', text: 'prompt skill content' }
+    ])
+
+    expect(tracker.estimate('s1')?.categories).toContainEqual({
+      key: 'skills',
+      tokens: 3,
+      estimated: true
+    })
+
+    tracker.replacePromptSkillDocuments('s1', [])
+
+    expect(tracker.estimate('s1')?.categories).not.toContainEqual(
+      expect.objectContaining({ key: 'skills' })
+    )
+  })
+
+  it('keeps a prompt Skill after an observed file read promotes it to persistent history', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    const skillPath = '/codex/skills/pdf/SKILL.md'
+    tracker.beginSession('s1', { frameworkId: 'codex', model: 'gpt-5.6-sol' })
+    tracker.replacePromptSkillDocuments('s1', [{ path: skillPath, text: 'skill content here' }])
+    tracker.observeSessionUpdate(
+      's1',
+      {
+        sessionId: 's1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'read-1',
+          title: 'Read',
+          status: 'completed',
+          content: [{ type: 'content', content: { type: 'text', text: 'skill content here' } }]
+        }
+      },
+      { toolCategory: 'skills', skillFilePath: skillPath }
+    )
+
+    tracker.replacePromptSkillDocuments('s1', [{ path: skillPath, text: 'skill content here' }])
+    tracker.replacePromptSkillDocuments('s1', [])
+
+    expect(tracker.estimate('s1')?.categories).toContainEqual({
+      key: 'skills',
+      tokens: 3,
+      estimated: true
+    })
   })
 })
