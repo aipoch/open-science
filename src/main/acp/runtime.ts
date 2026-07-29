@@ -2570,6 +2570,9 @@ class AcpRuntime {
     let skillActivitiesStarted = false
     let skillActivitiesFinalized = false
     let revokeReferencedUploadGrant: (() => void) | undefined
+    let contextUsageCheckpoint: ReturnType<ContextUsageTracker['checkpointSession']> | undefined
+    let contextUsageBeforePrompt: AcpContextUsage | undefined
+    let contextUsageEstimateCommitted = false
 
     try {
       // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
@@ -2670,6 +2673,8 @@ class AcpRuntime {
         codexSkillInputs
       )
 
+      contextUsageCheckpoint = this.contextUsageTracker.checkpointSession(request.sessionId)
+      contextUsageBeforePrompt = this.contextUsageBySession.get(request.sessionId)
       await this.recordPromptContextEstimate(
         request.sessionId,
         promptContent,
@@ -2708,6 +2713,7 @@ class AcpRuntime {
         }
 
         if (message.kind === 'stop') {
+          contextUsageEstimateCommitted = true
           this.recordCodexPromptResponseContextUsage(
             request.sessionId,
             message.response,
@@ -2757,6 +2763,14 @@ class AcpRuntime {
         this.handleSessionUpdate(message.notification, request.sessionId)
       }
     } catch (error) {
+      if (contextUsageCheckpoint && !contextUsageEstimateCommitted) {
+        this.contextUsageTracker.restoreSession(request.sessionId, contextUsageCheckpoint)
+        if (contextUsageBeforePrompt) {
+          this.contextUsageBySession.set(request.sessionId, contextUsageBeforePrompt)
+        } else {
+          this.contextUsageBySession.delete(request.sessionId)
+        }
+      }
       if (skillActivitiesStarted && !skillActivitiesFinalized) {
         this.emitCodexSkillInputActivities(
           request.sessionId,

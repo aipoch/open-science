@@ -59,6 +59,22 @@ describe('ContextUsageTracker', () => {
     })
   })
 
+  it('restores a session checkpoint without retaining later turn estimates', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.appendText('s1', 'messages', 'committed history')
+    const checkpoint = tracker.checkpointSession('s1')
+
+    tracker.appendText('s1', 'messages', 'failed prompt content')
+    tracker.replaceText('s1', 'tool:failed:input', 'tools', 'failed tool input')
+    tracker.restoreSession('s1', checkpoint)
+
+    expect(tracker.compare('s1', 5, 'reconciled')?.categories).toEqual([
+      { key: 'messages', tokens: 2, estimated: true },
+      { key: 'other', tokens: 3, estimated: false }
+    ])
+  })
+
   it('attributes a repeated framework prefix to system instead of messages', () => {
     const tracker = new ContextUsageTracker(wordCounter)
     tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })

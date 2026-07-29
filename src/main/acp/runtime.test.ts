@@ -6511,6 +6511,34 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('rolls back the context estimate when an Agent prompt fails', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'], {
+      onPrompt: () => {
+        throw new Error('provider rejected prompt')
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 12, size: 128000 }
+    })
+    const beforeFailure = runtime.getSnapshot().contextUsageBySession.s1
+
+    await expect(
+      runtime.sendPrompt({ sessionId: 's1', text: 'failed prompt content must roll back' })
+    ).rejects.toThrow()
+
+    expect(runtime.getSnapshot().contextUsageBySession.s1).toEqual(beforeFailure)
+  })
+
   it.each([
     ['Claude Code', claudeCodeFramework, 200_000],
     ['OpenCode', opencodeFramework, 128_000],

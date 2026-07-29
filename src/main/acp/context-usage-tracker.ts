@@ -33,6 +33,10 @@ type SessionEstimateInput = {
   persistentSystemPrompt?: readonly string[]
 }
 
+type SessionEstimateCheckpoint = {
+  state?: SessionEstimate
+}
+
 type SessionUpdateObservation = {
   toolCategory?: Extract<EstimatedCategoryKey, 'tools' | 'mcp' | 'skills'>
   skillFilePath?: string
@@ -52,6 +56,13 @@ const emptyTotals = (): Record<EstimatedCategoryKey, number> => ({
   messages: 0,
   mcp: 0,
   skills: 0
+})
+
+const cloneSessionEstimate = (state: SessionEstimate): SessionEstimate => ({
+  profile: state.profile,
+  ...(state.model ? { model: state.model } : {}),
+  totals: { ...state.totals },
+  keyedSections: new Map(state.keyedSections)
 })
 
 let o200kTokenizer: Tiktoken | undefined
@@ -167,6 +178,16 @@ class ContextUsageTracker {
   resetSession(sessionId: string, input: SessionEstimateInput): void {
     this.sessions.delete(sessionId)
     this.beginSession(sessionId, input)
+  }
+
+  checkpointSession(sessionId: string): SessionEstimateCheckpoint {
+    const state = this.sessions.get(sessionId)
+    return state ? { state: cloneSessionEstimate(state) } : {}
+  }
+
+  restoreSession(sessionId: string, checkpoint: SessionEstimateCheckpoint): void {
+    if (checkpoint.state) this.sessions.set(sessionId, cloneSessionEstimate(checkpoint.state))
+    else this.sessions.delete(sessionId)
   }
 
   appendText(sessionId: string, category: EstimatedCategoryKey, text: string): void {
