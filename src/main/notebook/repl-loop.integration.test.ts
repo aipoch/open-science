@@ -116,6 +116,36 @@ gate('repl_loop.js', () => {
     }
   }, 60_000)
 
+  it('blocks Worker isolates that would reload unguarded built-in modules', async () => {
+    const { child, send } = startLoop({})
+    try {
+      const result = await send(
+        `const { Worker } = require('node:worker_threads'); ` +
+          `new Worker('require("node:fs").writeFileSync("escape.txt", "x")', { eval: true })`
+      )
+      expect(result.error).toMatch(/Worker is not allowed/)
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('blocks child process payloads that write into the managed runtime', async () => {
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-child-guard-'))
+    const blockedPath = join(runtimeRoot, 'child-blocked.txt')
+    const { child, send } = startLoop({ OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot })
+    try {
+      const result = await send(
+        `require('node:child_process').execFileSync('/bin/sh', ` +
+          `['-c', 'touch "$OPEN_SCIENCE_RUNTIME_DIR/child-blocked.txt"'])`
+      )
+      expect(result.error).toMatch(/manage_packages/)
+      expect(existsSync(blockedPath)).toBe(false)
+    } finally {
+      child.kill()
+      await rm(runtimeRoot, { recursive: true, force: true })
+    }
+  }, 60_000)
+
   it('blocks managed-runtime writes routed through a temporary variable', async () => {
     const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-runtime-guard-'))
     const blockedPath = join(runtimeRoot, 'blocked.txt')
@@ -139,18 +169,22 @@ gate('repl_loop.js', () => {
     `await new Promise((resolve, reject) => require('node:fs').mkdtemp(` +
       `process.env.OPEN_SCIENCE_RUNTIME_DIR + '/callback-', ` +
       `(error, value) => error ? reject(error) : resolve(value)))`
-  ])('blocks managed-runtime temporary directory creation at runtime', async (source) => {
-    const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-mkdtemp-guard-'))
-    const { child, send } = startLoop({ OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot })
-    try {
-      const result = await send(source)
-      expect(result.error).toMatch(/manage_packages/)
-      expect(await readdir(runtimeRoot)).toEqual([])
-    } finally {
-      child.kill()
-      await rm(runtimeRoot, { recursive: true, force: true })
-    }
-  }, 60_000)
+  ])(
+    'blocks managed-runtime temporary directory creation at runtime',
+    async (source) => {
+      const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-mkdtemp-guard-'))
+      const { child, send } = startLoop({ OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot })
+      try {
+        const result = await send(source)
+        expect(result.error).toMatch(/manage_packages/)
+        expect(await readdir(runtimeRoot)).toEqual([])
+      } finally {
+        child.kill()
+        await rm(runtimeRoot, { recursive: true, force: true })
+      }
+    },
+    60_000
+  )
 })
 
 gate('repl_loop.js host.compute', () => {

@@ -105,6 +105,7 @@ for (binding_name in c("install.packages", "remove.packages", "update.packages")
 # local variables on platforms without a native filesystem sandbox.
 runtime_write_policy_env <- new.env(parent = baseenv())
 runtime_write_policy_env$managed_runtime_dir <- NULL
+runtime_write_policy_env$managed_runtime_source <- NULL
 
 canonical_runtime_path <- function(value) {
   if (inherits(value, "connection")) {
@@ -138,6 +139,59 @@ assert_runtime_write_allowed <- function(targets) {
         call. = FALSE
       )
     }
+  }
+  invisible(NULL)
+}
+
+assert_runtime_process_allowed <- function(command, args = character()) {
+  text <- paste(c(command, args), collapse = " ")
+  package_mutation <- grepl(
+    paste0(
+      "\\b(micromamba|mamba|conda|pip|pip3|pipx|uv|poetry)(\\.exe)?\\b.{0,160}",
+      "\\b(install|uninstall|update|upgrade|remove|create|sync|add|venv)\\b|",
+      "\\b(python|python3|py)(\\.[0-9]+)?(\\.exe)?\\b.{0,80}\\s-m\\s+",
+      "((venv|virtualenv|ensurepip)\\b|pip\\b.{0,100}\\b(install|uninstall|wheel)\\b)|",
+      "\\bR(script)?(\\.exe)?\\b.{0,120}(\\bCMD\\s+INSTALL\\b|",
+      "(install|remove|update)\\.packages\\b)"
+    ),
+    text,
+    ignore.case = TRUE,
+    perl = TRUE
+  )
+  if (package_mutation) {
+    stop(
+      "Package/environment mutation is not allowed in an R child process; use manage_packages.",
+      call. = FALSE
+    )
+  }
+  root <- managed_runtime_dir
+  if (is.null(root)) return(invisible(NULL))
+  comparable <- if (.Platform$OS.type == "windows") tolower(text) else text
+  comparable <- chartr("\\", "/", comparable)
+  roots <- c(root, managed_runtime_source)
+  references_runtime <- grepl("OPEN_SCIENCE_RUNTIME_DIR", text, fixed = TRUE) ||
+    any(vapply(roots, function(candidate) {
+      !is.null(candidate) && nzchar(candidate) && grepl(candidate, comparable, fixed = TRUE)
+    }, logical(1)))
+  write_primitive <- grepl(
+    paste0(
+      "\\b(rm|mv|cp|install|mkdir|touch|truncate|chmod|chown|ln|tee|sed|perl|dd)\\b|",
+      "\\b(open|write_text|write_bytes|writeFile|writeFileSync|mkdtemp|mkdtempSync)\\s*\\(|",
+      "\\b(os|shutil)\\.(remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|",
+      "chmod|chown|copy|copy2|copytree|move|rmtree)\\s*\\(|",
+      "\\b(unlink|file\\.remove|file\\.rename|file\\.create|dir\\.create|writeLines|",
+      "writeBin|save|saveRDS)\\s*\\(|",
+      "\\b(New-Item|Remove-Item|Set-Content|Add-Content|Clear-Content|Out-File)\\b"
+    ),
+    text,
+    ignore.case = TRUE,
+    perl = TRUE
+  )
+  if (references_runtime && write_primitive) {
+    stop(
+      "Managed runtime files are read-only in an R child process; use manage_packages for changes.",
+      call. = FALSE
+    )
   }
   invisible(NULL)
 }
@@ -209,6 +263,17 @@ make_runtime_write_guard <- function(binding_name) {
         }
       },
       sink = list(runtime_argument(args, "file", 1L)),
+      system = {
+        assert_runtime_process_allowed(runtime_argument(args, "command", 1L))
+        list()
+      },
+      system2 = {
+        assert_runtime_process_allowed(
+          runtime_argument(args, "command", 1L),
+          runtime_argument(args, "args", 2L)
+        )
+        list()
+      },
       list()
     )
     assert_runtime_write_allowed(targets)
@@ -219,6 +284,7 @@ make_runtime_write_guard <- function(binding_name) {
 for (helper in c(
   "canonical_runtime_path",
   "assert_runtime_write_allowed",
+  "assert_runtime_process_allowed",
   "runtime_argument",
   "make_runtime_write_guard"
 )) {
@@ -227,14 +293,18 @@ for (helper in c(
   assign(helper, helper_fn, envir = runtime_write_policy_env)
 }
 runtime_value <- Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR", "")
+source_root <- NULL
 if (nzchar(runtime_value)) {
   runtime_write_policy_env$managed_runtime_dir <-
     runtime_write_policy_env$canonical_runtime_path(runtime_value)
+  source_root <- path.expand(runtime_value)
+  if (.Platform$OS.type == "windows") source_root <- tolower(source_root)
+  runtime_write_policy_env$managed_runtime_source <- chartr("\\", "/", source_root)
 }
 runtime_write_bindings <- c(
   "writeLines", "writeBin", "unlink", "file.remove", "file.rename", "file.create",
   "dir.create", "saveRDS", "save", "cat", "file", "gzfile", "bzfile", "xzfile",
-  "open", "sink"
+  "open", "sink", "system", "system2"
 )
 runtime_write_wrappers <- lapply(
   runtime_write_bindings,
@@ -250,9 +320,11 @@ for (binding_name in runtime_write_bindings) {
 rm(
   canonical_runtime_path,
   assert_runtime_write_allowed,
+  assert_runtime_process_allowed,
   runtime_argument,
   make_runtime_write_guard,
   runtime_value,
+  source_root,
   runtime_write_bindings,
   runtime_write_wrappers
 )

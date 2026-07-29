@@ -35,6 +35,7 @@ describe('detectManagedRuntimeMutation', () => {
     ['bash', 'printf x > report.txt'],
     ['bash', 'cd /tmp; touch report.txt'],
     ['powershell', 'Write-Output $env:OPEN_SCIENCE_RUNTIME_DIR; New-Item report.txt'],
+    ['powershell', 'Set-Content report.txt $env:OPEN_SCIENCE_RUNTIME_DIR'],
     ['powershell', 'Copy-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\source.txt" ".\\copy.txt"'],
     ['r', 'cat(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR")); writeLines("ok", "report.txt")'],
     ['r', 'writeLines(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "report.txt")'],
@@ -71,15 +72,33 @@ describe('detectManagedRuntimeMutation', () => {
     ['bash', 'cat > "$OPEN_SCIENCE_RUNTIME_DIR/x"'],
     ['bash', 'target="$OPEN_SCIENCE_RUNTIME_DIR/x"; printf x >> "$target"'],
     ['bash', 'target="$OPEN_SCIENCE_RUNTIME_DIR/x"; touch "$target"'],
-    [
-      'bash',
-      'root=$(printf %s /tmp/open-science/runtime); touch "$root/conda-meta/pwn.json"'
-    ],
+    ['bash', 'root=$(printf %s /tmp/open-science/runtime); touch "$root/conda-meta/pwn.json"'],
     ['bash', 'cd "$OPEN_SCIENCE_RUNTIME_DIR" && touch conda-meta/pwn.json'],
     ['powershell', 'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; New-Item conda-meta\\pwn.json'],
     ['powershell', 'Remove-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\conda-meta\\history"'],
     ['powershell', "$target = Join-Path $env:OPEN_SCIENCE_RUNTIME_DIR 'pwn.txt'; New-Item $target"],
+    [
+      'powershell',
+      '[IO.File]::WriteAllText((Join-Path $env:OPEN_SCIENCE_RUNTIME_DIR "pwn.txt"), "x")'
+    ],
+    ['powershell', '& "pip" install pandas'],
     ['r', 'writeLines("x", file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "x"))'],
+    [
+      'bash',
+      `python -c 'import os; open(os.path.join(os.environ["OPEN_SCIENCE_RUNTIME_DIR"], "x"), "w")'`
+    ],
+    [
+      'python',
+      `subprocess.run([sys.executable, "-c", "import os; open(os.path.join(os.environ['OPEN_SCIENCE_RUNTIME_DIR'], 'x'), 'w')"] )`
+    ],
+    [
+      'r',
+      `system2("python3", c("-c", "import os; open(os.environ['OPEN_SCIENCE_RUNTIME_DIR'] + '/x', 'w')"))`
+    ],
+    [
+      'repl',
+      `execFile("python3", ["-c", "import os; open(os.environ['OPEN_SCIENCE_RUNTIME_DIR'] + '/x', 'w')"])`
+    ],
     ['repl', 'writeFileSync(process.env.OPEN_SCIENCE_RUNTIME_DIR + "/x", "x")'],
     ['repl', 'fs.mkdtemp(process.env.OPEN_SCIENCE_RUNTIME_DIR + "/pwn-", callback)'],
     ['repl', 'mkdtempSync(process.env.OPEN_SCIENCE_RUNTIME_DIR + "/pwn-")'],

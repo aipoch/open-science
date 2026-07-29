@@ -542,7 +542,11 @@ export async function installPackages(
       baseSpawn(command, args, context.env)
     )
   }
-  const runConda: InstallSpawn = async (command, args) => {
+  const runConda = async (
+    command: string,
+    args: string[],
+    stopAfterSpawn?: (result: SpawnResult) => boolean | Promise<boolean>
+  ): Promise<SpawnResult> => {
     const context = resolveCondaContext()
     const cacheKeys = condaCacheKeys(context.cache)
     const result = await withSharedCacheLocks(cacheKeys, () =>
@@ -551,6 +555,7 @@ export async function installPackages(
       // would misread that as "never spawned" and reconcile/retry under a possibly-live installer.
       baseSpawn(command, args, context.env, deps.onChild, deps.onBeforeSpawn)
     )
+    if (await stopAfterSpawn?.(result)) return result
     if (result.code === 0) return result
     const evidence = `${result.stdout}\n${result.stderr}`
     let recovered = false
@@ -584,6 +589,17 @@ export async function installPackages(
       // spawn→onChild crash window on the retry would be unrecoverable (no sidecar → misread as no child).
       baseSpawn(command, args, context.env, deps.onChild, deps.onBeforeSpawn)
     )
+    if (await stopAfterSpawn?.(retry)) {
+      return {
+        ...retry,
+        stdout:
+          `Original failure before MAX_PATH recovery (stdout):\n${result.stdout}\n` +
+          `Retry result after MAX_PATH recovery (stdout):\n${retry.stdout}`,
+        stderr:
+          `Original failure before MAX_PATH recovery (stderr):\n${result.stderr}\n` +
+          `Retry result after MAX_PATH recovery (stderr):\n${retry.stderr}`
+      }
+    }
     if (retry.code === 0) return retry
     return {
       ...retry,
@@ -685,7 +701,7 @@ export async function installPackages(
   }
 
   if (req.operation === 'uninstall') {
-    return uninstallPackages(req, deps, run, runConda, root, prefix)
+    return uninstallPackages(req, deps, run, runCondaPreflight, runConda, root, prefix)
   }
 
   if (req.language === 'python') {
@@ -851,24 +867,47 @@ export async function installPackages(
       stdout: preflight.stdout,
       stderr: [preflight.stderr, planError].filter(Boolean).join('\n')
     }
-    return cranFallback(rejectedPlan, {
-      groupOrdinal: 0,
-      installer: 'conda',
-      packages: [...condaPkgs],
-      status: 'failed',
-      mutationRisk: 'none',
-      reason: 'validation'
-    })
+    return {
+      ok: false,
+      needsRestart: false,
+      log: mergeLog(rejectedPlan),
+      method: 'conda',
+      attempts: [
+        {
+          groupOrdinal: 0,
+          installer: 'conda',
+          packages: [...condaPkgs],
+          status: 'failed',
+          mutationRisk: 'none',
+          reason: 'validation'
+        }
+      ],
+      fallbackUsed: false,
+      prefix,
+      error: planError
+    }
   }
 
-  const conda = await runConda(argv[0], [...argv.slice(1, 3), '--json', ...argv.slice(3)])
+  let finalRBaseIdentity: CondaPackageIdentity | undefined
+  const stopAfterRBaseChange = (): boolean => {
+    finalRBaseIdentity = (deps.readCondaPackageIdentity ?? readCondaPackageIdentity)(
+      prefix,
+      'r-base'
+    )
+    return (
+      !hasVerifiableCondaBuild(finalRBaseIdentity) ||
+      condaPackageIdentityKey(finalRBaseIdentity) !==
+        condaPackageIdentityKey(installedRBaseIdentity)
+    )
+  }
+  const conda = await runConda(
+    argv[0],
+    [...argv.slice(1, 3), '--json', ...argv.slice(3)],
+    stopAfterRBaseChange
+  )
   // A failed solver process can still leave a partially-applied UNLINK/LINK transaction. Verify the
   // protected interpreter after EVERY real spawn, not only after exit code 0, before considering a
   // fallback or returning an ordinary installer failure.
-  const finalRBaseIdentity = (deps.readCondaPackageIdentity ?? readCondaPackageIdentity)(
-    prefix,
-    'r-base'
-  )
   if (
     !hasVerifiableCondaBuild(finalRBaseIdentity) ||
     condaPackageIdentityKey(finalRBaseIdentity) !== condaPackageIdentityKey(installedRBaseIdentity)
@@ -942,9 +981,14 @@ async function uninstallPackages(
   req: InstallRequest,
   deps: Partial<InstallDeps>,
   run: InstallSpawn,
+  runCondaPreflight: InstallSpawn,
   // Cache-locked spawner for micromamba remove (mutates the shared pkgs cache); pip uninstall stays on
   // `run` (env-prefix only). See the runConda note in installPackages.
-  runConda: InstallSpawn,
+  runConda: (
+    command: string,
+    args: string[],
+    stopAfterSpawn?: (result: SpawnResult) => boolean | Promise<boolean>
+  ) => Promise<SpawnResult>,
   root: string,
   prefix: string
 ): Promise<InstallResult> {
@@ -1027,12 +1071,88 @@ async function uninstallPackages(
         'before removing packages.'
     }
   }
+  const cranRemoveFallback = async (
+    condaResult: SpawnResult,
+    condaAttempt: NotebookPackageInstallerAttempt,
+    approvedPlan?: SpawnResult
+  ): Promise<InstallResult> => {
+    const condaLog = [approvedPlan ? mergeLog(approvedPlan) : '', mergeLog(condaResult)]
+      .filter(Boolean)
+      .join('\n')
+    const vector = req.packages.map((pkg) => JSON.stringify(pkg)).join(', ')
+    const rLib = envRLibrary(prefix)
+    const script = `remove.packages(c(${vector}), lib=${JSON.stringify(rLib)})`
+    const fallback = await run(rScriptBin(prefix), ['-e', script])
+    const ok = fallback.code === 0
+    return {
+      ok,
+      needsRestart: ok,
+      log: `${condaLog}\n${mergeLog(fallback)}`,
+      method: 'cran',
+      attempts: [condaAttempt, installerAttempt(1, 'r-install-packages', req.packages, fallback)],
+      fallbackUsed: true,
+      prefix: rLib,
+      error: ok ? undefined : 'R remove.packages failed.'
+    }
+  }
   const argv = removeArgv(mm, root, prefix, condaPkgs)
-  const conda = await runConda(argv[0], argv.slice(1))
-  const finalRBaseIdentity = (deps.readCondaPackageIdentity ?? readCondaPackageIdentity)(
-    prefix,
-    'r-base'
-  )
+  const preflight = await runCondaPreflight(argv[0], [
+    ...argv.slice(1, 3),
+    '--dry-run',
+    ...argv.slice(3)
+  ])
+  if (preflight.code !== 0) {
+    const classification = classifyCondaFailure(preflight)
+    const condaAttempt = installerAttempt(0, 'conda', condaPkgs, preflight, classification)
+    if (classification.reason === 'package-not-found' && classification.mutationRisk === 'none') {
+      return cranRemoveFallback(preflight, condaAttempt)
+    }
+    return {
+      ok: false,
+      needsRestart: false,
+      log: mergeLog(preflight),
+      method: 'conda',
+      attempts: [condaAttempt],
+      fallbackUsed: false,
+      prefix,
+      error: condaFailureMessage('remove', preflight)
+    }
+  }
+  const planError = protectedRBasePlanError(preflight, installedRBaseIdentity.version)
+  if (planError) {
+    return {
+      ok: false,
+      needsRestart: false,
+      log: [mergeLog(preflight), planError].filter(Boolean).join('\n'),
+      method: 'conda',
+      attempts: [
+        {
+          groupOrdinal: 0,
+          installer: 'conda',
+          packages: [...condaPkgs],
+          status: 'failed',
+          mutationRisk: 'none',
+          reason: 'validation'
+        }
+      ],
+      fallbackUsed: false,
+      prefix,
+      error: planError
+    }
+  }
+  let finalRBaseIdentity: CondaPackageIdentity | undefined
+  const stopAfterRBaseChange = (): boolean => {
+    finalRBaseIdentity = (deps.readCondaPackageIdentity ?? readCondaPackageIdentity)(
+      prefix,
+      'r-base'
+    )
+    return (
+      !hasVerifiableCondaBuild(finalRBaseIdentity) ||
+      condaPackageIdentityKey(finalRBaseIdentity) !==
+        condaPackageIdentityKey(installedRBaseIdentity)
+    )
+  }
+  const conda = await runConda(argv[0], argv.slice(1), stopAfterRBaseChange)
   if (
     !hasVerifiableCondaBuild(finalRBaseIdentity) ||
     condaPackageIdentityKey(finalRBaseIdentity) !== condaPackageIdentityKey(installedRBaseIdentity)
@@ -1040,7 +1160,7 @@ async function uninstallPackages(
     return {
       ok: false,
       needsRestart: false,
-      log: mergeLog(conda),
+      log: [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n'),
       method: 'conda',
       attempts: [installerAttempt(0, 'conda', condaPkgs, conda)],
       fallbackUsed: false,
@@ -1056,7 +1176,7 @@ async function uninstallPackages(
     return {
       ok: true,
       needsRestart: true,
-      log: mergeLog(conda),
+      log: [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n'),
       method: 'conda',
       attempts: [installerAttempt(0, 'conda', condaPkgs, conda)],
       fallbackUsed: false,
@@ -1066,7 +1186,7 @@ async function uninstallPackages(
 
   // A conda remove that failed for any reason OTHER than the package not being in the env is a real
   // error (e.g. a broken env); surface it rather than masking it with a CRAN attempt.
-  const condaLog = mergeLog(conda)
+  const condaLog = [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n')
   const classification = classifyCondaFailure(conda)
   const condaAttempt = installerAttempt(0, 'conda', condaPkgs, conda, classification)
   if (classification.reason !== 'package-not-found' || classification.mutationRisk !== 'none') {
@@ -1082,22 +1202,6 @@ async function uninstallPackages(
     }
   }
 
-  // Not conda-managed → CRAN install. remove.packages is pinned to the env's own R library with an
-  // explicit lib=, so the removal can never reach the user's global R library that .libPaths() might
-  // front. The reported prefix is that exact env-scoped location.
-  const vector = req.packages.map((pkg) => JSON.stringify(pkg)).join(', ')
-  const rLib = envRLibrary(prefix)
-  const script = `remove.packages(c(${vector}), lib=${JSON.stringify(rLib)})`
-  const fallback = await run(rScriptBin(prefix), ['-e', script])
-  const ok = fallback.code === 0
-  return {
-    ok,
-    needsRestart: ok,
-    log: `${condaLog}\n${mergeLog(fallback)}`,
-    method: 'cran',
-    attempts: [condaAttempt, installerAttempt(1, 'r-install-packages', req.packages, fallback)],
-    fallbackUsed: true,
-    prefix: rLib,
-    error: ok ? undefined : 'R remove.packages failed.'
-  }
+  // Not conda-managed → CRAN removal. The successful dry-run is retained in the audit log.
+  return cranRemoveFallback(conda, condaAttempt, preflight)
 }

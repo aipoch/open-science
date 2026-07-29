@@ -52,6 +52,14 @@ const safeRPlan: SpawnResult = {
   }),
   stderr: ''
 }
+const safeRRemovePlan: SpawnResult = {
+  code: 0,
+  stdout: JSON.stringify({
+    success: true,
+    actions: { LINK: [], UNLINK: [{ name: 'r-requested-package', version: '1.0.0' }] }
+  }),
+  stderr: ''
+}
 const fail: SpawnResult = { code: 1, stdout: '', stderr: 'boom' }
 const packageUnavailable: SpawnResult = {
   code: 1,
@@ -280,7 +288,7 @@ describe('installPackages', () => {
       }),
       stderr: ''
     }
-    const { spawn, calls } = scriptedSpawn([protectedPlan, ok])
+    const { spawn, calls } = scriptedSpawn([protectedPlan])
 
     const result = await installPackages(
       { language: 'r', packages: ['dplyr'] },
@@ -308,13 +316,12 @@ describe('installPackages', () => {
         'r-dplyr'
       ])
     )
-    expect(calls).toHaveLength(2)
-    expect(calls[1][0]).toBe(rScriptBin(prefix))
+    expect(calls).toHaveLength(1)
     expect(result).toMatchObject({
-      ok: true,
-      method: 'cran',
-      fallbackUsed: true,
-      needsRestart: true
+      ok: false,
+      method: 'conda',
+      fallbackUsed: false,
+      needsRestart: false
     })
     expect(result.log).toMatch(/r-base.*4\.4\.3.*4\.5\.3/i)
   })
@@ -383,6 +390,38 @@ describe('installPackages', () => {
     expect(result.error).toMatch(/h123_0.*h999_1.*Repair/i)
   })
 
+  it('checks r-base after the first real MAX_PATH attempt before allowing a retry', async () => {
+    const identities = [
+      { name: 'r-base', version: '4.4.3', build: 'h123_0', buildNumber: 0 },
+      { name: 'r-base', version: '4.5.3', build: 'h999_1', buildNumber: 1 }
+    ]
+    const failedWithMaxPath: SpawnResult = {
+      code: 1,
+      stdout: '',
+      stderr:
+        "Invalid package cache, file 'C:\\runtime\\pkgs\\broken\\missing' is missing; Package cache error"
+    }
+    const { spawn, calls } = scriptedSpawn([safeRPlan, failedWithMaxPath, ok])
+
+    const result = await installPackages(
+      { language: 'r', packages: ['dplyr'] },
+      {
+        spawn,
+        ...base,
+        readCondaPackageIdentity: () => identities.shift(),
+        micromambaEnv: {
+          platform: 'win32',
+          env: { PATH: 'C:\\Windows' },
+          selectCache: () => ({ path: 'C:\\runtime\\pkgs', lockKey: 'c:\\runtime\\pkgs' })
+        }
+      }
+    )
+
+    expect(calls).toHaveLength(2)
+    expect(result).toMatchObject({ ok: false, repairRequired: true, needsRestart: false })
+    expect(result.error).toMatch(/4\.4\.3.*4\.5\.3.*Repair/i)
+  })
+
   it('journals the approved R transaction but not the read-only dry-run', async () => {
     const order: string[] = []
     let call = 0
@@ -423,7 +462,7 @@ describe('installPackages', () => {
   })
 
   it('points bioconda at the same mirror host when the conda channel is a mirror URL', async () => {
-    const { spawn, calls } = scriptedSpawn([ok])
+    const { spawn, calls } = scriptedSpawn([safeRRemovePlan, ok])
     await installPackages(
       { language: 'python', packages: ['numpy'] },
       {
@@ -797,6 +836,7 @@ describe('installPackages', () => {
       { spawn, ...base, pathExists: () => true }
     )
     const prefix = envPrefix(runtimeRoot('/root'), 'my-analysis')
+    expect(calls).toHaveLength(1)
     const [command, args] = calls[0]
     expect(command).toBe('/mm/bin/micromamba')
     expect(args).toEqual(expect.arrayContaining(['install', '--prefix', prefix]))
@@ -907,7 +947,7 @@ describe('installPackages uninstall', () => {
   })
 
   it('routes a conda-managed R uninstall through micromamba remove with r-/bioconductor- names, needsRestart true', async () => {
-    const { spawn, calls } = scriptedSpawn([ok])
+    const { spawn, calls } = scriptedSpawn([safeRRemovePlan, ok])
     const result = await installPackages(
       {
         language: 'r',
@@ -918,6 +958,7 @@ describe('installPackages uninstall', () => {
       { spawn, ...named }
     )
     const prefix = envPrefix(runtimeRoot('/root'), 'my-analysis')
+    expect(calls).toHaveLength(2)
     const [command, args] = calls[0]
     expect(command).toBe('/mm/bin/micromamba')
     // Same conda name-mangling as R install: r- prefix for CRAN-style names, already-namespaced
@@ -925,6 +966,7 @@ describe('installPackages uninstall', () => {
     expect(args).toEqual([
       '--no-rc',
       'remove',
+      '--dry-run',
       '--json',
       '--root-prefix',
       runtimeRoot('/root'),
@@ -934,6 +976,7 @@ describe('installPackages uninstall', () => {
       'r-ggplot2',
       'bioconductor-deseq2'
     ])
+    expect(calls[1][1]).not.toContain('--dry-run')
     expect(result).toMatchObject({
       ok: true,
       // R uninstall asks for a restart just like R install: a live session holds namespaces/DLLs.
@@ -970,7 +1013,7 @@ describe('installPackages uninstall', () => {
       { name: 'r-base', version: '4.4.3', build: 'h123_0', buildNumber: 0 },
       { name: 'r-base', version: '4.4.3', build: 'h999_1', buildNumber: 1 }
     ]
-    const { spawn } = scriptedSpawn([ok])
+    const { spawn } = scriptedSpawn([safeRRemovePlan, ok])
 
     const result = await installPackages(
       {
@@ -984,6 +1027,36 @@ describe('installPackages uninstall', () => {
 
     expect(result).toMatchObject({ ok: false, repairRequired: true, needsRestart: false })
     expect(result.error).toMatch(/h123_0.*h999_1.*Repair/i)
+  })
+
+  it('rejects an R uninstall dry-run that would change r-base before the real remove', async () => {
+    const protectedPlan: SpawnResult = {
+      code: 0,
+      stdout: JSON.stringify({
+        success: true,
+        actions: {
+          UNLINK: [{ name: 'r-base', version: '4.4.3' }],
+          LINK: [{ name: 'r-base', version: '4.5.3' }]
+        }
+      }),
+      stderr: ''
+    }
+    const { spawn, calls } = scriptedSpawn([protectedPlan, ok])
+
+    const result = await installPackages(
+      {
+        language: 'r',
+        packages: ['dplyr'],
+        operation: 'uninstall',
+        environment: 'my-analysis'
+      },
+      { ...named, spawn }
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0][1]).toContain('--dry-run')
+    expect(result).toMatchObject({ ok: false, fallbackUsed: false, needsRestart: false })
+    expect(result.error).toMatch(/proposed changing protected r-base/i)
   })
 
   it('falls back to Rscript remove.packages when micromamba reports the package is not conda-managed', async () => {

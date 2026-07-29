@@ -386,6 +386,32 @@ const runtimeWriteTargets = (
 const shellWords = (command: string): string[] =>
   command.match(/(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|[^\s])+/gu) ?? []
 
+const shellCommandSegments = (source: string): string[] => {
+  const segments: string[] = []
+  let start = 0
+  let quote: "'" | '"' | '`' | undefined
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index]
+    if (char === '\\') {
+      index += 1
+      continue
+    }
+    if (quote) {
+      if (char === quote) quote = undefined
+      continue
+    }
+    if (char === "'" || char === '"' || char === '`') {
+      quote = char
+      continue
+    }
+    if (!/[;\r\n|&]/u.test(char)) continue
+    segments.push(source.slice(start, index))
+    start = index + 1
+  }
+  segments.push(source.slice(start))
+  return segments
+}
+
 const shellRedirectionTargets = (command: string): string[] => {
   const targets: string[] = []
   let quote: "'" | '"' | undefined
@@ -486,7 +512,7 @@ const commandName = (word: string | undefined): string =>
 
 const shellSequenceWritesRuntime = (source: string, runtimeRoot: string): boolean => {
   let insideRuntime = false
-  for (const command of source.split(/[;\r\n|&]+/u)) {
+  for (const command of shellCommandSegments(source)) {
     const words = shellWords(command)
     const executable = commandName(words[0])
     if (executable === 'cd') {
@@ -523,25 +549,38 @@ const powerShellRuntimeWriteTargets = (command: string): string[] => {
   const executable = commandName(words[0])
   const args = words.slice(1)
   const positional = args.filter((arg) => !arg.startsWith('-'))
+  const pathFlag = args.findIndex((arg) => /^-(?:literal)?path$|^-filepath$/iu.test(arg))
+  const explicitPath = pathFlag >= 0 ? args[pathFlag + 1] : undefined
   if (/^(?:copy-item|copy|cp|cpi)$/u.test(executable)) {
     return [...redirections, ...positional.slice(-1)]
   }
   if (/^(?:move-item|move|mv|mi|rename-item|rename|ren|rni)$/u.test(executable)) {
     return [...redirections, ...positional]
   }
-  if (
-    /^(?:new-item|ni|mkdir|md|remove-item|ri|rm|del|erase|set-content|sc|add-content|ac|clear-content|clc|out-file)$/u.test(
-      executable
-    )
-  ) {
+  if (/^(?:new-item|ni|mkdir|md|remove-item|ri|rm|del|erase)$/u.test(executable)) {
     return [...redirections, ...args]
+  }
+  if (/^(?:set-content|sc|add-content|ac|clear-content|clc|out-file)$/u.test(executable)) {
+    return [...redirections, ...(explicitPath ? [explicitPath] : positional.slice(0, 1))]
   }
   return redirections
 }
 
+const powerShellDotNetWritesRuntime = (source: string, runtimeRoot: string): boolean => {
+  const pattern =
+    /\[(?:System\.)?IO\.(?:File|Directory)\]::(?:WriteAllText|AppendAllText|WriteAllBytes|Create|CreateText|AppendText|Move|Replace|Delete|CreateDirectory)\s*\(/giu
+  for (let match = pattern.exec(source); match; match = pattern.exec(source)) {
+    const openIndex = match.index + match[0].lastIndexOf('(')
+    const call = matchingCall(source, match.index, openIndex)
+    const target = call ? callArguments(call, openIndex - match.index)[0] : undefined
+    if (target && referencesManagedRuntimePath(target, runtimeRoot)) return true
+  }
+  return false
+}
+
 const powerShellSequenceWritesRuntime = (source: string, runtimeRoot: string): boolean => {
   let insideRuntime = false
-  for (const command of source.split(/[;\r\n|]+/u)) {
+  for (const command of shellCommandSegments(source)) {
     const words = shellWords(command)
     const executable = commandName(words[0])
     if (/^(?:set-location|cd|chdir|sl)$/u.test(executable)) {
@@ -584,6 +623,77 @@ const executionBridgeCandidates = (
   return candidates
 }
 
+type ExecutionPayload = { surface: NotebookExecutionSurface; source: string }
+
+const unquoteWord = (value: string): string =>
+  value.replace(/^(["'`])([\s\S]*)\1$/u, '$2').replace(/\\([\\"'`])/gu, '$1')
+
+const invocationPayload = (rawWords: string[]): ExecutionPayload | undefined => {
+  const words = rawWords.map(unquoteWord)
+  const commandIndex = words[0] === '&' ? 1 : 0
+  const executable = commandName(words[commandIndex])
+  const flagFor = (pattern: RegExp): string | undefined => {
+    const index = words.findIndex((word, position) => position > commandIndex && pattern.test(word))
+    return index >= 0 ? words[index + 1] : undefined
+  }
+  if (/^(?:python|python3|py)(?:\.\d+)?(?:\.exe)?$/u.test(executable)) {
+    const source = flagFor(/^-c$/u)
+    return source ? { surface: 'python', source } : undefined
+  }
+  if (/^(?:r|rscript)(?:\.exe)?$/u.test(executable)) {
+    const source = flagFor(/^-e$/u)
+    return source ? { surface: 'r', source } : undefined
+  }
+  if (/^(?:node|nodejs)(?:\.exe)?$/u.test(executable)) {
+    const source = flagFor(/^(?:-e|--eval)$/u)
+    return source ? { surface: 'repl', source } : undefined
+  }
+  if (/^(?:bash|sh|zsh)(?:\.exe)?$/u.test(executable)) {
+    const source = flagFor(/^-c$/u)
+    return source ? { surface: 'bash', source } : undefined
+  }
+  if (/^(?:powershell|pwsh)(?:\.exe)?$/u.test(executable)) {
+    const source = flagFor(/^-command$/iu)
+    return source ? { surface: 'powershell', source } : undefined
+  }
+  return undefined
+}
+
+const quotedLiteralValues = (source: string): string[] => {
+  const values: string[] = []
+  const pattern = /(["'`])((?:\\[\s\S]|(?!\1)[\s\S])*)\1/gu
+  for (let match = pattern.exec(source); match; match = pattern.exec(source)) {
+    values.push(unquoteWord(match[0]))
+  }
+  return values
+}
+
+const executionPayloads = (
+  source: string,
+  surface: NotebookExecutionSurface
+): ExecutionPayload[] => {
+  if (surface === 'bash' || surface === 'powershell') {
+    return shellCommandSegments(source)
+      .map((command) => invocationPayload(shellWords(command)))
+      .filter((payload): payload is ExecutionPayload => payload !== undefined)
+  }
+
+  const maskedSource =
+    surface === 'repl'
+      ? maskJavascriptQuotedAndCommentText(source)
+      : maskQuotedAndCommentText(source)
+  return executionBridgeCandidates(source, surface, maskedSource).flatMap((call) => {
+    const values = quotedLiteralValues(call)
+    const argvPayload = invocationPayload(
+      /\bsys\s*\.\s*executable\b/u.test(call) ? ['python', ...values] : values
+    )
+    if (argvPayload) return [argvPayload]
+    return values
+      .map((value) => invocationPayload(shellWords(value)))
+      .filter((payload): payload is ExecutionPayload => payload !== undefined)
+  })
+}
+
 const shellMatchIsExecutable = (source: string, matchIndex: number): boolean => {
   const boundary = Math.max(
     source.lastIndexOf('\n', matchIndex - 1),
@@ -591,7 +701,10 @@ const shellMatchIsExecutable = (source: string, matchIndex: number): boolean => 
     source.lastIndexOf('|', matchIndex - 1),
     source.lastIndexOf('&', matchIndex - 1)
   )
-  const prefix = source.slice(boundary + 1, matchIndex).trim()
+  const prefix = source
+    .slice(boundary + 1, matchIndex)
+    .trim()
+    .replace(/["']/gu, '')
   if (/^(?:(?:sudo|env|command|exec|if|then|while|until|!|&)\s+)*$/iu.test(prefix)) return true
   return /\b(?:Rscript|R|python|python3|py|bash|sh|zsh|powershell|pwsh|cmd)(?:\.exe)?\b[^\n]{0,80}(?:-e|-c|\/c)\s*["']?$/iu.test(
     prefix
@@ -630,7 +743,7 @@ const findPackageMutationRule = (
   return undefined
 }
 
-const hasManagedRuntimeWrite = (
+const hasDirectManagedRuntimeWrite = (
   source: string,
   surface: NotebookExecutionSurface,
   runtimeRoot: string
@@ -645,7 +758,9 @@ const hasManagedRuntimeWrite = (
   if (surface === 'powershell') {
     const executableSource = stripShellComments(source)
     return [executableSource, resolvePowerShellLiteralAssignments(executableSource)].some(
-      (candidate) => powerShellSequenceWritesRuntime(candidate, runtimeRoot)
+      (candidate) =>
+        powerShellSequenceWritesRuntime(candidate, runtimeRoot) ||
+        powerShellDotNetWritesRuntime(candidate, runtimeRoot)
     )
   }
 
@@ -674,6 +789,16 @@ const hasManagedRuntimeWrite = (
   }
   return false
 }
+
+const hasManagedRuntimeWrite = (
+  source: string,
+  surface: NotebookExecutionSurface,
+  runtimeRoot: string
+): boolean =>
+  hasDirectManagedRuntimeWrite(source, surface, runtimeRoot) ||
+  executionPayloads(source, surface).some((payload) =>
+    hasDirectManagedRuntimeWrite(payload.source, payload.surface, runtimeRoot)
+  )
 
 // Single policy seam shared by data-cell and shell execution. This is intentionally independent from
 // Agent instructions: a request is rejected in the trusted main process before any interpreter starts.

@@ -36,7 +36,20 @@ _package_mutation_command = re.compile(
     r"(?:\b(?:micromamba|mamba|conda|pip|pip3|pipx|uv|poetry)(?:\.exe)?\b.{0,160}"
     r"\b(?:install|uninstall|update|upgrade|remove|create|sync|add|venv)\b|"
     r"\b(?:python|python3|py)(?:\.\d+)?(?:\.exe)?\b.{0,80}\s-m\s+"
-    r"(?:(?:venv|virtualenv|ensurepip)\b|pip\b.{0,100}\b(?:install|uninstall|wheel)\b))",
+    r"(?:(?:venv|virtualenv|ensurepip)\b|pip\b.{0,100}\b(?:install|uninstall|wheel)\b)|"
+    r"\bR(?:script)?(?:\.exe)?\b.{0,120}(?:\bCMD\s+INSTALL\b|"
+    r"(?:install|remove|update)\.packages\b))",
+    re.IGNORECASE | re.DOTALL,
+)
+_runtime_write_command = re.compile(
+    r"(?:\b(?:rm|mv|cp|install|mkdir|touch|truncate|chmod|chown|ln|tee|sed|perl|dd)\b|"
+    r"\b(?:open|write_text|write_bytes|writeFile|writeFileSync|mkdtemp|mkdtempSync)\s*\(|"
+    r"\b(?:os|shutil)\.(?:remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|"
+    r"chmod|chown|copy|copy2|copytree|move|rmtree)\s*\(|"
+    r"\b(?:unlink|file\.remove|file\.rename|file\.create|dir\.create|writeLines|writeBin|"
+    r"save|saveRDS)\s*\(|"
+    r"\b(?:New-Item|Remove-Item|Set-Content|Add-Content|Clear-Content|Out-File)\b|"
+    r"\[IO\.File\]::(?:WriteAllText|AppendAllText|WriteAllBytes|Create|Delete)\s*\()",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -52,10 +65,19 @@ def _blocked_environment_mutation(*_args, **_kwargs):
         "Package/environment mutation is not allowed in a Python cell; use manage_packages."
     )
 
+def _command_writes_managed_runtime(command):
+    text = _command_text(command)
+    comparable = os.path.normcase(text).replace("\\", "/")
+    root = os.path.normcase(_managed_runtime_dir).replace("\\", "/")
+    references_runtime = bool(root and root in comparable) or "OPEN_SCIENCE_RUNTIME_DIR" in text
+    return references_runtime and bool(_runtime_write_command.search(text))
+
 def _protected_paths_audit(event, args):
-    if event in ("subprocess.Popen", "os.system") and args:
-        command = args[1] if event == "subprocess.Popen" and len(args) > 1 else args[0]
+    if event in ("subprocess.Popen", "os.system", "os.posix_spawn", "os.exec") and args:
+        command = args[1] if event in ("subprocess.Popen", "os.posix_spawn", "os.exec") and len(args) > 1 else args[0]
         if _package_mutation_command.search(_command_text(command)):
+            _blocked_environment_mutation()
+        if _command_writes_managed_runtime(command):
             _blocked_environment_mutation()
         return
     if event in ("os.remove", "os.rmdir", "os.mkdir", "os.chmod", "os.chown") and args:

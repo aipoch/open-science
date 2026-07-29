@@ -691,6 +691,18 @@ gate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
       expect(pipResult.status).toBe('failed')
       expect(pipResult.traceback).toMatch(/manage_packages/)
 
+      const rInstallerResult = await executor.execute({
+        ...request,
+        code:
+          `import subprocess\n` +
+          `runner = "R" + "script"\n` +
+          `operation = "install" + ".packages('dplyr')"\n` +
+          `subprocess.run([runner, "-e", operation])`,
+        language: 'python'
+      })
+      expect(rInstallerResult.status).toBe('failed')
+      expect(rInstallerResult.traceback).toMatch(/manage_packages/)
+
       const ensurepipResult = await executor.execute({
         ...request,
         code: `getattr(__import__("ensure" + "pip"), "boot" + "strap")()`,
@@ -717,6 +729,19 @@ gate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
       expect(symlinkWriteResult.status).toBe('failed')
       expect(symlinkWriteResult.traceback).toMatch(/manage_packages/)
       expect(existsSync(join(request.runtimeRoot, 'blocked-from-link.txt'))).toBe(false)
+
+      const posixSpawnPath = join(request.runtimeRoot, 'blocked-from-posix-spawn.txt')
+      const posixSpawnResult = await executor.execute({
+        ...request,
+        code:
+          `import os\n` +
+          `os.posix_spawn('/bin/sh', ['sh', '-c', ` +
+          `'touch "$OPEN_SCIENCE_RUNTIME_DIR/blocked-from-posix-spawn.txt"'], os.environ)`,
+        language: 'python'
+      })
+      expect(posixSpawnResult.status).toBe('failed')
+      expect(posixSpawnResult.traceback).toMatch(/manage_packages/)
+      expect(existsSync(posixSpawnPath)).toBe(false)
     } finally {
       await executor.shutdown()
     }
@@ -823,6 +848,28 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
       expect(result.status).toBe('failed')
       expect(result.traceback).toMatch(/manage_packages/)
       expect(existsSync(blockedPath)).toBe(false)
+
+      const childPath = join(request.runtimeRoot, 'blocked-r-child.txt')
+      const childResult = await executor.execute({
+        ...request,
+        code:
+          'target <- file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "blocked-r-child.txt"); ' +
+          'system(paste("touch", shQuote(target)))',
+        language: 'r'
+      })
+      expect(childResult.status).toBe('failed')
+      expect(childResult.traceback).toMatch(/manage_packages/)
+      expect(existsSync(childPath)).toBe(false)
+
+      const packageCommandResult = await executor.execute({
+        ...request,
+        code:
+          'installer <- paste0("p", "ip"); operation <- paste0("in", "stall"); ' +
+          'system2(installer, c(operation, "dplyr"))',
+        language: 'r'
+      })
+      expect(packageCommandResult.status).toBe('failed')
+      expect(packageCommandResult.traceback).toMatch(/manage_packages/)
     } finally {
       await executor.shutdown()
     }

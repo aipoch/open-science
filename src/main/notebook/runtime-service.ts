@@ -1884,6 +1884,24 @@ class NotebookRuntimeService {
       runningRun,
       () =>
         this.envLock.withRun(env, async () => {
+          // The run may have waited behind an installer after computing interpreterResolveError above.
+          // Re-read the repair gate only after the shared run lease is acquired so a transaction that
+          // quarantined this env while we waited cannot release the lock and let a stale decision spawn it.
+          const repairRequiredAfterLock =
+            this.repairBlockedEnvs.has(dataProcessKey(cell.language, env)) ||
+            isRepairRequired(repairRegistryRoot, repairKey) ||
+            (binding?.source === 'managed' &&
+              isRepairRequired(repairRegistryRoot, binding.runtimeId))
+          if (repairRequiredAfterLock) {
+            executedOnLiveKernel = false
+            return errorToExecutionResult(
+              new Error(
+                `RUNTIME_REPAIR_REQUIRED: the bound ${cell.language} runtime failed a protected-package ` +
+                  'integrity check. Run the runtime Repair workflow before executing another cell.'
+              ),
+              cwdBefore
+            )
+          }
           // A failed interpreter resolve (external overlay build) never reached a live kernel; surface
           // it through the same normalization the executor uses so it becomes a failed run, not a throw.
           if (interpreterResolveError !== undefined) {
@@ -2817,7 +2835,8 @@ class NotebookRuntimeService {
               repairRuntimeId,
               request.language,
               envName,
-              runtimeRoot
+              runtimeRoot,
+              binding?.source !== 'external'
             )
           }
         }
@@ -2871,16 +2890,20 @@ class NotebookRuntimeService {
       // A pre-canonicalization registry may still key this same managed prefix by an interpreter path.
       // Clear every loaded binding alias for the repaired env even when the repair caller was unbound.
       for (const session of this.sessions.values()) {
-        const candidate = session.runtimeBindings.get(request.language)
-        if (
-          candidate?.source === 'managed' &&
-          this.resolveRunEnv(session, request.language) === envName
-        ) {
-          clearRepairRequired(runtimeRoot, candidate.runtimeId)
+        for (const [language, candidate] of session.runtimeBindings) {
+          if (candidate.source === 'managed' && this.resolveRunEnv(session, language) === envName) {
+            clearRepairRequired(runtimeRoot, candidate.runtimeId)
+          }
         }
       }
-      this.repairBlockedEnvs.delete(dataProcessKey(request.language, envName))
-      this.restoreRepairedBindings(repairRuntimeId, request.language, envName)
+      const managedRepair = binding?.source !== 'external'
+      const repairedLanguages: readonly NotebookLanguage[] = managedRepair
+        ? ['python', 'r']
+        : [request.language]
+      for (const language of repairedLanguages) {
+        this.repairBlockedEnvs.delete(dataProcessKey(language, envName))
+      }
+      this.restoreRepairedBindings(repairRuntimeId, request.language, envName, managedRepair)
     }
 
     // R installs/uninstalls don't take effect in a live R session (attached namespaces, held DLLs), so
@@ -3600,15 +3623,16 @@ class NotebookRuntimeService {
   private restoreRepairedBindings(
     runtimeId: string,
     repairedLanguage: NotebookLanguage,
-    envName: string
+    envName: string,
+    managedRepair: boolean
   ): void {
     for (const session of this.sessions.values()) {
       let changed = false
       for (const [language, binding] of session.runtimeBindings) {
         const targetMatches =
           binding.source === 'external'
-            ? binding.runtimeId === runtimeId
-            : language === repairedLanguage && this.resolveRunEnv(session, language) === envName
+            ? !managedRepair && language === repairedLanguage && binding.runtimeId === runtimeId
+            : managedRepair && this.resolveRunEnv(session, language) === envName
         if (targetMatches && binding.reason === 'repair-required') {
           session.runtimeBindings.set(language, {
             ...binding,
@@ -3630,27 +3654,36 @@ class NotebookRuntimeService {
     runtimeId: string,
     language: NotebookLanguage,
     envName: string,
-    runtimeRoot: string
+    runtimeRoot: string,
+    managedRuntime: boolean
   ): Promise<void> {
-    const kind = language === 'r' ? 'r' : 'python'
-    const affectedBindings: RuntimeSession[] = []
-    this.repairBlockedEnvs.add(dataProcessKey(language, envName))
+    const affectedBindings = new Set<RuntimeSession>()
+    const affectedLanguages: readonly NotebookLanguage[] = managedRuntime
+      ? ['python', 'r']
+      : [language]
+    for (const affectedLanguage of affectedLanguages) {
+      this.repairBlockedEnvs.add(dataProcessKey(affectedLanguage, envName))
+    }
     try {
       for (const session of this.sessions.values()) {
-        const binding = session.runtimeBindings.get(language)
-        const sessionEnv = this.resolveRunEnv(session, language)
-        const targetMatches =
-          binding?.source === 'external' ? binding.runtimeId === runtimeId : sessionEnv === envName
-        if (!targetMatches) continue
+        for (const affectedLanguage of affectedLanguages) {
+          const binding = session.runtimeBindings.get(affectedLanguage)
+          const sessionEnv = this.resolveRunEnv(session, affectedLanguage)
+          const targetMatches = managedRuntime
+            ? sessionEnv === envName
+            : binding?.source === 'external' && binding.runtimeId === runtimeId
+          if (!targetMatches) continue
 
-        if (binding) {
-          binding.status = 'unavailable'
-          binding.reason = 'repair-required'
-          affectedBindings.push(session)
+          if (binding) {
+            binding.status = 'unavailable'
+            binding.reason = 'repair-required'
+            affectedBindings.add(session)
+          }
+          const kind = affectedLanguage === 'r' ? 'r' : 'python'
+          await session.executor.terminate?.(kind, sessionEnv)
+          this.tearDownLanguageBinding(session, affectedLanguage, sessionEnv)
+          this.notifyNotebookChanged(session)
         }
-        await session.executor.terminate?.(kind, sessionEnv)
-        this.tearDownLanguageBinding(session, language, sessionEnv)
-        this.notifyNotebookChanged(session)
       }
 
       // The operation journal stays live until both the durable repair registry and the binding state

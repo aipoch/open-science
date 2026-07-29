@@ -72,6 +72,7 @@ for (const method of ['exec', 'execSync']) {
   const original = childProcess[method]
   childProcess[method] = function guardedExec(command, ...args) {
     assertPackageCommandAllowed(command)
+    assertRuntimeProcessCommandAllowed(command)
     return original.call(this, command, ...args)
   }
 }
@@ -79,6 +80,7 @@ for (const method of ['execFile', 'execFileSync', 'spawn', 'spawnSync']) {
   const original = childProcess[method]
   childProcess[method] = function guardedExecFile(command, args, ...rest) {
     assertPackageCommandAllowed(command, args)
+    assertRuntimeProcessCommandAllowed(command, args)
     return original.call(this, command, args, ...rest)
   }
 }
@@ -89,6 +91,18 @@ childProcess.fork = function guardedFork() {
   throw new Error(
     'child_process.fork is not allowed in the control REPL; use manage_packages for package changes.'
   )
+}
+
+// A Worker starts a fresh Node isolate and reloads pristine built-in fs/child_process modules, so it
+// would bypass every in-process guard installed by this control loop. Keep worker isolates outside the
+// notebook control plane until they can inherit an OS-enforced runtime write boundary.
+const workerThreads = require('node:worker_threads')
+workerThreads.Worker = class GuardedWorker {
+  constructor() {
+    throw new Error(
+      'worker_threads.Worker is not allowed in the control REPL; managed runtime guards cannot be inherited.'
+    )
+  }
 }
 
 // Enforce the managed-runtime read-only boundary at the Node filesystem API as well as in the main
@@ -131,6 +145,23 @@ const assertRuntimeWriteAllowed = (...values) => {
         'Managed runtime files are read-only in the control REPL; use manage_packages for changes.'
       )
     }
+  }
+}
+const runtimeWriteCommand =
+  /(?:\b(?:rm|mv|cp|install|mkdir|touch|truncate|chmod|chown|ln|tee|sed|perl|dd)\b|\b(?:open|write_text|write_bytes|writeFile|writeFileSync|mkdtemp|mkdtempSync)\s*\(|\b(?:os|shutil)\.(?:remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|chmod|chown|copy|copy2|copytree|move|rmtree)\s*\(|\b(?:unlink|file\.remove|file\.rename|file\.create|dir\.create|writeLines|writeBin|save|saveRDS)\s*\(|\b(?:New-Item|Remove-Item|Set-Content|Add-Content|Clear-Content|Out-File)\b|\[IO\.File\]::(?:WriteAllText|AppendAllText|WriteAllBytes|Create|Delete)\s*\()/isu
+const assertRuntimeProcessCommandAllowed = (command, args = []) => {
+  if (!managedRuntimeRoot) return
+  const text = commandText(command, args)
+  const comparable = comparableGuardPath(text.replaceAll('\\', '/'))
+  const roots = [managedRuntimeRoot, runtimeRootValue]
+    .filter((value) => typeof value === 'string' && value.length > 0)
+    .map((value) => comparableGuardPath(value.replaceAll('\\', '/')))
+  const referencesRuntime =
+    text.includes('OPEN_SCIENCE_RUNTIME_DIR') || roots.some((root) => comparable.includes(root))
+  if (referencesRuntime && runtimeWriteCommand.test(text)) {
+    throw new Error(
+      'Managed runtime files are read-only in control REPL child processes; use manage_packages for changes.'
+    )
   }
 }
 const writeOpenFlags = (flags) =>

@@ -2746,6 +2746,85 @@ describe('notebook runtime service', () => {
       expect(execute).not.toHaveBeenCalled()
     })
 
+    it('blocks both language bindings that share a managed prefix when quarantine persistence fails', async () => {
+      const root = await createStorageRoot()
+      const runtimeRoot = getRuntimeRoot(root)
+      const envName = 'shared-analysis'
+      const prefix = envPrefix(runtimeRoot, envName)
+      const namedPython = join(prefix, 'bin', 'python')
+      const namedR = join(prefix, 'bin', 'R')
+      const terminate = vi.fn(async () => undefined)
+      const execute = vi.fn(async (): Promise<NotebookExecutionResult> => {
+        throw new Error('a repair-blocked shared prefix must not execute')
+      })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentStateTracker: verifiedPackageMutationTracker(),
+        discoverRuntimes: async (language) => [
+          {
+            language,
+            provenance: 'agent-created',
+            envId: language === 'python' ? namedPython : namedR,
+            interpreterPath: language === 'python' ? namedPython : namedR,
+            label: envName,
+            condaEnv: envName,
+            version: language === 'python' ? '3.12' : '4.4.3',
+            runnable: true
+          }
+        ],
+        executorFactory: () => ({
+          execute,
+          terminate,
+          shutdown: async () => ({ reaped: true })
+        }),
+        installPackagesImpl: vi.fn().mockResolvedValue({
+          ok: false,
+          needsRestart: false,
+          log: 'r-base changed',
+          repairRequired: true,
+          error: 'Protected r-base changed unexpectedly. Run Repair.'
+        })
+      })
+
+      await service.bindRuntime({
+        sessionId: 'shared',
+        workspaceCwd: root,
+        language: 'python',
+        runtimeId: namedPython
+      })
+      await service.bindRuntime({
+        sessionId: 'shared',
+        workspaceCwd: root,
+        language: 'r',
+        runtimeId: namedR
+      })
+      await mkdir(repairRegistryPath(runtimeRoot), { recursive: true })
+
+      await expect(
+        service.managePackages({
+          sessionId: 'shared',
+          workspaceCwd: root,
+          language: 'r',
+          packages: ['dplyr']
+        })
+      ).rejects.toThrow(/REPAIR_QUARANTINE_FAILED/)
+
+      expect(terminate).toHaveBeenCalledWith('r', envName)
+      expect(terminate).toHaveBeenCalledWith('python', envName)
+      const run = await service.execute({
+        sessionId: 'shared',
+        workspaceCwd: root,
+        language: 'python',
+        code: '1'
+      })
+      expect(run.status).toBe('failed')
+      expect(run.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
+      expect(execute).not.toHaveBeenCalled()
+    })
+
     it('does not start an installer when the durable Environment dirty marker cannot be written', async () => {
       const root = await createStorageRoot()
       const installPackagesImpl = vi.fn().mockResolvedValue({
@@ -3202,6 +3281,59 @@ describe('notebook runtime service', () => {
       releaseInstall?.()
       await Promise.all([install, run])
       expect(events).toEqual(['install:start', 'install:end', 'run:run'])
+    })
+
+    it('rechecks the repair gate after a queued run acquires the environment lock', async () => {
+      const root = await createStorageRoot()
+      let releaseInstall: (() => void) | undefined
+      const execute = vi.fn(async (request): Promise<NotebookExecutionResult> => ({
+        status: 'completed',
+        stdout: '',
+        stderr: '',
+        traceback: '',
+        cwdAfter: request.cwd,
+        outputs: []
+      }))
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentStateTracker: verifiedPackageMutationTracker(),
+        executorFactory: () => ({
+          execute,
+          terminate: async () => undefined,
+          shutdown: async () => ({ reaped: true })
+        }),
+        installPackagesImpl: async () => {
+          await new Promise<void>((resolve) => {
+            releaseInstall = resolve
+          })
+          return {
+            ok: false,
+            needsRestart: false,
+            log: 'protected interpreter changed',
+            repairRequired: true,
+            error: 'Run Repair.'
+          }
+        }
+      })
+
+      const install = service.managePackages({ language: 'python', packages: ['numpy'] })
+      await vi.waitFor(() => expect(releaseInstall).toBeDefined())
+      const run = service.execute({
+        sessionId: 's',
+        workspaceCwd: root,
+        code: '1',
+        language: 'python'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      releaseInstall?.()
+      const [, completedRun] = await Promise.all([install, run])
+      expect(completedRun.status).toBe('failed')
+      expect(completedRun.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
+      expect(execute).not.toHaveBeenCalled()
     })
 
     it('does not block a run in a different env behind an install (D5)', async () => {
