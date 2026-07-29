@@ -933,7 +933,15 @@ const sanitizeConversationGraph = (
         const promptMessageId = asString(candidate.promptMessageId)
         const runtimeSegmentId = asString(candidate.runtimeSegmentId)
         return activity && agentFrameId && messageBranchId && promptMessageId && runtimeSegmentId
-          ? [{ ...activity, agentFrameId, messageBranchId, promptMessageId, runtimeSegmentId }]
+          ? [
+              {
+                ...normalizeActivityAfterRestore(activity),
+                agentFrameId,
+                messageBranchId,
+                promptMessageId,
+                runtimeSegmentId
+              }
+            ]
           : []
       })
     : []
@@ -945,7 +953,14 @@ const sanitizeConversationGraph = (
         const messageBranchId = asString(candidate.messageBranchId)
         const promptMessageId = asString(candidate.promptMessageId)
         return group && agentFrameId && messageBranchId && promptMessageId
-          ? [{ ...group, agentFrameId, messageBranchId, promptMessageId }]
+          ? [
+              {
+                ...normalizeActivityGroupAfterRestore(group),
+                agentFrameId,
+                messageBranchId,
+                promptMessageId
+              }
+            ]
           : []
       })
     : []
@@ -1034,7 +1049,7 @@ const sanitizeSession = (
         .filter((item): item is PersistedActivityGroup => !!item)
         .map(normalizeActivityGroupAfterRestore)
     : []
-  const sanitized: PersistedChatSession = {
+  let sanitized: PersistedChatSession = {
     id,
     // Content value is a hint; the repository overrides it with the session file's directory on load.
     projectId: asString(session.projectId) ?? '',
@@ -1087,6 +1102,11 @@ const sanitizeSession = (
   if (activityGroups.length > 0) sanitized.activityGroups = activityGroups
   if (enabledComputeHosts.length > 0) sanitized.enabledComputeHosts = enabledComputeHosts
 
+  // Normalize interrupted runtime state before constructing a graph for legacy sessions. Otherwise
+  // the compatibility message list becomes an error while the newly-created canonical graph retains
+  // a streaming message and later projects that stale state back into the UI.
+  sanitized = normalizeSessionAfterRestore(sanitized)
+
   if (session.conversationGraph !== undefined) {
     const graph = sanitizeConversationGraph(session.conversationGraph, options)
     if (!graph) return undefined
@@ -1104,7 +1124,7 @@ const sanitizeSession = (
     })
   }
 
-  return sanitizeSessionMessageImages(normalizeSessionAfterRestore(sanitized))
+  return sanitizeSessionMessageImages(sanitized)
 }
 
 // ---------------------------------------------------------------------------

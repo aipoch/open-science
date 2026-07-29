@@ -828,6 +828,47 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('finalizes every artifact claim deferred before the same stop event', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-event-1',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        text: 'Saving two files.'
+      })
+    )
+    const finalizeRunArtifacts = vi.fn().mockResolvedValue([])
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+
+    for (const claimId of ['claim-a', 'claim-b']) {
+      await applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: `artifact-${claimId}`,
+          kind: 'artifact',
+          runId: `run-${claimId}`,
+          promptMessageId,
+          artifactSessionId: 'artifact-session-1',
+          artifactClaimId: claimId,
+          artifacts: [createArtifactFile({ runId: `run-${claimId}` })]
+        }),
+        { finalizeRunArtifacts, saveSession }
+      )
+    }
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+
+    expect(finalizeRunArtifacts).toHaveBeenCalledTimes(2)
+    expect(finalizeRunArtifacts).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ claimId: 'claim-a' })
+    )
+    expect(finalizeRunArtifacts).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ claimId: 'claim-b' })
+    )
+  })
+
   it('replays an inactive-branch artifact claim against its original response', async () => {
     const originalPromptMessageId =
       useSessionStore.getState().sessions[0].activeRun?.promptMessageId
@@ -1201,9 +1242,7 @@ describe('workspace runtime events', () => {
 
       await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
 
-      // Give the fire-and-forget promise time to settle.
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.runAllTimersAsync()
 
       expect(reviewerRun).toHaveBeenCalledWith(
         expect.objectContaining({ sessionId: 'transport-session-1' })
@@ -1229,8 +1268,7 @@ describe('workspace runtime events', () => {
 
       await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
 
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.runAllTimersAsync()
 
       expect(reviewerRun).not.toHaveBeenCalled()
 
@@ -1252,8 +1290,7 @@ describe('workspace runtime events', () => {
 
       await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
 
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.runAllTimersAsync()
 
       expect(reviewerRun).not.toHaveBeenCalled()
 
@@ -1277,8 +1314,7 @@ describe('workspace runtime events', () => {
 
       await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
 
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.runAllTimersAsync()
 
       expect(reviewerRun).toHaveBeenCalledWith(
         expect.objectContaining({ sessionId: 'transport-session-1' })
@@ -1487,11 +1523,60 @@ describe('workspace runtime events', () => {
       })
 
       await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.runAllTimersAsync()
 
       expect(reviewerRun).toHaveBeenCalledWith(expect.objectContaining({ origin: 'auto' }))
 
+      vi.unstubAllGlobals()
+    })
+
+    it('waits for a post-stop artifact to finalize before starting auto-review', async () => {
+      const operationOrder: string[] = []
+      const reviewerRun = vi.fn().mockImplementation(async () => {
+        operationOrder.push('review')
+        return { started: true }
+      })
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Saved the result.'
+      })
+      const responseMessageId = useSessionStore.getState().sessions[0].messages[1].id
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      await applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: 'artifact-after-stop',
+          kind: 'artifact',
+          runId: 'artifact-run-1',
+          promptMessageId,
+          artifactClaimId: 'claim-1',
+          artifacts: [createArtifactFile({ runId: 'artifact-run-1' })]
+        }),
+        {
+          saveSession: vi.fn().mockResolvedValue(undefined),
+          finalizeRunArtifacts: vi.fn().mockImplementation(async () => {
+            operationOrder.push('finalize')
+            return [
+              createArtifactFile({
+                id: `transport-session-1:${responseMessageId}:result.txt`,
+                sessionId: 'transport-session-1',
+                messageId: responseMessageId,
+                runId: undefined
+              })
+            ]
+          })
+        }
+      )
+
+      expect(reviewerRun).not.toHaveBeenCalled()
+      await vi.runAllTimersAsync()
+
+      expect(operationOrder).toEqual(['finalize', 'review'])
       vi.unstubAllGlobals()
     })
   })
@@ -1546,6 +1631,7 @@ describe('loop guard: suppressNextAutoReview', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
+    resetDeferredArtifactEventsForTests()
     useSessionStore.setState(createInitialSessionState())
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useSessionStore.getState().appendUserMessage({
@@ -1574,8 +1660,7 @@ describe('loop guard: suppressNextAutoReview', () => {
     await applyWorkspaceRuntimeEvent(
       createEvent({ id: 'stop-correction', kind: 'stop', sessionId: 'transport-session-1' })
     )
-    await Promise.resolve()
-    await Promise.resolve()
+    await vi.runAllTimersAsync()
 
     // reviewer.run must NOT have been called for the suppressed stop.
     expect(reviewerRun).not.toHaveBeenCalled()
@@ -1592,8 +1677,7 @@ describe('loop guard: suppressNextAutoReview', () => {
     await applyWorkspaceRuntimeEvent(
       createEvent({ id: 'stop-normal', kind: 'stop', sessionId: 'transport-session-1' })
     )
-    await Promise.resolve()
-    await Promise.resolve()
+    await vi.runAllTimersAsync()
 
     // reviewer.run called exactly once for the normal turn.
     expect(reviewerRun).toHaveBeenCalledTimes(1)
@@ -1615,8 +1699,7 @@ describe('loop guard: suppressNextAutoReview', () => {
     await applyWorkspaceRuntimeEvent(
       createEvent({ id: 'stop-1', kind: 'stop', sessionId: 'transport-session-1' })
     )
-    await Promise.resolve()
-    await Promise.resolve()
+    await vi.runAllTimersAsync()
 
     // transport-session-1 is not suppressed, reviewer.run fires.
     expect(reviewerRun).toHaveBeenCalledTimes(1)
@@ -1636,8 +1719,7 @@ describe('loop guard: suppressNextAutoReview', () => {
     await applyWorkspaceRuntimeEvent(
       createEvent({ id: 'stop-next', kind: 'stop', sessionId: 'transport-session-1' })
     )
-    await Promise.resolve()
-    await Promise.resolve()
+    await vi.runAllTimersAsync()
 
     // The suppression was cleared, so the next turn's review fires normally.
     expect(reviewerRun).toHaveBeenCalledTimes(1)

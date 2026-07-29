@@ -25,7 +25,10 @@ import {
   recordSpawnIntentSync
 } from './operation-journal'
 import { DefaultRuntimeProvisioner } from './provisioner'
-import { EnvironmentManifestPublicationError } from './environment-state-tracker'
+import {
+  EnvironmentManifestPublicationError,
+  type EnvironmentStateTracker
+} from './environment-state-tracker'
 import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import type {
   InstallDeps as InstallDepsForTest,
@@ -3130,6 +3133,19 @@ describe('v4 runtime bindings & agent tools', () => {
 
   // Service with injected discovery + enablement + a recording executor, so the tools run without any
   // real interpreter and executions can be inspected for the resolved interpreter.
+  const verifiedPackageMutationTracker = (): Pick<
+    EnvironmentStateTracker,
+    | 'prepareRun'
+    | 'captureCompletedRun'
+    | 'markPackageMutationDirty'
+    | 'refreshAfterPackageMutation'
+  > => ({
+    prepareRun: vi.fn(),
+    captureCompletedRun: vi.fn(),
+    markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+    refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'success' })
+  })
+
   const bindingService = (
     root: string,
     options: {
@@ -3156,6 +3172,11 @@ describe('v4 runtime bindings & agent tools', () => {
       getRuntimeEnablement: async () => options.enablement,
       platform: options.platform,
       installPackagesImpl: options.installPackagesImpl,
+      // A fake installer must have a fake inventory refresh too. Mixing the fake installer with a
+      // scan of the host's real /usr/bin/python3 makes these tests depend on runner packages.
+      environmentStateTracker: options.installPackagesImpl
+        ? verifiedPackageMutationTracker()
+        : undefined,
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
           options.executions?.push(request)

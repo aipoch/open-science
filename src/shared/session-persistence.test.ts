@@ -408,6 +408,61 @@ describe('normalizeSessionFile with activities', () => {
     expect(activities?.[0]?.status).toBe('failed')
   })
 
+  it('restores open conversation graph activities as failed', () => {
+    const persisted = createSessionFile({
+      ...(createSessionWithActivity({
+        id: 'activity-1',
+        kind: 'tool',
+        title: 'downloading',
+        status: 'in_progress',
+        sortIndex: 1,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }) as PersistedChatSession),
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Download it',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    const restored = normalizeSessionFile(persisted)
+
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+  })
+
+  it('builds a legacy conversation graph from normalized interrupted messages', () => {
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Interrupted session',
+      cwd: '/workspace',
+      status: 'running',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'agent',
+          content: 'Partial response',
+          status: 'streaming',
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    })
+
+    expect(restored?.messages[0]?.status).toBe('error')
+    expect(restored?.conversationGraph?.messages[0]?.status).toBe('error')
+  })
+
   it('loads sessions that predate persisted activities', () => {
     const session = normalizeSessionFile({
       id: 'session-1',

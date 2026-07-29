@@ -36,12 +36,16 @@ type DeferredArtifactEvent = {
 
 // The runtime deliberately publishes generated files immediately before its stop event. Providers may
 // still have a terminal assistant chunk queued behind the tool result, so binding at the artifact event
-// can capture an intermediate message. Hold that one event until stop makes the renderer's terminal
-// Message/Branch projection authoritative.
-const deferredArtifactEventsBySession = new Map<string, DeferredArtifactEvent>()
+// can capture an intermediate message. Hold every event until stop makes the renderer's terminal
+// Message/Branch projection authoritative; one turn may publish more than one generated file claim.
+const deferredArtifactEventsBySession = new Map<string, DeferredArtifactEvent[]>()
+const scheduledAutoReviewsBySession = new Map<string, ReturnType<typeof setTimeout>>()
+const AUTO_REVIEW_ARTIFACT_SETTLE_DELAY_MS = 100
 
 const resetDeferredArtifactEventsForTests = (): void => {
   deferredArtifactEventsBySession.clear()
+  for (const timer of scheduledAutoReviewsBySession.values()) clearTimeout(timer)
+  scheduledAutoReviewsBySession.clear()
 }
 
 const isActivityGroupControlEvent = (event: AcpRuntimeEvent): boolean => {
@@ -305,6 +309,24 @@ const triggerAutoReview = async (sessionId: string): Promise<void> => {
   }
 }
 
+const cancelScheduledAutoReview = (sessionId: string): void => {
+  const timer = scheduledAutoReviewsBySession.get(sessionId)
+  if (timer) clearTimeout(timer)
+  scheduledAutoReviewsBySession.delete(sessionId)
+}
+
+// Stop and artifact events normally arrive together, but some providers publish the Artifact just
+// after stop. A short debounced barrier lets that claim finalize before Reviewer freezes its scope.
+// A post-stop Artifact cancels this timer immediately and schedules a fresh review after finalization.
+const scheduleAutoReview = (sessionId: string): void => {
+  cancelScheduledAutoReview(sessionId)
+  const timer = setTimeout(() => {
+    scheduledAutoReviewsBySession.delete(sessionId)
+    void triggerAutoReview(sessionId)
+  }, AUTO_REVIEW_ARTIFACT_SETTLE_DELAY_MS)
+  scheduledAutoReviewsBySession.set(sessionId, timer)
+}
+
 // Applies one runtime event to the workspace store when it affects chat state.
 const applyWorkspaceRuntimeEvent = async (
   event: AcpRuntimeEvent,
@@ -379,16 +401,18 @@ const applyWorkspaceRuntimeEvent = async (
       return true
     }
 
-    const deferredArtifact = deferredArtifactEventsBySession.get(event.sessionId)
-    if (deferredArtifact) {
-      await finalizeArtifactEvent(deferredArtifact.event, deferredArtifact.dependencies)
+    const deferredArtifacts = deferredArtifactEventsBySession.get(event.sessionId)
+    if (deferredArtifacts) {
       deferredArtifactEventsBySession.delete(event.sessionId)
+      for (const deferredArtifact of deferredArtifacts) {
+        await finalizeArtifactEvent(deferredArtifact.event, deferredArtifact.dependencies)
+      }
     }
 
     // Trigger a background review for the just-completed turn.
     // We read the session state after both finishRun and Artifact finalization so the scope includes
     // the terminal message and its finalized Artifact Version ids.
-    void triggerAutoReview(event.sessionId)
+    scheduleAutoReview(event.sessionId)
 
     return true
   }
@@ -422,11 +446,16 @@ const applyWorkspaceRuntimeEvent = async (
     const session = store.sessions.find((candidate) => candidate.id === event.sessionId)
     if (session?.conversationGraphSyncBlocked) return true
     if (session?.activeRun) {
-      deferredArtifactEventsBySession.set(event.sessionId, { event, dependencies })
+      const deferredArtifacts = deferredArtifactEventsBySession.get(event.sessionId) ?? []
+      deferredArtifacts.push({ event, dependencies })
+      deferredArtifactEventsBySession.set(event.sessionId, deferredArtifacts)
       return true
     }
 
-    return finalizeArtifactEvent(event, dependencies)
+    cancelScheduledAutoReview(event.sessionId)
+    const wasFinalized = await finalizeArtifactEvent(event, dependencies)
+    if (wasFinalized) scheduleAutoReview(event.sessionId)
+    return wasFinalized
   }
 
   if (event.kind === 'error' && event.sessionId) {

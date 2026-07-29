@@ -4,6 +4,7 @@ import type { NotebookSessionReference } from '../../../shared/notebook'
 import type { ProjectFileOriginSession } from '../../../shared/project-files'
 import type { FindingLocator } from '../../../shared/reviewer'
 import type { UploadedAttachment } from '../../../shared/uploads'
+import { getUploadedAttachmentPath } from '../../../shared/uploads'
 
 export type PreviewPanelState = 'open' | 'collapsed'
 export type PreviewFileFormat =
@@ -216,10 +217,12 @@ const reconcileUploadPreviewItems = (
     if (item.type !== 'file' || item.source !== 'upload') return item
 
     const upload = uploadByPreviewId.get(item.id)
-    if (!upload || (upload.path === item.path && upload.sessionId === item.sessionId)) return item
+    if (!upload) return item
+    const path = getUploadedAttachmentPath(upload, item.projectId)
+    if (path === item.path && upload.sessionId === item.sessionId) return item
 
     changed = true
-    return { ...item, sessionId: upload.sessionId, path: upload.path, updatedAt }
+    return { ...item, sessionId: upload.sessionId, path, updatedAt }
   })
 
   return changed ? reconciledItems : items
