@@ -6637,6 +6637,50 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('estimates bridge-backed Codex MCP schemas with compatibility aliases', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+    })
+    const counter: TokenCounter = {
+      count: (text) => {
+        if (text.includes('mcp__open_science_activity__begin_activity_group')) return 101
+        if (text.includes('mcp.open-science-activity.begin_activity_group')) return 17
+        return 0
+      }
+    }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      contextUsageTracker: new ContextUsageTracker(counter),
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {},
+        providerConfiguration: {
+          providerId: 'custom-gateway',
+          apiType: 'openai',
+          baseUrl: 'http://127.0.0.1:1234/v1',
+          headers: { authorization: 'Bearer bridge' }
+        }
+      }),
+      framework: codexFramework,
+      activityGroups: { mcpEntryPath: '/app/out/main/index.js' }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 150, size: 128_000 }
+    })
+
+    expect(runtime.getSnapshot().contextUsageBySession.s1.breakdown?.categories).toContainEqual({
+      key: 'mcp',
+      tokens: 101,
+      estimated: true
+    })
+  })
+
   it('publishes the local estimate while a prompt is still generating', async () => {
     const process = new FakeAgentProcess()
     const finishPrompt = createDeferred()

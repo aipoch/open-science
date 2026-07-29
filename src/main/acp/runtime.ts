@@ -4994,7 +4994,8 @@ class AcpRuntime {
       activity: Boolean(this.activityGroupOptions && this.framework.acceptsStdioMcp),
       artifacts: this.artifactToolingAvailable(),
       notebook: this.notebookToolingAvailable(),
-      skillImport: this.skillImportToolingAvailable()
+      skillImport: this.skillImportToolingAvailable(),
+      codexBridgeAliases: this.bridgeMcpAliasesEnabled
     }).map(({ sectionId, text }) => ({ sectionId, category: 'mcp' as const, text }))
 
     return {

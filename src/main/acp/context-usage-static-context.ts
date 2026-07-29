@@ -19,6 +19,7 @@ type ContextUsageMcpOptions = {
   artifacts: boolean
   notebook: boolean
   skillImport: boolean
+  codexBridgeAliases?: boolean
 }
 
 type ContextUsageMcpSection = {
@@ -35,16 +36,18 @@ type ToolDefinition = {
 
 const modelFacingMcpToolName = (
   frameworkId: AgentFrameworkId,
+  codexBridgeAliases: boolean,
   server: string,
   tool: string
 ): string => {
-  if (frameworkId === 'codex') return `mcp.${server}.${tool}`
+  if (frameworkId === 'codex' && !codexBridgeAliases) return `mcp.${server}.${tool}`
   if (frameworkId === 'opencode') return `${server}_${tool}`
   return `mcp__${server.replace(/[^a-zA-Z0-9_]/g, '_')}__${tool}`
 }
 
 const serializeToolDefinitions = (
   frameworkId: AgentFrameworkId,
+  codexBridgeAliases: boolean,
   server: string,
   tools: ReadonlyArray<{ name: string; definition: ToolDefinition }>
 ): ContextUsageMcpSection => ({
@@ -54,7 +57,7 @@ const serializeToolDefinitions = (
   // guessed here. Compact JSON best matches the wire representation without counting whitespace.
   text: JSON.stringify(
     tools.map(({ name, definition }) => ({
-      name: modelFacingMcpToolName(frameworkId, server, name),
+      name: modelFacingMcpToolName(frameworkId, codexBridgeAliases, server, name),
       title: definition.title,
       description: definition.description,
       inputSchema: z.toJSONSchema(z.object(definition.inputSchema), { target: 'draft-7' }),
@@ -69,8 +72,10 @@ const contextUsageMcpSections = (
   frameworkId: AgentFrameworkId,
   options: ContextUsageMcpOptions
 ): readonly ContextUsageMcpSection[] => {
+  const codexBridgeAliases = frameworkId === 'codex' && options.codexBridgeAliases === true
   const cacheKey = [
     frameworkId,
+    Number(codexBridgeAliases),
     ...[options.activity, options.artifacts, options.notebook, options.skillImport].map(Number)
   ].join(':')
   const cached = sectionsByAvailability.get(cacheKey)
@@ -80,7 +85,7 @@ const contextUsageMcpSections = (
 
   if (options.activity) {
     sections.push(
-      serializeToolDefinitions(frameworkId, ACTIVITY_GROUP_MCP_SERVER_NAME, [
+      serializeToolDefinitions(frameworkId, codexBridgeAliases, ACTIVITY_GROUP_MCP_SERVER_NAME, [
         { name: BEGIN_ACTIVITY_GROUP_TOOL_NAME, definition: beginActivityGroupToolDefinition }
       ])
     )
@@ -88,7 +93,7 @@ const contextUsageMcpSections = (
 
   if (options.artifacts) {
     sections.push(
-      serializeToolDefinitions(frameworkId, ARTIFACT_MCP_SERVER_NAME, [
+      serializeToolDefinitions(frameworkId, codexBridgeAliases, ARTIFACT_MCP_SERVER_NAME, [
         { name: 'write_artifact_file', definition: writeArtifactFileToolDefinition }
       ])
     )
@@ -98,6 +103,7 @@ const contextUsageMcpSections = (
     sections.push(
       serializeToolDefinitions(
         frameworkId,
+        codexBridgeAliases,
         NOTEBOOK_MCP_SERVER_NAME,
         NOTEBOOK_RPC_TOOLS.map(({ name, title, description, inputSchema }) => ({
           name,
@@ -109,7 +115,7 @@ const contextUsageMcpSections = (
 
   if (options.skillImport) {
     sections.push(
-      serializeToolDefinitions(frameworkId, SKILL_IMPORT_MCP_SERVER_NAME, [
+      serializeToolDefinitions(frameworkId, codexBridgeAliases, SKILL_IMPORT_MCP_SERVER_NAME, [
         { name: REQUEST_SKILL_IMPORT_TOOL_NAME, definition: requestSkillImportToolDefinition }
       ])
     )

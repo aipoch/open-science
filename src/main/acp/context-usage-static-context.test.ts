@@ -29,6 +29,20 @@ describe('contextUsageMcpSections', () => {
     expect(text).not.toContain('mcp__open_science_notebook__notebook_execute')
   })
 
+  it('uses bridge aliases for Codex MCP tools delivered through a compatibility proxy', () => {
+    const sections = contextUsageMcpSections('codex', {
+      activity: false,
+      artifacts: false,
+      notebook: true,
+      skillImport: false,
+      codexBridgeAliases: true
+    })
+
+    const text = sections.map((section) => section.text).join('\n')
+    expect(text).toContain('mcp__open_science_notebook__notebook_execute')
+    expect(text).not.toContain('mcp.open-science-notebook.notebook_execute')
+  })
+
   it('serializes only the app-owned MCP schemas enabled for the session', () => {
     const sections = contextUsageMcpSections('claude-code', {
       activity: true,
