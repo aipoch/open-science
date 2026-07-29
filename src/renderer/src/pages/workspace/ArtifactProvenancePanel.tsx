@@ -42,7 +42,12 @@ import { groupConversationItems } from './workspace-tool-activity-groups'
 
 type ProvenanceTab = 'code' | 'execution' | 'messages' | 'environment' | 'review'
 type DeferredProvenanceTab = Extract<ProvenanceTab, 'execution' | 'messages' | 'review'>
-type DeferredSectionResult = { state: 'loaded' } | { state: 'error'; message: string }
+type DeferredSection =
+  | Pick<ArtifactVersionProvenance, 'execution'>
+  | Pick<ArtifactVersionProvenance, 'messages'>
+  | Pick<ArtifactVersionProvenance, 'review'>
+type DeferredSectionResult =
+  { state: 'loaded'; section: DeferredSection } | { state: 'error'; message: string }
 
 type ArtifactProvenancePanelProps = {
   item: PreviewFileItem
@@ -409,7 +414,8 @@ const ArtifactProvenancePanel = ({
   const selectedVersionId = lineage ? selectedVersionDescriptor?.versionId : requestedVersionId
   const selectedVersionUnavailable = Boolean(lineage && requestedVersionId && !selectedVersionId)
   const provenanceKey = `${lineageKey}:${selectedVersionId ?? ''}`
-  const provenance = provenanceResult?.key === provenanceKey ? provenanceResult.value : undefined
+  const coreProvenance =
+    provenanceResult?.key === provenanceKey ? provenanceResult.value : undefined
   const showAllPackages = showAllPackagesKey === provenanceKey
   const notebookExportError =
     notebookExportFailure?.key === provenanceKey ? notebookExportFailure.message : undefined
@@ -489,13 +495,19 @@ const ArtifactProvenancePanel = ({
     ? deferredSectionResults[deferredSectionKey]
     : undefined
   const deferredSectionState = deferredSectionResult?.state
+  const provenance = useMemo(
+    () =>
+      coreProvenance && deferredSectionResult?.state === 'loaded'
+        ? { ...coreProvenance, ...deferredSectionResult.section }
+        : coreProvenance,
+    [coreProvenance, deferredSectionResult]
+  )
   const deferredTabLabel = deferredTab
     ? tabs.find((tab) => tab.id === deferredTab)?.label
     : undefined
   const deferredSectionLoading = Boolean(deferredSectionKey && deferredSectionState === undefined)
   const deferredSectionReady = !deferredSectionKey || deferredSectionState === 'loaded'
-  const hasLoadedProvenance =
-    provenanceResult?.key === provenanceKey && Boolean(provenanceResult.value)
+  const hasLoadedProvenance = Boolean(coreProvenance)
   useEffect(() => {
     let active = true
     if (!item.artifactId || !selectedVersionId || !hasLoadedProvenance) {
@@ -521,14 +533,9 @@ const ArtifactProvenancePanel = ({
     void load
       .then((section) => {
         if (!active) return
-        setProvenanceResult((current) =>
-          current?.key === provenanceKey && current.value
-            ? { key: provenanceKey, value: { ...current.value, ...section } }
-            : current
-        )
         setDeferredSectionResults((current) => ({
           ...current,
-          [sectionKey]: { state: 'loaded' }
+          [sectionKey]: { state: 'loaded', section }
         }))
       })
       .catch((failure: unknown) => {

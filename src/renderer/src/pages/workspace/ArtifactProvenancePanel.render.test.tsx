@@ -572,6 +572,50 @@ describe('ArtifactProvenancePanel', () => {
     expect(container.textContent).not.toContain('Loading Messages')
   })
 
+  it('loads the selected Version section when switching Versions inside Provenance', async () => {
+    const renderPanel = (selectedItem: PreviewFileItem): void => {
+      root.render(
+        <ArtifactProvenancePanel
+          item={selectedItem}
+          projectId="project-1"
+          onClose={vi.fn()}
+          onVersionChange={renderPanel}
+        />
+      )
+    }
+    await act(async () => renderPanel(item))
+    await flush()
+    getVersionMessages.mockImplementation(async (request: { versionId: string }) => {
+      const messages = provenance().messages
+      if (messages.state !== 'available') throw new Error('Expected available fixture messages')
+      return {
+        messages: {
+          ...messages,
+          items: messages.items.map((message) => ({
+            ...message,
+            content: `${request.versionId}: ${message.content}`
+          }))
+        }
+      }
+    })
+
+    await clickTab('Messages')
+    await flush()
+    expect(container.textContent).toContain('version-1: The plot is ready.')
+
+    const next = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Next Artifact version"]'
+    )
+    await act(async () => next?.click())
+    await flush()
+
+    expect(getVersionMessages).toHaveBeenLastCalledWith(
+      expect.objectContaining({ versionId: 'version-2' })
+    )
+    expect(container.textContent).toContain('version-2: The plot is ready.')
+    expect(container.textContent).not.toContain('(not-loaded)')
+  })
+
   it('renders producer inputs in Code and opens the exact immutable input Version', async () => {
     expect(container.querySelector('[aria-label="Inputs"]')?.textContent).toContain('groups.csv')
     expect(container.querySelector('[aria-label="Inputs"]')?.textContent).toContain('v3')
