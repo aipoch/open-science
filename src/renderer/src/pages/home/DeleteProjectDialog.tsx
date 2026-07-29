@@ -17,6 +17,7 @@ import type { Project } from '../../../../shared/projects'
 type DeleteProjectDialogProps = {
   project: Project | undefined
   sessionCount: number
+  canDelete: boolean
   onCancel: () => void
   onConfirmDelete: () => void
 }
@@ -28,6 +29,7 @@ const deleteDialogConfirmButtonClassName =
 const DeleteProjectDialog = ({
   project,
   sessionCount,
+  canDelete,
   onCancel,
   onConfirmDelete
 }: DeleteProjectDialogProps): React.JSX.Element => {
@@ -79,6 +81,7 @@ const DeleteProjectDialog = ({
               <Button
                 type="button"
                 className={deleteDialogConfirmButtonClassName}
+                disabled={!canDelete}
                 onClick={onConfirmDelete}
               >
                 Delete

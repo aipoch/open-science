@@ -40,6 +40,10 @@ type ProjectSummary = {
 
 type ProjectFormState = { mode: 'create' } | { mode: 'edit'; projectId: string }
 
+type HomePageProps = {
+  canDeleteProjects: boolean
+}
+
 // Optional warnings (currently Python and reduced key protection) never create a Home alert. Only a
 // failed check that blocks the core flow asks an existing user to revisit environment setup.
 const getRequiredEnvironmentFailures = (
@@ -71,10 +75,10 @@ const menuItemClassName =
   'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-text-100 transition-colors duration-150 ease-out outline-none data-[highlighted]:bg-bg-200 data-[highlighted]:text-text-000'
 
 const menuDangerItemClassName =
-  'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-danger-000 transition-colors duration-150 ease-out outline-none data-[highlighted]:bg-danger-900'
+  'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-danger-000 transition-colors duration-150 ease-out outline-none data-[highlighted]:bg-danger-900 data-[disabled]:pointer-events-none data-[disabled]:opacity-50'
 
 // Landing screen: pick a project or jump back into a recent session.
-const HomePage = (): React.JSX.Element => {
+const HomePage = ({ canDeleteProjects }: HomePageProps): React.JSX.Element => {
   const projects = useProjectStore((state) => state.projects)
   const loadError = useProjectStore((state) => state.loadError)
   const createProject = useProjectStore((state) => state.createProject)
@@ -149,6 +153,12 @@ const HomePage = (): React.JSX.Element => {
     setFormError(undefined)
   }
 
+  const openDeleteDialog = (project: Project): void => {
+    if (!canDeleteProjects) return
+
+    setProjectToDelete(project)
+  }
+
   const closeFormDialog = (): void => {
     if (isSubmitting) return
 
@@ -192,7 +202,7 @@ const HomePage = (): React.JSX.Element => {
 
   // Main coordinates durable project/session/index cleanup; renderer state changes only after it succeeds.
   const confirmDeleteProject = (): void => {
-    if (!projectToDelete) return
+    if (!canDeleteProjects || !projectToDelete) return
 
     const projectId = projectToDelete.id
 
@@ -339,7 +349,8 @@ const HomePage = (): React.JSX.Element => {
                           <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
                           <DropdownMenu.Item
                             className={menuDangerItemClassName}
-                            onSelect={() => setProjectToDelete(project)}
+                            disabled={!canDeleteProjects}
+                            onSelect={() => openDeleteDialog(project)}
                           >
                             <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
                             Delete
@@ -419,6 +430,7 @@ const HomePage = (): React.JSX.Element => {
       <DeleteProjectDialog
         project={projectToDelete}
         sessionCount={deleteTargetSessionCount}
+        canDelete={canDeleteProjects}
         onCancel={() => setProjectToDelete(undefined)}
         onConfirmDelete={confirmDeleteProject}
       />

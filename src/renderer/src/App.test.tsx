@@ -29,6 +29,11 @@ const mocks = vi.hoisted(() => {
     },
     loadProjects: vi.fn().mockResolvedValue(undefined),
     deepLinkNavigation: vi.fn(),
+    lifecycleSync: vi.fn(() => ({
+      notice: undefined,
+      dismissNotice: vi.fn(),
+      viewNotice: vi.fn()
+    })),
     initUpdates: vi.fn(),
     openSessionById: vi.fn(),
     notificationNudgeBox,
@@ -40,6 +45,7 @@ const mocks = vi.hoisted(() => {
       takePendingOpenSession: vi.fn().mockResolvedValue(null)
     },
     sessionPersistence: {
+      isHydrated: true,
       isReady: true,
       loadError: undefined as string | undefined,
       loadWarning: undefined as string | undefined,
@@ -63,11 +69,7 @@ vi.mock('@/hooks/useCloseActivePaneShortcut', () => ({
   useCloseActivePaneShortcut: vi.fn()
 }))
 vi.mock('@/hooks/useLifecycleSync', () => ({
-  useLifecycleSync: () => ({
-    notice: undefined,
-    dismissNotice: vi.fn(),
-    viewNotice: vi.fn()
-  })
+  useLifecycleSync: mocks.lifecycleSync
 }))
 vi.mock('@/hooks/useWindowFindAppearanceSync', () => ({
   useWindowFindAppearanceSync: mocks.syncWindowFindAppearance
@@ -127,7 +129,9 @@ vi.mock('@/components/UpdateDialog', () => ({
   UpdateDialog: (): React.JSX.Element => <div data-testid="update-dialog" />
 }))
 vi.mock('@/pages/home/HomePage', () => ({
-  HomePage: (): React.JSX.Element => <div data-testid="home-page" />
+  HomePage: ({ canDeleteProjects }: { canDeleteProjects: boolean }): React.JSX.Element => (
+    <div data-testid="home-page" data-can-delete-projects={String(canDeleteProjects)} />
+  )
 }))
 vi.mock('@/pages/onboarding/OnboardingWizard', () => ({
   OnboardingWizard: (): React.JSX.Element => <div data-testid="onboarding-page" />
@@ -177,12 +181,14 @@ describe('App startup routing', () => {
     mocks.navigation.view = 'home'
     mocks.startupView = 'home'
     mocks.sessionPersistence.isReady = true
+    mocks.sessionPersistence.isHydrated = true
     mocks.sessionPersistence.loadError = undefined
     mocks.sessionPersistence.loadWarning = undefined
     mocks.sessionPersistence.writeError = undefined
     mocks.sessionPersistence.retryLoad.mockClear()
     mocks.sessionPersistence.retryWrites.mockClear()
     mocks.deepLinkNavigation.mockClear()
+    mocks.lifecycleSync.mockClear()
     mocks.syncWindowFindAppearance.mockClear()
     mocks.getInfo.mockResolvedValue({
       dataRoot: '/workspace/OpenScience',
@@ -258,6 +264,21 @@ describe('App startup routing', () => {
     expect(mocks.deepLinkNavigation).toHaveBeenCalledWith(false)
   })
 
+  it('allows lifecycle sync after a partial session load enters read-only recovery', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = true
+    mocks.sessionPersistence.isReady = false
+
+    await render()
+
+    expect(mocks.lifecycleSync).toHaveBeenCalledWith({
+      isSessionPersistenceHydrated: true
+    })
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset.canDeleteProjects
+    ).toBe('false')
+  })
+
   it('routes first-run users to onboarding after settings hydration', async () => {
     mocks.settings.isLoaded = true
     mocks.startupView = 'onboarding'
@@ -286,6 +307,7 @@ describe('App startup routing', () => {
 
   it('surfaces a session load failure with a retry action', async () => {
     mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = false
     mocks.sessionPersistence.isReady = false
     mocks.sessionPersistence.loadError = 'sessions directory unavailable'
 
@@ -293,6 +315,7 @@ describe('App startup routing', () => {
 
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert?.textContent).toContain('sessions directory unavailable')
+    expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
 
     container.querySelector<HTMLButtonElement>('[data-testid="session-persistence-retry"]')?.click()
     expect(mocks.sessionPersistence.retryLoad).toHaveBeenCalledOnce()

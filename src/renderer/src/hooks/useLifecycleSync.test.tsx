@@ -24,11 +24,11 @@ const listeners: {
 } = {}
 
 const Harness = ({
-  isSessionPersistenceReady = true
+  isSessionPersistenceHydrated = true
 }: {
-  isSessionPersistenceReady?: boolean
+  isSessionPersistenceHydrated?: boolean
 }): React.JSX.Element => {
-  const lifecycleSync = useLifecycleSync({ isSessionPersistenceReady })
+  const lifecycleSync = useLifecycleSync({ isSessionPersistenceHydrated })
   return (
     <button
       type="button"
@@ -127,7 +127,7 @@ describe('useLifecycleSync', () => {
   it('replays lifecycle events after initial snapshots finish hydrating', async () => {
     await act(async () => {
       useProjectStore.setState(createInitialProjectState())
-      root.render(<Harness isSessionPersistenceReady={false} />)
+      root.render(<Harness isSessionPersistenceHydrated={false} />)
     })
     await act(async () => {
       listeners.projectCreated?.(project)
@@ -191,7 +191,7 @@ describe('useLifecycleSync', () => {
     await act(async () => {
       useProjectStore.setState(createInitialProjectState())
       useSessionStore.setState(createInitialSessionState())
-      root.render(<Harness isSessionPersistenceReady={false} />)
+      root.render(<Harness isSessionPersistenceHydrated={false} />)
     })
     await act(async () => {
       listeners.projectDeleted?.({ projectId: project.id })

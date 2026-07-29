@@ -81,6 +81,7 @@ type SessionStoreSnapshot = {
 }
 
 type SessionPersistenceState = {
+  isHydrated: boolean
   isReady: boolean
   loadError: string | undefined
   loadWarning: string | undefined
@@ -230,6 +231,7 @@ const createStoreSaver = (
 
 // Starts session persistence and returns health/recovery state so App can gate input and surface failures.
 const useSessionPersistence = (): SessionPersistenceState => {
+  const [isHydrated, setIsHydrated] = useState(false)
   const [isReady, setIsReady] = useState(false)
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
   const [loadWarning, setLoadWarning] = useState<string | undefined>(undefined)
@@ -238,6 +240,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const failedWriteTargets = useRef(new Set<string>())
   const saverRef = useRef<StoreSaver | undefined>(undefined)
   const retryLoad = useCallback(() => {
+    setIsHydrated(false)
     setIsReady(false)
     setLoadError(undefined)
     setLoadWarning(undefined)
@@ -277,6 +280,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       try {
         const result = await loadPersistedSessions(window.api.sessions, () => isMounted)
         if (!result || !isMounted) return
+        setIsHydrated(true)
 
         if (result.diagnostics?.isComplete === false) {
           setLoadError(
@@ -356,7 +360,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     }
   }, [loadAttempt])
 
-  return { isReady, loadError, loadWarning, writeError, retryLoad, retryWrites }
+  return { isHydrated, isReady, loadError, loadWarning, writeError, retryLoad, retryWrites }
 }
 
 export { createStoreSaver, loadPersistedSessions, reconcilePendingArtifacts, useSessionPersistence }

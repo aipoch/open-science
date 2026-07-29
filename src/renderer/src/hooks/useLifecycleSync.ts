@@ -18,15 +18,15 @@ type LifecycleSyncResult = {
 }
 
 type LifecycleSyncOptions = {
-  isSessionPersistenceReady: boolean
+  isSessionPersistenceHydrated: boolean
 }
 
 const useLifecycleSync = ({
-  isSessionPersistenceReady
+  isSessionPersistenceHydrated
 }: LifecycleSyncOptions): LifecycleSyncResult => {
   const [notice, setNotice] = useState<ExternalSessionNotice | undefined>()
   const isProjectPersistenceReady = useProjectStore((state) => state.isLoaded)
-  const isHydrated = isSessionPersistenceReady && isProjectPersistenceReady
+  const isHydrated = isSessionPersistenceHydrated && isProjectPersistenceReady
   const isHydratedRef = useRef(isHydrated)
   const lifecycleClientIdRef = useRef<string | null | undefined>(undefined)
   const pendingActionsRef = useRef<Array<() => void>>([])

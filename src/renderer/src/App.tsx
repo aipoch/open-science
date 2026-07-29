@@ -32,8 +32,9 @@ import { useUpdateStore } from '@/stores/update-store'
 const App = (): React.JSX.Element | null => {
   // Persistence is started once at the top so sessions stay loaded for both Home and Workspace.
   const sessionPersistence = useSessionPersistence()
+  const isSessionPersistenceHydrated = sessionPersistence.isHydrated
   const isSessionPersistenceReady = sessionPersistence.isReady
-  const lifecycleSync = useLifecycleSync({ isSessionPersistenceReady })
+  const lifecycleSync = useLifecycleSync({ isSessionPersistenceHydrated })
   useDeepLinkNavigation(isSessionPersistenceReady)
   const view = useNavigationStore((state) => state.view)
   // Cmd+W / Ctrl+W closes the open preview panel before it closes the window.
@@ -216,6 +217,24 @@ const App = (): React.JSX.Element | null => {
     return <OnboardingWizard />
   }
 
+  // A hard load failure leaves no trustworthy session snapshot. Keep the interactive surfaces
+  // closed until retry succeeds; partial loads set isHydrated and use the read-only alert below.
+  if (!isSessionPersistenceHydrated && sessionPersistence.loadError) {
+    return (
+      <main
+        data-testid="session-persistence-startup-error"
+        className="flex h-screen items-center justify-center bg-bg-10 p-6 text-text-100"
+      >
+        <SessionPersistenceAlert
+          title="Saved conversations could not be loaded"
+          message={sessionPersistence.loadError}
+          inline
+          onRetry={sessionPersistence.retryLoad}
+        />
+      </main>
+    )
+  }
+
   return (
     <>
       <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} />
@@ -239,7 +258,7 @@ const App = (): React.JSX.Element | null => {
         />
       ) : null}
       {view === 'home' ? (
-        <HomePage />
+        <HomePage canDeleteProjects={isSessionPersistenceReady} />
       ) : (
         <WorkspacePage isSessionPersistenceReady={isSessionPersistenceReady} />
       )}

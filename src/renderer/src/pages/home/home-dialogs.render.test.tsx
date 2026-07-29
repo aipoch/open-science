@@ -121,6 +121,7 @@ describe('home dialogs shared chrome', () => {
     const tree = DeleteProjectDialog({
       project: createProject(),
       sessionCount: 2,
+      canDelete: true,
       onCancel,
       onConfirmDelete
     })

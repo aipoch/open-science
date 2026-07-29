@@ -60,7 +60,7 @@ describe('HomePage environment repair notice', () => {
       ])
     })
 
-    await act(async () => root.render(<HomePage />))
+    await act(async () => root.render(<HomePage canDeleteProjects />))
 
     expect(container.querySelector('[aria-label="Open environment repair"]')).toBeNull()
   })
@@ -79,7 +79,7 @@ describe('HomePage environment repair notice', () => {
       openSettingsToPanel
     } as never)
 
-    await act(async () => root.render(<HomePage />))
+    await act(async () => root.render(<HomePage canDeleteProjects />))
 
     const repairButton = container.querySelector<HTMLButtonElement>(
       '[aria-label="Open environment repair"]'
@@ -112,7 +112,7 @@ describe('HomePage environment repair notice', () => {
       openSettingsToPanel
     } as never)
 
-    await act(async () => root.render(<HomePage />))
+    await act(async () => root.render(<HomePage canDeleteProjects />))
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[aria-label="Open environment repair"]')?.click()
     )
@@ -134,7 +134,7 @@ describe('HomePage environment repair notice', () => {
       openSettingsToPanel
     } as never)
 
-    await act(async () => root.render(<HomePage />))
+    await act(async () => root.render(<HomePage canDeleteProjects />))
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[aria-label="Open environment repair"]')?.click()
     )
@@ -156,7 +156,7 @@ describe('HomePage environment repair notice', () => {
       openSettingsToPanel
     } as never)
 
-    await act(async () => root.render(<HomePage />))
+    await act(async () => root.render(<HomePage canDeleteProjects />))
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[aria-label="Open environment repair"]')?.click()
     )
@@ -178,7 +178,7 @@ describe('HomePage environment repair notice', () => {
       openSettingsToPanel
     } as never)
 
-    await act(async () => root.render(<HomePage />))
+    await act(async () => root.render(<HomePage canDeleteProjects />))
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[aria-label="Open environment repair"]')?.click()
     )
