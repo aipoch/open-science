@@ -724,9 +724,11 @@ gate('NotebookKernelExecutor idle-timeout shutdown', () => {
         code: '__SLEEP__',
         timeoutMs: 300
       })
-      await new Promise((resolve) => setTimeout(resolve, 0))
+      await vi.waitFor(
+        () => expect(internals.procs.get(procKeyFor('python'))?.pending).toBeDefined(),
+        { timeout: 1_000, interval: 10 }
+      )
       const proc = internals.procs.get(procKeyFor('python'))
-      expect(proc?.pending).toBeDefined()
 
       // Directly invoke the idle-fire handler as if a stale timer raced past the disarm point:
       // handleIdleTimeout's own `pending` guard must refuse to drop a proc that is mid-request.

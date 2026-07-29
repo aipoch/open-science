@@ -13,6 +13,10 @@ type ArtifactDurabilityOptions = {
   platform?: NodeJS.Platform
 }
 
+// Keep the fs import lazy so test suites that partially mock node:fs/promises can import Artifact
+// repositories without needing an `open` mock unless they actually exercise a durability barrier.
+const defaultOpenHandle: OpenSyncHandle = (path, flags) => open(path, flags)
+
 const syncOpenPath = async (
   openHandle: OpenSyncHandle,
   path: string,
@@ -29,7 +33,7 @@ const syncOpenPath = async (
 export const createArtifactDurability = (
   options: ArtifactDurabilityOptions = {}
 ): ArtifactDurability => {
-  const openHandle = options.openHandle ?? open
+  const openHandle = options.openHandle ?? defaultOpenHandle
   const platform = options.platform ?? process.platform
 
   return {
