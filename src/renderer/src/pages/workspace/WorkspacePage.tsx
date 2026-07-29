@@ -962,9 +962,16 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     closeRenameDialog()
   }
 
+  // Opens destructive Session actions only after startup has restored complete durable authority.
+  const openDeleteDialog = (session: ChatSession): void => {
+    if (!isSessionPersistenceReady) return
+
+    setSessionToDelete(session)
+  }
+
   // Deletes the selected session and repairs the chat surface if it was showing that session.
   const confirmDeleteSession = (): void => {
-    if (!sessionToDelete) return
+    if (!isSessionPersistenceReady || !sessionToDelete) return
 
     const deletedSessionId = sessionToDelete.id
     const isActiveSession = deletedSessionId === selectedSessionId
@@ -1140,7 +1147,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
           sessions={sessions}
           activeSessionId={selectedSessionId}
           canCreateConversation={isSessionPersistenceReady}
-          canModifyConversationMetadata={isSessionPersistenceReady}
+          canMutateConversations={isSessionPersistenceReady}
           onGoHome={goHome}
           onNewConversation={openNewConversation}
           isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
@@ -1151,7 +1158,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
           onTogglePin={(session) => {
             if (isSessionPersistenceReady) togglePinned(session.id)
           }}
-          onDeleteSession={setSessionToDelete}
+          onDeleteSession={openDeleteDialog}
           onOpenSettings={openSettings}
         />
 

@@ -58,13 +58,11 @@ describe('workspace page component boundaries', () => {
     expect(workspacePageSource).toContain('isSessionPersistenceReady')
     expect(workspacePageSource).toContain('isSessionPersistenceReady &&')
     expect(workspacePageSource).toContain('canCreateConversation={isSessionPersistenceReady}')
-    expect(workspacePageSource).toContain(
-      'canModifyConversationMetadata={isSessionPersistenceReady}'
-    )
+    expect(workspacePageSource).toContain('canMutateConversations={isSessionPersistenceReady}')
     expect(workspacePageSource).toContain('canEditDraft={canEditDraft}')
     expect(workspacePageSource).toContain('if (!isSessionPersistenceReady) return')
     expect(workspaceSidebarSource).toContain('disabled={!canCreateConversation}')
-    expect(workspaceSidebarSource).toContain('disabled={!canModifyConversationMetadata}')
+    expect(workspaceSidebarSource).toContain('disabled={!canMutateConversations}')
     expect(conversationPanelSource).toContain('disabled={!canEditDraft}')
   })
 

@@ -27,7 +27,7 @@ type WorkspaceSidebarProps = {
   sessions: ChatSession[]
   activeSessionId: string | undefined
   canCreateConversation: boolean
-  canModifyConversationMetadata: boolean
+  canMutateConversations: boolean
   onGoHome: () => void
   onNewConversation: () => void
   isFilesOpen: boolean
@@ -74,7 +74,7 @@ const WorkspaceSidebar = ({
   sessions,
   activeSessionId,
   canCreateConversation,
-  canModifyConversationMetadata,
+  canMutateConversations,
   onGoHome,
   onNewConversation,
   isFilesOpen,
@@ -230,7 +230,7 @@ const WorkspaceSidebar = ({
                             {/* Pin / Unpin toggles the conversation into or out of the pinned section. */}
                             <DropdownMenuItem
                               className="gap-2"
-                              disabled={!canModifyConversationMetadata}
+                              disabled={!canMutateConversations}
                               onSelect={() => onTogglePin(session)}
                             >
                               <span className={sessionMenuIconClassName}>
@@ -244,7 +244,7 @@ const WorkspaceSidebar = ({
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               className="gap-2"
-                              disabled={!canModifyConversationMetadata}
+                              disabled={!canMutateConversations}
                               onSelect={() => onRenameSession(session)}
                             >
                               <span className={sessionMenuIconClassName}>
@@ -264,6 +264,7 @@ const WorkspaceSidebar = ({
                             {/* Delete uses the project's danger token pair for light surfaces. */}
                             <DropdownMenuItem
                               className="gap-2 text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000"
+                              disabled={!canMutateConversations}
                               onSelect={() => onDeleteSession(session)}
                             >
                               <span className={sessionMenuIconClassName}>

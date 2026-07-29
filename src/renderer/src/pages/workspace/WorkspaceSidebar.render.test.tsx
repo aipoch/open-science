@@ -28,7 +28,7 @@ const renderSidebar = async (sessions: ChatSession[]): Promise<string> => {
       sessions={sessions}
       activeSessionId={sessions[0]?.id}
       canCreateConversation
-      canModifyConversationMetadata
+      canMutateConversations
       onGoHome={vi.fn()}
       onNewConversation={vi.fn()}
       isFilesOpen={false}
@@ -110,7 +110,7 @@ describe('WorkspaceSidebar accessible render', () => {
       sessions,
       activeSessionId: sessions[0].id,
       canCreateConversation: true,
-      canModifyConversationMetadata: true,
+      canMutateConversations: true,
       onGoHome: vi.fn(),
       onNewConversation: vi.fn(),
       isFilesOpen: false,
@@ -153,7 +153,7 @@ describe('WorkspaceSidebar accessible render', () => {
       sessions: [createSession({ id: 'session-a', title: 'Notebook review' })],
       activeSessionId: 'session-a',
       canCreateConversation: true,
-      canModifyConversationMetadata: true,
+      canMutateConversations: true,
       onGoHome: vi.fn(),
       onNewConversation: vi.fn(),
       isFilesOpen: true,
@@ -191,7 +191,7 @@ describe('WorkspaceSidebar accessible render', () => {
       sessions,
       activeSessionId: sessions[0].id,
       canCreateConversation: true,
-      canModifyConversationMetadata: true,
+      canMutateConversations: true,
       onGoHome: vi.fn(),
       onNewConversation: vi.fn(),
       isFilesOpen: false,
@@ -238,7 +238,7 @@ describe('WorkspaceSidebar accessible render', () => {
       sessions,
       activeSessionId: sessions[0].id,
       canCreateConversation: true,
-      canModifyConversationMetadata: true,
+      canMutateConversations: true,
       onGoHome: vi.fn(),
       onNewConversation: vi.fn(),
       isFilesOpen: false,
@@ -265,7 +265,7 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(onTogglePin).toHaveBeenCalledWith(sessions[1])
   })
 
-  it('disables metadata mutations while session persistence is recovering', async () => {
+  it('disables durable session mutations while session persistence is recovering', async () => {
     const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
     const session = createSession({ id: 'session-a', title: 'Notebook review' })
     const tree = WorkspaceSidebar({
@@ -273,7 +273,7 @@ describe('WorkspaceSidebar accessible render', () => {
       sessions: [session],
       activeSessionId: session.id,
       canCreateConversation: false,
-      canModifyConversationMetadata: false,
+      canMutateConversations: false,
       onGoHome: vi.fn(),
       onNewConversation: vi.fn(),
       isFilesOpen: false,
@@ -288,8 +288,10 @@ describe('WorkspaceSidebar accessible render', () => {
     const elements = collectElements(tree)
     const pinItem = elements.find((element) => getTextContent(element).trim() === 'Pin')
     const renameItem = elements.find((element) => getTextContent(element).trim() === 'Rename…')
+    const deleteItem = elements.find((element) => getTextContent(element).trim() === 'Delete')
 
     expect(pinItem?.props.disabled).toBe(true)
     expect(renameItem?.props.disabled).toBe(true)
+    expect(deleteItem?.props.disabled).toBe(true)
   })
 })

@@ -204,10 +204,10 @@ describe('WorkspacePage draft preservation', () => {
     container.remove()
   })
 
-  const renderPage = async (): Promise<void> => {
+  const renderPage = async (isSessionPersistenceReady = true): Promise<void> => {
     root = createRoot(container)
     await act(async () => {
-      root.render(<WorkspacePage isSessionPersistenceReady={true} />)
+      root.render(<WorkspacePage isSessionPersistenceReady={isSessionPersistenceReady} />)
     })
   }
 
@@ -370,6 +370,23 @@ describe('WorkspacePage draft preservation', () => {
     expect(deleteUpload).toHaveBeenCalledWith({ path: attachmentB.path })
     expect(runtime.deleteRuntimeSession).toHaveBeenCalledWith('sess-b')
     expect(conversationProps.draftDoc).toEqual(emptyDoc)
+  })
+
+  it('blocks session deletion while durable persistence is recovering', async () => {
+    await renderPage(false)
+
+    const sessionB = useSessionStore.getState().sessions.find((session) => session.id === 'sess-b')!
+    await act(async () => {
+      sidebarProps.onDeleteSession(sessionB)
+    })
+    await act(async () => {
+      deleteDialogProps.onConfirmDelete()
+    })
+
+    expect(runtime.deleteRuntimeSession).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions).toContainEqual(
+      expect.objectContaining({ id: 'sess-b' })
+    )
   })
 
   it('cancels in-flight and queued transfers before deleting their session draft', async () => {
