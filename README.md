@@ -14,7 +14,7 @@
 
 > ⭐ **Star the repo:** If this project has been helpful, we'd greatly appreciate a star on GitHub. Starring the repository encourages continued development. It only takes a second, but it has a meaningful impact on the project.
 
-> 💡 **The application is available now.** Installers for macOS, Windows, and Linux are published on the [latest release](https://github.com/aipoch/open-science/releases/latest) page. Open Science supports the complete `plan → execute → produce → preview` workflow; use the release notes and the installed app for version-specific details.
+> 💡 **Open Science v0.7.3 released.** A polish and reach release on top of v0.7.2: native context compaction for long sessions, a dark-mode theme, a whole-window find bar, large-file streaming uploads, a Grok (xAI) provider, and framework-aware custom-gateway defaults.
 
 <p align="center">
  <img width="1920" height="1140" alt="img_v3_0213r_31a1e21f-0ec2-4957-a150-62811a9899dg" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />
