@@ -5,7 +5,12 @@ import {
   type LoadAllSessionsResult,
   type PersistedChatSession
 } from '../../../../shared/session-persistence'
-import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
+import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
+import {
+  createInitialSessionState,
+  isExternallyHydratedSession,
+  useSessionStore
+} from '../../stores/session-store'
 import {
   createStoreSaver,
   loadPersistedSessions,
@@ -37,7 +42,7 @@ const createLoadResult = (
 
 const createApi = (overrides: Partial<SessionPersistenceApi> = {}): SessionPersistenceApi => ({
   loadAll: vi.fn().mockResolvedValue(createLoadResult()),
-  saveSession: vi.fn().mockResolvedValue(undefined),
+  saveSession: vi.fn(async (session: PersistedChatSession) => session),
   deleteSession: vi.fn().mockResolvedValue(undefined),
   saveManifest: vi.fn().mockResolvedValue(undefined),
   ...overrides
@@ -262,6 +267,219 @@ describe('renderer session persistence bridge', () => {
     )
   })
 
+  it('applies the path-free durable projection returned by a live save to the originating store', async () => {
+    const legacyPath = '/data/uploads/default-project/session-1/legacy.csv'
+    const legacySession = createPersistedSession({
+      projectId: 'project-a',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Analyze this upload',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'upload-1',
+              sessionId: 'session-1',
+              name: 'legacy.csv',
+              originalName: 'legacy.csv',
+              path: legacyPath,
+              size: 12
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    useSessionStore.getState().hydrateSessions([legacySession])
+    const saveSession = vi.fn(async (submitted: PersistedChatSession) => {
+      const durable = structuredClone(submitted)
+      const versionedUpload = {
+        id: 'upload-1',
+        versionId: 'upload-version-1',
+        versionNumber: 1,
+        sessionId: 'session-1',
+        name: 'legacy.csv',
+        originalName: 'legacy.csv',
+        size: 12,
+        sha256: 'a'.repeat(64)
+      }
+      durable.messages[0].uploads = [versionedUpload]
+      const graphMessage = durable.conversationGraph?.messages.find(
+        (message) => message.id === 'message-1'
+      )
+      if (graphMessage) graphMessage.uploads = [versionedUpload]
+      return durable
+    })
+    const save = createStoreSaver(createApi({ saveSession }), useSessionStore.getState())
+
+    useSessionStore.getState().renameSession('session-1', 'Persist upgraded upload')
+    await save(useSessionStore.getState())
+
+    const stored = useSessionStore.getState().sessions[0]
+    const upload = stored.messages[0].uploads?.[0]
+    expect(upload).toMatchObject({ id: 'upload-1', versionId: 'upload-version-1' })
+    expect(upload).not.toHaveProperty('path')
+    expect(toRuntimeUploadedAttachment(upload!, stored.projectId).path).toBe(
+      'upload-version:project-a/session-1/upload-version-1'
+    )
+    expect(saveSession).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the readable legacy projection in the live store when durable propagation fails', async () => {
+    const legacyPath = '/data/uploads/default-project/session-1/legacy.csv'
+    useSessionStore.getState().hydrateSessions([
+      createPersistedSession({
+        projectId: 'project-a',
+        messages: [
+          {
+            id: 'message-1',
+            role: 'user',
+            content: 'Analyze this upload',
+            status: 'complete',
+            eventIds: [],
+            uploads: [
+              {
+                id: 'upload-1',
+                sessionId: 'session-1',
+                name: 'legacy.csv',
+                originalName: 'legacy.csv',
+                path: legacyPath,
+                size: 12
+              }
+            ],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+    ])
+    const save = createStoreSaver(
+      createApi({ saveSession: vi.fn().mockRejectedValue(new Error('IPC propagation failed')) }),
+      useSessionStore.getState()
+    )
+
+    useSessionStore.getState().renameSession('session-1', 'Save will fail')
+    await expect(save(useSessionStore.getState())).rejects.toThrow('IPC propagation failed')
+
+    const upload = useSessionStore.getState().sessions[0].messages[0].uploads?.[0]
+    expect(upload).toMatchObject({ path: legacyPath })
+    expect(upload).not.toHaveProperty('versionId')
+  })
+
+  it('merges a delayed durable Upload identity without overwriting a newer live message', () => {
+    const legacyPath = '/data/uploads/default-project/session-1/legacy.csv'
+    const persisted = createPersistedSession({
+      projectId: 'project-a',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Analyze this upload',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'upload-1',
+              sessionId: 'session-1',
+              name: 'legacy.csv',
+              originalName: 'legacy.csv',
+              path: legacyPath,
+              size: 12
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    useSessionStore.getState().hydrateSessions([persisted])
+    const source = useSessionStore.getState().sessions[0]
+    const durable = structuredClone(persisted)
+    durable.messages[0].uploads = [
+      {
+        id: 'upload-1',
+        versionId: 'upload-version-1',
+        versionNumber: 1,
+        sessionId: 'session-1',
+        name: 'legacy.csv',
+        originalName: 'legacy.csv',
+        size: 12,
+        sha256: 'a'.repeat(64)
+      }
+    ]
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Newer live message',
+      projectId: 'project-a'
+    })
+    useSessionStore.getState().applyDurableSessionProjection({ source, session: durable })
+
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.messages.map((message) => message.content)).toEqual([
+      'Analyze this upload',
+      'Newer live message'
+    ])
+    expect(projected.messages[0].uploads?.[0]).toMatchObject({
+      versionId: 'upload-version-1'
+    })
+    expect(
+      projected.conversationGraph?.messages.find((message) => message.id === 'message-1')
+        ?.uploads?.[0]
+    ).toMatchObject({ versionId: 'upload-version-1' })
+    expect(isExternallyHydratedSession(projected)).toBe(true)
+  })
+
+  it('accepts an equal-revision Upload Version from another lifecycle client', () => {
+    const persisted = createPersistedSession({
+      projectId: 'project-a',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Analyze this upload',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'upload-1',
+              sessionId: 'session-1',
+              name: 'legacy.csv',
+              originalName: 'legacy.csv',
+              path: '/data/uploads/default-project/session-1/legacy.csv',
+              size: 12
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    useSessionStore.getState().hydrateSessions([persisted])
+    const durable = structuredClone(persisted)
+    durable.messages[0].uploads = [
+      {
+        id: 'upload-1',
+        versionId: 'upload-version-1',
+        versionNumber: 1,
+        sessionId: 'session-1',
+        name: 'legacy.csv',
+        originalName: 'legacy.csv',
+        size: 12,
+        sha256: 'a'.repeat(64)
+      }
+    ]
+
+    useSessionStore.getState().upsertPersistedSession(durable)
+
+    expect(useSessionStore.getState().sessions[0].messages[0].uploads?.[0]).toMatchObject({
+      versionId: 'upload-version-1'
+    })
+  })
+
   it('does not infer durable deletion from sessions removed from the store', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
@@ -308,8 +526,8 @@ describe('renderer session persistence bridge', () => {
   })
 
   it('queues writes so later snapshots do not resolve before earlier ones', async () => {
-    const firstSave = createDeferred<void>()
-    const secondSave = createDeferred<void>()
+    const firstSave = createDeferred<PersistedChatSession>()
+    const secondSave = createDeferred<PersistedChatSession>()
     const saveSession = vi
       .fn()
       .mockReturnValueOnce(firstSave.promise)
@@ -343,11 +561,11 @@ describe('renderer session persistence bridge', () => {
     await flushMicrotasks()
     expect(saveSession).toHaveBeenCalledTimes(1)
 
-    firstSave.resolve()
+    firstSave.resolve(saveSession.mock.calls[0][0])
     await flushMicrotasks()
     expect(saveSession).toHaveBeenCalledTimes(2)
 
-    secondSave.resolve()
+    secondSave.resolve(saveSession.mock.calls[1][0])
     await flushMicrotasks()
   })
 })

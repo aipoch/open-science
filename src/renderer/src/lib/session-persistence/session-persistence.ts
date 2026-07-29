@@ -17,7 +17,7 @@ import type { ChatSession } from '../../stores/session-store'
 
 type SessionPersistenceApi = {
   loadAll: () => Promise<LoadAllSessionsResult>
-  saveSession: (session: PersistedChatSession) => Promise<void>
+  saveSession: (session: PersistedChatSession) => Promise<PersistedChatSession>
   deleteSession: (request: DeleteSessionRequest) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
@@ -149,7 +149,13 @@ const createStoreSaver = (
       ) {
         const persisted = toPersistedSession(session)
 
-        tasks.push(() => api.saveSession(persisted))
+        tasks.push(async () => {
+          const durableSession = await api.saveSession(persisted)
+          useSessionStore.getState().applyDurableSessionProjection({
+            source: session,
+            session: durableSession
+          })
+        })
       }
     }
 

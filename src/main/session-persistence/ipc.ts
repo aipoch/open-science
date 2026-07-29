@@ -16,15 +16,18 @@ import { withDataRootWrite } from '../storage/migration-state'
 
 type SessionPersistenceBackend = {
   loadAll: () => Promise<LoadAllSessionsResult>
-  saveSession: (session: PersistedChatSession) => Promise<boolean>
+  saveSession: (
+    session: PersistedChatSession
+  ) => Promise<{ created: boolean; session: PersistedChatSession }>
   deleteSession: (projectId: string, sessionId: string) => Promise<void>
-  deleteProjectSessions: (projectId: string) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
 
 type SessionPersistenceHandlers = {
   loadAll: () => Promise<LoadAllSessionsResult>
-  saveSession: (session: PersistedChatSession) => Promise<boolean>
+  saveSession: (
+    session: PersistedChatSession
+  ) => Promise<{ created: boolean; session: PersistedChatSession }>
   deleteSession: (request: DeleteSessionRequest) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
@@ -66,15 +69,16 @@ const registerSessionPersistenceIpcHandlers = (
   // Hold the shared data-root lease at the IPC boundary so migration drains the complete operation.
   ipcMain.handle('sessions:load-all', () => withDataRootWrite(() => handlers.loadAll()))
   ipcMain.handle('sessions:save-session', async (event, session: PersistedChatSession) => {
-    await withDataRootWrite(async () => {
-      const created = await handlers.saveSession(session)
+    return withDataRootWrite(async () => {
+      const result = await handlers.saveSession(session)
       broadcastLifecycleEvent(
-        created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,
+        result.created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,
         {
-          session,
+          session: result.session,
           originClientId: getLifecycleClientId(event)
         }
       )
+      return result.session
     })
   })
   ipcMain.handle('sessions:delete-session', async (_event, request: DeleteSessionRequest) => {

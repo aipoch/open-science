@@ -1,13 +1,33 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createUploadVersionReference, PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
+import {
+  createUploadVersionReference,
+  PENDING_UPLOAD_SESSION_ID,
+  type PersistedUploadedAttachment
+} from '../../shared/uploads'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
-import { UploadRepository } from './repository'
+import {
+  OrphanLegacyUploadAuthorityMissingError,
+  UnsafeLegacyUploadResidualError,
+  UploadRepository
+} from './repository'
 import { stageUploadFixtures } from './repository.test-utils'
 
 let storageRoot: string | undefined
@@ -17,6 +37,73 @@ const createStorageRoot = async (): Promise<string> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-uploads-'))
   return storageRoot
 }
+
+const createSessionWithGraphUpload = (
+  primaryUpload: PersistedUploadedAttachment,
+  graphUpload: PersistedUploadedAttachment
+): PersistedChatSession => ({
+  id: 'session-1',
+  projectId: 'project-1',
+  title: 'Conflicting Upload references',
+  cwd: '/workspace',
+  status: 'idle',
+  messages: [
+    {
+      id: 'message-primary',
+      role: 'user',
+      content: 'Primary upload',
+      status: 'complete',
+      eventIds: [],
+      uploads: [primaryUpload],
+      createdAt: 1,
+      updatedAt: 1
+    }
+  ],
+  conversationGraph: {
+    schemaVersion: 1,
+    rootFrameId: 'frame-root',
+    activeFrameId: 'frame-root',
+    frames: [
+      {
+        id: 'frame-root',
+        originBindingState: 'root',
+        kind: 'root',
+        status: 'completed',
+        activeBranchId: 'branch-root',
+        createdAt: 1,
+        completedAt: 1
+      }
+    ],
+    branches: [
+      {
+        id: 'branch-root',
+        agentFrameId: 'frame-root',
+        headMessageId: 'message-graph',
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    messages: [
+      {
+        id: 'message-graph',
+        agentFrameId: 'frame-root',
+        introducedOnBranchId: 'branch-root',
+        role: 'user',
+        content: 'Graph upload',
+        status: 'complete',
+        eventIds: [],
+        uploads: [graphUpload],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    activities: [],
+    activityGroups: [],
+    runtimeSegments: []
+  },
+  createdAt: 1,
+  updatedAt: 1
+})
 
 afterEach(async () => {
   await disconnect?.()
@@ -494,8 +581,11 @@ describe('upload repository', () => {
       'content'
     ].join('/')
     const finalPath = join(root, ...storageKey.split('/'))
+    const legacyPath = join(root, 'uploads', 'default-project', 'session-1', 'renamed.txt')
+    await mkdir(dirname(legacyPath), { recursive: true })
     await mkdir(dirname(finalPath), { recursive: true })
-    await writeFile(finalPath, content)
+    await writeFile(legacyPath, content)
+    await rename(legacyPath, finalPath)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
@@ -524,6 +614,8 @@ describe('upload repository', () => {
 
     await repository.recoverStagingUploads()
 
+    await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(finalPath)).resolves.toEqual(content)
     await expect(
       client.uploadVersion.findUniqueOrThrow({ where: { id: versionId } })
     ).resolves.toMatchObject({ state: 'ready' })
@@ -538,6 +630,67 @@ describe('upload repository', () => {
         }
       })
     ).resolves.toMatchObject({ sourceVersionId: versionId })
+  })
+
+  it('recovers and removes a deterministic live-copy temp left before its final rename', async () => {
+    const root = await createStorageRoot()
+    const client = createProjectDbClient(root)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
+    const content = Buffer.from('copied before crash')
+    const checksum = createHash('sha256').update(content).digest('hex')
+    const versionId = 'upload-version-live-copy-crash'
+    const storageKey = [
+      'uploads',
+      'project-1',
+      'session-1',
+      'upload-live-copy-crash',
+      'versions',
+      versionId,
+      'content'
+    ].join('/')
+    const finalPath = join(root, ...storageKey.split('/'))
+    const temporaryPath = `${finalPath}.live-copy.tmp`
+    const legacyPath = join(root, 'uploads', 'default-project', 'session-1', 'legacy.txt')
+    await mkdir(dirname(finalPath), { recursive: true })
+    await mkdir(dirname(legacyPath), { recursive: true })
+    await writeFile(temporaryPath, content)
+    await writeFile(legacyPath, content)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-live-copy-crash',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename: 'legacy.txt',
+        originalFilename: 'legacy.txt',
+        versions: {
+          create: {
+            id: versionId,
+            versionNumber: 1,
+            state: 'staging',
+            contentStorageKey: storageKey,
+            filename: 'legacy.txt',
+            originalFilename: 'legacy.txt',
+            contentType: 'text/plain',
+            sizeBytes: BigInt(content.byteLength),
+            checksum
+          }
+        }
+      }
+    })
+
+    await repository.recoverStagingUploads()
+
+    await expect(readFile(finalPath)).resolves.toEqual(content)
+    await expect(readFile(temporaryPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(legacyPath)).resolves.toEqual(content)
+    await expect(
+      client.uploadVersion.findUniqueOrThrow({ where: { id: versionId } })
+    ).resolves.toMatchObject({ state: 'ready' })
   })
 
   it('upgrades a legacy session upload before writing a path-free Session projection', async () => {
@@ -589,14 +742,653 @@ describe('upload repository', () => {
       versionNumber: 1,
       sha256: '5fe3f7b7e3492c63599954312dcb1e1d78488782753b6d3068c8d03292c7c1f6'
     })
-    expect(upload?.versionId).toMatch(/^[0-9a-f-]{36}$/u)
+    const versionId = upload?.versionId
+    expect(versionId).toMatch(/^[0-9a-f-]{36}$/u)
+    if (!versionId) throw new Error('Legacy upload upgrade did not create a Version identity.')
     expect(upload).not.toHaveProperty('path')
     expect(upload).not.toHaveProperty('createdAt')
-    await expect(readFile(legacyPath, 'utf8')).resolves.toBe('sample,value\na,1\n')
+    await expect(readFile(legacyPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     const version = await client.uploadVersion.findUniqueOrThrow({
-      where: { id: upload?.versionId }
+      where: { id: versionId }
     })
     expect(version).toMatchObject({ state: 'ready', createdAt: null })
+
+    const preview = await repository.readManagedUploadPreview({
+      path: createUploadVersionReference(versionId, {
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      }),
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      encoding: 'utf8'
+    })
+    expect(preview.content).toBe('sample,value\na,1\n')
+
+    // A crash before Session JSON persistence leaves the original path-only projection on disk.
+    // Retrying it must recover from the already-ready Version without recreating legacy bytes.
+    const retried = await repository.upgradeLegacySessionUploads(session)
+    expect(retried.messages[0].uploads?.[0]?.versionId).toBe(versionId)
+    await expect(
+      client.uploadVersion.count({ where: { uploadFileId: 'legacy-upload-1' } })
+    ).resolves.toBe(1)
+    await expect(readFile(legacyPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('preserves the live legacy source until a later reconciliation observes the path-free projection', async () => {
+    const root = await createStorageRoot()
+    const client = createProjectDbClient(root)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
+    const content = 'sample,value\na,1\n'
+    const legacyPath = join(root, 'uploads', 'default-project', 'session-1', 'legacy.csv')
+    await mkdir(dirname(legacyPath), { recursive: true })
+    await writeFile(legacyPath, content)
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Live legacy upload',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Inspect this',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'legacy-upload-live',
+              sessionId: 'session-1',
+              name: 'legacy.csv',
+              originalName: 'legacy.csv',
+              path: legacyPath,
+              mimeType: 'text/csv',
+              size: Buffer.byteLength(content)
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    const durable = await repository.upgradeLegacySessionUploads(session, { mode: 'live-save' })
+    const versionId = durable.messages[0].uploads?.[0]?.versionId
+
+    expect(versionId).toBeTruthy()
+    expect(durable.messages[0].uploads?.[0]).not.toHaveProperty('path')
+    await expect(readFile(legacyPath, 'utf8')).resolves.toBe(content)
+    await expect(
+      repository.readManagedUploadPreview({
+        path: createUploadVersionReference(versionId!, {
+          projectId: 'project-1',
+          sessionId: 'session-1'
+        }),
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        encoding: 'utf8'
+      })
+    ).resolves.toMatchObject({ content })
+
+    await repository.upgradeLegacySessionUploads(durable)
+
+    await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('retains orphan bytes without authority but drops a positively absent legacy reference', async () => {
+    const root = await createStorageRoot()
+    const client = createProjectDbClient(root)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
+    const content = 'sample,value\na,1\n'
+    const legacyPath = join(root, 'uploads', 'default-project', 'session-1', 'legacy.csv')
+    await mkdir(dirname(legacyPath), { recursive: true })
+    await writeFile(legacyPath, content)
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Orphaned legacy upload',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Inspect this',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'missing-upload-authority',
+              sessionId: 'session-1',
+              name: 'legacy.csv',
+              originalName: 'legacy.csv',
+              path: legacyPath,
+              mimeType: 'text/csv',
+              size: Buffer.byteLength(content)
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    await expect(
+      repository.upgradeLegacySessionUploads(session, { mode: 'orphan-recovery' })
+    ).rejects.toThrow(/legacy Upload authority is unavailable/i)
+
+    await expect(readFile(legacyPath, 'utf8')).resolves.toBe(content)
+    await expect(
+      client.uploadFile.findUnique({ where: { id: 'missing-upload-authority' } })
+    ).resolves.toBeNull()
+    await expect(client.uploadVersion.count()).resolves.toBe(0)
+    await expect(client.managedFile.count()).resolves.toBe(0)
+
+    await rm(legacyPath)
+    const versionsRoot = join(
+      root,
+      'uploads',
+      'project-1',
+      'session-1',
+      'missing-upload-authority',
+      'versions'
+    )
+    const externalEmptyDir = join(root, 'external-empty')
+    await mkdir(dirname(versionsRoot), { recursive: true })
+    await mkdir(externalEmptyDir)
+    await symlink(externalEmptyDir, versionsRoot)
+    await expect(
+      repository.upgradeLegacySessionUploads(session, { mode: 'orphan-recovery' })
+    ).rejects.toThrow(/legacy Upload authority is unavailable/i)
+    await rm(versionsRoot)
+
+    const liveCopyPath = join(versionsRoot, 'unknown-version', 'content.live-copy.tmp')
+    await mkdir(dirname(liveCopyPath), { recursive: true })
+    await writeFile(liveCopyPath, content)
+    await expect(
+      repository.upgradeLegacySessionUploads(session, { mode: 'orphan-recovery' })
+    ).rejects.toThrow(/legacy Upload authority is unavailable/i)
+    await rm(liveCopyPath)
+
+    const cleaned = await repository.upgradeLegacySessionUploads(session, {
+      mode: 'orphan-recovery'
+    })
+
+    expect(cleaned.messages[0].uploads).toEqual([])
+    await expect(
+      client.uploadFile.findUnique({ where: { id: 'missing-upload-authority' } })
+    ).resolves.toBeNull()
+  })
+
+  it('rejects conflicting orphan locators before a cached absence can drop graph bytes', async () => {
+    const root = await createStorageRoot()
+    const client = createProjectDbClient(root)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
+    const uploadId = 'conflicting-orphan-upload'
+    const absentPath = join(root, 'uploads', 'default-project', 'session-1', 'absent.csv')
+    const presentPath = join(root, 'uploads', 'default-project', 'session-1', 'present.csv')
+    const presentContent = Buffer.from('present graph bytes')
+    await mkdir(dirname(presentPath), { recursive: true })
+    await writeFile(presentPath, presentContent)
+    const primaryUpload: PersistedUploadedAttachment = {
+      id: uploadId,
+      sessionId: 'session-1',
+      name: 'absent.csv',
+      originalName: 'absent.csv',
+      path: absentPath,
+      mimeType: 'text/csv',
+      size: presentContent.byteLength
+    }
+    const graphUpload: PersistedUploadedAttachment = {
+      ...primaryUpload,
+      name: 'present.csv',
+      originalName: 'present.csv',
+      path: presentPath
+    }
+    const session = createSessionWithGraphUpload(primaryUpload, graphUpload)
+
+    let rejection: unknown
+    try {
+      await repository.upgradeLegacySessionUploads(session, { mode: 'orphan-recovery' })
+    } catch (error) {
+      rejection = error
+    }
+
+    expect(rejection).toBeInstanceOf(Error)
+    expect(rejection).not.toBeInstanceOf(OrphanLegacyUploadAuthorityMissingError)
+    expect((rejection as Error).message).toMatch(/conflicting immutable identity/i)
+    expect(session.messages[0].uploads?.[0]?.path).toBe(absentPath)
+    expect(session.conversationGraph?.messages[0].uploads?.[0]?.path).toBe(presentPath)
+    await expect(readFile(presentPath)).resolves.toEqual(presentContent)
+    await expect(readFile(absentPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(client.uploadFile.count()).resolves.toBe(0)
+    await expect(client.uploadVersion.count()).resolves.toBe(0)
+    await expect(client.managedFile.count()).resolves.toBe(0)
+    await expect(client.managedFileSessionSync.count()).resolves.toBe(0)
+    await expect(client.fileOriginSession.count()).resolves.toBe(0)
+  })
+
+  it('rejects conflicting authoritative locators before publishing or rewriting either reference', async () => {
+    const root = await createStorageRoot()
+    const client = createProjectDbClient(root)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
+    const uploadId = 'conflicting-existing-upload'
+    const versionId = 'conflicting-existing-version'
+    const firstContent = Buffer.from('first locator bytes')
+    const secondContent = Buffer.from('second locator bytes')
+    const checksum = createHash('sha256').update(firstContent).digest('hex')
+    const firstPath = join(root, 'uploads', 'default-project', 'session-1', 'first.csv')
+    const secondPath = join(root, 'uploads', 'default-project', 'session-1', 'second.csv')
+    const contentStorageKey = [
+      'uploads',
+      'project-1',
+      'session-1',
+      uploadId,
+      'versions',
+      versionId,
+      'content'
+    ].join('/')
+    const finalPath = join(root, ...contentStorageKey.split('/'))
+    await mkdir(dirname(firstPath), { recursive: true })
+    await writeFile(firstPath, firstContent)
+    await writeFile(secondPath, secondContent)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: uploadId,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename: 'first.csv',
+        originalFilename: 'first.csv',
+        versions: {
+          create: {
+            id: versionId,
+            versionNumber: 1,
+            state: 'staging',
+            contentStorageKey,
+            filename: 'first.csv',
+            originalFilename: 'first.csv',
+            contentType: 'text/csv',
+            sizeBytes: BigInt(firstContent.byteLength),
+            checksum
+          }
+        }
+      }
+    })
+    const primaryUpload: PersistedUploadedAttachment = {
+      id: uploadId,
+      sessionId: 'session-1',
+      name: 'first.csv',
+      originalName: 'first.csv',
+      path: firstPath,
+      mimeType: 'text/csv',
+      size: firstContent.byteLength
+    }
+    const graphUpload: PersistedUploadedAttachment = {
+      ...primaryUpload,
+      name: 'second.csv',
+      originalName: 'second.csv',
+      path: secondPath,
+      size: secondContent.byteLength
+    }
+    const session = createSessionWithGraphUpload(primaryUpload, graphUpload)
+
+    let rejection: unknown
+    try {
+      await repository.upgradeLegacySessionUploads(session, { mode: 'orphan-recovery' })
+    } catch (error) {
+      rejection = error
+    }
+
+    expect(rejection).toBeInstanceOf(Error)
+    expect(rejection).not.toBeInstanceOf(OrphanLegacyUploadAuthorityMissingError)
+    expect((rejection as Error).message).toMatch(/conflicting immutable identity/i)
+    expect(session.messages[0].uploads?.[0]?.path).toBe(firstPath)
+    expect(session.conversationGraph?.messages[0].uploads?.[0]?.path).toBe(secondPath)
+    await expect(readFile(firstPath)).resolves.toEqual(firstContent)
+    await expect(readFile(secondPath)).resolves.toEqual(secondContent)
+    await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      client.uploadVersion.findUniqueOrThrow({ where: { id: versionId } })
+    ).resolves.toMatchObject({ state: 'staging' })
+    await expect(client.uploadFile.count()).resolves.toBe(1)
+    await expect(client.uploadVersion.count()).resolves.toBe(1)
+    await expect(client.managedFile.count()).resolves.toBe(0)
+    await expect(client.managedFileSessionSync.count()).resolves.toBe(0)
+    await expect(client.fileOriginSession.count()).resolves.toBe(1)
+  })
+
+  it('removes a verified legacy copy when reusing an existing ready Upload Version', async () => {
+    const root = await createStorageRoot()
+    const client = createProjectDbClient(root)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
+    const content = Buffer.from('sample,value\na,1\n')
+    const checksum = '5fe3f7b7e3492c63599954312dcb1e1d78488782753b6d3068c8d03292c7c1f6'
+    const versionId = 'legacy-ready-version-1'
+    const contentStorageKey = [
+      'uploads',
+      'project-1',
+      'session-1',
+      'legacy-upload-ready',
+      'versions',
+      versionId,
+      'content'
+    ].join('/')
+    const finalPath = join(root, ...contentStorageKey.split('/'))
+    const legacyPath = join(root, 'uploads', 'default-project', 'session-1', 'legacy.csv')
+    const cleanupPrivateDir = `${legacyPath}.legacy-cleanup.private`
+    const cleanupPrivatePath = join(cleanupPrivateDir, 'candidate')
+    const unrelatedPath = join(root, 'uploads', 'default-project', 'session-1', 'other.csv')
+    await mkdir(dirname(finalPath), { recursive: true })
+    await mkdir(dirname(legacyPath), { recursive: true })
+    await writeFile(finalPath, content)
+    await writeFile(legacyPath, content)
+    await writeFile(unrelatedPath, content)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: 'legacy-upload-ready',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename: 'legacy.csv',
+        originalFilename: 'legacy.csv',
+        versions: {
+          create: {
+            id: versionId,
+            versionNumber: 1,
+            state: 'ready',
+            contentStorageKey,
+            filename: 'legacy.csv',
+            originalFilename: 'legacy.csv',
+            contentType: 'text/csv',
+            sizeBytes: BigInt(content.byteLength),
+            checksum
+          }
+        }
+      }
+    })
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Legacy ready upload',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Inspect this',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'legacy-upload-ready',
+              sessionId: 'session-1',
+              name: 'legacy.csv',
+              originalName: 'legacy.csv',
+              path: legacyPath,
+              mimeType: 'text/csv',
+              size: content.byteLength
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    const upgraded = await repository.upgradeLegacySessionUploads(session)
+
+    expect(upgraded.messages[0].uploads?.[0]?.versionId).toBe(versionId)
+    await expect(
+      client.uploadVersion.count({ where: { uploadFileId: 'legacy-upload-ready' } })
+    ).resolves.toBe(1)
+    await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(finalPath)).resolves.toEqual(content)
+    await expect(readFile(unrelatedPath)).resolves.toEqual(content)
+    await expect(
+      repository.readManagedUploadPreview({
+        path: createUploadVersionReference(versionId, {
+          projectId: 'project-1',
+          sessionId: 'session-1'
+        }),
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        encoding: 'utf8'
+      })
+    ).resolves.toMatchObject({ content: content.toString('utf8') })
+
+    await writeFile(legacyPath, content)
+    const reconciled = await repository.upgradeLegacySessionUploads(upgraded)
+    expect(reconciled.messages[0].uploads?.[0]?.versionId).toBe(versionId)
+    await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(finalPath)).resolves.toEqual(content)
+
+    await expect(repository.upgradeLegacySessionUploads(reconciled)).resolves.toMatchObject({
+      messages: [{ uploads: [{ versionId }] }]
+    })
+    await expect(readFile(unrelatedPath)).resolves.toEqual(content)
+
+    const replacement = Buffer.from('different bytes at the historical path')
+    await writeFile(legacyPath, replacement)
+    await expect(repository.upgradeLegacySessionUploads(reconciled)).resolves.toMatchObject({
+      messages: [{ uploads: [{ versionId }] }]
+    })
+    await expect(readFile(legacyPath)).resolves.toEqual(replacement)
+    await expect(readFile(finalPath)).resolves.toEqual(content)
+    await expect(
+      repository.upgradeLegacySessionUploads(reconciled, { mode: 'terminal-delete' })
+    ).rejects.toBeInstanceOf(UnsafeLegacyUploadResidualError)
+    await expect(readFile(legacyPath)).resolves.toEqual(replacement)
+
+    await writeFile(legacyPath, content)
+    const disappearingSourceRepository = new UploadRepository(root, {
+      getClient: () => Promise.resolve(client),
+      getLegacyFileChecksum: async (path) => {
+        await rm(path, { force: true })
+        throw Object.assign(new Error('Legacy source disappeared during verification.'), {
+          code: 'ENOENT'
+        })
+      }
+    })
+    await expect(
+      disappearingSourceRepository.upgradeLegacySessionUploads(reconciled)
+    ).resolves.toMatchObject({ messages: [{ uploads: [{ versionId }] }] })
+    await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(finalPath)).resolves.toEqual(content)
+
+    await writeFile(legacyPath, content)
+    const displacedLegacyPath = `${legacyPath}.verified-before-race`
+    const renameRaceReplacement = Buffer.from('replacement installed after legacy verification')
+    const renameRaceRepository = new UploadRepository(root, {
+      getClient: () => Promise.resolve(client),
+      renameLegacyForCleanup: async (source, destination) => {
+        await rename(source, displacedLegacyPath)
+        await writeFile(source, renameRaceReplacement)
+        await rename(source, destination)
+      }
+    })
+
+    await expect(
+      renameRaceRepository.upgradeLegacySessionUploads(reconciled)
+    ).resolves.toMatchObject({ messages: [{ uploads: [{ versionId }] }] })
+    await expect(readFile(legacyPath)).resolves.toEqual(renameRaceReplacement)
+    await expect(readFile(displacedLegacyPath)).resolves.toEqual(content)
+    await expect(stat(cleanupPrivateDir)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(readFile(finalPath)).resolves.toEqual(content)
+
+    await writeFile(legacyPath, content)
+    const sameInodeReplacement = Buffer.alloc(content.byteLength, 'x')
+    const inPlaceRaceRepository = new UploadRepository(root, {
+      getClient: () => Promise.resolve(client),
+      renameLegacyForCleanup: async (source, destination) => {
+        await writeFile(source, sameInodeReplacement)
+        await rename(source, destination)
+      }
+    })
+
+    await expect(
+      inPlaceRaceRepository.upgradeLegacySessionUploads(reconciled)
+    ).resolves.toMatchObject({ messages: [{ uploads: [{ versionId }] }] })
+    await expect(readFile(legacyPath)).resolves.toEqual(sameInodeReplacement)
+    await expect(stat(cleanupPrivateDir)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(readFile(finalPath)).resolves.toEqual(content)
+
+    await writeFile(legacyPath, content)
+    const collidingPrivateBytes = Buffer.from('concurrent private claim')
+    const privateClaimRaceRepository = new UploadRepository(root, {
+      getClient: () => Promise.resolve(client),
+      getLegacyFileChecksum: async () => {
+        await mkdir(cleanupPrivateDir)
+        await writeFile(cleanupPrivatePath, collidingPrivateBytes)
+        return checksum
+      }
+    })
+
+    await expect(
+      privateClaimRaceRepository.upgradeLegacySessionUploads(reconciled)
+    ).rejects.toThrow(/private claim is already occupied/i)
+    await expect(readFile(cleanupPrivatePath)).resolves.toEqual(collidingPrivateBytes)
+    await expect(readFile(legacyPath)).resolves.toEqual(content)
+    await expect(readFile(finalPath)).resolves.toEqual(content)
+    await rm(cleanupPrivateDir, { recursive: true, force: true })
+
+    await writeFile(legacyPath, content)
+    const crashAfterRename = new Error('simulated crash after legacy quarantine rename')
+    const crashRepository = new UploadRepository(root, {
+      getClient: () => Promise.resolve(client),
+      renameLegacyForCleanup: async (source, destination) => {
+        await rename(source, destination)
+        throw crashAfterRename
+      }
+    })
+
+    await expect(crashRepository.upgradeLegacySessionUploads(reconciled)).rejects.toBe(
+      crashAfterRename
+    )
+    await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(cleanupPrivatePath)).resolves.toEqual(content)
+
+    const recoveryRepository = new UploadRepository(root, {
+      getClient: () => Promise.resolve(client)
+    })
+    await expect(recoveryRepository.upgradeLegacySessionUploads(reconciled)).resolves.toMatchObject(
+      {
+        messages: [{ uploads: [{ versionId }] }]
+      }
+    )
+    await expect(readFile(cleanupPrivatePath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(cleanupPrivateDir)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(finalPath)).resolves.toEqual(content)
+
+    await writeFile(legacyPath, content)
+    const sameContentDisplacedPath = `${legacyPath}.same-content-crash-original`
+    let replacementIdentity: Awaited<ReturnType<typeof lstat>> | undefined
+    const sameContentCrash = new Error('simulated crash before private inode revalidation')
+    const sameContentCrashRepository = new UploadRepository(root, {
+      getClient: () => Promise.resolve(client),
+      renameLegacyForCleanup: async (source, destination) => {
+        await rename(source, sameContentDisplacedPath)
+        await writeFile(source, content)
+        replacementIdentity = await lstat(source)
+        await rename(source, destination)
+        throw sameContentCrash
+      }
+    })
+
+    await expect(sameContentCrashRepository.upgradeLegacySessionUploads(reconciled)).rejects.toBe(
+      sameContentCrash
+    )
+    await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(cleanupPrivatePath)).resolves.toEqual(content)
+
+    let reverifiedIdentity: Awaited<ReturnType<typeof lstat>> | undefined
+    const witnessResetRepository = new UploadRepository(root, {
+      getClient: () => Promise.resolve(client),
+      getLegacyFileChecksum: async (path) => {
+        reverifiedIdentity = await lstat(path)
+        return checksum
+      }
+    })
+    await expect(
+      witnessResetRepository.upgradeLegacySessionUploads(reconciled)
+    ).resolves.toMatchObject({ messages: [{ uploads: [{ versionId }] }] })
+    expect(replacementIdentity).toBeDefined()
+    expect(reverifiedIdentity?.dev).toBe(replacementIdentity?.dev)
+    expect(reverifiedIdentity?.ino).toBe(replacementIdentity?.ino)
+    await expect(readFile(sameContentDisplacedPath)).resolves.toEqual(content)
+    await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(cleanupPrivateDir)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(finalPath)).resolves.toEqual(content)
+
+    const isolatedPrivateBytes = Buffer.from('unverified quarantined bytes')
+    await mkdir(cleanupPrivateDir)
+    await writeFile(cleanupPrivatePath, isolatedPrivateBytes)
+    await writeFile(legacyPath, renameRaceReplacement)
+    await expect(
+      recoveryRepository.upgradeLegacySessionUploads(reconciled, { mode: 'terminal-delete' })
+    ).rejects.toThrow(/could not safely restore a private candidate/i)
+    await expect(readFile(cleanupPrivatePath)).resolves.toEqual(isolatedPrivateBytes)
+    await expect(readFile(legacyPath)).resolves.toEqual(renameRaceReplacement)
+    await expect(readFile(finalPath)).resolves.toEqual(content)
+
+    const missingVersionPath = join(root, 'uploads', 'default-project', 'session-1', 'missing.csv')
+    await writeFile(missingVersionPath, content)
+    const pathFreeUpload = reconciled.messages[0].uploads?.[0]
+    if (!pathFreeUpload) throw new Error('Expected the reconciled path-free Upload projection.')
+    const missingVersionSession: PersistedChatSession = {
+      ...reconciled,
+      messages: [
+        {
+          ...reconciled.messages[0],
+          uploads: [
+            {
+              ...pathFreeUpload,
+              id: 'missing-upload',
+              versionId: 'missing-version',
+              name: 'missing.csv',
+              originalName: 'missing.csv'
+            }
+          ]
+        }
+      ]
+    }
+    await expect(repository.upgradeLegacySessionUploads(missingVersionSession)).rejects.toThrow(
+      /Version authority is unavailable/i
+    )
+    await expect(readFile(missingVersionPath)).resolves.toEqual(content)
+
+    await writeFile(legacyPath, content)
+    const unavailableAuthorityRepository = new UploadRepository(root, {
+      getClient: () => Promise.reject(new Error('Upload authority unavailable.'))
+    })
+    await expect(
+      unavailableAuthorityRepository.upgradeLegacySessionUploads(reconciled)
+    ).rejects.toThrow('Upload authority unavailable.')
   })
 
   it('reads bounded previews only from managed uploads', async () => {

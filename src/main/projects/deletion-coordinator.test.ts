@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ProjectDeletionCoordinator, type ProjectDeletionRepository } from './deletion-coordinator'
+import {
+  ProjectDeletionCoordinator,
+  type ProjectDeletionRepository,
+  type ProjectSessionDeletion
+} from './deletion-coordinator'
 import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 
 afterEach(() => clearMigrationPending())
@@ -17,11 +21,9 @@ const project = {
 describe('ProjectDeletionCoordinator', () => {
   it('rejects deletion recovery while a data-root migration is pending', async () => {
     const projects = createProjects()
-    const coordinator = new ProjectDeletionCoordinator(
-      projects,
-      { deleteProjectSessions: vi.fn().mockResolvedValue(undefined) },
-      { delete: vi.fn().mockResolvedValue(undefined) }
-    )
+    const coordinator = new ProjectDeletionCoordinator(projects, createSessions(), {
+      delete: vi.fn().mockResolvedValue(undefined)
+    })
     beginMigration()
 
     await expect(coordinator.recoverPendingDeletions()).rejects.toThrow(/moving your data/i)
@@ -30,7 +32,7 @@ describe('ProjectDeletionCoordinator', () => {
 
   it('deletes the project row, sessions, index, and preview state', async () => {
     const projects = createProjects()
-    const sessions = { deleteProjectSessions: vi.fn().mockResolvedValue(undefined) }
+    const sessions = createSessions()
     const preview = { delete: vi.fn().mockResolvedValue(undefined) }
     const reviews = { deleteReviewsForProject: vi.fn().mockResolvedValue(undefined) }
     const provenance = { deleteProjectProvenance: vi.fn().mockResolvedValue(undefined) }
@@ -55,9 +57,9 @@ describe('ProjectDeletionCoordinator', () => {
 
   it('keeps the project row and clears intent when session and index cleanup fails', async () => {
     const projects = createProjects()
-    const sessions = {
+    const sessions = createSessions({
       deleteProjectSessions: vi.fn().mockRejectedValue(new Error('directory busy'))
-    }
+    })
     const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
       delete: vi.fn().mockResolvedValue(undefined)
     })
@@ -68,10 +70,26 @@ describe('ProjectDeletionCoordinator', () => {
     expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-1')
   })
 
+  it('keeps an online intent when Session authority committed before a derived failure', async () => {
+    const projects = createProjects()
+    const sessions = createSessions({
+      deleteProjectSessions: vi.fn().mockRejectedValue(new Error('index unavailable')),
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('prepared')
+    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
+      delete: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await expect(coordinator.deleteProject('project-1')).rejects.toThrow('index unavailable')
+
+    expect(projects.delete).not.toHaveBeenCalled()
+    expect(projects.deleteDeletionIntent).not.toHaveBeenCalled()
+  })
+
   it('replays durable deletion intents after a process restart', async () => {
     const projects = createProjects()
     projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-1'])
-    const sessions = { deleteProjectSessions: vi.fn().mockResolvedValue(undefined) }
+    const sessions = createSessions()
     const reviews = { deleteReviewsForProject: vi.fn().mockResolvedValue(undefined) }
     const coordinator = new ProjectDeletionCoordinator(
       projects,
@@ -86,6 +104,220 @@ describe('ProjectDeletionCoordinator', () => {
     expect(projects.delete).toHaveBeenCalledWith('project-1')
     expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-1')
     expect(reviews.deleteReviewsForProject).toHaveBeenCalledWith('project-1')
+    expect(sessions.listLegacyProjectSessionTombstones).toHaveBeenCalledOnce()
+  })
+
+  it('adopts an orphaned legacy tombstone into an intent before preparing its Session authority', async () => {
+    const order: string[] = []
+    const projects = createProjects()
+    projects.get = vi.fn().mockResolvedValue(null)
+    projects.createDeletionIntent = vi.fn(async () => {
+      order.push('intent-created')
+    })
+    projects.deleteDeletionIntent = vi.fn(async () => {
+      order.push('intent-removed')
+    })
+    const sessions = createSessions({
+      listLegacyProjectSessionTombstones: vi.fn().mockResolvedValue(['project-old']),
+      deleteProjectSessions: vi.fn(async () => {
+        order.push('sessions-prepared')
+        return { status: 'completed' as const }
+      }),
+      completeProjectSessionDeletion: vi.fn(async () => {
+        order.push('tombstone-removed')
+      })
+    })
+    const provenance = {
+      deleteProjectProvenance: vi.fn(async () => {
+        order.push('provenance-removed')
+      })
+    }
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      sessions,
+      { delete: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+      provenance
+    )
+
+    await coordinator.recoverPendingDeletions()
+
+    expect(order).toEqual([
+      'intent-created',
+      'sessions-prepared',
+      'provenance-removed',
+      'tombstone-removed',
+      'intent-removed'
+    ])
+  })
+
+  it('retains an adopted legacy intent when retained index deletion fails', async () => {
+    const projects = createProjects()
+    projects.get = vi.fn().mockResolvedValue(null)
+    const sessions = createSessions({
+      listLegacyProjectSessionTombstones: vi.fn().mockResolvedValue(['project-old']),
+      deleteProjectSessions: vi.fn().mockRejectedValue(new Error('index temporarily unavailable'))
+    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
+      delete: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await expect(coordinator.recoverPendingDeletions()).rejects.toThrow(
+      'index temporarily unavailable'
+    )
+
+    expect(projects.createDeletionIntent).toHaveBeenCalledWith('project-old')
+    expect(projects.deleteDeletionIntent).not.toHaveBeenCalled()
+    expect(sessions.completeProjectSessionDeletion).not.toHaveBeenCalled()
+  })
+
+  it('drops the temporary intent and continues when an adopted orphan must be retained', async () => {
+    const projects = createProjects()
+    projects.get = vi.fn().mockResolvedValue(null)
+    const sessions = createSessions({
+      listLegacyProjectSessionTombstones: vi.fn().mockResolvedValue(['project-old']),
+      deleteProjectSessions: vi.fn().mockResolvedValue({
+        status: 'orphan-retained',
+        reason: 'missing-upload-authority'
+      })
+    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
+      delete: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await expect(coordinator.recoverPendingDeletions()).resolves.toBeUndefined()
+
+    expect(projects.createDeletionIntent).toHaveBeenCalledWith('project-old')
+    expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-old')
+    expect(sessions.completeProjectSessionDeletion).not.toHaveBeenCalled()
+  })
+
+  it('re-derives orphan authority policy when replaying an adopted intent after restart', async () => {
+    const projects = createProjects()
+    projects.get = vi.fn().mockResolvedValue(null)
+    projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-old'])
+    const sessions = createSessions({
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('legacy-committed')
+    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
+      delete: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await coordinator.recoverPendingDeletions()
+
+    expect(sessions.deleteProjectSessions).toHaveBeenCalledWith('project-old', {
+      requireExistingUploadAuthority: true
+    })
+  })
+
+  it('releases a replayed orphan-retained intent without adopting it twice in one recovery', async () => {
+    const projects = createProjects()
+    projects.get = vi.fn().mockResolvedValue(null)
+    projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-old'])
+    const sessions = createSessions({
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('legacy-committed'),
+      listLegacyProjectSessionTombstones: vi.fn().mockResolvedValue(['project-old']),
+      deleteProjectSessions: vi.fn().mockResolvedValue({
+        status: 'orphan-retained',
+        reason: 'missing-upload-authority'
+      })
+    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
+      delete: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await expect(coordinator.recoverPendingDeletions()).resolves.toBeUndefined()
+
+    expect(sessions.deleteProjectSessions).toHaveBeenCalledOnce()
+    expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-old')
+    expect(sessions.completeProjectSessionDeletion).not.toHaveBeenCalled()
+  })
+
+  it('clears a stale pre-commit recovery intent and continues with later Projects', async () => {
+    const projects = createProjects()
+    projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-1', 'project-2'])
+    const sessions = createSessions({
+      deleteProjectSessions: vi.fn(async (projectId: string) => {
+        if (projectId === 'project-1') throw new Error('transient session cleanup failure')
+        return { status: 'completed' as const }
+      }),
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('live')
+    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
+      delete: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await expect(coordinator.recoverPendingDeletions()).resolves.toBeUndefined()
+
+    expect(sessions.deleteProjectSessions).toHaveBeenCalledTimes(2)
+    expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-1')
+    expect(projects.delete).not.toHaveBeenCalledWith('project-1')
+    expect(projects.delete).toHaveBeenCalledWith('project-2')
+    expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-2')
+  })
+
+  it('keeps a committed recovery intent when the Project row still exists and replay fails', async () => {
+    const projects = createProjects()
+    projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-1'])
+    const sessions = createSessions({
+      deleteProjectSessions: vi.fn().mockRejectedValue(new Error('tail cleanup unavailable')),
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('prepared')
+    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
+      delete: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await expect(coordinator.recoverPendingDeletions()).rejects.toThrow('tail cleanup unavailable')
+
+    expect(projects.deleteDeletionIntent).not.toHaveBeenCalled()
+  })
+
+  it('keeps a recovery intent when durable Session phase state is unknown', async () => {
+    const projects = createProjects()
+    projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-1'])
+    const replayFailure = new Error('session replay failed')
+    const sessions = createSessions({
+      deleteProjectSessions: vi.fn().mockRejectedValue(replayFailure),
+      getProjectSessionDeletionState: vi.fn().mockRejectedValue(new Error('marker unreadable'))
+    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
+      delete: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await expect(coordinator.recoverPendingDeletions()).rejects.toBe(replayFailure)
+
+    expect(projects.deleteDeletionIntent).not.toHaveBeenCalled()
+  })
+
+  it('keeps a recovery intent when failed replay finds Session authority absent', async () => {
+    const projects = createProjects()
+    projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-1'])
+    const sessions = createSessions({
+      deleteProjectSessions: vi.fn().mockRejectedValue(new Error('session replay failed')),
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('absent')
+    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
+      delete: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await expect(coordinator.recoverPendingDeletions()).rejects.toThrow('session replay failed')
+
+    expect(projects.deleteDeletionIntent).not.toHaveBeenCalled()
+  })
+
+  it('keeps the intent when committed Session tombstone cleanup fails', async () => {
+    const projects = createProjects()
+    const sessions = createSessions({
+      completeProjectSessionDeletion: vi.fn().mockRejectedValue(new Error('tombstone busy'))
+    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
+      delete: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await expect(coordinator.deleteProject('project-1')).rejects.toThrow('tombstone busy')
+
+    expect(projects.delete).toHaveBeenCalledWith('project-1')
+    expect(projects.deleteDeletionIntent).not.toHaveBeenCalled()
   })
 
   it('keeps the recovery intent until derived project cleanup has finished', async () => {
@@ -97,9 +329,14 @@ describe('ProjectDeletionCoordinator', () => {
     projects.deleteDeletionIntent = vi.fn(async () => {
       order.push('intent')
     })
+    const sessions = createSessions({
+      completeProjectSessionDeletion: vi.fn(async () => {
+        order.push('tombstone')
+      })
+    })
     const coordinator = new ProjectDeletionCoordinator(
       projects,
-      { deleteProjectSessions: vi.fn().mockResolvedValue(undefined) },
+      sessions,
       {
         delete: vi.fn(async () => {
           order.push('preview')
@@ -119,16 +356,14 @@ describe('ProjectDeletionCoordinator', () => {
 
     await coordinator.deleteProject('project-1')
 
-    expect(order).toEqual(['project', 'preview', 'reviews', 'provenance', 'intent'])
+    expect(order).toEqual(['project', 'preview', 'reviews', 'provenance', 'tombstone', 'intent'])
   })
 
   it('reuses a successful recovery gate for later operations', async () => {
     const projects = createProjects()
-    const coordinator = new ProjectDeletionCoordinator(
-      projects,
-      { deleteProjectSessions: vi.fn().mockResolvedValue(undefined) },
-      { delete: vi.fn().mockResolvedValue(undefined) }
-    )
+    const coordinator = new ProjectDeletionCoordinator(projects, createSessions(), {
+      delete: vi.fn().mockResolvedValue(undefined)
+    })
 
     await coordinator.recoverPendingDeletions()
     await coordinator.recoverPendingDeletions()
@@ -140,11 +375,12 @@ describe('ProjectDeletionCoordinator', () => {
     const deletionGate = createDeferred<void>()
     const coordinator = new ProjectDeletionCoordinator(
       createProjects(),
-      {
+      createSessions({
         deleteProjectSessions: vi.fn(async () => {
           await deletionGate.promise
+          return { status: 'completed' as const }
         })
-      },
+      }),
       { delete: vi.fn().mockResolvedValue(undefined) }
     )
     await coordinator.recoverPendingDeletions()
@@ -166,11 +402,12 @@ describe('ProjectDeletionCoordinator', () => {
   it('keeps recovery blocked until every concurrently requested deletion finishes', async () => {
     const firstGate = createDeferred<void>()
     const secondGate = createDeferred<void>()
-    const sessions = {
+    const sessions = createSessions({
       deleteProjectSessions: vi.fn(async (projectId: string) => {
         await (projectId === 'project-1' ? firstGate.promise : secondGate.promise)
+        return { status: 'completed' as const }
       })
-    }
+    })
     const coordinator = new ProjectDeletionCoordinator(createProjects(), sessions, {
       delete: vi.fn().mockResolvedValue(undefined)
     })
@@ -201,6 +438,16 @@ const createProjects = (): ProjectDeletionRepository => ({
   createDeletionIntent: vi.fn().mockResolvedValue(undefined),
   deleteDeletionIntent: vi.fn().mockResolvedValue(undefined),
   listDeletionIntents: vi.fn().mockResolvedValue([])
+})
+
+const createSessions = (
+  overrides: Partial<ProjectSessionDeletion> = {}
+): ProjectSessionDeletion => ({
+  deleteProjectSessions: vi.fn().mockResolvedValue({ status: 'completed' }),
+  getProjectSessionDeletionState: vi.fn().mockResolvedValue('absent'),
+  completeProjectSessionDeletion: vi.fn().mockResolvedValue(undefined),
+  listLegacyProjectSessionTombstones: vi.fn().mockResolvedValue([]),
+  ...overrides
 })
 
 const createDeferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {

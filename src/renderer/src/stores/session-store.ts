@@ -193,6 +193,11 @@ type ReplaceMessageUploadsInput = {
   uploads: PersistedUploadedAttachment[]
 }
 
+type ApplyDurableSessionProjectionInput = {
+  source: ChatSession
+  session: PersistedChatSession
+}
+
 type AppendMessageResult = {
   sessionId: string
   messageId: string
@@ -214,6 +219,7 @@ type SessionStore = SessionStoreData & {
   clearArtifactError: (sessionId: string) => void
   hydrateSessions: (sessions: PersistedChatSession[], manifest?: PersistedSessionManifest) => void
   upsertPersistedSession: (session: PersistedChatSession) => void
+  applyDurableSessionProjection: (input: ApplyDurableSessionProjectionInput) => void
   finishRun: (sessionId: string) => void
   // opts.reportable overrides the report-affordance decision: pass false for a model-provider failure
   // (the agent relayed an upstream LLM/HTTP error), true to force it, or omit to let the store derive it
@@ -352,6 +358,81 @@ const hydrateSession = (session: PersistedChatSession): ChatSession => ({
   // flag them so the composer can surface a Resume button instead of a dead-end error.
   interrupted: session.error === INTERRUPTED_SESSION_ERROR ? true : undefined
 })
+
+const withTransientSessionState = (
+  session: PersistedChatSession,
+  source: ChatSession
+): ChatSession => {
+  const sourceMessages = new Map(source.messages.map((message) => [message.id, message]))
+  const hydrated = hydrateSession(session)
+  return {
+    ...hydrated,
+    messages: hydrated.messages.map((message) => ({
+      ...message,
+      sortIndex: sourceMessages.get(message.id)?.sortIndex
+    })),
+    isPending: source.isPending,
+    interrupted: source.interrupted,
+    fixLoopActive: source.fixLoopActive,
+    compacting: source.compacting,
+    agentStatus: source.agentStatus,
+    branchContextResetRequired: source.branchContextResetRequired,
+    branchSwitchBlocked: source.branchSwitchBlocked,
+    conversationGraphSyncBlocked: source.conversationGraphSyncBlocked
+  }
+}
+
+const isSameSubmittedUpload = (
+  current: PersistedUploadedAttachment,
+  submitted: PersistedUploadedAttachment
+): boolean =>
+  current.id === submitted.id &&
+  current.versionId === submitted.versionId &&
+  current.sessionId === submitted.sessionId &&
+  current.name === submitted.name &&
+  current.originalName === submitted.originalName &&
+  current.path === submitted.path &&
+  current.mimeType === submitted.mimeType &&
+  current.size === submitted.size
+
+// A save may resolve after a newer runtime event already replaced the source Session object. Merge
+// only the legacy Upload identities proven by that submitted snapshot; never overwrite newer text,
+// graph, status, or transient runtime state with an older durable response.
+const mergeDurableUploadProjection = <Message extends PersistedChatMessage>(
+  currentMessages: Message[],
+  submittedMessages: PersistedChatMessage[],
+  durableMessages: PersistedChatMessage[]
+): { messages: Message[]; changed: boolean } => {
+  const submittedById = new Map(submittedMessages.map((message) => [message.id, message]))
+  const durableById = new Map(durableMessages.map((message) => [message.id, message]))
+  let changed = false
+  const messages = currentMessages.map((message) => {
+    const submitted = submittedById.get(message.id)
+    const durable = durableById.get(message.id)
+    if (!message.uploads || !submitted?.uploads || !durable?.uploads) return message
+    const submittedUploads = new Map(submitted.uploads.map((upload) => [upload.id, upload]))
+    const durableUploads = new Map(durable.uploads.map((upload) => [upload.id, upload]))
+    let uploadsChanged = false
+    const uploads = message.uploads.map((upload) => {
+      const submittedUpload = submittedUploads.get(upload.id)
+      const durableUpload = durableUploads.get(upload.id)
+      if (
+        !submittedUpload ||
+        !durableUpload?.versionId ||
+        submittedUpload.versionId ||
+        !isSameSubmittedUpload(upload, submittedUpload)
+      ) {
+        return upload
+      }
+      uploadsChanged = true
+      return durableUpload
+    })
+    if (!uploadsChanged) return message
+    changed = true
+    return { ...message, uploads } as Message
+  })
+  return { messages, changed }
+}
 
 // Serializes one in-memory session into the durable per-file projection saved by the main process.
 export { stripTransientSessionState as toPersistedSession }
@@ -934,11 +1015,45 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Applies a durable lifecycle event without letting this client's own save echo replace newer
-  // transient runtime state. Newer external snapshots remain authoritative.
+  // transient runtime state. An equal-revision response may still carry a newly published Upload
+  // Version, so merge that identity delta instead of discarding the whole event.
   upsertPersistedSession: (session) => {
     set((state) => {
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
-      if (existing && existing.updatedAt >= session.updatedAt) return state
+      if (existing && existing.updatedAt > session.updatedAt) return state
+      if (existing && existing.updatedAt === session.updatedAt) {
+        const flat = mergeDurableUploadProjection(
+          existing.messages,
+          existing.messages,
+          session.messages
+        )
+        const graph = existing.conversationGraph
+          ? mergeDurableUploadProjection(
+              existing.conversationGraph.messages,
+              existing.conversationGraph.messages,
+              session.conversationGraph?.messages ?? session.messages
+            )
+          : undefined
+        if (!flat.changed && !graph?.changed) return state
+        const projected: ChatSession = {
+          ...existing,
+          messages: flat.messages,
+          ...(graph?.changed
+            ? {
+                conversationGraph: {
+                  ...existing.conversationGraph!,
+                  messages: graph.messages
+                }
+              }
+            : {})
+        }
+        externallyHydratedSessions.add(projected)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? projected : candidate
+          )
+        }
+      }
 
       const hydratedSession = hydrateSession(session)
       externallyHydratedSessions.add(hydratedSession)
@@ -948,6 +1063,67 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       ].sort((left, right) => right.updatedAt - left.updatedAt)
 
       return { sessions }
+    })
+  },
+
+  // Acknowledges the exact projection returned by this client's save. Reference equality makes an
+  // unchanged source safe to replace wholesale; a later live mutation receives only the immutable
+  // Upload identity delta so the older response cannot roll back newer conversation state.
+  applyDurableSessionProjection: ({ source, session }) => {
+    set((state) => {
+      const current = state.sessions.find((candidate) => candidate.id === session.id)
+      if (!current) return state
+
+      let projected: ChatSession
+      if (current === source) {
+        const flat = mergeDurableUploadProjection(
+          source.messages,
+          source.messages,
+          session.messages
+        )
+        const graph = source.conversationGraph
+          ? mergeDurableUploadProjection(
+              source.conversationGraph.messages,
+              source.conversationGraph.messages,
+              session.conversationGraph?.messages ?? session.messages
+            )
+          : undefined
+        if (!flat.changed && !graph?.changed) return state
+        projected = withTransientSessionState(session, current)
+      } else {
+        const flat = mergeDurableUploadProjection(
+          current.messages,
+          source.messages,
+          session.messages
+        )
+        const graph = current.conversationGraph
+          ? mergeDurableUploadProjection(
+              current.conversationGraph.messages,
+              source.conversationGraph?.messages ?? source.messages,
+              session.conversationGraph?.messages ?? session.messages
+            )
+          : undefined
+        if (!flat.changed && !graph?.changed) return state
+        projected = {
+          ...current,
+          messages: flat.messages,
+          ...(graph?.changed
+            ? {
+                conversationGraph: {
+                  ...current.conversationGraph!,
+                  messages: graph.messages
+                }
+              }
+            : {})
+        }
+      }
+
+      externallyHydratedSessions.add(projected)
+      return {
+        sessions: state.sessions.map((candidate) =>
+          candidate.id === session.id ? projected : candidate
+        )
+      }
     })
   },
 

@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
@@ -16,6 +16,7 @@ import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-p
 
 const SESSIONS_DIR = 'sessions'
 const DELETED_SESSIONS_DIR = 'deleted-sessions'
+const PROJECT_DELETION_COMMIT_MARKER = '.project-deletion-committed'
 const MANIFEST_FILE = 'manifest.json'
 const FILE_REPLACEMENT_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const
 
@@ -25,6 +26,18 @@ type SessionLoadDiagnostics = {
   // Callers may hydrate the returned sessions but must not reconcile absent index rows as deletions.
   isComplete: boolean
 }
+
+type SessionLoadDiagnostic =
+  | { status: 'found'; session: PersistedChatSession }
+  | { status: 'missing' }
+  | { status: 'unreadable' }
+
+type ProjectSessionLoadDiagnostics = {
+  sessions: PersistedChatSession[]
+  isComplete: boolean
+}
+
+type ProjectSessionDeletionState = 'live' | 'legacy-committed' | 'prepared' | 'absent'
 
 type SessionRepositoryDependencies = {
   remove(path: string, options: { force: boolean; recursive: boolean }): Promise<void>
@@ -131,21 +144,63 @@ class SessionRepository {
     projectId: string,
     sessionId: string
   ): Promise<PersistedChatSession | undefined> {
-    const read = await this.readSessionFile(
-      this.sessionFilePath(projectId, sessionId),
-      assertSafeSegment(projectId)
-    )
-    return read.session
+    const safeProjectId = assertSafeSegment(projectId)
+    return (
+      await this.readSessionFile(
+        this.sessionFilePath(safeProjectId, assertSafeSegment(sessionId)),
+        safeProjectId
+      )
+    ).session
   }
 
-  // Reports whether the sessions tree was fully scanned so DB reconciliation never acts on a partial
-  // read. Cleanup of previously renamed project tombstones is best-effort and does not re-expose them.
+  // Terminal mutations must distinguish absence from a transient/non-ENOENT read failure. Treating
+  // both as undefined could unlink the JSON before Upload cleanup has observed its final authority.
+  async loadSessionWithDiagnostics(
+    projectId: string,
+    sessionId: string
+  ): Promise<SessionLoadDiagnostic> {
+    const safeProjectId = assertSafeSegment(projectId)
+    const safeSessionId = assertSafeSegment(sessionId)
+    const read = await this.readSessionFile(
+      this.sessionFilePath(safeProjectId, safeSessionId),
+      safeProjectId
+    )
+    if (!read.isComplete || read.wasQuarantined) return { status: 'unreadable' }
+
+    const quarantine = await this.hasQuarantinedSessionFile(safeProjectId, safeSessionId)
+    if (!quarantine.isComplete) return { status: 'unreadable' }
+    if (read.session) return { status: 'found', session: read.session }
+    return quarantine.exists ? { status: 'unreadable' } : { status: 'missing' }
+  }
+
+  // Reports whether the live sessions tree was fully scanned so DB reconciliation never acts on a
+  // partial read. Project recovery owns tombstone cleanup before ordinary hydration is allowed.
   async loadAllWithDiagnostics(): Promise<SessionLoadDiagnostics> {
-    await this.cleanupDeletedProjects()
     const { sessions, isComplete } = await this.readAllSessions()
     const manifest = await this.readManifest()
 
     return { result: { sessions, manifest }, isComplete }
+  }
+
+  // Project deletion needs a complete view of only its target authority. An unrelated unreadable
+  // Project must not block deletion, while any target-directory failure remains fail-closed.
+  async loadProjectWithDiagnostics(projectId: string): Promise<ProjectSessionLoadDiagnostics> {
+    return this.readProjectSessions(assertSafeSegment(projectId), {
+      quarantinedIsIncomplete: true
+    })
+  }
+
+  async loadCommittedProjectWithDiagnostics(
+    projectId: string
+  ): Promise<ProjectSessionLoadDiagnostics> {
+    const safeProjectId = assertSafeSegment(projectId)
+    return this.readProjectSessionsAtDirectory(
+      safeProjectId,
+      this.deletedProjectDir(safeProjectId),
+      {
+        quarantinedIsIncomplete: true
+      }
+    )
   }
 
   // Writes one session file (serialized through the save queue to preserve write order).
@@ -153,26 +208,160 @@ class SessionRepository {
     return this.enqueue(() => this.writeSession(session))
   }
 
-  // Removes a single session file.
-  async deleteSession(projectId: string, sessionId: string): Promise<void> {
-    return this.enqueue(() => rm(this.sessionFilePath(projectId, sessionId), { force: true }))
+  async saveCommittedProjectSession(session: PersistedChatSession): Promise<void> {
+    return this.enqueue(async () => {
+      if ((await this.getProjectSessionDeletionState(session.projectId)) !== 'legacy-committed') {
+        throw new Error('Cannot save a Session outside committed Project deletion authority.')
+      }
+      await this.writeSessionToDirectory(session, this.deletedProjectDir(session.projectId))
+    })
   }
 
-  // Atomically removes the project from the readable sessions tree before best-effort cleanup.
+  // Removes a single session file.
+  async deleteSession(projectId: string, sessionId: string): Promise<void> {
+    return this.enqueue(async () => {
+      const safeProjectId = assertSafeSegment(projectId)
+      const safeSessionId = assertSafeSegment(sessionId)
+      const diagnostic = await this.loadSessionWithDiagnostics(safeProjectId, safeSessionId)
+      if (diagnostic.status === 'unreadable') {
+        throw new Error('Cannot delete a Session whose durable JSON is unreadable.')
+      }
+      if (diagnostic.status === 'missing') return
+
+      // The valid primary proves matching quarantines are superseded authority covered by this
+      // explicit Session deletion. Remove every backup first so any failure leaves that proof in
+      // place and the operation safely retryable; only then remove the current primary.
+      const quarantines = await this.listQuarantinedSessionFiles(safeProjectId, safeSessionId)
+      if (!quarantines.isComplete) {
+        throw new Error('Cannot delete a Session whose quarantine directory is unreadable.')
+      }
+      for (const fileName of quarantines.names) {
+        await this.dependencies.remove(join(this.projectDir(safeProjectId), fileName), {
+          force: true,
+          recursive: false
+        })
+      }
+      await this.dependencies.remove(this.sessionFilePath(safeProjectId, safeSessionId), {
+        force: true,
+        recursive: false
+      })
+    })
+  }
+
+  // Atomically moves a marked live directory into the durable deletion area. The marker/tombstone is
+  // retained until Project deletion finishes so recovery can distinguish a committed Session phase
+  // from an attempt that failed before the rename, including for Projects with no Session files.
   async deleteProjectSessions(projectId: string): Promise<void> {
     return this.enqueue(async () => {
-      const deletedProjectDir = this.deletedProjectDir(projectId)
+      const safeProjectId = assertSafeSegment(projectId)
+      const state = await this.getProjectSessionDeletionState(safeProjectId)
+      if (state === 'legacy-committed' || state === 'prepared') return
+
+      const liveProjectDir = this.projectDir(safeProjectId)
+      const deletedProjectDir = this.deletedProjectDir(safeProjectId)
       await mkdir(this.deletedSessionsDir, { recursive: true })
-
-      try {
-        await rename(this.projectDir(projectId), deletedProjectDir)
-      } catch (error) {
-        if (!isMissingFileError(error)) throw error
-      }
-
-      // Once renamed, the session JSON is logically deleted. Cleanup can safely retry on startup.
-      await this.removeDeletedProject(deletedProjectDir)
+      await this.dependencies.remove(deletedProjectDir, { recursive: true, force: true })
+      await mkdir(liveProjectDir, { recursive: true })
+      await writeFile(join(liveProjectDir, PROJECT_DELETION_COMMIT_MARKER), '', 'utf8')
+      await rename(liveProjectDir, deletedProjectDir)
     })
+  }
+
+  async getProjectSessionDeletionState(projectId: string): Promise<ProjectSessionDeletionState> {
+    const safeProjectId = assertSafeSegment(projectId)
+    const deletedProjectDir = this.deletedProjectDir(safeProjectId)
+    const liveProjectDir = this.projectDir(safeProjectId)
+    const markerPath = join(deletedProjectDir, PROJECT_DELETION_COMMIT_MARKER)
+
+    try {
+      const tombstone = await lstat(deletedProjectDir)
+      if (!tombstone.isDirectory() || tombstone.isSymbolicLink()) {
+        throw new Error(`Project Session deletion tombstone is invalid: ${projectId}`)
+      }
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        try {
+          const live = await lstat(liveProjectDir)
+          if (!live.isDirectory() || live.isSymbolicLink()) {
+            throw new Error(`Project Session live authority is invalid: ${projectId}`)
+          }
+          return 'live'
+        } catch (liveError) {
+          if (isMissingFileError(liveError)) return 'absent'
+          throw liveError
+        }
+      }
+      throw error
+    }
+
+    let isPrepared = false
+    try {
+      const marker = await lstat(markerPath)
+      if (!marker.isFile() || marker.isSymbolicLink()) {
+        throw new Error(`Project Session deletion marker is invalid: ${projectId}`)
+      }
+      isPrepared = true
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error
+    }
+
+    // Releases before the marker protocol atomically renamed the same directory and then removed it
+    // best-effort. A surviving unmarked tombstone therefore proves a possible committed old Session
+    // phase and must be treated fail-closed while a Project deletion intent is being recovered.
+    try {
+      await lstat(liveProjectDir)
+    } catch (error) {
+      if (isMissingFileError(error)) return isPrepared ? 'prepared' : 'legacy-committed'
+      throw error
+    }
+    throw new Error(`Project Session deletion has conflicting live authority: ${projectId}`)
+  }
+
+  async markCommittedProjectSessionsPrepared(projectId: string): Promise<void> {
+    await this.enqueue(async () => {
+      if ((await this.getProjectSessionDeletionState(projectId)) !== 'legacy-committed') return
+      await this.atomicWrite(
+        join(this.deletedProjectDir(assertSafeSegment(projectId)), PROJECT_DELETION_COMMIT_MARKER),
+        ''
+      )
+    })
+  }
+
+  async completeProjectSessionDeletion(projectId: string): Promise<void> {
+    await this.enqueue(() =>
+      this.dependencies.remove(this.deletedProjectDir(assertSafeSegment(projectId)), {
+        recursive: true,
+        force: true
+      })
+    )
+  }
+
+  async listLegacyProjectSessionTombstones(): Promise<string[]> {
+    let entries
+    try {
+      entries = await readdir(this.deletedSessionsDir, { withFileTypes: true })
+    } catch (error) {
+      if (isMissingFileError(error)) return []
+      throw error
+    }
+
+    const projectIds: string[] = []
+    for (const entry of entries) {
+      // Every direct child is deletion authority. Ignoring an unexpected file or symlink could hide
+      // an old tombstone from adoption and permanently strand the only legacy Upload locator.
+      if (!entry.isDirectory() || entry.isSymbolicLink()) {
+        throw new Error(`Project Session deletion tombstone is invalid: ${entry.name}`)
+      }
+      const projectId = assertSafeSegment(entry.name)
+      const state = await this.getProjectSessionDeletionState(projectId)
+      if (state === 'legacy-committed') projectIds.push(projectId)
+      else if (state !== 'prepared') {
+        // A tombstone observed by this scan must remain authoritative through classification. Treat
+        // concurrent disappearance or conflicting live authority as unknown instead of skipping it.
+        throw new Error(`Project Session deletion tombstone state changed: ${projectId}`)
+      }
+    }
+    return projectIds.sort()
   }
 
   // Persists the last-open project/session pointer.
@@ -194,6 +383,13 @@ class SessionRepository {
 
   // Writes through a unique temp file, then atomically replaces the target session file.
   private async writeSession(session: PersistedChatSession): Promise<void> {
+    await this.writeSessionToDirectory(session, this.projectDir(session.projectId))
+  }
+
+  private async writeSessionToDirectory(
+    session: PersistedChatSession,
+    projectDirectory: string
+  ): Promise<void> {
     const messages = [...session.messages, ...(session.conversationGraph?.messages ?? [])]
     const legacyUpload = messages
       .flatMap((message) => message.uploads ?? [])
@@ -203,10 +399,10 @@ class SessionRepository {
         `Session upload must be upgraded to an immutable Version before persistence: ${legacyUpload.id}`
       )
     }
-    const filePath = this.sessionFilePath(session.projectId, session.id)
+    const filePath = join(projectDirectory, `${assertSafeSegment(session.id)}.json`)
     const sanitizedSession = sanitizeSessionUploadedAttachments(session)
 
-    await mkdir(this.projectDir(session.projectId), { recursive: true })
+    await mkdir(projectDirectory, { recursive: true })
     await this.atomicWrite(filePath, createSessionFile(encodeSessionDataPaths(sanitizedSession)))
   }
 
@@ -240,19 +436,6 @@ class SessionRepository {
     }
   }
 
-  private async cleanupDeletedProjects(): Promise<void> {
-    const deletedProjects = await this.listDirectoryNames(this.deletedSessionsDir)
-    for (const projectId of deletedProjects.names) {
-      await this.removeDeletedProject(join(this.deletedSessionsDir, projectId))
-    }
-  }
-
-  // Physical cleanup happens after the atomic rename removed the directory from the readable tree.
-  // Failures are intentionally swallowed because startup will retry the tombstone later.
-  private async removeDeletedProject(path: string): Promise<void> {
-    await this.dependencies.remove(path, { recursive: true, force: true }).catch(() => undefined)
-  }
-
   private async readManifest(): Promise<PersistedSessionManifest> {
     try {
       const raw = await readFile(this.manifestPath, 'utf8')
@@ -274,18 +457,49 @@ class SessionRepository {
     let isComplete = projectDirectories.isComplete
 
     for (const projectId of projectDirectories.names) {
-      const projectDir = join(this.sessionsDir, projectId)
-      const sessionFiles = await this.listSessionFileNames(projectDir)
-      isComplete &&= sessionFiles.isComplete
+      const project = await this.readProjectSessions(projectId)
+      sessions.push(...project.sessions)
+      isComplete &&= project.isComplete
+    }
 
-      for (const fileName of sessionFiles.names) {
-        // The directory is the authoritative owning project, regardless of the file's stored projectId.
-        const read = await this.readSessionFile(join(projectDir, fileName), projectId)
-        isComplete &&= read.isComplete
+    return { sessions, isComplete }
+  }
 
-        if (read.session) sessions.push(read.session)
+  private async readProjectSessions(
+    projectIdValue: string,
+    options: { quarantinedIsIncomplete?: boolean } = {}
+  ): Promise<ProjectSessionLoadDiagnostics> {
+    const projectId = assertSafeSegment(projectIdValue)
+    return this.readProjectSessionsAtDirectory(
+      projectId,
+      join(this.sessionsDir, projectId),
+      options
+    )
+  }
+
+  private async readProjectSessionsAtDirectory(
+    projectId: string,
+    projectDir: string,
+    options: { quarantinedIsIncomplete?: boolean } = {}
+  ): Promise<ProjectSessionLoadDiagnostics> {
+    const sessionFiles = await this.listSessionFileNames(projectDir)
+    const sessions: PersistedChatSession[] = []
+    const activeQuarantines = new Set(sessionFiles.quarantinedPrimaryFileNames)
+    let isComplete = sessionFiles.isComplete
+
+    for (const fileName of sessionFiles.names) {
+      // The directory is the authoritative owning project, regardless of the file's stored projectId.
+      const read = await this.readSessionFile(join(projectDir, fileName), projectId)
+      isComplete &&= read.isComplete
+      if (options.quarantinedIsIncomplete && read.wasQuarantined) isComplete = false
+      if (read.session) {
+        // A current primary that successfully normalizes supersedes retained historical backups for
+        // the same file. Keep the backups, but do not let them permanently block terminal mutation.
+        activeQuarantines.delete(fileName)
+        sessions.push(read.session)
       }
     }
+    if (options.quarantinedIsIncomplete && activeQuarantines.size > 0) isComplete = false
 
     return { sessions, isComplete }
   }
@@ -293,7 +507,11 @@ class SessionRepository {
   private async readSessionFile(
     filePath: string,
     projectId: string
-  ): Promise<{ session?: PersistedChatSession; isComplete: boolean }> {
+  ): Promise<{
+    session?: PersistedChatSession
+    isComplete: boolean
+    wasQuarantined?: boolean
+  }> {
     let raw: string
     try {
       raw = await this.dependencies.readSessionFile(filePath)
@@ -306,11 +524,15 @@ class SessionRepository {
       const session = normalizeSessionFile(JSON.parse(raw) as unknown, {
         preserveLegacyUploadPaths: true
       })
-      if (!session) return { isComplete: await this.tryBackupInvalidFile(filePath) }
+      if (!session) {
+        const wasQuarantined = await this.tryBackupInvalidFile(filePath)
+        return { isComplete: wasQuarantined, wasQuarantined }
+      }
 
       return { session: decodeSessionDataPaths({ ...session, projectId }), isComplete: true }
     } catch {
-      return { isComplete: await this.tryBackupInvalidFile(filePath) }
+      const wasQuarantined = await this.tryBackupInvalidFile(filePath)
+      return { isComplete: wasQuarantined, wasQuarantined }
     }
   }
 
@@ -328,11 +550,14 @@ class SessionRepository {
     }
   }
 
-  // Lists only committed session JSON files. In-progress temp writes and quarantined invalid files are
-  // excluded, while non-ENOENT directory failures keep reconciliation disabled.
-  private async listSessionFileNames(
-    dir: string
-  ): Promise<{ names: string[]; isComplete: boolean }> {
+  // Lists only committed session JSON files. Quarantines are associated with their former primary so
+  // terminal scans can distinguish orphan authority from a backup superseded by valid current JSON.
+  // In-progress temp writes stay excluded and non-ENOENT directory failures disable reconciliation.
+  private async listSessionFileNames(dir: string): Promise<{
+    names: string[]
+    isComplete: boolean
+    quarantinedPrimaryFileNames: string[]
+  }> {
     try {
       const entries = await readdir(dir, { withFileTypes: true })
 
@@ -346,6 +571,40 @@ class SessionRepository {
               !entry.name.includes('.invalid-')
           )
           .map((entry) => entry.name),
+        isComplete: true,
+        quarantinedPrimaryFileNames: entries.flatMap((entry) => {
+          const match = /^(.*\.json)\.invalid-\d+-\d+$/u.exec(entry.name)
+          return match ? [match[1]] : []
+        })
+      }
+    } catch (error) {
+      return {
+        names: [],
+        isComplete: isMissingFileError(error),
+        quarantinedPrimaryFileNames: []
+      }
+    }
+  }
+
+  private async hasQuarantinedSessionFile(
+    projectId: string,
+    sessionId: string
+  ): Promise<{ exists: boolean; isComplete: boolean }> {
+    const quarantines = await this.listQuarantinedSessionFiles(projectId, sessionId)
+    return { exists: quarantines.names.length > 0, isComplete: quarantines.isComplete }
+  }
+
+  private async listQuarantinedSessionFiles(
+    projectId: string,
+    sessionId: string
+  ): Promise<{ names: string[]; isComplete: boolean }> {
+    try {
+      const entries = await readdir(this.projectDir(projectId))
+      const prefix = `${sessionId}.json.invalid-`
+      return {
+        names: entries.filter(
+          (entry) => entry.startsWith(prefix) && /^\d+-\d+$/u.test(entry.slice(prefix.length))
+        ),
         isComplete: true
       }
     } catch (error) {
@@ -377,4 +636,5 @@ const isMissingFileError = (error: unknown): boolean =>
   (error as { code?: unknown }).code === 'ENOENT'
 
 export { SessionRepository, getSessionPersistenceDir }
+export type { ProjectSessionDeletionState, ProjectSessionLoadDiagnostics, SessionLoadDiagnostic }
 export type { SessionLoadDiagnostics }

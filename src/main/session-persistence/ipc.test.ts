@@ -65,9 +65,8 @@ describe('session persistence IPC handlers', () => {
     const loadResult = { sessions: [session], manifest: { version: 1 as const } }
     const repository = {
       loadAll: vi.fn().mockResolvedValue(loadResult),
-      saveSession: vi.fn().mockResolvedValue(false),
+      saveSession: vi.fn().mockResolvedValue({ created: false, session }),
       deleteSession: vi.fn().mockResolvedValue(undefined),
-      deleteProjectSessions: vi.fn().mockResolvedValue(undefined),
       saveManifest: vi.fn().mockResolvedValue(undefined)
     }
     const reviewRepository = createMockReviewRepository()
@@ -95,9 +94,8 @@ describe('session persistence IPC handlers', () => {
   it('does not report a successful session deletion when the repository fails', async () => {
     const repository = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
-      saveSession: vi.fn().mockResolvedValue(false),
+      saveSession: vi.fn().mockResolvedValue({ created: false, session: createSession() }),
       deleteSession: vi.fn().mockRejectedValueOnce(new Error('repository failed')),
-      deleteProjectSessions: vi.fn().mockResolvedValue(undefined),
       saveManifest: vi.fn().mockResolvedValue(undefined)
     }
     const handlers = createSessionPersistenceHandlers(repository, createMockReviewRepository())
@@ -116,11 +114,10 @@ describe('session persistence IPC handlers', () => {
     const order: string[] = []
     const repository = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
-      saveSession: vi.fn().mockResolvedValue(false),
+      saveSession: vi.fn().mockResolvedValue({ created: false, session: createSession() }),
       deleteSession: vi.fn(async () => {
         order.push('session')
       }),
-      deleteProjectSessions: vi.fn().mockResolvedValue(undefined),
       saveManifest: vi.fn().mockResolvedValue(undefined)
     }
     const reviewRepository = createMockReviewRepository()
@@ -136,12 +133,41 @@ describe('session persistence IPC handlers', () => {
 
   it('registers each persistence channel and forwards renderer requests', async () => {
     const session = createSession()
+    const durableSession = {
+      ...session,
+      title: 'Durable projection',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user' as const,
+          content: 'Legacy upload',
+          status: 'complete' as const,
+          eventIds: [],
+          uploads: [
+            {
+              id: 'upload-1',
+              versionId: 'upload-version-1',
+              versionNumber: 1,
+              sessionId: 'session-1',
+              name: 'legacy.csv',
+              originalName: 'legacy.csv',
+              size: 11,
+              sha256: 'a'.repeat(64)
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    }
     const loadResult = { sessions: [session], manifest: { version: 1 as const } }
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn().mockResolvedValue(loadResult),
-      saveSession: vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false),
+      saveSession: vi
+        .fn()
+        .mockResolvedValueOnce({ created: true, session: durableSession })
+        .mockResolvedValueOnce({ created: false, session: durableSession }),
       deleteSession: vi.fn().mockResolvedValue(undefined),
-      deleteProjectSessions: vi.fn().mockResolvedValue(undefined),
       saveManifest: vi.fn().mockResolvedValue(undefined)
     }
     const reviewRepository = createMockReviewRepository()
@@ -158,7 +184,9 @@ describe('session persistence IPC handlers', () => {
     const manifestRequest = { lastProjectId: 'project-a', lastSessionId: 'session-1' }
     const event = { sender: { id: -2, lifecycleClientId: 'web:browser-1' } }
     await expect(ipcHandlers.get('sessions:load-all')?.()).resolves.toBe(loadResult)
-    await ipcHandlers.get('sessions:save-session')?.(event, session)
+    await expect(ipcHandlers.get('sessions:save-session')?.(event, session)).resolves.toBe(
+      durableSession
+    )
     const updatedSession = { ...session, title: 'Updated session', updatedAt: 1710000000001 }
     await ipcHandlers.get('sessions:save-session')?.(event, updatedSession)
     await ipcHandlers.get('sessions:delete-session')?.(event, deleteRequest)
@@ -169,11 +197,11 @@ describe('session persistence IPC handlers', () => {
     expect(reviewRepository.deleteReviewsForSession).not.toHaveBeenCalled()
     expect(repository.saveManifest).toHaveBeenCalledWith(manifestRequest)
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:created', {
-      session,
+      session: durableSession,
       originClientId: 'web:browser-1'
     })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:updated', {
-      session: updatedSession,
+      session: durableSession,
       originClientId: 'web:browser-1'
     })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:deleted', deleteRequest)
@@ -182,9 +210,8 @@ describe('session persistence IPC handlers', () => {
   it('rejects session persistence while a data-root migration is pending', async () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
-      saveSession: vi.fn().mockResolvedValue(false),
+      saveSession: vi.fn().mockResolvedValue({ created: false, session: createSession() }),
       deleteSession: vi.fn().mockResolvedValue(undefined),
-      deleteProjectSessions: vi.fn().mockResolvedValue(undefined),
       saveManifest: vi.fn().mockResolvedValue(undefined)
     }
     registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository())
@@ -197,5 +224,24 @@ describe('session persistence IPC handlers', () => {
       })
     ).rejects.toThrow(/moving your data/i)
     expect(repository.deleteSession).not.toHaveBeenCalled()
+  })
+
+  it('does not broadcast a stale projection when durable save propagation fails', async () => {
+    const failure = new Error('durable projection unavailable')
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      saveSession: vi.fn().mockRejectedValue(failure),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+      saveManifest: vi.fn().mockResolvedValue(undefined)
+    }
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository())
+
+    await expect(
+      ipcHandlers.get('sessions:save-session')?.(
+        { sender: { id: 1, lifecycleClientId: 'electron:origin' } },
+        createSession()
+      )
+    ).rejects.toBe(failure)
+    expect(broadcastLifecycleEvent).not.toHaveBeenCalled()
   })
 })

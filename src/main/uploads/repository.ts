@@ -1,5 +1,17 @@
 import { constants, createReadStream } from 'node:fs'
-import { copyFile, link, mkdir, open, realpath, rename, rm, stat } from 'node:fs/promises'
+import {
+  copyFile,
+  link,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  stat
+} from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 
@@ -30,11 +42,16 @@ import { readBoundedManagedFilePreview } from '../managed-file-preview'
 
 const UPLOADS_DIR = 'uploads'
 const STAGING_UPLOAD_SESSION_ID = '.staging'
+const LIVE_COPY_TEMP_SUFFIX = '.live-copy.tmp'
+const LEGACY_CLEANUP_PRIVATE_SUFFIX = '.legacy-cleanup.private'
+const LEGACY_CLEANUP_CANDIDATE = 'candidate'
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 type UploadRepositoryOptions = {
   maxFileBytes?: number
   getClient?: () => Promise<PrismaClient>
+  getLegacyFileChecksum?: (path: string) => Promise<string>
+  renameLegacyForCleanup?: (source: string, destination: string) => Promise<void>
   createLocalReadStream?: (
     sourcePath: string,
     options: { highWaterMark: number; signal: AbortSignal }
@@ -72,6 +89,14 @@ type CreateAttachmentInput = {
   originalName: string
   filePath: string
   mimeType?: string
+}
+
+type LegacyUploadUpgradeOptions = {
+  // Live callers cannot prove that every renderer has applied the returned path-free projection.
+  // Preserve the legacy source until a later startup/deletion reconciliation runs without live state.
+  // Orphan recovery also preserves it, but may only reuse authority left by the old deletion tail:
+  // recreating identity after provenance succeeded could claim unrelated residual bytes.
+  mode?: 'reconcile' | 'live-save' | 'orphan-recovery' | 'terminal-delete'
 }
 
 // Accepts only path segments that cannot escape the managed upload layout.
@@ -146,6 +171,48 @@ const sha256File = async (filePath: string): Promise<string> => {
   for await (const chunk of createReadStream(filePath)) hash.update(chunk)
   return hash.digest('hex')
 }
+
+type FileIdentity = Awaited<ReturnType<typeof lstat>>
+
+const hasSameFileIdentity = (left: FileIdentity, right: FileIdentity): boolean =>
+  left.dev === right.dev && left.ino === right.ino && left.size === right.size
+
+const hasSameFileSnapshot = (left: FileIdentity, right: FileIdentity): boolean =>
+  hasSameFileIdentity(left, right) &&
+  left.mtimeMs === right.mtimeMs &&
+  left.ctimeMs === right.ctimeMs
+
+class LegacyCleanupIncompleteError extends Error {}
+
+// Terminal Project deletion may leave bytes only when reconciliation has positively proved that the
+// deterministic legacy path no longer contains the Version-owned source. Callers must not use this
+// type for missing/corrupt Version authority or transient filesystem/private-claim failures.
+class UnsafeLegacyUploadResidualError extends Error {}
+
+// Orphan adoption may suppress only this positively proven cross-version state: the Upload row is
+// absent while candidate bytes exist or cannot safely be ruled out from the surviving locator.
+// Database/filesystem failures and malformed surviving authority keep their original retry behavior.
+class OrphanLegacyUploadAuthorityMissingError extends Error {}
+
+// Promise.all rejects before sibling publication settles. Orphan recovery must not let a late
+// sibling reactivate ManagedFile rows after its caller has already soft-deleted the Project index.
+// Prefer an ordinary failure over the suppressible missing-authority state so DB/FS errors retain
+// their durable intent instead of being accidentally collapsed into orphan-retained.
+const settleSiblingOperations = async <Value>(operations: Promise<Value>[]): Promise<Value[]> => {
+  const settled = await Promise.allSettled(operations)
+  const failures = settled.filter(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  )
+  const failure =
+    failures.find(
+      (result) => !(result.reason instanceof OrphanLegacyUploadAuthorityMissingError)
+    ) ?? failures[0]
+  if (failure) throw failure.reason
+  return settled.map((result) => (result as PromiseFulfilledResult<Value>).value)
+}
+
+type LegacyCleanupResult =
+  { status: 'absent' | 'removed' } | { status: 'unsafe-residual'; reason: string }
 
 // Owns app-managed uploads so renderer paths are always validated in the main process.
 class UploadRepository {
@@ -455,30 +522,74 @@ class UploadRepository {
     attachments: UploadedAttachment[],
     projectId = DEFAULT_UPLOAD_PROJECT_NAME
   ): Promise<UploadedAttachment[]> {
+    return this.finalizeSessionUploads(sessionId, attachments, projectId)
+  }
+
+  private async finalizeSessionUploads(
+    sessionId: string,
+    attachments: UploadedAttachment[],
+    projectId: string,
+    options: { preserveLegacySource?: boolean; requireExistingAuthority?: boolean } = {}
+  ): Promise<UploadedAttachment[]> {
     const safeSessionId = assertSafePathSegment(sessionId)
     const safeProjectId = assertSafePathSegment(projectId.trim() || DEFAULT_UPLOAD_PROJECT_NAME)
+    if (options.requireExistingAuthority && !this.options.getClient) {
+      throw new Error('Legacy Upload authority is unavailable for orphan recovery.')
+    }
 
-    return Promise.all(
+    const finalized = await Promise.all(
       attachments.map(async (attachment) => {
         if (this.options.getClient) {
-          return this.publishAttachment(safeProjectId, safeSessionId, attachment)
+          return this.publishAttachment(safeProjectId, safeSessionId, attachment, options)
         }
         const finalized = await this.finalizeAttachment(safeSessionId, attachment)
         return finalized
       })
     )
+    return finalized.filter(
+      (attachment): attachment is UploadedAttachment => attachment !== undefined
+    )
   }
 
   // Converts path-only Session records from pre-Version releases before the Session repository is
-  // allowed to write its path-free JSON projection. Repeated references in the top-level transcript
-  // and conversation graph share one publication operation and therefore one immutable Version.
-  async upgradeLegacySessionUploads(session: PersistedChatSession): Promise<PersistedChatSession> {
-    const upgrades = new Map<string, Promise<PersistedUploadedAttachment>>()
-    const upgrade = (upload: PersistedUploadedAttachment): Promise<PersistedUploadedAttachment> => {
+  // allowed to write its path-free JSON projection, and reconciles historical copies left behind by
+  // older Version-aware releases. Repeated references share one publication or reconciliation.
+  async upgradeLegacySessionUploads(
+    session: PersistedChatSession,
+    options: LegacyUploadUpgradeOptions = {}
+  ): Promise<PersistedChatSession> {
+    this.assertConsistentSessionUploadReferences(session)
+    const isLiveSave = options.mode === 'live-save' || options.mode === 'orphan-recovery'
+    const requireExistingAuthority = options.mode === 'orphan-recovery'
+    const isTerminalDelete = options.mode === 'terminal-delete'
+    const upgrades = new Map<string, Promise<PersistedUploadedAttachment | undefined>>()
+    const reconciliations = new Map<string, Promise<LegacyCleanupResult>>()
+    const upgrade = async (
+      upload: PersistedUploadedAttachment
+    ): Promise<PersistedUploadedAttachment | undefined> => {
       if (upload.versionId) {
-        return Promise.resolve(
-          toPersistedUploadedAttachment(toRuntimeUploadedAttachment(upload, session.projectId))
+        const persisted = toPersistedUploadedAttachment(
+          toRuntimeUploadedAttachment(upload, session.projectId)
         )
+        if (isLiveSave) return Promise.resolve(persisted)
+        const reconciliationKey = `${upload.id}:${upload.versionId}`
+        let reconciliation = reconciliations.get(reconciliationKey)
+        if (!reconciliation) {
+          reconciliation = this.removeVerifiedLegacyCopy({
+            projectId: session.projectId,
+            sessionId: upload.sessionId,
+            uploadFileId: upload.id,
+            versionId: upload.versionId,
+            filename: upload.name
+          })
+          reconciliations.set(reconciliationKey, reconciliation)
+        }
+        return reconciliation.then(async (cleanup) => {
+          if (isTerminalDelete) {
+            await this.assertLegacySourceAbsent(upload.sessionId, upload.name, cleanup)
+          }
+          return persisted
+        })
       }
 
       const existing = upgrades.get(upload.id)
@@ -487,11 +598,16 @@ class UploadRepository {
         if (!upload.path) {
           throw new Error(`Legacy upload has no recoverable path: ${upload.id}`)
         }
-        const [finalized] = await this.finalizePendingSessionUploads(
+        const [finalized] = await this.finalizeSessionUploads(
           session.id,
           [toRuntimeUploadedAttachment(upload, session.projectId)],
-          session.projectId
+          session.projectId,
+          { preserveLegacySource: isLiveSave, requireExistingAuthority }
         )
+        if (!finalized) return undefined
+        if (isTerminalDelete) {
+          await this.assertLegacySourceAbsent(upload.sessionId, upload.name, { status: 'absent' })
+        }
         return toPersistedUploadedAttachment(finalized)
       })()
       upgrades.set(upload.id, operation)
@@ -501,21 +617,65 @@ class UploadRepository {
       message: Message
     ): Promise<Message> => {
       if (!message.uploads?.length) return message
-      const uploads = await Promise.all(message.uploads.map(upgrade))
+      const uploads = (await settleSiblingOperations(message.uploads.map(upgrade))).filter(
+        (upload): upload is PersistedUploadedAttachment => upload !== undefined
+      )
       return { ...message, uploads } as Message
     }
+    const messagesOperation = settleSiblingOperations(session.messages.map(upgradeMessage))
+    const graphMessagesOperation = session.conversationGraph
+      ? settleSiblingOperations(session.conversationGraph.messages.map(upgradeMessage))
+      : undefined
+    await settleSiblingOperations<unknown>([
+      messagesOperation,
+      ...(graphMessagesOperation ? [graphMessagesOperation] : [])
+    ])
+    const messages = await messagesOperation
+    const graphMessages = await graphMessagesOperation
 
     return {
       ...session,
-      messages: await Promise.all(session.messages.map(upgradeMessage)),
+      messages,
       ...(session.conversationGraph
         ? {
             conversationGraph: {
               ...session.conversationGraph,
-              messages: await Promise.all(session.conversationGraph.messages.map(upgradeMessage))
+              messages: graphMessages!
             }
           }
         : {})
+    }
+  }
+
+  // Operation sharing is safe only after every occurrence across the flat transcript and graph has
+  // proven the same immutable identity. This synchronous, lexical preflight runs before any DB or
+  // filesystem work starts, so a conflicting historical locator cannot be overwritten or orphaned.
+  private assertConsistentSessionUploadReferences(session: PersistedChatSession): void {
+    const identities = new Map<string, string>()
+    const messages = [...session.messages, ...(session.conversationGraph?.messages ?? [])]
+    for (const upload of messages.flatMap((message) => message.uploads ?? [])) {
+      if (upload.sha256 && upload.checksum && upload.sha256 !== upload.checksum) {
+        throw new Error(`Session Upload reference has conflicting checksums: ${upload.id}`)
+      }
+      const identity = JSON.stringify([
+        upload.sessionId,
+        upload.name,
+        upload.originalName,
+        upload.path === undefined ? null : resolve(upload.path),
+        upload.versionId ?? null,
+        upload.versionNumber ?? null,
+        upload.sha256 ?? upload.checksum ?? null,
+        upload.size,
+        upload.mimeType ?? null,
+        upload.createdAt ?? null
+      ])
+      const existing = identities.get(upload.id)
+      if (existing !== undefined && existing !== identity) {
+        throw new Error(
+          `Session Upload references have conflicting immutable identity: ${upload.id}`
+        )
+      }
+      identities.set(upload.id, identity)
     }
   }
 
@@ -564,8 +724,7 @@ class UploadRepository {
             checksum: version.checksum,
             createdAt: version.createdAt?.toISOString()
           },
-          version,
-          { preserveSource: sourcePath === sourceCandidates[2] }
+          version
         )
       })
     )
@@ -929,8 +1088,9 @@ class UploadRepository {
   private async publishAttachment(
     projectId: string,
     sessionId: string,
-    attachment: UploadedAttachment
-  ): Promise<UploadedAttachment> {
+    attachment: UploadedAttachment,
+    options: { preserveLegacySource?: boolean; requireExistingAuthority?: boolean } = {}
+  ): Promise<UploadedAttachment | undefined> {
     const uploadFileId = assertSafePathSegment(attachment.id)
     const client = await this.options.getClient!()
     const existingFile = await client.uploadFile.findUnique({
@@ -946,9 +1106,37 @@ class UploadRepository {
       if (attachment.versionId && attachment.versionId !== existingVersion.id) {
         throw new Error('Upload Version identity conflicts with the existing immutable Version.')
       }
-      return this.completeStagingUpload(projectId, sessionId, attachment, existingVersion, {
-        preserveSource: attachment.sessionId === sessionId && !attachment.versionId
-      })
+      const published = await this.completeStagingUpload(
+        projectId,
+        sessionId,
+        attachment,
+        existingVersion,
+        { preserveSource: options.preserveLegacySource === true }
+      )
+      if (
+        !options.preserveLegacySource &&
+        attachment.sessionId === sessionId &&
+        !attachment.versionId
+      ) {
+        await this.removeVerifiedLegacyCopy({
+          projectId,
+          sessionId,
+          uploadFileId,
+          versionId: existingVersion.id,
+          filename: attachment.name,
+          legacyPath: attachment.path
+        })
+      }
+      return published
+    }
+
+    if (options.requireExistingAuthority) {
+      if (!(await this.hasOrphanLegacyCandidate(projectId, sessionId, uploadFileId, attachment))) {
+        return undefined
+      }
+      throw new OrphanLegacyUploadAuthorityMissingError(
+        `Legacy Upload authority is unavailable: ${uploadFileId}`
+      )
     }
 
     const sourcePath = await this.resolveManagedUploadPath({ path: attachment.path })
@@ -1026,8 +1214,67 @@ class UploadRepository {
     })
 
     return this.completeStagingUpload(projectId, sessionId, attachment, registered, {
-      preserveSource: attachment.sessionId === sessionId
+      preserveSource: options.preserveLegacySource === true
     })
+  }
+
+  // Missing legacy and private candidates are positive evidence that the old deletion tail already
+  // consumed the bytes. A mismatched recorded locator remains unknown and is retained fail-closed.
+  private async hasOrphanLegacyCandidate(
+    projectId: string,
+    sessionId: string,
+    uploadFileId: string,
+    attachment: UploadedAttachment
+  ): Promise<boolean> {
+    assertSafePathSegment(projectId)
+    assertSafePathSegment(sessionId)
+    assertSafePathSegment(uploadFileId)
+    const legacyRoot = this.getSessionUploadDir(sessionId)
+    const expectedLegacyPath = resolve(legacyRoot, attachment.name)
+    const privateClaimDir = `${expectedLegacyPath}${LEGACY_CLEANUP_PRIVATE_SUFFIX}`
+    assertPathInsideRoot(legacyRoot, expectedLegacyPath)
+    assertPathInsideRoot(legacyRoot, privateClaimDir)
+    if (resolve(attachment.path) !== expectedLegacyPath) return true
+
+    for (const candidate of [expectedLegacyPath, privateClaimDir]) {
+      try {
+        await lstat(candidate)
+        return true
+      } catch (error) {
+        if (!isMissingFileError(error)) throw error
+      }
+    }
+
+    // A live-save can crash after copying bytes into an authority-derived Version directory. The
+    // Version id is unavailable once SQLite authority is gone, so scan only this Upload's bounded
+    // versions root. Empty directories left by provenance cleanup are harmless; any surviving entry
+    // (including content.live-copy.tmp) is retained for manual/retry recovery.
+    const versionsRoot = resolve(
+      this.storageRoot,
+      UPLOADS_DIR,
+      projectId,
+      sessionId,
+      uploadFileId,
+      'versions'
+    )
+    assertPathInsideRoot(this.storageRoot, versionsRoot)
+    let versionsRootInfo
+    try {
+      versionsRootInfo = await lstat(versionsRoot)
+    } catch (error) {
+      if (isMissingFileError(error)) return false
+      throw error
+    }
+    if (!versionsRootInfo.isDirectory() || versionsRootInfo.isSymbolicLink()) return true
+    const versionEntries = await readdir(versionsRoot, { withFileTypes: true })
+    for (const versionEntry of versionEntries) {
+      if (!versionEntry.isDirectory() || versionEntry.isSymbolicLink()) return true
+      const entries = await readdir(join(versionsRoot, versionEntry.name), {
+        withFileTypes: true
+      })
+      if (entries.length > 0) return true
+    }
+    return false
   }
 
   private async completeStagingUpload(
@@ -1084,6 +1331,23 @@ class UploadRepository {
       } catch (error) {
         if (!isMissingFileError(error)) throw error
       }
+      await mkdir(dirname(finalPath), { recursive: true })
+      const temporaryPath = `${finalPath}${LIVE_COPY_TEMP_SUFFIX}`
+      if (await validateContent(temporaryPath)) {
+        // A prior live save completed its copy but exited before the atomic final rename. The
+        // deterministic path is derived from staging authority, so recovery can safely finish it.
+        await rename(temporaryPath, finalPath)
+        finalValid = await validateContent(finalPath)
+        if (!finalValid) {
+          throw new Error(`Recovered Upload Version content is corrupt: ${version.id}`)
+        }
+      } else {
+        // Remove a partial/corrupt crash residue before retrying from the still-authoritative source.
+        await rm(temporaryPath, { force: true })
+      }
+    }
+
+    if (!finalValid) {
       let sourcePath: string | undefined
       try {
         sourcePath = await this.resolveManagedUploadPath({ path: attachment.path })
@@ -1100,9 +1364,11 @@ class UploadRepository {
         })
         throw new Error(`Upload Version staging content is unavailable: ${version.id}`)
       }
-      await mkdir(dirname(finalPath), { recursive: true })
       if (options.preserveSource) {
-        const temporaryPath = `${finalPath}.${randomUUID()}.tmp`
+        // A live Session may still be rendering the path-only projection. Publish through an atomic
+        // temporary copy, but retain that sole readable path until a later startup/deletion pass can
+        // prove the path-free projection is authoritative without relying on renderer delivery.
+        const temporaryPath = `${finalPath}${LIVE_COPY_TEMP_SUFFIX}`
         try {
           await copyFile(sourcePath, temporaryPath, constants.COPYFILE_EXCL)
           if (!(await validateContent(temporaryPath))) {
@@ -1110,9 +1376,12 @@ class UploadRepository {
           }
           await rename(temporaryPath, finalPath)
         } finally {
-          await rm(temporaryPath, { force: true })
+          await rm(temporaryPath, { force: true }).catch(() => undefined)
         }
       } else {
+        // The staging row is durable before this atomic move. If the process exits before the row is
+        // marked ready, startup recovery validates the final path and completes publication. If the
+        // Session JSON still contains the legacy path, a retry resolves the same row by uploadFileId.
         await rename(sourcePath, finalPath)
       }
       finalValid = await validateContent(finalPath)
@@ -1120,6 +1389,9 @@ class UploadRepository {
         throw new Error(`Published Upload Version content is corrupt: ${version.id}`)
       }
     }
+
+    // A valid final path supersedes any deterministic crash residue from an earlier staging retry.
+    await rm(`${finalPath}${LIVE_COPY_TEMP_SUFFIX}`, { force: true })
 
     const client = await this.options.getClient!()
     const ready = await client.$transaction(async (tx) => {
@@ -1183,6 +1455,300 @@ class UploadRepository {
       checksum: ready.checksum,
       createdAt: ready.createdAt?.toISOString()
     }
+  }
+
+  // Reconciles copies left by releases that published a ready Version without consuming the legacy
+  // source. Cleanup is fail-closed: SQLite authority, both byte copies, the deterministic legacy path,
+  // and the source file identity must all remain valid through the final pre-delete check.
+  private async removeVerifiedLegacyCopy(input: {
+    projectId: string
+    sessionId: string
+    uploadFileId: string
+    versionId: string
+    filename: string
+    legacyPath?: string
+  }): Promise<LegacyCleanupResult> {
+    const projectId = assertSafePathSegment(input.projectId)
+    const sessionId = assertSafePathSegment(input.sessionId)
+    const uploadFileId = assertSafePathSegment(input.uploadFileId)
+    const versionId = assertSafePathSegment(input.versionId)
+    const legacyRoot = this.getSessionUploadDir(sessionId)
+    const expectedLegacyPath = resolve(legacyRoot, input.filename)
+    const cleanupPrivateDir = `${expectedLegacyPath}${LEGACY_CLEANUP_PRIVATE_SUFFIX}`
+    const cleanupPrivatePath = join(cleanupPrivateDir, LEGACY_CLEANUP_CANDIDATE)
+    assertPathInsideRoot(legacyRoot, expectedLegacyPath)
+    assertPathInsideRoot(legacyRoot, cleanupPrivateDir)
+    assertPathInsideRoot(legacyRoot, cleanupPrivatePath)
+
+    let initialLegacyInfo: FileIdentity | undefined
+    let privateDirInfo: FileIdentity | undefined
+    let privateInfo: FileIdentity | undefined
+    try {
+      initialLegacyInfo = await lstat(expectedLegacyPath)
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error
+    }
+    try {
+      privateDirInfo = await lstat(cleanupPrivateDir)
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error
+    }
+    if (privateDirInfo) {
+      if (!privateDirInfo.isDirectory() || privateDirInfo.isSymbolicLink()) {
+        throw new LegacyCleanupIncompleteError(
+          `Legacy upload cleanup found an unsafe private claim: ${input.filename}`
+        )
+      }
+      try {
+        privateInfo = await lstat(cleanupPrivatePath)
+      } catch (error) {
+        if (!isMissingFileError(error)) throw error
+        try {
+          await rmdir(cleanupPrivateDir)
+          privateDirInfo = undefined
+        } catch {
+          throw new LegacyCleanupIncompleteError(
+            `Legacy upload cleanup found an incomplete private claim: ${input.filename}`
+          )
+        }
+      }
+    }
+    if (!initialLegacyInfo && !privateInfo) return { status: 'absent' }
+
+    if (input.legacyPath && resolve(input.legacyPath) !== expectedLegacyPath) {
+      return {
+        status: 'unsafe-residual',
+        reason: 'the recorded legacy path does not match its deterministic Session path'
+      }
+    }
+
+    if (!this.options.getClient) {
+      throw new Error(`Upload Version authority is unavailable for legacy cleanup: ${versionId}`)
+    }
+
+    // The common path-free case has neither candidate, so the lstat checks above avoid a database read
+    // and full immutable-file hash on every subsequent Session save. Database failures after a
+    // candidate is found propagate so reconciliation remains incomplete and retries later.
+    const client = await this.options.getClient()
+    const version = await client.uploadVersion.findFirst({
+      where: {
+        id: versionId,
+        uploadFileId,
+        state: 'ready',
+        uploadFile: { is: { projectId, sessionId } }
+      },
+      select: {
+        contentStorageKey: true,
+        filename: true,
+        sizeBytes: true,
+        checksum: true
+      }
+    })
+    if (!version) {
+      throw new Error(`Ready Upload Version authority is unavailable: ${versionId}`)
+    }
+    if (version.filename !== input.filename) {
+      throw new Error(`Ready Upload Version filename does not match: ${versionId}`)
+    }
+
+    const finalPath = resolve(this.storageRoot, ...version.contentStorageKey.split('/'))
+    assertPathInsideRoot(this.storageRoot, finalPath, 'Upload storage key escapes storage.')
+    const finalInfo = await stat(finalPath)
+    if (
+      !finalInfo.isFile() ||
+      finalInfo.size !== Number(version.sizeBytes) ||
+      (await sha256File(finalPath)) !== version.checksum
+    ) {
+      throw new Error(`Ready Upload Version content is unavailable or corrupt: ${versionId}`)
+    }
+
+    // A pre-existing claim has lost the pre-rename inode witness held by its original process. Never
+    // delete that candidate from checksum alone: restore it without overwrite, release the claim, and
+    // make this invocation prove the legacy path again before acquiring a fresh claim.
+    if (privateInfo) {
+      await this.restoreLegacyCleanupPrivate(
+        cleanupPrivateDir,
+        cleanupPrivatePath,
+        expectedLegacyPath,
+        privateInfo
+      )
+    }
+
+    let verifiedLegacyInfo: FileIdentity
+    try {
+      initialLegacyInfo = await lstat(expectedLegacyPath)
+      if (!initialLegacyInfo.isFile() || initialLegacyInfo.isSymbolicLink()) {
+        return {
+          status: 'unsafe-residual',
+          reason: 'the deterministic legacy path is not a regular owned file'
+        }
+      }
+      const sourcePath = await this.resolveManagedUploadPath(
+        { path: expectedLegacyPath },
+        { projectId, sessionId }
+      )
+      const resolvedLegacyPath = await realpath(expectedLegacyPath)
+      const resolvedFinalPath = await realpath(finalPath)
+      if (
+        sourcePath !== resolvedLegacyPath ||
+        sourcePath === resolvedFinalPath ||
+        initialLegacyInfo.size !== Number(version.sizeBytes)
+      ) {
+        return {
+          status: 'unsafe-residual',
+          reason: 'the deterministic legacy path does not match the Version-owned source'
+        }
+      }
+
+      const legacyChecksum = await (this.options.getLegacyFileChecksum ?? sha256File)(
+        expectedLegacyPath
+      )
+      if (legacyChecksum !== version.checksum) {
+        return {
+          status: 'unsafe-residual',
+          reason: 'the deterministic legacy path contains different content'
+        }
+      }
+
+      verifiedLegacyInfo = await lstat(expectedLegacyPath)
+      const verifiedLegacyPath = await realpath(expectedLegacyPath)
+      if (
+        !verifiedLegacyInfo.isFile() ||
+        verifiedLegacyInfo.isSymbolicLink() ||
+        verifiedLegacyPath !== sourcePath ||
+        !hasSameFileSnapshot(verifiedLegacyInfo, initialLegacyInfo)
+      ) {
+        return {
+          status: 'unsafe-residual',
+          reason: 'the deterministic legacy path changed during ownership verification'
+        }
+      }
+    } catch (error) {
+      if (isMissingFileError(error)) return { status: 'absent' }
+      throw error
+    }
+
+    try {
+      // mkdir is the no-replace claim Node exposes portably. Once this empty directory is ours, the
+      // rename target inside it cannot collide with another cooperating cleanup process.
+      await mkdir(cleanupPrivateDir)
+    } catch (error) {
+      if (isFileExistsError(error)) {
+        throw new LegacyCleanupIncompleteError(
+          `Legacy upload cleanup private claim is already occupied: ${input.filename}`
+        )
+      }
+      throw error
+    }
+
+    try {
+      await (this.options.renameLegacyForCleanup ?? rename)(expectedLegacyPath, cleanupPrivatePath)
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        try {
+          await rmdir(cleanupPrivateDir)
+        } catch {
+          throw new LegacyCleanupIncompleteError(
+            `Legacy upload cleanup could not release its private claim: ${input.filename}`
+          )
+        }
+        return { status: 'absent' }
+      }
+      throw error
+    }
+
+    const movedInfo = await lstat(cleanupPrivatePath)
+    const movedChecksum = await sha256File(cleanupPrivatePath)
+    const reverifiedMovedInfo = await lstat(cleanupPrivatePath)
+    if (
+      !hasSameFileIdentity(movedInfo, verifiedLegacyInfo) ||
+      movedChecksum !== version.checksum ||
+      !hasSameFileSnapshot(reverifiedMovedInfo, movedInfo)
+    ) {
+      await this.restoreLegacyCleanupPrivate(
+        cleanupPrivateDir,
+        cleanupPrivatePath,
+        expectedLegacyPath,
+        reverifiedMovedInfo
+      )
+      return {
+        status: 'unsafe-residual',
+        reason: 'the claimed legacy source changed before removal'
+      }
+    }
+
+    await rm(cleanupPrivatePath, { force: true })
+    await rmdir(cleanupPrivateDir)
+    return { status: 'removed' }
+  }
+
+  private async restoreLegacyCleanupPrivate(
+    cleanupPrivateDir: string,
+    cleanupPrivatePath: string,
+    expectedLegacyPath: string,
+    privateInfo: FileIdentity
+  ): Promise<void> {
+    if (!privateInfo.isFile() || privateInfo.isSymbolicLink()) {
+      throw new LegacyCleanupIncompleteError(
+        `Legacy upload cleanup left an unverifiable private candidate: ${basename(expectedLegacyPath)}`
+      )
+    }
+
+    try {
+      await link(cleanupPrivatePath, expectedLegacyPath)
+    } catch (error) {
+      if (isFileExistsError(error)) {
+        // If a previous restore linked the same inode before crashing, finish removal of the extra
+        // private name. Any different replacement wins EEXIST and remains untouched alongside it.
+        const currentLegacyInfo = await lstat(expectedLegacyPath).catch(() => undefined)
+        if (currentLegacyInfo && hasSameFileIdentity(currentLegacyInfo, privateInfo)) {
+          await rm(cleanupPrivatePath, { force: true })
+          await rmdir(cleanupPrivateDir)
+          return
+        }
+      }
+      throw new LegacyCleanupIncompleteError(
+        `Legacy upload cleanup could not safely restore a private candidate: ${basename(expectedLegacyPath)}`
+      )
+    }
+
+    await rm(cleanupPrivatePath, { force: true })
+    await rmdir(cleanupPrivateDir)
+  }
+
+  // Session/project deletion removes the final JSON authority needed to discover a legacy duplicate.
+  // Refuse that terminal commit while any deterministic candidate remains, including a replacement
+  // file that fail-closed checksum or inode validation deliberately would not delete.
+  private async assertLegacySourceAbsent(
+    sessionId: string,
+    filename: string,
+    cleanup: LegacyCleanupResult
+  ): Promise<void> {
+    const legacyRoot = this.getSessionUploadDir(assertSafePathSegment(sessionId))
+    const legacyPath = resolve(legacyRoot, filename)
+    const cleanupPrivateDir = `${legacyPath}${LEGACY_CLEANUP_PRIVATE_SUFFIX}`
+    assertPathInsideRoot(legacyRoot, legacyPath)
+    assertPathInsideRoot(legacyRoot, cleanupPrivateDir)
+    try {
+      await lstat(cleanupPrivateDir)
+      throw new LegacyCleanupIncompleteError(
+        `Legacy upload cleanup found an incomplete private claim: ${filename}`
+      )
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error
+    }
+    try {
+      await lstat(legacyPath)
+    } catch (error) {
+      if (isMissingFileError(error)) return
+      throw error
+    }
+    if (cleanup.status === 'unsafe-residual') {
+      throw new UnsafeLegacyUploadResidualError(
+        `Legacy upload source is not owned by its ready Version: ${filename}; ${cleanup.reason}.`
+      )
+    }
+    throw new Error(`Legacy upload cleanup is incomplete: ${filename}`)
   }
 
   // Returns the top-level upload directory under the app persistence root.
@@ -1279,4 +1845,8 @@ class UploadRepository {
   }
 }
 
-export { UploadRepository }
+export {
+  OrphanLegacyUploadAuthorityMissingError,
+  UnsafeLegacyUploadResidualError,
+  UploadRepository
+}

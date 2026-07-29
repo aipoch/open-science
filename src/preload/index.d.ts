@@ -256,7 +256,7 @@ interface OpenScienceAPI {
   }
   sessions: {
     loadAll(): Promise<LoadAllSessionsResult>
-    saveSession(session: PersistedChatSession): Promise<void>
+    saveSession(session: PersistedChatSession): Promise<PersistedChatSession>
     deleteSession(request: DeleteSessionRequest): Promise<void>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
     onCreated(listener: AcpListener<SessionUpsertEvent>): RemoveListener

@@ -111,7 +111,7 @@ const isNonActionableCodexDiagnostic = (text: string): boolean => {
 
 type WorkspaceRuntimeEventDependencies = {
   finalizeRunArtifacts?: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
-  saveSession?: (session: PersistedChatSession) => Promise<void>
+  saveSession?: (session: PersistedChatSession) => Promise<PersistedChatSession | void>
 }
 
 // Defaults to the preload artifact API while allowing tests to inject a fake finalizer.
@@ -120,8 +120,9 @@ const finalizeRunArtifacts = (request: FinalizeRunArtifactsRequest): Promise<Art
 
 // Artifact finalization validates its renderer-selected Message against the durable Session graph.
 // Persist that graph explicitly instead of relying on the asynchronous store saver to win the IPC race.
-const saveSessionForArtifactFinalization = (session: PersistedChatSession): Promise<void> =>
-  window.api.sessions.saveSession(session)
+const saveSessionForArtifactFinalization = (
+  session: PersistedChatSession
+): Promise<PersistedChatSession> => window.api.sessions.saveSession(session)
 
 const finalizeArtifactEvent = async (
   event: AcpRuntimeEvent,
@@ -157,9 +158,16 @@ const finalizeArtifactEvent = async (
       if (!attachedSession) {
         throw new Error('Artifact finalization Session is no longer available.')
       }
-      await (dependencies.saveSession ?? saveSessionForArtifactFinalization)(
-        toPersistedSession(attachedSession)
+      const submittedSession = toPersistedSession(attachedSession)
+      const durableSession = await (dependencies.saveSession ?? saveSessionForArtifactFinalization)(
+        submittedSession
       )
+      if (durableSession) {
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: attachedSession,
+          session: durableSession
+        })
+      }
     }
 
     await persistLatestSession()

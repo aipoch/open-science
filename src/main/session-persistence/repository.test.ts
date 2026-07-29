@@ -139,6 +139,9 @@ describe('session persistence repository (per-session files)', () => {
     expect(refreshed?.title).toBe('After correction')
     expect(refreshed?.messages.at(-1)?.id).toBe('message-2')
     await expect(repository.loadSession('project-a', 'missing')).resolves.toBeUndefined()
+    await expect(repository.loadSessionWithDiagnostics('project-a', 'missing')).resolves.toEqual({
+      status: 'missing'
+    })
   })
 
   it('never writes finalized upload absolute paths into Session JSON', async () => {
@@ -317,6 +320,57 @@ describe('session persistence repository (per-session files)', () => {
     expect(scan.isComplete).toBe(true)
   })
 
+  it('keeps a terminal Project scan incomplete while a quarantined Session preserves authority', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const projectDir = join(storageRoot!, 'sessions', 'project-a')
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(join(projectDir, 'broken.json'), '{broken json', 'utf8')
+
+    const first = await repository.loadProjectWithDiagnostics('project-a')
+    const second = await repository.loadProjectWithDiagnostics('project-a')
+
+    expect(first).toEqual({ sessions: [], isComplete: false })
+    expect(second).toEqual({ sessions: [], isComplete: false })
+    expect(await readdir(projectDir)).toContainEqual(
+      expect.stringMatching(/^broken\.json\.invalid-/)
+    )
+  })
+
+  it('keeps a quarantined Session unreadable on later terminal lookups', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const projectDir = join(storageRoot!, 'sessions', 'project-a')
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(join(projectDir, 'broken.json'), '{broken json', 'utf8')
+
+    await expect(repository.loadSessionWithDiagnostics('project-a', 'broken')).resolves.toEqual({
+      status: 'unreadable'
+    })
+    await expect(repository.loadSessionWithDiagnostics('project-a', 'broken')).resolves.toEqual({
+      status: 'unreadable'
+    })
+  })
+
+  it('lets a valid current Session supersede its retained older quarantine', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const session = createSession()
+    await repository.saveSession(session)
+    const projectDir = join(storageRoot!, 'sessions', session.projectId)
+    const quarantineName = `${session.id}.json.invalid-1710000000000-1`
+    await writeFile(join(projectDir, quarantineName), '{older malformed authority', 'utf8')
+
+    await expect(repository.loadSession(session.projectId, session.id)).resolves.toMatchObject({
+      id: session.id
+    })
+    await expect(
+      repository.loadSessionWithDiagnostics(session.projectId, session.id)
+    ).resolves.toEqual({ status: 'found', session: expect.objectContaining({ id: session.id }) })
+    await expect(repository.loadProjectWithDiagnostics(session.projectId)).resolves.toEqual({
+      sessions: [expect.objectContaining({ id: session.id })],
+      isComplete: true
+    })
+    await expect(readdir(projectDir)).resolves.toContain(quarantineName)
+  })
+
   it('keeps the scan incomplete without quarantining a session file that cannot be read', async () => {
     const root = await createStorageRoot()
     const session = createSession()
@@ -334,6 +388,63 @@ describe('session persistence repository (per-session files)', () => {
       readFile(join(root, 'sessions', session.projectId, `${session.id}.json`), 'utf8')
     ).resolves.toContain(session.id)
     expect(readSessionFile).toHaveBeenCalledOnce()
+  })
+
+  it('distinguishes an unreadable Session from an absent Session for terminal mutations', async () => {
+    const root = await createStorageRoot()
+    const session = createSession()
+    await new SessionRepository(root).saveSession(session)
+    const repository = new SessionRepository(root, {
+      readSessionFile: vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }))
+    })
+
+    await expect(
+      repository.loadSessionWithDiagnostics(session.projectId, session.id)
+    ).resolves.toEqual({ status: 'unreadable' })
+  })
+
+  it('keeps terminal diagnostics fail-closed when the Project path is not readable as a directory', async () => {
+    const root = await createStorageRoot()
+    await mkdir(join(root, 'sessions'), { recursive: true })
+    await writeFile(join(root, 'sessions', 'project-a'), 'not a directory', 'utf8')
+    const repository = new SessionRepository(root)
+
+    await expect(repository.loadProjectWithDiagnostics('project-a')).resolves.toEqual({
+      sessions: [],
+      isComplete: false
+    })
+    await expect(repository.loadSessionWithDiagnostics('project-a', 'session-1')).resolves.toEqual({
+      status: 'unreadable'
+    })
+  })
+
+  it('scans one Project completely without reading an unrelated unreadable Project', async () => {
+    const root = await createStorageRoot()
+    const writer = new SessionRepository(root)
+    const projectASession = createSession({ id: 'session-a', projectId: 'project-a' })
+    const projectBSession = createSession({ id: 'session-b', projectId: 'project-b' })
+    await writer.saveSession(projectASession)
+    await writer.saveSession(projectBSession)
+    const readSessionFile = vi.fn(async (filePath: string) => {
+      if (filePath.includes(`${join('sessions', 'project-b')}`)) {
+        throw Object.assign(new Error('unrelated project unavailable'), { code: 'EACCES' })
+      }
+      return readFile(filePath, 'utf8')
+    })
+    const repository = new SessionRepository(root, { readSessionFile })
+
+    await expect(repository.loadProjectWithDiagnostics('project-a')).resolves.toEqual({
+      sessions: [expect.objectContaining({ id: 'session-a', projectId: 'project-a' })],
+      isComplete: true
+    })
+    expect(readSessionFile).not.toHaveBeenCalledWith(
+      expect.stringContaining(join('sessions', 'project-b'))
+    )
+    await expect(repository.loadAllWithDiagnostics()).resolves.toMatchObject({
+      isComplete: false
+    })
   })
 
   it('keeps default dependencies when optional overrides are explicitly undefined', async () => {
@@ -415,19 +526,154 @@ describe('session persistence repository (per-session files)', () => {
     ])
   })
 
-  it('keeps a staged project deletion committed when recursive cleanup fails', async () => {
+  it('keeps valid primary JSON when removing a superseded quarantine fails', async () => {
     const root = await createStorageRoot()
-    const remove = vi.fn().mockRejectedValue(new Error('partial recursive cleanup'))
+    const session = createSession()
+    const quarantinePath = join(
+      root,
+      'sessions',
+      session.projectId,
+      `${session.id}.json.invalid-1710000000000-1`
+    )
+    const removalFailure = new Error('backup is locked')
+    const remove = vi.fn(async (path: string, options: { force: boolean; recursive: boolean }) => {
+      if (path === quarantinePath) throw removalFailure
+      await rm(path, options)
+    })
     const repository = new SessionRepository(root, { remove })
+    await repository.saveSession(session)
+    await writeFile(quarantinePath, '{older malformed authority', 'utf8')
+
+    await expect(repository.deleteSession(session.projectId, session.id)).rejects.toBe(
+      removalFailure
+    )
+
+    await expect(
+      repository.loadSessionWithDiagnostics(session.projectId, session.id)
+    ).resolves.toEqual({ status: 'found', session: expect.objectContaining({ id: session.id }) })
+    await expect(readFile(quarantinePath, 'utf8')).resolves.toBe('{older malformed authority')
+  })
+
+  it('does not delete orphan quarantines or current invalid primary authority', async () => {
+    const root = await createStorageRoot()
+    const projectDir = join(root, 'sessions', 'project-a')
+    const orphanPath = join(projectDir, 'orphan.json.invalid-1710000000000-1')
+    const invalidPath = join(projectDir, 'invalid.json')
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(orphanPath, '{orphan authority', 'utf8')
+    await writeFile(invalidPath, '{current invalid authority', 'utf8')
+    const repository = new SessionRepository(root)
+
+    await expect(repository.deleteSession('project-a', 'orphan')).rejects.toThrow(/unreadable/i)
+    await expect(readFile(orphanPath, 'utf8')).resolves.toBe('{orphan authority')
+
+    await expect(repository.deleteSession('project-a', 'invalid')).rejects.toThrow(/unreadable/i)
+    const invalidBackup = (await readdir(projectDir)).find((name) =>
+      /^invalid\.json\.invalid-\d+-\d+$/u.test(name)
+    )
+    expect(invalidBackup).toBeDefined()
+    await expect(readFile(join(projectDir, invalidBackup!), 'utf8')).resolves.toBe(
+      '{current invalid authority'
+    )
+  })
+
+  it('keeps a marked Project tombstone through loadAll until tail completion', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
     await repository.saveSession(createSession({ id: 'session-1', projectId: 'project-a' }))
     await repository.saveSession(createSession({ id: 'session-2', projectId: 'project-a' }))
 
     await expect(repository.deleteProjectSessions('project-a')).resolves.toBeUndefined()
     await expect(repository.loadAll()).resolves.toMatchObject({ sessions: [] })
-    expect(await readdir(join(root, 'deleted-sessions', 'project-a'))).toEqual([
+    expect((await readdir(join(root, 'deleted-sessions', 'project-a'))).sort()).toEqual([
+      '.project-deletion-committed',
       'session-1.json',
       'session-2.json'
     ])
+    await expect(repository.getProjectSessionDeletionState('project-a')).resolves.toBe('prepared')
+    await expect(repository.listLegacyProjectSessionTombstones()).resolves.toEqual([])
+
+    await repository.completeProjectSessionDeletion('project-a')
+
+    await expect(repository.getProjectSessionDeletionState('project-a')).resolves.toBe('absent')
+  })
+
+  it('commits an empty Project Session phase with a durable marker', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
+
+    await repository.deleteProjectSessions('project-empty')
+
+    await expect(repository.getProjectSessionDeletionState('project-empty')).resolves.toBe(
+      'prepared'
+    )
+    await expect(readdir(join(root, 'deleted-sessions', 'project-empty'))).resolves.toEqual([
+      '.project-deletion-committed'
+    ])
+  })
+
+  it('discovers an unmarked legacy Project tombstone without deleting its authority', async () => {
+    const root = await createStorageRoot()
+    const legacyTombstone = join(root, 'deleted-sessions', 'project-old')
+    await mkdir(legacyTombstone, { recursive: true })
+    await writeFile(join(legacyTombstone, 'session.json'), '{}', 'utf8')
+    const repository = new SessionRepository(root)
+
+    await expect(repository.getProjectSessionDeletionState('project-old')).resolves.toBe(
+      'legacy-committed'
+    )
+    await repository.loadAll()
+
+    await expect(readdir(legacyTombstone)).resolves.toEqual(['session.json'])
+    await expect(repository.listLegacyProjectSessionTombstones()).resolves.toEqual(['project-old'])
+    await expect(readdir(legacyTombstone)).resolves.toEqual(['session.json'])
+  })
+
+  it('retains a tombstone with a malformed commit marker as unknown authority', async () => {
+    const root = await createStorageRoot()
+    const tombstone = join(root, 'deleted-sessions', 'project-unknown')
+    const marker = join(tombstone, '.project-deletion-committed')
+    await mkdir(marker, { recursive: true })
+    const repository = new SessionRepository(root)
+
+    await expect(repository.getProjectSessionDeletionState('project-unknown')).rejects.toThrow(
+      /marker is invalid/i
+    )
+    await expect(repository.listLegacyProjectSessionTombstones()).rejects.toThrow(
+      /marker is invalid/i
+    )
+    await repository.loadAll()
+
+    await expect(readdir(tombstone)).resolves.toEqual(['.project-deletion-committed'])
+  })
+
+  it('rejects conflicting live authority beside a marked Project tombstone', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
+    await repository.saveSession(createSession({ projectId: 'project-conflict' }))
+    const tombstone = join(root, 'deleted-sessions', 'project-conflict')
+    await mkdir(tombstone, { recursive: true })
+    await writeFile(join(tombstone, '.project-deletion-committed'), '', 'utf8')
+
+    await expect(repository.getProjectSessionDeletionState('project-conflict')).rejects.toThrow(
+      /conflicting live authority/i
+    )
+    await expect(repository.listLegacyProjectSessionTombstones()).rejects.toThrow(
+      /conflicting live authority/i
+    )
+  })
+
+  it('rejects conflicting live authority beside an unmarked legacy tombstone', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
+    await repository.saveSession(createSession({ projectId: 'project-legacy-conflict' }))
+    const tombstone = join(root, 'deleted-sessions', 'project-legacy-conflict')
+    await mkdir(tombstone, { recursive: true })
+    await writeFile(join(tombstone, 'old-session.json'), '{}', 'utf8')
+
+    await expect(
+      repository.getProjectSessionDeletionState('project-legacy-conflict')
+    ).rejects.toThrow(/conflicting live authority/i)
   })
 
   it('round-trips the manifest', async () => {

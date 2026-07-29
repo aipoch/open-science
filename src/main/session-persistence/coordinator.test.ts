@@ -1,6 +1,15 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import {
+  OrphanLegacyUploadAuthorityMissingError,
+  UnsafeLegacyUploadResidualError,
+  UploadRepository
+} from '../uploads/repository'
 import {
   SessionPersistenceCoordinator,
   type SessionFileIndex,
@@ -19,6 +28,49 @@ const createSession = (overrides: Partial<PersistedChatSession> = {}): Persisted
   updatedAt: 2,
   ...overrides
 })
+
+const createLegacyUploadSession = (sessionId: string): PersistedChatSession =>
+  createSession({
+    id: sessionId,
+    messages: [
+      {
+        id: `${sessionId}-message`,
+        role: 'user',
+        content: 'legacy upload',
+        status: 'complete',
+        eventIds: [],
+        uploads: [
+          {
+            id: `${sessionId}-upload`,
+            sessionId,
+            name: 'legacy.csv',
+            originalName: 'legacy.csv',
+            path: `/legacy/${sessionId}/legacy.csv`,
+            size: 11
+          }
+        ],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+  })
+
+const toVersionedUploadSession = (session: PersistedChatSession): PersistedChatSession => {
+  const upgraded = structuredClone(session)
+  upgraded.messages[0].uploads = [
+    {
+      id: `${session.id}-upload`,
+      versionId: `${session.id}-upload-version`,
+      versionNumber: 1,
+      sessionId: session.id,
+      name: 'legacy.csv',
+      originalName: 'legacy.csv',
+      size: 11,
+      sha256: 'a'.repeat(64)
+    }
+  ]
+  return upgraded
+}
 
 describe('SessionPersistenceCoordinator', () => {
   it('serializes a pending save before deletion and rejects saves after the tombstone', async () => {
@@ -65,6 +117,29 @@ describe('SessionPersistenceCoordinator', () => {
     expect(repository.saveSession).toHaveBeenCalledOnce()
   })
 
+  it('returns the exact durable Session after publishing legacy Uploads in live-safe mode', async () => {
+    const legacySession = createLegacyUploadSession('session-1')
+    const durableSession = toVersionedUploadSession(legacySession)
+    const uploads = {
+      upgradeLegacySessionUploads: vi.fn().mockResolvedValue(durableSession)
+    }
+    const repository = createSessionRepository()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      uploads
+    )
+
+    await expect(coordinator.saveSession(legacySession)).resolves.toBe(durableSession)
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'session-1' }),
+      { mode: 'live-save' }
+    )
+    expect(repository.saveSession).toHaveBeenCalledWith(durableSession)
+  })
+
   it('restores DB visibility and clears the tombstone when JSON deletion fails', async () => {
     const repository = createSessionRepository({
       deleteSession: vi.fn().mockRejectedValueOnce(new Error('disk locked'))
@@ -80,14 +155,16 @@ describe('SessionPersistenceCoordinator', () => {
       'delete-session-operation'
     )
 
-    await expect(coordinator.saveSession(createSession())).resolves.toBeUndefined()
+    await expect(coordinator.saveSession(createSession())).resolves.toMatchObject({
+      id: 'session-1'
+    })
     expect(repository.saveSession).toHaveBeenCalledOnce()
   })
 
   it('retains native Project files and completes the origin tombstone after JSON deletion', async () => {
     const session = createSession({ title: 'Retained analysis' })
     const repository = createSessionRepository({
-      loadSession: vi.fn().mockResolvedValue(session)
+      loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'found', session })
     })
     const fileIndex = createFileIndex()
     const onFilesChanged = vi.fn()
@@ -168,7 +245,9 @@ describe('SessionPersistenceCoordinator', () => {
       }
     ]
     const repository = createSessionRepository({
-      loadSession: vi.fn().mockResolvedValue(legacySession),
+      loadSessionWithDiagnostics: vi
+        .fn()
+        .mockResolvedValue({ status: 'found', session: legacySession }),
       saveSession: vi.fn(async () => {
         order.push('save-upgraded')
       }),
@@ -177,9 +256,14 @@ describe('SessionPersistenceCoordinator', () => {
       })
     })
     const uploads = {
-      upgradeLegacySessionUploads: vi.fn(async () => {
-        order.push('upgrade')
-        return upgradedSession
+      upgradeLegacySessionUploads: vi.fn(async (session, options) => {
+        if (options?.mode === 'live-save') {
+          order.push('upgrade-live')
+          return upgradedSession
+        }
+        order.push('cleanup-terminal')
+        expect(session).toBe(upgradedSession)
+        return session
       })
     }
     const provenance = {
@@ -206,14 +290,64 @@ describe('SessionPersistenceCoordinator', () => {
 
     await coordinator.deleteSession('project-1', 'session-1')
 
-    expect(order).toEqual(['upgrade', 'save-upgraded', 'prepare-delete', 'delete-json'])
+    expect(order).toEqual([
+      'upgrade-live',
+      'save-upgraded',
+      'cleanup-terminal',
+      'prepare-delete',
+      'delete-json'
+    ])
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenNthCalledWith(1, legacySession, {
+      mode: 'live-save'
+    })
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenNthCalledWith(2, upgradedSession, {
+      mode: 'terminal-delete'
+    })
     expect(provenance.prepareSessionDeletion).toHaveBeenCalledWith(upgradedSession)
+  })
+
+  it('retains a legacy Session source when its path-free projection cannot be saved before deletion', async () => {
+    const legacySession = createLegacyUploadSession('session-1')
+    const upgradedSession = toVersionedUploadSession(legacySession)
+    let legacySourceRemoved = false
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi
+        .fn()
+        .mockResolvedValue({ status: 'found', session: legacySession }),
+      saveSession: vi.fn().mockRejectedValue(new Error('session file unavailable'))
+    })
+    const uploads = {
+      upgradeLegacySessionUploads: vi.fn(async (_session, options) => {
+        if (options?.mode === 'terminal-delete') legacySourceRemoved = true
+        return upgradedSession
+      })
+    }
+    const fileIndex = createFileIndex()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      uploads
+    )
+
+    await expect(coordinator.deleteSession('project-1', 'session-1')).rejects.toThrow(
+      'session file unavailable'
+    )
+
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenCalledOnce()
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenCalledWith(legacySession, {
+      mode: 'live-save'
+    })
+    expect(legacySourceRemoved).toBe(false)
+    expect(fileIndex.softDeleteSession).not.toHaveBeenCalled()
+    expect(repository.deleteSession).not.toHaveBeenCalled()
   })
 
   it('aborts a retained origin tombstone when JSON deletion fails', async () => {
     const session = createSession()
     const repository = createSessionRepository({
-      loadSession: vi.fn().mockResolvedValue(session),
+      loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'found', session }),
       deleteSession: vi.fn().mockRejectedValueOnce(new Error('disk locked'))
     })
     const fileIndex = createFileIndex()
@@ -258,7 +392,9 @@ describe('SessionPersistenceCoordinator', () => {
       'database unavailable'
     )
     expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
-    await expect(coordinator.saveSession(createSession())).resolves.toBeUndefined()
+    await expect(coordinator.saveSession(createSession())).resolves.toMatchObject({
+      id: 'session-1'
+    })
   })
 
   it('hydrates sessions after indexing and reconciles only a complete scan', async () => {
@@ -289,6 +425,404 @@ describe('SessionPersistenceCoordinator', () => {
     )
     expect(fileIndex.syncSession).toHaveBeenCalledWith(session)
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([session])
+  })
+
+  it('reconciles path-free Upload copies only on the first complete load from multiple clients', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-upload-startup-reconcile-'))
+    const client = createProjectDbClient(root)
+    await ensureProjectSchema(client)
+    const content = Buffer.from('sample,value\na,1\n')
+    const checksum = '5fe3f7b7e3492c63599954312dcb1e1d78488782753b6d3068c8d03292c7c1f6'
+    const contentStorageKey =
+      'uploads/project-1/session-1/upload-1/versions/upload-version-1/content'
+    const finalPath = join(root, ...contentStorageKey.split('/'))
+    const legacyPath = join(root, 'uploads', 'default-project', 'session-1', 'legacy.csv')
+    await mkdir(dirname(finalPath), { recursive: true })
+    await mkdir(dirname(legacyPath), { recursive: true })
+    await writeFile(finalPath, content)
+    await writeFile(legacyPath, content)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename: 'legacy.csv',
+        originalFilename: 'legacy.csv',
+        versions: {
+          create: {
+            id: 'upload-version-1',
+            versionNumber: 1,
+            state: 'ready',
+            contentStorageKey,
+            filename: 'legacy.csv',
+            originalFilename: 'legacy.csv',
+            contentType: 'text/csv',
+            sizeBytes: BigInt(content.byteLength),
+            checksum
+          }
+        }
+      }
+    })
+    const session = createSession({
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'path-free upload',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'upload-1',
+              versionId: 'upload-version-1',
+              versionNumber: 1,
+              sessionId: 'session-1',
+              name: 'legacy.csv',
+              originalName: 'legacy.csv',
+              size: content.byteLength,
+              sha256: checksum
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const uploads = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
+    const fileIndex = createFileIndex()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      uploads
+    )
+
+    try {
+      // No one-time normalizer participates here, representing pathsNormalizedAt already being set.
+      await expect(coordinator.loadAll()).resolves.toBe(result)
+
+      await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(finalPath)).resolves.toEqual(content)
+      expect(repository.saveSession).not.toHaveBeenCalled()
+      expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([session])
+      expect(fileIndex.syncSession).toHaveBeenCalledWith(session)
+
+      // A later renderer/task load is live-safe. Even if a historical path reappears, that call must
+      // not remove bytes that another already-hydrated client could still be rendering.
+      await writeFile(legacyPath, content)
+      await expect(coordinator.loadAll()).resolves.toBe(result)
+      await expect(readFile(legacyPath)).resolves.toEqual(content)
+    } finally {
+      await client.$disconnect()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('persists path-only Upload upgrades before startup indexing', async () => {
+    const legacySession = createSession({
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'legacy upload',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'upload-1',
+              sessionId: 'session-1',
+              name: 'legacy.csv',
+              originalName: 'legacy.csv',
+              path: '/legacy/legacy.csv',
+              size: 11
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    const upgradedSession = structuredClone(legacySession)
+    upgradedSession.messages[0].uploads = [
+      {
+        id: 'upload-1',
+        versionId: 'upload-version-1',
+        versionNumber: 1,
+        sessionId: 'session-1',
+        name: 'legacy.csv',
+        originalName: 'legacy.csv',
+        size: 11,
+        sha256: 'a'.repeat(64)
+      }
+    ]
+    const result = { sessions: [legacySession], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const uploads = {
+      upgradeLegacySessionUploads: vi.fn().mockResolvedValue(upgradedSession)
+    }
+    const fileIndex = createFileIndex()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      uploads
+    )
+
+    const loaded = await coordinator.loadAll()
+
+    expect(loaded.sessions).toEqual([upgradedSession])
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenNthCalledWith(1, legacySession, {
+      mode: 'live-save'
+    })
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenNthCalledWith(2, upgradedSession, {
+      mode: 'reconcile'
+    })
+    expect(repository.saveSession).toHaveBeenCalledWith(upgradedSession)
+    expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([upgradedSession])
+    expect(fileIndex.syncSession).toHaveBeenCalledWith(upgradedSession)
+  })
+
+  it('retains every legacy source when one Upload prevents a complete startup projection', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-upload-startup-partial-'))
+    const client = createProjectDbClient(root)
+    await ensureProjectSchema(client)
+    const content = Buffer.from('sample,value\na,1\n')
+    const retainedPath = join(root, 'uploads', 'default-project', 'session-1', 'retained.csv')
+    const missingPath = join(root, 'uploads', 'default-project', 'session-1', 'missing.csv')
+    await mkdir(dirname(retainedPath), { recursive: true })
+    await writeFile(retainedPath, content)
+    const legacySession = createSession({
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'partially recoverable uploads',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'upload-retained',
+              sessionId: 'session-1',
+              name: 'retained.csv',
+              originalName: 'retained.csv',
+              path: retainedPath,
+              size: content.byteLength
+            },
+            {
+              id: 'upload-missing',
+              sessionId: 'session-1',
+              name: 'missing.csv',
+              originalName: 'missing.csv',
+              path: missingPath,
+              size: content.byteLength
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    const result = { sessions: [legacySession], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const uploads = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
+    const upgradeSpy = vi.spyOn(uploads, 'upgradeLegacySessionUploads')
+    const markReconciliationIncomplete = vi.fn()
+    const fileIndex = createFileIndex({ markReconciliationIncomplete })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      uploads
+    )
+
+    try {
+      await expect(coordinator.loadAll()).resolves.toBe(result)
+
+      await vi.waitFor(async () => {
+        await expect(
+          client.uploadVersion.findFirst({
+            where: { uploadFileId: 'upload-retained', state: 'ready' }
+          })
+        ).resolves.toBeTruthy()
+      })
+      await expect(readFile(retainedPath)).resolves.toEqual(content)
+      expect(upgradeSpy).toHaveBeenCalledWith(legacySession, { mode: 'live-save' })
+      expect(repository.saveSession).not.toHaveBeenCalled()
+      expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+      expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
+    } finally {
+      await client.$disconnect()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('closes destructive startup cleanup after an incomplete first load', async () => {
+    const legacySession = createLegacyUploadSession('session-1')
+    const upgradedSession = toVersionedUploadSession(legacySession)
+    const incomplete = {
+      result: { sessions: [], manifest: { version: 1 as const } },
+      isComplete: false
+    }
+    const complete = {
+      result: { sessions: [legacySession], manifest: { version: 1 as const } },
+      isComplete: true
+    }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi
+        .fn()
+        .mockResolvedValueOnce(incomplete)
+        .mockResolvedValueOnce(complete)
+    })
+    const uploads = {
+      upgradeLegacySessionUploads: vi.fn().mockResolvedValue(upgradedSession)
+    }
+    const artifactStorage = { reconcileSession: vi.fn().mockResolvedValue(undefined) }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      uploads,
+      artifactStorage
+    )
+
+    await expect(coordinator.loadAll()).resolves.toBe(incomplete.result)
+    await expect(coordinator.loadAll()).resolves.toEqual({
+      sessions: [upgradedSession],
+      manifest: complete.result.manifest
+    })
+
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenCalledOnce()
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenCalledWith(legacySession, {
+      mode: 'live-save'
+    })
+    expect(repository.saveSession).toHaveBeenCalledWith(upgradedSession)
+    expect(artifactStorage.reconcileSession).toHaveBeenCalledWith(
+      'project-1',
+      'session-1',
+      upgradedSession,
+      { removeOrphanStaging: false }
+    )
+  })
+
+  it('marks startup reconciliation incomplete when one Session Upload reconciliation fails', async () => {
+    const first = createLegacyUploadSession('session-1')
+    const upgradedFirst = toVersionedUploadSession(first)
+    const second = createLegacyUploadSession('session-2')
+    const result = { sessions: [first, second], manifest: { version: 1 as const } }
+    let persistedFirst: PersistedChatSession | undefined
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true }),
+      saveSession: vi.fn(async (session) => {
+        persistedFirst = structuredClone(session)
+      })
+    })
+    const uploads = {
+      upgradeLegacySessionUploads: vi
+        .fn()
+        .mockResolvedValueOnce(upgradedFirst)
+        .mockRejectedValueOnce(new Error('upload reconciliation failed'))
+    }
+    const markReconciliationIncomplete = vi.fn()
+    const fileIndex = createFileIndex({ markReconciliationIncomplete })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      uploads
+    )
+
+    const loaded = await coordinator.loadAll()
+
+    expect(loaded.sessions).toEqual([upgradedFirst, second])
+    expect(persistedFirst).toEqual(upgradedFirst)
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenNthCalledWith(1, first, {
+      mode: 'live-save'
+    })
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenNthCalledWith(2, upgradedFirst, {
+      mode: 'reconcile'
+    })
+    expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+    expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
+    expect(fileIndex.syncSession).not.toHaveBeenCalled()
+  })
+
+  it('hydrates an upgraded Session when its authoritative startup save fails', async () => {
+    const session = createLegacyUploadSession('session-1')
+    const upgradedSession = toVersionedUploadSession(session)
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true }),
+      saveSession: vi.fn().mockRejectedValue(new Error('session file unavailable'))
+    })
+    const uploads = {
+      upgradeLegacySessionUploads: vi.fn().mockResolvedValue(upgradedSession)
+    }
+    const markReconciliationIncomplete = vi.fn()
+    const fileIndex = createFileIndex({ markReconciliationIncomplete })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      uploads
+    )
+
+    const loaded = await coordinator.loadAll()
+
+    expect(loaded.sessions).toEqual([upgradedSession])
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenCalledOnce()
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenCalledWith(session, {
+      mode: 'live-save'
+    })
+    expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+    expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
+  })
+
+  it('does not roll back upgraded hydration when downstream startup reconciliation fails', async () => {
+    const session = createLegacyUploadSession('session-1')
+    const upgradedSession = toVersionedUploadSession(session)
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const uploads = {
+      upgradeLegacySessionUploads: vi.fn().mockResolvedValue(upgradedSession)
+    }
+    const markReconciliationIncomplete = vi.fn()
+    const fileIndex = createFileIndex({
+      markReconciliationIncomplete,
+      reconcileActiveSessions: vi.fn().mockRejectedValue(new Error('index unavailable'))
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      uploads
+    )
+
+    const loaded = await coordinator.loadAll()
+
+    expect(loaded.sessions).toEqual([upgradedSession])
+    expect(repository.saveSession).toHaveBeenCalledWith(upgradedSession)
+    expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+    expect(fileIndex.syncSession).not.toHaveBeenCalled()
   })
 
   it('reconciles active owners before syncing sessions from a complete startup scan', async () => {
@@ -411,7 +945,7 @@ describe('SessionPersistenceCoordinator', () => {
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([session])
   })
 
-  it('restores a project index when deleting its session directory fails', async () => {
+  it('leaves the project index untouched when authoritative Session rename fails', async () => {
     const repository = createSessionRepository({
       deleteProjectSessions: vi.fn().mockRejectedValueOnce(new Error('directory busy'))
     })
@@ -419,9 +953,404 @@ describe('SessionPersistenceCoordinator', () => {
     const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
 
     await expect(coordinator.deleteProjectSessions('project-1')).rejects.toThrow('directory busy')
+    expect(fileIndex.softDeleteProject).not.toHaveBeenCalled()
+    await expect(coordinator.saveSession(createSession())).resolves.toMatchObject({
+      id: 'session-1'
+    })
+  })
+
+  it('retains the Project tombstone and retries a derived index failure after Session commit', async () => {
+    const repository = createSessionRepository({
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('prepared')
+    })
+    const fileIndex = createFileIndex({
+      softDeleteProject: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('index unavailable'))
+        .mockResolvedValue('delete-project-operation')
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+
+    await expect(coordinator.deleteProjectSessions('project-1')).rejects.toThrow(
+      'index unavailable'
+    )
+    await expect(coordinator.saveSession(createSession())).rejects.toThrow(/project.*deleted/i)
+    expect(repository.deleteProjectSessions).toHaveBeenCalledOnce()
+
+    await expect(coordinator.deleteProjectSessions('project-1')).resolves.toEqual({
+      status: 'completed'
+    })
+    expect(repository.deleteProjectSessions).toHaveBeenCalledTimes(2)
+    expect(fileIndex.softDeleteProject).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries committed tombstone cleanup after persisting its path-free Session projection', async () => {
+    const legacySession = createLegacyUploadSession('session-1')
+    const upgradedSession = toVersionedUploadSession(legacySession)
+    let durableSession = legacySession
+    const repository = createSessionRepository({
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('legacy-committed'),
+      loadCommittedProjectWithDiagnostics: vi.fn(async () => ({
+        sessions: [durableSession],
+        isComplete: true
+      })),
+      saveCommittedProjectSession: vi.fn(async (session) => {
+        durableSession = session
+      })
+    })
+    let terminalAttempts = 0
+    const uploads = {
+      upgradeLegacySessionUploads: vi.fn(async (session, options) => {
+        if (options?.mode === 'live-save') return upgradedSession
+        terminalAttempts += 1
+        if (terminalAttempts === 1) throw new Error('terminal cleanup interrupted')
+        return session
+      })
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      uploads
+    )
+
+    await expect(coordinator.deleteProjectSessions('project-1')).rejects.toThrow(
+      'terminal cleanup interrupted'
+    )
+    expect(repository.saveCommittedProjectSession).toHaveBeenCalledWith(upgradedSession)
+    expect(repository.markCommittedProjectSessionsPrepared).not.toHaveBeenCalled()
+    expect(repository.deleteProjectSessions).not.toHaveBeenCalled()
+
+    await expect(coordinator.deleteProjectSessions('project-1')).resolves.toEqual({
+      status: 'completed'
+    })
+    expect(repository.saveCommittedProjectSession).toHaveBeenCalledOnce()
+    expect(repository.markCommittedProjectSessionsPrepared).toHaveBeenCalledOnce()
+    expect(repository.deleteProjectSessions).toHaveBeenCalledOnce()
+  })
+
+  it('reconciles retained Upload copies before project Session and index authority are removed', async () => {
+    const order: string[] = []
+    const session = toVersionedUploadSession(createLegacyUploadSession('session-1'))
+    const repository = createSessionRepository({
+      loadProjectWithDiagnostics: vi.fn().mockResolvedValue({
+        sessions: [session],
+        isComplete: true
+      }),
+      deleteProjectSessions: vi.fn(async () => {
+        order.push('delete-json')
+      })
+    })
+    const fileIndex = createFileIndex({
+      softDeleteProject: vi.fn(async () => {
+        order.push('soft-delete-index')
+        return 'delete-project-operation'
+      })
+    })
+    const uploads = {
+      upgradeLegacySessionUploads: vi.fn(async () => {
+        order.push('reconcile-upload-copy')
+        return session
+      })
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      uploads
+    )
+
+    await coordinator.deleteProjectSessions('project-1')
+
+    expect(order).toEqual(['reconcile-upload-copy', 'delete-json', 'soft-delete-index'])
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenCalledWith(session, {
+      mode: 'terminal-delete'
+    })
+  })
+
+  it('terminal-cleans readable Sessions before deleting incomplete Project authority', async () => {
+    const order: string[] = []
+    const session = toVersionedUploadSession(createLegacyUploadSession('session-1'))
+    const repository = createSessionRepository({
+      loadProjectWithDiagnostics: vi.fn().mockResolvedValue({
+        sessions: [session],
+        isComplete: false
+      }),
+      deleteProjectSessions: vi.fn(async () => {
+        order.push('delete-project-sessions')
+      })
+    })
+    const fileIndex = createFileIndex({
+      markReconciliationIncomplete: vi.fn(() => {
+        order.push('mark-incomplete')
+      }),
+      softDeleteProject: vi.fn(async () => {
+        order.push('soft-delete-index')
+        return 'delete-project-operation'
+      })
+    })
+    const uploads = {
+      upgradeLegacySessionUploads: vi.fn(async () => {
+        order.push('terminal-cleanup')
+        return session
+      })
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      uploads
+    )
+
+    await expect(coordinator.deleteProjectSessions('project-1')).resolves.toEqual({
+      status: 'completed'
+    })
+
+    expect(order).toEqual([
+      'mark-incomplete',
+      'terminal-cleanup',
+      'delete-project-sessions',
+      'soft-delete-index'
+    ])
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenCalledWith(session, {
+      mode: 'terminal-delete'
+    })
+  })
+
+  it('preserves incomplete orphaned tombstone authority instead of adopting its readable subset', async () => {
+    const session = toVersionedUploadSession(createLegacyUploadSession('session-1'))
+    const repository = createSessionRepository({
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('legacy-committed'),
+      loadCommittedProjectWithDiagnostics: vi.fn().mockResolvedValue({
+        sessions: [session],
+        isComplete: false
+      })
+    })
+    const uploads = {
+      upgradeLegacySessionUploads: vi.fn().mockResolvedValue(session)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      uploads
+    )
+
+    await expect(
+      coordinator.deleteProjectSessions('project-1', {
+        requireExistingUploadAuthority: true
+      })
+    ).rejects.toThrow(/incomplete Session authority/i)
+
+    expect(uploads.upgradeLegacySessionUploads).not.toHaveBeenCalled()
+    expect(repository.markCommittedProjectSessionsPrepared).not.toHaveBeenCalled()
+    expect(repository.deleteProjectSessions).not.toHaveBeenCalled()
+  })
+
+  it('returns orphan-retained only for positively missing Upload authority', async () => {
+    const session = createLegacyUploadSession('session-1')
+    const repository = createSessionRepository({
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('legacy-committed'),
+      loadCommittedProjectWithDiagnostics: vi.fn().mockResolvedValue({
+        sessions: [session],
+        isComplete: true
+      })
+    })
+    const fileIndex = createFileIndex()
+    const uploads = {
+      upgradeLegacySessionUploads: vi
+        .fn()
+        .mockRejectedValue(new OrphanLegacyUploadAuthorityMissingError('missing Upload authority'))
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      uploads
+    )
+
+    await expect(
+      coordinator.deleteProjectSessions('project-1', {
+        requireExistingUploadAuthority: true
+      })
+    ).resolves.toEqual({
+      status: 'orphan-retained',
+      reason: 'missing-upload-authority'
+    })
+
+    expect(fileIndex.markReconciliationIncomplete).toHaveBeenCalledOnce()
     expect(fileIndex.softDeleteProject).toHaveBeenCalledWith('project-1')
-    expect(fileIndex.restoreProject).toHaveBeenCalledWith('project-1', 'delete-project-operation')
-    await expect(coordinator.saveSession(createSession())).resolves.toBeUndefined()
+    expect(repository.markCommittedProjectSessionsPrepared).not.toHaveBeenCalled()
+    expect(repository.deleteProjectSessions).not.toHaveBeenCalled()
+  })
+
+  it('rejects orphan retention when the Project index cannot be soft-deleted', async () => {
+    const session = createLegacyUploadSession('session-1')
+    const repository = createSessionRepository({
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('legacy-committed'),
+      loadCommittedProjectWithDiagnostics: vi.fn().mockResolvedValue({
+        sessions: [session],
+        isComplete: true
+      })
+    })
+    const fileIndex = createFileIndex({
+      softDeleteProject: vi.fn().mockRejectedValue(new Error('index temporarily unavailable'))
+    })
+    const uploads = {
+      upgradeLegacySessionUploads: vi
+        .fn()
+        .mockRejectedValue(new OrphanLegacyUploadAuthorityMissingError('missing Upload authority'))
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      uploads
+    )
+
+    await expect(
+      coordinator.deleteProjectSessions('project-1', {
+        requireExistingUploadAuthority: true
+      })
+    ).rejects.toThrow('index temporarily unavailable')
+
+    expect(fileIndex.markReconciliationIncomplete).toHaveBeenCalledOnce()
+    expect(repository.markCommittedProjectSessionsPrepared).not.toHaveBeenCalled()
+    expect(repository.deleteProjectSessions).not.toHaveBeenCalled()
+  })
+
+  it('aborts Project deletion on transient Upload cleanup failure and retries from intact authority', async () => {
+    const first = createLegacyUploadSession('session-1')
+    const upgradedFirst = toVersionedUploadSession(first)
+    const second = createLegacyUploadSession('session-2')
+    const order: string[] = []
+    const repository = createSessionRepository({
+      loadProjectWithDiagnostics: vi.fn().mockResolvedValue({
+        sessions: [first, second],
+        isComplete: true
+      }),
+      saveSession: vi.fn(async (session) => {
+        order.push(`save:${session.id}`)
+      })
+    })
+    let secondUpgradeAttempts = 0
+    const uploads = {
+      upgradeLegacySessionUploads: vi.fn(async (session, options) => {
+        order.push(`${session.id}:${options?.mode}`)
+        if (session.id === 'session-1') return upgradedFirst
+        secondUpgradeAttempts += 1
+        if (secondUpgradeAttempts === 1) throw new Error('second upload upgrade failed')
+        return toVersionedUploadSession(second)
+      })
+    }
+    const fileIndex = createFileIndex()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      uploads
+    )
+
+    await expect(coordinator.deleteProjectSessions('project-1')).rejects.toThrow(
+      'second upload upgrade failed'
+    )
+
+    expect(order).toEqual([
+      'session-1:live-save',
+      'save:session-1',
+      'session-1:terminal-delete',
+      'session-2:live-save'
+    ])
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+    expect(repository.saveSession).toHaveBeenCalledWith(upgradedFirst)
+    expect(fileIndex.softDeleteProject).not.toHaveBeenCalled()
+    expect(repository.deleteProjectSessions).not.toHaveBeenCalled()
+
+    await expect(coordinator.deleteProjectSessions('project-1')).resolves.toEqual({
+      status: 'completed'
+    })
+    expect(fileIndex.softDeleteProject).toHaveBeenCalledWith('project-1')
+    expect(repository.deleteProjectSessions).toHaveBeenCalledWith('project-1')
+  })
+
+  it('retains a legacy source and aborts Project deletion when path-free projection save fails', async () => {
+    const legacySession = createLegacyUploadSession('session-1')
+    const upgradedSession = toVersionedUploadSession(legacySession)
+    let legacySourceRemoved = false
+    const repository = createSessionRepository({
+      loadProjectWithDiagnostics: vi.fn().mockResolvedValue({
+        sessions: [legacySession],
+        isComplete: true
+      }),
+      saveSession: vi.fn().mockRejectedValue(new Error('session file unavailable'))
+    })
+    const uploads = {
+      upgradeLegacySessionUploads: vi.fn(async (_session, options) => {
+        if (options?.mode === 'terminal-delete') legacySourceRemoved = true
+        return upgradedSession
+      })
+    }
+    const fileIndex = createFileIndex()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      uploads
+    )
+
+    await expect(coordinator.deleteProjectSessions('project-1')).rejects.toThrow(
+      'session file unavailable'
+    )
+
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenCalledOnce()
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenCalledWith(legacySession, {
+      mode: 'live-save'
+    })
+    expect(legacySourceRemoved).toBe(false)
+    expect(fileIndex.markReconciliationIncomplete).not.toHaveBeenCalled()
+    expect(fileIndex.softDeleteProject).not.toHaveBeenCalled()
+    expect(repository.deleteProjectSessions).not.toHaveBeenCalled()
+  })
+
+  it('retains a proven unsafe Upload replacement while committing Project deletion', async () => {
+    const session = toVersionedUploadSession(createLegacyUploadSession('session-1'))
+    const repository = createSessionRepository({
+      loadProjectWithDiagnostics: vi.fn().mockResolvedValue({
+        sessions: [session],
+        isComplete: true
+      })
+    })
+    const uploads = {
+      upgradeLegacySessionUploads: vi
+        .fn()
+        .mockRejectedValue(
+          new UnsafeLegacyUploadResidualError('legacy path contains unrelated bytes')
+        )
+    }
+    const fileIndex = createFileIndex()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      uploads
+    )
+
+    await expect(coordinator.deleteProjectSessions('project-1')).resolves.toEqual({
+      status: 'completed'
+    })
+
+    expect(fileIndex.markReconciliationIncomplete).toHaveBeenCalledOnce()
+    expect(fileIndex.softDeleteProject).toHaveBeenCalledWith('project-1')
+    expect(repository.deleteProjectSessions).toHaveBeenCalledWith('project-1')
   })
 
   it('rejects late session saves after a project session directory was deleted', async () => {
@@ -440,7 +1369,9 @@ describe('SessionPersistenceCoordinator', () => {
       throw new Error('renderer unavailable')
     })
 
-    await expect(coordinator.deleteProjectSessions('project-1')).resolves.toBeUndefined()
+    await expect(coordinator.deleteProjectSessions('project-1')).resolves.toEqual({
+      status: 'completed'
+    })
     expect(repository.deleteProjectSessions).toHaveBeenCalledWith('project-1')
     await expect(coordinator.saveSession(createSession())).rejects.toThrow(/project.*deleted/i)
   })
@@ -618,10 +1549,20 @@ const createSessionRepository = (
     result: { sessions: [], manifest: { version: 1 } },
     isComplete: true
   }),
-  loadSession: vi.fn().mockResolvedValue(undefined),
+  loadProjectWithDiagnostics: vi.fn().mockResolvedValue({ sessions: [], isComplete: true }),
+  loadCommittedProjectWithDiagnostics: vi.fn().mockResolvedValue({
+    sessions: [],
+    isComplete: true
+  }),
+  loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'missing' }),
   saveSession: vi.fn().mockResolvedValue(undefined),
+  saveCommittedProjectSession: vi.fn().mockResolvedValue(undefined),
   deleteSession: vi.fn().mockResolvedValue(undefined),
   deleteProjectSessions: vi.fn().mockResolvedValue(undefined),
+  getProjectSessionDeletionState: vi.fn().mockResolvedValue('absent'),
+  markCommittedProjectSessionsPrepared: vi.fn().mockResolvedValue(undefined),
+  completeProjectSessionDeletion: vi.fn().mockResolvedValue(undefined),
+  listLegacyProjectSessionTombstones: vi.fn().mockResolvedValue([]),
   saveManifest: vi.fn().mockResolvedValue(undefined),
   ...overrides
 })
@@ -631,7 +1572,6 @@ const createFileIndex = (overrides: Partial<SessionFileIndex> = {}): SessionFile
   softDeleteSession: vi.fn().mockResolvedValue('delete-session-operation'),
   restoreSession: vi.fn().mockResolvedValue(undefined),
   softDeleteProject: vi.fn().mockResolvedValue('delete-project-operation'),
-  restoreProject: vi.fn().mockResolvedValue(undefined),
   reconcileActiveSessions: vi.fn().mockResolvedValue(undefined),
   markReconciliationIncomplete: vi.fn(),
   ...overrides
