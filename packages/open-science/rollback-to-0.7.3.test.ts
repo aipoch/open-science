@@ -100,7 +100,6 @@ describe('rollback-to-0.7.3', () => {
               updatedAt: 1
             }
           ],
-          conversationGraph: { schemaVersion: 1, messages: [{ id: 'inactive-message' }] },
           artifacts: [
             {
               id: 'artifact-version-1',
@@ -179,6 +178,117 @@ describe('rollback-to-0.7.3', () => {
     expect(converted.session.artifacts[0]).not.toHaveProperty('versionId')
   })
 
+  it('projects the active root branch when a child Agent Frame is focused', () => {
+    const rootMessages = [
+      {
+        id: 'root-user',
+        role: 'user',
+        content: 'Create a plot',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1,
+        agentFrameId: 'root-frame',
+        introducedOnBranchId: 'root-branch'
+      },
+      {
+        id: 'root-assistant',
+        role: 'assistant',
+        content: 'Plot created',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 2,
+        updatedAt: 2,
+        agentFrameId: 'root-frame',
+        introducedOnBranchId: 'root-branch',
+        parentMessageId: 'root-user'
+      }
+    ]
+    const converted = convertSessionToV073(
+      {
+        version: 2,
+        session: {
+          id: 'session-1',
+          projectId: 'project-1',
+          cwd: '/data/notebooks/project-1/session-1',
+          messages: [
+            {
+              id: 'review-message',
+              role: 'assistant',
+              content: 'Review passed',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 3,
+              updatedAt: 3
+            }
+          ],
+          conversationGraph: {
+            schemaVersion: 1,
+            rootFrameId: 'root-frame',
+            activeFrameId: 'review-frame',
+            frames: [
+              {
+                id: 'root-frame',
+                activeBranchId: 'root-branch'
+              },
+              {
+                id: 'review-frame',
+                parentFrameId: 'root-frame',
+                activeBranchId: 'review-branch'
+              }
+            ],
+            branches: [
+              {
+                id: 'root-branch',
+                agentFrameId: 'root-frame',
+                headMessageId: 'root-assistant'
+              },
+              {
+                id: 'review-branch',
+                agentFrameId: 'review-frame',
+                headMessageId: 'review-message'
+              }
+            ],
+            messages: [
+              ...rootMessages,
+              {
+                id: 'review-message',
+                role: 'assistant',
+                content: 'Review passed',
+                status: 'complete',
+                eventIds: [],
+                createdAt: 3,
+                updatedAt: 3,
+                agentFrameId: 'review-frame',
+                introducedOnBranchId: 'review-branch'
+              }
+            ],
+            activities: [],
+            activityGroups: [],
+            runtimeSegments: []
+          },
+          artifacts: [],
+          createdAt: 1,
+          updatedAt: 3
+        }
+      },
+      {
+        sourceDataRoot: '/data',
+        rollbackDataRoot: '/rollback',
+        uploadVersions: new Map(),
+        artifactVersions: new Map()
+      }
+    ) as { session: { messages: Array<{ id: string }>; conversationGraph?: unknown } }
+
+    expect(converted.session.messages.map((message) => message.id)).toEqual([
+      'root-user',
+      'root-assistant'
+    ])
+    expect(converted.session.messages[1]).not.toHaveProperty('agentFrameId')
+    expect(converted.session.messages[1]).not.toHaveProperty('parentMessageId')
+    expect(converted.session.conversationGraph).toBeUndefined()
+  })
+
   it('creates and activates an isolated 0.7.3 data root while preserving newer data', async () => {
     const root = await temporaryRoot()
     const configRoot = join(root, '.open-science')
@@ -254,7 +364,6 @@ describe('rollback-to-0.7.3', () => {
               updatedAt: 1
             }
           ],
-          conversationGraph: { schemaVersion: 1 },
           artifacts: [
             {
               id: 'artifact-version-1',

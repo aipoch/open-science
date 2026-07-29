@@ -222,14 +222,67 @@ const convertArtifact = (artifact, context) => {
   return converted
 }
 
+const resolveRollbackMessages = (source) => {
+  const graph = source.conversationGraph
+  if (!isRecord(graph)) return source.messages
+  if (
+    typeof graph.rootFrameId !== 'string' ||
+    !Array.isArray(graph.frames) ||
+    !Array.isArray(graph.branches) ||
+    !Array.isArray(graph.messages)
+  ) {
+    throw new Error('Session Conversation Graph cannot be projected for Open Science 0.7.3.')
+  }
+
+  const rootFrame = graph.frames.find((frame) => isRecord(frame) && frame.id === graph.rootFrameId)
+  if (!isRecord(rootFrame) || typeof rootFrame.activeBranchId !== 'string') {
+    throw new Error('Session Conversation Graph has no active root Frame branch.')
+  }
+  const rootBranch = graph.branches.find(
+    (branch) =>
+      isRecord(branch) &&
+      branch.id === rootFrame.activeBranchId &&
+      branch.agentFrameId === graph.rootFrameId
+  )
+  if (!isRecord(rootBranch)) {
+    throw new Error('Session Conversation Graph has no valid active root Message Branch.')
+  }
+
+  const messagesById = new Map(
+    graph.messages
+      .filter((message) => isRecord(message) && typeof message.id === 'string')
+      .map((message) => [message.id, message])
+  )
+  const reversePath = []
+  const seen = new Set()
+  let currentId = rootBranch.headMessageId
+  while (typeof currentId === 'string' && currentId) {
+    if (seen.has(currentId)) throw new Error('Session Conversation Graph contains a Message cycle.')
+    seen.add(currentId)
+    const message = messagesById.get(currentId)
+    if (!isRecord(message) || message.agentFrameId !== graph.rootFrameId) {
+      throw new Error('Session root Message Branch references an invalid Message.')
+    }
+    reversePath.push(message)
+    currentId = message.parentMessageId
+  }
+  return reversePath.reverse()
+}
+
 export const convertSessionToV073 = (value, context) => {
   if (!isRecord(value)) throw new Error('Session file is not an object.')
   const source = isRecord(value.session) ? value.session : value
   if (!Array.isArray(source.messages)) throw new Error('Session has no active Message projection.')
 
-  const messages = source.messages.map((message) => {
+  const messages = resolveRollbackMessages(source).map((message) => {
     if (!isRecord(message)) throw new Error('Session contains an invalid Message.')
     const converted = { ...message }
+    delete converted.agentFrameId
+    delete converted.introducedOnBranchId
+    delete converted.parentMessageId
+    delete converted.revisionRootMessageId
+    delete converted.supersedesMessageId
+    delete converted.runtimeSegmentId
     if (Array.isArray(message.uploads)) {
       converted.uploads = message.uploads.map((upload) => convertUpload(upload, context))
     }
