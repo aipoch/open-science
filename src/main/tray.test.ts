@@ -6,6 +6,7 @@ type MenuTemplateItem = { label?: string; type?: string; click?: () => void }
 // A nativeImage stand-in that records template-image flagging so tests can assert the macOS branch.
 type FakeImage = {
   kind: 'path' | 'bitmap'
+  path?: string
   isTemplate: boolean
   isEmpty: () => boolean
   getSize: () => { width: number; height: number }
@@ -34,16 +35,20 @@ let lastTemplate: MenuTemplateItem[] | undefined
 let trayShouldThrow = false
 // Toggles for the nativeImage doubles, driving the macOS template branch and its fallbacks.
 let sourceEmpty = false
+let emptyImagePath: string | undefined
+let throwingImagePath: string | undefined
 let bitmapThrows = false
 let sourceBitmap = Buffer.alloc(4 * 4 * 4, 200)
 let templateBitmap: Buffer | undefined
 let createdFromPaths: string[] = []
+const loggerError = vi.fn()
 
-const makeImage = (kind: 'path' | 'bitmap'): FakeImage => {
+const makeImage = (kind: 'path' | 'bitmap', path?: string): FakeImage => {
   const image: FakeImage = {
     kind,
+    path,
     isTemplate: false,
-    isEmpty: () => (kind === 'path' ? sourceEmpty : false),
+    isEmpty: () => (kind === 'path' ? sourceEmpty || path === emptyImagePath : false),
     getSize: () => ({ width: 4, height: 4 }),
     toBitmap: () => {
       if (bitmapThrows) throw new Error('toBitmap failed')
@@ -102,7 +107,8 @@ vi.mock('electron', () => ({
   nativeImage: {
     createFromPath: (path: string) => {
       createdFromPaths.push(path)
-      return makeImage('path')
+      if (path === throwingImagePath) throw new Error('createFromPath failed')
+      return makeImage('path', path)
     },
     createFromBitmap: (bitmap: Buffer) => {
       templateBitmap = Buffer.from(bitmap)
@@ -119,7 +125,7 @@ vi.mock('./logger', () => ({
     debug: () => undefined,
     info: () => undefined,
     warn: () => undefined,
-    error: () => undefined
+    error: loggerError
   })
 }))
 
@@ -142,10 +148,13 @@ describe('createAppTray', () => {
     lastTemplate = undefined
     trayShouldThrow = false
     sourceEmpty = false
+    emptyImagePath = undefined
+    throwingImagePath = undefined
     bitmapThrows = false
     sourceBitmap = Buffer.alloc(4 * 4 * 4, 200)
     templateBitmap = undefined
     createdFromPaths = []
+    loggerError.mockReset()
     // Default the shared cases to a non-darwin platform (full-color icon path).
     setPlatform('linux')
   })
@@ -227,6 +236,50 @@ describe('createAppTray', () => {
   describe('on Windows', () => {
     beforeEach(() => {
       setPlatform('win32')
+    })
+
+    it('uses the dedicated Windows tray icon', () => {
+      createAppTray({
+        iconPath: '/icons/icon-light.ico',
+        windowsIconPath: '/icons/tray.ico',
+        onShow: vi.fn(),
+        onHide: vi.fn(),
+        onQuit: vi.fn()
+      })
+
+      expect(lastTray?.icon.path).toBe('/icons/tray.ico')
+    })
+
+    it('falls back to the shared app icon when the Windows tray icon is empty', () => {
+      emptyImagePath = '/icons/tray.ico'
+
+      createAppTray({
+        iconPath: '/icons/icon-light.ico',
+        windowsIconPath: '/icons/tray.ico',
+        onShow: vi.fn(),
+        onHide: vi.fn(),
+        onQuit: vi.fn()
+      })
+
+      expect(lastTray?.icon.path).toBe('/icons/icon-light.ico')
+      expect(loggerError).toHaveBeenCalledWith(
+        'Windows tray icon is empty; falling back to the app icon'
+      )
+    })
+
+    it('falls back to the shared app icon when the Windows tray icon cannot be loaded', () => {
+      throwingImagePath = '/icons/tray.ico'
+
+      const tray = createAppTray({
+        iconPath: '/icons/icon-light.ico',
+        windowsIconPath: '/icons/tray.ico',
+        onShow: vi.fn(),
+        onHide: vi.fn(),
+        onQuit: vi.fn()
+      })
+
+      expect(tray).toBeDefined()
+      expect(lastTray?.icon.path).toBe('/icons/icon-light.ico')
     })
 
     it('keeps the standard context menu and single-click for the desktop app', () => {

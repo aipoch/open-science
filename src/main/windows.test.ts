@@ -46,6 +46,7 @@ type CloseEvent = { preventDefault: () => void; defaultPrevented: boolean }
 // currentWindow and lastWindow both point at the latest window; two describe blocks, one shared fake.
 let currentWindow: FakeBrowserWindow | undefined
 let lastWindow: FakeBrowserWindow | undefined
+let lastWindowOptions: Record<string, unknown> | undefined
 
 class FakeBrowserWindow {
   closeMock = vi.fn()
@@ -113,7 +114,8 @@ vi.mock('electron', () => ({
   // isPackaged=true skips the dev title-suffix branch, keeping the fake focused on the open + close handlers.
   app: { isPackaged: true, getAppPath: () => '/app' },
   BrowserWindow: class {
-    constructor() {
+    constructor(options: Record<string, unknown>) {
+      lastWindowOptions = options
       currentWindow = new FakeBrowserWindow()
       lastWindow = currentWindow
       return currentWindow as unknown as object
@@ -127,8 +129,23 @@ vi.mock('electron', () => ({
 vi.mock('@electron-toolkit/utils', () => ({ is: { dev: false } }))
 
 vi.mock('../../resources/icon.png?asset', () => ({ default: 'icon-path' }))
+vi.mock('../../resources/icon-light.ico?asset', () => ({ default: 'windows-icon-path' }))
 
 const { createMainWindow } = await import('./windows')
+
+describe('window icon', () => {
+  const originalPlatform = process.platform
+
+  it('uses the dedicated multi-size ICO on Windows', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      createMainWindow()
+      expect(lastWindowOptions?.icon).toBe('windows-icon-path')
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+})
 
 // A keyDown close chord for the host platform: Cmd+W on macOS, Ctrl+W elsewhere. Built off
 // process.platform so the interception test passes on every CI runner (windows, linux, macOS).

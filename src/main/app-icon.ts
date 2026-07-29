@@ -49,7 +49,7 @@ export const buildAppIconPreviews = (
 
 export type AppIconControllerDeps = {
   electron: AppIconElectron
-  // Absolute filesystem path of each variant's bundled PNG asset (resolved by the ?asset import).
+  // Absolute filesystem path of each variant's bundled platform asset (resolved by the ?asset import).
   variantPaths: Record<AppIconVariant, string>
   // The persisted variant to apply on startup.
   initialVariant: AppIconVariant
@@ -92,7 +92,7 @@ const loadIcon = (
 export const createAppIconController = (deps: AppIconControllerDeps): AppIconController => {
   const platform = deps.platform ?? process.platform
   const isDarwin = platform === 'darwin'
-  // Cache each built image so repeated applies (every new window) don't re-decode the PNG.
+  // Cache each built image so repeated applies (every new window) don't re-decode the platform asset.
   const cache = new Map<AppIconVariant, NativeImage | undefined>()
   let current: AppIconVariant = deps.initialVariant
 

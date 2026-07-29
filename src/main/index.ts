@@ -88,8 +88,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     process.platform === 'win32'
       ? { light: iconWindows, dark: iconDarkWindows }
       : { light: icon, dark: iconDark }
+  // On Windows iconPath is the app-icon fallback; windowsIconPath is the preferred tray-specific ICO.
   const trayIconPath =
-    process.platform === 'win32' ? trayWindows : process.platform === 'linux' ? trayLinux : icon
+    process.platform === 'win32' ? iconWindows : process.platform === 'linux' ? trayLinux : icon
 
   // Ordered startup: the single-instance lock is acquired FIRST (UI path only — the MCP stdio server
   // modes never reach startElectronApp), so a secondary launch quits before prepare() imports any
@@ -259,6 +260,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           return ctx.createAppTray({
             iconPath: trayIconPath,
             templateIconPath: process.platform === 'darwin' ? trayMacTemplate : undefined,
+            windowsIconPath: process.platform === 'win32' ? trayWindows : undefined,
             ...handlers,
             ...(headlessWeb
               ? {

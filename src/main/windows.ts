@@ -30,7 +30,6 @@ import {
 
 const rendererEntry = join(__dirname, '../renderer/index.html')
 const preloadEntry = join(__dirname, '../preload/index.js')
-const icon = process.platform === 'win32' ? iconWindows : iconPng
 // The find overlay is a static page (no bundler entry) shipped under resources/, so it resolves the
 // same way in dev (project root) and packaged (asar root) via app.getAppPath().
 const findOverlayEntry = join(app.getAppPath(), 'resources/find-overlay/index.html')
@@ -48,7 +47,9 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
   const window = new BrowserWindow({
     show: false,
     autoHideMenuBar: true,
-    ...(process.platform !== 'darwin' ? { icon } : {}),
+    ...(process.platform !== 'darwin'
+      ? { icon: process.platform === 'win32' ? iconWindows : iconPng }
+      : {}),
     ...options,
     webPreferences: {
       preload: preloadEntry,
