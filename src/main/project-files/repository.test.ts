@@ -499,6 +499,90 @@ describe('ManagedFileIndexRepository', () => {
     })
   })
 
+  it('repairs a legacy Upload projection that copied the referencing Session scope', async () => {
+    const sourceSessionId = 'session-source-legacy'
+    const uploadId = 'upload-cross-session-legacy'
+    const uploadPath = join(
+      storageRoot,
+      'uploads',
+      'default-project',
+      sourceSessionId,
+      'reference.pdf'
+    )
+    const content = 'legacy pdf bytes'
+    await writeManagedFile(uploadPath, content)
+    await client.managedFile.create({
+      data: {
+        source: 'upload',
+        sourceFileId: uploadId,
+        projectId: PROJECT_ID,
+        // This is the stale pre-repair state: the row copied the Session containing the @ reference.
+        sessionId: SESSION_ID,
+        displayName: 'reference.pdf',
+        storageKey: relative(storageRoot, uploadPath),
+        mimeType: 'application/pdf',
+        sizeBytes: BigInt(Buffer.byteLength(content)),
+        sortAtMs: 1_710_000_000_200n
+      }
+    })
+    await client.managedFileSessionSync.create({
+      data: {
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        filesRevision: 1,
+        groupSortAtMs: 1_710_000_001_000n,
+        uploadCount: 1
+      }
+    })
+    const referencingSession = createSession({
+      messages: [
+        {
+          id: 'message-reference-legacy',
+          role: 'user',
+          content: 'Use the source PDF',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: uploadId,
+              sessionId: sourceSessionId,
+              name: 'reference.pdf',
+              originalName: 'reference.pdf',
+              path: uploadPath,
+              mimeType: 'application/pdf',
+              size: Buffer.byteLength(content)
+            }
+          ],
+          createdAt: 1_710_000_000_100,
+          updatedAt: 1_710_000_000_200
+        }
+      ]
+    })
+
+    await expect(repository.syncSession(referencingSession)).resolves.toContain('upload')
+    await expect(
+      client.managedFileSessionSync.findUnique({
+        where: { projectId_sessionId: { projectId: PROJECT_ID, sessionId: SESSION_ID } }
+      })
+    ).resolves.toMatchObject({ uploadCount: 0 })
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'uploads' },
+        limit: 10
+      })
+    ).resolves.toMatchObject({
+      items: [
+        {
+          sourceFileId: uploadId,
+          sourceVersionId: undefined,
+          sessionId: sourceSessionId,
+          path: uploadPath
+        }
+      ]
+    })
+  })
+
   it('keeps file Versions visible after their Message Branch becomes inactive', async () => {
     const uploadPath = join(
       storageRoot,

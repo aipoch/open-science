@@ -667,6 +667,22 @@ class UploadRepository {
           select: { id: true }
         })
         if (version) return resolvedFilePath
+
+        // Files is a project-scoped, main-maintained read model. A legacy path selected from that
+        // surface may be referenced by any Session in the same Project, so its indexed membership is
+        // sufficient for preview access even when the renderer's active Session is not the owner.
+        const indexedFile = safeProjectId
+          ? await client.managedFile.findFirst({
+              where: {
+                projectId: safeProjectId,
+                source: 'upload',
+                storageKey: contentStorageKey,
+                deletedAt: null
+              },
+              select: { seq: true }
+            })
+          : undefined
+        if (indexedFile) return resolvedFilePath
       }
 
       // Canonical raw paths retain the project/session layout. This compatibility branch never

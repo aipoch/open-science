@@ -18,6 +18,7 @@ import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
   createUploadVersionReference,
+  DEFAULT_UPLOAD_PROJECT_NAME,
   getUploadedAttachmentName,
   PENDING_UPLOAD_SESSION_ID
 } from '../../shared/uploads'
@@ -776,7 +777,13 @@ class ManagedFileIndexRepository {
       }),
       client.managedFile.findMany({
         where: { projectId, sessionId, deletedAt: null },
-        select: { source: true, sourceFileId: true, sourceVersionId: true }
+        select: {
+          source: true,
+          sourceFileId: true,
+          sourceVersionId: true,
+          sessionId: true,
+          storageKey: true
+        }
       })
     ])
     const expectedArtifacts = new Map(
@@ -796,6 +803,13 @@ class ManagedFileIndexRepository {
     ) {
       return false
     }
+
+    const hasMismatchedLegacyUploadOwner = rows.some((row) => {
+      if (row.source !== 'upload' || row.sourceVersionId !== null) return false
+      const storageSessionId = getLegacyUploadStorageSessionId(row.storageKey)
+      return storageSessionId !== undefined && storageSessionId !== row.sessionId
+    })
+    if (hasMismatchedLegacyUploadOwner) return false
 
     // A native Upload row is owned by its source Session, even when another Session references it.
     // Detect old derived rows that copied the referencing Session so one startup sync repairs their
@@ -900,7 +914,7 @@ class ManagedFileIndexRepository {
           sourceVersionId: upload.versionId,
           checksum: upload.sha256 ?? upload.checksum,
           projectId: session.projectId,
-          sessionId: session.id,
+          sessionId: upload.sessionId,
           messageId: message.id,
           displayName: getUploadedAttachmentName(upload),
           path: upload.path,
@@ -1161,6 +1175,15 @@ const isPathInsideRoot = (root: string, filePath: string): boolean => {
 
 const isPendingArtifactPath = (path: string): boolean =>
   path.split(/[\\/]+/).includes(PENDING_ARTIFACT_DIR)
+
+const getLegacyUploadStorageSessionId = (storageKey: string): string | undefined => {
+  const segments = storageKey.split('/')
+  return segments[0] === UPLOADS_DIR &&
+    segments[1] === DEFAULT_UPLOAD_PROJECT_NAME &&
+    segments.length >= 4
+    ? segments[2]
+    : undefined
+}
 
 const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)

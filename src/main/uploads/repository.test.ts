@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -701,6 +701,48 @@ describe('upload repository', () => {
       repositoryWithTrustedOrigins.resolveManagedUploadPath(
         { path: finalized.path },
         { projectId: 'other-project' }
+      )
+    ).rejects.toThrow(/different project or session/i)
+  })
+
+  it('uses project Files membership to preview a legacy upload across Sessions', async () => {
+    const root = await createStorageRoot()
+    const legacyRepository = new UploadRepository(root)
+    const [staged] = await stageUploadFixtures(legacyRepository, {
+      files: [{ name: 'paper.pdf', content: Buffer.from('legacy pdf').toString('base64') }]
+    })
+    const [finalized] = await legacyRepository.finalizePendingSessionUploads('source-session', [
+      staged
+    ])
+    const client = createProjectDbClient(root)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    await client.managedFile.create({
+      data: {
+        source: 'upload',
+        sourceFileId: finalized.id,
+        projectId: 'project-files-a',
+        sessionId: 'source-session',
+        displayName: 'paper.pdf',
+        storageKey: relative(root, finalized.path).split(sep).join('/'),
+        sizeBytes: BigInt(finalized.size),
+        sortAtMs: 1n
+      }
+    })
+    const repository = new UploadRepository(root, {
+      getClient: () => Promise.resolve(client)
+    })
+
+    await expect(
+      repository.resolveManagedUploadPath(
+        { path: finalized.path },
+        { projectId: 'project-files-a', sessionId: 'referencing-session' }
+      )
+    ).resolves.toBe(await realpath(finalized.path))
+    await expect(
+      repository.resolveManagedUploadPath(
+        { path: finalized.path },
+        { projectId: 'unrelated-project', sessionId: 'referencing-session' }
       )
     ).rejects.toThrow(/different project or session/i)
   })
