@@ -11,6 +11,7 @@ import {
   NOTEBOOK_RPC_TOOLS,
   NOTEBOOK_SYSTEM_PROMPT_APPEND,
   callNotebookRpc,
+  compactManagePackagesResult,
   compactRestartResult,
   createNotebookMcpServerConfig,
   truncateNotebookRunResult
@@ -314,6 +315,7 @@ describe('manage_packages tool', () => {
   it('registers manage_packages backed by the managePackages RPC method', () => {
     expect(tool).toBeDefined()
     expect(tool?.method).toBe('managePackages')
+    expect(tool?.mapResult).toBe(compactManagePackagesResult)
     expect(Object.keys(tool?.inputSchema ?? {})).toEqual(
       expect.arrayContaining(['language', 'packages', 'usePip', 'channels'])
     )
@@ -376,6 +378,60 @@ describe('manage_packages tool', () => {
 
   it('points the notebook system prompt at manage_packages as the only install path', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('manage_packages')
+  })
+})
+
+describe('compactManagePackagesResult', () => {
+  it('keeps the package outcome while omitting verbose installer diagnostics', () => {
+    const compact = compactManagePackagesResult({
+      ok: true,
+      needsRestart: true,
+      method: 'conda',
+      prefix: '/runtime/envs/default-r',
+      fallbackUsed: false,
+      log: JSON.stringify({
+        actions: {
+          FETCH: [{ name: 'r-dplyr', depends: Array.from({ length: 100 }, () => 'dependency') }],
+          LINK: [{ name: 'r-dplyr' }]
+        }
+      }),
+      attempts: [
+        {
+          groupOrdinal: 0,
+          installer: 'conda',
+          packages: ['r-dplyr'],
+          status: 'succeeded',
+          mutationRisk: 'confirmed'
+        }
+      ]
+    }) as Record<string, unknown>
+
+    expect(compact).toEqual({
+      ok: true,
+      needsRestart: true,
+      method: 'conda',
+      prefix: '/runtime/envs/default-r',
+      fallbackUsed: false
+    })
+    expect(JSON.stringify(compact)).not.toContain('FETCH')
+    expect(JSON.stringify(compact)).not.toContain('r-dplyr')
+  })
+
+  it('retains a concise failure reason and passes through non-object results', () => {
+    expect(
+      compactManagePackagesResult({
+        ok: false,
+        needsRestart: false,
+        log: 'very verbose diagnostics',
+        error: 'Package installation could not be verified: dplyr.'
+      })
+    ).toEqual({
+      ok: false,
+      needsRestart: false,
+      error: 'Package installation could not be verified: dplyr.'
+    })
+    expect(compactManagePackagesResult(null)).toBeNull()
+    expect(compactManagePackagesResult('x')).toBe('x')
   })
 })
 

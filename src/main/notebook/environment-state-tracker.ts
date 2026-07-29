@@ -46,6 +46,11 @@ type PackageMutationOutcome = PackageMutationIntent & {
   fallbackUsed?: boolean
 }
 
+type PackageMutationVerification = {
+  result: NotebookEnvironmentOperation['result']
+  unsatisfiedPackages?: string[]
+}
+
 type EnvironmentInventoryBindingCache = {
   schemaVersion: 1
   generation: number
@@ -133,7 +138,31 @@ const packageNameFromSpec = (value: string, language: NotebookLanguage): string 
   const unqualified = value.trim().split('::').at(-1) ?? ''
   const name = unqualified.match(/^[A-Za-z0-9_.-]+/u)?.[0]
   if (!name) return undefined
-  return language === 'r' && name.toLocaleLowerCase('und').startsWith('r-') ? name.slice(2) : name
+  if (language !== 'r') return name
+  const lowerName = name.toLocaleLowerCase('und')
+  if (lowerName.startsWith('r-')) return name.slice(2)
+  if (lowerName.startsWith('bioconductor-')) return name.slice('bioconductor-'.length)
+  return name
+}
+
+const verifyPackageMutation = (
+  target: EnvironmentCaptureTarget,
+  outcome: PackageMutationOutcome,
+  packages: NotebookEnvironmentPackage[]
+): PackageMutationVerification => {
+  if (outcome.result !== 'success') return { result: outcome.result }
+  const installedNames = new Set(
+    packages.map((pkg) => requestedPackageKey(pkg.name)).filter((name) => name.length > 0)
+  )
+  const unsatisfiedPackages = outcome.packages.filter((spec) => {
+    const name = packageNameFromSpec(spec, target.language)
+    if (!name) return false
+    const installed = installedNames.has(requestedPackageKey(name))
+    return outcome.operation === 'uninstall' ? installed : !installed
+  })
+  return unsatisfiedPackages.length > 0
+    ? { result: 'failure', unsatisfiedPackages }
+    : { result: 'success' }
 }
 
 const packageChangesForOperation = ({
@@ -607,8 +636,8 @@ class EnvironmentStateTracker {
   async refreshAfterPackageMutation(
     target: EnvironmentCaptureTarget,
     outcome: PackageMutationOutcome
-  ): Promise<void> {
-    await this.serializeTarget(target, async () => {
+  ): Promise<PackageMutationVerification> {
+    return this.serializeTarget(target, async () => {
       const cache = await this.readBinding(target)
       const operation = await this.readOperation(target, outcome.operationId)
       const beforeInventoryChecksum = operation?.beforeInventoryChecksum ?? cache.inventoryChecksum
@@ -626,6 +655,7 @@ class EnvironmentStateTracker {
         inventoryRefresh: 'failed',
         inventoryRefreshAttempts: operation?.inventoryRefreshAttempts ?? []
       }
+      let verification: PackageMutationVerification = { result: outcome.result }
       try {
         const previousInventoryChecksum = cache.inventoryChecksum
         const inventory = await this.captureInventory(target)
@@ -638,8 +668,10 @@ class EnvironmentStateTracker {
           timestamp: this.now().toISOString(),
           result: inventoryRefresh
         }
+        verification = verifyPackageMutation(target, outcome, inventory.packages)
         const publishedEntry: NotebookEnvironmentOperation = {
           ...baseLogEntry,
+          result: verification.result,
           inventoryRefresh,
           inventoryRefreshAttempts: [...baseLogEntry.inventoryRefreshAttempts, publishedAttempt],
           packageChanges: packageChangesForOperation({
@@ -705,6 +737,7 @@ class EnvironmentStateTracker {
         })
       }
       await this.writeBinding(target, cache)
+      return verification
     })
   }
 
@@ -804,12 +837,22 @@ class EnvironmentStateTracker {
     if (!cache.dirtyOperationId) return
     const pending = await this.readOperation(target, cache.dirtyOperationId)
     if (!pending) return
+    const recoveredResult = verifyPackageMutation(
+      target,
+      {
+        operationId: pending.operationId,
+        operation: pending.operation,
+        packages: pending.packages,
+        result: pending.terminalResult ?? 'failure'
+      },
+      inventory.packages
+    )
     const operation: NotebookEnvironmentOperation = {
       operationId: pending.operationId,
       timestamp: this.now().toISOString(),
       operation: pending.operation,
       packages: [...pending.packages],
-      result: pending.terminalResult ?? 'failure',
+      result: recoveredResult.result,
       attempts: pending.attempts ?? [],
       fallbackUsed: pending.fallbackUsed ?? false,
       inventoryRefresh: 'published',
@@ -1003,5 +1046,6 @@ export type {
   EnvironmentStateTrackerOptions,
   InstalledEnvironmentInventory,
   PackageMutationIntent,
+  PackageMutationVerification,
   PackageMutationOutcome
 }

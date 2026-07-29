@@ -2255,6 +2255,47 @@ describe('notebook runtime service', () => {
       expect(installPackagesImpl).not.toHaveBeenCalled()
     })
 
+    it('reports failure when the refreshed inventory cannot verify an installed package', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentStateTracker: {
+          prepareRun: vi.fn(),
+          captureCompletedRun: vi.fn(),
+          markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+          refreshAfterPackageMutation: vi.fn().mockResolvedValue({
+            result: 'failure',
+            unsatisfiedPackages: ['dplyr']
+          })
+        },
+        executorFactory: () => ({
+          execute: async () => {
+            throw new Error('not used')
+          },
+          shutdown: async () => ({ reaped: true })
+        }),
+        installPackagesImpl: vi.fn().mockResolvedValue({
+          ok: true,
+          needsRestart: true,
+          log: 'micromamba transaction output',
+          method: 'conda'
+        })
+      })
+
+      const result = await service.managePackages({ language: 'r', packages: ['dplyr'] })
+
+      expect(result).toMatchObject({
+        ok: false,
+        needsRestart: false,
+        method: 'conda'
+      })
+      expect(result.error).toContain('dplyr')
+      expect(result.error).toMatch(/could not be verified/i)
+    })
+
     it('resolves the effective mirror from the injected getPackageMirror + locale and forwards it as installPackages deps', async () => {
       const root = await createStorageRoot()
       const calls: Array<[InstallRequestForTest, Partial<InstallDepsForTest> | undefined]> = []

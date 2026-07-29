@@ -253,6 +253,59 @@ describe('EnvironmentStateTracker', () => {
     )
   })
 
+  it('marks a successful installer process as failed when the requested R package is absent', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-unverified-mutation-'))
+    const inspectInstalled = vi.fn().mockResolvedValue({
+      runtimeVersion: '4.4.3',
+      packages: [
+        {
+          name: 'ggplot2',
+          version: '4.0.3',
+          versionStatus: 'known',
+          ecosystem: 'r',
+          evidenceSources: ['r-installed-packages']
+        }
+      ]
+    })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled,
+      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+    })
+    const rTarget = {
+      language: 'r' as const,
+      environmentName: 'default-r',
+      runtimeSource: 'managed' as const,
+      command: '/runtime/default-r/bin/Rscript',
+      args: []
+    }
+
+    await tracker.markPackageMutationDirty(rTarget, {
+      operationId: 'operation-missing-dplyr',
+      operation: 'install',
+      packages: ['dplyr']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(rTarget, {
+      operationId: 'operation-missing-dplyr',
+      operation: 'install',
+      packages: ['dplyr'],
+      result: 'success'
+    })
+    const capture = await tracker.captureCompletedRun(rTarget)
+
+    expect(verification).toEqual({ result: 'failure', unsatisfiedPackages: ['dplyr'] })
+    expect(capture.manifest.operationLog).toEqual([
+      expect.objectContaining({
+        operationId: 'operation-missing-dplyr',
+        result: 'failure',
+        packages: ['dplyr']
+      })
+    ])
+    expect(capture.manifest.packages).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'dplyr' })])
+    )
+  })
+
   it('forces a terminal rescan and marks evidence partial when package state changes during a run', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-fingerprint-'))
     const inspectInstalled = vi.fn().mockResolvedValue({

@@ -2591,9 +2591,8 @@ class NotebookRuntimeService {
                 .catch(() => undefined)
             }
           })
-          return installResult
         } finally {
-          await this.environmentStateTracker
+          const verification = await this.environmentStateTracker
             .refreshAfterPackageMutation(environmentTarget, {
               ...mutation,
               result: installResult?.ok ? 'success' : 'failure',
@@ -2601,7 +2600,20 @@ class NotebookRuntimeService {
               fallbackUsed: installResult?.fallbackUsed ?? false
             })
             .catch(() => undefined)
+          if (installResult?.ok && verification?.result === 'failure') {
+            const packages =
+              verification.unsatisfiedPackages?.join(', ') || request.packages.join(', ')
+            installResult = {
+              ...installResult,
+              ok: false,
+              needsRestart: false,
+              error:
+                `Package installation could not be verified in the target runtime: ${packages}. ` +
+                'The installer exited successfully, but the refreshed environment inventory does not show the requested package(s).'
+            }
+          }
         }
+        return installResult
       })
     } catch (error) {
       // begin() failed (nothing spawned) → structured fail-closed refusal, no cleanup needed.

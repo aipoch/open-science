@@ -467,6 +467,22 @@ const compactRestartResult = (raw: unknown): unknown => {
   }
 }
 
+// Package installers retain their full stdout/stderr in the main process for diagnostics and
+// provenance, but micromamba's JSON transaction can contain hundreds of FETCH/LINK records. The
+// agent only needs the outcome and actionable error, not the solver's package metadata.
+const compactManagePackagesResult = (raw: unknown): unknown => {
+  if (typeof raw !== 'object' || raw === null) return raw
+  const result = raw as Record<string, unknown>
+  return {
+    ok: result.ok,
+    needsRestart: result.needsRestart,
+    ...(result.method !== undefined ? { method: result.method } : {}),
+    ...(result.prefix !== undefined ? { prefix: result.prefix } : {}),
+    ...(result.fallbackUsed !== undefined ? { fallbackUsed: result.fallbackUsed } : {}),
+    ...(result.error !== undefined ? { error: result.error } : {})
+  }
+}
+
 // Tool definitions stay data-driven so schema, title, and RPC method cannot drift independently.
 const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
   {
@@ -541,7 +557,8 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     title: 'Install notebook packages',
     description: MANAGE_PACKAGES_DOC,
     method: 'managePackages',
-    inputSchema: managePackagesToolSchema
+    inputSchema: managePackagesToolSchema,
+    mapResult: compactManagePackagesResult
   },
   {
     name: 'manage_environments',
@@ -589,6 +606,7 @@ export {
   NOTEBOOK_RPC_TOOLS,
   NOTEBOOK_SYSTEM_PROMPT_APPEND,
   callNotebookRpc,
+  compactManagePackagesResult,
   compactRestartResult,
   createNotebookMcpEnvironmentFromProcess,
   createNotebookMcpServer,
