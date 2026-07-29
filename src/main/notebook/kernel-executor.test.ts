@@ -147,6 +147,7 @@ const resolvePython3 = (): string | undefined =>
 
 const python3 = resolvePython3()
 const gate = python3 ? describe : describe.skip
+const posixGate = describe.skipIf(process.platform === 'win32' || !python3)
 const rExecutable = ['/usr/local/bin/R', '/opt/homebrew/bin/R'].find(existsSync)
 const rScriptExecutable = ['/usr/local/bin/Rscript', '/opt/homebrew/bin/Rscript'].find(existsSync)
 
@@ -651,7 +652,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
   }, 15_000)
 })
 
-gate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
+posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
   it('blocks dynamically assembled venv and pip subprocess entry points', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-package-guard-'))
     const request = baseRequest(cwdDir)

@@ -222,8 +222,9 @@ describe('detectManagedRuntimeMutation', () => {
 
 describe('protectManagedRuntimeWrites', () => {
   const invocation = { executable: 'sh', args: ['-c', 'echo hi'] }
+  const macOSOnly = it.skipIf(process.platform === 'win32')
 
-  it('wraps the complete child process tree in a macOS read-only runtime policy', () => {
+  macOSOnly('wraps the complete child process tree in a macOS read-only runtime policy', () => {
     const protectedInvocation = protectManagedRuntimeWrites(
       invocation,
       '/tmp/open-science/runtime',
