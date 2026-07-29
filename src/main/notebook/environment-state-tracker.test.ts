@@ -21,6 +21,12 @@ const target = {
   args: []
 }
 
+const bindingPath = async (root: string): Promise<string> => {
+  const inventoryRoot = join(root, 'runtime', 'provenance', 'environment-inventory')
+  const [targetKey] = await readdir(inventoryRoot)
+  return join(inventoryRoot, targetKey, 'binding.json')
+}
+
 const readBinding = async (
   root: string
 ): Promise<{
@@ -28,9 +34,7 @@ const readBinding = async (
   operationLogTruncation?: { omittedCount: number; earliestRetainedAt?: string }
   dirtyOperationId?: string
 }> => {
-  const inventoryRoot = join(root, 'runtime', 'provenance', 'environment-inventory')
-  const [targetKey] = await readdir(inventoryRoot)
-  return JSON.parse(await readFile(join(inventoryRoot, targetKey, 'binding.json'), 'utf8'))
+  return JSON.parse(await readFile(await bindingPath(root), 'utf8'))
 }
 
 describe('EnvironmentStateTracker', () => {
@@ -324,7 +328,7 @@ describe('EnvironmentStateTracker', () => {
 
   it('bounds byte-heavy completed operation history by serialized size', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-log-bytes-'))
-    const maxBytes = 1_000
+    const maxBytes = 2_500
     const tracker = new EnvironmentStateTracker({
       dataRoot,
       inspectInstalled: vi.fn().mockResolvedValue({ runtimeVersion: '3.13.2', packages: [] }),
@@ -349,11 +353,8 @@ describe('EnvironmentStateTracker', () => {
     }
 
     const binding = await readBinding(dataRoot)
-    const retainedBytes = binding.operationLog.reduce(
-      (total, operation) => total + Buffer.byteLength(JSON.stringify(operation), 'utf8'),
-      0
-    )
-    expect(retainedBytes).toBeLessThanOrEqual(maxBytes)
+    const persistedBytes = Buffer.byteLength(await readFile(await bindingPath(dataRoot), 'utf8'))
+    expect(persistedBytes).toBeLessThanOrEqual(maxBytes)
     expect(binding.operationLog.at(-1)?.operationId).toBe('large-operation-4')
     expect(binding.operationLogTruncation?.omittedCount).toBeGreaterThan(0)
   })

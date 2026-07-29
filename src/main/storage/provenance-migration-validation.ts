@@ -5,7 +5,10 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { createProjectDbClient } from '../projects/prisma-client'
 import { validateConversationGraph } from '../../shared/conversation-graph'
-import { NOTEBOOK_RUN_FILE } from '../../shared/notebook'
+import {
+  isNotebookEnvironmentOperationLogTruncation,
+  NOTEBOOK_RUN_FILE
+} from '../../shared/notebook'
 import { normalizeSessionFile } from '../../shared/session-persistence'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -120,6 +123,12 @@ const validateEnvironmentState = async (root: string): Promise<Set<string>> => {
       throw new Error(`Unfinished Environment operation blocks migration: ${target.name}`)
     }
     if (binding && (binding.schemaVersion !== 1 || !Array.isArray(binding.operationLog))) {
+      throw new Error(`Invalid Environment binding blocks migration: ${target.name}`)
+    }
+    if (
+      binding?.operationLogTruncation !== undefined &&
+      !isNotebookEnvironmentOperationLogTruncation(binding.operationLogTruncation)
+    ) {
       throw new Error(`Invalid Environment binding blocks migration: ${target.name}`)
     }
   }

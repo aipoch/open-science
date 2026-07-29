@@ -119,6 +119,18 @@ export type NotebookEnvironmentOperationLogTruncation = {
   earliestRetainedAt?: string
 }
 
+export const isNotebookEnvironmentOperationLogTruncation = (
+  value: unknown
+): value is NotebookEnvironmentOperationLogTruncation => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const candidate = value as Record<string, unknown>
+  return (
+    Number.isInteger(candidate.omittedCount) &&
+    Number(candidate.omittedCount) > 0 &&
+    (candidate.earliestRetainedAt === undefined || typeof candidate.earliestRetainedAt === 'string')
+  )
+}
+
 export type NotebookEnvironmentManifest = {
   schemaVersion: 1
   captureKind: 'completed-run'

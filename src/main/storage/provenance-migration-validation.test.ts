@@ -40,6 +40,25 @@ describe('validateProvenanceMigrationState', () => {
     )
   })
 
+  it('refuses malformed Environment operation-log truncation metadata', async () => {
+    const target = join(root, 'runtime', 'provenance', 'environment-inventory', 'environment-key')
+    await mkdir(target, { recursive: true })
+    await writeFile(
+      join(target, 'binding.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        generation: 1,
+        state: 'clean',
+        operationLog: [],
+        operationLogTruncation: { omittedCount: 0 }
+      })
+    )
+
+    await expect(validateProvenanceMigrationState(root)).rejects.toThrow(
+      /invalid Environment binding/i
+    )
+  })
+
   it('refuses an Artifact staging directory that has not reached an immutable lifecycle state', async () => {
     await mkdir(
       join(
