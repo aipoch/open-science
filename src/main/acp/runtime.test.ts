@@ -1898,6 +1898,44 @@ describe('ACP runtime session management', () => {
     ).toEqual([])
   })
 
+  it('drops estimated pre-compaction categories when no fresh usage update arrives', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    handleSessionUpdate(runtime, {
+      sessionId: session.sessionId,
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        messageId: 'discarded-history',
+        content: { type: 'text', text: 'discarded history before compaction' }
+      }
+    })
+    handleSessionUpdate(runtime, {
+      sessionId: session.sessionId,
+      update: { sessionUpdate: 'usage_update', used: 180_000, size: 200_000 }
+    })
+    expect(
+      runtime.getSnapshot().contextUsageBySession[session.sessionId]?.breakdown?.categories
+    ).toContainEqual(expect.objectContaining({ key: 'messages' }))
+
+    await runtime.compactSession({ sessionId: session.sessionId })
+    handleSessionUpdate(runtime, {
+      sessionId: session.sessionId,
+      update: { sessionUpdate: 'usage_update', used: 10, size: 200_000 }
+    })
+
+    expect(
+      runtime.getSnapshot().contextUsageBySession[session.sessionId]?.breakdown?.categories
+    ).not.toContainEqual(expect.objectContaining({ key: 'messages' }))
+  })
+
   it('settles a cancelled native command without reporting compaction failure', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['remote-session-1'], {

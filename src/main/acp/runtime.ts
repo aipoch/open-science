@@ -1725,13 +1725,13 @@ class AcpRuntime {
           // Some adapters do not emit usage_update for their compaction control turn. Invalidate only
           // the unchanged pre-compaction reading; a fresh update received during the turn is a new
           // object and remains available to the context meter and auto-compaction threshold.
+          this.contextUsageTracker.resetSession(
+            appSessionId,
+            this.contextUsageEstimateInput(appSessionId)
+          )
           if (this.contextUsageBySession.get(appSessionId) === contextUsageBeforeCompaction) {
             this.contextUsageBySession.delete(appSessionId)
           } else {
-            this.contextUsageTracker.resetSession(
-              appSessionId,
-              this.contextUsageEstimateInput(appSessionId)
-            )
             this.refreshEstimatedContextUsage(appSessionId, 'reconciled')
           }
           this.sessionInlineImageBytes.delete(appSessionId)
