@@ -21,6 +21,19 @@ type PermissionPolicyContext = {
   mcpServerNames?: readonly string[]
 }
 
+const TRUSTED_MCP_TOOL_IDENTITY = Symbol('trusted-mcp-tool-identity')
+type TrustedMcpPermissionRequest = RequestPermissionRequest & {
+  [TRUSTED_MCP_TOOL_IDENTITY]?: string
+}
+
+// Carries a runtime-verified MCP identity across the broker without serializing it back to ACP. A
+// symbol key cannot be supplied by provider JSON, while its enumerable value survives the broker's
+// options projection spread before automatic policy resolution.
+const withTrustedMcpToolIdentity = (
+  params: RequestPermissionRequest,
+  identity: string
+): RequestPermissionRequest => Object.assign({}, params, { [TRUSTED_MCP_TOOL_IDENTITY]: identity })
+
 // MCP tool naming differs per framework: Claude Code namespaces them mcp__<server>__<tool>, Codex
 // reports mcp.<server>.<tool>, and opencode joins them <server>_<tool>. Claude's distinctive prefix is
 // self-identifying; the shorter Codex/opencode forms are checked against known session servers.
@@ -124,7 +137,10 @@ const isArtifactSaveTool = (
   const providerToolName = extractProviderToolName(params.toolCall)
   if (!providerToolName) return false
 
+  const trustedMcpIdentity = (params as TrustedMcpPermissionRequest)[TRUSTED_MCP_TOOL_IDENTITY]
+
   return (
+    trustedMcpIdentity === 'open-science-artifacts/write_artifact_file' ||
     providerToolName === 'mcp__open-science-artifacts__write_artifact_file' ||
     providerToolName === 'mcp__open_science_artifacts__write_artifact_file' ||
     providerToolName === 'mcp.open-science-artifacts.write_artifact_file' ||
@@ -183,6 +199,7 @@ export {
   isWithinWorkspace,
   resolveMcpProviderLeafIdentity,
   resolveAutomaticPermission,
-  resolveAllowOptionId
+  resolveAllowOptionId,
+  withTrustedMcpToolIdentity
 }
 export type { PermissionPolicyContext }

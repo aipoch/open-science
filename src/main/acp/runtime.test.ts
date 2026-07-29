@@ -4325,6 +4325,63 @@ describe('ACP runtime session management', () => {
     expect(permissionRequests).toHaveLength(0)
   })
 
+  it('auto-allows a Codex Artifact save restored from its sparse MCP approval', async () => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: AcpPermissionRequest[] = []
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'codex-artifact-session',
+      toolCallId: 'codex-artifact-1',
+      toolTitle: 'unused-by-sparse-codex-approval',
+      sparseCodexMcpApproval: true,
+      codexMcpIdentity: {
+        server: 'open-science-artifacts',
+        tool: 'write_artifact_file',
+        arguments: {
+          filename: 'results.md',
+          mimeType: 'text/markdown',
+          content: '# Results'
+        }
+      },
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const root = await createTemporaryRoot()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository: new ArtifactRepository(root)
+      },
+      callbacks: {
+        onPermissionRequest: (request) => {
+          permissionRequests.push(request)
+          runtime.respondToPermission({ requestId: request.requestId, cancelled: true })
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'save results.md' })
+
+    expect(permissionRequests).toHaveLength(0)
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+  })
+
   it('auto-allows a Claude Code Artifact save identified by its qualified MCP title', async () => {
     const process = new FakeAgentProcess()
     const permissionRequests: AcpPermissionRequest[] = []

@@ -84,7 +84,7 @@ import {
   ConversationPermissionGrantStore,
   resolveNotebookPermissionContext
 } from './permission-broker'
-import { isMcpToolName } from './permission-policy'
+import { isMcpToolName, withTrustedMcpToolIdentity } from './permission-policy'
 import { applyCurrentModeUpdate } from './permission-profile-controller'
 import {
   ARTIFACT_MCP_SERVER_NAME,
@@ -327,6 +327,7 @@ type ClientContextSessionAttacher = {
 type CodexMcpToolIdentity = {
   title: string
   providerToolName: string
+  mcpIdentity: string
   rawInput: unknown
 }
 
@@ -417,6 +418,7 @@ const codexMcpToolIdentity = (
   return {
     title: event.title ?? `mcp.${server}.${tool}`,
     providerToolName: tool,
+    mcpIdentity: `${server}/${tool}`,
     rawInput: event.rawInput.arguments
   }
 }
@@ -4475,15 +4477,18 @@ class AcpRuntime {
 
     const toolMeta = isRecord(params.toolCall._meta) ? params.toolCall._meta : {}
 
-    return {
-      ...params,
-      toolCall: {
-        ...params.toolCall,
-        title: params.toolCall.title ?? identity.title,
-        rawInput: params.toolCall.rawInput ?? identity.rawInput,
-        _meta: { ...toolMeta, toolName: identity.providerToolName }
-      }
-    }
+    return withTrustedMcpToolIdentity(
+      {
+        ...params,
+        toolCall: {
+          ...params.toolCall,
+          title: params.toolCall.title ?? identity.title,
+          rawInput: params.toolCall.rawInput ?? identity.rawInput,
+          _meta: { ...toolMeta, toolName: identity.providerToolName }
+        }
+      },
+      identity.mcpIdentity
+    )
   }
 
   private restoreClaudeCodeMcpToolInput(
