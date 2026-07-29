@@ -1072,6 +1072,24 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           return session
         }
 
+        // Switching revisions projects only the active Branch into `session.messages`, while the
+        // durable graph keeps events from every Branch. Runtime replay can therefore deliver an
+        // already-finalized Artifact whose owning Message is currently inactive. Resolve that event
+        // against the full graph so the main-process claim is replayed with its original Message id;
+        // rebinding it to the active response would correctly fail the provenance ownership check.
+        const alreadyAppliedGraphMessage = session.conversationGraph?.messages.find((message) =>
+          message.eventIds.includes(eventId)
+        )
+
+        if (alreadyAppliedGraphMessage) {
+          result = {
+            sessionId,
+            messageId: alreadyAppliedGraphMessage.id
+          }
+
+          return session
+        }
+
         const responseToMessageId = promptMessageId ?? session.activeRun?.promptMessageId
         // The app-owned prompt identity survives stop/failure event ordering and is authoritative. The
         // stream-id comparison remains only as a compatibility fallback for older artifact events.
@@ -1082,6 +1100,45 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           (responseToMessageId
             ? agentMessages.find((message) => message.responseToMessageId === responseToMessageId)
             : undefined) ?? agentMessages.find((message) => message.streamId === runId)
+
+        const promptIsActive = promptMessageId
+          ? session.messages.some((message) => message.id === promptMessageId)
+          : false
+
+        if (!existingMessage && promptMessageId && !promptIsActive && session.conversationGraph) {
+          const graphResponses = session.conversationGraph.messages.filter(
+            (message) => message.role === 'agent' && message.responseToMessageId === promptMessageId
+          )
+
+          if (graphResponses.length === 1) {
+            const graphResponse = graphResponses[0]
+            result = { sessionId, messageId: graphResponse.id }
+            return {
+              ...session,
+              artifacts: upsertArtifacts(session.artifacts, incomingArtifacts),
+              conversationGraph: {
+                ...session.conversationGraph,
+                messages: session.conversationGraph.messages.map((message) =>
+                  message.id === graphResponse.id
+                    ? {
+                        ...message,
+                        eventIds: appendUniqueStrings(message.eventIds, [eventId]),
+                        artifactIds: appendUniqueStrings(message.artifactIds, incomingArtifactIds),
+                        updatedAt: now
+                      }
+                    : message
+                ),
+                updatedAt: now
+              },
+              updatedAt: now
+            }
+          }
+
+          // An explicit prompt from another Branch must never fall through to a new Message on the
+          // active Branch. A later replay can be resolved after that Branch is projected again.
+          return session
+        }
+
         const messageId = existingMessage?.id ?? createMessageId()
         result = { sessionId, messageId }
 
@@ -1146,8 +1203,34 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         if (session.id !== sessionId) return session
 
         const message = session.messages.find((item) => item.id === messageId)
+        const graphMessage = session.conversationGraph?.messages.find(
+          (item) => item.id === messageId
+        )
 
-        if (!message) return session
+        if (!message) {
+          if (!graphMessage || !session.conversationGraph) return session
+
+          const replacedArtifactIds = new Set(graphMessage.artifactIds ?? [])
+          const preservedArtifacts = (session.artifacts ?? []).filter(
+            (artifact) => !replacedArtifactIds.has(artifact.id)
+          )
+          const nextArtifacts = upsertArtifacts(preservedArtifacts, incomingArtifacts)
+          const now = Date.now()
+          return {
+            ...session,
+            artifacts: nextArtifacts,
+            conversationGraph: {
+              ...session.conversationGraph,
+              messages: session.conversationGraph.messages.map((item) =>
+                item.id === messageId
+                  ? { ...item, artifactIds: incomingArtifactIds, updatedAt: now }
+                  : item
+              ),
+              updatedAt: now
+            },
+            updatedAt: now
+          }
+        }
 
         // Remove only the artifacts previously linked to this message, preserving other message files.
         const replacedArtifactIds = new Set(message.artifactIds ?? [])

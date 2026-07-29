@@ -828,6 +828,111 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('replays an inactive-branch artifact claim against its original response', async () => {
+    const originalPromptMessageId =
+      useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    let finalizedMessageId: string | undefined
+    const finalizeRunArtifacts = vi.fn(async ({ messageId }: { messageId: string }) => {
+      if (finalizedMessageId && finalizedMessageId !== messageId) {
+        throw new Error(`Artifact run claim already finalized for message: ${finalizedMessageId}`)
+      }
+      finalizedMessageId = messageId
+      return [
+        createArtifactFile({
+          id: `transport-session-1:${messageId}:result.txt`,
+          sessionId: 'transport-session-1',
+          messageId,
+          runId: undefined
+        })
+      ]
+    })
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+    const artifactEvent = createEvent({
+      id: 'artifact-event-inactive-branch',
+      kind: 'artifact',
+      runId: 'artifact-run-inactive-branch',
+      promptMessageId: originalPromptMessageId,
+      artifactSessionId: 'artifact-session-1',
+      artifactClaimId: 'claim-inactive-branch',
+      artifacts: [createArtifactFile({ runId: 'artifact-run-inactive-branch' })]
+    })
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-event-inactive-branch',
+        role: 'assistant',
+        messageId: 'assistant-message-inactive-branch',
+        text: 'Saved the inactive branch result.'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(artifactEvent, { finalizeRunArtifacts, saveSession })
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-inactive-branch', kind: 'stop' }), {
+      finalizeRunArtifacts,
+      saveSession
+    })
+
+    const originalResponseMessageId = finalizedMessageId
+    expect(originalResponseMessageId).toBeDefined()
+    expect(
+      useSessionStore
+        .getState()
+        .sessions[0].conversationGraph?.messages.find(
+          (message) => message.id === originalResponseMessageId
+        )
+    ).toMatchObject({
+      id: originalResponseMessageId,
+      responseToMessageId: originalPromptMessageId
+    })
+
+    useSessionStore
+      .getState()
+      .truncateSessionFromMessage('transport-session-1', originalPromptMessageId ?? '')
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Create a different version'
+    })
+    expect(
+      useSessionStore
+        .getState()
+        .sessions[0].conversationGraph?.messages.find(
+          (message) => message.id === originalResponseMessageId
+        )
+    ).toMatchObject({
+      id: originalResponseMessageId,
+      responseToMessageId: originalPromptMessageId
+    })
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-event-current-branch',
+        role: 'assistant',
+        messageId: 'assistant-message-current-branch',
+        text: 'Saved the current branch result.'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(artifactEvent, { finalizeRunArtifacts, saveSession })
+
+    await expect(
+      applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-current-branch', kind: 'stop' }), {
+        finalizeRunArtifacts,
+        saveSession
+      })
+    ).resolves.toBe(true)
+
+    expect(finalizeRunArtifacts).toHaveBeenCalledTimes(2)
+    expect(finalizeRunArtifacts).toHaveBeenLastCalledWith({
+      claimId: 'claim-inactive-branch',
+      messageId: originalResponseMessageId
+    })
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.messages.every((message) => (message.artifactIds?.length ?? 0) === 0)).toBe(true)
+    expect(
+      session.conversationGraph?.messages.find(
+        (message) => message.id === originalResponseMessageId
+      )?.artifactIds
+    ).toEqual([`transport-session-1:${originalResponseMessageId}:result.txt`])
+  })
+
   it('acknowledges stop without finalizing deferred evidence after graph synchronization fails', async () => {
     const finalizeRunArtifacts = vi.fn()
     const saveSession = vi.fn()
