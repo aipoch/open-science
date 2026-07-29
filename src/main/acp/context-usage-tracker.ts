@@ -26,9 +26,10 @@ type SessionEstimate = {
   totals: Record<EstimatedCategoryKey, number>
   keyedSections: Map<string, { category: EstimatedCategoryKey; tokens: number }>
   toolObservations: Map<string, SessionUpdateObservation>
-  skillSectionsByToolCallId: Map<string, string>
+  skillSectionsByToolOccurrence: Map<string, string>
   canonicalRawOutputSections: Set<string>
   promptSkillSectionIds: Set<string>
+  promptSequence: number
   pendingAssistantText: string
   pendingAssistantTokens: number
 }
@@ -78,9 +79,10 @@ const cloneSessionEstimate = (state: SessionEstimate): SessionEstimate => ({
   totals: { ...state.totals },
   keyedSections: new Map(state.keyedSections),
   toolObservations: new Map(state.toolObservations),
-  skillSectionsByToolCallId: new Map(state.skillSectionsByToolCallId),
+  skillSectionsByToolOccurrence: new Map(state.skillSectionsByToolOccurrence),
   canonicalRawOutputSections: new Set(state.canonicalRawOutputSections),
   promptSkillSectionIds: new Set(state.promptSkillSectionIds),
+  promptSequence: state.promptSequence,
   pendingAssistantText: state.pendingAssistantText,
   pendingAssistantTokens: state.pendingAssistantTokens
 })
@@ -326,9 +328,10 @@ class ContextUsageTracker {
       totals: emptyTotals(),
       keyedSections: new Map(),
       toolObservations: new Map(),
-      skillSectionsByToolCallId: new Map(),
+      skillSectionsByToolOccurrence: new Map(),
       canonicalRawOutputSections: new Set(),
       promptSkillSectionIds: new Set(),
+      promptSequence: 0,
       pendingAssistantText: '',
       pendingAssistantTokens: 0
     }
@@ -372,6 +375,9 @@ class ContextUsageTracker {
   ): void {
     const state = this.sessions.get(sessionId)
     if (!state) return
+    // Runtime calls this exactly once for each outbound user prompt; use that boundary to namespace
+    // later tool events without exposing a second lifecycle method that callers could forget.
+    state.promptSequence += 1
 
     const text = typeof content === 'string' ? content : content.map(contentBlockText).join('\n')
     const tokens = Math.max(
@@ -400,7 +406,7 @@ class ContextUsageTracker {
 
   private recordSkillDocument(
     sessionId: string,
-    toolCallId: string,
+    toolOccurrence: string,
     path: string,
     text: string,
     canonical: boolean
@@ -410,11 +416,11 @@ class ContextUsageTracker {
 
     const promptSectionId = skillFileSectionId(path)
     const sectionId =
-      state.skillSectionsByToolCallId.get(toolCallId) ??
+      state.skillSectionsByToolOccurrence.get(toolOccurrence) ??
       (state.promptSkillSectionIds.has(promptSectionId)
         ? promptSectionId
-        : `tool:${toolCallId}:document`)
-    state.skillSectionsByToolCallId.set(toolCallId, sectionId)
+        : `tool:${toolOccurrence}:document`)
+    state.skillSectionsByToolOccurrence.set(toolOccurrence, sectionId)
     if (!canonical && state.canonicalRawOutputSections.has(sectionId)) return
     if (canonical) state.canonicalRawOutputSections.add(sectionId)
     this.replaceText(sessionId, sectionId, 'skills', text)
@@ -477,10 +483,14 @@ class ContextUsageTracker {
     if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return
     const state = this.sessions.get(sessionId)
     if (!state) return
+    // ACP toolCallId values are opaque and may be reused by a later user turn. Namespace every
+    // lifecycle with the local prompt sequence so incremental updates still replace one occurrence
+    // without allowing a reused raw id to inherit metadata or overwrite older context history.
+    const toolOccurrence = `${state.promptSequence}:${update.toolCallId}`
     if (observation.toolCategory || observation.skillFilePath) {
-      state.toolObservations.set(update.toolCallId, observation)
+      state.toolObservations.set(toolOccurrence, observation)
     }
-    const effectiveObservation = state.toolObservations.get(update.toolCallId) ?? observation
+    const effectiveObservation = state.toolObservations.get(toolOccurrence) ?? observation
     // An assistant segment emitted before a tool call becomes input to the Agent's next internal
     // model request in this same user turn. Commit it at the observable tool boundary; the final
     // assistant segment remains buffered until the next user prompt.
@@ -494,7 +504,7 @@ class ContextUsageTracker {
       chars: MAX_TOOL_ESTIMATE_CHARS,
       nodes: MAX_TOOL_ESTIMATE_NODES
     }
-    const prefix = `tool:${update.toolCallId}`
+    const prefix = `tool:${toolOccurrence}`
     if (update.rawInput !== undefined) {
       this.replaceText(
         sessionId,
@@ -507,7 +517,7 @@ class ContextUsageTracker {
       if (update.rawOutput !== undefined) {
         this.recordSkillDocument(
           sessionId,
-          update.toolCallId,
+          toolOccurrence,
           effectiveObservation.skillFilePath,
           boundedJsonText(update.rawOutput, budget),
           true
@@ -515,7 +525,7 @@ class ContextUsageTracker {
       } else if (update.content !== undefined) {
         this.recordSkillDocument(
           sessionId,
-          update.toolCallId,
+          toolOccurrence,
           effectiveObservation.skillFilePath,
           toolContentText(update.content, budget),
           false

@@ -438,6 +438,41 @@ describe('ContextUsageTracker', () => {
     expect(tracker.estimate('s1')?.categories).toEqual([{ key: 'mcp', tokens: 6, estimated: true }])
   })
 
+  it('treats a reused tool call id in a later prompt as a new history entry', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.appendPromptContent('s1', '')
+    tracker.observeSessionUpdate(
+      's1',
+      {
+        sessionId: 's1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'reused-id',
+          status: 'completed',
+          rawOutput: 'first MCP result'
+        }
+      },
+      { toolCategory: 'mcp' }
+    )
+
+    tracker.appendPromptContent('s1', '')
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'reused-id',
+        status: 'completed',
+        rawOutput: 'second tool result'
+      }
+    })
+
+    expect(tracker.estimate('s1')?.categories).toEqual([
+      { key: 'tools', tokens: 3, estimated: true },
+      { key: 'mcp', tokens: 3, estimated: true }
+    ])
+  })
+
   it('deduplicates a pre-counted Codex Skill when the same SKILL.md is read', () => {
     const tracker = new ContextUsageTracker(wordCounter)
     tracker.beginSession('s1', { frameworkId: 'codex', model: 'gpt-5.6-sol' })
@@ -492,9 +527,11 @@ describe('ContextUsageTracker', () => {
     observeRead('read-1')
     observeRead('read-1')
     observeRead('read-2')
+    tracker.appendPromptContent('s1', '')
+    observeRead('read-1')
 
     expect(tracker.estimate('s1')?.categories).toEqual([
-      { key: 'skills', tokens: 6, estimated: true }
+      { key: 'skills', tokens: 9, estimated: true }
     ])
   })
 
