@@ -5,6 +5,9 @@ from kernel import extract_dois
 
 
 class ExtractDoisTests(unittest.TestCase):
+    def test_strips_trailing_markdown_emphasis(self) -> None:
+        self.assertEqual(extract_dois("**10.1234/foo**"), ["10.1234/foo"])
+
     def test_rejecting_a_long_markdown_like_suffix_stays_fast(self) -> None:
         candidate = "10.1234/" + "*" * 8_000 + "A"
 
