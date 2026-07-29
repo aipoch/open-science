@@ -739,7 +739,20 @@ describe('workspace runtime events', () => {
       claimId: 'claim-1',
       messageId: responseMessageId
     })
-    expect(operationOrder).toEqual(['save', 'finalize'])
+    expect(operationOrder).toEqual(['save', 'finalize', 'save'])
+    expect(saveSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        artifacts: [
+          expect.objectContaining({ id: `transport-session-1:${responseMessageId}:result.txt` })
+        ],
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            id: responseMessageId,
+            artifactIds: [`transport-session-1:${responseMessageId}:result.txt`]
+          })
+        ])
+      })
+    )
     expect(session.messages).toHaveLength(2)
     expect(session.messages[1].artifactIds).toEqual([
       `transport-session-1:${responseMessageId}:result.txt`
@@ -862,7 +875,7 @@ describe('workspace runtime events', () => {
       { finalizeRunArtifacts, saveSession }
     )
 
-    expect(operationOrder).toEqual(['save', 'finalize', 'save', 'finalize'])
+    expect(operationOrder).toEqual(['save', 'finalize', 'save', 'finalize', 'save'])
     expect(finalizeRunArtifacts).toHaveBeenCalledTimes(2)
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
   })
