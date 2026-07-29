@@ -296,7 +296,10 @@ const resolveShellLiteralAssignments = (source: string): string => {
       return name ? (values.get(name) ?? token) : token
     }
   )
-  return expanded.replace(/["']/gu, '')
+  // Unquote only simple argv words so expanded command/flag variables remain executable to the
+  // scanners. Preserve quoted payloads containing spaces or separators; removing those quotes would
+  // incorrectly promote a nested shell's `;` into the parent command sequence.
+  return expanded.replace(/(["'])([^"'\\\s;&|]+)\1/gu, '$2')
 }
 
 const EXECUTION_BRIDGES: Record<NotebookExecutionSurface, RegExp> = {
@@ -558,39 +561,66 @@ const commandName = (word: string | undefined): string =>
     .at(-1)
     ?.toLowerCase() ?? ''
 
+const resolveSequenceCwd = (
+  target: string | undefined,
+  runtimeRoot: string,
+  cwd: string
+): string => {
+  if (!target) return cwd
+  const unquoted = target.replace(/^['"]|['"]$/gu, '')
+  const expanded = unquoted
+    .replace(/\$\{?env:OPEN_SCIENCE_RUNTIME_DIR\}?/giu, () => runtimeRoot)
+    .replace(/\$\{?OPEN_SCIENCE_RUNTIME_DIR\}?/gu, () => runtimeRoot)
+    .replace(/%OPEN_SCIENCE_RUNTIME_DIR%/giu, () => runtimeRoot)
+  const normalizedExpanded =
+    sep === '\\' ? expanded.replaceAll('/', sep) : expanded.replaceAll('\\', sep)
+  const resolvedTarget = canonicalGuardPath(normalizedExpanded, cwd)
+  if (resolvedTarget) return resolvedTarget
+  if (referencesManagedRuntimePath(target, runtimeRoot, cwd)) {
+    return canonicalGuardPath(runtimeRoot, cwd) ?? resolve(cwd, runtimeRoot)
+  }
+  return resolve(cwd, normalizedExpanded)
+}
+
+const sequenceTargetWritesRuntime = (target: string, runtimeRoot: string, cwd: string): boolean => {
+  if (referencesManagedRuntimePath(target, runtimeRoot, cwd)) return true
+  // Preserve the existing fail-closed behavior for a dynamic target while the current directory is
+  // managed, but allow a statically resolved absolute destination outside the runtime.
+  return (
+    canonicalGuardPath(target, cwd) === undefined &&
+    referencesManagedRuntimePath('.', runtimeRoot, cwd)
+  )
+}
+
 const shellSequenceWritesRuntime = (
   source: string,
   runtimeRoot: string,
   cwd: string,
-  inheritedRuntimeCwd = false,
   depth = 0
 ): boolean => {
-  let insideRuntime = inheritedRuntimeCwd
+  let currentCwd = cwd
   for (const command of shellCommandSegments(source)) {
     const words = shellWords(command)
     const executable = commandName(words[0])
     if (executable === 'cd') {
       const target = words.find((word, index) => index > 0 && !word.startsWith('-'))
-      if (target && referencesManagedRuntimePath(target, runtimeRoot, cwd)) insideRuntime = true
-      else if (target && /^(?:[A-Za-z]:)?[\\/]/u.test(target.replace(/^['"]|['"]$/gu, ''))) {
-        insideRuntime = false
-      }
+      currentCwd = resolveSequenceCwd(target, runtimeRoot, currentCwd)
     }
     const targets = shellRuntimeWriteTargets(command)
-    if (targets.some((target) => referencesManagedRuntimePath(target, runtimeRoot, cwd)))
+    if (targets.some((target) => sequenceTargetWritesRuntime(target, runtimeRoot, currentCwd))) {
       return true
-    if (insideRuntime && targets.length > 0) return true
-    if (insideRuntime && depth < 8) {
+    }
+    if (referencesManagedRuntimePath('.', runtimeRoot, currentCwd) && depth < 8) {
       const payload = invocationPayload(words)
       if (
         payload?.surface === 'bash' &&
-        shellSequenceWritesRuntime(payload.source, runtimeRoot, cwd, true, depth + 1)
+        shellSequenceWritesRuntime(payload.source, runtimeRoot, currentCwd, depth + 1)
       ) {
         return true
       }
       if (
         payload?.surface === 'powershell' &&
-        powerShellSequenceWritesRuntime(payload.source, runtimeRoot, cwd, true, depth + 1)
+        powerShellSequenceWritesRuntime(payload.source, runtimeRoot, currentCwd, depth + 1)
       ) {
         return true
       }
@@ -598,13 +628,7 @@ const shellSequenceWritesRuntime = (
         payload &&
         payload.surface !== 'bash' &&
         payload.surface !== 'powershell' &&
-        hasManagedRuntimeWrite(
-          payload.source,
-          payload.surface,
-          runtimeRoot,
-          canonicalGuardPath(runtimeRoot, cwd) ?? resolve(cwd, runtimeRoot),
-          depth + 1
-        )
+        hasManagedRuntimeWrite(payload.source, payload.surface, runtimeRoot, currentCwd, depth + 1)
       ) {
         return true
       }
@@ -675,10 +699,9 @@ const powerShellSequenceWritesRuntime = (
   source: string,
   runtimeRoot: string,
   cwd: string,
-  inheritedRuntimeCwd = false,
   depth = 0
 ): boolean => {
-  let insideRuntime = inheritedRuntimeCwd
+  let currentCwd = cwd
   for (const command of shellCommandSegments(source)) {
     const words = shellWords(command)
     const executable = commandName(words[0])
@@ -688,26 +711,24 @@ const powerShellSequenceWritesRuntime = (
         pathFlag >= 0
           ? words[pathFlag + 1]
           : words.find((word, index) => index > 0 && !word.startsWith('-'))
-      if (target && referencesManagedRuntimePath(target, runtimeRoot, cwd)) insideRuntime = true
-      else if (target && /^(?:[A-Za-z]:)?[\\/]/u.test(target.replace(/^['"]|['"]$/gu, ''))) {
-        insideRuntime = false
-      }
+      currentCwd = resolveSequenceCwd(target, runtimeRoot, currentCwd)
     }
     const targets = powerShellRuntimeWriteTargets(command)
-    if (targets.some((target) => referencesManagedRuntimePath(target, runtimeRoot, cwd)))
+    if (targets.some((target) => sequenceTargetWritesRuntime(target, runtimeRoot, currentCwd))) {
       return true
-    if (insideRuntime && targets.length > 0) return true
-    if (insideRuntime && depth < 8) {
+    }
+    if (powerShellDotNetWritesRuntime(command, runtimeRoot, currentCwd)) return true
+    if (referencesManagedRuntimePath('.', runtimeRoot, currentCwd) && depth < 8) {
       const payload = invocationPayload(words)
       if (
         payload?.surface === 'bash' &&
-        shellSequenceWritesRuntime(payload.source, runtimeRoot, cwd, true, depth + 1)
+        shellSequenceWritesRuntime(payload.source, runtimeRoot, currentCwd, depth + 1)
       ) {
         return true
       }
       if (
         payload?.surface === 'powershell' &&
-        powerShellSequenceWritesRuntime(payload.source, runtimeRoot, cwd, true, depth + 1)
+        powerShellSequenceWritesRuntime(payload.source, runtimeRoot, currentCwd, depth + 1)
       ) {
         return true
       }
@@ -715,13 +736,7 @@ const powerShellSequenceWritesRuntime = (
         payload &&
         payload.surface !== 'bash' &&
         payload.surface !== 'powershell' &&
-        hasManagedRuntimeWrite(
-          payload.source,
-          payload.surface,
-          runtimeRoot,
-          canonicalGuardPath(runtimeRoot, cwd) ?? resolve(cwd, runtimeRoot),
-          depth + 1
-        )
+        hasManagedRuntimeWrite(payload.source, payload.surface, runtimeRoot, currentCwd, depth + 1)
       ) {
         return true
       }

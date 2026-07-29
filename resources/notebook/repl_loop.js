@@ -213,8 +213,19 @@ const shellWords = (command) =>
   String(command).match(/(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|[^\s])+/gu) ?? []
 const resolvedCommandCwd = (target, cwd) => {
   if (!target) return cwd
-  if (managedRuntimeRoot && runtimeTextReferencesManagedRuntime(target)) return managedRuntimeRoot
-  return canonicalGuardPath(unquoteShellWord(target), cwd) ?? cwd
+  const unquoted = unquoteShellWord(target)
+  const expanded = managedRuntimeRoot
+    ? unquoted
+        .replace(/\$\{?env:OPEN_SCIENCE_RUNTIME_DIR\}?/giu, () => managedRuntimeRoot)
+        .replace(/\$\{?OPEN_SCIENCE_RUNTIME_DIR\}?/gu, () => managedRuntimeRoot)
+        .replace(/%OPEN_SCIENCE_RUNTIME_DIR%/giu, () => managedRuntimeRoot)
+    : unquoted
+  const normalizedExpanded =
+    path.sep === '\\' ? expanded.replaceAll('/', path.sep) : expanded.replaceAll('\\', path.sep)
+  if (managedRuntimeRoot && runtimeTextReferencesManagedRuntime(target)) {
+    return canonicalGuardPath(normalizedExpanded, cwd) ?? managedRuntimeRoot
+  }
+  return canonicalGuardPath(normalizedExpanded, cwd) ?? cwd
 }
 const powerShellInvocationSource = (words, commandIndex = 0) => {
   const commandFlag = words.findIndex(

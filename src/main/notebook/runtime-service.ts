@@ -137,6 +137,18 @@ const isRepairQuarantineError = (error: unknown): boolean =>
 const dataProcessKey = (language: NotebookLanguage, environment?: string): string =>
   `${language === 'r' ? 'r' : 'python'}:${resolveEnvName(language, environment)}`
 
+const externalRepairBlockKey = (language: NotebookLanguage, runtimeId: string): string =>
+  `external:${language}:${runtimeId}`
+
+const repairBlockKey = (
+  language: NotebookLanguage,
+  environment: string,
+  binding: NotebookRuntimeBinding | undefined
+): string =>
+  binding?.source === 'external'
+    ? externalRepairBlockKey(language, binding.runtimeId)
+    : dataProcessKey(language, environment)
+
 // The process key the executor reports through onIdleShutdown/onTerminated(kind, env): `${kind}:${env}`
 // for python/r, bare 'repl' for the env-agnostic control kernel. A missing kind/env (direct callers /
 // tests that omit them) resolves to the DEFAULT env for the kind so run.json stays consistent.
@@ -1770,7 +1782,7 @@ class NotebookRuntimeService {
     const repairRegistryRoot = getRuntimeRoot(this.options.dataRoot)
     const repairKeys = this.repairRegistryKeys(cell.language, env, binding, repairRegistryRoot)
     const repairRequired =
-      this.repairBlockedEnvs.has(dataProcessKey(cell.language, env)) ||
+      this.repairBlockedEnvs.has(repairBlockKey(cell.language, env, binding)) ||
       repairKeys.some((key) => isRepairRequired(repairRegistryRoot, key))
     if (
       (binding?.runtimeId && this.blockedRuntimeIds.has(binding.runtimeId)) ||
@@ -1916,7 +1928,7 @@ class NotebookRuntimeService {
           // Re-read the repair gate only after the shared run lease is acquired so a transaction that
           // quarantined this env while we waited cannot release the lock and let a stale decision spawn it.
           const repairRequiredAfterLock =
-            this.repairBlockedEnvs.has(dataProcessKey(cell.language, env)) ||
+            this.repairBlockedEnvs.has(repairBlockKey(cell.language, env, binding)) ||
             repairKeys.some((key) => isRepairRequired(repairRegistryRoot, key))
           if (repairRequiredAfterLock) {
             executedOnLiveKernel = false
@@ -2940,11 +2952,12 @@ class NotebookRuntimeService {
           }
         }
       }
-      const repairedLanguages: readonly NotebookLanguage[] = managedRepair
-        ? ['python', 'r']
-        : [request.language]
-      for (const language of repairedLanguages) {
-        this.repairBlockedEnvs.delete(dataProcessKey(language, envName))
+      if (managedRepair) {
+        for (const language of ['python', 'r'] as const) {
+          this.repairBlockedEnvs.delete(dataProcessKey(language, envName))
+        }
+      } else {
+        this.repairBlockedEnvs.delete(externalRepairBlockKey(request.language, repairRuntimeId))
       }
       this.restoreRepairedBindings(repairRuntimeId, request.language, envName, managedRepair)
     }
@@ -3704,8 +3717,12 @@ class NotebookRuntimeService {
     const affectedLanguages: readonly NotebookLanguage[] = managedRuntime
       ? ['python', 'r']
       : [language]
-    for (const affectedLanguage of affectedLanguages) {
-      this.repairBlockedEnvs.add(dataProcessKey(affectedLanguage, envName))
+    if (managedRuntime) {
+      for (const affectedLanguage of affectedLanguages) {
+        this.repairBlockedEnvs.add(dataProcessKey(affectedLanguage, envName))
+      }
+    } else {
+      this.repairBlockedEnvs.add(externalRepairBlockKey(language, runtimeId))
     }
     try {
       for (const session of this.sessions.values()) {
@@ -3713,7 +3730,7 @@ class NotebookRuntimeService {
           const binding = session.runtimeBindings.get(affectedLanguage)
           const sessionEnv = this.resolveRunEnv(session, affectedLanguage)
           const targetMatches = managedRuntime
-            ? sessionEnv === envName
+            ? binding?.source !== 'external' && sessionEnv === envName
             : binding?.source === 'external' && binding.runtimeId === runtimeId
           if (!targetMatches) continue
 

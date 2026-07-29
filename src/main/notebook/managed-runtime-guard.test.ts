@@ -60,6 +60,18 @@ describe('detectManagedRuntimeMutation', () => {
   })
 
   it.each([
+    ['bash', 'cd "$OPEN_SCIENCE_RUNTIME_DIR"; cd ..; touch report.txt'],
+    ['bash', `cd "$OPEN_SCIENCE_RUNTIME_DIR"; sh -c 'cd ..; touch report.txt'`],
+    ['bash', 'cd "$OPEN_SCIENCE_RUNTIME_DIR/subdir"; cd ../..; touch report.txt'],
+    [
+      'powershell',
+      'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; Set-Location ..; New-Item report.txt'
+    ]
+  ] as const)('allows %s after leaving the managed runtime: %s', (surface, source) => {
+    expect(detectManagedRuntimeMutation({ source, surface, runtimeRoot })).toBeUndefined()
+  })
+
+  it.each([
     ['python', `os.system("pip install pandas")`],
     ['r', `f <- utils::install.packages`],
     ['bash', 'pip install pandas'],
@@ -94,6 +106,7 @@ describe('detectManagedRuntimeMutation', () => {
       'ln -s "$OPEN_SCIENCE_RUNTIME_DIR" runtime-link; touch runtime-link/conda-meta/pwn.json'
     ],
     ['bash', 'cd "$OPEN_SCIENCE_RUNTIME_DIR" && touch conda-meta/pwn.json'],
+    ['bash', 'cd "$OPEN_SCIENCE_RUNTIME_DIR/subdir"; cd ..; touch conda-meta/pwn.json'],
     ['bash', `cd "$OPEN_SCIENCE_RUNTIME_DIR"; sh -c 'touch conda-meta/inherited-cwd.json'`],
     ['bash', `cd "$OPEN_SCIENCE_RUNTIME_DIR"; python -c 'open("python-relative", "w")'`],
     ['bash', `cd "$OPEN_SCIENCE_RUNTIME_DIR"; Rscript -e 'writeLines("x", "r-relative")'`],

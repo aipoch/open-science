@@ -169,11 +169,28 @@ gate('repl_loop.js', () => {
         'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; Set-Content relative-powershell.txt x'
       ],
       'relative-powershell.txt'
+    ],
+    [
+      'shell from a runtime subdirectory',
+      '/bin/sh',
+      ['-c', 'cd "$OPEN_SCIENCE_RUNTIME_DIR/subdir"; cd ..; touch relative-shell-subdir.txt'],
+      'relative-shell-subdir.txt'
+    ],
+    [
+      'PowerShell from a runtime subdirectory',
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-c',
+        'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR\\subdir; Set-Location ..; Set-Content relative-powershell-subdir.txt x'
+      ],
+      'relative-powershell-subdir.txt'
     ]
   ] as const)(
     'blocks %s child-process writes after entering the managed runtime',
     async (_name, command, args, relativeTarget) => {
       const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-child-cwd-'))
+      await mkdir(join(runtimeRoot, 'subdir'))
       const { child, send } = startLoop({ OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot })
       try {
         const result = await send(

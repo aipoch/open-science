@@ -5086,6 +5086,55 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(executions).toHaveLength(0)
   })
 
+  it('does not quarantine an external binding that shares the managed default env key', async () => {
+    const root = await createStorageRoot()
+    const terminations: string[] = []
+    const executions: NotebookExecutionRequest[] = []
+    const service = bindingService(root, {
+      discovered: [managedR, userR],
+      enablement: { enabled: { [userR.envId]: true }, installAuthorized: {} },
+      executions,
+      terminations,
+      installPackagesImpl: async () => ({
+        ok: false,
+        needsRestart: false,
+        log: 'managed r-base changed',
+        repairRequired: true,
+        error: 'Protected r-base changed unexpectedly. Run Repair.'
+      })
+    })
+
+    await service.bindRuntime({
+      sessionId: 'external',
+      workspaceCwd: root,
+      language: 'r',
+      runtimeId: userR.envId
+    })
+    await service.state({ sessionId: 'managed', workspaceCwd: root })
+
+    const result = await service.managePackages({
+      sessionId: 'managed',
+      workspaceCwd: root,
+      language: 'r',
+      packages: ['dplyr']
+    })
+
+    expect(result.repairRequired).toBe(true)
+    expect(terminations.filter((entry) => entry === `r:${DEFAULT_R_ENV}`)).toHaveLength(1)
+    const state = await service.state({ sessionId: 'external', workspaceCwd: root })
+    expect(state.runtimeBindings.r?.status).toBe('active')
+    expect(state.runtimeBindings.r?.reason).toBeUndefined()
+
+    const run = await service.execute({
+      sessionId: 'external',
+      workspaceCwd: root,
+      language: 'r',
+      code: 'R.version.string'
+    })
+    expect(run.status).toBe('completed')
+    expect(executions.at(-1)?.resolvedInterpreter?.command).toBe('/usr/local/bin/Rscript')
+  })
+
   it('honors and clears a legacy managed runtimeId marker for an unbound default session', async () => {
     const root = await createStorageRoot()
     const runtimeRoot = getRuntimeRoot(root)
