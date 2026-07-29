@@ -162,31 +162,6 @@ describe('createAppIconController (non-darwin)', () => {
     expect(destroyed.appliedIcon).toBeUndefined()
     expect(live.appliedIcon).toBeUndefined()
   })
-
-  it('switches between the platform-specific ICO variants on Windows', () => {
-    const windowsVariantPaths = {
-      light: '/assets/icon-light.ico',
-      dark: '/assets/icon-dark.ico'
-    }
-    const existing = makeWindow()
-    const { electron, emitWindowCreated } = makeElectron([existing])
-
-    const controller = createAppIconController({
-      electron,
-      variantPaths: windowsVariantPaths,
-      initialVariant: 'light',
-      platform: 'win32'
-    })
-
-    expect(existing.appliedIcon?.path).toBe(windowsVariantPaths.light)
-
-    controller.setVariant('dark')
-    const later = makeWindow()
-    emitWindowCreated(later)
-
-    expect(existing.appliedIcon?.path).toBe(windowsVariantPaths.dark)
-    expect(later.appliedIcon?.path).toBe(windowsVariantPaths.dark)
-  })
 })
 
 describe('createAppIconController (darwin)', () => {

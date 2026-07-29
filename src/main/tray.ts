@@ -53,28 +53,11 @@ const createMacTemplateIcon = (
   }
 }
 
-// Windows needs a small-icon-specific ICO. Keep the shared app icon as a runtime fallback so a
-// missing or unreadable packaged resource does not suppress the tray entry entirely.
-const createWindowsTrayIcon = (iconPath: string, fallbackPath: string): NativeImage => {
-  try {
-    const icon = nativeImage.createFromPath(iconPath)
-    if (icon.isEmpty()) {
-      logger.error('Windows tray icon is empty; falling back to the app icon')
-      return nativeImage.createFromPath(fallbackPath)
-    }
-    return icon
-  } catch (error) {
-    logger.error('failed to load Windows tray icon; falling back to the app icon', error)
-    return nativeImage.createFromPath(fallbackPath)
-  }
-}
-
 // Builds a system tray icon with a Show/Quit menu. Returns undefined when the platform has no tray
 // host (e.g. Linux without a StatusNotifier/AppIndicator), letting the app fall back to quit-on-close.
 const createAppTray = (opts: {
   iconPath: string
   templateIconPath?: string
-  windowsIconPath?: string
   onShow: () => void
   onHide: () => void
   onQuit: () => void
@@ -83,17 +66,16 @@ const createAppTray = (opts: {
   onCopyWebUrl?: () => void | Promise<void>
 }): Tray | undefined => {
   try {
-    // macOS gets a monochrome template glyph that follows the menu-bar appearance. Windows uses its
-    // optically tuned multi-size ICO when supplied; Linux keeps the shared full-color app icon.
+    // macOS gets a monochrome template glyph that follows the menu-bar appearance; other platforms use
+    // the full-color icon. An empty image is tolerated so the tray still appears with a blank glyph.
     const icon =
       process.platform === 'darwin'
         ? (createMacTemplateIcon(
             opts.templateIconPath ?? opts.iconPath,
             Boolean(opts.templateIconPath)
-          ) ?? nativeImage.createFromPath(opts.iconPath))
-        : process.platform === 'win32' && opts.windowsIconPath
-          ? createWindowsTrayIcon(opts.windowsIconPath, opts.iconPath)
-          : nativeImage.createFromPath(opts.iconPath)
+          ) ??
+          nativeImage.createFromPath(opts.iconPath))
+        : nativeImage.createFromPath(opts.iconPath)
     const tray = new Tray(icon)
 
     const headlessWeb = opts.headless && opts.onOpenWeb && opts.onCopyWebUrl
