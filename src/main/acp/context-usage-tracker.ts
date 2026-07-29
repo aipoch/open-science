@@ -400,7 +400,8 @@ class ContextUsageTracker {
     sessionId: string,
     toolCallId: string,
     path: string,
-    text: string
+    text: string,
+    canonical: boolean
   ): void {
     const state = this.sessions.get(sessionId)
     if (!state) return
@@ -412,6 +413,8 @@ class ContextUsageTracker {
         ? promptSectionId
         : `tool:${toolCallId}:document`)
     state.skillSectionsByToolCallId.set(toolCallId, sectionId)
+    if (!canonical && state.canonicalRawOutputSections.has(sectionId)) return
+    if (canonical) state.canonicalRawOutputSections.add(sectionId)
     this.replaceText(sessionId, sectionId, 'skills', text)
     state.promptSkillSectionIds.delete(promptSectionId)
   }
@@ -489,24 +492,6 @@ class ContextUsageTracker {
       chars: MAX_TOOL_ESTIMATE_CHARS,
       nodes: MAX_TOOL_ESTIMATE_NODES
     }
-    if (effectiveObservation.skillFilePath) {
-      const output =
-        update.content !== undefined
-          ? toolContentText(update.content, budget)
-          : update.rawOutput !== undefined
-            ? boundedJsonText(update.rawOutput, budget)
-            : ''
-      if (output) {
-        this.recordSkillDocument(
-          sessionId,
-          update.toolCallId,
-          effectiveObservation.skillFilePath,
-          output
-        )
-      }
-      return
-    }
-
     const prefix = `tool:${update.toolCallId}`
     if (update.rawInput !== undefined) {
       this.replaceText(
@@ -516,6 +501,27 @@ class ContextUsageTracker {
         boundedJsonText(update.rawInput, budget)
       )
     }
+    if (effectiveObservation.skillFilePath) {
+      if (update.rawOutput !== undefined) {
+        this.recordSkillDocument(
+          sessionId,
+          update.toolCallId,
+          effectiveObservation.skillFilePath,
+          boundedJsonText(update.rawOutput, budget),
+          true
+        )
+      } else if (update.content !== undefined) {
+        this.recordSkillDocument(
+          sessionId,
+          update.toolCallId,
+          effectiveObservation.skillFilePath,
+          toolContentText(update.content, budget),
+          false
+        )
+      }
+      return
+    }
+
     // Native Skill adapters may mirror the same instruction document in rawOutput and content. The
     // request input is distinct metadata, but the document itself must occupy one stable section.
     if (nativeSkill) {

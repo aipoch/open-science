@@ -461,8 +461,8 @@ describe('ContextUsageTracker', () => {
     )
 
     expect(tracker.compare('s1', 5, 'reconciled')?.categories).toEqual([
-      { key: 'skills', tokens: 3, estimated: true },
-      { key: 'other', tokens: 2, estimated: false }
+      { key: 'skills', tokens: 4, estimated: true },
+      { key: 'other', tokens: 1, estimated: false }
     ])
   })
 
@@ -495,6 +495,40 @@ describe('ContextUsageTracker', () => {
 
     expect(tracker.estimate('s1')?.categories).toEqual([
       { key: 'skills', tokens: 6, estimated: true }
+    ])
+  })
+
+  it('keeps Skill read input and canonical raw output across projected updates', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    const skillPath = '/codex/skills/pdf/SKILL.md'
+    tracker.beginSession('s1', { frameworkId: 'codex', model: 'gpt-5.6-sol' })
+    tracker.observeSessionUpdate(
+      's1',
+      {
+        sessionId: 's1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'read-1',
+          title: 'Read',
+          status: 'completed',
+          rawInput: { path: skillPath },
+          rawOutput: 'full skill document'
+        }
+      },
+      { toolCategory: 'skills', skillFilePath: skillPath }
+    )
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'read-1',
+        status: 'completed',
+        content: [{ type: 'content', content: { type: 'text', text: 'short projection' } }]
+      }
+    })
+
+    expect(tracker.estimate('s1')?.categories).toEqual([
+      { key: 'skills', tokens: 4, estimated: true }
     ])
   })
 
