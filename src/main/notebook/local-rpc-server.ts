@@ -174,6 +174,7 @@ class NotebookLocalRpcServer {
   private readonly artifactProvenanceContexts = new Map<string, NotebookRunProvenanceContext>()
   private readonly activeTurnProjectIds = new Map<string, string>()
   private readonly activeInputRunLeases = new Map<string, Set<NotebookInputRunLease>>()
+  private readonly inputRunLeaseIds = new WeakMap<NotebookInputRunLease, string>()
   private readonly artifactRpcCapabilities = new Map<string, ArtifactRpcCapability>()
 
   constructor(
@@ -430,45 +431,41 @@ class NotebookLocalRpcServer {
 
     if (method === 'resolveNotebookInput') {
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
+      const inputRunLeaseId =
+        typeof params.inputRunLeaseId === 'string' ? params.inputRunLeaseId : ''
       const sourceKind = params.sourceKind
       const inputFileVersionId = params.inputFileVersionId
       if (
         !sessionId ||
+        !inputRunLeaseId ||
         (sourceKind !== 'upload-version' && sourceKind !== 'artifact-version') ||
         typeof inputFileVersionId !== 'string'
       ) {
         throw new Error(
-          'Notebook input resolution requires sessionId, sourceKind and inputFileVersionId.'
+          'Notebook input resolution requires sessionId, inputRunLeaseId, sourceKind and inputFileVersionId.'
         )
       }
       const leases = this.activeInputRunLeases.get(sessionId)
       if (!leases || leases.size === 0) {
         throw new Error('Notebook input resolution requires an active run lease.')
       }
-      const matchingLeases = [...leases].filter((lease) =>
-        lease
-          .getRunInputFiles()
-          .some(
-            (input) =>
-              input.sourceKind === sourceKind && input.inputFileVersionId === inputFileVersionId
-          )
+      const lease = [...leases].find(
+        (candidate) => this.inputRunLeaseIds.get(candidate) === inputRunLeaseId
       )
-      if (matchingLeases.length === 0) {
-        throw new Error(`Notebook input is not registered for an active run: ${inputFileVersionId}`)
+      if (!lease) {
+        throw new Error('Notebook input resolution does not match an active run lease.')
       }
-      // Control and data-kernel RPCs may overlap for one Session. Every matching lease is bound to
-      // the same immutable Version; resolve each so its execution snapshot records the dependency,
-      // then reject if a corrupt registry ever maps that identity to different bytes.
-      const resolvedPaths = await Promise.all(
-        matchingLeases.map((lease) => lease.resolve({ sourceKind, inputFileVersionId }))
-      )
-      if (new Set(resolvedPaths).size !== 1) {
-        throw new Error(
-          `Notebook input leases disagree on immutable content: ${inputFileVersionId}`
+      const registered = lease
+        .getRunInputFiles()
+        .some(
+          (input) =>
+            input.sourceKind === sourceKind && input.inputFileVersionId === inputFileVersionId
         )
+      if (!registered) {
+        throw new Error(`Notebook input is not registered for this run: ${inputFileVersionId}`)
       }
       return {
-        path: resolvedPaths[0]
+        path: await lease.resolve({ sourceKind, inputFileVersionId })
       }
     }
 
@@ -718,13 +715,20 @@ class NotebookLocalRpcServer {
         promptMessageId: provenanceContext.promptMessageId
       })
       const leases = this.activeInputRunLeases.get(sessionId) ?? new Set<NotebookInputRunLease>()
+      const inputRunLeaseId = randomUUID()
       leases.add(lease)
+      this.inputRunLeaseIds.set(lease, inputRunLeaseId)
       this.activeInputRunLeases.set(sessionId, leases)
       try {
-        return await handler({ ...params, registeredInputFiles: lease.getRunInputFiles() })
+        return await handler({
+          ...params,
+          registeredInputFiles: lease.getRunInputFiles(),
+          inputRunLeaseId
+        })
       } finally {
         lease.close()
         leases.delete(lease)
+        this.inputRunLeaseIds.delete(lease)
         if (leases.size === 0) this.activeInputRunLeases.delete(sessionId)
       }
     }

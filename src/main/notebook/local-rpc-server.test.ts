@@ -507,6 +507,7 @@ describe('notebook local RPC server', () => {
               method: 'resolveNotebookInput',
               params: {
                 sessionId: 'session-1',
+                inputRunLeaseId: request.inputRunLeaseId,
                 sourceKind: 'upload-version',
                 inputFileVersionId: 'upload-version-1'
               }
@@ -606,7 +607,7 @@ describe('notebook local RPC server', () => {
     }
   })
 
-  it('resolves the same immutable input while control and data run leases overlap', async () => {
+  it('resolves an immutable input only for the calling run while leases overlap', async () => {
     const root = await createStorageRoot()
     const server = new NotebookLocalRpcServer(
       new NotebookRuntimeService({
@@ -627,22 +628,27 @@ describe('notebook local RPC server', () => {
       }) as unknown as NotebookInputRunLease
     const internals = server as unknown as {
       activeInputRunLeases: Map<string, Set<NotebookInputRunLease>>
+      inputRunLeaseIds: WeakMap<NotebookInputRunLease, string>
       dispatch(method: string, params: Record<string, unknown>): Promise<unknown>
     }
-    internals.activeInputRunLeases.set(
-      'session-1',
-      new Set([createLease(firstResolve), createLease(secondResolve)])
-    )
+    const firstLease = createLease(firstResolve)
+    const secondLease = createLease(secondResolve)
+    internals.activeInputRunLeases.set('session-1', new Set([firstLease, secondLease]))
+    internals.inputRunLeaseIds = new WeakMap([
+      [firstLease, 'input-run-1'],
+      [secondLease, 'input-run-2']
+    ])
 
     await expect(
       internals.dispatch('resolveNotebookInput', {
         sessionId: 'session-1',
+        inputRunLeaseId: 'input-run-1',
         sourceKind: 'upload-version',
         inputFileVersionId: 'upload-version-1'
       })
     ).resolves.toEqual({ path: '/managed/groups.csv' })
     expect(firstResolve).toHaveBeenCalledTimes(1)
-    expect(secondResolve).toHaveBeenCalledTimes(1)
+    expect(secondResolve).not.toHaveBeenCalled()
   })
 
   it('dispatches managePackages to the runtime service', async () => {

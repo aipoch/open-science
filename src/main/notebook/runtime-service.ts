@@ -200,6 +200,8 @@ type NotebookExecutionRequest = {
   // the control path sets these; data cells have no host.compute and leave them unset.
   sessionId?: string
   projectName?: string
+  // App-owned lease identity returned by the kernel when it resolves an immutable run input.
+  inputRunLeaseId?: string
 }
 
 type NotebookExecutionResult = {
@@ -1852,7 +1854,8 @@ class NotebookRuntimeService {
               runtimeRoot: session.runtimeRoot,
               protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
               timeoutMs: request.timeoutMs,
-              resolvedInterpreter
+              resolvedInterpreter,
+              inputRunLeaseId: request.inputRunLeaseId
             })
             .catch((error: unknown) => {
               executedOnLiveKernel = false
@@ -2013,7 +2016,8 @@ class NotebookRuntimeService {
           // Grant-scope identity for host.compute (This conversation / This project). The executor
           // forwards these into the repl kernel's spawn env; only the control path carries them.
           sessionId: session.sessionId,
-          projectName: session.projectName
+          projectName: session.projectName,
+          inputRunLeaseId: request.inputRunLeaseId
         })
         .catch((error: unknown) => {
           executedOnLiveKernel = false

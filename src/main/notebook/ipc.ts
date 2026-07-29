@@ -41,9 +41,10 @@ type NotebookHandlers = {
 const withoutTrustedTurnContext = <Request extends NotebookSessionRequest>(
   request: Request
 ): Request => {
-  const { provenanceContext, registeredInputFiles, ...publicRequest } = request
+  const { provenanceContext, registeredInputFiles, inputRunLeaseId, ...publicRequest } = request
   void provenanceContext
   void registeredInputFiles
+  void inputRunLeaseId
   return publicRequest as Request
 }
 

@@ -433,6 +433,9 @@ export type NotebookSessionRequest = {
   // Injected only by the authenticated local RPC bridge after resolving the active turn registry.
   // Renderer IPC strips this field before calling the runtime service.
   registeredInputFiles?: NotebookRunInputFile[]
+  // Identifies the exact active input lease for this execution. The bridge generates it and the
+  // kernel returns it when resolving an immutable input so overlapping runs cannot claim access.
+  inputRunLeaseId?: string
 }
 
 // Resolves the data kernel ('python' or 'r') that owns a given tab. For python/r tabs the
