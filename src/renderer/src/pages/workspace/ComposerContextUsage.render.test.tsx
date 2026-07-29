@@ -112,6 +112,8 @@ describe('ComposerContextUsage', () => {
     expect(popover?.className).toContain('border-border')
     expect(popover?.className).toContain('bg-popover')
     expect(popover?.className).toContain('shadow-menu')
+    expect(popover?.className).toContain('w-72')
+    expect(popover?.getAttribute('data-align')).toBe('center')
     expect(popover?.querySelector('[data-slot="context-usage-summary"]')?.className).toContain(
       'whitespace-nowrap'
     )
