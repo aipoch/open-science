@@ -759,6 +759,73 @@ describe('workspace runtime events', () => {
     ])
   })
 
+  it('retains an unchanged post-stop Artifact after switching an edited Branch away and back', async () => {
+    const originalPromptMessageId =
+      useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-event-original',
+        role: 'assistant',
+        messageId: 'assistant-message-original',
+        text: 'Saved the original plot.'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-original', kind: 'stop' }))
+
+    const originalBranchId =
+      useSessionStore.getState().sessions[0].conversationGraph?.frames[0].activeBranchId
+    useSessionStore
+      .getState()
+      .truncateSessionFromMessage('transport-session-1', originalPromptMessageId ?? '')
+    const editedPrompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Save an edited plot'
+    })
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-event-edited',
+        role: 'assistant',
+        messageId: 'assistant-message-edited',
+        text: 'Saved the edited plot.'
+      })
+    )
+    const responseMessageId = useSessionStore.getState().sessions[0].messages.at(-1)?.id
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-edited', kind: 'stop' }))
+
+    const artifact = createArtifactFile({
+      id: 'artifact-version-2',
+      sessionId: 'transport-session-1',
+      messageId: responseMessageId,
+      runId: 'artifact-run-2'
+    })
+    const finalizeRunArtifacts = vi.fn().mockResolvedValue([artifact])
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-event-after-edited-stop',
+        kind: 'artifact',
+        runId: 'artifact-run-2',
+        promptMessageId: editedPrompt?.messageId,
+        artifactSessionId: 'artifact-session-1',
+        artifactClaimId: 'claim-edited',
+        artifacts: [artifact]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+
+    const beforeSwitch = useSessionStore.getState().sessions[0]
+    const editedBranchId = beforeSwitch.conversationGraph?.frames[0].activeBranchId
+    expect(beforeSwitch.messages.at(-1)?.artifactIds).toEqual(['artifact-version-2'])
+
+    useSessionStore.getState().activateMessageBranch('transport-session-1', originalBranchId ?? '')
+    useSessionStore.getState().activateMessageBranch('transport-session-1', editedBranchId ?? '')
+
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)).toMatchObject({
+      id: responseMessageId,
+      artifactIds: ['artifact-version-2']
+    })
+  })
+
   it('waits for stop before binding an artifact to the terminal response for its prompt', async () => {
     const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
     await applyWorkspaceRuntimeEvent(

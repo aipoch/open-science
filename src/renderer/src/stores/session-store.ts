@@ -1241,7 +1241,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
         if (
           arePersistedArtifactsEqual(session.artifacts, nextArtifacts) &&
-          areStringArraysEqual(message.artifactIds ?? [], incomingArtifactIds)
+          areStringArraysEqual(message.artifactIds ?? [], incomingArtifactIds) &&
+          areStringArraysEqual(graphMessage?.artifactIds ?? [], incomingArtifactIds)
         ) {
           return session
         }
