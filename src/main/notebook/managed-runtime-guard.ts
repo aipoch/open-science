@@ -87,7 +87,10 @@ const referencesManagedRuntimePath = (source: string, runtimeRoot: string): bool
   const variants = new Set([
     canonical,
     canonical.replaceAll('\\', '/'),
-    canonical.replaceAll('/', '\\')
+    canonical.replaceAll('/', '\\'),
+    runtimeRoot,
+    runtimeRoot.replaceAll('\\', '/'),
+    runtimeRoot.replaceAll('/', '\\')
   ])
   for (const candidate of variants) {
     if (!candidate) continue
@@ -260,9 +263,9 @@ const EXECUTION_BRIDGES: Record<NotebookExecutionSurface, RegExp> = {
   bash: /\b(?:bash|sh|zsh|powershell|pwsh|cmd)(?:\.exe)?\b[^\n]{0,80}\s(?:-c|\/c)\b|\beval\b/iu,
   powershell: /\b(?:powershell|pwsh)(?:\.exe)?\b[^\n]{0,80}\s(?:-Command|-EncodedCommand)\b/iu,
   python:
-    /\b(?:subprocess\.(?:run|call|Popen|check_call|check_output)|os\.system|os\.popen|exec|eval)\s*\(/iu,
+    /\b(?:subprocess\.(?:run|call|Popen|check_call|check_output)|os\.system|os\.popen|pip(?:\._internal(?:\.cli\.main)?)?\.main|exec|eval)\s*\(/iu,
   r: /\b(?:system|system2|do\.call|get|match\.fun|eval|parse)\s*\(/iu,
-  repl: /\b(?:exec|execFile|spawn|fork|eval)\s*\(|\bchild_process\s*\.\s*(?:exec|execFile|spawn|fork)\s*\(/iu
+  repl: /\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork|eval)\s*\(|\bchild_process\s*\.\s*(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(/iu
 }
 
 const matchingCall = (
@@ -557,8 +560,13 @@ const powerShellRuntimeWriteTargets = (command: string): string[] => {
   if (/^(?:move-item|move|mv|mi|rename-item|rename|ren|rni)$/u.test(executable)) {
     return [...redirections, ...positional]
   }
-  if (/^(?:new-item|ni|mkdir|md|remove-item|ri|rm|del|erase)$/u.test(executable)) {
+  if (/^(?:new-item|ni|mkdir|md|remove-item|ri|rm|del|erase|rmdir|rd)$/u.test(executable)) {
     return [...redirections, ...args]
+  }
+  if (executable === 'mklink') {
+    // Either endpoint can create a durable alias into the managed runtime, so treat both the link
+    // path and its target as security-relevant rather than allowing a later write through the alias.
+    return [...redirections, ...args.filter((arg) => !/^\/[dhj]$/iu.test(arg))]
   }
   if (/^(?:set-content|sc|add-content|ac|clear-content|clc|out-file)$/u.test(executable)) {
     return [...redirections, ...(explicitPath ? [explicitPath] : positional.slice(0, 1))]
@@ -656,6 +664,15 @@ const invocationPayload = (rawWords: string[]): ExecutionPayload | undefined => 
     const source = flagFor(/^-command$/iu)
     return source ? { surface: 'powershell', source } : undefined
   }
+  if (/^cmd(?:\.exe)?$/u.test(executable)) {
+    const flagIndex = words.findIndex(
+      (word, position) => position > commandIndex && /^\/c$/iu.test(word)
+    )
+    const source = flagIndex >= 0 ? words.slice(flagIndex + 1).join(' ') : undefined
+    // The Windows command aliases covered by the PowerShell target scanner (copy, move, mkdir,
+    // del, redirections, and related forms) also describe the cmd.exe write surface we permit here.
+    return source ? { surface: 'powershell', source } : undefined
+  }
   return undefined
 }
 
@@ -713,7 +730,8 @@ const shellMatchIsExecutable = (source: string, matchIndex: number): boolean => 
 
 const findPackageMutationRule = (
   source: string,
-  surface: NotebookExecutionSurface
+  surface: NotebookExecutionSurface,
+  depth = 0
 ): MutationRule | undefined => {
   const executableSource =
     surface === 'bash' || surface === 'powershell'
@@ -738,6 +756,12 @@ const findPackageMutationRule = (
       ) {
         return rule
       }
+    }
+  }
+  if (depth < 8) {
+    for (const payload of executionPayloads(source, surface)) {
+      const nestedRule = findPackageMutationRule(payload.source, payload.surface, depth + 1)
+      if (nestedRule) return nestedRule
     }
   }
   return undefined
@@ -793,12 +817,14 @@ const hasDirectManagedRuntimeWrite = (
 const hasManagedRuntimeWrite = (
   source: string,
   surface: NotebookExecutionSurface,
-  runtimeRoot: string
+  runtimeRoot: string,
+  depth = 0
 ): boolean =>
   hasDirectManagedRuntimeWrite(source, surface, runtimeRoot) ||
-  executionPayloads(source, surface).some((payload) =>
-    hasDirectManagedRuntimeWrite(payload.source, payload.surface, runtimeRoot)
-  )
+  (depth < 8 &&
+    executionPayloads(source, surface).some((payload) =>
+      hasManagedRuntimeWrite(payload.source, payload.surface, runtimeRoot, depth + 1)
+    ))
 
 // Single policy seam shared by data-cell and shell execution. This is intentionally independent from
 // Agent instructions: a request is rejected in the trusted main process before any interpreter starts.

@@ -21,8 +21,10 @@ describe('detectManagedRuntimeMutation', () => {
     ['repl', 'console.log(`exec("pip install pandas")`)'],
     ['python', 'import pip, venv, ensurepip; print(pip.__version__)'],
     ['bash', 'python -m pip list'],
+    ['bash', `python -c 'import pip; print(pip.__version__)'`],
     ['python', 'subprocess.run([sys.executable, "-m", "pip", "show", "numpy"])'],
     ['repl', 'execFile("python3", ["-m", "pip", "help"])'],
+    ['powershell', `node -e 'require("child_process").execFileSync("pip", ["list"])'`],
     ['python', 'print(os.environ["OPEN_SCIENCE_RUNTIME_DIR"]); open("report.txt", "w")'],
     ['python', 'open("/tmp/open-science/runtime-backup.txt", "w")'],
     ['python', 'Path("/tmp/open-science/runtime-backup.txt").write_text("ok")'],
@@ -37,6 +39,7 @@ describe('detectManagedRuntimeMutation', () => {
     ['powershell', 'Write-Output $env:OPEN_SCIENCE_RUNTIME_DIR; New-Item report.txt'],
     ['powershell', 'Set-Content report.txt $env:OPEN_SCIENCE_RUNTIME_DIR'],
     ['powershell', 'Copy-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\source.txt" ".\\copy.txt"'],
+    ['powershell', 'cmd /c copy %OPEN_SCIENCE_RUNTIME_DIR%\\source.txt report.txt'],
     ['r', 'cat(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR")); writeLines("ok", "report.txt")'],
     ['r', 'writeLines(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "report.txt")'],
     [
@@ -54,6 +57,9 @@ describe('detectManagedRuntimeMutation', () => {
     ['bash', 'pip install pandas'],
     ['bash', 'python -m pip install pandas'],
     ['bash', `Rscript -e 'install.packages("dplyr")'`],
+    ['bash', `python -c 'import pip._internal; pip._internal.main(["install", "pandas"])'`],
+    ['bash', `python -c 'import venv; venv.create("analysis-env")'`],
+    ['powershell', `node -e 'require("child_process").execFileSync("pip", ["install", "pandas"])'`],
     ['python', `subprocess.run(["pip", "install", "pandas"])`],
     ['python', 'subprocess.run([sys.executable, "-m", "pip", "install", "pandas"])'],
     ['r', `system("R CMD INSTALL package.tar.gz")`],
@@ -108,6 +114,21 @@ describe('detectManagedRuntimeMutation', () => {
     expect(detectManagedRuntimeMutation({ source, surface, runtimeRoot })?.message).toMatch(
       /manage_packages/
     )
+  })
+
+  it.each([
+    'cmd.exe /d /c copy report.txt C:\\OpenScience\\runtime\\conda-meta\\history',
+    'cmd /c mkdir C:\\OpenScience\\runtime\\pwn',
+    'cmd.exe /c rmdir C:\\OpenScience\\runtime\\envs\\default-r /s /q',
+    'cmd /c mklink /d report-link C:\\OpenScience\\runtime\\envs\\default-r'
+  ])('rejects a cmd.exe payload that writes into the Windows runtime', (source) => {
+    expect(
+      detectManagedRuntimeMutation({
+        source,
+        surface: 'powershell',
+        runtimeRoot: 'C:\\OpenScience\\runtime'
+      })?.message
+    ).toMatch(/manage_packages/)
   })
 })
 
