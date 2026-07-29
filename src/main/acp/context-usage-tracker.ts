@@ -314,6 +314,8 @@ class ContextUsageTracker {
   beginSession(sessionId: string, input: SessionEstimateInput): void {
     const profile = tokenizerProfileFor(input.frameworkId, input.model)
     const current = this.sessions.get(sessionId)
+    // Static sections and the persistent system prompt are creation-scoped; reset the session to
+    // apply replacements instead of treating this idempotent guard as a refresh.
     if (current && current.profile === profile && current.model === input.model) return
 
     const state: SessionEstimate = {
