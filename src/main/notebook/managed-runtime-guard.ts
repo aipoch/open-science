@@ -40,10 +40,6 @@ const PACKAGE_MUTATION_RULES: MutationRule[] = [
       /\b(?:python|python3|py)(?:\.\d+)?(?:\.exe)?\b[\s\S]{0,100}\s-m\s+(?:venv|virtualenv|ensurepip|pip)\b/iu
   },
   {
-    installer: 'Python venv/ensurepip',
-    pattern: /(?:^|[\r\n;])\s*(?:from|import)\s+(?:venv|virtualenv|ensurepip|pip)(?:\b|\.)/imu
-  },
-  {
     installer: 'Python venv',
     pattern: /\b(?:venv\s*\.\s*create|EnvBuilder|virtualenv)\s*\(/iu
   },
@@ -341,6 +337,35 @@ const findPackageMutationRule = (
   return undefined
 }
 
+const hasManagedRuntimeWrite = (
+  source: string,
+  surface: NotebookExecutionSurface,
+  runtimeRoot: string
+): boolean => {
+  if (surface === 'bash') {
+    return stripShellComments(source)
+      .split(/[;\r\n|&]+/u)
+      .some(
+        (command) =>
+          mentionsManagedRuntime(command, runtimeRoot) && RUNTIME_WRITE_RULES.bash.test(command)
+      )
+  }
+
+  const maskedSource =
+    surface === 'repl'
+      ? maskJavascriptQuotedAndCommentText(source)
+      : maskQuotedAndCommentText(source)
+  const base = RUNTIME_WRITE_RULES[surface]
+  const flags = base.flags.includes('g') ? base.flags : `${base.flags}g`
+  const pattern = new RegExp(base.source, flags)
+  for (let match = pattern.exec(maskedSource); match; match = pattern.exec(maskedSource)) {
+    const call = matchingCall(source, match.index)
+    if (call && mentionsManagedRuntime(call, runtimeRoot)) return true
+    if (match[0].length === 0) pattern.lastIndex += 1
+  }
+  return false
+}
+
 // Single policy seam shared by data-cell and shell execution. This is intentionally independent from
 // Agent instructions: a request is rejected in the trusted main process before any interpreter starts.
 export const detectManagedRuntimeMutation = ({
@@ -362,7 +387,7 @@ export const detectManagedRuntimeMutation = ({
     }
   }
 
-  if (mentionsManagedRuntime(source, runtimeRoot) && RUNTIME_WRITE_RULES[surface].test(source)) {
+  if (hasManagedRuntimeWrite(source, surface, runtimeRoot)) {
     return {
       installer: 'direct managed-runtime write',
       message:

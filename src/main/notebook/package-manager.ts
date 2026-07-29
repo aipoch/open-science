@@ -532,13 +532,14 @@ export async function installPackages(
       canonicalize: deps.micromambaEnv?.canonicalize
     })
   ]
-  // A dry-run may refresh repodata in the shared package cache, so it takes the same cache locks as a
-  // real transaction. It cannot write the env prefix, but its child still needs crash supervision: a
-  // surviving micromamba may keep mutating the shared cache after the main process exits.
+  // A dry-run may refresh repodata in the shared package cache, so it takes the same in-process cache
+  // locks as a real transaction. It deliberately does NOT reuse the install journal hooks: the solver
+  // cannot write the target prefix, and recording it as an `install` would make a crash after a harmless
+  // probe quarantine an untouched runtime at the next startup.
   const runCondaPreflight: InstallSpawn = async (command, args) => {
     const context = resolveCondaContext()
     return withSharedCacheLocks(condaCacheKeys(context.cache), () =>
-      baseSpawn(command, args, context.env, deps.onChild, deps.onBeforeSpawn)
+      baseSpawn(command, args, context.env)
     )
   }
   const runConda: InstallSpawn = async (command, args) => {

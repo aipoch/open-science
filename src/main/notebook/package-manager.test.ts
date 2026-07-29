@@ -383,13 +383,14 @@ describe('installPackages', () => {
     expect(result.error).toMatch(/h123_0.*h999_1.*Repair/i)
   })
 
-  it('journals both the R dry-run and the approved transaction child', async () => {
+  it('journals the approved R transaction but not the read-only dry-run', async () => {
     const order: string[] = []
     let call = 0
     const spawn: InstallSpawn = async (_command, _args, _env, onChild, onBeforeSpawn) => {
       onBeforeSpawn?.()
-      order.push(`child#${call}`)
+      order.push(`spawn#${call}`)
       onChild?.(4100 + call)
+      if (onChild) order.push(`child#${call}`)
       return call++ === 0 ? safeRPlan : ok
     }
 
@@ -398,12 +399,13 @@ describe('installPackages', () => {
       {
         ...base,
         spawn,
-        onBeforeSpawn: () => order.push('intent')
+        onBeforeSpawn: () => order.push('intent'),
+        onChild: () => undefined
       }
     )
 
     expect(result.ok).toBe(true)
-    expect(order).toEqual(['intent', 'child#0', 'intent', 'child#1'])
+    expect(order).toEqual(['spawn#0', 'intent', 'spawn#1', 'child#1'])
   })
 
   it('installs a Bioconductor R package by its bioconductor- name without r- mangling', async () => {

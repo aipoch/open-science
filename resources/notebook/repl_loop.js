@@ -80,6 +80,14 @@ for (const method of ['execFile', 'execFileSync', 'spawn', 'spawnSync']) {
   }
 }
 
+// A forked Node process would start outside this patched control plane and could perform package
+// mutations through dynamically assembled code. Keep helper processes behind the guarded spawn APIs.
+childProcess.fork = function guardedFork() {
+  throw new Error(
+    'child_process.fork is not allowed in the control REPL; use manage_packages for package changes.'
+  )
+}
+
 // host.mcp: async connector call over the loopback RPC endpoint (same protocol as the python bridge).
 // Only injected here, in the trusted control plane. Accepts a single positional args object; keyword
 // arguments are not idiomatic in JS, so a second object is treated as a fallback args source.

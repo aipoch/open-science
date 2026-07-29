@@ -86,6 +86,18 @@ gate('repl_loop.js', () => {
       child.kill()
     }
   }, 60_000)
+
+  it('blocks child_process.fork from escaping the runtime guard', async () => {
+    const { child, send } = startLoop({})
+    try {
+      const result = await send(
+        `const cp = require('node:child_process'); cp['fo' + 'rk']('untrusted-helper.js')`
+      )
+      expect(result.error).toMatch(/child_process\.fork is not allowed/)
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
 })
 
 gate('repl_loop.js host.compute', () => {

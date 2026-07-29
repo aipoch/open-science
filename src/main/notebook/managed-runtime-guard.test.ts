@@ -18,7 +18,12 @@ describe('detectManagedRuntimeMutation', () => {
     ['repl', 'console.log(`pip install pandas`)'],
     ['python', `print('os.system("pip install pandas")')`],
     ['repl', '// exec("pip install pandas")'],
-    ['repl', 'console.log(`exec("pip install pandas")`)']
+    ['repl', 'console.log(`exec("pip install pandas")`)'],
+    ['python', 'import pip, venv, ensurepip; print(pip.__version__)'],
+    ['python', 'print(os.environ["OPEN_SCIENCE_RUNTIME_DIR"]); open("report.txt", "w")'],
+    ['bash', 'echo "$OPEN_SCIENCE_RUNTIME_DIR"; touch report.txt'],
+    ['r', 'cat(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR")); writeLines("ok", "report.txt")'],
+    ['repl', 'console.log(process.env.OPEN_SCIENCE_RUNTIME_DIR); writeFileSync("report.txt", "ok")']
   ] as const)('allows %s code that only mentions an installer', (surface, source) => {
     expect(detectManagedRuntimeMutation({ source, surface, runtimeRoot })).toBeUndefined()
   })
@@ -32,7 +37,11 @@ describe('detectManagedRuntimeMutation', () => {
     ['r', `system("R CMD INSTALL package.tar.gz")`],
     ['repl', `execFile("pip", ["install", "pandas"])`],
     ['bash', `tool=python3; mode=-m; action=venv; "$tool" "$mode" "$action" analysis-env`],
-    ['bash', `tool=pip; verb=install; "$tool" "$verb" --user pandas`]
+    ['bash', `tool=pip; verb=install; "$tool" "$verb" --user pandas`],
+    ['python', 'open(os.path.join(os.environ["OPEN_SCIENCE_RUNTIME_DIR"], "x"), "w")'],
+    ['bash', 'touch "$OPEN_SCIENCE_RUNTIME_DIR/x"'],
+    ['r', 'writeLines("x", file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "x"))'],
+    ['repl', 'writeFileSync(process.env.OPEN_SCIENCE_RUNTIME_DIR + "/x", "x")']
   ] as const)('rejects %s code that executes or aliases an installer', (surface, source) => {
     expect(detectManagedRuntimeMutation({ source, surface, runtimeRoot })?.message).toMatch(
       /manage_packages/
