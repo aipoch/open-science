@@ -278,6 +278,10 @@ export type ArtifactVersionEnvironmentEvidence = {
       library_scope?: 'environment' | 'user' | 'system' | 'unknown'
     }>
   }>
+  op_log_truncation?: {
+    omitted_count: number
+    earliest_retained_at?: string
+  }
   captured_at: string
   source_manifest_checksum: string
   complete: boolean

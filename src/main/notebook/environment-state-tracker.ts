@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import type {
   NotebookEnvironmentManifest,
   NotebookEnvironmentOperation,
+  NotebookEnvironmentOperationLogTruncation,
   NotebookEnvironmentPackageChange,
   NotebookEnvironmentPackage,
   NotebookInventoryRefreshAttempt,
@@ -18,6 +19,10 @@ import type {
 const execFileAsync = promisify(execFile)
 const INSPECTION_TIMEOUT_MS = 30_000
 const MAX_INVENTORY_CACHE_AGE_MS = 24 * 60 * 60 * 1_000
+// The mutable binding cache is read on every run, so keep completed operation history bounded by
+// both shape and serialized size. Recovery-critical entries may temporarily exceed these limits.
+const MAX_OPERATION_LOG_ENTRIES = 200
+const MAX_OPERATION_LOG_BYTES = 256 * 1_024
 
 type EnvironmentCaptureTarget = {
   language: NotebookLanguage
@@ -63,6 +68,7 @@ type EnvironmentInventoryBindingCache = {
   dirtyReason?: 'package-mutation' | 'fingerprint-changed' | 'recovery'
   verifiedAt?: string
   operationLog: NotebookEnvironmentOperation[]
+  operationLogTruncation?: NotebookEnvironmentOperationLogTruncation
 }
 
 type EnvironmentRunCaptureStart = {
@@ -102,6 +108,10 @@ type EnvironmentStateTrackerOptions = {
   inspectInstalled?: (target: EnvironmentCaptureTarget) => Promise<InstalledEnvironmentInventory>
   captureFingerprint?: (target: EnvironmentCaptureTarget) => Promise<string | undefined>
   now?: () => Date
+  operationLogLimits?: {
+    maxEntries: number
+    maxBytes: number
+  }
 }
 
 class EnvironmentManifestPublicationError extends Error {
@@ -117,6 +127,62 @@ const sha256 = (value: string): string => createHash('sha256').update(value).dig
 
 const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+const operationLogEntryBytes = (operation: NotebookEnvironmentOperation): number =>
+  Buffer.byteLength(JSON.stringify(operation), 'utf8')
+
+const compactOperationLog = (
+  cache: EnvironmentInventoryBindingCache,
+  limits: { maxEntries: number; maxBytes: number }
+): boolean => {
+  const protectedOperationIds = new Set(cache.dirtyOperationId ? [cache.dirtyOperationId] : [])
+  const retainedIndexes = new Set<number>()
+  let retainedEntries = 0
+  let retainedBytes = 0
+
+  cache.operationLog.forEach((operation, index) => {
+    if (!protectedOperationIds.has(operation.operationId)) return
+    retainedIndexes.add(index)
+    retainedEntries += 1
+    retainedBytes += operationLogEntryBytes(operation)
+  })
+
+  // Retain a contiguous suffix of completed operations. Skipping an oversized recent entry while
+  // keeping older entries would make the visible history look complete when it contains a gap.
+  for (let index = cache.operationLog.length - 1; index >= 0; index -= 1) {
+    if (retainedIndexes.has(index)) continue
+    const operationBytes = operationLogEntryBytes(cache.operationLog[index])
+    if (retainedEntries >= limits.maxEntries || retainedBytes + operationBytes > limits.maxBytes) {
+      break
+    }
+    retainedIndexes.add(index)
+    retainedEntries += 1
+    retainedBytes += operationBytes
+  }
+
+  const retained = cache.operationLog.filter((_operation, index) => retainedIndexes.has(index))
+  const newlyOmitted = cache.operationLog.length - retained.length
+  const omittedCount = (cache.operationLogTruncation?.omittedCount ?? 0) + newlyOmitted
+  const earliestRetainedAt = retained
+    .map((operation) => operation.timestamp)
+    .filter((timestamp) => timestamp.length > 0)
+    .sort()[0]
+  const nextTruncation =
+    omittedCount > 0
+      ? {
+          omittedCount,
+          ...(earliestRetainedAt ? { earliestRetainedAt } : {})
+        }
+      : undefined
+  const changed =
+    newlyOmitted > 0 ||
+    cache.operationLogTruncation?.omittedCount !== nextTruncation?.omittedCount ||
+    cache.operationLogTruncation?.earliestRetainedAt !== nextTruncation?.earliestRetainedAt
+
+  cache.operationLog = retained
+  cache.operationLogTruncation = nextTruncation
+  return changed
+}
 
 const packageKey = (value: string): string => value.normalize('NFC').toLocaleLowerCase('und')
 
@@ -447,12 +513,17 @@ class EnvironmentStateTracker {
     target: EnvironmentCaptureTarget
   ) => Promise<string | undefined>
   private readonly now: () => Date
+  private readonly operationLogLimits: { maxEntries: number; maxBytes: number }
   private readonly targetQueues = new Map<string, Promise<void>>()
 
   constructor(private readonly options: EnvironmentStateTrackerOptions) {
     this.inspectInstalled = options.inspectInstalled ?? inspectInstalledDefault
     this.captureFingerprint = options.captureFingerprint ?? captureFingerprintDefault
     this.now = options.now ?? (() => new Date())
+    this.operationLogLimits = options.operationLogLimits ?? {
+      maxEntries: MAX_OPERATION_LOG_ENTRIES,
+      maxBytes: MAX_OPERATION_LOG_BYTES
+    }
   }
 
   async prepareRun(target: EnvironmentCaptureTarget): Promise<EnvironmentRunCaptureStart> {
@@ -519,6 +590,9 @@ class EnvironmentStateTracker {
     return this.serializeTarget(target, async () => {
       const capturedAt = this.now().toISOString()
       const cache = await this.readBinding(target)
+      if (compactOperationLog(cache, this.operationLogLimits)) {
+        await this.writeBinding(target, cache)
+      }
       let inventory: StoredInventory | undefined
       let inventorySource: NotebookEnvironmentManifest['installedInventory']['source'] =
         runStart.inventoryRefreshed ? 'full-scan' : 'cache-reused'
@@ -591,6 +665,9 @@ class EnvironmentStateTracker {
         ],
         packages,
         ...(cache.operationLog.length > 0 ? { operationLog: cache.operationLog } : {}),
+        ...(cache.operationLogTruncation
+          ? { operationLogTruncation: cache.operationLogTruncation }
+          : {}),
         complete,
         captureStatus: complete ? 'complete' : 'partial',
         ...(warnings.length > 0 ? { warnings } : {})
@@ -972,6 +1049,15 @@ class EnvironmentStateTracker {
         inventoryRefresh: operation.inventoryRefresh ?? 'published',
         inventoryRefreshAttempts: operation.inventoryRefreshAttempts ?? []
       }))
+      if (
+        parsed.operationLogTruncation &&
+        (!Number.isInteger(parsed.operationLogTruncation.omittedCount) ||
+          parsed.operationLogTruncation.omittedCount <= 0 ||
+          (parsed.operationLogTruncation.earliestRetainedAt !== undefined &&
+            typeof parsed.operationLogTruncation.earliestRetainedAt !== 'string'))
+      ) {
+        throw new Error('Invalid environment operation log truncation metadata.')
+      }
       return parsed
     } catch (error) {
       if (
@@ -990,6 +1076,7 @@ class EnvironmentStateTracker {
     target: EnvironmentCaptureTarget,
     cache: EnvironmentInventoryBindingCache
   ): Promise<void> {
+    compactOperationLog(cache, this.operationLogLimits)
     const path = join(this.targetDirectory(target), 'binding.json')
     await mkdir(dirname(path), { recursive: true })
     const temporary = `${path}.${process.pid}.tmp`

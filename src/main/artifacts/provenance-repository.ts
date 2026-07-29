@@ -937,6 +937,16 @@ const environmentEvidence = (
         }))
       }
     : {}),
+  ...(manifest.operationLogTruncation
+    ? {
+        op_log_truncation: {
+          omitted_count: manifest.operationLogTruncation.omittedCount,
+          ...(manifest.operationLogTruncation.earliestRetainedAt
+            ? { earliest_retained_at: manifest.operationLogTruncation.earliestRetainedAt }
+            : {})
+        }
+      }
+    : {}),
   captured_at: manifest.capturedAt,
   source_manifest_checksum: checksum,
   complete: manifest.complete,

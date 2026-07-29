@@ -114,6 +114,11 @@ export type NotebookEnvironmentOperation = {
   packageChanges?: NotebookEnvironmentPackageChange[]
 }
 
+export type NotebookEnvironmentOperationLogTruncation = {
+  omittedCount: number
+  earliestRetainedAt?: string
+}
+
 export type NotebookEnvironmentManifest = {
   schemaVersion: 1
   captureKind: 'completed-run'
@@ -132,6 +137,7 @@ export type NotebookEnvironmentManifest = {
   inventorySources: Array<'kernel-native' | 'interpreter-native' | 'operation-log'>
   packages: NotebookEnvironmentPackage[]
   operationLog?: NotebookEnvironmentOperation[]
+  operationLogTruncation?: NotebookEnvironmentOperationLogTruncation
   complete: boolean
   captureStatus: 'complete' | 'partial'
   warnings?: string[]

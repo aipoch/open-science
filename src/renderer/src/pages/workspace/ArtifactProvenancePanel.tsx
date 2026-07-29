@@ -578,6 +578,12 @@ const ArtifactProvenancePanel = ({
         .map(asRecord)
         .filter((operation): operation is Record<string, unknown> => operation !== undefined)
     : []
+  const operationLogTruncation = asRecord(environment?.op_log_truncation)
+  const omittedOperationCount =
+    typeof operationLogTruncation?.omitted_count === 'number'
+      ? operationLogTruncation.omitted_count
+      : 0
+  const earliestRetainedOperationAt = asString(operationLogTruncation?.earliest_retained_at)
   const environmentWarnings = Array.isArray(environment?.warnings)
     ? environment.warnings.filter((warning): warning is string => typeof warning === 'string')
     : []
@@ -1049,6 +1055,14 @@ const ArtifactProvenancePanel = ({
                       ? `Show relevant ${filteredEnvironmentPackages.length} packages`
                       : `Show all ${environmentPackages.length} packages`}
                   </button>
+                ) : null}
+                {omittedOperationCount > 0 ? (
+                  <p className="rounded-md bg-bg-100 px-3 py-2 text-xs text-text-300">
+                    {`${omittedOperationCount} earlier operation${omittedOperationCount === 1 ? '' : 's'} omitted from this bounded history.`}
+                    {earliestRetainedOperationAt
+                      ? ` Retained entries begin ${new Date(earliestRetainedOperationAt).toLocaleString()}.`
+                      : ''}
+                  </p>
                 ) : null}
                 {environmentOperations.length > 0 ? (
                   <div className="space-y-2">

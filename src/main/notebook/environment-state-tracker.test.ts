@@ -21,6 +21,18 @@ const target = {
   args: []
 }
 
+const readBinding = async (
+  root: string
+): Promise<{
+  operationLog: Array<{ operationId: string; timestamp: string }>
+  operationLogTruncation?: { omittedCount: number; earliestRetainedAt?: string }
+  dirtyOperationId?: string
+}> => {
+  const inventoryRoot = join(root, 'runtime', 'provenance', 'environment-inventory')
+  const [targetKey] = await readdir(inventoryRoot)
+  return JSON.parse(await readFile(join(inventoryRoot, targetKey, 'binding.json'), 'utf8'))
+}
+
 describe('EnvironmentStateTracker', () => {
   it('reuses immutable installed inventory while capturing fresh live-Kernel state per run', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-state-'))
@@ -251,6 +263,126 @@ describe('EnvironmentStateTracker', () => {
         })
       ])
     )
+  })
+
+  it('retains only the newest completed operations within the entry budget', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-log-count-'))
+    let timestamp = Date.parse('2026-07-27T10:00:00.000Z')
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi.fn().mockResolvedValue({
+        runtimeVersion: '3.13.2',
+        packages: [
+          {
+            name: 'numpy',
+            version: '2.2.0',
+            versionStatus: 'known',
+            ecosystem: 'python',
+            evidenceSources: ['python-importlib-metadata']
+          }
+        ]
+      }),
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python'),
+      now: () => new Date((timestamp += 1_000)),
+      operationLogLimits: { maxEntries: 3, maxBytes: 1_000_000 }
+    })
+
+    for (let index = 1; index <= 5; index += 1) {
+      const operationId = `operation-${index}`
+      await tracker.markPackageMutationDirty(target, {
+        operationId,
+        operation: 'install',
+        packages: ['numpy']
+      })
+      await tracker.refreshAfterPackageMutation(target, {
+        operationId,
+        operation: 'install',
+        packages: ['numpy'],
+        result: 'success'
+      })
+    }
+
+    const capture = await tracker.captureCompletedRun(target)
+    expect(capture.manifest.operationLog?.map((operation) => operation.operationId)).toEqual([
+      'operation-3',
+      'operation-4',
+      'operation-5'
+    ])
+    expect(capture.manifest.operationLogTruncation).toEqual({
+      omittedCount: 2,
+      earliestRetainedAt: capture.manifest.operationLog?.[0].timestamp
+    })
+    await expect(readBinding(dataRoot)).resolves.toMatchObject({
+      operationLog: [
+        { operationId: 'operation-3' },
+        { operationId: 'operation-4' },
+        { operationId: 'operation-5' }
+      ],
+      operationLogTruncation: { omittedCount: 2 }
+    })
+  })
+
+  it('bounds byte-heavy completed operation history by serialized size', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-log-bytes-'))
+    const maxBytes = 1_000
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi.fn().mockResolvedValue({ runtimeVersion: '3.13.2', packages: [] }),
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python'),
+      operationLogLimits: { maxEntries: 20, maxBytes }
+    })
+
+    for (let index = 1; index <= 4; index += 1) {
+      const operationId = `large-operation-${index}`
+      const packageSpec = `missing-${index}-${'x'.repeat(300)}`
+      await tracker.markPackageMutationDirty(target, {
+        operationId,
+        operation: 'install',
+        packages: [packageSpec]
+      })
+      await tracker.refreshAfterPackageMutation(target, {
+        operationId,
+        operation: 'install',
+        packages: [packageSpec],
+        result: 'failure'
+      })
+    }
+
+    const binding = await readBinding(dataRoot)
+    const retainedBytes = binding.operationLog.reduce(
+      (total, operation) => total + Buffer.byteLength(JSON.stringify(operation), 'utf8'),
+      0
+    )
+    expect(retainedBytes).toBeLessThanOrEqual(maxBytes)
+    expect(binding.operationLog.at(-1)?.operationId).toBe('large-operation-4')
+    expect(binding.operationLogTruncation?.omittedCount).toBeGreaterThan(0)
+  })
+
+  it('retains the recovery-critical operation even when it exceeds both budgets', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-log-recovery-'))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi.fn().mockRejectedValue(new Error('inventory unavailable')),
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python'),
+      operationLogLimits: { maxEntries: 0, maxBytes: 0 }
+    })
+
+    await tracker.markPackageMutationDirty(target, {
+      operationId: 'operation-pending-recovery',
+      operation: 'install',
+      packages: ['numpy']
+    })
+    await tracker.refreshAfterPackageMutation(target, {
+      operationId: 'operation-pending-recovery',
+      operation: 'install',
+      packages: ['numpy'],
+      result: 'success'
+    })
+
+    await expect(readBinding(dataRoot)).resolves.toMatchObject({
+      dirtyOperationId: 'operation-pending-recovery',
+      operationLog: [{ operationId: 'operation-pending-recovery' }]
+    })
   })
 
   it('marks a successful installer process as failed when the requested R package is absent', async () => {

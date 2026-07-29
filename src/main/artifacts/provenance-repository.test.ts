@@ -844,6 +844,10 @@ describe('artifact provenance repository', () => {
           ]
         }
       ],
+      operationLogTruncation: {
+        omittedCount: 4,
+        earliestRetainedAt: '2026-07-27T11:58:00.000Z'
+      },
       complete: true,
       captureStatus: 'complete'
     }
@@ -1084,6 +1088,10 @@ describe('artifact provenance repository', () => {
             ]
           })
         ],
+        op_log_truncation: {
+          omitted_count: 4,
+          earliest_retained_at: '2026-07-27T11:58:00.000Z'
+        },
         source_manifest_checksum: environmentManifestChecksum,
         complete: true,
         capture_status: 'complete'

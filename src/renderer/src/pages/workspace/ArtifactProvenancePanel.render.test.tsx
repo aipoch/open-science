@@ -258,6 +258,10 @@ const provenance = (): ArtifactVersionProvenance => ({
           ]
         }
       ],
+      op_log_truncation: {
+        omitted_count: 2,
+        earliest_retained_at: '2026-07-27T19:00:00.000Z'
+      },
       captured_at: '2026-07-27T19:01:01.000Z',
       source_manifest_checksum: 'c'.repeat(64),
       complete: true
@@ -709,6 +713,10 @@ describe('ArtifactProvenancePanel', () => {
     expect(container.textContent).not.toContain('libzlib')
     expect(container.textContent).toContain('Show all 2 packages')
     expect(container.textContent).toContain('Operations')
+    expect(container.textContent).toContain(
+      '2 earlier operations omitted from this bounded history.'
+    )
+    expect(container.textContent).toContain('Retained entries begin')
     expect(container.textContent).toContain('Inventory cache was reused without a full validation')
     expect(container.textContent).toContain('Live Kernel package state unavailable.')
     expect(container.textContent).toContain('create')
