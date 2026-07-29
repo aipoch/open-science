@@ -790,6 +790,7 @@ class AcpRuntime {
   // The selected upstream model owns the denominator. Adapter values are fallback-only because a
   // bridge can report its internal transport model (for example Codex gpt-5.5) instead.
   private selectedModelContextWindow: number | undefined
+  private selectedContextUsageModel: string | undefined
   // Reasoning-effort level to apply per session via the ACP thought_level configOption; undefined
   // means "don't override" (the agent keeps its own default). Refreshed on each connect.
   private pendingSessionEffort: ModelReasoningEffort | undefined
@@ -2439,6 +2440,7 @@ class AcpRuntime {
     this.pendingSessionModelRequired = backend.sessionModelRequired ?? false
     this.pendingSessionEffort = backend.sessionEffort
     this.selectedModelContextWindow = backend.contextWindow
+    this.selectedContextUsageModel = backend.contextUsageModel
     this.pendingSessionOptions = backend.sessionOptions
     this.pendingSystemPromptAppends = [...(backend.systemPromptAppends ?? [])]
     this.pendingAuthentication = backend.authentication
@@ -4893,7 +4895,9 @@ class AcpRuntime {
       : undefined
     return {
       frameworkId: this.framework.id,
-      ...(appliedModel ? { model: appliedModel } : {}),
+      ...(this.selectedContextUsageModel || appliedModel
+        ? { model: this.selectedContextUsageModel ?? appliedModel }
+        : {}),
       ...(this.framework.id === 'claude-code'
         ? { persistentSystemPrompt: this.getSystemPromptAppends() }
         : {})

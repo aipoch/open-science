@@ -6511,6 +6511,32 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('tokenizes context with the upstream model instead of the ACP framework default', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: async () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/claude-agent-acp',
+        env: {},
+        contextUsageModel: 'deepseek-v4-flash'
+      })
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 12, size: 1_000_000 }
+    })
+
+    expect(runtime.getSnapshot().contextUsageBySession.s1.breakdown).toMatchObject({
+      tokenizer: 'cl100k_base',
+      model: 'deepseek-v4-flash'
+    })
+  })
+
   it('rolls back the context estimate when an Agent prompt fails', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['s1'], {

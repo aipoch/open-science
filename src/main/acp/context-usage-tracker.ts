@@ -101,13 +101,20 @@ const tokenizerProfileFor = (
   model: string | undefined
 ): TokenizerProfile => {
   const normalized = model?.trim().toLowerCase().split('/').pop() ?? ''
-  if (normalized.startsWith('claude') || frameworkId === 'claude-code') return 'anthropic'
-  if (
-    /^(gpt-5|gpt-4o|gpt-4\.1|o[134](?:-|$)|codex)/.test(normalized) ||
-    (frameworkId === 'codex' && !normalized)
-  ) {
-    return 'o200k_base'
+  // The framework describes the ACP transport, not necessarily the upstream model. Claude Code can
+  // drive DeepSeek/GLM/Kimi through an Anthropic-compatible endpoint, while Codex can bridge those
+  // same models through Responses. Therefore an explicit model always wins; framework defaults are
+  // only safe when the agent did not expose or receive a model id.
+  if (normalized) {
+    if (normalized.startsWith('claude')) return 'anthropic'
+    if (/^(gpt-5|gpt-4o|gpt-4\.1|o[134](?:-|$)|codex)/.test(normalized)) {
+      return 'o200k_base'
+    }
+    return 'cl100k_base'
   }
+
+  if (frameworkId === 'claude-code') return 'anthropic'
+  if (frameworkId === 'codex') return 'o200k_base'
   return 'cl100k_base'
 }
 

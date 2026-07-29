@@ -13,11 +13,14 @@ const wordCounter: TokenCounter = {
 }
 
 describe('ContextUsageTracker', () => {
-  it('selects a stable local tokenizer profile by framework and model', () => {
+  it('selects a stable local tokenizer profile by model before framework fallback', () => {
     expect(tokenizerProfileFor('claude-code', undefined)).toBe('anthropic')
+    expect(tokenizerProfileFor('claude-code', 'deepseek-v4-flash')).toBe('cl100k_base')
+    expect(tokenizerProfileFor('claude-code', 'gpt-5.6-sol')).toBe('o200k_base')
     expect(tokenizerProfileFor('opencode', 'claude-sonnet-4-5')).toBe('anthropic')
     expect(tokenizerProfileFor('opencode', 'anthropic/claude-sonnet-4-5')).toBe('anthropic')
     expect(tokenizerProfileFor('codex', 'gpt-5.6-sol')).toBe('o200k_base')
+    expect(tokenizerProfileFor('codex', 'claude-sonnet-4-5')).toBe('anthropic')
     expect(tokenizerProfileFor('opencode', 'gpt-4.1-mini')).toBe('o200k_base')
     expect(tokenizerProfileFor('opencode', 'openai/gpt-5')).toBe('o200k_base')
     expect(tokenizerProfileFor('opencode', 'deepseek-v4')).toBe('cl100k_base')

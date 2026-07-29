@@ -3706,6 +3706,7 @@ class SettingsService {
           : {}),
         sessionEffort,
         contextWindow: provider.contextWindow,
+        contextUsageModel: provider.model,
         authentication: modelConfig.authentication,
         providerConfiguration: modelConfig.providerConfiguration,
         responsesBridgeLease: responsesBridge?.lease

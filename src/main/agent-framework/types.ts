@@ -200,6 +200,10 @@ export type ResolvedAgentBackend = {
   // Exact context-window limit for the selected upstream provider model. Framework adapters may
   // report a fallback or bridge transport model instead, so the runtime treats this as authoritative.
   contextWindow?: number
+  // Upstream provider model used for local context tokenization. This is deliberately separate from
+  // `sessionModel`: a framework may select its model through env rather than ACP, or use a bridge
+  // transport model whose id differs from the provider model that ultimately tokenizes the request.
+  contextUsageModel?: string
   authentication?: AgentAuthentication
   providerConfiguration?: AgentProviderConfiguration
   // A bridged backend owns one reference to its local loopback bridge. Runtime teardown releases it;
