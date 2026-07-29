@@ -634,6 +634,11 @@ describe('ProjectFilesView', () => {
     expect(listRow?.className).toContain('hover:bg-accent')
     expect(listRow?.className).toContain('hover:text-accent-foreground')
     expect(listRow?.className).not.toContain('hover:bg-bg-200')
+    const listRowButton = listRow?.querySelector<HTMLButtonElement>(
+      '[aria-label="Preview generated file result.txt"]'
+    )
+    expect(listRowButton?.className).toContain('focus-visible:outline-none')
+    expect(listRow?.className).toContain('focus-within:ring-3')
   })
 
   it('removes the divider only from the first visible file group', async () => {
@@ -1594,6 +1599,179 @@ describe('ProjectFilesView', () => {
     expect(
       openMenu?.querySelector('[data-filter-id="session:session-9"]')?.getAttribute('aria-checked')
     ).toBe('true')
+  })
+
+  it('refreshes the count for a collapsed selected session outside the catalog group page', async () => {
+    const sessions = createArtifactSessions(12)
+    await renderView(sessions)
+    let selectedSessionCount = 1
+    const catalogListener = vi.mocked(window.api.projectFiles.onChanged).mock.calls[0]?.[0]
+
+    vi.mocked(window.api.projectFiles.listArtifactGroups).mockImplementation(async (request) => ({
+      items: (request.cursor ? sessions.slice(10) : sessions.slice(0, 10)).map((session) => ({
+        sessionId: session.id,
+        artifactCount: session.id === 'session-12' ? selectedSessionCount : 1
+      })),
+      nextCursor: request.cursor ? undefined : 'page-2',
+      totalCount: 12
+    }))
+    vi.mocked(window.api.projectFiles.listFiles).mockImplementation(async (request) => {
+      if (
+        request.collection.kind !== 'sessionArtifacts' ||
+        request.collection.sessionId !== 'session-12'
+      ) {
+        return { items: [], totalCount: 0 }
+      }
+
+      return {
+        items: Array.from({ length: selectedSessionCount }, (_, index) => ({
+          id: `artifact-12-${index}`,
+          source: 'artifact' as const,
+          sourceFileId: `artifact-12-${index}`,
+          projectId: 'default',
+          sessionId: 'session-12',
+          name: `file-12-${index}.txt`,
+          path: `/workspace/file-12-${index}.txt`,
+          size: 1,
+          sortAtMs: 12 - index
+        })),
+        totalCount: selectedSessionCount
+      }
+    })
+    await act(async () => {
+      catalogListener?.({
+        projectId: 'default',
+        sources: ['artifact'],
+        kind: 'reset'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLElement>('[data-testid="session-options-toggle"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLElement>('[data-filter-id="session:session-12"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const selectedHeader = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-testid="project-file-section-header"]')
+    ).find((button) => button.textContent?.includes('Session 12'))
+    await act(async () => selectedHeader?.click())
+    expect(selectedHeader?.getAttribute('aria-expanded')).toBe('false')
+
+    const filterButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Filter project files"]'
+    )
+    if (filterButton?.getAttribute('aria-expanded') !== 'true') {
+      await act(async () => clickDropdownTrigger(filterButton))
+    }
+    await act(async () => {
+      document.body
+        .querySelector<HTMLElement>('[data-testid="session-options-toggle"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    selectedSessionCount = 2
+    await act(async () => {
+      catalogListener?.({
+        projectId: 'default',
+        sources: ['artifact'],
+        kind: 'reset'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const countLabel = container.querySelector<HTMLInputElement>(
+      '[aria-label="Search project files"]'
+    )?.parentElement?.nextElementSibling
+    expect(countLabel?.textContent).toBe('2 files')
+  })
+
+  it('preserves a deleted source session title in a scoped search group', async () => {
+    await renderView([])
+    const catalogListener = vi.mocked(window.api.projectFiles.onChanged).mock.calls[0]?.[0]
+    const originSession = {
+      state: 'deleted' as const,
+      title: 'Retained analysis',
+      deletedAt: '2026-07-27T12:00:00.000Z'
+    }
+    const retainedFile: ProjectFileItem = {
+      id: 'retained-artifact',
+      source: 'artifact',
+      sourceFileId: 'retained-artifact',
+      projectId: 'default',
+      sessionId: 'deleted-session',
+      name: 'result.csv',
+      path: 'artifact-version:default/deleted-session/retained-artifact/version-1',
+      size: 12,
+      sortAtMs: 1,
+      originSession
+    }
+
+    vi.mocked(window.api.projectFiles.getOverview).mockResolvedValue({
+      totalCount: 1,
+      uploadCount: 0,
+      artifactCount: 1,
+      artifactGroupCount: 1,
+      isIndexComplete: true
+    })
+    vi.mocked(window.api.projectFiles.listArtifactGroups).mockResolvedValue({
+      items: [{ sessionId: 'deleted-session', artifactCount: 1, originSession }],
+      totalCount: 1
+    })
+    vi.mocked(window.api.projectFiles.listFiles).mockResolvedValue({
+      items: [retainedFile],
+      totalCount: 1
+    })
+    await act(async () => {
+      catalogListener?.({
+        projectId: 'default',
+        sources: ['artifact'],
+        kind: 'reset'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLElement>('[data-filter-id="session:deleted-session"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const search = container.querySelector<HTMLInputElement>('[aria-label="Search project files"]')
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+    await act(async () => {
+      setter?.call(search, 'result')
+      search?.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => window.setTimeout(resolve, 300))
+      await Promise.resolve()
+    })
+
+    const selectedHeader = container.querySelector<HTMLButtonElement>(
+      '[data-testid="project-file-section-header"]'
+    )
+    expect(selectedHeader).not.toBeNull()
+    expect(selectedHeader?.textContent).toContain('Retained analysis · Source session deleted')
   })
 
   it('keeps filtered content and trigger icon synchronized with the selected category', async () => {

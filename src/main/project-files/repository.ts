@@ -802,6 +802,8 @@ class ManagedFileIndexRepository {
     }
   }
 
+  // Search keeps the same collection predicates and keyset ordering as the unfiltered path. The
+  // paired count query intentionally omits only the cursor so totalCount describes every match.
   private async listMatchingFiles(
     client: ProjectFilesClient,
     projectId: string,
@@ -1182,6 +1184,8 @@ const normalizeLimit = (limit: number): number => {
   return limit
 }
 
+// Normalizes untrusted IPC input once so SQL predicates and cursor identity share the same bounded,
+// trimmed query. Blank input deliberately falls back to the indexed non-search path.
 const normalizeSearch = (search: unknown): NormalizedSearch | undefined => {
   if (search === undefined) return undefined
   if (!isRecord(search) || typeof search.filenameContains !== 'string') {
@@ -1246,6 +1250,8 @@ const getMatchingOverviewCounts = async (
   ]
 }
 
+// Mirrors the optional source and session constraints used by listMatchingFiles so each collection
+// reports its own complete match count rather than the current page size.
 const countMatchingFiles = async (
   client: ProjectFilesClient,
   projectId: string,
@@ -1268,6 +1274,7 @@ const countMatchingFiles = async (
   return toSafeCount(rows[0]?.count ?? 0n, 'search result count')
 }
 
+// Counts only session groups that still own at least one active artifact matching the search.
 const countMatchingArtifactGroups = async (
   client: ProjectFilesClient,
   projectId: string,
@@ -1287,6 +1294,8 @@ const countMatchingArtifactGroups = async (
   return toSafeCount(rows[0]?.count ?? 0n, 'artifact group count')
 }
 
+// Applies the group-header keyset after filtering artifacts, preserving independent pagination for
+// session headers while returning per-group match counts instead of catalog artifact counts.
 const listMatchingArtifactGroups = async (
   client: ProjectFilesClient,
   projectId: string,
@@ -1479,11 +1488,11 @@ const toSafeNumber = (value: bigint, field: string): number => {
   return number
 }
 
+// Raw SQL aggregates may be bigint or number depending on the SQLite expression and test adapter.
 const toSafeCount = (value: bigint | number, field: string): number =>
   typeof value === 'number' ? value : toSafeNumber(value, field)
 
-// Reconstructs an absolute managed path only after a storageKey has been produced by trusted indexing.
-// Bigint fields are range-checked before crossing Electron IPC, which serializes the numeric DTO.
+// Carries durable source-session metadata independently from the live renderer session store.
 const toOriginProjection = (
   origin: FileOriginSession | undefined
 ): { originSession?: ProjectFileOriginSession } =>
@@ -1497,6 +1506,8 @@ const toOriginProjection = (
       }
     : {}
 
+// Reconstructs an absolute managed path only after trusted indexing produced the storageKey. Bigint
+// fields are range-checked here before the renderer-visible DTO crosses Electron IPC.
 const toProjectFileItem = (
   row: ManagedFile,
   dataRoot: string,

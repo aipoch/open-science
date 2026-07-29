@@ -69,6 +69,7 @@ const emptyPage = <Item>(): PageState<Item> => ({
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : 'Could not load project files.'
 
+// Omits blank search state entirely so the repository can retain its faster indexed catalog path.
 const withFilenameSearch = (
   filenameContains: string | undefined
 ): { search?: ProjectFilesSearch } => (filenameContains ? { search: { filenameContains } } : {})

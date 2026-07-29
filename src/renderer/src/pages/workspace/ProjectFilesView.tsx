@@ -37,6 +37,7 @@ import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type {
   ArtifactGroupItem,
   ProjectFileItem,
+  ProjectFileOriginSession,
   ProjectFilesChangedEvent
 } from '../../../../shared/project-files'
 
@@ -70,8 +71,10 @@ type ProjectFilesFilterOption = {
   label: string
   count: number
   kind: 'all' | 'uploads' | 'session'
+  originSession?: ProjectFileOriginSession
 }
 
+// Keeps collection semantics visible in both the menu rows and the currently selected trigger.
 const ProjectFilesFilterIcon = ({
   kind,
   className
@@ -90,6 +93,8 @@ const ProjectFilesFilterIcon = ({
 
 const COLLAPSED_SESSION_OPTION_COUNT = 5
 
+// Caps the collapsed menu at five sessions while reserving the final slot for an active session
+// that lies later in the independently paginated option catalog.
 const getCollapsedSessionOptions = (
   options: ProjectFilesFilterOption[],
   selectedOptionId: string
@@ -100,7 +105,6 @@ const getCollapsedSessionOptions = (
     return firstOptions
   }
 
-  // Keep the active radio item discoverable without exceeding the five-row collapsed menu.
   return [...firstOptions.slice(0, COLLAPSED_SESSION_OPTION_COUNT - 1), selectedOption]
 }
 
@@ -135,6 +139,7 @@ const PREVIEW_READ_CONCURRENCY = 4
 const MAX_PREVIEW_CACHE_ENTRIES = 96
 // Keeps manual pagination recognizable without the outline competing with the surrounding file tiles.
 const loadMoreButtonClassName = 'bg-bg-200 text-text-100 hover:bg-bg-300 hover:text-text-000'
+// Shares count grammar between the toolbar summary and independently paginated section headers.
 const formatFileCount = (count: number): string => `${count} file${count === 1 ? '' : 's'}`
 
 const MINUTE_MS = 60 * 1000
@@ -606,6 +611,8 @@ const FileTile = ({
   )
 }
 
+// List mode stays metadata-only: the download action replaces right-side details on hover, while the
+// row container owns the single focus ring shared by preview and download controls.
 const FileListRow = ({
   file,
   previewLabel,
@@ -631,7 +638,7 @@ const FileListRow = ({
       <button
         ref={setRowElement}
         type="button"
-        className="flex h-full min-w-0 flex-1 items-center gap-2.5 px-2 text-left"
+        className="flex h-full min-w-0 flex-1 items-center gap-2.5 px-2 text-left focus-visible:outline-none"
         aria-label={previewLabel}
         title={file.name}
         onClick={onPreview}
@@ -670,6 +677,8 @@ const FileListRow = ({
   )
 }
 
+// Switches presentation without changing file identity or pagination; only grid mode consumes the
+// bounded thumbnail cache supplied by previewById.
 const ProjectFileItems = ({
   files,
   viewMode,
@@ -748,6 +757,8 @@ const FilterMenuItem = ({
   )
 }
 
+// Keeps all/uploads filters fixed while session choices expand through their own group-header cursor,
+// preventing menu exploration from advancing any file collection shown in the content area.
 const ProjectFilesFilterMenu = ({
   label,
   options,
@@ -1053,6 +1064,8 @@ const ProjectFilesViewContent = ({
   }, [searchQuery])
 
   const catalogIndex = useProjectFilesIndex(activeProjectId, handleIndexChanged)
+  // The expanded filter menu owns a separate group cursor so loading every session option does not
+  // append hidden groups or trigger artifact-page reads in the visible catalog.
   const sessionOptionsIndex = useProjectFilesIndex(
     showAllSessionOptions ? activeProjectId : undefined,
     undefined,
@@ -1103,7 +1116,8 @@ const ProjectFilesViewContent = ({
         id: `session:${group.sessionId}`,
         label: getArtifactGroupTitle(group),
         count: group.artifactCount,
-        kind: 'session' as const
+        kind: 'session' as const,
+        originSession: group.originSession
       }))
     ]
 
@@ -1140,15 +1154,36 @@ const ProjectFilesViewContent = ({
   const selectedSessionIsLoaded = selectedSessionId
     ? catalogIndex.groups.items.some((group) => group.sessionId === selectedSessionId)
     : false
+  const selectedCatalogSessionPage = selectedSessionId
+    ? catalogIndex.artifactsBySession[selectedSessionId]
+    : undefined
+  const loadMoreCatalogArtifacts = catalogIndex.loadMoreArtifacts
+
+  // A selected session outside the catalog's current header page still needs an authoritative first
+  // file page. Loading it while collapsed keeps the toolbar count current after index resets.
+  useEffect(() => {
+    if (!selectedSessionId || selectedSessionIsLoaded) return
+
+    if (selectedCatalogSessionPage?.isLoading || selectedCatalogSessionPage?.isLoaded) return
+
+    void loadMoreCatalogArtifacts(selectedSessionId)
+  }, [
+    loadMoreCatalogArtifacts,
+    selectedCatalogSessionPage,
+    selectedSessionId,
+    selectedSessionIsLoaded
+  ])
 
   useEffect(() => {
     if (!selectedSessionId || selectedSessionStillExists || selectedSessionIsLoaded) return
 
-    const sessionPage = catalogIndex.artifactsBySession[selectedSessionId]
     const groupsSettled =
       catalogIndex.groups.isLoaded && !catalogIndex.groups.isLoading && !catalogIndex.groups.error
-    const sessionPageSettled = sessionPage?.isLoaded && !sessionPage.isLoading && !sessionPage.error
-    if (!groupsSettled || !sessionPageSettled || sessionPage.totalCount > 0) return
+    const sessionPageSettled =
+      selectedCatalogSessionPage?.isLoaded &&
+      !selectedCatalogSessionPage.isLoading &&
+      !selectedCatalogSessionPage.error
+    if (!groupsSettled || !sessionPageSettled || selectedCatalogSessionPage.totalCount > 0) return
 
     let canceled = false
     // A DB-only session can remain in the selected fallback after reset. Clear it only after both the
@@ -1163,8 +1198,8 @@ const ProjectFilesViewContent = ({
       canceled = true
     }
   }, [
-    catalogIndex.artifactsBySession,
     catalogIndex.groups,
+    selectedCatalogSessionPage,
     selectedSessionId,
     selectedSessionIsLoaded,
     selectedSessionStillExists
@@ -1198,6 +1233,8 @@ const ProjectFilesViewContent = ({
           : { kind: 'all' },
     [effectiveSessionId, isUploadsFilter]
   )
+  // Search follows the selected collection but leaves catalog cursors mounted, so clearing the query
+  // restores the previous grouped view without rebuilding its loaded pages.
   const searchIndex = useProjectFilesIndex(
     isSearchActive ? activeProjectId : undefined,
     undefined,
@@ -1224,7 +1261,8 @@ const ProjectFilesViewContent = ({
                 sessionId: effectiveSessionId,
                 artifactCount:
                   index.artifactsBySession[effectiveSessionId]?.totalCount ??
-                  (isSearchActive ? 0 : selectedFilterOption.count)
+                  (isSearchActive ? 0 : selectedFilterOption.count),
+                originSession: selectedFilterOption.originSession
               }
             ]
           : [],
@@ -1234,7 +1272,8 @@ const ProjectFilesViewContent = ({
       index.groups.items,
       isAllFilter,
       isSearchActive,
-      selectedFilterOption.count
+      selectedFilterOption.count,
+      selectedFilterOption.originSession
     ]
   )
   // Catalog counts remain authoritative even when a collapsed section has not loaded its file page.
