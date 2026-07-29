@@ -806,6 +806,7 @@ describe('notebook runtime service', () => {
     expect(execute).not.toHaveBeenCalled()
     const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
     expect(state.runs.at(-1)).toMatchObject({ kernelKind: 'repl', status: 'failed' })
+    expect(state.kernelStatus).toBe('idle')
   })
 
   it('threads the session id and project name into the repl execute request for host.compute grants', async () => {

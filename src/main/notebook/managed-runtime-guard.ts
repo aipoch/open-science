@@ -1,5 +1,5 @@
 import { realpathSync } from 'node:fs'
-import { resolve, sep } from 'node:path'
+import { resolve } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 
@@ -75,20 +75,33 @@ const PACKAGE_MUTATION_RULES: MutationRule[] = [
 const RUNTIME_WRITE_RULES: Record<NotebookExecutionSurface, RegExp> = {
   bash: /\b(?:rm|mv|cp|install|mkdir|touch|truncate|chmod|chown|ln|tee|sed|perl|dd)\b/iu,
   python:
-    /\b(?:open|Path\s*\([^)]*\)\s*\.(?:write_|touch|mkdir|rename|replace|unlink)|os\.(?:remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|chmod|chown)|shutil\.(?:copy|copy2|copytree|move|rmtree))\s*\(/iu,
+    /\b(?:open|Path\s*\([^)]*\)\s*\.(?:write_[A-Za-z0-9_]+|touch|mkdir|rename|replace|unlink)|os\.(?:remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|chmod|chown)|shutil\.(?:copy|copy2|copytree|move|rmtree))\s*\(/iu,
   r: /\b(?:unlink|file\.remove|file\.rename|file\.create|dir\.create|writeLines|writeBin|save|saveRDS)\s*\(/iu,
   repl: /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|rm|rmSync|unlink|unlinkSync|rename|renameSync|mkdir|mkdirSync|copyFile|copyFileSync)\s*\(/iu
 }
 
-const mentionsManagedRuntime = (source: string, runtimeRoot: string): boolean => {
+const referencesManagedRuntimePath = (source: string, runtimeRoot: string): boolean => {
   const canonical = resolve(runtimeRoot)
   const variants = new Set([
     canonical,
-    canonical.split(sep).join('/'),
-    canonical.split(sep).join('\\'),
-    'OPEN_SCIENCE_RUNTIME_DIR'
+    canonical.replaceAll('\\', '/'),
+    canonical.replaceAll('/', '\\')
   ])
-  return [...variants].some((candidate) => candidate.length > 0 && source.includes(candidate))
+  for (const candidate of variants) {
+    if (!candidate) continue
+    for (
+      let index = source.indexOf(candidate);
+      index >= 0;
+      index = source.indexOf(candidate, index + 1)
+    ) {
+      const before = source[index - 1]
+      const after = source[index + candidate.length]
+      const startsAtPathBoundary = before === undefined || /[\s'"`([{=,:+]/u.test(before)
+      const endsAtDirectoryBoundary = after === undefined || /[\\/\s'"`\])},:;]/u.test(after)
+      if (startsAtPathBoundary && endsAtDirectoryBoundary) return true
+    }
+  }
+  return /(?:^|[^A-Za-z0-9_])OPEN_SCIENCE_RUNTIME_DIR(?:$|[^A-Za-z0-9_])/u.test(source)
 }
 
 // Replaces quoted literals and comments with spaces while preserving line/column positions. Direct
@@ -249,8 +262,12 @@ const EXECUTION_BRIDGES: Record<NotebookExecutionSurface, RegExp> = {
   repl: /\b(?:exec|execFile|spawn|fork|eval)\s*\(|\bchild_process\s*\.\s*(?:exec|execFile|spawn|fork)\s*\(/iu
 }
 
-const matchingCall = (source: string, matchIndex: number): string | undefined => {
-  const open = source.indexOf('(', matchIndex)
+const matchingCall = (
+  source: string,
+  matchIndex: number,
+  openIndex?: number
+): string | undefined => {
+  const open = openIndex ?? source.indexOf('(', matchIndex)
   if (open < 0) return undefined
   let depth = 0
   let quote: "'" | '"' | '`' | undefined
@@ -273,6 +290,134 @@ const matchingCall = (source: string, matchIndex: number): string | undefined =>
     }
   }
   return undefined
+}
+
+const callArguments = (call: string, openIndex: number): string[] => {
+  const args: string[] = []
+  let start = openIndex + 1
+  let depth = 0
+  let quote: "'" | '"' | '`' | undefined
+  for (let index = start; index < call.length; index += 1) {
+    const char = call[index]
+    if (quote) {
+      if (char === '\\') index += 1
+      else if (char === quote) quote = undefined
+      continue
+    }
+    if (char === "'" || char === '"' || char === '`') {
+      quote = char
+    } else if (char === '(' || char === '[' || char === '{') {
+      depth += 1
+    } else if (char === ')' || char === ']' || char === '}') {
+      if (char === ')' && depth === 0) {
+        const tail = call.slice(start, index).trim()
+        if (tail || args.length > 0) args.push(tail)
+        return args
+      }
+      depth -= 1
+    } else if (char === ',' && depth === 0) {
+      args.push(call.slice(start, index).trim())
+      start = index + 1
+    }
+  }
+  return args
+}
+
+const namedOrPositionalArgument = (
+  args: string[],
+  name: string,
+  position: number
+): string | undefined => {
+  const named = args.find((arg) => new RegExp(`^${name}\\s*=`, 'iu').test(arg))
+  return named ? named.replace(new RegExp(`^${name}\\s*=\\s*`, 'iu'), '') : args[position]
+}
+
+const runtimeWriteTargets = (
+  surface: Exclude<NotebookExecutionSurface, 'bash'>,
+  call: string,
+  operation: string,
+  openIndex: number
+): string[] => {
+  const args = callArguments(call, openIndex)
+  const op = operation.toLowerCase()
+
+  if (surface === 'python') {
+    if (/^open\b/u.test(op)) {
+      const mode = namedOrPositionalArgument(args, 'mode', 1)
+      if (!mode || /^['"]r[bt]?['"]$/iu.test(mode.trim())) return []
+      return args[0] ? [args[0]] : []
+    }
+    if (/^path\s*\(/u.test(op)) {
+      const path = call.match(/^Path\s*\(([\s\S]*?)\)\s*\./u)?.[1]
+      if (!path) return []
+      return /\.(?:rename|replace)\b/iu.test(operation) && args[0] ? [path, args[0]] : [path]
+    }
+    if (/shutil\.(?:copy|copy2|copytree)\b/u.test(op)) return args[1] ? [args[1]] : []
+    if (/shutil\.move\b/u.test(op)) return args.slice(0, 2)
+    if (/os\.(?:rename|replace)\b/u.test(op)) return args.slice(0, 2)
+    return args[0] ? [args[0]] : []
+  }
+
+  if (surface === 'r') {
+    if (/\bfile\.rename\b/u.test(op)) return args.slice(0, 2)
+    if (/\b(?:writelines|writebin)\b/u.test(op)) {
+      const target = namedOrPositionalArgument(args, 'con', 1)
+      return target ? [target] : []
+    }
+    if (/\bsave\s*\(/u.test(op)) {
+      const target = namedOrPositionalArgument(args, 'file', Number.MAX_SAFE_INTEGER)
+      return target ? [target] : []
+    }
+    if (/\bsaverds\b/u.test(op)) {
+      const target = namedOrPositionalArgument(args, 'file', 1)
+      return target ? [target] : []
+    }
+    return args[0] ? [args[0]] : []
+  }
+
+  if (/\b(?:rename|renamesync)\b/u.test(op)) return args.slice(0, 2)
+  if (/\b(?:copyfile|copyfilesync)\b/u.test(op)) return args[1] ? [args[1]] : []
+  return args[0] ? [args[0]] : []
+}
+
+const shellWords = (command: string): string[] =>
+  command.match(/(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|[^\s])+/gu) ?? []
+
+const shellRuntimeWriteTargets = (command: string): string[] => {
+  const words = shellWords(command)
+  const commandIndex = words.findIndex((word) =>
+    /^(?:rm|mv|cp|install|mkdir|touch|truncate|chmod|chown|ln|tee|sed|perl|dd)(?:\.exe)?$/iu.test(
+      word
+        .replace(/^['"]|['"]$/gu, '')
+        .split(/[\\/]/u)
+        .at(-1) ?? ''
+    )
+  )
+  if (commandIndex < 0) return []
+  const executable =
+    words[commandIndex]
+      .replace(/^['"]|['"]$/gu, '')
+      .split(/[\\/]/u)
+      .at(-1) ?? ''
+  const args = words.slice(commandIndex + 1)
+  const targetDirectory = args
+    .find((arg) => /^--target-directory=/iu.test(arg))
+    ?.split(/=(.*)/su)[1]
+  const shortTargetIndex = args.findIndex((arg) => arg === '-t')
+  if (targetDirectory) return [targetDirectory]
+  if (shortTargetIndex >= 0 && args[shortTargetIndex + 1]) return [args[shortTargetIndex + 1]]
+
+  if (/^dd(?:\.exe)?$/iu.test(executable)) {
+    return args.filter((arg) => /^of=/iu.test(arg)).map((arg) => arg.slice(arg.indexOf('=') + 1))
+  }
+  const positional = args.filter((arg) => !arg.startsWith('-'))
+  if (/^(?:cp|install|ln)(?:\.exe)?$/iu.test(executable)) return positional.slice(-1)
+  if (/^mv(?:\.exe)?$/iu.test(executable)) return positional
+  if (/^(?:chmod|chown)(?:\.exe)?$/iu.test(executable)) return positional.slice(1)
+  if (/^(?:sed|perl)(?:\.exe)?$/iu.test(executable)) {
+    return args.some((arg) => /^-.*i/u.test(arg)) ? positional.slice(-1) : []
+  }
+  return positional
 }
 
 // Scan only the resolved bridge call rather than restoring every string/comment in the cell. This
@@ -345,9 +490,10 @@ const hasManagedRuntimeWrite = (
   if (surface === 'bash') {
     return stripShellComments(source)
       .split(/[;\r\n|&]+/u)
-      .some(
-        (command) =>
-          mentionsManagedRuntime(command, runtimeRoot) && RUNTIME_WRITE_RULES.bash.test(command)
+      .some((command) =>
+        shellRuntimeWriteTargets(command).some((target) =>
+          referencesManagedRuntimePath(target, runtimeRoot)
+        )
       )
   }
 
@@ -359,8 +505,19 @@ const hasManagedRuntimeWrite = (
   const flags = base.flags.includes('g') ? base.flags : `${base.flags}g`
   const pattern = new RegExp(base.source, flags)
   for (let match = pattern.exec(maskedSource); match; match = pattern.exec(maskedSource)) {
-    const call = matchingCall(source, match.index)
-    if (call && mentionsManagedRuntime(call, runtimeRoot)) return true
+    const openIndex = match.index + match[0].lastIndexOf('(')
+    const call = matchingCall(source, match.index, openIndex)
+    if (
+      call &&
+      runtimeWriteTargets(
+        surface,
+        call,
+        source.slice(match.index, openIndex + 1),
+        openIndex - match.index
+      ).some((target) => referencesManagedRuntimePath(target, runtimeRoot))
+    ) {
+      return true
+    }
     if (match[0].length === 0) pattern.lastIndex += 1
   }
   return false

@@ -21,9 +21,21 @@ describe('detectManagedRuntimeMutation', () => {
     ['repl', 'console.log(`exec("pip install pandas")`)'],
     ['python', 'import pip, venv, ensurepip; print(pip.__version__)'],
     ['python', 'print(os.environ["OPEN_SCIENCE_RUNTIME_DIR"]); open("report.txt", "w")'],
+    ['python', 'open("/tmp/open-science/runtime-backup.txt", "w")'],
+    ['python', 'Path("/tmp/open-science/runtime-backup.txt").write_text("ok")'],
+    [
+      'python',
+      'shutil.copy(os.path.join(os.environ["OPEN_SCIENCE_RUNTIME_DIR"], "x"), "report.txt")'
+    ],
     ['bash', 'echo "$OPEN_SCIENCE_RUNTIME_DIR"; touch report.txt'],
+    ['bash', 'cp "$OPEN_SCIENCE_RUNTIME_DIR/x" ./copy.txt'],
     ['r', 'cat(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR")); writeLines("ok", "report.txt")'],
-    ['repl', 'console.log(process.env.OPEN_SCIENCE_RUNTIME_DIR); writeFileSync("report.txt", "ok")']
+    ['r', 'writeLines(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "report.txt")'],
+    [
+      'repl',
+      'console.log(process.env.OPEN_SCIENCE_RUNTIME_DIR); writeFileSync("report.txt", "ok")'
+    ],
+    ['repl', 'copyFileSync(process.env.OPEN_SCIENCE_RUNTIME_DIR + "/x", "report.txt")']
   ] as const)('allows %s code that only mentions an installer', (surface, source) => {
     expect(detectManagedRuntimeMutation({ source, surface, runtimeRoot })).toBeUndefined()
   })
@@ -39,9 +51,16 @@ describe('detectManagedRuntimeMutation', () => {
     ['bash', `tool=python3; mode=-m; action=venv; "$tool" "$mode" "$action" analysis-env`],
     ['bash', `tool=pip; verb=install; "$tool" "$verb" --user pandas`],
     ['python', 'open(os.path.join(os.environ["OPEN_SCIENCE_RUNTIME_DIR"], "x"), "w")'],
+    ['python', 'Path(os.environ["OPEN_SCIENCE_RUNTIME_DIR"]).write_text("x")'],
+    [
+      'python',
+      'shutil.copy("report.txt", os.path.join(os.environ["OPEN_SCIENCE_RUNTIME_DIR"], "x"))'
+    ],
     ['bash', 'touch "$OPEN_SCIENCE_RUNTIME_DIR/x"'],
+    ['bash', 'cp ./copy.txt "$OPEN_SCIENCE_RUNTIME_DIR/x"'],
     ['r', 'writeLines("x", file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "x"))'],
-    ['repl', 'writeFileSync(process.env.OPEN_SCIENCE_RUNTIME_DIR + "/x", "x")']
+    ['repl', 'writeFileSync(process.env.OPEN_SCIENCE_RUNTIME_DIR + "/x", "x")'],
+    ['repl', 'copyFileSync("report.txt", process.env.OPEN_SCIENCE_RUNTIME_DIR + "/x")']
   ] as const)('rejects %s code that executes or aliases an installer', (surface, source) => {
     expect(detectManagedRuntimeMutation({ source, surface, runtimeRoot })?.message).toMatch(
       /manage_packages/

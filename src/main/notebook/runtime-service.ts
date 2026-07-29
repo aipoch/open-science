@@ -2059,16 +2059,19 @@ class NotebookRuntimeService {
     // token} the repl kernel captured at its own spawn time.
     const mcpRpc = await this.resolveMcpRpcConnection()
 
-    // Kernel-level 'running' status for the live control run (§4 [running]); same rationale as
-    // runCellExclusive. The repl kernel takes no env lock — installs only ever target python/r envs.
-    session.terminatedKernels.delete('repl')
-    await this.persistKernelStatus(session, 'running', 'repl')
-
     const blockedMutation = detectManagedRuntimeMutation({
       source: request.code,
       surface: 'repl',
       runtimeRoot: session.runtimeRoot
     })
+    // Only a request that reaches the live control process may transition its kernel to `running`.
+    // A source-policy rejection still records a failed run below, but must leave the live kernel state
+    // untouched (including a prior `terminated` status).
+    if (!blockedMutation) {
+      session.terminatedKernels.delete('repl')
+      await this.persistKernelStatus(session, 'running', 'repl')
+    }
+
     let executedOnLiveKernel = !blockedMutation
     const { result } = await this.persistRun(session, runningRun, () =>
       (blockedMutation
