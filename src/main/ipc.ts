@@ -753,7 +753,8 @@ const registerIpcHandlers = async ({
     serialized,
     provisioningRoot,
     waitForRecovery,
-    assertProvisionAllowed
+    assertProvisionAllowed,
+    (language) => notebookService.completeRuntimeRepair(language)
   )
   if (provisioner && serialized) {
     // Back the notebook service's manage_environments tool with the same provisioner that owns the env

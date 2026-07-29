@@ -721,6 +721,17 @@ gate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
       expect(inProcessPipResult.status).toBe('failed')
       expect(inProcessPipResult.traceback).toMatch(/manage_packages/)
 
+      const pipCommandFactoryResult = await executor.execute({
+        ...request,
+        code:
+          `commands = __import__("pip._internal.commands", fromlist=["create_command"])\n` +
+          `command = commands.create_command("in" + "stall")\n` +
+          `command.main(["--help"])`,
+        language: 'python'
+      })
+      expect(pipCommandFactoryResult.status).toBe('failed')
+      expect(pipCommandFactoryResult.traceback).toMatch(/manage_packages/)
+
       const symlinkWriteResult = await executor.execute({
         ...request,
         code: `open("runtime-link/blocked-from-link.txt", "w").write("changed")`,

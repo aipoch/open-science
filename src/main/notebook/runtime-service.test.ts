@@ -44,6 +44,7 @@ import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
   envPrefix,
+  isProtectedIdentityRepairRequired,
   isRepairRequired,
   pythonBin,
   rBin,
@@ -5084,6 +5085,124 @@ describe('v4 runtime bindings & agent tools', () => {
       expect(run.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
     }
     expect(executions).toHaveLength(0)
+  })
+
+  it('does not let an ordinary package install clear a protected R identity quarantine', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    let installAttempts = 0
+    const serviceOptions = {
+      discovered: [managedR],
+      installPackagesImpl: async () => {
+        installAttempts += 1
+        if (installAttempts === 1) {
+          return {
+            ok: false,
+            needsRestart: false,
+            log: 'r-base changed',
+            repairRequired: true,
+            error: 'Protected r-base changed unexpectedly. Run Repair.'
+          }
+        }
+        return { ok: true, needsRestart: false, log: 'ordinary install completed' }
+      }
+    }
+    const service = bindingService(root, serviceOptions)
+
+    await service.bindRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'r',
+      runtimeId: managedR.envId
+    })
+    const quarantined = await service.managePackages({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'r',
+      packages: ['dplyr']
+    })
+    expect(quarantined.repairRequired).toBe(true)
+    expect(isRepairRequired(runtimeRoot, DEFAULT_R_ENV)).toBe(true)
+    expect(isProtectedIdentityRepairRequired(runtimeRoot, DEFAULT_R_ENV)).toBe(true)
+
+    // A fresh service proves the durable reason survives an app restart; the process-local gate from
+    // the first service cannot be what refuses this retry.
+    const restarted = bindingService(root, serviceOptions)
+
+    const retry = await restarted.managePackages({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'r',
+      packages: ['ggplot2']
+    })
+
+    expect(retry.ok).toBe(false)
+    expect(retry.repairRequired).toBe(true)
+    expect(retry.error).toMatch(/RUNTIME_REPAIR_REQUIRED/)
+    expect(installAttempts).toBe(1)
+    expect(isRepairRequired(runtimeRoot, DEFAULT_R_ENV)).toBe(true)
+    const state = await restarted.state({ sessionId: 's', workspaceCwd: root })
+    expect(state.runtimeBindings.r?.reason).toBe('repair-required')
+
+    // This callback represents a successful provisioner Reset: only that verified rebuild releases
+    // the durable marker, in-memory gate, and persisted binding state.
+    await restarted.completeRuntimeRepair('r')
+    expect(isRepairRequired(runtimeRoot, DEFAULT_R_ENV)).toBe(false)
+    const repairedState = await restarted.state({ sessionId: 's', workspaceCwd: root })
+    expect(repairedState.runtimeBindings.r?.status).toBe('active')
+    expect(repairedState.runtimeBindings.r?.reason).toBeUndefined()
+
+    const run = await restarted.execute({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'r',
+      code: 'R.version.string'
+    })
+    expect(run.status).toBe('completed')
+
+    const reloaded = bindingService(root, serviceOptions)
+    const reloadedState = await reloaded.state({ sessionId: 's', workspaceCwd: root })
+    expect(reloadedState.runtimeBindings.r?.status).toBe('active')
+    expect(reloadedState.runtimeBindings.r?.reason).toBeUndefined()
+  })
+
+  it('keeps an untyped legacy external install marker repairable by an authorized reinstall', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    await mkdir(runtimeRoot, { recursive: true })
+    await writeFile(
+      repairRegistryPath(runtimeRoot),
+      `${JSON.stringify({ runtimeIds: [userPyA.envId] })}\n`,
+      'utf8'
+    )
+    const installPackagesImpl = vi
+      .fn()
+      .mockResolvedValue({ ok: true, needsRestart: false, log: 'repaired' })
+    const service = bindingService(root, {
+      discovered: [managedPy, userPyA],
+      enablement: {
+        enabled: { [userPyA.envId]: true },
+        installAuthorized: { [userPyA.envId]: true }
+      },
+      installPackagesImpl
+    })
+
+    await service.bindRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyA.envId
+    })
+    const result = await service.managePackages({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      packages: ['numpy']
+    })
+
+    expect(result.ok).toBe(true)
+    expect(installPackagesImpl).toHaveBeenCalledOnce()
+    expect(isRepairRequired(runtimeRoot, userPyA.envId)).toBe(false)
   })
 
   it('does not quarantine an external binding that shares the managed default env key', async () => {

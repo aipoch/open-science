@@ -249,8 +249,36 @@ except ImportError:
 try:
     import pip._internal as _open_science_pip_internal
     import pip._internal.cli.main as _open_science_pip_cli
+    import pip._internal.commands as _open_science_pip_commands
     _open_science_pip_internal.main = _blocked_environment_mutation
     _open_science_pip_cli.main = _blocked_environment_mutation
+
+    # `pip._internal.commands.create_command()` bypasses both public `main` functions and returns a
+    # command object whose `main()` can mutate the current interpreter in-process. Guard the factory
+    # as well as the concrete mutation command methods: the latter also covers direct construction of
+    # InstallCommand/UninstallCommand without going through the factory. Inspection commands such as
+    # `pip list` remain available.
+    _open_science_pip_create_command = _open_science_pip_commands.create_command
+    def _guarded_pip_create_command(name, *args, **kwargs):
+        if str(name).strip().casefold() in ("install", "uninstall"):
+            _blocked_environment_mutation()
+        return _open_science_pip_create_command(name, *args, **kwargs)
+    _open_science_pip_commands.create_command = _guarded_pip_create_command
+    if hasattr(_open_science_pip_cli, "create_command"):
+        _open_science_pip_cli.create_command = _guarded_pip_create_command
+
+    for _module_name, _class_name in (
+        ("pip._internal.commands.install", "InstallCommand"),
+        ("pip._internal.commands.uninstall", "UninstallCommand"),
+    ):
+        try:
+            _module = __import__(_module_name, fromlist=[_class_name])
+            _command_class = getattr(_module, _class_name)
+            for _method_name in ("main", "_main", "run"):
+                if hasattr(_command_class, _method_name):
+                    setattr(_command_class, _method_name, _blocked_environment_mutation)
+        except (ImportError, AttributeError):
+            pass
 except ImportError:
     pass
 '''

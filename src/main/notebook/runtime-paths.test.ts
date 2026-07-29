@@ -38,6 +38,7 @@ import {
   addRepairRequired,
   clearRepairRequired,
   condaActivatedPath,
+  isProtectedIdentityRepairRequired,
   isRepairRequired,
   readRepairRequired
 } from './runtime-paths'
@@ -368,5 +369,32 @@ describe('repair-required registry', () => {
     writeFileSync(join(root, '.repair-required.json'), 'not json', 'utf8')
     expect(readRepairRequired(root)).toEqual([])
     expect(isRepairRequired(root, 'anything')).toBe(false)
+  })
+
+  it('keeps protected identity changes stronger than interrupted-install markers', () => {
+    const root = makeRoot()
+    addRepairRequired(root, 'default-r')
+    expect(isProtectedIdentityRepairRequired(root, 'default-r')).toBe(false)
+
+    addRepairRequired(root, 'default-r', 'protected-identity-change')
+    expect(isProtectedIdentityRepairRequired(root, 'default-r')).toBe(true)
+
+    // A later recovery pass must not downgrade the protected quarantine.
+    addRepairRequired(root, 'default-r', 'interrupted-install')
+    expect(isProtectedIdentityRepairRequired(root, 'default-r')).toBe(true)
+
+    clearRepairRequired(root, 'default-r')
+    expect(isProtectedIdentityRepairRequired(root, 'default-r')).toBe(false)
+  })
+
+  it('treats legacy untyped repair markers as protected instead of guessing safe', () => {
+    const root = makeRoot()
+    writeFileSync(
+      join(root, '.repair-required.json'),
+      `${JSON.stringify({ runtimeIds: ['default-r'] })}\n`,
+      'utf8'
+    )
+
+    expect(isProtectedIdentityRepairRequired(root, 'default-r')).toBe(true)
   })
 })

@@ -74,6 +74,7 @@ import {
   pythonReady,
   rBin,
   rScriptBin,
+  readRepairRequiredReason,
   rReady,
   resolveEnvName
 } from './runtime-paths'
@@ -2618,6 +2619,32 @@ class NotebookRuntimeService {
       : resolveEnvName(request.language, undefined)
     const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
 
+    // A protected interpreter identity change is not repairable by installing another ordinary
+    // package. Doing so would let the package manager capture the already-replaced r-base as its new
+    // baseline and then clear quarantine after an unrelated successful install. Only the explicit UI
+    // Runtime Reset rebuilds and verifies the environment before clearing this stronger marker.
+    const protectedRepairRequired =
+      this.repairBlockedEnvs.has(repairBlockKey(request.language, envName, binding)) ||
+      this.repairRegistryKeys(request.language, envName, binding, runtimeRoot).some((key) => {
+        const reason = readRepairRequiredReason(runtimeRoot, key)
+        return (
+          reason === 'protected-identity-change' ||
+          (reason === 'legacy-unknown' && binding?.source !== 'external')
+        )
+      })
+    if (protectedRepairRequired) {
+      return {
+        ok: false,
+        needsRestart: false,
+        repairRequired: true,
+        log: '',
+        error:
+          `RUNTIME_REPAIR_REQUIRED: the ${request.language} runtime's protected interpreter identity ` +
+          'changed. Use Repair/Reset in Settings → Runtimes to rebuild and verify it before installing ' +
+          'packages.'
+      }
+    }
+
     // Gate the install on that binding. An EXTERNAL binding is read-only unless the user turned on
     // "Allow package install" for THAT runtime in Settings (per-env installAuthorized) — then pip
     // installs into the user's OWN interpreter (installs land in the user's env, not app storage), and
@@ -2625,8 +2652,8 @@ class NotebookRuntimeService {
     // prefix. This replaces the removed pre-v4 RuntimeSelection gate.
     let interpreter: { command: string; args?: string[] } | undefined
     if (binding?.source === 'external') {
-      // repair-required is installable: re-running the install to completion is exactly how the user
-      // clears it. Only a genuinely disabled/missing binding refuses the install.
+      // An interrupted-install repair marker remains installable: re-running the authorized install
+      // to completion clears it. The stronger protected-identity marker was refused above.
       const blocked =
         (binding.status ?? 'active') !== 'active' && binding.reason !== 'repair-required'
       if (blocked) {
@@ -2680,9 +2707,10 @@ class NotebookRuntimeService {
     } else if (binding) {
       // A MANAGED binding (app-managed default or an agent-created named env). Same no-silent-fallback
       // guarantee as execute() and the external path: a disabled/unavailable managed binding refuses the
-      // install rather than quietly installing into a different env. repair-required stays installable —
-      // completing the install is how the user clears it. Without this, disabling a managed runtime
-      // blocked execution but still let manage_packages install into it (the gate was external-only).
+      // install rather than quietly installing into a different env. An interrupted-install marker
+      // stays installable; the stronger protected-identity marker was refused above. Without this,
+      // disabling a managed runtime blocked execution but still let manage_packages install into it
+      // (the gate was external-only).
       const blocked =
         (binding.status ?? 'active') !== 'active' && binding.reason !== 'repair-required'
       if (blocked) {
@@ -2920,12 +2948,11 @@ class NotebookRuntimeService {
         await journal.complete(operationId).catch(() => undefined)
       }
     }
-    // A completed install of this runtime clears any prior repair-required flag: re-running the install
-    // to completion IS the repair, so the runtime returns to a known-good state. Clearing the disk flag
-    // alone isn't enough — bindings that were resolved while repair-required (in THIS and OTHER sessions)
-    // are still held in memory as unavailable/repair-required and would keep refusing execution until a
-    // rebind/reload. Restore every matching binding to active and refresh its UI so the repaired runtime
-    // is usable immediately, everywhere.
+    // A completed install clears an interrupted-install repair flag (a protected-identity flag was
+    // refused before any installer ran). Clearing the disk flag alone isn't enough — bindings that were
+    // resolved while repair-required (in THIS and OTHER sessions) are still held in memory as
+    // unavailable/repair-required and would keep refusing execution until a rebind/reload. Restore every
+    // matching binding to active and refresh its UI so the repaired runtime is usable immediately.
     if (result.ok) {
       const managedRepair = binding?.source !== 'external'
       clearRepairRequired(runtimeRoot, repairRuntimeId)
@@ -2959,7 +2986,7 @@ class NotebookRuntimeService {
       } else {
         this.repairBlockedEnvs.delete(externalRepairBlockKey(request.language, repairRuntimeId))
       }
-      this.restoreRepairedBindings(repairRuntimeId, request.language, envName, managedRepair)
+      await this.restoreRepairedBindings(repairRuntimeId, request.language, envName, managedRepair)
     }
 
     // R installs/uninstalls don't take effect in a live R session (attached namespaces, held DLLs), so
@@ -3166,6 +3193,48 @@ class NotebookRuntimeService {
   clearRuntimeRecoveryBlock(runtimeId: string): void {
     this.blockedRuntimeIds.delete(runtimeId)
     this.startupBlockedRuntimeIds.delete(runtimeId)
+  }
+
+  // Called only after the explicit UI Runtime Reset has rebuilt and verified the managed default env.
+  // This is deliberately separate from managePackages(): an ordinary install may clear an
+  // interrupted-install marker, but it must never release a protected-identity quarantine.
+  async completeRuntimeRepair(language: NotebookLanguage): Promise<void> {
+    const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
+    const envName = this.defaultEnvNameFor(language)
+    const registryKeys = new Set<string>()
+
+    for (const affectedLanguage of ['python', 'r'] as const) {
+      for (const key of this.repairRegistryKeys(
+        affectedLanguage,
+        envName,
+        undefined,
+        runtimeRoot
+      )) {
+        registryKeys.add(key)
+      }
+    }
+
+    // Older registries and loaded sessions may key this prefix by a discovered interpreter runtimeId.
+    // Clear those aliases too before restoring and persisting every affected binding. Keep the
+    // canonical env-name marker until LAST: if clearing an alias fails, the durable primary gate remains
+    // armed across restart and the process-local gate below is not released.
+    for (const session of this.sessions.values()) {
+      for (const [boundLanguage, binding] of session.runtimeBindings) {
+        if (
+          binding.source === 'managed' &&
+          this.resolveRunEnv(session, boundLanguage) === envName
+        ) {
+          registryKeys.add(binding.runtimeId)
+        }
+      }
+    }
+    registryKeys.delete(envName)
+    for (const key of registryKeys) clearRepairRequired(runtimeRoot, key)
+    clearRepairRequired(runtimeRoot, envName)
+    for (const affectedLanguage of ['python', 'r'] as const) {
+      this.repairBlockedEnvs.delete(dataProcessKey(affectedLanguage, envName))
+    }
+    await this.restoreRepairedBindings(envName, language, envName, true)
   }
 
   // Releases ONE prefix from the global corrupt-journal write barrier. Called by a force Reset (via the
@@ -3673,15 +3742,15 @@ class NotebookRuntimeService {
   // After a repair install clears the repair-required flag, bring every in-memory binding for that
   // runtime (across ALL sessions) back to active — they were held unavailable/repair-required from when
   // they were resolved, and clearing only the disk flag would leave them refusing execution until a
-  // rebind. Persisted state needs no rewrite: it stores the binding without the transient repair status
-  // (that status is recomputed from the disk flag on reload, which is now cleared). Notifies each
-  // touched session's UI so the runtime shows usable again immediately.
-  private restoreRepairedBindings(
+  // rebind. Persist every restored binding before notifying its session, so both the live UI and a later
+  // reload observe the active state after the durable marker is cleared.
+  private async restoreRepairedBindings(
     runtimeId: string,
     repairedLanguage: NotebookLanguage,
     envName: string,
     managedRepair: boolean
-  ): void {
+  ): Promise<void> {
+    const changedSessions: RuntimeSession[] = []
     for (const session of this.sessions.values()) {
       let changed = false
       for (const [language, binding] of session.runtimeBindings) {
@@ -3698,7 +3767,11 @@ class NotebookRuntimeService {
           changed = true
         }
       }
-      if (changed) this.notifyNotebookChanged(session)
+      if (changed) changedSessions.push(session)
+    }
+    for (const session of changedSessions) {
+      await this.persistRuntimeBindings(session)
+      this.notifyNotebookChanged(session)
     }
   }
 
@@ -3749,7 +3822,7 @@ class NotebookRuntimeService {
       // The operation journal stays live until both the durable repair registry and the binding state
       // are committed. A tagged failure makes the caller retain journal + sidecar evidence for startup
       // recovery, while the process-local gate above continues blocking execution immediately.
-      addRepairRequired(runtimeRoot, runtimeId)
+      addRepairRequired(runtimeRoot, runtimeId, 'protected-identity-change')
       for (const session of affectedBindings) await this.persistRuntimeBindings(session)
     } catch (error) {
       throw new Error(

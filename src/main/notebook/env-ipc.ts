@@ -222,7 +222,11 @@ export const createNotebookEnvHandlers = (
   // Throws if the default env for a language is recovery-blocked (an unknown-liveness orphan may still
   // be writing its prefix), so a UI provision/repair refuses instead of materializing over a live env.
   // Checked AFTER waitForRecovery, so the blocked set is populated. Optional for existing tests.
-  assertProvisionAllowed?: (language: NotebookLanguage) => void
+  assertProvisionAllowed?: (language: NotebookLanguage) => void,
+  // Called only after the provisioner has rebuilt and verified an explicit UI Repair. The runtime
+  // service owns its separate durable repair marker, process-local execution gate, and bindings; this
+  // handoff lets it release those states only at the verified Reset boundary.
+  onRepairCompleted?: (language: NotebookLanguage) => Promise<void> | void
 ): NotebookEnvHandlers => {
   const serialized = serializeProvisioner(provisioner)
   const afterRecovery = async (
@@ -257,6 +261,7 @@ export const createNotebookEnvHandlers = (
       await withDataRootWrite(async () => {
         if (waitForRecovery) await waitForRecovery()
         await serialized.repair(lang, onProgress, { force: true })
+        await onRepairCompleted?.(lang)
       })
     },
     cancel: (language) => serialized.cancel(language)
@@ -370,11 +375,17 @@ export const registerNotebookEnvIpcHandlers = (
   waitForRecovery?: () => Promise<void>,
   // Throws if the default env for a language is recovery-blocked, so UI provision/repair refuses rather
   // than materializing over a prefix an unknown-liveness orphan may still hold.
-  assertProvisionAllowed?: (language: NotebookLanguage) => void
+  assertProvisionAllowed?: (language: NotebookLanguage) => void,
+  onRepairCompleted?: (language: NotebookLanguage) => Promise<void> | void
 ): void => {
   const serialized = provisioner ? serializeProvisioner(provisioner) : undefined
   const handlers = serialized
-    ? createNotebookEnvHandlers(serialized, waitForRecovery, assertProvisionAllowed)
+    ? createNotebookEnvHandlers(
+        serialized,
+        waitForRecovery,
+        assertProvisionAllowed,
+        onRepairCompleted
+      )
     : createUnavailableHandlers()
   ipcMain.handle('notebook-env:status', () => handlers.status())
   ipcMain.handle('notebook-env:provision', (_event, lang: NotebookLanguage) =>
