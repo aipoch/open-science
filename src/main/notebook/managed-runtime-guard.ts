@@ -37,7 +37,7 @@ const PACKAGE_MUTATION_RULES: MutationRule[] = [
   {
     installer: 'Python venv/ensurepip',
     pattern:
-      /\b(?:python|python3|py)(?:\.\d+)?(?:\.exe)?\b[\s\S]{0,100}\s-m\s+(?:venv|virtualenv|ensurepip|pip)\b/iu
+      /\b(?:python|python3|py)(?:\.\d+)?(?:\.exe)?\b[\s\S]{0,100}\s-m\s+(?:(?:venv|virtualenv|ensurepip)\b|pip\b[\s\S]{0,100}\b(?:install|uninstall|wheel)\b)/iu
   },
   {
     installer: 'Python venv',

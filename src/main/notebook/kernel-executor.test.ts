@@ -672,6 +672,15 @@ gate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
       expect(venvResult.traceback).toMatch(/manage_packages/)
       expect(existsSync(join(cwdDir, 'blocked-env'))).toBe(false)
 
+      const pipInspectionResult = await executor.execute({
+        ...request,
+        code:
+          `import subprocess, sys\n` +
+          `subprocess.run([sys.executable, "-m", "p" + "ip", "li" + "st", "--help"])`,
+        language: 'python'
+      })
+      expect(pipInspectionResult.status).toBe('completed')
+
       const pipResult = await executor.execute({
         ...request,
         code:

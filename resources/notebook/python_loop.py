@@ -36,7 +36,7 @@ _package_mutation_command = re.compile(
     r"(?:\b(?:micromamba|mamba|conda|pip|pip3|pipx|uv|poetry)(?:\.exe)?\b.{0,160}"
     r"\b(?:install|uninstall|update|upgrade|remove|create|sync|add|venv)\b|"
     r"\b(?:python|python3|py)(?:\.\d+)?(?:\.exe)?\b.{0,80}\s-m\s+"
-    r"(?:pip|venv|virtualenv|ensurepip)\b)",
+    r"(?:(?:venv|virtualenv|ensurepip)\b|pip\b.{0,100}\b(?:install|uninstall|wheel)\b))",
     re.IGNORECASE | re.DOTALL,
 )
 

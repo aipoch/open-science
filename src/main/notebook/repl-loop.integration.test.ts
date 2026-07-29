@@ -87,6 +87,20 @@ gate('repl_loop.js', () => {
     }
   }, 60_000)
 
+  it('allows dynamically assembled pip inspection commands at runtime', async () => {
+    const { child, send } = startLoop({})
+    try {
+      const result = await send(
+        `require('node:child_process')['spa' + 'wnSync'](` +
+          `'python3', ['-m', 'p' + 'ip', 'li' + 'st', '--help']); 'allowed'`
+      )
+      expect(result.error).toBeNull()
+      expect(result.result).toBe('allowed')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
   it('blocks child_process.fork from escaping the runtime guard', async () => {
     const { child, send } = startLoop({})
     try {
