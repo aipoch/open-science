@@ -158,6 +158,8 @@ for (const method of [
   'unlinkSync',
   'mkdir',
   'mkdirSync',
+  'mkdtemp',
+  'mkdtempSync',
   'truncate',
   'truncateSync',
   'chmod',
@@ -217,6 +219,7 @@ for (const method of [
   'rmdir',
   'unlink',
   'mkdir',
+  'mkdtemp',
   'truncate',
   'chmod',
   'chown'

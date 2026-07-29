@@ -71,12 +71,19 @@ describe('detectManagedRuntimeMutation', () => {
     ['bash', 'cat > "$OPEN_SCIENCE_RUNTIME_DIR/x"'],
     ['bash', 'target="$OPEN_SCIENCE_RUNTIME_DIR/x"; printf x >> "$target"'],
     ['bash', 'target="$OPEN_SCIENCE_RUNTIME_DIR/x"; touch "$target"'],
+    [
+      'bash',
+      'root=$(printf %s /tmp/open-science/runtime); touch "$root/conda-meta/pwn.json"'
+    ],
     ['bash', 'cd "$OPEN_SCIENCE_RUNTIME_DIR" && touch conda-meta/pwn.json'],
     ['powershell', 'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; New-Item conda-meta\\pwn.json'],
     ['powershell', 'Remove-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\conda-meta\\history"'],
     ['powershell', "$target = Join-Path $env:OPEN_SCIENCE_RUNTIME_DIR 'pwn.txt'; New-Item $target"],
     ['r', 'writeLines("x", file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "x"))'],
     ['repl', 'writeFileSync(process.env.OPEN_SCIENCE_RUNTIME_DIR + "/x", "x")'],
+    ['repl', 'fs.mkdtemp(process.env.OPEN_SCIENCE_RUNTIME_DIR + "/pwn-", callback)'],
+    ['repl', 'mkdtempSync(process.env.OPEN_SCIENCE_RUNTIME_DIR + "/pwn-")'],
+    ['repl', 'fs.promises.mkdtemp(process.env.OPEN_SCIENCE_RUNTIME_DIR + "/pwn-")'],
     ['repl', 'copyFileSync("report.txt", process.env.OPEN_SCIENCE_RUNTIME_DIR + "/x")']
   ] as const)('rejects %s code that executes or aliases an installer', (surface, source) => {
     expect(detectManagedRuntimeMutation({ source, surface, runtimeRoot })?.message).toMatch(

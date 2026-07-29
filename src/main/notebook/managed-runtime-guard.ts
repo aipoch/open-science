@@ -79,7 +79,7 @@ const RUNTIME_WRITE_RULES: Record<NotebookExecutionSurface, RegExp> = {
   python:
     /\b(?:open|Path\s*\([^)]*\)\s*\.(?:write_[A-Za-z0-9_]+|touch|mkdir|rename|replace|unlink)|os\.(?:remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|chmod|chown)|shutil\.(?:copy|copy2|copytree|move|rmtree))\s*\(/iu,
   r: /\b(?:unlink|file\.remove|file\.rename|file\.create|dir\.create|writeLines|writeBin|save|saveRDS)\s*\(/iu,
-  repl: /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|rm|rmSync|unlink|unlinkSync|rename|renameSync|mkdir|mkdirSync|copyFile|copyFileSync)\s*\(/iu
+  repl: /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|rm|rmSync|unlink|unlinkSync|rename|renameSync|mkdir|mkdirSync|mkdtemp|mkdtempSync|copyFile|copyFileSync)\s*\(/iu
 }
 
 const referencesManagedRuntimePath = (source: string, runtimeRoot: string): boolean => {
@@ -234,7 +234,7 @@ const stripShellComments = (source: string): string =>
 const resolveShellLiteralAssignments = (source: string): string => {
   const values = new Map<string, string>()
   const assignment =
-    /(^|[;\r\n]|\s)([A-Za-z_][A-Za-z0-9_]*)=("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s;]+)/gmu
+    /(^|[;\r\n]|\s)([A-Za-z_][A-Za-z0-9_]*)=("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\$\((?:\\.|[^)])*\)|[^\s;]+)/gmu
   const commands = source.replace(
     assignment,
     (whole, prefix: string, name: string, raw: string) => {

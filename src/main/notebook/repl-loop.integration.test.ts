@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -127,6 +127,25 @@ gate('repl_loop.js', () => {
       )
       expect(result.error).toMatch(/manage_packages/)
       expect(existsSync(blockedPath)).toBe(false)
+    } finally {
+      child.kill()
+      await rm(runtimeRoot, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it.each([
+    `require('node:fs').mkdtempSync(process.env.OPEN_SCIENCE_RUNTIME_DIR + '/sync-')`,
+    `await require('node:fs').promises.mkdtemp(process.env.OPEN_SCIENCE_RUNTIME_DIR + '/promise-')`,
+    `await new Promise((resolve, reject) => require('node:fs').mkdtemp(` +
+      `process.env.OPEN_SCIENCE_RUNTIME_DIR + '/callback-', ` +
+      `(error, value) => error ? reject(error) : resolve(value)))`
+  ])('blocks managed-runtime temporary directory creation at runtime', async (source) => {
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-mkdtemp-guard-'))
+    const { child, send } = startLoop({ OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot })
+    try {
+      const result = await send(source)
+      expect(result.error).toMatch(/manage_packages/)
+      expect(await readdir(runtimeRoot)).toEqual([])
     } finally {
       child.kill()
       await rm(runtimeRoot, { recursive: true, force: true })
