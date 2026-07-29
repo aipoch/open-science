@@ -497,9 +497,15 @@ class ContextUsageTracker {
     this.commitPendingAssistantOutput(sessionId)
 
     const nativeSkill = isNativeSkillToolUpdate(update)
-    const category: EstimatedCategoryKey = nativeSkill
-      ? 'skills'
-      : (effectiveObservation.toolCategory ?? 'tools')
+    const skillLoad = nativeSkill || Boolean(effectiveObservation.skillFilePath)
+    const skillLoadCompleted = skillLoad && update.status === 'completed'
+    const skillLoadFailed =
+      skillLoad && (update.status === 'failed' || update.status === 'cancelled')
+    const category: EstimatedCategoryKey = skillLoadFailed
+      ? 'tools'
+      : nativeSkill
+        ? 'skills'
+        : (effectiveObservation.toolCategory ?? 'tools')
     const budget: ToolTextBudget = {
       chars: MAX_TOOL_ESTIMATE_CHARS,
       nodes: MAX_TOOL_ESTIMATE_NODES
@@ -513,7 +519,17 @@ class ContextUsageTracker {
         boundedJsonText(update.rawInput, budget)
       )
     }
-    if (effectiveObservation.skillFilePath) {
+    // Only a successful terminal update proves that the payload is a Skill document. Partial,
+    // failed, and cancelled payloads remain ordinary tool output so they cannot replace an already
+    // loaded document with an error message. A later success replaces this provisional output.
+    const outputSectionId = `${prefix}:output`
+    if (skillLoadCompleted) {
+      this.deleteSection(state, outputSectionId)
+      state.canonicalRawOutputSections.delete(outputSectionId)
+    } else if (skillLoadFailed) {
+      state.canonicalRawOutputSections.delete(outputSectionId)
+    }
+    if (effectiveObservation.skillFilePath && skillLoadCompleted) {
       if (update.rawOutput !== undefined) {
         this.recordSkillDocument(
           sessionId,
@@ -536,7 +552,7 @@ class ContextUsageTracker {
 
     // Native Skill adapters may mirror the same instruction document in rawOutput and content. The
     // request input is distinct metadata, but the document itself must occupy one stable section.
-    if (nativeSkill) {
+    if (nativeSkill && skillLoadCompleted) {
       const sectionId = `${prefix}:document`
       if (update.rawOutput !== undefined) {
         state.canonicalRawOutputSections.add(sectionId)
@@ -548,7 +564,7 @@ class ContextUsageTracker {
     }
     // ACP content is the displayable projection of the same result represented by rawOutput. Prefer
     // the raw model-side value across partial updates; content is only a fallback until raw appears.
-    const sectionId = `${prefix}:output`
+    const sectionId = outputSectionId
     if (update.rawOutput !== undefined) {
       state.canonicalRawOutputSections.add(sectionId)
       this.replaceText(sessionId, sectionId, category, boundedJsonText(update.rawOutput, budget))

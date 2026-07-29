@@ -384,6 +384,26 @@ describe('ContextUsageTracker', () => {
     })
   })
 
+  it('counts a failed native Skill load as ordinary tool output', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'claude-code', model: 'claude-sonnet-4-5' })
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'skill-1',
+        title: 'Loading skill: pdf',
+        status: 'failed',
+        rawInput: { name: 'pdf' },
+        rawOutput: 'skill load failed'
+      }
+    })
+
+    expect(tracker.estimate('s1')?.categories).toEqual([
+      { key: 'tools', tokens: 4, estimated: true }
+    ])
+  })
+
   it('accepts an MCP classification from the runtime session boundary', () => {
     const tracker = new ContextUsageTracker(wordCounter)
     tracker.beginSession('s1', { frameworkId: 'codex', model: 'gpt-5.6-sol' })
@@ -498,6 +518,43 @@ describe('ContextUsageTracker', () => {
     expect(tracker.compare('s1', 5, 'reconciled')?.categories).toEqual([
       { key: 'skills', tokens: 4, estimated: true },
       { key: 'other', tokens: 1, estimated: false }
+    ])
+  })
+
+  it('keeps the existing Skill document when a later read fails', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    const skillPath = '/codex/skills/pdf/SKILL.md'
+    tracker.beginSession('s1', { frameworkId: 'codex', model: 'gpt-5.6-sol' })
+    tracker.replacePromptSkillDocuments('s1', [
+      { path: skillPath, text: 'real skill instructions' }
+    ])
+    tracker.observeSessionUpdate(
+      's1',
+      {
+        sessionId: 's1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'read-1',
+          title: 'Read',
+          status: 'in_progress',
+          rawInput: { path: skillPath }
+        }
+      },
+      { toolCategory: 'skills', skillFilePath: skillPath }
+    )
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'read-1',
+        status: 'failed',
+        rawOutput: 'permission denied error'
+      }
+    })
+
+    expect(tracker.estimate('s1')?.categories).toEqual([
+      { key: 'tools', tokens: 3, estimated: true },
+      { key: 'skills', tokens: 4, estimated: true }
     ])
   })
 
