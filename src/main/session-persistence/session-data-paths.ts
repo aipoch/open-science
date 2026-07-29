@@ -1,6 +1,10 @@
 import { pathToFileURL } from 'node:url'
 
-import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
+import type {
+  PersistedArtifact,
+  PersistedChatMessage,
+  PersistedChatSession
+} from '../../shared/session-persistence'
 import { decodeDataPath, encodeDataPath } from '../storage/data-path'
 
 // Replaces a data-root absolute path with a $DATA sentinel and drops the derived fileUrl.
@@ -25,34 +29,63 @@ const decodeArtifact = (
   return { ...artifact, path, fileUrl: pathToFileURL(path).href }
 }
 
+const transformMessageUploadPaths = <Message extends PersistedChatMessage>(
+  messages: readonly Message[],
+  transformPath: (path: string) => string
+): Message[] =>
+  messages.map((message) => ({
+    ...message,
+    uploads: message.uploads?.map((upload) =>
+      upload.path ? { ...upload, path: transformPath(upload.path) } : upload
+    )
+  }))
+
 // Encodes/decodes a session's persisted paths (cwd, upload paths, artifact paths) without touching
 // any other field. Pure and immutable: always returns a new session object.
 export const encodeSessionDataPaths = (
   session: PersistedChatSession,
   dataRoot?: string
-): PersistedChatSession => ({
-  ...session,
-  cwd: encodeDataPath(session.cwd, dataRoot) as string,
-  messages: session.messages.map((message) => ({
-    ...message,
-    uploads: message.uploads?.map((upload) =>
-      upload.path ? { ...upload, path: encodeDataPath(upload.path, dataRoot) as string } : upload
-    )
-  })),
-  artifacts: session.artifacts?.map((artifact) => encodeArtifact(artifact, dataRoot))
-})
+): PersistedChatSession => {
+  const encodeUploadPath = (path: string): string => encodeDataPath(path, dataRoot) as string
+  return {
+    ...session,
+    cwd: encodeDataPath(session.cwd, dataRoot) as string,
+    messages: transformMessageUploadPaths(session.messages, encodeUploadPath),
+    ...(session.conversationGraph
+      ? {
+          conversationGraph: {
+            ...session.conversationGraph,
+            messages: transformMessageUploadPaths(
+              session.conversationGraph.messages,
+              encodeUploadPath
+            )
+          }
+        }
+      : {}),
+    artifacts: session.artifacts?.map((artifact) => encodeArtifact(artifact, dataRoot))
+  }
+}
 
 export const decodeSessionDataPaths = (
   session: PersistedChatSession,
   dataRoot?: string
-): PersistedChatSession => ({
-  ...session,
-  cwd: decodeDataPath(session.cwd, dataRoot) as string,
-  messages: session.messages.map((message) => ({
-    ...message,
-    uploads: message.uploads?.map((upload) =>
-      upload.path ? { ...upload, path: decodeDataPath(upload.path, dataRoot) as string } : upload
-    )
-  })),
-  artifacts: session.artifacts?.map((artifact) => decodeArtifact(artifact, dataRoot))
-})
+): PersistedChatSession => {
+  const decodeUploadPath = (path: string): string => decodeDataPath(path, dataRoot) as string
+  return {
+    ...session,
+    cwd: decodeDataPath(session.cwd, dataRoot) as string,
+    messages: transformMessageUploadPaths(session.messages, decodeUploadPath),
+    ...(session.conversationGraph
+      ? {
+          conversationGraph: {
+            ...session.conversationGraph,
+            messages: transformMessageUploadPaths(
+              session.conversationGraph.messages,
+              decodeUploadPath
+            )
+          }
+        }
+      : {}),
+    artifacts: session.artifacts?.map((artifact) => decodeArtifact(artifact, dataRoot))
+  }
+}

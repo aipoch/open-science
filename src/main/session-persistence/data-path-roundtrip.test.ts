@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import { normalizeSessionFile, type PersistedChatSession } from '../../shared/session-persistence'
 import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
 
 const ROOT = '/data/os'
@@ -39,19 +39,45 @@ const session: PersistedChatSession = {
 
 describe('session data-path round-trip', () => {
   it('encodes data-root paths to $DATA and decodes against a new root', () => {
-    const enc = encodeSessionDataPaths(session, ROOT)
+    const materialized = normalizeSessionFile(session, { preserveLegacyUploadPaths: true })!
+    const enc = encodeSessionDataPaths(materialized, ROOT)
     expect(enc.artifacts?.[0].path).toBe('$DATA/artifacts/p/s1/m/x.png')
     expect(enc.messages[0].uploads?.[0].path).toBe('$DATA/uploads/f')
+    expect(enc.conversationGraph?.messages[0].uploads?.[0].path).toBe('$DATA/uploads/f')
     expect(enc.cwd).toBe('$DATA/notebooks/p/s1')
 
     const dec = decodeSessionDataPaths(enc, '/mnt/new')
     expect(dec.artifacts?.[0].path).toBe(join('/mnt/new', 'artifacts/p/s1/m/x.png'))
     expect(dec.messages[0].uploads?.[0].path).toBe(join('/mnt/new', 'uploads/f'))
+    expect(dec.conversationGraph?.messages[0].uploads?.[0].path).toBe(join('/mnt/new', 'uploads/f'))
     expect(dec.artifacts?.[0].fileUrl).toMatch(/^file:\/\/.*x\.png$/)
   })
 
   it('leaves an external cwd unchanged', () => {
     const s = { ...session, cwd: '/Users/x/project' }
     expect(encodeSessionDataPaths(s, ROOT).cwd).toBe('/Users/x/project')
+  })
+
+  it('decodes Upload paths in a graph materialized from a legacy Session', () => {
+    const legacy = normalizeSessionFile(
+      {
+        ...session,
+        cwd: '$DATA/notebooks/p/s1',
+        messages: session.messages.map((message) => ({
+          ...message,
+          uploads: message.uploads?.map((upload) => ({
+            ...upload,
+            path: '$DATA/uploads/f'
+          }))
+        }))
+      },
+      { preserveLegacyUploadPaths: true }
+    )
+    expect(legacy?.conversationGraph?.messages[0].uploads?.[0].path).toBe('$DATA/uploads/f')
+
+    const decoded = decodeSessionDataPaths(legacy!, '/mnt/new')
+    expect(decoded.conversationGraph?.messages[0].uploads?.[0]).toEqual(
+      decoded.messages[0].uploads?.[0]
+    )
   })
 })
