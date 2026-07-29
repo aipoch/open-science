@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve, win32 } from 'node:path'
 
+import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import { DEFAULT_MAX_CACHE_RELATIVE_PATH as MANIFEST_DEFAULT_MAX_CACHE_RELATIVE_PATH } from './bundle-manifest'
 
 export const WINDOWS_MAX_USABLE_PATH = 259
@@ -105,7 +106,7 @@ export const windowsCacheAclHardeningScript = (path: string): string => {
 export const hardenWindowsCacheAcl = (path: string): void => {
   if (process.platform !== 'win32') return
   execFileSync(
-    'powershell.exe',
+    resolveWindowsPowerShellExecutable(),
     ['-NoProfile', '-NonInteractive', '-Command', windowsCacheAclHardeningScript(path)],
     { encoding: 'utf8', windowsHide: true }
   )
@@ -170,7 +171,7 @@ export const windowsCacheAclReadScript = (path: string): string => {
 export const readWindowsCacheAcl = (path: string): WindowsCacheAcl => {
   const script = windowsCacheAclReadScript(path)
   const raw = execFileSync(
-    'powershell.exe',
+    resolveWindowsPowerShellExecutable(),
     ['-NoProfile', '-NonInteractive', '-Command', script],
     {
       encoding: 'utf8',

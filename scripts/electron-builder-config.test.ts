@@ -27,6 +27,9 @@ describe('electron-builder Windows targets', () => {
     expect(config).toContain('from: build/windows-runtime-cache-uninstall.ps1')
     expect(config).toContain('include: build/installer.nsh')
     expect(include).toContain('windows-runtime-cache-uninstall.ps1')
+    const customUninstall = include.match(/!macro customUnInstall\n([\s\S]*?)!macroend/)?.[1]
+    expect(customUninstall).toContain('$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe')
+    expect(customUninstall).not.toMatch(/ExecToLog 'powershell\.exe\b/)
     expect(cleanup).toContain('.open-science-cache.json')
     expect(cleanup).toContain('Get-CompactCacheLeaf')
     expect(cleanup).toContain('$compactLeaf = Get-CompactCacheLeaf $canonicalRoot $userIdentity')

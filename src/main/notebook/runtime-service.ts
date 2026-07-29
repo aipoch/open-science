@@ -108,6 +108,7 @@ import {
 import { isChildUnconfirmedError } from './provisioner-runtime'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { terminateProcessTree } from '../process-tree'
+import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import {
   EnvironmentManifestPublicationError,
   EnvironmentStateTracker,
@@ -730,7 +731,7 @@ const resolveShellInvocation = (
 ): ShellInvocation =>
   platform === 'win32'
     ? {
-        executable: 'powershell.exe',
+        executable: resolveWindowsPowerShellExecutable(),
         args: [
           '-NoLogo',
           '-NoProfile',

@@ -57,6 +57,7 @@ const createStorageRoot = async (): Promise<string> => {
 }
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   if (storageRoot) {
     await rm(storageRoot, { recursive: true, force: true })
     storageRoot = undefined
@@ -99,10 +100,13 @@ describe('resolveShellInvocation', () => {
     })
   })
 
-  it('uses a non-interactive PowerShell command on Windows instead of assuming sh exists', () => {
+  it('uses an absolute non-interactive PowerShell command on Windows without relying on PATH', () => {
+    vi.stubEnv('SystemRoot', 'C:\\Windows')
     const invocation = resolveShellInvocation('cp "source.png" "destination.png"', 'win32')
 
-    expect(invocation.executable).toBe('powershell.exe')
+    expect(invocation.executable).toBe(
+      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+    )
     expect(invocation.args.slice(0, -1)).toEqual([
       '-NoLogo',
       '-NoProfile',
@@ -133,6 +137,7 @@ describe('resolveShellInvocation', () => {
   })
 
   it('isolates PowerShell command syntax from the exit-code wrapper', () => {
+    vi.stubEnv('SystemRoot', 'C:\\Windows')
     const command = "Write-Output 'first'\n# keep this comment\nWrite-Output 'continued' `"
     const invocation = resolveShellInvocation(command, 'win32')
     const script = Buffer.from(invocation.args.at(-1) ?? '', 'base64').toString('utf16le')
