@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   ContextUsageTracker,
+  MAX_TOOL_ESTIMATE_CHARS,
   tokenizerProfileFor,
   type TokenCounter
 } from './context-usage-tracker'
@@ -15,8 +16,10 @@ describe('ContextUsageTracker', () => {
   it('selects a stable local tokenizer profile by framework and model', () => {
     expect(tokenizerProfileFor('claude-code', undefined)).toBe('anthropic')
     expect(tokenizerProfileFor('opencode', 'claude-sonnet-4-5')).toBe('anthropic')
+    expect(tokenizerProfileFor('opencode', 'anthropic/claude-sonnet-4-5')).toBe('anthropic')
     expect(tokenizerProfileFor('codex', 'gpt-5.6-sol')).toBe('o200k_base')
     expect(tokenizerProfileFor('opencode', 'gpt-4.1-mini')).toBe('o200k_base')
+    expect(tokenizerProfileFor('opencode', 'openai/gpt-5')).toBe('o200k_base')
     expect(tokenizerProfileFor('opencode', 'deepseek-v4')).toBe('cl100k_base')
   })
 
@@ -126,6 +129,46 @@ describe('ContextUsageTracker', () => {
         { key: 'other', tokens: 6, estimated: false }
       ]
     })
+  })
+
+  it('bounds tool serialization and tokenization before traversing the full payload', () => {
+    const observedLengths: number[] = []
+    const tracker = new ContextUsageTracker({
+      count: (text) => {
+        observedLengths.push(text.length)
+        return text.length
+      }
+    })
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    let itemReads = 0
+    const rawOutput = new Proxy(new Array(20_000).fill('payload'), {
+      get(target, property, receiver) {
+        if (property !== 'length') itemReads += 1
+        return Reflect.get(target, property, receiver)
+      }
+    })
+
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'large-tool',
+        status: 'completed',
+        rawOutput,
+        content: [
+          {
+            type: 'content',
+            content: { type: 'text', text: 'x'.repeat(MAX_TOOL_ESTIMATE_CHARS * 2) }
+          }
+        ]
+      }
+    })
+
+    expect(itemReads).toBeLessThan(2_100)
+    expect(Math.max(...observedLengths)).toBeLessThanOrEqual(MAX_TOOL_ESTIMATE_CHARS)
+    expect(
+      tracker.compare('s1', MAX_TOOL_ESTIMATE_CHARS, 'reconciled')?.estimatedTokens
+    ).toBeLessThanOrEqual(MAX_TOOL_ESTIMATE_CHARS)
   })
 
   it('classifies native Skill tool content separately from conversation messages', () => {
