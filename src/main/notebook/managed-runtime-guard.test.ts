@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { performance } from 'node:perf_hooks'
 
 import { describe, expect, it } from 'vitest'
 
@@ -173,6 +174,14 @@ describe('detectManagedRuntimeMutation', () => {
       await rm(cwd, { recursive: true, force: true })
     }
   })
+
+  it('handles an unterminated shell command substitution without exponential backtracking', () => {
+    const source = ` assignment=$(value${String.raw`\(`.repeat(26)} `
+    const startedAt = performance.now()
+
+    expect(detectManagedRuntimeMutation({ source, surface: 'bash', runtimeRoot })).toBeUndefined()
+    expect(performance.now() - startedAt).toBeLessThan(500)
+  })
 })
 
 describe('protectManagedRuntimeWrites', () => {
@@ -200,5 +209,17 @@ describe('protectManagedRuntimeWrites', () => {
     expect(protectManagedRuntimeWrites(invocation, '/tmp/open-science/runtime', 'linux')).toBe(
       invocation
     )
+  })
+
+  it('keeps an absolute executable with shell metacharacters in one sandbox argv element', () => {
+    const executable = '/Applications/Open Science; touch injected.app/Contents/MacOS/Open Science'
+    const protectedInvocation = protectManagedRuntimeWrites(
+      { executable, args: ['--inspect'] },
+      '/tmp/open-science/runtime',
+      'darwin'
+    )
+
+    expect(protectedInvocation.executable).toBe('/usr/bin/sandbox-exec')
+    expect(protectedInvocation.args.slice(-2)).toEqual([executable, '--inspect'])
   })
 })

@@ -276,7 +276,7 @@ const stripShellComments = (source: string): string =>
 const resolveShellLiteralAssignments = (source: string): string => {
   const values = new Map<string, string>()
   const assignment =
-    /(^|[;\r\n]|\s)([A-Za-z_][A-Za-z0-9_]*)=("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\$\((?:\\.|[^)])*\)|[^\s;]+)/gmu
+    /(^|[;\r\n]|\s)([A-Za-z_][A-Za-z0-9_]*)=("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\$\((?:\\.|[^)\\])*\)|[^\s;]+)/gmu
   const commands = source.replace(
     assignment,
     (whole, prefix: string, name: string, raw: string) => {
