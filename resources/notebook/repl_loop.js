@@ -59,8 +59,33 @@ const commandText = (command, args = []) =>
     .map((part) => String(part))
     .join(' ')
 
+const powerShellEncodedSource = (words, commandIndex = 0) => {
+  const encodedFlag = words.findIndex((word, index) => {
+    if (index <= commandIndex || !String(word).startsWith('-')) return false
+    const flag = String(word).slice(1).toLowerCase()
+    return flag === 'e' || flag === 'ec' || (flag.length >= 2 && 'encodedcommand'.startsWith(flag))
+  })
+  return encodedFlag >= 0
+    ? Buffer.from(
+        String(words[encodedFlag + 1] ?? '').replace(/^['"]|['"]$/gu, ''),
+        'base64'
+      ).toString('utf16le')
+    : undefined
+}
+
 const assertPackageCommandAllowed = (command, args) => {
-  if (packageMutationCommand.test(commandText(command, args))) {
+  const argv = Array.isArray(args) ? args.map(String) : []
+  const executable = path
+    .basename(String(command ?? ''))
+    .replace(/^['"]|['"]$/gu, '')
+    .toLowerCase()
+  const encodedSource = /^(?:powershell|pwsh)(?:\.exe)?$/u.test(executable)
+    ? powerShellEncodedSource([command, ...argv])
+    : undefined
+  if (
+    packageMutationCommand.test(commandText(command, args)) ||
+    (encodedSource !== undefined && packageMutationCommand.test(encodedSource))
+  ) {
     throw new Error(
       'Package/environment mutation is not allowed in the control REPL; use manage_packages.'
     )
@@ -109,14 +134,14 @@ workerThreads.Worker = class GuardedWorker {
 // process source policy. This catches paths assembled dynamically inside the persistent REPL and is
 // the hard backstop on platforms without sandbox-exec.
 const runtimeRootValue = process.env.OPEN_SCIENCE_RUNTIME_DIR
-const canonicalGuardPath = (value) => {
+const canonicalGuardPath = (value, cwd = process.cwd()) => {
   if (typeof value === 'number' || value === undefined || value === null) return undefined
   let raw = value
   if (raw instanceof URL) raw = fileURLToPath(raw)
   if (Buffer.isBuffer(raw)) raw = raw.toString()
   if (typeof raw !== 'string') return undefined
 
-  const absolute = path.resolve(raw)
+  const absolute = path.resolve(cwd, raw)
   let cursor = absolute
   const suffix = []
   while (true) {
@@ -167,12 +192,12 @@ const runtimeTextReferencesManagedRuntime = (text) => {
     roots.some((root) => comparable.includes(root))
   )
 }
-const runtimeTargetIsManaged = (value) => {
+const runtimeTargetIsManaged = (value, cwd = process.cwd()) => {
   if (!managedRuntimeRoot || value === undefined || value === null) return false
   const text = String(value).trim()
   if (runtimeTextReferencesManagedRuntime(text)) return true
   const unquoted = text.replace(/^(?:(["'`]))([\s\S]*)\1$/u, '$2')
-  const resolved = canonicalGuardPath(unquoted)
+  const resolved = canonicalGuardPath(unquoted, cwd)
   if (!resolved) return false
   const candidate = comparableGuardPath(resolved)
   const root = comparableGuardPath(managedRuntimeRoot)
@@ -186,6 +211,18 @@ const unquoteShellWord = (value) =>
     .replace(/\\([\\"'`])/gu, '$1')
 const shellWords = (command) =>
   String(command).match(/(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|[^\s])+/gu) ?? []
+const resolvedCommandCwd = (target, cwd) => {
+  if (!target) return cwd
+  if (managedRuntimeRoot && runtimeTextReferencesManagedRuntime(target)) return managedRuntimeRoot
+  return canonicalGuardPath(unquoteShellWord(target), cwd) ?? cwd
+}
+const powerShellInvocationSource = (words, commandIndex = 0) => {
+  const commandFlag = words.findIndex(
+    (word, index) => index > commandIndex && /^(?:-command|-c)$/iu.test(word)
+  )
+  if (commandFlag >= 0) return unquoteShellWord(words[commandFlag + 1] ?? '')
+  return powerShellEncodedSource(words, commandIndex)
+}
 const shellCommandSegments = (source) => {
   const segments = []
   let start = 0
@@ -418,24 +455,68 @@ const staticShellTarget = (target) => {
     .replace(/^(?:(["']))([\s\S]*)\1$/u, '$2')
   return value.length > 0 && !/[$%`<>&;|()\r\n]/u.test(value)
 }
-const powerShellSourceWritesRuntime = (source) => {
+const powerShellSourceWritesRuntime = (source, cwd = process.cwd(), depth = 0) => {
   const referencesRuntime = runtimeTextReferencesManagedRuntime(source)
+  let currentCwd = cwd
   for (const segment of shellCommandSegments(String(source))) {
+    const words = shellWords(segment)
+    const commandIndex = words[0] === '&' ? 1 : 0
+    const executable = commandName(words[commandIndex])
+    if (/^(?:set-location|cd|chdir|sl)$/u.test(executable)) {
+      const args = words.slice(commandIndex + 1)
+      const pathFlag = args.findIndex((word) => /^-(?:literal)?path$/iu.test(word))
+      const target =
+        pathFlag >= 0 ? args[pathFlag + 1] : args.find((word) => !String(word).startsWith('-'))
+      currentCwd = resolvedCommandCwd(target, currentCwd)
+    }
     const targets = powerShellWriteTargets(segment)
-    if (targets.some(runtimeTargetIsManaged)) return true
+    if (targets.some((target) => runtimeTargetIsManaged(target, currentCwd))) return true
     if (referencesRuntime && targets.some((target) => !staticShellTarget(target))) return true
-  }
-  const dotNetWrites =
-    /\[(?:System\.)?IO\.(?:File|Directory)\]::(?:WriteAllText|AppendAllText|WriteAllBytes|Create|CreateText|AppendText|Move|Replace|Delete|CreateDirectory)\s*\(/giu
-  for (let match = dotNetWrites.exec(source); match; match = dotNetWrites.exec(source)) {
-    const call = matchingCall(source, match.index)
-    const target = call ? callArguments(call)[0] : undefined
-    if (target && runtimeTargetIsManaged(target)) return true
-    if (target && referencesRuntime && !staticLiteralTarget(target)) return true
+    const dotNetWrites =
+      /\[(?:System\.)?IO\.(?:File|Directory)\]::(?:WriteAllText|AppendAllText|WriteAllBytes|Create|CreateText|AppendText|Move|Replace|Delete|CreateDirectory)\s*\(/giu
+    for (let match = dotNetWrites.exec(segment); match; match = dotNetWrites.exec(segment)) {
+      const call = matchingCall(segment, match.index)
+      const target = call ? callArguments(call)[0] : undefined
+      if (target && runtimeTargetIsManaged(target, currentCwd)) return true
+      if (target && referencesRuntime && !staticLiteralTarget(target)) return true
+    }
+    if (depth >= 8) continue
+    const shellFlag = words.findIndex((word) => /^-c$/u.test(word))
+    if (
+      /^(?:bash|sh|zsh)(?:\.exe)?$/u.test(executable) &&
+      shellFlag >= 0 &&
+      shellSourceWritesRuntime(unquoteShellWord(words[shellFlag + 1] ?? ''), currentCwd, depth + 1)
+    ) {
+      return true
+    }
+    const powerShellPayload = powerShellInvocationSource(words, commandIndex)
+    if (
+      /^(?:powershell|pwsh)(?:\.exe)?$/u.test(executable) &&
+      powerShellPayload !== undefined &&
+      powerShellSourceWritesRuntime(powerShellPayload, currentCwd, depth + 1)
+    ) {
+      return true
+    }
+    const inlineFlag = words.findIndex((word) => /^(?:-e|--eval)$/u.test(word))
+    if (
+      (/^(?:node|nodejs)(?:\.exe)?$/u.test(executable) ||
+        words[commandIndex] === process.execPath) &&
+      inlineFlag >= 0 &&
+      javascriptSourceWritesRuntime(unquoteShellWord(words[inlineFlag + 1] ?? ''), currentCwd)
+    ) {
+      return true
+    }
+    if (
+      /^(?:python|python3|py|r|rscript)(?:\.exe)?$/u.test(executable) &&
+      (runtimeTargetIsManaged('.', currentCwd) || runtimeTextReferencesManagedRuntime(segment)) &&
+      runtimeWriteCommand.test(segment)
+    ) {
+      return true
+    }
   }
   return false
 }
-const javascriptSourceWritesRuntime = (source) => {
+const javascriptSourceWritesRuntime = (source, cwd = process.cwd()) => {
   const masked = maskJavascriptQuotedAndCommentText(source)
   const operations =
     /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|rm|rmSync|rmdir|rmdirSync|unlink|unlinkSync|rename|renameSync|mkdir|mkdirSync|mkdtemp|mkdtempSync|truncate|truncateSync|chmod|chmodSync|chown|chownSync|copyFile|copyFileSync|cp|cpSync|link|linkSync|symlink|symlinkSync|open|openSync|createWriteStream)\s*\(/gu
@@ -454,24 +535,30 @@ const javascriptSourceWritesRuntime = (source) => {
             /^(?:["'])r[bt]?(?:["'])$/u.test(args[1].trim())
           ? []
           : args.slice(0, 1)
-    if (targets.some(runtimeTargetIsManaged)) return true
+    if (targets.some((target) => runtimeTargetIsManaged(target, cwd))) return true
     if (referencesRuntime && targets.some((target) => !staticLiteralTarget(target))) return true
   }
   return false
 }
-const shellSourceWritesRuntime = (source) => {
+const shellSourceWritesRuntime = (source, cwd = process.cwd(), depth = 0) => {
   const referencesRuntime = runtimeTextReferencesManagedRuntime(source)
+  let currentCwd = cwd
   for (const segment of shellCommandSegments(String(source))) {
     const words = shellWords(segment)
-    const targets = writeTargetsForWords(words, shellRedirectionTargets(segment))
-    if (targets.some(runtimeTargetIsManaged)) return true
-    if (referencesRuntime && targets.some((target) => !staticShellTarget(target))) return true
     const executable = commandName(words[0])
+    if (executable === 'cd') {
+      const target = words.find((word, index) => index > 0 && !String(word).startsWith('-'))
+      currentCwd = resolvedCommandCwd(target, currentCwd)
+    }
+    const targets = writeTargetsForWords(words, shellRedirectionTargets(segment))
+    if (targets.some((target) => runtimeTargetIsManaged(target, currentCwd))) return true
+    if (referencesRuntime && targets.some((target) => !staticShellTarget(target))) return true
+    if (depth >= 8) continue
     const inlineFlag = words.findIndex((word) => /^(?:-e|--eval)$/u.test(word))
     if (
       (/^(?:node|nodejs)(?:\.exe)?$/u.test(executable) || words[0] === process.execPath) &&
       inlineFlag >= 0 &&
-      javascriptSourceWritesRuntime(unquoteShellWord(words[inlineFlag + 1] ?? ''))
+      javascriptSourceWritesRuntime(unquoteShellWord(words[inlineFlag + 1] ?? ''), currentCwd)
     ) {
       return true
     }
@@ -479,15 +566,15 @@ const shellSourceWritesRuntime = (source) => {
     if (
       /^(?:bash|sh|zsh)(?:\.exe)?$/u.test(executable) &&
       shellFlag >= 0 &&
-      shellSourceWritesRuntime(unquoteShellWord(words[shellFlag + 1] ?? ''))
+      shellSourceWritesRuntime(unquoteShellWord(words[shellFlag + 1] ?? ''), currentCwd, depth + 1)
     ) {
       return true
     }
-    const powerShellFlag = words.findIndex((word) => /^-command$/iu.test(word))
+    const powerShellPayload = powerShellInvocationSource(words)
     if (
       /^(?:powershell|pwsh)(?:\.exe)?$/u.test(executable) &&
-      powerShellFlag >= 0 &&
-      powerShellSourceWritesRuntime(unquoteShellWord(words[powerShellFlag + 1] ?? ''))
+      powerShellPayload !== undefined &&
+      powerShellSourceWritesRuntime(powerShellPayload, currentCwd, depth + 1)
     ) {
       return true
     }
@@ -499,14 +586,16 @@ const shellSourceWritesRuntime = (source) => {
         words
           .slice(cmdFlag + 1)
           .map(unquoteShellWord)
-          .join(' ')
+          .join(' '),
+        currentCwd,
+        depth + 1
       )
     ) {
       return true
     }
     if (
       /^(?:python|python3|py|r|rscript)(?:\.exe)?$/u.test(executable) &&
-      runtimeTextReferencesManagedRuntime(segment) &&
+      (runtimeTargetIsManaged('.', currentCwd) || runtimeTextReferencesManagedRuntime(segment)) &&
       runtimeWriteCommand.test(segment)
     ) {
       return true
@@ -522,14 +611,9 @@ const runtimeProcessCommandWritesRuntime = (command, args, shellCommand) => {
   if (/^(?:bash|sh|zsh)(?:\.exe)?$/u.test(executable) && shellFlag >= 0) {
     return shellSourceWritesRuntime(argv[shellFlag + 1] ?? '')
   }
-  const powerShellFlag = argv.findIndex((word) => /^-command$/iu.test(word))
-  if (/^(?:powershell|pwsh)(?:\.exe)?$/u.test(executable) && powerShellFlag >= 0) {
-    return powerShellSourceWritesRuntime(argv[powerShellFlag + 1] ?? '')
-  }
-  const encodedPowerShellFlag = argv.findIndex((word) => /^-encodedcommand$/iu.test(word))
-  if (/^(?:powershell|pwsh)(?:\.exe)?$/u.test(executable) && encodedPowerShellFlag >= 0) {
-    const source = Buffer.from(argv[encodedPowerShellFlag + 1] ?? '', 'base64').toString('utf16le')
-    return powerShellSourceWritesRuntime(source)
+  const powerShellPayload = powerShellInvocationSource([command, ...argv])
+  if (/^(?:powershell|pwsh)(?:\.exe)?$/u.test(executable) && powerShellPayload !== undefined) {
+    return powerShellSourceWritesRuntime(powerShellPayload)
   }
   const cmdFlag = argv.findIndex((word) => /^\/c$/iu.test(word))
   if (/^cmd(?:\.exe)?$/u.test(executable) && cmdFlag >= 0) {
@@ -543,7 +627,9 @@ const runtimeProcessCommandWritesRuntime = (command, args, shellCommand) => {
     return javascriptSourceWritesRuntime(argv[inlineFlag + 1] ?? '')
   }
   const directTargets = writeTargetsForWords([command, ...argv])
-  if (directTargets.length > 0) return directTargets.some(runtimeTargetIsManaged)
+  if (directTargets.length > 0) {
+    return directTargets.some((target) => runtimeTargetIsManaged(target))
+  }
   const text = commandText(command, argv)
   return runtimeTextReferencesManagedRuntime(text) && runtimeWriteCommand.test(text)
 }

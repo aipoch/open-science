@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 
@@ -781,8 +782,19 @@ const invocationPayload = (rawWords: string[]): ExecutionPayload | undefined => 
     return source ? { surface: 'bash', source } : undefined
   }
   if (/^(?:powershell|pwsh)(?:\.exe)?$/u.test(executable)) {
-    const source = flagFor(/^-command$/iu)
-    return source ? { surface: 'powershell', source } : undefined
+    const source = flagFor(/^(?:-command|-c)$/iu)
+    if (source) return { surface: 'powershell', source }
+    const encodedIndex = words.findIndex((word, position) => {
+      if (position <= commandIndex || !word.startsWith('-')) return false
+      const flag = word.slice(1).toLowerCase()
+      return (
+        flag === 'e' || flag === 'ec' || (flag.length >= 2 && 'encodedcommand'.startsWith(flag))
+      )
+    })
+    const encoded = encodedIndex >= 0 ? words[encodedIndex + 1] : undefined
+    return encoded
+      ? { surface: 'powershell', source: Buffer.from(encoded, 'base64').toString('utf16le') }
+      : undefined
   }
   if (/^cmd(?:\.exe)?$/u.test(executable)) {
     const flagIndex = words.findIndex(

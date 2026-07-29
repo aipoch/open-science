@@ -106,6 +106,10 @@ describe('detectManagedRuntimeMutation', () => {
       'powershell',
       `Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; node -e 'require("fs").writeFileSync("node-relative", "x")'`
     ],
+    [
+      'powershell',
+      `powershell.exe -c 'Set-Content "$env:OPEN_SCIENCE_RUNTIME_DIR\\short-command.txt" x'`
+    ],
     ['powershell', 'Remove-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\conda-meta\\history"'],
     ['powershell', "$target = Join-Path $env:OPEN_SCIENCE_RUNTIME_DIR 'pwn.txt'; New-Item $target"],
     [
@@ -155,6 +159,23 @@ describe('detectManagedRuntimeMutation', () => {
       })?.message
     ).toMatch(/manage_packages/)
   })
+
+  it.each(['-EncodedCommand', '-ec', '-e'])(
+    'rejects a PowerShell %s payload that writes into the Windows runtime',
+    (flag) => {
+      const payload =
+        '[IO.File]::WriteAllText("C:\\OpenScience\\runtime\\conda-meta\\encoded.txt", "x")'
+      const encoded = Buffer.from(payload, 'utf16le').toString('base64')
+
+      expect(
+        detectManagedRuntimeMutation({
+          source: `powershell.exe -NoProfile ${flag} ${encoded}`,
+          surface: 'powershell',
+          runtimeRoot: 'C:\\OpenScience\\runtime'
+        })?.message
+      ).toMatch(/manage_packages/)
+    }
+  )
 
   it('rejects a shell write through an existing runtime symlink or junction', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'os-runtime-alias-'))

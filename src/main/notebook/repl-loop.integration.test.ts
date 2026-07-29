@@ -85,6 +85,13 @@ gate('repl_loop.js', () => {
           `cp['ex' + 'ec']('p' + 'ip in' + 'stall pandas')`
       )
       expect(result.error).toMatch(/manage_packages/)
+
+      const encoded = Buffer.from('pip install pandas', 'utf16le').toString('base64')
+      const encodedResult = await send(
+        `require('node:child_process').execFileSync('powershell.exe', ` +
+          `${JSON.stringify(['-NoProfile', '-ec', encoded])})`
+      )
+      expect(encodedResult.error).toMatch(/manage_packages/)
     } finally {
       child.kill()
     }
@@ -146,6 +153,43 @@ gate('repl_loop.js', () => {
     }
   }, 60_000)
 
+  it.each([
+    [
+      'shell',
+      '/bin/sh',
+      ['-c', 'cd "$OPEN_SCIENCE_RUNTIME_DIR"; touch relative-shell.txt'],
+      'relative-shell.txt'
+    ],
+    [
+      'PowerShell',
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-c',
+        'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; Set-Content relative-powershell.txt x'
+      ],
+      'relative-powershell.txt'
+    ]
+  ] as const)(
+    'blocks %s child-process writes after entering the managed runtime',
+    async (_name, command, args, relativeTarget) => {
+      const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-child-cwd-'))
+      const { child, send } = startLoop({ OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot })
+      try {
+        const result = await send(
+          `require('node:child_process').execFileSync(${JSON.stringify(command)}, ` +
+            `${JSON.stringify(args)})`
+        )
+        expect(result.error).toMatch(/manage_packages/)
+        expect(existsSync(join(runtimeRoot, relativeTarget))).toBe(false)
+      } finally {
+        child.kill()
+        await rm(runtimeRoot, { recursive: true, force: true })
+      }
+    },
+    60_000
+  )
+
   it('allows child process payloads that only read the runtime and write elsewhere', async () => {
     const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-child-read-'))
     const workspace = await mkdtemp(join(tmpdir(), 'os-repl-child-output-'))
@@ -175,6 +219,7 @@ gate('repl_loop.js', () => {
         const shellPayload =
           `cp "$OPEN_SCIENCE_RUNTIME_DIR/source.txt" ${JSON.stringify(shellCopy)}; ` +
           `printf '%s' "$OPEN_SCIENCE_RUNTIME_DIR" > /dev/null; ` +
+          `cd "$OPEN_SCIENCE_RUNTIME_DIR"; ` +
           `touch ${JSON.stringify(shellReport)}`
         const shellResult = await send(
           `require('node:child_process').execFileSync('/bin/sh', ['-c', ${JSON.stringify(shellPayload)}])`
@@ -198,6 +243,7 @@ gate('repl_loop.js', () => {
       const allowedPayload =
         `Copy-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\source.txt" ${JSON.stringify(join(workspace, 'report.txt'))}; ` +
         `Write-Output $env:OPEN_SCIENCE_RUNTIME_DIR; ` +
+        `Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; ` +
         `New-Item ${JSON.stringify(join(workspace, 'report-created.txt'))}`
       const allowed = await send(
         `try { require('node:child_process').execFileSync('powershell.exe', ` +
