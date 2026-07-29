@@ -11,6 +11,7 @@ import {
   SKILL_IMPORT_MCP_SERVER_NAME,
   requestSkillImportToolDefinition
 } from '../skills/mcp-server'
+import type { AgentFrameworkId } from '../agent-framework/types'
 import { REQUEST_SKILL_IMPORT_TOOL_NAME } from '../../shared/skill-import'
 
 type ContextUsageMcpOptions = {
@@ -32,7 +33,18 @@ type ToolDefinition = {
   annotations?: Record<string, unknown>
 }
 
+const modelFacingMcpToolName = (
+  frameworkId: AgentFrameworkId,
+  server: string,
+  tool: string
+): string => {
+  if (frameworkId === 'codex') return `mcp.${server}.${tool}`
+  if (frameworkId === 'opencode') return `${server}_${tool}`
+  return `mcp__${server.replace(/[^a-zA-Z0-9_]/g, '_')}__${tool}`
+}
+
 const serializeToolDefinitions = (
+  frameworkId: AgentFrameworkId,
   server: string,
   tools: ReadonlyArray<{ name: string; definition: ToolDefinition }>
 ): ContextUsageMcpSection => ({
@@ -42,7 +54,7 @@ const serializeToolDefinitions = (
   // guessed here. Compact JSON best matches the wire representation without counting whitespace.
   text: JSON.stringify(
     tools.map(({ name, definition }) => ({
-      name: `mcp__${server.replace(/[^a-zA-Z0-9_]/g, '_')}__${name}`,
+      name: modelFacingMcpToolName(frameworkId, server, name),
       title: definition.title,
       description: definition.description,
       inputSchema: z.toJSONSchema(z.object(definition.inputSchema), { target: 'draft-7' }),
@@ -54,11 +66,13 @@ const serializeToolDefinitions = (
 const sectionsByAvailability = new Map<string, readonly ContextUsageMcpSection[]>()
 
 const contextUsageMcpSections = (
+  frameworkId: AgentFrameworkId,
   options: ContextUsageMcpOptions
 ): readonly ContextUsageMcpSection[] => {
-  const cacheKey = [options.activity, options.artifacts, options.notebook, options.skillImport]
-    .map(Number)
-    .join('')
+  const cacheKey = [
+    frameworkId,
+    ...[options.activity, options.artifacts, options.notebook, options.skillImport].map(Number)
+  ].join(':')
   const cached = sectionsByAvailability.get(cacheKey)
   if (cached) return cached
 
@@ -66,7 +80,7 @@ const contextUsageMcpSections = (
 
   if (options.activity) {
     sections.push(
-      serializeToolDefinitions(ACTIVITY_GROUP_MCP_SERVER_NAME, [
+      serializeToolDefinitions(frameworkId, ACTIVITY_GROUP_MCP_SERVER_NAME, [
         { name: BEGIN_ACTIVITY_GROUP_TOOL_NAME, definition: beginActivityGroupToolDefinition }
       ])
     )
@@ -74,7 +88,7 @@ const contextUsageMcpSections = (
 
   if (options.artifacts) {
     sections.push(
-      serializeToolDefinitions(ARTIFACT_MCP_SERVER_NAME, [
+      serializeToolDefinitions(frameworkId, ARTIFACT_MCP_SERVER_NAME, [
         { name: 'write_artifact_file', definition: writeArtifactFileToolDefinition }
       ])
     )
@@ -83,6 +97,7 @@ const contextUsageMcpSections = (
   if (options.notebook) {
     sections.push(
       serializeToolDefinitions(
+        frameworkId,
         NOTEBOOK_MCP_SERVER_NAME,
         NOTEBOOK_RPC_TOOLS.map(({ name, title, description, inputSchema }) => ({
           name,
@@ -94,7 +109,7 @@ const contextUsageMcpSections = (
 
   if (options.skillImport) {
     sections.push(
-      serializeToolDefinitions(SKILL_IMPORT_MCP_SERVER_NAME, [
+      serializeToolDefinitions(frameworkId, SKILL_IMPORT_MCP_SERVER_NAME, [
         { name: REQUEST_SKILL_IMPORT_TOOL_NAME, definition: requestSkillImportToolDefinition }
       ])
     )

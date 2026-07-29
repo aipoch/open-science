@@ -3,8 +3,34 @@ import { describe, expect, it } from 'vitest'
 import { contextUsageMcpSections } from './context-usage-static-context'
 
 describe('contextUsageMcpSections', () => {
+  it('uses OpenCode MCP tool names in its serialized schema baseline', () => {
+    const sections = contextUsageMcpSections('opencode', {
+      activity: false,
+      artifacts: false,
+      notebook: true,
+      skillImport: false
+    })
+
+    const text = sections.map((section) => section.text).join('\n')
+    expect(text).toContain('open-science-notebook_notebook_execute')
+    expect(text).not.toContain('mcp__open_science_notebook__notebook_execute')
+  })
+
+  it('uses Codex MCP tool names in its serialized schema baseline', () => {
+    const sections = contextUsageMcpSections('codex', {
+      activity: false,
+      artifacts: false,
+      notebook: true,
+      skillImport: false
+    })
+
+    const text = sections.map((section) => section.text).join('\n')
+    expect(text).toContain('mcp.open-science-notebook.notebook_execute')
+    expect(text).not.toContain('mcp__open_science_notebook__notebook_execute')
+  })
+
   it('serializes only the app-owned MCP schemas enabled for the session', () => {
-    const sections = contextUsageMcpSections({
+    const sections = contextUsageMcpSections('claude-code', {
       activity: true,
       artifacts: true,
       notebook: true,
@@ -24,7 +50,7 @@ describe('contextUsageMcpSections', () => {
 
   it('returns no baseline when app MCP tooling is unavailable', () => {
     expect(
-      contextUsageMcpSections({
+      contextUsageMcpSections('claude-code', {
         activity: false,
         artifacts: false,
         notebook: false,
@@ -35,6 +61,8 @@ describe('contextUsageMcpSections', () => {
 
   it('caches each static availability combination', () => {
     const options = { activity: true, artifacts: false, notebook: true, skillImport: false }
-    expect(contextUsageMcpSections(options)).toBe(contextUsageMcpSections(options))
+    expect(contextUsageMcpSections('claude-code', options)).toBe(
+      contextUsageMcpSections('claude-code', options)
+    )
   })
 })

@@ -4990,7 +4990,7 @@ class AcpRuntime {
       systemPromptAppends: this.getSystemPromptAppends(),
       sessionOptions: this.pendingSessionOptions
     })
-    const persistentSections = contextUsageMcpSections({
+    const persistentSections = contextUsageMcpSections(this.framework.id, {
       activity: Boolean(this.activityGroupOptions && this.framework.acceptsStdioMcp),
       artifacts: this.artifactToolingAvailable(),
       notebook: this.notebookToolingAvailable(),
