@@ -1,3 +1,8 @@
+/* Hallmark · component: context-usage popover · genre: modern-minimal · theme: app tokens
+ * states: default · hover · focus · active · disabled · loading; error/success not applicable
+ * contrast: inherited from semantic app tokens
+ * pre-emit critique: P5 H5 E4 S5 R5 V4
+ */
 // Composer context-usage indicator: a compact "% of context window" pill with a hover breakdown,
 // mirroring Claude Code's /context. The numerator (tokens in context) comes from the ACP usage_update
 // the runtime records per session; the denominator is already bound to the same agent-context generation
@@ -33,7 +38,7 @@ const CATEGORY_PRESENTATION: Record<AcpContextUsageCategoryKey, { label: string;
   }
 
 const TOKENIZER_LABELS = {
-  anthropic: 'Anthropic tokenizer',
+  anthropic: 'Anthropic',
   o200k_base: 'o200k_base',
   cl100k_base: 'cl100k_base'
 } as const
@@ -123,7 +128,7 @@ const ComposerContextUsage = ({
       aria-disabled={compactUnavailable ? true : undefined}
       disabled={compacting || (compactUnavailable && !compactHint)}
       onClick={compacting || compactUnavailable ? undefined : onCompact}
-      className={`inline-flex h-6 w-full items-center justify-center gap-1 rounded bg-bg-000 px-2 text-[11px] text-text-000 transition-colors hover:bg-bg-100 disabled:cursor-not-allowed disabled:opacity-50 ${compactHint ? 'cursor-not-allowed opacity-50 hover:bg-bg-000' : ''}`}
+      className={`inline-flex h-6 w-full items-center justify-center gap-1 rounded-lg bg-bg-200 px-2 text-[11px] text-text-000 outline-none transition-colors duration-150 motion-reduce:transition-none hover:bg-bg-300 focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-bg-400 disabled:cursor-not-allowed disabled:opacity-50 ${compactHint ? 'cursor-not-allowed opacity-50 hover:bg-bg-200' : ''}`}
     >
       <Minimize2 className="size-3" aria-hidden="true" />
       {compacting ? 'Compacting…' : 'Compact'}
@@ -136,7 +141,7 @@ const ComposerContextUsage = ({
         <button
           ref={triggerRef}
           type="button"
-          className="flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-text-000 transition-colors duration-200 ease-out hover:bg-bg-200"
+          className="flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-text-000 outline-none transition-colors duration-150 motion-reduce:transition-none hover:bg-bg-200 focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-bg-300"
           aria-label={`Context used: ${label}`}
           aria-haspopup="dialog"
           aria-expanded={open}
@@ -167,7 +172,9 @@ const ComposerContextUsage = ({
         ref={contentRef}
         id={contentId}
         side="top"
-        className="w-80 max-w-[calc(100vw-2rem)]"
+        align="end"
+        sideOffset={8}
+        className="w-84 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-menu"
         onPointerEnter={keepOpen}
         onPointerLeave={scheduleClose}
         onFocusCapture={keepOpen}
@@ -176,14 +183,17 @@ const ComposerContextUsage = ({
           if (openedFromPointerRef.current) event.preventDefault()
         }}
       >
-        <div className="space-y-3 text-[12px]">
+        <div className="space-y-2.5 text-[12px]">
           <div>
-            <div className="font-medium">Context window</div>
-            <div className="mt-1 flex items-baseline gap-2">
-              <span className="text-xl font-semibold tabular-nums">
+            <div className="text-[13px] font-medium">Context window</div>
+            <div
+              data-slot="context-usage-summary"
+              className="mt-1 flex min-w-0 items-baseline gap-2 whitespace-nowrap"
+            >
+              <span className="shrink-0 text-xl font-semibold tabular-nums">
                 {usagePercent !== undefined ? `${usagePercent.toFixed(1)}%` : formatTokens(used)}
               </span>
-              <span className="text-muted-foreground tabular-nums">
+              <span className="min-w-0 truncate text-muted-foreground tabular-nums">
                 Agent used {formatDetailedTokens(used)} / {formatDetailedTokens(size)}
               </span>
             </div>
@@ -208,11 +218,14 @@ const ComposerContextUsage = ({
                   )
                 })}
               </div>
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 {categories.map((category) => {
                   const presentation = CATEGORY_PRESENTATION[category.key]
                   return (
-                    <div key={category.key} className="flex items-center justify-between gap-3">
+                    <div
+                      key={category.key}
+                      className="flex items-center justify-between gap-3 whitespace-nowrap"
+                    >
                       <span className="flex min-w-0 items-center gap-2">
                         <span className={`${presentation.color} size-2 shrink-0 rounded-full`} />
                         <span className="truncate">{presentation.label}</span>
@@ -225,22 +238,25 @@ const ComposerContextUsage = ({
                   )
                 })}
               </div>
-              <div className="border-t border-border pt-2 text-[11px] leading-relaxed text-muted-foreground">
-                <div>
-                  Local estimate {formatDetailedTokens(breakdown.estimatedTokens)} · Agent{' '}
+              <div
+                data-slot="context-usage-diagnostics"
+                className="space-y-0.5 border-t border-border pt-2 text-[11px] leading-4 text-muted-foreground"
+                title="Agent total is authoritative; category values are local estimates."
+              >
+                <div className="whitespace-nowrap tabular-nums">
+                  Local {formatDetailedTokens(breakdown.estimatedTokens)} · Agent{' '}
                   {formatDetailedTokens(used)} · Δ {breakdown.difference > 0 ? '+' : ''}
                   {formatDetailedTokens(breakdown.difference)}
                 </div>
-                <div>
+                <div className="truncate whitespace-nowrap">
                   {breakdown.status === 'preflight' ? 'Preflight' : 'Reconciled'}
                   {breakdown.tokenizer ? ` · ${TOKENIZER_LABELS[breakdown.tokenizer]}` : ''}
                   {breakdown.model ? ` · ${breakdown.model}` : ''}
                 </div>
-                <div>Agent total is authoritative; category values are local estimates.</div>
               </div>
             </>
           ) : (
-            <div>
+            <div className="whitespace-nowrap text-muted-foreground tabular-nums">
               {formatTokens(used)} / {formatTokens(size)} tokens
               {percent !== undefined ? ` (${percent}%)` : ''}
             </div>

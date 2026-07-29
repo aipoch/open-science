@@ -100,9 +100,24 @@ describe('ComposerContextUsage', () => {
     expect(document.body.textContent).toContain('Messages')
     expect(document.body.textContent).toContain('Skills')
     expect(document.body.textContent).toContain('Agent/framework overhead')
-    expect(document.body.textContent).toContain('Local estimate 29.4k · Agent 29.5k · Δ +95')
+    expect(document.body.textContent).toContain('Local 29.4k · Agent 29.5k · Δ +95')
     expect(document.body.textContent).toContain('Reconciled · o200k_base · gpt-5.6-sol')
-    expect(document.body.textContent).toContain('Agent total is authoritative')
+    expect(document.body.textContent).not.toContain(
+      'Agent total is authoritative; category values are local estimates.'
+    )
+
+    const popoverId = trigger?.getAttribute('aria-controls')
+    const popover = popoverId ? document.getElementById(popoverId) : null
+    expect(popover?.className).toContain('rounded-lg')
+    expect(popover?.className).toContain('border-border')
+    expect(popover?.className).toContain('bg-popover')
+    expect(popover?.className).toContain('shadow-menu')
+    expect(popover?.querySelector('[data-slot="context-usage-summary"]')?.className).toContain(
+      'whitespace-nowrap'
+    )
+    expect(
+      popover?.querySelector('[data-slot="context-usage-diagnostics"]')?.textContent
+    ).toContain('Reconciled · o200k_base · gpt-5.6-sol')
     expect(
       document.body.querySelector('[aria-label^="Estimated category occupancy"]')
     ).not.toBeNull()
