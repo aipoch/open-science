@@ -2332,10 +2332,10 @@ class NotebookRuntimeService {
     return this.state(request)
   }
 
-  // Reads installed package metadata from the exact runtime bound to this session. The shared env slot
-  // prevents the inventory scan from overlapping a package mutation, while still allowing ordinary
-  // notebook runs to proceed. This is deliberately separate from managePackages: it never invokes an
-  // installer and therefore never requires a package-install authorization for an external runtime.
+  // Reads installed package metadata from the app-managed runtime bound to this session. The shared
+  // env slot prevents the inventory scan from overlapping a package mutation, while still allowing
+  // ordinary notebook runs to proceed. External runtimes are rejected because inventory capture must
+  // execute their interpreter; notebookExecute provides the explicit execution approval for that case.
   async inspectPackages(request: InspectPackagesRequest): Promise<InspectPackagesResult> {
     await this.ensureRecovered()
     const session = await this.ensureSession(request)
@@ -2343,6 +2343,13 @@ class NotebookRuntimeService {
     const envName = this.resolveRunEnv(session, request.language)
     const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
     const isExternal = binding?.source === 'external'
+    if (isExternal) {
+      throw new Error(
+        'EXTERNAL_RUNTIME_INSPECTION_REQUIRES_EXECUTION: inspect_packages cannot run a bound ' +
+          'external interpreter under package-metadata permission. Use notebook_execute in this ' +
+          'runtime to query package metadata so interpreter execution receives notebook approval.'
+      )
+    }
     const prefixBlocked =
       !isExternal && this.isPrefixRecoveryBlocked(envPrefix(runtimeRoot, envName))
 

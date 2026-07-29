@@ -39,6 +39,7 @@ describe('env-management bundled skill', () => {
     const body = await new SkillRegistry(skillsRoot).body('env-management')
 
     expect(body).toContain('inspect_packages')
+    expect(body).toMatch(/external runtime.*notebook_execute/)
     expect(body).toMatch(/version/i)
     expect(body).toMatch(/do not.*preflight|not.*preflight/i)
     expect(body).toMatch(/missing.*manage_packages/i)

@@ -389,6 +389,7 @@ describe('inspect_packages tool', () => {
     expect(tool).toBeDefined()
     expect(tool?.method).toBe('inspectPackages')
     expect(tool?.description).toBe(INSPECT_PACKAGES_DOC)
+    expect(tool?.description).toMatch(/external runtime.*notebook_execute/)
     expect(Object.keys(tool?.inputSchema ?? {})).toEqual(['language', 'packages'])
 
     const schema = z.object(tool?.inputSchema ?? {})

@@ -2305,6 +2305,69 @@ describe('notebook runtime service', () => {
       )
       expect(installPackagesImpl).not.toHaveBeenCalled()
     })
+
+    it('refuses package inspection for an external runtime so interpreter execution uses notebook approval', async () => {
+      const root = await createStorageRoot()
+      const runtimeId = '/opt/external-python/bin/python'
+      const inspectPackages = vi.fn().mockResolvedValue({
+        inventory: { source: 'full-scan', validation: 'full-scan' },
+        packages: []
+      })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        discoverRuntimes: async (language) =>
+          language === 'python'
+            ? [
+                {
+                  language: 'python',
+                  provenance: 'user-own',
+                  envId: runtimeId,
+                  interpreterPath: runtimeId,
+                  label: 'External Python',
+                  version: '3.13.2',
+                  runnable: true
+                }
+              ]
+            : [],
+        getRuntimeEnablement: async () => ({
+          enabled: { [runtimeId]: true },
+          installAuthorized: {}
+        }),
+        environmentStateTracker: {
+          prepareRun: vi.fn(),
+          captureCompletedRun: vi.fn(),
+          inspectPackages,
+          markPackageMutationDirty: vi.fn(),
+          refreshAfterPackageMutation: vi.fn()
+        },
+        executorFactory: () => ({
+          execute: async () => {
+            throw new Error('not used')
+          },
+          shutdown: async () => ({ reaped: true })
+        })
+      })
+      await service.bindRuntime({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        language: 'python',
+        runtimeId
+      })
+
+      await expect(
+        service.inspectPackages({
+          language: 'python',
+          packages: ['numpy'],
+          projectName: 'default-project',
+          sessionId: 'session-1',
+          workspaceCwd: root
+        })
+      ).rejects.toThrow(/EXTERNAL_RUNTIME_INSPECTION_REQUIRES_EXECUTION.*notebook_execute/)
+      expect(inspectPackages).not.toHaveBeenCalled()
+    })
   })
 
   describe('managePackages', () => {

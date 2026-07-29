@@ -81,7 +81,8 @@ describe('describePermissionRequest', () => {
     ).toMatchObject({
       actionTitle: 'View notebook packages?',
       categoryLabel: 'Notebook control',
-      description: 'Reads installed package names and versions without changing the environment.'
+      description:
+        'Reads installed package names and versions from the bound app-managed runtime without changing it.'
     })
   })
 
