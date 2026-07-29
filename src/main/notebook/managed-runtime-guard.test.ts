@@ -11,8 +11,11 @@ describe('detectManagedRuntimeMutation', () => {
     ['bash', `echo "pip install pandas"`],
     ['bash', '# pip install pandas'],
     ['python', `print("pip install pandas"); subprocess.run(["echo", "ok"])`],
+    ['python', `subprocess.run(["echo", 'python -c "pip install pandas"'])`],
     ['r', `cat("install.packages('dplyr')"); system("echo ok")`],
+    ['r', `system2("echo", 'python -c "pip install pandas"')`],
     ['repl', `console.log("pip install pandas"); execFile("echo", ["ok"])`],
+    ['repl', `execFile("echo", ['python -c "pip install pandas"'])`],
     ['repl', '// pip install pandas'],
     ['repl', '/* pip install pandas */'],
     ['repl', 'console.log(`pip install pandas`)'],
@@ -80,7 +83,12 @@ describe('detectManagedRuntimeMutation', () => {
     ['bash', 'target="$OPEN_SCIENCE_RUNTIME_DIR/x"; touch "$target"'],
     ['bash', 'root=$(printf %s /tmp/open-science/runtime); touch "$root/conda-meta/pwn.json"'],
     ['bash', 'cd "$OPEN_SCIENCE_RUNTIME_DIR" && touch conda-meta/pwn.json'],
+    ['bash', `cd "$OPEN_SCIENCE_RUNTIME_DIR"; sh -c 'touch conda-meta/inherited-cwd.json'`],
     ['powershell', 'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; New-Item conda-meta\\pwn.json'],
+    [
+      'powershell',
+      `Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; powershell -Command 'New-Item conda-meta\\inherited-cwd.json'`
+    ],
     ['powershell', 'Remove-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\conda-meta\\history"'],
     ['powershell', "$target = Join-Path $env:OPEN_SCIENCE_RUNTIME_DIR 'pwn.txt'; New-Item $target"],
     [

@@ -513,8 +513,13 @@ const commandName = (word: string | undefined): string =>
     .at(-1)
     ?.toLowerCase() ?? ''
 
-const shellSequenceWritesRuntime = (source: string, runtimeRoot: string): boolean => {
-  let insideRuntime = false
+const shellSequenceWritesRuntime = (
+  source: string,
+  runtimeRoot: string,
+  inheritedRuntimeCwd = false,
+  depth = 0
+): boolean => {
+  let insideRuntime = inheritedRuntimeCwd
   for (const command of shellCommandSegments(source)) {
     const words = shellWords(command)
     const executable = commandName(words[0])
@@ -528,6 +533,21 @@ const shellSequenceWritesRuntime = (source: string, runtimeRoot: string): boolea
     const targets = shellRuntimeWriteTargets(command)
     if (targets.some((target) => referencesManagedRuntimePath(target, runtimeRoot))) return true
     if (insideRuntime && targets.length > 0) return true
+    if (insideRuntime && depth < 8) {
+      const payload = invocationPayload(words)
+      if (
+        payload?.surface === 'bash' &&
+        shellSequenceWritesRuntime(payload.source, runtimeRoot, true, depth + 1)
+      ) {
+        return true
+      }
+      if (
+        payload?.surface === 'powershell' &&
+        powerShellSequenceWritesRuntime(payload.source, runtimeRoot, true, depth + 1)
+      ) {
+        return true
+      }
+    }
   }
   return false
 }
@@ -586,8 +606,13 @@ const powerShellDotNetWritesRuntime = (source: string, runtimeRoot: string): boo
   return false
 }
 
-const powerShellSequenceWritesRuntime = (source: string, runtimeRoot: string): boolean => {
-  let insideRuntime = false
+const powerShellSequenceWritesRuntime = (
+  source: string,
+  runtimeRoot: string,
+  inheritedRuntimeCwd = false,
+  depth = 0
+): boolean => {
+  let insideRuntime = inheritedRuntimeCwd
   for (const command of shellCommandSegments(source)) {
     const words = shellWords(command)
     const executable = commandName(words[0])
@@ -605,6 +630,21 @@ const powerShellSequenceWritesRuntime = (source: string, runtimeRoot: string): b
     const targets = powerShellRuntimeWriteTargets(command)
     if (targets.some((target) => referencesManagedRuntimePath(target, runtimeRoot))) return true
     if (insideRuntime && targets.length > 0) return true
+    if (insideRuntime && depth < 8) {
+      const payload = invocationPayload(words)
+      if (
+        payload?.surface === 'bash' &&
+        shellSequenceWritesRuntime(payload.source, runtimeRoot, true, depth + 1)
+      ) {
+        return true
+      }
+      if (
+        payload?.surface === 'powershell' &&
+        powerShellSequenceWritesRuntime(payload.source, runtimeRoot, true, depth + 1)
+      ) {
+        return true
+      }
+    }
   }
   return false
 }
@@ -685,6 +725,21 @@ const quotedLiteralValues = (source: string): string[] => {
   return values
 }
 
+const bridgeUsesShellCommandString = (call: string, surface: NotebookExecutionSurface): boolean => {
+  if (surface === 'python') {
+    if (/\b(?:os\.system|os\.popen)\s*\(/iu.test(call)) return true
+    if (/\bsubprocess\.(?:run|call|Popen|check_call|check_output)\s*\(/u.test(call)) {
+      const openIndex = call.indexOf('(')
+      const firstArgument = openIndex >= 0 ? callArguments(call, openIndex)[0] : undefined
+      return firstArgument !== undefined && !/^\s*[[(]/u.test(firstArgument)
+    }
+    return false
+  }
+  if (surface === 'r') return /\bsystem\s*\(/u.test(call)
+  if (surface === 'repl') return /\b(?:exec|execSync)\s*\(/u.test(call)
+  return false
+}
+
 const executionPayloads = (
   source: string,
   surface: NotebookExecutionSurface
@@ -705,11 +760,33 @@ const executionPayloads = (
       /\bsys\s*\.\s*executable\b/u.test(call) ? ['python', ...values] : values
     )
     if (argvPayload) return [argvPayload]
+    if (!bridgeUsesShellCommandString(call, surface)) return []
     return values
+      .slice(0, 1)
       .map((value) => invocationPayload(shellWords(value)))
       .filter((payload): payload is ExecutionPayload => payload !== undefined)
   })
 }
+
+const packageExecutionBridgeCandidates = (
+  source: string,
+  surface: NotebookExecutionSurface,
+  maskedSource: string
+): string[] =>
+  executionBridgeCandidates(source, surface, maskedSource).flatMap((call) => {
+    if (/\bpip(?:\._internal(?:\.cli\.main)?)?\.main\s*\(/iu.test(call)) return [call]
+    const values = quotedLiteralValues(call)
+    const argvValues = /\bsys\s*\.\s*executable\b/u.test(call) ? ['python', ...values] : values
+    const executable = commandName(argvValues[0])
+    if (
+      /^(?:micromamba|mamba|conda|pip|pip3|pipx|uv|poetry|python|python3|py|r|rscript|brew|apt|apt-get|yum|dnf|pacman|zypper|apk|choco|winget)(?:\.exe)?$/u.test(
+        executable
+      )
+    ) {
+      return [argvValues.join(' ')]
+    }
+    return bridgeUsesShellCommandString(call, surface) ? values.slice(0, 1) : []
+  })
 
 const shellMatchIsExecutable = (source: string, matchIndex: number): boolean => {
   const boundary = Math.max(
@@ -743,7 +820,7 @@ const findPackageMutationRule = (
     executableSource,
     ...(surface === 'bash' ? [resolveShellLiteralAssignments(executableSource)] : []),
     ...(surface === 'powershell' ? [resolvePowerShellLiteralAssignments(executableSource)] : []),
-    ...executionBridgeCandidates(source, surface, executableSource)
+    ...packageExecutionBridgeCandidates(source, surface, executableSource)
   ]
 
   for (const candidate of candidates) {
