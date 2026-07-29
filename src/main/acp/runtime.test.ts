@@ -6522,7 +6522,8 @@ describe('ACP runtime session management', () => {
         executablePath: '/bin/claude-agent-acp',
         env: {},
         contextUsageModel: 'deepseek-v4-flash'
-      })
+      }),
+      activityGroups: { mcpEntryPath: '/app/out/main/index.js' }
     })
 
     await runtime.createSession({ cwd: '/workspace' })
@@ -6533,7 +6534,8 @@ describe('ACP runtime session management', () => {
 
     expect(runtime.getSnapshot().contextUsageBySession.s1.breakdown).toMatchObject({
       tokenizer: 'cl100k_base',
-      model: 'deepseek-v4-flash'
+      model: 'deepseek-v4-flash',
+      categories: expect.arrayContaining([expect.objectContaining({ key: 'mcp', estimated: true })])
     })
   })
 

@@ -31,6 +31,11 @@ type SessionEstimateInput = {
   frameworkId: AgentFrameworkId
   model?: string
   persistentSystemPrompt?: readonly string[]
+  persistentSections?: ReadonlyArray<{
+    sectionId: string
+    category: EstimatedCategoryKey
+    text: string
+  }>
 }
 
 type SessionEstimateCheckpoint = {
@@ -301,6 +306,9 @@ class ContextUsageTracker {
       'system',
       (input.persistentSystemPrompt ?? []).join('\n\n')
     )
+    for (const section of input.persistentSections ?? []) {
+      this.replaceText(sessionId, `persistent:${section.sectionId}`, section.category, section.text)
+    }
   }
 
   resetSession(sessionId: string, input: SessionEstimateInput): void {

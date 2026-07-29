@@ -123,6 +123,13 @@ const writeArtifactFileToolSchema = {
     )
 }
 
+const writeArtifactFileToolDefinition = {
+  title: 'Write artifact file',
+  description:
+    'Attach a file this turn generated as a downloadable artifact (chart, image, report, CSV, archive, …). The file must ALREADY EXIST on disk before you call this. Simplest use inside a notebook: save with a relative name (e.g. plt.savefig("plot.png") / R png("plot.png")) then call this with just `filename: "plot.png"` — the app resolves it against the notebook session data dir (the kernel cwd) and copies it. You may also pass an explicit `source`: {kind:"localPath", path} where path is a bare filename, a path relative to the notebook data dir or session workspace, the session-relative `data/plot.png` returned by Notebook `workingFiles`, or an absolute path to an already-saved file; or {kind:"inline", content} for small in-memory text. The app assigns session/message ownership; do not call this before the file is written.',
+  inputSchema: writeArtifactFileToolSchema
+}
+
 // Narrows parsed JSON before reading run context fields from the handoff file.
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -470,12 +477,7 @@ const createArtifactMcpServer = (
 
   server.registerTool(
     'write_artifact_file',
-    {
-      title: 'Write artifact file',
-      description:
-        'Attach a file this turn generated as a downloadable artifact (chart, image, report, CSV, archive, …). The file must ALREADY EXIST on disk before you call this. Simplest use inside a notebook: save with a relative name (e.g. plt.savefig("plot.png") / R png("plot.png")) then call this with just `filename: "plot.png"` — the app resolves it against the notebook session data dir (the kernel cwd) and copies it. You may also pass an explicit `source`: {kind:"localPath", path} where path is a bare filename, a path relative to the notebook data dir or session workspace, the session-relative `data/plot.png` returned by Notebook `workingFiles`, or an absolute path to an already-saved file; or {kind:"inline", content} for small in-memory text. The app assigns session/message ownership; do not call this before the file is written.',
-      inputSchema: writeArtifactFileToolSchema
-    },
+    writeArtifactFileToolDefinition,
     async (input, extra) => {
       // Echo the stored artifact metadata so the model can mention filenames without inventing paths.
       const artifact = await writeArtifactFileForCurrentRun(repository, environment, input, {
@@ -572,6 +574,7 @@ export {
   runArtifactMcpServer,
   callArtifactRpc,
   toWriteArtifactToolResult,
+  writeArtifactFileToolDefinition,
   writeArtifactFileToolSchema,
   writeArtifactFileForCurrentRun
 }

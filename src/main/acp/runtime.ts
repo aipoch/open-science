@@ -122,7 +122,8 @@ import type { ResponsesBridgeSkillCandidate } from '../settings/responses-bridge
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
 import { CodexSkillActivityProjector } from './codex-skill-activity'
-import { ContextUsageTracker } from './context-usage-tracker'
+import { ContextUsageTracker, type SessionEstimateInput } from './context-usage-tracker'
+import { contextUsageMcpSections } from './context-usage-static-context'
 import {
   createManagedFileReferenceResolver,
   type FileReferenceResolver
@@ -2390,6 +2391,7 @@ class AcpRuntime {
       framework: backend.framework.id,
       backendId: backend.backendId ?? '(unspecified)',
       sessionModel: backend.sessionModel ?? '(framework default)',
+      contextUsageModel: backend.contextUsageModel ?? '(framework fallback)',
       sessionEffort: backend.sessionEffort ?? '(agent default)',
       contextWindow: backend.contextWindow ?? '(adapter reported)',
       args: backend.args ?? [],
@@ -4883,16 +4885,19 @@ class AcpRuntime {
     this.emitState()
   }
 
-  private contextUsageEstimateInput(sessionId?: string): {
-    frameworkId: AgentFrameworkId
-    model?: string
-    persistentSystemPrompt?: readonly string[]
-  } {
+  private contextUsageEstimateInput(sessionId?: string): SessionEstimateInput {
     const activeSession = sessionId ? this.sessions.get(sessionId) : undefined
     const appliedModel = sessionId
       ? (this.appliedSessionModels.get(sessionId) ??
         (activeSession ? this.appliedSessionModels.get(activeSession.sessionId) : undefined))
       : undefined
+    const persistentSections = contextUsageMcpSections({
+      activity: Boolean(this.activityGroupOptions && this.framework.acceptsStdioMcp),
+      artifacts: this.artifactToolingAvailable(),
+      notebook: this.notebookToolingAvailable(),
+      skillImport: this.skillImportToolingAvailable()
+    }).map(({ sectionId, text }) => ({ sectionId, category: 'mcp' as const, text }))
+
     return {
       frameworkId: this.framework.id,
       ...(this.selectedContextUsageModel || appliedModel
@@ -4900,7 +4905,8 @@ class AcpRuntime {
         : {}),
       ...(this.framework.id === 'claude-code'
         ? { persistentSystemPrompt: this.getSystemPromptAppends() }
-        : {})
+        : {}),
+      ...(persistentSections.length > 0 ? { persistentSections } : {})
     }
   }
 

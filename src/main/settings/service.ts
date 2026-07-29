@@ -3607,7 +3607,8 @@ class SettingsService {
         env: envOverrides,
         sessionOptions,
         sessionEffort,
-        contextWindow
+        contextWindow,
+        contextUsageModel: effectiveModel
       }
     }
 

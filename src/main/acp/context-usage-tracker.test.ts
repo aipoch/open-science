@@ -52,6 +52,28 @@ describe('ContextUsageTracker', () => {
     })
   })
 
+  it('counts persistent app-owned tool schemas in their explicit category', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', {
+      frameworkId: 'claude-code',
+      model: 'deepseek-v4-flash',
+      persistentSections: [
+        {
+          sectionId: 'mcp-schema:open-science-notebook',
+          category: 'mcp',
+          text: 'notebook execute schema'
+        }
+      ]
+    })
+
+    expect(tracker.compare('s1', 5, 'preflight')).toMatchObject({
+      categories: [
+        { key: 'mcp', tokens: 3, estimated: true },
+        { key: 'other', tokens: 2, estimated: false }
+      ]
+    })
+  })
+
   it('reports a negative comparison without hiding it through proportional scaling', () => {
     const tracker = new ContextUsageTracker(wordCounter)
     tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
