@@ -634,7 +634,7 @@ const FileListRow = ({
   const relativeTimeLabel = formatRelativeFileTime(file.mtimeMs ?? file.sortAtMs)
 
   return (
-    <div className="group relative flex h-9 min-w-0 items-center rounded-md text-text-000 transition-colors duration-150 hover:bg-accent hover:text-accent-foreground focus-within:ring-3 focus-within:ring-ring/50 focus-within:ring-inset motion-reduce:transition-none">
+    <div className="group relative flex h-9 min-w-0 items-center rounded-md text-text-000 transition-colors duration-150 hover:bg-bg-200 focus-within:ring-3 focus-within:ring-ring/50 focus-within:ring-inset motion-reduce:transition-none">
       <button
         ref={setRowElement}
         type="button"
@@ -1473,7 +1473,7 @@ const ProjectFilesViewContent = ({
                 <ToggleGroup.Item
                   value="grid"
                   aria-label="Grid view"
-                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-accent aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-accent"
+                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
                 >
                   <LayoutGrid className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
                 </ToggleGroup.Item>
@@ -1485,7 +1485,7 @@ const ProjectFilesViewContent = ({
                 <ToggleGroup.Item
                   value="list"
                   aria-label="List view"
-                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-accent aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-accent"
+                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
                 >
                   <List className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
                 </ToggleGroup.Item>

@@ -612,11 +612,12 @@ describe('ProjectFilesView', () => {
     expect(search?.className).not.toContain('focus-visible:ring-0')
     expect(gridControl?.getAttribute('aria-checked')).toBe('true')
     expect(listControl?.getAttribute('aria-checked')).toBe('false')
-    expect(gridControl?.className).toContain('aria-checked:bg-accent')
-    expect(gridControl?.className).toContain('aria-checked:hover:bg-accent')
+    expect(gridControl?.className).toContain('hover:bg-muted')
+    expect(gridControl?.className).toContain('aria-checked:bg-bg-400')
+    expect(gridControl?.className).toContain('aria-checked:hover:bg-bg-400')
     expect(gridControl?.className).toContain('aria-checked:shadow-sm')
-    expect(listControl?.className).toContain('aria-checked:bg-accent')
-    expect(gridControl?.className).not.toContain('aria-checked:bg-bg-400')
+    expect(listControl?.className).toContain('aria-checked:bg-bg-400')
+    expect(gridControl?.className).not.toContain('aria-checked:bg-accent')
 
     await act(async () => gridControl?.focus())
     expect(document.body.textContent).toContain('Grid view')
@@ -631,9 +632,9 @@ describe('ProjectFilesView', () => {
     )?.parentElement
     expect(listRow?.className).toContain('h-9')
     expect(listRow?.className).toContain('rounded-md')
-    expect(listRow?.className).toContain('hover:bg-accent')
-    expect(listRow?.className).toContain('hover:text-accent-foreground')
-    expect(listRow?.className).not.toContain('hover:bg-bg-200')
+    expect(listRow?.className).toContain('hover:bg-bg-200')
+    expect(listRow?.className).not.toContain('hover:bg-accent')
+    expect(listRow?.className).not.toContain('hover:text-accent-foreground')
     const listRowButton = listRow?.querySelector<HTMLButtonElement>(
       '[aria-label="Preview generated file result.txt"]'
     )
