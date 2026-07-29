@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -23,6 +23,26 @@ describe('verifyExecutable', () => {
     await expect(verifyExecutable('/no/such/binary-xyz')).rejects.toThrow()
   })
 
+  it('rejects an executable R whose home and libraries still resolve to a previous prefix', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'os-relocated-r-'))
+    const prefix = join(dir, 'runtime', 'envs', 'default-r')
+    const bin = join(prefix, 'bin', 'R')
+    const oldPrefix = join(dir, 'old-runtime', 'envs', 'default-r')
+    mkdirSync(join(prefix, 'bin'), { recursive: true })
+    writeFileSync(
+      bin,
+      `#!${process.execPath}\n` +
+        `process.stdout.write([` +
+        `'OPEN_SCIENCE_R_HOME=${join(oldPrefix, 'lib', 'R')}',` +
+        `'OPEN_SCIENCE_R_BASE_LIBRARY=${join(oldPrefix, 'lib', 'R', 'library')}',` +
+        `'OPEN_SCIENCE_R_LIBRARY=${join(oldPrefix, 'lib', 'R', 'library')}'` +
+        `].join('\\n') + '\\n')\n`
+    )
+    chmodSync(bin, 0o755)
+
+    await expect(verifyExecutable(bin, { prefix })).rejects.toThrow(/outside.*prefix|relocat/i)
+  })
+
   it.skipIf(process.platform === 'win32')(
     'passes the activated Windows conda PATH to the interpreter process',
     async () => {
@@ -32,7 +52,13 @@ describe('verifyExecutable', () => {
       const expectedPath = condaActivatedPath(prefix, 'C:\\Windows', 'win32')
       writeFileSync(
         bin,
-        `#!${process.execPath}\nprocess.exit(process.env.PATH === process.env.EXPECTED_PATH ? 0 : 19)\n`
+        `#!${process.execPath}\n` +
+          `if (process.env.PATH !== process.env.EXPECTED_PATH) process.exit(19)\n` +
+          `process.stdout.write([` +
+          `'OPEN_SCIENCE_R_HOME=C:\\\\runtime\\\\envs\\\\default-r\\\\lib\\\\R',` +
+          `'OPEN_SCIENCE_R_BASE_LIBRARY=C:\\\\runtime\\\\envs\\\\default-r\\\\lib\\\\R\\\\library',` +
+          `'OPEN_SCIENCE_R_LIBRARY=C:\\\\runtime\\\\envs\\\\default-r\\\\lib\\\\R\\\\library'` +
+          `].join('\\n') + '\\n')\n`
       )
       chmodSync(bin, 0o755)
 

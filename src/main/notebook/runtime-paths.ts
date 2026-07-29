@@ -344,10 +344,11 @@ const isFile = (path: string): boolean => {
 
 // Registry of runtimes flagged "repair-required" by crash recovery: an env whose package install was
 // interrupted (killed mid-conda/pip) may be half-applied, so it must NOT be silently trusted. Keyed by
-// runtimeId (envId = the interpreter's real path or a managed env prefix), it is consulted when a
-// binding resolves so the runtime surfaces as unavailable/repair-required, and cleared once a fresh
-// install of that runtime completes (re-installing IS the repair). A single JSON file under the runtime
-// root covers managed AND external runtimes without writing into a user's own environment.
+// canonical mutation target: managed runtimes use their conda env name (so bound and unbound sessions
+// share one key for the same prefix), while external runtimes use their discovered runtimeId. It is
+// consulted when a binding resolves so the runtime surfaces as unavailable/repair-required, and cleared
+// once a fresh install of that runtime completes (re-installing IS the repair). A single JSON file under
+// the runtime root covers managed AND external runtimes without writing into a user's own environment.
 export const repairRegistryPath = (root: string): string => join(root, '.repair-required.json')
 
 export const readRepairRequired = (root: string): string[] => {

@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { spawn as nodeSpawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -74,6 +74,9 @@ export type InstallResult = {
   // Absolute env prefix the packages were installed into (<dataRoot>/runtime/envs/<env>), so the
   // UI/agent can see the concrete, env-scoped install location. Set on every real install outcome.
   prefix?: string
+  // A protected interpreter package changed despite the approved plan. The caller must quarantine
+  // this runtime and require Repair before another kernel can execute from it.
+  repairRequired?: boolean
   error?: string
 }
 
@@ -107,6 +110,12 @@ export type InstallDeps = {
   micromambaEnv?: MicromambaSpawnEnvDeps
   // Injected for tests to check a named env's interpreter without touching real disk.
   pathExists?: (path: string) => boolean
+  // Reads one installed conda package identity from <prefix>/conda-meta. The managed R install path
+  // uses this to pin r-base's version+build and compare the complete identity after the transaction.
+  readCondaPackageIdentity?: (
+    prefix: string,
+    packageName: string
+  ) => CondaPackageIdentity | undefined
   // Set for an EXTERNAL (BYO) runtime: install with THIS interpreter's own pip (`<command> [args] -m
   // pip install …`) instead of the app-managed prefix. The bundled micromamba never touches a foreign
   // environment. Absent -> managed install into the app prefix (today's behavior).
@@ -154,6 +163,14 @@ const rCondaNames = (packages: string[]): string[] =>
     pkg.startsWith('r-') || pkg.startsWith('bioconductor-') ? pkg : `r-${pkg}`
   )
 
+// Extracts the canonical name portion of a conda MatchSpec. R package requests may carry an exact
+// version/build in named environments; protection decisions must not compare the whole spec string or
+// `r-base=4.4.3` would bypass the kernel-package uninstall guard.
+const condaMatchSpecName = (spec: string): string | undefined => {
+  const unqualified = spec.trim().split('::').at(-1) ?? ''
+  return /^[A-Za-z0-9_.-]+/u.exec(unqualified)?.[0]?.toLowerCase()
+}
+
 type CondaFailureClassification = Pick<NotebookPackageInstallerAttempt, 'mutationRisk' | 'reason'>
 
 const parseStructuredCondaResult = (result: SpawnResult): Record<string, unknown> | undefined => {
@@ -168,6 +185,123 @@ const parseStructuredCondaResult = (result: SpawnResult): Record<string, unknown
     }
   }
   return undefined
+}
+
+export type CondaPackageIdentity = {
+  name: string
+  version: string
+  build?: string
+  buildNumber?: number
+  channel?: string
+  subdir?: string
+  url?: string
+  md5?: string
+  sha256?: string
+}
+
+const readCondaPackageIdentity = (
+  prefix: string,
+  packageName: string
+): CondaPackageIdentity | undefined => {
+  let files: string[]
+  try {
+    files = readdirSync(join(prefix, 'conda-meta')).filter((file) => file.endsWith('.json'))
+  } catch {
+    return undefined
+  }
+
+  const identities: CondaPackageIdentity[] = []
+  for (const file of files) {
+    try {
+      const record = JSON.parse(readFileSync(join(prefix, 'conda-meta', file), 'utf8')) as Record<
+        string,
+        unknown
+      >
+      if (record.name === packageName && typeof record.version === 'string') {
+        identities.push({
+          name: packageName,
+          version: record.version,
+          ...(typeof record.build === 'string' ? { build: record.build } : {}),
+          ...(typeof record.build_number === 'number' ? { buildNumber: record.build_number } : {}),
+          ...(typeof record.channel === 'string' ? { channel: record.channel } : {}),
+          ...(typeof record.subdir === 'string' ? { subdir: record.subdir } : {}),
+          ...(typeof record.url === 'string' ? { url: record.url } : {}),
+          ...(typeof record.md5 === 'string' ? { md5: record.md5 } : {}),
+          ...(typeof record.sha256 === 'string' ? { sha256: record.sha256 } : {})
+        })
+      }
+    } catch {
+      // A malformed record makes the package identity ambiguous; the caller fails closed below.
+    }
+  }
+  return identities.length === 1 ? identities[0] : undefined
+}
+
+const condaPackageIdentityKey = (identity: CondaPackageIdentity): string => JSON.stringify(identity)
+
+const condaPackageIdentityLabel = (identity: CondaPackageIdentity): string =>
+  [identity.version, identity.build].filter(Boolean).join(' build ')
+
+const hasVerifiableCondaBuild = (
+  identity: CondaPackageIdentity | undefined
+): identity is CondaPackageIdentity & { build: string; buildNumber: number } =>
+  Boolean(identity?.build) && Number.isInteger(identity?.buildNumber)
+
+type CondaPlanPackageAction = {
+  action: 'LINK' | 'UNLINK'
+  name: string
+  version?: string
+}
+
+const condaPlanPackageActions = (value: unknown): CondaPlanPackageAction[] => {
+  const actions: CondaPlanPackageAction[] = []
+  const visit = (nested: unknown): void => {
+    if (Array.isArray(nested)) {
+      nested.forEach(visit)
+      return
+    }
+    if (typeof nested !== 'object' || nested === null) return
+    for (const [key, child] of Object.entries(nested as Record<string, unknown>)) {
+      const normalized = key.toUpperCase()
+      if ((normalized === 'LINK' || normalized === 'UNLINK') && Array.isArray(child)) {
+        for (const record of child) {
+          if (typeof record !== 'object' || record === null) continue
+          const packageRecord = record as Record<string, unknown>
+          if (typeof packageRecord.name !== 'string') continue
+          actions.push({
+            action: normalized,
+            name: packageRecord.name,
+            ...(typeof packageRecord.version === 'string' ? { version: packageRecord.version } : {})
+          })
+        }
+        continue
+      }
+      visit(child)
+    }
+  }
+  visit(value)
+  return actions
+}
+
+const protectedRBasePlanError = (
+  result: SpawnResult,
+  installedVersion: string
+): string | undefined => {
+  const structured = parseStructuredCondaResult(result)
+  if (!structured) {
+    return 'micromamba returned no structured dry-run plan, so the protected R transaction was not executed.'
+  }
+  const rBaseActions = condaPlanPackageActions(structured).filter(
+    (action) => action.name.toLowerCase() === 'r-base'
+  )
+  if (rBaseActions.length === 0) return undefined
+  const plan = rBaseActions
+    .map((action) => `${action.action} r-base${action.version ? ` ${action.version}` : ''}`)
+    .join(', ')
+  return (
+    `micromamba proposed changing protected r-base ${installedVersion} (${plan}); ` +
+    'the Conda transaction was not executed.'
+  )
 }
 
 const stringValues = (value: unknown): string[] =>
@@ -391,15 +525,25 @@ export async function installPackages(
     condaContext = { cache, env }
     return condaContext
   }
+  const condaCacheKeys = (cache: MicromambaCache): string[] => [
+    cache.lockKey,
+    micromambaCacheLockKey(join(root, 'pkgs'), {
+      platform: deps.micromambaEnv?.platform,
+      canonicalize: deps.micromambaEnv?.canonicalize
+    })
+  ]
+  // A dry-run may refresh repodata in the shared package cache, so it takes the same cache locks as a
+  // real transaction. It cannot write the env prefix, but its child still needs crash supervision: a
+  // surviving micromamba may keep mutating the shared cache after the main process exits.
+  const runCondaPreflight: InstallSpawn = async (command, args) => {
+    const context = resolveCondaContext()
+    return withSharedCacheLocks(condaCacheKeys(context.cache), () =>
+      baseSpawn(command, args, context.env, deps.onChild, deps.onBeforeSpawn)
+    )
+  }
   const runConda: InstallSpawn = async (command, args) => {
     const context = resolveCondaContext()
-    const cacheKeys = [
-      context.cache.lockKey,
-      micromambaCacheLockKey(join(root, 'pkgs'), {
-        platform: deps.micromambaEnv?.platform,
-        canonicalize: deps.micromambaEnv?.canonicalize
-      })
-    ]
+    const cacheKeys = condaCacheKeys(context.cache)
     const result = await withSharedCacheLocks(cacheKeys, () =>
       // Thread onBeforeSpawn so the {spawning} intent sidecar is written BEFORE conda spawns, exactly as
       // the pip path does. Without it, a crash in the spawn→onChild window leaves no sidecar, and recovery
@@ -614,13 +758,140 @@ export async function installPackages(
   if (!mm) return { ok: false, needsRestart: false, log: '', error: 'micromamba not found.' }
 
   const condaPkgs = rCondaNames(req.packages)
-  const argv = installArgv(mm, root, prefix, channels, condaPkgs, isDefaultEnv)
+  const installedRBaseIdentity = (deps.readCondaPackageIdentity ?? readCondaPackageIdentity)(
+    prefix,
+    'r-base'
+  )
+  if (!hasVerifiableCondaBuild(installedRBaseIdentity)) {
+    return {
+      ok: false,
+      needsRestart: false,
+      log: '',
+      method: 'conda',
+      attempts: [],
+      fallbackUsed: false,
+      prefix,
+      error:
+        `Cannot verify the installed r-base version and build in ${prefix}; repair this R runtime ` +
+        'before installing packages. Open Science will not run an incompletely pinned R package transaction.'
+    }
+  }
+  const installedRBaseVersion = installedRBaseIdentity.version
+
+  const cranFallback = async (
+    conda: SpawnResult,
+    condaAttempt: NotebookPackageInstallerAttempt,
+    approvedPlan?: SpawnResult
+  ): Promise<InstallResult> => {
+    const condaLog = mergeLog(conda)
+    const cran = deps.cranMirror ?? DEFAULT_CRAN_MIRROR
+    const vector = req.packages.map((pkg) => JSON.stringify(pkg)).join(', ')
+    // Pin install.packages to the env's own R library with an explicit lib=, rather than letting it
+    // write into .libPaths()[1] (which a conda R env can front with the user's global R library).
+    const rLib = envRLibrary(prefix)
+    const script =
+      `dir.create(${JSON.stringify(rLib)}, recursive=TRUE, showWarnings=FALSE); ` +
+      `install.packages(c(${vector}), lib=${JSON.stringify(rLib)}, repos=${JSON.stringify(cran)})`
+    const fallback = await run(rScriptBin(prefix), ['-e', script])
+    const ok = fallback.code === 0
+    return {
+      ok,
+      needsRestart: ok,
+      log: [approvedPlan ? mergeLog(approvedPlan) : '', condaLog, mergeLog(fallback)]
+        .filter(Boolean)
+        .join('\n'),
+      method: 'cran',
+      attempts: [condaAttempt, installerAttempt(1, 'r-install-packages', req.packages, fallback)],
+      fallbackUsed: true,
+      prefix: rLib,
+      error:
+        ok || !/Retry failure after MAX_PATH recovery/i.test(condaLog)
+          ? ok
+            ? undefined
+            : 'conda and CRAN install both failed.'
+          : 'conda failed after short Windows package cache recovery, and CRAN install also failed. ' +
+            'Retry Repair; if it fails again, choose a shorter data location.'
+    }
+  }
+
+  // r-base is part of the kernel, not a package dependency the solver may rewrite. Pin the exact
+  // installed version and inspect a JSON dry-run before any prefix-writing spawn is journaled or run.
+  const rBasePin = `r-base=${installedRBaseVersion}=${installedRBaseIdentity.build}`
+  const solverPkgs = [rBasePin, ...condaPkgs]
+  const argv = installArgv(mm, root, prefix, channels, solverPkgs, isDefaultEnv)
+  const preflight = await runCondaPreflight(argv[0], [
+    ...argv.slice(1, 3),
+    '--dry-run',
+    '--json',
+    ...argv.slice(3)
+  ])
+  if (preflight.code !== 0) {
+    const classification = classifyCondaFailure(preflight)
+    const condaAttempt = installerAttempt(0, 'conda', condaPkgs, preflight, classification)
+    if (condaFallbackIsAuthorized(classification)) {
+      return cranFallback(preflight, condaAttempt)
+    }
+    return {
+      ok: false,
+      needsRestart: false,
+      log: mergeLog(preflight),
+      method: 'conda',
+      attempts: [condaAttempt],
+      fallbackUsed: false,
+      prefix,
+      error: condaFailureMessage('install', preflight)
+    }
+  }
+
+  const planError = protectedRBasePlanError(preflight, installedRBaseVersion)
+  if (planError) {
+    const rejectedPlan: SpawnResult = {
+      code: 1,
+      stdout: preflight.stdout,
+      stderr: [preflight.stderr, planError].filter(Boolean).join('\n')
+    }
+    return cranFallback(rejectedPlan, {
+      groupOrdinal: 0,
+      installer: 'conda',
+      packages: [...condaPkgs],
+      status: 'failed',
+      mutationRisk: 'none',
+      reason: 'validation'
+    })
+  }
+
   const conda = await runConda(argv[0], [...argv.slice(1, 3), '--json', ...argv.slice(3)])
+  // A failed solver process can still leave a partially-applied UNLINK/LINK transaction. Verify the
+  // protected interpreter after EVERY real spawn, not only after exit code 0, before considering a
+  // fallback or returning an ordinary installer failure.
+  const finalRBaseIdentity = (deps.readCondaPackageIdentity ?? readCondaPackageIdentity)(
+    prefix,
+    'r-base'
+  )
+  if (
+    !hasVerifiableCondaBuild(finalRBaseIdentity) ||
+    condaPackageIdentityKey(finalRBaseIdentity) !== condaPackageIdentityKey(installedRBaseIdentity)
+  ) {
+    return {
+      ok: false,
+      needsRestart: false,
+      log: [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n'),
+      method: 'conda',
+      attempts: [installerAttempt(0, 'conda', condaPkgs, conda)],
+      fallbackUsed: false,
+      prefix,
+      repairRequired: true,
+      error:
+        `Protected r-base changed unexpectedly from ${condaPackageIdentityLabel(installedRBaseIdentity)} to ` +
+        `${finalRBaseIdentity ? condaPackageIdentityLabel(finalRBaseIdentity) : 'an unknown identity'}. ` +
+        'Stop using this runtime and run Repair.'
+    }
+  }
   if (conda.code === 0) {
     return {
       ok: true,
       needsRestart: true,
-      log: mergeLog(conda),
+      log: [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n'),
       method: 'conda',
       attempts: [installerAttempt(0, 'conda', condaPkgs, conda)],
       fallbackUsed: false,
@@ -628,7 +899,7 @@ export async function installPackages(
     }
   }
 
-  const condaLog = mergeLog(conda)
+  const condaLog = [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n')
   const classification = classifyCondaFailure(conda)
   const condaAttempt = installerAttempt(0, 'conda', condaPkgs, conda, classification)
   if (!condaFallbackIsAuthorized(classification)) {
@@ -643,34 +914,7 @@ export async function installPackages(
       error: condaFailureMessage('install', conda)
     }
   }
-
-  const cran = deps.cranMirror ?? DEFAULT_CRAN_MIRROR
-  const vector = req.packages.map((pkg) => JSON.stringify(pkg)).join(', ')
-  // Pin install.packages to the env's own R library with an explicit lib=, rather than letting it write
-  // into .libPaths()[1] (which a conda R env can front with the user's global R library). dir.create
-  // ensures the lib exists before install; the reported prefix is that exact env-scoped location.
-  const rLib = envRLibrary(prefix)
-  const script =
-    `dir.create(${JSON.stringify(rLib)}, recursive=TRUE, showWarnings=FALSE); ` +
-    `install.packages(c(${vector}), lib=${JSON.stringify(rLib)}, repos=${JSON.stringify(cran)})`
-  const fallback = await run(rScriptBin(prefix), ['-e', script])
-  const ok = fallback.code === 0
-  return {
-    ok,
-    needsRestart: ok,
-    log: `${condaLog}\n${mergeLog(fallback)}`,
-    method: 'cran',
-    attempts: [condaAttempt, installerAttempt(1, 'r-install-packages', req.packages, fallback)],
-    fallbackUsed: true,
-    prefix: rLib,
-    error:
-      ok || !/Retry failure after MAX_PATH recovery/i.test(condaLog)
-        ? ok
-          ? undefined
-          : 'conda and CRAN install both failed.'
-        : 'conda failed after short Windows package cache recovery, and CRAN install also failed. ' +
-          'Retry Repair; if it fails again, choose a shorter data location.'
-  }
+  return cranFallback(conda, condaAttempt, preflight)
 }
 
 // micromamba remove --root-prefix <root> --prefix <prefix> -y <pkgs...>. Env-scoped removal mirroring
@@ -752,8 +996,61 @@ async function uninstallPackages(
   if (!mm) return { ok: false, needsRestart: false, log: '', error: 'micromamba not found.' }
 
   const condaPkgs = rCondaNames(req.packages)
+  if (condaPkgs.some((pkg) => condaMatchSpecName(pkg) === 'r-base')) {
+    return {
+      ok: false,
+      needsRestart: false,
+      log: '',
+      method: 'conda',
+      attempts: [],
+      fallbackUsed: false,
+      prefix,
+      error: 'r-base is part of the protected R kernel and cannot be uninstalled.'
+    }
+  }
+  const installedRBaseIdentity = (deps.readCondaPackageIdentity ?? readCondaPackageIdentity)(
+    prefix,
+    'r-base'
+  )
+  if (!hasVerifiableCondaBuild(installedRBaseIdentity)) {
+    return {
+      ok: false,
+      needsRestart: false,
+      log: '',
+      method: 'conda',
+      attempts: [],
+      fallbackUsed: false,
+      prefix,
+      error:
+        `Cannot verify the installed r-base version and build in ${prefix}; repair this R runtime ` +
+        'before removing packages.'
+    }
+  }
   const argv = removeArgv(mm, root, prefix, condaPkgs)
   const conda = await runConda(argv[0], argv.slice(1))
+  const finalRBaseIdentity = (deps.readCondaPackageIdentity ?? readCondaPackageIdentity)(
+    prefix,
+    'r-base'
+  )
+  if (
+    !hasVerifiableCondaBuild(finalRBaseIdentity) ||
+    condaPackageIdentityKey(finalRBaseIdentity) !== condaPackageIdentityKey(installedRBaseIdentity)
+  ) {
+    return {
+      ok: false,
+      needsRestart: false,
+      log: mergeLog(conda),
+      method: 'conda',
+      attempts: [installerAttempt(0, 'conda', condaPkgs, conda)],
+      fallbackUsed: false,
+      prefix,
+      repairRequired: true,
+      error:
+        `Protected r-base changed unexpectedly from ${condaPackageIdentityLabel(installedRBaseIdentity)} to ` +
+        `${finalRBaseIdentity ? condaPackageIdentityLabel(finalRBaseIdentity) : 'an unknown identity'}. ` +
+        'Stop using this runtime and run Repair.'
+    }
+  }
   if (conda.code === 0) {
     return {
       ok: true,

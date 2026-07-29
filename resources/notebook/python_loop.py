@@ -18,30 +18,109 @@ _figures_dir = os.environ.get("OPEN_SCIENCE_KERNEL_FIGURES_DIR", "")
 # NO outbound connector access: host.mcp lives only in the control-plane REPL kernel, and connector
 # data reaches python via the ./handoff channel. The namespace intentionally exposes no `host` symbol.
 _BOOTSTRAP = r'''
-import os, sys, warnings
+import os, re, sys, warnings
 warnings.filterwarnings("ignore", message=".*is non-interactive, and thus cannot be shown")
 
+def _guard_path(value):
+    return os.path.normcase(os.path.realpath(os.path.abspath(os.fspath(value))))
+
 _protected_dirs = [
-    os.path.abspath(entry)
+    _guard_path(entry)
     for entry in os.environ.get("OPEN_SCIENCE_PROTECTED_DIRS", "").split(os.pathsep)
     if entry
 ]
+_runtime_dir_value = os.environ.get("OPEN_SCIENCE_RUNTIME_DIR", "")
+_managed_runtime_dir = _guard_path(_runtime_dir_value) if _runtime_dir_value else ""
+
+_package_mutation_command = re.compile(
+    r"(?:\b(?:micromamba|mamba|conda|pip|pip3|pipx|uv|poetry)(?:\.exe)?\b.{0,160}"
+    r"\b(?:install|uninstall|update|upgrade|remove|create|sync|add|venv)\b|"
+    r"\b(?:python|python3|py)(?:\.\d+)?(?:\.exe)?\b.{0,80}\s-m\s+"
+    r"(?:pip|venv|virtualenv|ensurepip)\b)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+def _command_text(value):
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(part) for part in value)
+    if isinstance(value, (str, bytes)):
+        return value.decode(errors="replace") if isinstance(value, bytes) else value
+    return str(value)
+
+def _blocked_environment_mutation(*_args, **_kwargs):
+    raise PermissionError(
+        "Package/environment mutation is not allowed in a Python cell; use manage_packages."
+    )
 
 def _protected_paths_audit(event, args):
-    if event != "open" or not _protected_dirs or not args:
+    if event in ("subprocess.Popen", "os.system") and args:
+        command = args[1] if event == "subprocess.Popen" and len(args) > 1 else args[0]
+        if _package_mutation_command.search(_command_text(command)):
+            _blocked_environment_mutation()
+        return
+    if event in ("os.remove", "os.rmdir", "os.mkdir", "os.chmod", "os.chown") and args:
+        targets = [args[0]]
+    elif event in ("os.rename", "os.link", "os.symlink") and len(args) > 1:
+        targets = [args[0], args[1]]
+    else:
+        targets = []
+    for target in targets:
+        try:
+            resolved = _guard_path(target)
+        except (TypeError, ValueError):
+            continue
+        if _managed_runtime_dir and (
+            resolved == _managed_runtime_dir or resolved.startswith(_managed_runtime_dir + os.sep)
+        ):
+            _blocked_environment_mutation()
+
+    if event != "open" or not args:
         return
     target = args[0]
     if target is None or isinstance(target, int):
         return
     try:
-        resolved = os.path.abspath(os.fspath(target))
+        resolved = _guard_path(target)
     except (TypeError, ValueError):
         return
+    if os.path.basename(resolved).casefold() == "pyvenv.cfg":
+        _blocked_environment_mutation()
+    mode = args[1] if len(args) > 1 else None
+    flags = args[2] if len(args) > 2 else 0
+    write_open = (
+        isinstance(mode, str) and any(marker in mode for marker in ("w", "a", "x", "+"))
+    ) or (
+        isinstance(flags, int)
+        and bool(flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND))
+    )
+    if write_open and _managed_runtime_dir and (
+        resolved == _managed_runtime_dir or resolved.startswith(_managed_runtime_dir + os.sep)
+    ):
+        _blocked_environment_mutation()
     for directory in _protected_dirs:
         if resolved == directory or resolved.startswith(directory + os.sep):
             raise PermissionError("Access to protected application files is not allowed.")
 
 sys.addaudithook(_protected_paths_audit)
+
+# `venv.create` is pure Python and can otherwise be reached through dynamically assembled names that
+# no source scanner can recognize. Patch both public entry points inside this persistent process; the
+# audit hook above independently rejects the characteristic pyvenv.cfg write and installer subprocesses.
+import venv as _open_science_venv
+_open_science_venv.create = _blocked_environment_mutation
+_open_science_venv.EnvBuilder.create = _blocked_environment_mutation
+try:
+    import ensurepip as _open_science_ensurepip
+    _open_science_ensurepip.bootstrap = _blocked_environment_mutation
+except ImportError:
+    pass
+try:
+    import pip._internal as _open_science_pip_internal
+    import pip._internal.cli.main as _open_science_pip_cli
+    _open_science_pip_internal.main = _blocked_environment_mutation
+    _open_science_pip_cli.main = _blocked_environment_mutation
+except ImportError:
+    pass
 '''
 
 _globals = {"__name__": "__main__"}

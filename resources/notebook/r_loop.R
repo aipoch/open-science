@@ -4,10 +4,101 @@
 # jsonlite line per response. Not IRkernel / Jupyter.
 suppressWarnings(suppressMessages(library(jsonlite)))
 
-# A non-interactive R session has no default CRAN mirror, so a bare install.packages() in a cell
-# fails with "trying to use CRAN without setting a mirror". Set the app's configured mirror (or the
-# public default) so inline installs work; manage_packages remains the sanctioned install path.
-options(repos = c(CRAN = Sys.getenv("OPEN_SCIENCE_CRAN_MIRROR", "https://cloud.r-project.org")))
+# Package/environment changes are owned by manage_packages in the trusted main process. The main
+# process rejects the common forms before they reach this loop; this syntax-tree check is a second
+# layer so namespace-qualified and indirect calls cannot install from inside the persistent kernel.
+package_mutation_call_name <- function(expr) {
+  if (!is.call(expr) || length(expr) == 0L) return(NULL)
+  head <- expr[[1L]]
+  if (is.symbol(head) && as.character(head) %in% c("::", ":::") && length(expr) >= 3L) {
+    return(paste(as.character(expr[[2L]]), as.character(expr[[3L]]), sep = "::"))
+  }
+  if (is.symbol(head)) return(as.character(head))
+  if (is.call(head) && length(head) >= 3L &&
+      as.character(head[[1L]]) %in% c("::", ":::")) {
+    return(paste(as.character(head[[2L]]), as.character(head[[3L]]), sep = "::"))
+  }
+  NULL
+}
+
+is_package_mutation_name <- function(name) {
+  if (is.null(name)) return(FALSE)
+  name %in% c("install.packages", "remove.packages", "update.packages") ||
+    grepl(
+      paste0(
+        "^(utils::(install|remove|update)\\.packages|",
+        "BiocManager::install|",
+        "renv::(install|restore|update|hydrate)|",
+        "pak::(pkg_install|pkg_remove|lockfile_install)|",
+        "(remotes|devtools)::install_[A-Za-z0-9_.]+)$"
+      ),
+      name
+    )
+}
+
+assert_no_package_mutation <- function(expr) {
+  if (is.symbol(expr) && is_package_mutation_name(as.character(expr))) {
+    stop(
+      "Package/environment mutation is not allowed in an R cell; use manage_packages.",
+      call. = FALSE
+    )
+  }
+  call_name <- package_mutation_call_name(expr)
+  if (is_package_mutation_name(call_name)) {
+    stop(
+      "Package/environment mutation is not allowed in an R cell; use manage_packages.",
+      call. = FALSE
+    )
+  }
+  if (is.call(expr) && call_name %in% c("get", "match.fun", "do.call")) {
+    strings <- unlist(lapply(as.list(expr)[-1L], function(value) {
+      if (is.character(value)) value else character()
+    }), use.names = FALSE)
+    if (any(vapply(strings, is_package_mutation_name, logical(1)))) {
+      stop(
+        "Package/environment mutation is not allowed in an R cell; use manage_packages.",
+        call. = FALSE
+      )
+    }
+  }
+  if (is.call(expr) || is.expression(expr) || is.pairlist(expr)) {
+    lapply(as.list(expr), assert_no_package_mutation)
+  }
+  invisible(NULL)
+}
+
+blocked_package_mutation <- function(...) {
+  stop(
+    "Package/environment mutation is not allowed in an R cell; use manage_packages.",
+    call. = FALSE
+  )
+}
+
+# Keep the policy closure and all of its dependencies outside .GlobalEnv. User cells may assign names
+# such as package_mutation_call_name, but the locked evaluator continues resolving the original helpers.
+package_mutation_policy_env <- new.env(parent = baseenv())
+environment(package_mutation_call_name) <- package_mutation_policy_env
+environment(is_package_mutation_name) <- package_mutation_policy_env
+environment(assert_no_package_mutation) <- package_mutation_policy_env
+environment(blocked_package_mutation) <- package_mutation_policy_env
+assign("package_mutation_call_name", package_mutation_call_name, package_mutation_policy_env)
+assign("is_package_mutation_name", is_package_mutation_name, package_mutation_policy_env)
+assign("assert_no_package_mutation", assert_no_package_mutation, package_mutation_policy_env)
+assign("blocked_package_mutation", blocked_package_mutation, package_mutation_policy_env)
+lockEnvironment(package_mutation_policy_env, bindings = TRUE)
+
+# Replace the canonical utils entry points before any user request runs. This is the runtime backstop for
+# dynamically assembled lookups that cannot be identified from syntax alone, e.g.
+# get(paste0("install", ".packages"), asNamespace("utils")). The trusted manage_packages fallback runs
+# in a separate Rscript process, so it does not inherit these kernel-only bindings.
+for (binding_name in c("install.packages", "remove.packages", "update.packages")) {
+  for (binding_env in list(asNamespace("utils"), as.environment("package:utils"))) {
+    if (!exists(binding_name, envir = binding_env, inherits = FALSE)) next
+    if (bindingIsLocked(binding_name, binding_env)) unlockBinding(binding_name, binding_env)
+    assign(binding_name, package_mutation_policy_env$blocked_package_mutation, envir = binding_env)
+    lockBinding(binding_name, binding_env)
+  }
+}
 
 figures_dir <- Sys.getenv("OPEN_SCIENCE_KERNEL_FIGURES_DIR", "")
 con <- file("stdin", "rb")
@@ -428,22 +519,30 @@ run <- base::local({
       if (inherits(exprs, "condition")) {
         error <<- conditionMessage(exprs)
       } else {
-        refs <- attr(exprs, "srcref")
-        idx <- 0L
-        tryCatch({
-          for (idx in seq_along(exprs)) {
-            res <- withVisible(eval(exprs[[idx]], envir = globalenv()))
-            if (isTRUE(res$visible)) print(res$value)
-            mark_recorded_plot()
-          }
-        },
-        error = function(cnd) {
-          error <<- conditionMessage(cnd)
-          if (!is.null(refs) && idx >= 1L && idx <= length(refs)) {
-            error_line <<- as.integer(refs[[idx]][1])
-          }
-        },
-        interrupt = function(cnd) error <<- "interrupted")
+        policy_error <- tryCatch({
+          lapply(exprs, assert_no_package_mutation)
+          NULL
+        }, error = function(cnd) cnd)
+        if (inherits(policy_error, "condition")) {
+          error <- conditionMessage(policy_error)
+        } else {
+          refs <- attr(exprs, "srcref")
+          idx <- 0L
+          tryCatch({
+            for (idx in seq_along(exprs)) {
+              res <- withVisible(eval(exprs[[idx]], envir = globalenv()))
+              if (isTRUE(res$visible)) print(res$value)
+              mark_recorded_plot()
+            }
+          },
+          error = function(cnd) {
+            error <<- conditionMessage(cnd)
+            if (!is.null(refs) && idx >= 1L && idx <= length(refs)) {
+              error_line <<- as.integer(refs[[idx]][1])
+            }
+          },
+          interrupt = function(cnd) error <<- "interrupted")
+        }
       }
     }), collapse = "\n")
     capture_device_open <- isTRUE(capture_state$active) &&
@@ -471,7 +570,11 @@ run <- base::local({
          environment = capture_environment())
   }
 }, envir = base::list2env(
-  base::list(figures_dir = figures_dir, capture_environment = capture_environment),
+  base::list(
+    figures_dir = figures_dir,
+    capture_environment = capture_environment,
+    assert_no_package_mutation = assert_no_package_mutation
+  ),
   parent = base::baseenv()
 ))
 lockEnvironment(environment(run), bindings = TRUE)

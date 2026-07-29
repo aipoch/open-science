@@ -44,6 +44,14 @@ const scriptedSpawn = (
 }
 
 const ok: SpawnResult = { code: 0, stdout: 'done', stderr: '' }
+const safeRPlan: SpawnResult = {
+  code: 0,
+  stdout: JSON.stringify({
+    success: true,
+    actions: { LINK: [{ name: 'r-requested-package', version: '1.0.0' }], UNLINK: [] }
+  }),
+  stderr: ''
+}
 const fail: SpawnResult = { code: 1, stdout: '', stderr: 'boom' }
 const packageUnavailable: SpawnResult = {
   code: 1,
@@ -68,7 +76,14 @@ const notManaged: SpawnResult = {
 const base = {
   micromamba: '/mm/bin/micromamba',
   storageRoot: '/root',
-  condaChannel: 'https://mirror.test/conda-forge'
+  condaChannel: 'https://mirror.test/conda-forge',
+  readCondaPackageIdentity: () => ({
+    name: 'r-base',
+    version: '4.4.3',
+    build: 'h123_0',
+    buildNumber: 0,
+    channel: 'conda-forge'
+  })
 }
 
 describe('defaultSpawn (fail-closed spawn hooks)', () => {
@@ -212,17 +227,37 @@ describe('installPackages', () => {
   })
 
   it('prefixes r packages with r- and installs into default-r via micromamba, needsRestart true', async () => {
-    const { spawn, calls } = scriptedSpawn([ok])
+    const { spawn, calls } = scriptedSpawn([safeRPlan])
     const result = await installPackages(
       { language: 'r', packages: ['ggplot2', 'r-dplyr'] },
       { spawn, ...base }
     )
     const prefix = envPrefix(runtimeRoot('/root'), DEFAULT_R_ENV)
+    expect(calls).toHaveLength(2)
     const [command, args] = calls[0]
     expect(command).toBe('/mm/bin/micromamba')
     expect(args).toEqual(
-      expect.arrayContaining(['install', '--prefix', prefix, 'r-ggplot2', 'r-dplyr'])
+      expect.arrayContaining([
+        'install',
+        '--dry-run',
+        '--prefix',
+        prefix,
+        'r-base=4.4.3=h123_0',
+        'r-ggplot2',
+        'r-dplyr'
+      ])
     )
+    expect(calls[1][1]).toEqual(
+      expect.arrayContaining([
+        'install',
+        '--prefix',
+        prefix,
+        'r-base=4.4.3=h123_0',
+        'r-ggplot2',
+        'r-dplyr'
+      ])
+    )
+    expect(calls[1][1]).not.toContain('--dry-run')
     // R is fragile about loading packages into a live session, so a successful R install asks for a restart.
     expect(result.needsRestart).toBe(true)
     expect(result.ok).toBe(true)
@@ -230,8 +265,149 @@ describe('installPackages', () => {
     expect(calls[0][1].join(' ')).toContain('bioconda')
   })
 
+  it('never executes an R conda transaction whose dry-run would change r-base', async () => {
+    const protectedPlan: SpawnResult = {
+      code: 0,
+      stdout: JSON.stringify({
+        success: true,
+        actions: {
+          UNLINK: [{ name: 'r-base', version: '4.4.3' }],
+          LINK: [
+            { name: 'r-base', version: '4.5.3' },
+            { name: 'r-dplyr', version: '1.2.1' }
+          ]
+        }
+      }),
+      stderr: ''
+    }
+    const { spawn, calls } = scriptedSpawn([protectedPlan, ok])
+
+    const result = await installPackages(
+      { language: 'r', packages: ['dplyr'] },
+      {
+        spawn,
+        ...base,
+        readCondaPackageIdentity: () => ({
+          name: 'r-base',
+          version: '4.4.3',
+          build: 'h123_0',
+          buildNumber: 0,
+          channel: 'conda-forge'
+        })
+      }
+    )
+
+    const prefix = envPrefix(runtimeRoot('/root'), DEFAULT_R_ENV)
+    expect(calls[0][1]).toEqual(
+      expect.arrayContaining([
+        'install',
+        '--dry-run',
+        '--prefix',
+        prefix,
+        'r-base=4.4.3=h123_0',
+        'r-dplyr'
+      ])
+    )
+    expect(calls).toHaveLength(2)
+    expect(calls[1][0]).toBe(rScriptBin(prefix))
+    expect(result).toMatchObject({
+      ok: true,
+      method: 'cran',
+      fallbackUsed: true,
+      needsRestart: true
+    })
+    expect(result.log).toMatch(/r-base.*4\.4\.3.*4\.5\.3/i)
+  })
+
+  it('fails closed before solving when the installed r-base build identity is incomplete', async () => {
+    const spawn = vi.fn()
+
+    const result = await installPackages(
+      { language: 'r', packages: ['dplyr'] },
+      {
+        ...base,
+        spawn: spawn as unknown as InstallSpawn,
+        readCondaPackageIdentity: () => ({ name: 'r-base', version: '4.4.3' })
+      }
+    )
+
+    expect(spawn).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ ok: false, needsRestart: false })
+    expect(result.error).toMatch(/version and build.*repair/i)
+  })
+
+  it('quarantines an R runtime when the transaction changes only the r-base build identity', async () => {
+    const identities = [
+      { name: 'r-base', version: '4.4.3', build: 'h123_0', buildNumber: 0 },
+      { name: 'r-base', version: '4.4.3', build: 'h999_1', buildNumber: 1 }
+    ]
+    const { spawn, calls } = scriptedSpawn([safeRPlan, ok])
+
+    const result = await installPackages(
+      { language: 'r', packages: ['dplyr'] },
+      {
+        spawn,
+        ...base,
+        readCondaPackageIdentity: () => identities.shift()
+      }
+    )
+
+    expect(calls).toHaveLength(2)
+    expect(result).toMatchObject({ ok: false, repairRequired: true, needsRestart: false })
+    expect(result.error).toMatch(/h123_0.*h999_1.*Repair/i)
+  })
+
+  it('quarantines r-base changes even when the conda transaction exits non-zero', async () => {
+    const identities = [
+      { name: 'r-base', version: '4.4.3', build: 'h123_0', buildNumber: 0 },
+      { name: 'r-base', version: '4.4.3', build: 'h999_1', buildNumber: 1 }
+    ]
+    const failedAfterMutation: SpawnResult = {
+      code: 1,
+      stdout: JSON.stringify({ success: false, actions: { UNLINK: [{ name: 'r-base' }] } }),
+      stderr: 'transaction failed after unlink'
+    }
+    const { spawn, calls } = scriptedSpawn([safeRPlan, failedAfterMutation])
+
+    const result = await installPackages(
+      { language: 'r', packages: ['dplyr'] },
+      {
+        spawn,
+        ...base,
+        readCondaPackageIdentity: () => identities.shift()
+      }
+    )
+
+    expect(calls).toHaveLength(2)
+    expect(result).toMatchObject({ ok: false, repairRequired: true, needsRestart: false })
+    expect(result.error).toMatch(/h123_0.*h999_1.*Repair/i)
+  })
+
+  it('journals both the R dry-run and the approved transaction child', async () => {
+    const order: string[] = []
+    let call = 0
+    const spawn: InstallSpawn = async (_command, _args, _env, onChild, onBeforeSpawn) => {
+      onBeforeSpawn?.()
+      order.push(`child#${call}`)
+      onChild?.(4100 + call)
+      return call++ === 0 ? safeRPlan : ok
+    }
+
+    const result = await installPackages(
+      { language: 'r', packages: ['dplyr'] },
+      {
+        ...base,
+        spawn,
+        onBeforeSpawn: () => order.push('intent')
+      }
+    )
+
+    expect(result.ok).toBe(true)
+    expect(order).toEqual(['intent', 'child#0', 'intent', 'child#1'])
+  })
+
   it('installs a Bioconductor R package by its bioconductor- name without r- mangling', async () => {
-    const { spawn, calls } = scriptedSpawn([ok])
+    const { spawn, calls } = scriptedSpawn([safeRPlan])
     const result = await installPackages(
       { language: 'r', packages: ['bioconductor-deseq2'] },
       { spawn, ...base }
@@ -298,6 +474,20 @@ describe('installPackages', () => {
       }),
       expect.objectContaining({ installer: 'r-install-packages', status: 'succeeded' })
     ])
+  })
+
+  it('retains the approved R dry-run plan when the real transaction falls back to CRAN', async () => {
+    const { spawn } = scriptedSpawn([safeRPlan, packageUnavailable, ok])
+
+    const result = await installPackages(
+      { language: 'r', packages: ['someCranOnlyPkg'] },
+      { spawn, ...base }
+    )
+
+    expect(result).toMatchObject({ ok: true, method: 'cran', fallbackUsed: true })
+    expect(result.log).toContain('r-requested-package')
+    expect(result.log).toContain('does not exist')
+    expect(result.log).toContain('done')
   })
 
   it('never authorizes a fallback from human-readable conda stderr alone', async () => {
@@ -750,6 +940,48 @@ describe('installPackages uninstall', () => {
       method: 'conda',
       prefix
     })
+  })
+
+  it.each(['r-base', 'base', 'r-base=4.4.3', 'base=4.4.3', 'conda-forge::r-base=4.4.3=h123_0'])(
+    'refuses to uninstall the protected R kernel package %s from a named environment',
+    async (packageName) => {
+      const spawn = vi.fn()
+
+      const result = await installPackages(
+        {
+          language: 'r',
+          packages: [packageName],
+          operation: 'uninstall',
+          environment: 'my-analysis'
+        },
+        { ...named, spawn: spawn as unknown as InstallSpawn }
+      )
+
+      expect(spawn).not.toHaveBeenCalled()
+      expect(result).toMatchObject({ ok: false, needsRestart: false })
+      expect(result.error).toMatch(/protected R kernel/i)
+    }
+  )
+
+  it('quarantines an R uninstall transaction that unexpectedly changes r-base', async () => {
+    const identities = [
+      { name: 'r-base', version: '4.4.3', build: 'h123_0', buildNumber: 0 },
+      { name: 'r-base', version: '4.4.3', build: 'h999_1', buildNumber: 1 }
+    ]
+    const { spawn } = scriptedSpawn([ok])
+
+    const result = await installPackages(
+      {
+        language: 'r',
+        packages: ['dplyr'],
+        operation: 'uninstall',
+        environment: 'my-analysis'
+      },
+      { ...named, spawn, readCondaPackageIdentity: () => identities.shift() }
+    )
+
+    expect(result).toMatchObject({ ok: false, repairRequired: true, needsRestart: false })
+    expect(result.error).toMatch(/h123_0.*h999_1.*Repair/i)
   })
 
   it('falls back to Rscript remove.packages when micromamba reports the package is not conda-managed', async () => {

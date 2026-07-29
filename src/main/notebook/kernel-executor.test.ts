@@ -6,7 +6,14 @@ import { dirname, join, resolve, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { NotebookKernelExecutor } from './kernel-executor'
-import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, pythonBin } from './runtime-paths'
+import {
+  DEFAULT_PY_ENV,
+  DEFAULT_R_ENV,
+  envPrefix,
+  pythonBin,
+  rBin,
+  rScriptBin
+} from './runtime-paths'
 import { TimeoutController } from './timeout-controller'
 import {
   startWorkingFileObservation,
@@ -140,6 +147,8 @@ const resolvePython3 = (): string | undefined =>
 
 const python3 = resolvePython3()
 const gate = python3 ? describe : describe.skip
+const rExecutable = ['/usr/local/bin/R', '/opt/homebrew/bin/R'].find(existsSync)
+const rScriptExecutable = ['/usr/local/bin/Rscript', '/opt/homebrew/bin/Rscript'].find(existsSync)
 
 // Symlinks an env's python interpreter to the system python3 under a runtime root, so the strict
 // resolver (env interpreter only -- no system-PATH fallback) finds it and spawns the fake loop.
@@ -147,6 +156,13 @@ const stubEnvPython = async (runtimeRootDir: string, name: string): Promise<void
   const bin = pythonBin(envPrefix(runtimeRootDir, name))
   await mkdir(dirname(bin), { recursive: true })
   await symlink(python3 as string, bin)
+}
+
+const stubEnvR = async (runtimeRootDir: string, name: string): Promise<void> => {
+  const prefix = envPrefix(runtimeRootDir, name)
+  await mkdir(dirname(rBin(prefix)), { recursive: true })
+  await symlink(rExecutable as string, rBin(prefix))
+  await symlink(rScriptExecutable as string, rScriptBin(prefix))
 }
 
 // Makes a temp cwd AND stubs its default-python env interpreter, so a default-env execute() passes the
@@ -173,7 +189,7 @@ const procFor = (
 let cwdDir: string | undefined
 
 const makeExecutor = (): NotebookKernelExecutor =>
-  new NotebookKernelExecutor({ pythonBin: python3, pythonLoopPath: FIXTURE })
+  new NotebookKernelExecutor({ pythonBin: python3, pythonLoopPath: FIXTURE, platform: 'linux' })
 
 const baseRequest = (
   cwd: string
@@ -590,6 +606,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     const executor = new NotebookKernelExecutor({
       pythonBin: python3,
       pythonLoopPath: FIXTURE,
+      platform: 'linux',
       onTerminated: (kind) => terminated.push(kind)
     })
     try {
@@ -613,6 +630,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     const executor = new NotebookKernelExecutor({
       pythonBin: python3,
       pythonLoopPath: FIXTURE,
+      platform: 'linux',
       onTerminated: (kind) => terminated.push(kind)
     })
     await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
@@ -633,6 +651,149 @@ gate('NotebookKernelExecutor (fake loop)', () => {
   }, 15_000)
 })
 
+gate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
+  it('blocks dynamically assembled venv and pip subprocess entry points', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-package-guard-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvPython(request.runtimeRoot, DEFAULT_PY_ENV)
+    await symlink(request.runtimeRoot, join(cwdDir, 'runtime-link'))
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+
+    try {
+      const venvResult = await executor.execute({
+        ...request,
+        code: `getattr(__import__("ve" + "nv"), "create")("blocked-env")`,
+        language: 'python'
+      })
+      expect(venvResult.status).toBe('failed')
+      expect(venvResult.traceback).toMatch(/manage_packages/)
+      expect(existsSync(join(cwdDir, 'blocked-env'))).toBe(false)
+
+      const pipResult = await executor.execute({
+        ...request,
+        code:
+          `import subprocess, sys\n` +
+          `subprocess.run([sys.executable, "-m", "p" + "ip", "in" + "stall", "--help"])`,
+        language: 'python'
+      })
+      expect(pipResult.status).toBe('failed')
+      expect(pipResult.traceback).toMatch(/manage_packages/)
+
+      const ensurepipResult = await executor.execute({
+        ...request,
+        code: `getattr(__import__("ensure" + "pip"), "boot" + "strap")()`,
+        language: 'python'
+      })
+      expect(ensurepipResult.status).toBe('failed')
+      expect(ensurepipResult.traceback).toMatch(/manage_packages/)
+
+      const inProcessPipResult = await executor.execute({
+        ...request,
+        code:
+          `entry = getattr(__import__("pip._internal", fromlist=["main"]), "main")\n` +
+          `entry(["in" + "stall", "pandas"])`,
+        language: 'python'
+      })
+      expect(inProcessPipResult.status).toBe('failed')
+      expect(inProcessPipResult.traceback).toMatch(/manage_packages/)
+
+      const symlinkWriteResult = await executor.execute({
+        ...request,
+        code: `open("runtime-link/blocked-from-link.txt", "w").write("changed")`,
+        language: 'python'
+      })
+      expect(symlinkWriteResult.status).toBe('failed')
+      expect(symlinkWriteResult.traceback).toMatch(/manage_packages/)
+      expect(existsSync(join(request.runtimeRoot, 'blocked-from-link.txt'))).toBe(false)
+    } finally {
+      await executor.shutdown()
+    }
+  })
+})
+
+describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (real R loop)', () => {
+  it('rejects a package installer even when the main-process guard is bypassed', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-package-guard-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+    const executor = new NotebookKernelExecutor({
+      rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+      platform: 'linux'
+    })
+
+    try {
+      const result = await executor.execute({
+        ...request,
+        code: 'utils::install.packages("dplyr")',
+        language: 'r'
+      })
+
+      expect(result.status).toBe('failed')
+      expect(result.traceback).toMatch(/manage_packages/)
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('keeps installer aliases blocked after user code shadows the policy helper names', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-package-alias-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+    const executor = new NotebookKernelExecutor({
+      rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+      platform: 'linux'
+    })
+
+    try {
+      const shadow = await executor.execute({
+        ...request,
+        code:
+          'package_mutation_call_name <- function(expr) NULL; ' +
+          'is_package_mutation_name <- function(name) FALSE',
+        language: 'r'
+      })
+      expect(shadow.status).toBe('completed')
+
+      const alias = await executor.execute({
+        ...request,
+        code: 'installer <- utils::install.packages',
+        language: 'r'
+      })
+      expect(alias.status).toBe('failed')
+      expect(alias.traceback).toMatch(/manage_packages/)
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('blocks a dynamically assembled lookup of the canonical R installer', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-package-dynamic-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+    const executor = new NotebookKernelExecutor({
+      rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+      platform: 'linux'
+    })
+
+    try {
+      const result = await executor.execute({
+        ...request,
+        code:
+          'installer <- get(paste0("install", ".packages"), envir=asNamespace("utils")); ' +
+          'installer("dplyr")',
+        language: 'r'
+      })
+      expect(result.status).toBe('failed')
+      expect(result.traceback).toMatch(/manage_packages/)
+    } finally {
+      await executor.shutdown()
+    }
+  })
+})
+
 gate('NotebookKernelExecutor idle-timeout shutdown', () => {
   it('drops an idle proc when the idle timer fires, and respawns fresh on the next execute', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-idle-')
@@ -641,6 +802,7 @@ gate('NotebookKernelExecutor idle-timeout shutdown', () => {
     const executor = new NotebookKernelExecutor({
       pythonBin: python3,
       pythonLoopPath: FIXTURE,
+      platform: 'linux',
       idleTimeoutMs: 1_000,
       scheduleIdleTimer: h.schedule,
       cancelIdleTimer: h.cancel,
@@ -676,6 +838,7 @@ gate('NotebookKernelExecutor idle-timeout shutdown', () => {
     const executor = new NotebookKernelExecutor({
       pythonBin: python3,
       pythonLoopPath: FIXTURE,
+      platform: 'linux',
       idleTimeoutMs: 1_000,
       scheduleIdleTimer: h.schedule,
       cancelIdleTimer: h.cancel
@@ -704,6 +867,7 @@ gate('NotebookKernelExecutor idle-timeout shutdown', () => {
     const executor = new NotebookKernelExecutor({
       pythonBin: python3,
       pythonLoopPath: FIXTURE,
+      platform: 'linux',
       idleTimeoutMs: 1_000,
       scheduleIdleTimer: h.schedule,
       cancelIdleTimer: h.cancel,
@@ -750,6 +914,7 @@ gate('NotebookKernelExecutor idle-timeout shutdown', () => {
     const executor = new NotebookKernelExecutor({
       pythonBin: python3,
       pythonLoopPath: FIXTURE,
+      platform: 'linux',
       scheduleIdleTimer: h.schedule,
       cancelIdleTimer: h.cancel
     })
@@ -797,6 +962,7 @@ gate('NotebookKernelExecutor named environments', () => {
     const executor = new NotebookKernelExecutor({
       pythonBin: python3,
       pythonLoopPath: FIXTURE,
+      platform: 'linux',
       idleTimeoutMs: 1_000,
       scheduleIdleTimer: h.schedule,
       cancelIdleTimer: h.cancel,
@@ -838,6 +1004,7 @@ gate('NotebookKernelExecutor named environments', () => {
     const executor = new NotebookKernelExecutor({
       pythonBin: python3,
       pythonLoopPath: FIXTURE,
+      platform: 'linux',
       onTerminated: (kind, env) => terminated.push([kind, env])
     })
     await executor.execute({ ...req, code: 'warm', environment: 'my-analysis' })
@@ -1028,7 +1195,7 @@ const REPL_LOOP = join(__dirname, '../../../resources/notebook/repl_loop.js')
 describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
   it('spawns the repl loop via process.execPath and returns the mapped return value', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-'))
-    const executor = new NotebookKernelExecutor({ replLoopPath: REPL_LOOP })
+    const executor = new NotebookKernelExecutor({ replLoopPath: REPL_LOOP, platform: 'linux' })
     try {
       const result = await executor.execute({
         ...baseRequest(cwdDir),

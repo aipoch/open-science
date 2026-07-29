@@ -73,6 +73,19 @@ gate('repl_loop.js', () => {
       child.kill()
     }
   }, 60_000)
+
+  it('blocks dynamically assembled child_process package commands at runtime', async () => {
+    const { child, send } = startLoop({})
+    try {
+      const result = await send(
+        `const cp = require('node:child_process'); ` +
+          `cp['ex' + 'ec']('p' + 'ip in' + 'stall pandas')`
+      )
+      expect(result.error).toMatch(/manage_packages/)
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
 })
 
 gate('repl_loop.js host.compute', () => {

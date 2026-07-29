@@ -59,6 +59,7 @@ import {
   type InstallRequest,
   type InstallResult
 } from './package-manager'
+import { detectManagedRuntimeMutation, protectManagedRuntimeWrites } from './managed-runtime-guard'
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
 import {
   addRepairRequired,
@@ -125,6 +126,10 @@ const DEFAULT_LOCALE = 'en-US'
 const DEFAULT_SHELL_TIMEOUT_MS = 120_000
 // Grace period between SIGTERM and SIGKILL when a timed-out shell command ignores the polite signal.
 const SHELL_KILL_GRACE_MS = 2_000
+const REPAIR_QUARANTINE_FAILED = 'REPAIR_QUARANTINE_FAILED'
+
+const isRepairQuarantineError = (error: unknown): boolean =>
+  error instanceof Error && error.message.includes(REPAIR_QUARANTINE_FAILED)
 
 // Composite routing key for a data run, matching the executor's resolveProcessKey: `${kind}:${env}`
 // where kind is the language and env is the resolved env name. python:default-python and
@@ -763,11 +768,18 @@ const runShellCommand = (options: {
   command: string
   cwd: string
   handoffDir: string
+  runtimeRoot: string
+  platform?: NodeJS.Platform
   timeoutMs?: number
 }): Promise<NotebookShellResult> =>
   new Promise((resolve) => {
     const timeoutMs = options.timeoutMs ?? DEFAULT_SHELL_TIMEOUT_MS
-    const invocation = resolveShellInvocation(options.command)
+    const platform = options.platform ?? process.platform
+    const invocation = protectManagedRuntimeWrites(
+      resolveShellInvocation(options.command, platform),
+      options.runtimeRoot,
+      platform
+    )
     const child = spawn(invocation.executable, invocation.args, {
       cwd: options.cwd,
       env: buildShellEnv(options.handoffDir)
@@ -1015,6 +1027,9 @@ class NotebookRuntimeService {
   // remove/startup maintenance keep refusing by real prefix (blockedPrefixes). Cleared the same way:
   // a later restart re-runs recovery and, once the pid is gone/verifiable, reconciles the journal entry.
   private readonly blockedRuntimeIds = new Set<string>()
+  // Immediate in-process gate for a protected-identity failure. It is armed before kernel termination
+  // and before the durable registry write, so disk-full/permission errors cannot reopen the damaged env.
+  private readonly repairBlockedEnvs = new Set<string>()
   // Subsets populated specifically by startup recovery. Unlike same-process live-unconfirmed blocks,
   // these are refreshable: during a data-root relaunch the prior app can finish and durably remove its
   // journal record after this process first observed it. A later recovery pass rebuilds these sets from
@@ -1285,7 +1300,15 @@ class NotebookRuntimeService {
     // An interrupted install left this runtime possibly half-applied (crash recovery flagged it): mark
     // the binding repair-required so execution refuses rather than silently trusting it. A completed
     // re-install of this runtime clears the flag (see managePackages).
-    if (isRepairRequired(getRuntimeRoot(this.options.dataRoot), runtimeId)) {
+    const repairKey =
+      binding.source === 'external'
+        ? binding.runtimeId
+        : (binding.envName ?? this.defaultEnvNameFor(language))
+    const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
+    const repairRequired =
+      isRepairRequired(runtimeRoot, repairKey) ||
+      (binding.source === 'managed' && isRepairRequired(runtimeRoot, binding.runtimeId))
+    if (repairRequired) {
       return { ...binding, status: 'unavailable', reason: 'repair-required' }
     }
     return binding
@@ -1718,6 +1741,15 @@ class NotebookRuntimeService {
     const prefixBlocked =
       !isExternal &&
       this.isPrefixRecoveryBlocked(envPrefix(getRuntimeRoot(this.options.dataRoot), env))
+    // Managed repair state is keyed by the canonical conda env name, so an explicit binding and an
+    // unbound/default session cannot refer to the same prefix under two different registry keys.
+    // External runtimes have no app-owned prefix and remain keyed by their discovered runtime id.
+    const repairKey = binding?.source === 'external' ? binding.runtimeId : env
+    const repairRegistryRoot = getRuntimeRoot(this.options.dataRoot)
+    const repairRequired =
+      this.repairBlockedEnvs.has(dataProcessKey(cell.language, env)) ||
+      isRepairRequired(repairRegistryRoot, repairKey) ||
+      (binding?.source === 'managed' && isRepairRequired(repairRegistryRoot, binding.runtimeId))
     if (
       (binding?.runtimeId && this.blockedRuntimeIds.has(binding.runtimeId)) ||
       prefixBlocked ||
@@ -1732,6 +1764,11 @@ class NotebookRuntimeService {
         `RUNTIME_RECOVERY_BLOCKED: the bound ${cell.language} runtime is recovering from an interrupted ` +
           'operation whose worker process could not be confirmed stopped, so running it now could ' +
           'corrupt it. Restart the app to re-check and recover it before running cells.'
+      )
+    } else if (repairRequired) {
+      interpreterResolveError = new Error(
+        `RUNTIME_REPAIR_REQUIRED: the bound ${cell.language} runtime failed a protected-package ` +
+          'integrity check. Run the runtime Repair workflow before executing another cell.'
       )
     } else if (binding && (binding.status ?? 'active') !== 'active') {
       // No silent fallback: a disabled/unavailable bound runtime FAILS the run with an actionable
@@ -1779,6 +1816,17 @@ class NotebookRuntimeService {
       } catch (error) {
         interpreterResolveError = error
       }
+    }
+
+    const blockedMutation = detectManagedRuntimeMutation({
+      source: cell.code,
+      surface: cell.language,
+      runtimeRoot: session.runtimeRoot
+    })
+    if (blockedMutation && interpreterResolveError === undefined) {
+      interpreterResolveError = new Error(
+        `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`
+      )
     }
 
     // Mark the cell as running before execution so the preview can show immediate progress.
@@ -2016,30 +2064,41 @@ class NotebookRuntimeService {
     session.terminatedKernels.delete('repl')
     await this.persistKernelStatus(session, 'running', 'repl')
 
-    let executedOnLiveKernel = true
+    const blockedMutation = detectManagedRuntimeMutation({
+      source: request.code,
+      surface: 'repl',
+      runtimeRoot: session.runtimeRoot
+    })
+    let executedOnLiveKernel = !blockedMutation
     const { result } = await this.persistRun(session, runningRun, () =>
-      session.executor
-        .execute({
-          code: request.code,
-          kind: 'repl',
-          cwd: session.cwd,
-          notebookSessionRoot: session.notebookSessionRoot,
-          dataRoot: session.dataRoot,
-          runtimeRoot: session.runtimeRoot,
-          protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
-          timeoutMs: request.timeoutMs,
-          mcpRpcEndpoint: mcpRpc?.endpoint,
-          mcpRpcToken: mcpRpc?.token,
-          // Grant-scope identity for host.compute (This conversation / This project). The executor
-          // forwards these into the repl kernel's spawn env; only the control path carries them.
-          sessionId: session.sessionId,
-          projectName: session.projectName,
-          inputRunLeaseId: request.inputRunLeaseId
-        })
-        .catch((error: unknown) => {
-          executedOnLiveKernel = false
-          return errorToExecutionResult(error, session.cwd)
-        })
+      (blockedMutation
+        ? Promise.resolve(
+            errorToExecutionResult(
+              new Error(`MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`),
+              session.cwd
+            )
+          )
+        : session.executor.execute({
+            code: request.code,
+            kind: 'repl',
+            cwd: session.cwd,
+            notebookSessionRoot: session.notebookSessionRoot,
+            dataRoot: session.dataRoot,
+            runtimeRoot: session.runtimeRoot,
+            protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
+            timeoutMs: request.timeoutMs,
+            mcpRpcEndpoint: mcpRpc?.endpoint,
+            mcpRpcToken: mcpRpc?.token,
+            // Grant-scope identity for host.compute (This conversation / This project). The executor
+            // forwards these into the repl kernel's spawn env; only the control path carries them.
+            sessionId: session.sessionId,
+            projectName: session.projectName,
+            inputRunLeaseId: request.inputRunLeaseId
+          })
+      ).catch((error: unknown) => {
+        executedOnLiveKernel = false
+        return errorToExecutionResult(error, session.cwd)
+      })
     )
 
     // Same live-kernel signal as runCellExclusive: a control run that reached the executor settles the
@@ -2096,12 +2155,27 @@ class NotebookRuntimeService {
     const { result } = await this.persistRun(session, runningRun, async () => {
       const workingFileObservation = await startWorkingFileObservation(session)
       let workingFiles: NotebookWorkingFile[] = []
-      const shellResult = await runShellCommand({
-        command: request.command,
-        cwd: session.cwd,
-        handoffDir: join(session.notebookSessionRoot, 'handoff'),
-        timeoutMs: request.timeoutMs
-      }).finally(async () => {
+      const blockedMutation = detectManagedRuntimeMutation({
+        source: request.command,
+        surface: 'bash',
+        runtimeRoot: session.runtimeRoot
+      })
+      const shellResult = await (
+        blockedMutation
+          ? Promise.resolve<NotebookShellResult>({
+              stdout: '',
+              stderr: `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`,
+              exitCode: 1
+            })
+          : runShellCommand({
+              command: request.command,
+              cwd: session.cwd,
+              handoffDir: join(session.notebookSessionRoot, 'handoff'),
+              runtimeRoot: session.runtimeRoot,
+              platform: this.options.platform,
+              timeoutMs: request.timeoutMs
+            })
+      ).finally(async () => {
         workingFiles = await workingFileObservation.finish()
       })
       // No status/traceback classification for the caller-facing NotebookShellResult (the shell is
@@ -2609,7 +2683,7 @@ class NotebookRuntimeService {
     // reconciled at next startup by flagging this runtime repair-required — an interrupted install is
     // never silently assumed to have succeeded. runtimeId is the bound runtime's identity (its envId)
     // so recovery flags exactly this env. Best-effort journal I/O; cleared in the finally on completion.
-    const repairRuntimeId = binding?.runtimeId ?? envName
+    const repairRuntimeId = binding?.source === 'external' ? binding.runtimeId : envName
     // targetPath is the app-managed prefix ONLY for a managed/default install — an EXTERNAL install
     // writes the user's own env (outside runtimeRoot), so recording the default prefix here would make
     // recovery wrongly clean/block the unrelated managed default. Recovery then blocks an external
@@ -2732,6 +2806,17 @@ class NotebookRuntimeService {
                   'The installer exited successfully, but the refreshed environment inventory does not show the requested package(s).'
             }
           }
+          // Publish and enforce the repair gate before releasing the environment install lock. A
+          // failed conda transaction may already have replaced r-base; no queued work may observe the
+          // damaged prefix between the transaction finishing and quarantine becoming durable.
+          if (installResult?.repairRequired) {
+            await this.quarantineRuntimeForRepair(
+              repairRuntimeId,
+              request.language,
+              envName,
+              runtimeRoot
+            )
+          }
         }
         return installResult
       })
@@ -2751,6 +2836,7 @@ class NotebookRuntimeService {
       }
       // A recording failure whose installer couldn't be confirmed stopped: keep the sidecar + journal
       // record so recovery blocks (a worker may still be writing) instead of clearing the evidence.
+      if (isRepairQuarantineError(error)) retainForRecovery = true
       if (isChildUnconfirmedError(error)) {
         retainForRecovery = true
         // Block IN THIS PROCESS now, not just via the retained journal entry (which only guards the next
@@ -2778,7 +2864,20 @@ class NotebookRuntimeService {
     // is usable immediately, everywhere.
     if (result.ok) {
       clearRepairRequired(runtimeRoot, repairRuntimeId)
-      this.restoreRepairedBindings(repairRuntimeId)
+      if (binding?.source === 'managed') clearRepairRequired(runtimeRoot, binding.runtimeId)
+      // A pre-canonicalization registry may still key this same managed prefix by an interpreter path.
+      // Clear every loaded binding alias for the repaired env even when the repair caller was unbound.
+      for (const session of this.sessions.values()) {
+        const candidate = session.runtimeBindings.get(request.language)
+        if (
+          candidate?.source === 'managed' &&
+          this.resolveRunEnv(session, request.language) === envName
+        ) {
+          clearRepairRequired(runtimeRoot, candidate.runtimeId)
+        }
+      }
+      this.repairBlockedEnvs.delete(dataProcessKey(request.language, envName))
+      this.restoreRepairedBindings(repairRuntimeId, request.language, envName)
     }
 
     // R installs/uninstalls don't take effect in a live R session (attached namespaces, held DLLs), so
@@ -3256,6 +3355,7 @@ class NotebookRuntimeService {
 
     return new NotebookKernelExecutor({
       ...resolveDefaultExecutorOptions(),
+      platform: this.options.platform,
       onIdleShutdown: (kind, env) => {
         void this.handleKernelIdleShutdown(sessionId, projectName, kind, env)
       },
@@ -3494,11 +3594,19 @@ class NotebookRuntimeService {
   // rebind. Persisted state needs no rewrite: it stores the binding without the transient repair status
   // (that status is recomputed from the disk flag on reload, which is now cleared). Notifies each
   // touched session's UI so the runtime shows usable again immediately.
-  private restoreRepairedBindings(runtimeId: string): void {
+  private restoreRepairedBindings(
+    runtimeId: string,
+    repairedLanguage: NotebookLanguage,
+    envName: string
+  ): void {
     for (const session of this.sessions.values()) {
       let changed = false
       for (const [language, binding] of session.runtimeBindings) {
-        if (binding.runtimeId === runtimeId && binding.reason === 'repair-required') {
+        const targetMatches =
+          binding.source === 'external'
+            ? binding.runtimeId === runtimeId
+            : language === repairedLanguage && this.resolveRunEnv(session, language) === envName
+        if (targetMatches && binding.reason === 'repair-required') {
           session.runtimeBindings.set(language, {
             ...binding,
             status: 'active',
@@ -3508,6 +3616,51 @@ class NotebookRuntimeService {
         }
       }
       if (changed) this.notifyNotebookChanged(session)
+    }
+  }
+
+  // A protected interpreter identity changed after an installer transaction despite the approved
+  // dry-run. Persist the repair gate before returning, stop every live process using that env, and
+  // mark matching bindings unavailable so neither the current session nor another open session can
+  // execute the compromised runtime before Repair rebuilds it.
+  private async quarantineRuntimeForRepair(
+    runtimeId: string,
+    language: NotebookLanguage,
+    envName: string,
+    runtimeRoot: string
+  ): Promise<void> {
+    const kind = language === 'r' ? 'r' : 'python'
+    const affectedBindings: RuntimeSession[] = []
+    this.repairBlockedEnvs.add(dataProcessKey(language, envName))
+    try {
+      for (const session of this.sessions.values()) {
+        const binding = session.runtimeBindings.get(language)
+        const sessionEnv = this.resolveRunEnv(session, language)
+        const targetMatches =
+          binding?.source === 'external' ? binding.runtimeId === runtimeId : sessionEnv === envName
+        if (!targetMatches) continue
+
+        if (binding) {
+          binding.status = 'unavailable'
+          binding.reason = 'repair-required'
+          affectedBindings.push(session)
+        }
+        await session.executor.terminate?.(kind, sessionEnv)
+        this.tearDownLanguageBinding(session, language, sessionEnv)
+        this.notifyNotebookChanged(session)
+      }
+
+      // The operation journal stays live until both the durable repair registry and the binding state
+      // are committed. A tagged failure makes the caller retain journal + sidecar evidence for startup
+      // recovery, while the process-local gate above continues blocking execution immediately.
+      addRepairRequired(runtimeRoot, runtimeId)
+      for (const session of affectedBindings) await this.persistRuntimeBindings(session)
+    } catch (error) {
+      throw new Error(
+        `${REPAIR_QUARANTINE_FAILED}: could not durably quarantine the runtime after its protected ` +
+          `interpreter changed. ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error }
+      )
     }
   }
 

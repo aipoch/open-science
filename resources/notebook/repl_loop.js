@@ -43,6 +43,43 @@ delete process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
 // network-egress isolation is the tracked follow-up, not solvable in-process.)
 const capturedFetch = fetch
 
+// The control REPL must not become a second package-manager entry point. Patch the shared built-in
+// child_process exports before user code is evaluated, so computed property access such as
+// `cp['ex' + 'ec'](...)` is checked against the resolved command at call time. The main process source
+// policy rejects obvious calls earlier; this runtime layer covers dynamically assembled argv.
+const packageMutationCommand =
+  /(?:\b(?:micromamba|mamba|conda|pip|pip3|pipx|uv|poetry)(?:\.exe)?\b.{0,160}\b(?:install|uninstall|update|upgrade|remove|create|sync|add|venv)\b|\b(?:python|python3|py)(?:\.\d+)?(?:\.exe)?\b.{0,80}\s-m\s+(?:pip|venv|virtualenv|ensurepip)\b|\bR(?:script)?(?:\.exe)?\b.{0,120}(?:\bCMD\s+INSTALL\b|(?:install|remove|update)\.packages\b))/isu
+
+const commandText = (command, args = []) =>
+  [command, ...(Array.isArray(args) ? args : [])]
+    .filter((part) => part !== undefined && part !== null)
+    .map((part) => String(part))
+    .join(' ')
+
+const assertPackageCommandAllowed = (command, args) => {
+  if (packageMutationCommand.test(commandText(command, args))) {
+    throw new Error(
+      'Package/environment mutation is not allowed in the control REPL; use manage_packages.'
+    )
+  }
+}
+
+const childProcess = require('node:child_process')
+for (const method of ['exec', 'execSync']) {
+  const original = childProcess[method]
+  childProcess[method] = function guardedExec(command, ...args) {
+    assertPackageCommandAllowed(command)
+    return original.call(this, command, ...args)
+  }
+}
+for (const method of ['execFile', 'execFileSync', 'spawn', 'spawnSync']) {
+  const original = childProcess[method]
+  childProcess[method] = function guardedExecFile(command, args, ...rest) {
+    assertPackageCommandAllowed(command, args)
+    return original.call(this, command, args, ...rest)
+  }
+}
+
 // host.mcp: async connector call over the loopback RPC endpoint (same protocol as the python bridge).
 // Only injected here, in the trusted control plane. Accepts a single positional args object; keyword
 // arguments are not idiomatic in JS, so a second object is treated as a fallback args source.
