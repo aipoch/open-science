@@ -383,7 +383,50 @@ const runtimeWriteTargets = (
 const shellWords = (command: string): string[] =>
   command.match(/(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|[^\s])+/gu) ?? []
 
+const shellRedirectionTargets = (command: string): string[] => {
+  const targets: string[] = []
+  let quote: "'" | '"' | undefined
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index]
+    if (char === '\\') {
+      index += 1
+      continue
+    }
+    if (quote) {
+      if (char === quote) quote = undefined
+      continue
+    }
+    if (char === "'" || char === '"') {
+      quote = char
+      continue
+    }
+    if (char !== '>' || command[index + 1] === '&') continue
+    if (command[index + 1] === '>') index += 1
+    while (/\s/u.test(command[index + 1] ?? '')) index += 1
+    if (command[index + 1] === '|') index += 1
+    const start = index + 1
+    const targetQuote = command[start]
+    if (targetQuote === "'" || targetQuote === '"') {
+      let end = start + 1
+      while (end < command.length && command[end] !== targetQuote) {
+        if (command[end] === '\\') end += 1
+        end += 1
+      }
+      targets.push(command.slice(start, Math.min(end + 1, command.length)))
+      index = end
+      continue
+    }
+    let end = start
+    while (end < command.length && !/[\s;&|]/u.test(command[end])) end += 1
+    const target = command.slice(start, end)
+    if (target && !/^&?\d+$/u.test(target)) targets.push(target)
+    index = end - 1
+  }
+  return targets
+}
+
 const shellRuntimeWriteTargets = (command: string): string[] => {
+  const redirections = shellRedirectionTargets(command)
   const words = shellWords(command)
   const commandIndex = words.findIndex((word) =>
     /^(?:rm|mv|cp|install|mkdir|touch|truncate|chmod|chown|ln|tee|sed|perl|dd)(?:\.exe)?$/iu.test(
@@ -393,7 +436,7 @@ const shellRuntimeWriteTargets = (command: string): string[] => {
         .at(-1) ?? ''
     )
   )
-  if (commandIndex < 0) return []
+  if (commandIndex < 0) return redirections
   const executable =
     words[commandIndex]
       .replace(/^['"]|['"]$/gu, '')
@@ -404,20 +447,31 @@ const shellRuntimeWriteTargets = (command: string): string[] => {
     .find((arg) => /^--target-directory=/iu.test(arg))
     ?.split(/=(.*)/su)[1]
   const shortTargetIndex = args.findIndex((arg) => arg === '-t')
-  if (targetDirectory) return [targetDirectory]
-  if (shortTargetIndex >= 0 && args[shortTargetIndex + 1]) return [args[shortTargetIndex + 1]]
+  if (targetDirectory) return [...redirections, targetDirectory]
+  if (shortTargetIndex >= 0 && args[shortTargetIndex + 1]) {
+    return [...redirections, args[shortTargetIndex + 1]]
+  }
 
   if (/^dd(?:\.exe)?$/iu.test(executable)) {
-    return args.filter((arg) => /^of=/iu.test(arg)).map((arg) => arg.slice(arg.indexOf('=') + 1))
+    return [
+      ...redirections,
+      ...args.filter((arg) => /^of=/iu.test(arg)).map((arg) => arg.slice(arg.indexOf('=') + 1))
+    ]
   }
   const positional = args.filter((arg) => !arg.startsWith('-'))
-  if (/^(?:cp|install|ln)(?:\.exe)?$/iu.test(executable)) return positional.slice(-1)
-  if (/^mv(?:\.exe)?$/iu.test(executable)) return positional
-  if (/^(?:chmod|chown)(?:\.exe)?$/iu.test(executable)) return positional.slice(1)
-  if (/^(?:sed|perl)(?:\.exe)?$/iu.test(executable)) {
-    return args.some((arg) => /^-.*i/u.test(arg)) ? positional.slice(-1) : []
+  if (/^(?:cp|install|ln)(?:\.exe)?$/iu.test(executable)) {
+    return [...redirections, ...positional.slice(-1)]
   }
-  return positional
+  if (/^mv(?:\.exe)?$/iu.test(executable)) return [...redirections, ...positional]
+  if (/^(?:chmod|chown)(?:\.exe)?$/iu.test(executable)) {
+    return [...redirections, ...positional.slice(1)]
+  }
+  if (/^(?:sed|perl)(?:\.exe)?$/iu.test(executable)) {
+    return args.some((arg) => /^-.*i/u.test(arg))
+      ? [...redirections, ...positional.slice(-1)]
+      : redirections
+  }
+  return [...redirections, ...positional]
 }
 
 // Scan only the resolved bridge call rather than restoring every string/comment in the cell. This
@@ -488,13 +542,16 @@ const hasManagedRuntimeWrite = (
   runtimeRoot: string
 ): boolean => {
   if (surface === 'bash') {
-    return stripShellComments(source)
-      .split(/[;\r\n|&]+/u)
-      .some((command) =>
-        shellRuntimeWriteTargets(command).some((target) =>
-          referencesManagedRuntimePath(target, runtimeRoot)
+    const executableSource = stripShellComments(source)
+    return [executableSource, resolveShellLiteralAssignments(executableSource)].some((candidate) =>
+      candidate
+        .split(/[;\r\n|&]+/u)
+        .some((command) =>
+          shellRuntimeWriteTargets(command).some((target) =>
+            referencesManagedRuntimePath(target, runtimeRoot)
+          )
         )
-      )
+    )
   }
 
   const maskedSource =

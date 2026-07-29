@@ -10,6 +10,9 @@
 // `result` (best-effort; see wrapForRun). Explicit `return <expr>` or `console.log(...)` also work.
 const vm = require('node:vm')
 const readline = require('node:readline')
+const fs = require('node:fs')
+const path = require('node:path')
+const { fileURLToPath } = require('node:url')
 
 // Protocol output line. console is captured into strings during a run (see run()), so writing the
 // JSON here via process.stdout.write cannot be corrupted by user console output.
@@ -86,6 +89,164 @@ childProcess.fork = function guardedFork() {
   throw new Error(
     'child_process.fork is not allowed in the control REPL; use manage_packages for package changes.'
   )
+}
+
+// Enforce the managed-runtime read-only boundary at the Node filesystem API as well as in the main
+// process source policy. This catches paths assembled dynamically inside the persistent REPL and is
+// the hard backstop on platforms without sandbox-exec.
+const runtimeRootValue = process.env.OPEN_SCIENCE_RUNTIME_DIR
+const canonicalGuardPath = (value) => {
+  if (typeof value === 'number' || value === undefined || value === null) return undefined
+  let raw = value
+  if (raw instanceof URL) raw = fileURLToPath(raw)
+  if (Buffer.isBuffer(raw)) raw = raw.toString()
+  if (typeof raw !== 'string') return undefined
+
+  const absolute = path.resolve(raw)
+  let cursor = absolute
+  const suffix = []
+  while (true) {
+    try {
+      return path.join(fs.realpathSync.native(cursor), ...suffix)
+    } catch {
+      const parent = path.dirname(cursor)
+      if (parent === cursor) return absolute
+      suffix.unshift(path.basename(cursor))
+      cursor = parent
+    }
+  }
+}
+const managedRuntimeRoot = runtimeRootValue && canonicalGuardPath(runtimeRootValue)
+const comparableGuardPath = (value) =>
+  process.platform === 'win32' ? value.toLocaleLowerCase('en-US') : value
+const assertRuntimeWriteAllowed = (...values) => {
+  if (!managedRuntimeRoot) return
+  const root = comparableGuardPath(managedRuntimeRoot)
+  for (const value of values) {
+    const resolved = canonicalGuardPath(value)
+    if (!resolved) continue
+    const candidate = comparableGuardPath(resolved)
+    if (candidate === root || candidate.startsWith(root + path.sep)) {
+      throw new Error(
+        'Managed runtime files are read-only in the control REPL; use manage_packages for changes.'
+      )
+    }
+  }
+}
+const writeOpenFlags = (flags) =>
+  (typeof flags === 'string' && /[wax+]/u.test(flags)) ||
+  (typeof flags === 'number' &&
+    Boolean(
+      flags &
+      (fs.constants.O_WRONLY |
+        fs.constants.O_RDWR |
+        fs.constants.O_CREAT |
+        fs.constants.O_TRUNC |
+        fs.constants.O_APPEND)
+    ))
+
+for (const method of [
+  'writeFile',
+  'writeFileSync',
+  'appendFile',
+  'appendFileSync',
+  'rm',
+  'rmSync',
+  'rmdir',
+  'rmdirSync',
+  'unlink',
+  'unlinkSync',
+  'mkdir',
+  'mkdirSync',
+  'truncate',
+  'truncateSync',
+  'chmod',
+  'chmodSync',
+  'chown',
+  'chownSync'
+]) {
+  const original = fs[method]
+  if (typeof original !== 'function') continue
+  fs[method] = function guardedFsWrite(target, ...args) {
+    assertRuntimeWriteAllowed(target)
+    return original.call(this, target, ...args)
+  }
+}
+for (const method of ['rename', 'renameSync']) {
+  const original = fs[method]
+  fs[method] = function guardedFsRename(source, destination, ...args) {
+    assertRuntimeWriteAllowed(source, destination)
+    return original.call(this, source, destination, ...args)
+  }
+}
+for (const method of [
+  'copyFile',
+  'copyFileSync',
+  'cp',
+  'cpSync',
+  'link',
+  'linkSync',
+  'symlink',
+  'symlinkSync'
+]) {
+  const original = fs[method]
+  if (typeof original !== 'function') continue
+  fs[method] = function guardedFsCopy(source, destination, ...args) {
+    assertRuntimeWriteAllowed(destination)
+    return original.call(this, source, destination, ...args)
+  }
+}
+for (const method of ['open', 'openSync']) {
+  const original = fs[method]
+  fs[method] = function guardedFsOpen(target, flags, ...args) {
+    if (writeOpenFlags(flags)) assertRuntimeWriteAllowed(target)
+    return original.call(this, target, flags, ...args)
+  }
+}
+const originalCreateWriteStream = fs.createWriteStream
+fs.createWriteStream = function guardedCreateWriteStream(target, ...args) {
+  assertRuntimeWriteAllowed(target)
+  return originalCreateWriteStream.call(this, target, ...args)
+}
+
+const fsPromises = fs.promises
+for (const method of [
+  'writeFile',
+  'appendFile',
+  'rm',
+  'rmdir',
+  'unlink',
+  'mkdir',
+  'truncate',
+  'chmod',
+  'chown'
+]) {
+  const original = fsPromises[method]
+  if (typeof original !== 'function') continue
+  fsPromises[method] = function guardedPromiseWrite(target, ...args) {
+    assertRuntimeWriteAllowed(target)
+    return original.call(this, target, ...args)
+  }
+}
+for (const method of ['rename']) {
+  const original = fsPromises[method]
+  fsPromises[method] = function guardedPromiseRename(source, destination, ...args) {
+    assertRuntimeWriteAllowed(source, destination)
+    return original.call(this, source, destination, ...args)
+  }
+}
+for (const method of ['copyFile', 'cp', 'link', 'symlink']) {
+  const original = fsPromises[method]
+  if (typeof original !== 'function') continue
+  fsPromises[method] = function guardedPromiseCopy(source, destination, ...args) {
+    assertRuntimeWriteAllowed(destination)
+    return original.call(this, source, destination, ...args)
+  }
+}
+const originalPromiseOpen = fsPromises.open
+fsPromises.open = function guardedPromiseOpen(target, flags, ...args) {
+  if (writeOpenFlags(flags)) assertRuntimeWriteAllowed(target)
+  return originalPromiseOpen.call(this, target, flags, ...args)
 }
 
 // host.mcp: async connector call over the loopback RPC endpoint (same protocol as the python bridge).

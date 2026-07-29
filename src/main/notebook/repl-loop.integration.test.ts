@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import type { Server } from 'node:http'
 import { framePythonRequest, parseLoopResponse, type KernelLoopResponse } from './kernel-protocol'
@@ -110,6 +113,23 @@ gate('repl_loop.js', () => {
       expect(result.error).toMatch(/child_process\.fork is not allowed/)
     } finally {
       child.kill()
+    }
+  }, 60_000)
+
+  it('blocks managed-runtime writes routed through a temporary variable', async () => {
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-runtime-guard-'))
+    const blockedPath = join(runtimeRoot, 'blocked.txt')
+    const { child, send } = startLoop({ OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot })
+    try {
+      const result = await send(
+        `const target = process.env.OPEN_SCIENCE_RUNTIME_DIR + '/blocked.txt'; ` +
+          `require('node:fs').writeFileSync(target, 'changed')`
+      )
+      expect(result.error).toMatch(/manage_packages/)
+      expect(existsSync(blockedPath)).toBe(false)
+    } finally {
+      child.kill()
+      await rm(runtimeRoot, { recursive: true, force: true })
     }
   }, 60_000)
 })

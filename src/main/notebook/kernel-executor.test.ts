@@ -801,6 +801,32 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
       await executor.shutdown()
     }
   })
+
+  it('blocks managed-runtime writes routed through a temporary R variable', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-runtime-guard-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+    const blockedPath = join(request.runtimeRoot, 'blocked-r.txt')
+    const executor = new NotebookKernelExecutor({
+      rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+      platform: 'linux'
+    })
+
+    try {
+      const result = await executor.execute({
+        ...request,
+        code:
+          'target <- file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "blocked-r.txt"); ' +
+          'writeLines("changed", target)',
+        language: 'r'
+      })
+      expect(result.status).toBe('failed')
+      expect(result.traceback).toMatch(/manage_packages/)
+      expect(existsSync(blockedPath)).toBe(false)
+    } finally {
+      await executor.shutdown()
+    }
+  })
 })
 
 gate('NotebookKernelExecutor idle-timeout shutdown', () => {

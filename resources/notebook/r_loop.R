@@ -100,6 +100,163 @@ for (binding_name in c("install.packages", "remove.packages", "update.packages")
   }
 }
 
+# Enforce the managed-runtime read-only boundary inside the persistent R process. The main-process
+# syntax check provides an early error, while these guarded base bindings catch paths assembled in
+# local variables on platforms without a native filesystem sandbox.
+runtime_write_policy_env <- new.env(parent = baseenv())
+runtime_write_policy_env$managed_runtime_dir <- NULL
+
+canonical_runtime_path <- function(value) {
+  if (inherits(value, "connection")) {
+    value <- try(summary(value)$description, silent = TRUE)
+    if (inherits(value, "try-error")) return(NULL)
+  }
+  if (!is.character(value) || length(value) != 1L || !nzchar(value)) return(NULL)
+  cursor <- path.expand(value)
+  suffix <- character()
+  while (!file.exists(cursor)) {
+    parent <- dirname(cursor)
+    if (identical(parent, cursor)) break
+    suffix <- c(basename(cursor), suffix)
+    cursor <- parent
+  }
+  resolved <- normalizePath(cursor, winslash = "/", mustWork = FALSE)
+  if (length(suffix) > 0L) resolved <- do.call(file.path, as.list(c(resolved, suffix)))
+  if (.Platform$OS.type == "windows") resolved <- tolower(resolved)
+  resolved
+}
+
+assert_runtime_write_allowed <- function(targets) {
+  root <- managed_runtime_dir
+  if (is.null(root)) return(invisible(NULL))
+  for (target in targets) {
+    resolved <- canonical_runtime_path(target)
+    if (is.null(resolved)) next
+    if (identical(resolved, root) || startsWith(resolved, paste0(root, "/"))) {
+      stop(
+        "Managed runtime files are read-only in an R cell; use manage_packages for changes.",
+        call. = FALSE
+      )
+    }
+  }
+  invisible(NULL)
+}
+
+runtime_argument <- function(args, name, position) {
+  if (!is.null(names(args)) && name %in% names(args)) return(args[[name]])
+  if (length(args) >= position) args[[position]] else NULL
+}
+
+make_runtime_write_guard <- function(binding_name) {
+  original <- get(binding_name, envir = baseenv(), inherits = FALSE)
+  force(original)
+  force(binding_name)
+  function(...) {
+    args <- list(...)
+    targets <- switch(
+      binding_name,
+      writeLines = list(runtime_argument(args, "con", 2L)),
+      writeBin = list(runtime_argument(args, "con", 2L)),
+      unlink = list(runtime_argument(args, "x", 1L)),
+      file.remove = args,
+      file.rename = list(
+        runtime_argument(args, "from", 1L),
+        runtime_argument(args, "to", 2L)
+      ),
+      file.create = args,
+      dir.create = list(runtime_argument(args, "path", 1L)),
+      saveRDS = list(runtime_argument(args, "file", 2L)),
+      save = list(runtime_argument(args, "file", .Machine$integer.max)),
+      cat = list(runtime_argument(args, "file", .Machine$integer.max)),
+      file = {
+        open_mode <- runtime_argument(args, "open", 2L)
+        if (is.character(open_mode) && grepl("[wax+]", open_mode)) {
+          list(runtime_argument(args, "description", 1L))
+        } else {
+          list()
+        }
+      },
+      gzfile = {
+        open_mode <- runtime_argument(args, "open", 2L)
+        if (is.character(open_mode) && grepl("[wax+]", open_mode)) {
+          list(runtime_argument(args, "description", 1L))
+        } else {
+          list()
+        }
+      },
+      bzfile = {
+        open_mode <- runtime_argument(args, "open", 2L)
+        if (is.character(open_mode) && grepl("[wax+]", open_mode)) {
+          list(runtime_argument(args, "description", 1L))
+        } else {
+          list()
+        }
+      },
+      xzfile = {
+        open_mode <- runtime_argument(args, "open", 2L)
+        if (is.character(open_mode) && grepl("[wax+]", open_mode)) {
+          list(runtime_argument(args, "description", 1L))
+        } else {
+          list()
+        }
+      },
+      open = {
+        open_mode <- runtime_argument(args, "open", 2L)
+        if (is.character(open_mode) && grepl("[wax+]", open_mode)) {
+          list(runtime_argument(args, "con", 1L))
+        } else {
+          list()
+        }
+      },
+      sink = list(runtime_argument(args, "file", 1L)),
+      list()
+    )
+    assert_runtime_write_allowed(targets)
+    do.call(original, args, envir = parent.frame())
+  }
+}
+
+for (helper in c(
+  "canonical_runtime_path",
+  "assert_runtime_write_allowed",
+  "runtime_argument",
+  "make_runtime_write_guard"
+)) {
+  helper_fn <- get(helper, envir = .GlobalEnv, inherits = FALSE)
+  environment(helper_fn) <- runtime_write_policy_env
+  assign(helper, helper_fn, envir = runtime_write_policy_env)
+}
+runtime_value <- Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR", "")
+if (nzchar(runtime_value)) {
+  runtime_write_policy_env$managed_runtime_dir <-
+    runtime_write_policy_env$canonical_runtime_path(runtime_value)
+}
+runtime_write_bindings <- c(
+  "writeLines", "writeBin", "unlink", "file.remove", "file.rename", "file.create",
+  "dir.create", "saveRDS", "save", "cat", "file", "gzfile", "bzfile", "xzfile",
+  "open", "sink"
+)
+runtime_write_wrappers <- lapply(
+  runtime_write_bindings,
+  runtime_write_policy_env$make_runtime_write_guard
+)
+names(runtime_write_wrappers) <- runtime_write_bindings
+lockEnvironment(runtime_write_policy_env, bindings = TRUE)
+for (binding_name in runtime_write_bindings) {
+  if (bindingIsLocked(binding_name, baseenv())) unlockBinding(binding_name, baseenv())
+  assign(binding_name, runtime_write_wrappers[[binding_name]], envir = baseenv())
+  lockBinding(binding_name, baseenv())
+}
+rm(
+  canonical_runtime_path,
+  assert_runtime_write_allowed,
+  runtime_argument,
+  make_runtime_write_guard,
+  runtime_value,
+  runtime_write_bindings,
+  runtime_write_wrappers
+)
+
 figures_dir <- Sys.getenv("OPEN_SCIENCE_KERNEL_FIGURES_DIR", "")
 con <- file("stdin", "rb")
 

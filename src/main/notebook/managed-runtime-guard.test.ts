@@ -32,6 +32,7 @@ describe('detectManagedRuntimeMutation', () => {
     ],
     ['bash', 'echo "$OPEN_SCIENCE_RUNTIME_DIR"; touch report.txt'],
     ['bash', 'cp "$OPEN_SCIENCE_RUNTIME_DIR/x" ./copy.txt'],
+    ['bash', 'printf x > report.txt'],
     ['r', 'cat(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR")); writeLines("ok", "report.txt")'],
     ['r', 'writeLines(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "report.txt")'],
     [
@@ -64,6 +65,9 @@ describe('detectManagedRuntimeMutation', () => {
     ],
     ['bash', 'touch "$OPEN_SCIENCE_RUNTIME_DIR/x"'],
     ['bash', 'cp ./copy.txt "$OPEN_SCIENCE_RUNTIME_DIR/x"'],
+    ['bash', 'cat > "$OPEN_SCIENCE_RUNTIME_DIR/x"'],
+    ['bash', 'target="$OPEN_SCIENCE_RUNTIME_DIR/x"; printf x >> "$target"'],
+    ['bash', 'target="$OPEN_SCIENCE_RUNTIME_DIR/x"; touch "$target"'],
     ['r', 'writeLines("x", file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "x"))'],
     ['repl', 'writeFileSync(process.env.OPEN_SCIENCE_RUNTIME_DIR + "/x", "x")'],
     ['repl', 'copyFileSync("report.txt", process.env.OPEN_SCIENCE_RUNTIME_DIR + "/x")']
