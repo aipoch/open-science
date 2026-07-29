@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookExecutionRequest, NotebookExecutionResult } from './runtime-service'
@@ -45,6 +45,7 @@ import {
   DEFAULT_R_ENV,
   envPrefix,
   pythonBin,
+  writeReadyMarker,
   writeRReadyMarker
 } from './runtime-paths'
 
@@ -2247,6 +2248,11 @@ describe('notebook runtime service', () => {
   describe('inspectPackages', () => {
     it('reads package metadata from the session-bound runtime without invoking the installer', async () => {
       const root = await createStorageRoot()
+      const runtimeRoot = getRuntimeRoot(root)
+      const interpreter = pythonBin(envPrefix(runtimeRoot, DEFAULT_PY_ENV))
+      await mkdir(dirname(interpreter), { recursive: true })
+      await writeFile(interpreter, '', 'utf8')
+      writeReadyMarker(runtimeRoot, DEFAULT_ENV_VERSION, 'ready')
       const inspectPackages = vi.fn().mockResolvedValue({
         inventory: { source: 'full-scan', validation: 'full-scan' },
         packages: [
@@ -2308,11 +2314,49 @@ describe('notebook runtime service', () => {
         }),
         ['numpy']
       )
-      expect(provisionPython).toHaveBeenCalledOnce()
-      expect(provisionPython.mock.invocationCallOrder[0]).toBeLessThan(
-        inspectPackages.mock.invocationCallOrder[0]
-      )
+      expect(provisionPython).not.toHaveBeenCalled()
       expect(installPackagesImpl).not.toHaveBeenCalled()
+    })
+
+    it('refuses to provision a missing default runtime under read-only inspection permission', async () => {
+      const root = await createStorageRoot()
+      const inspectPackages = vi.fn()
+      const provisionPython = vi.fn(async () => undefined)
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentStateTracker: {
+          prepareRun: vi.fn(),
+          captureCompletedRun: vi.fn(),
+          inspectPackages,
+          markPackageMutationDirty: vi.fn(),
+          refreshAfterPackageMutation: vi.fn()
+        },
+        executorFactory: () => ({
+          execute: async () => {
+            throw new Error('not used')
+          },
+          shutdown: async () => ({ reaped: true })
+        })
+      })
+      service.setDefaultEnvProvisioner({
+        provisionPython,
+        provisionR: vi.fn(async () => undefined)
+      })
+
+      await expect(
+        service.inspectPackages({
+          language: 'python',
+          packages: ['numpy'],
+          projectName: 'default-project',
+          sessionId: 'session-1',
+          workspaceCwd: root
+        })
+      ).rejects.toThrow(/DEFAULT_RUNTIME_NOT_READY.*notebook_execute/)
+      expect(provisionPython).not.toHaveBeenCalled()
+      expect(inspectPackages).not.toHaveBeenCalled()
     })
 
     it('refuses package inspection for an external runtime so interpreter execution uses notebook approval', async () => {

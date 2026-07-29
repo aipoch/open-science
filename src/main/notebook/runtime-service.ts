@@ -2380,10 +2380,23 @@ class NotebookRuntimeService {
       )
     }
 
-    // Match notebook execution's first-use behavior: materialize an unbound/default managed runtime
-    // before its interpreter is invoked for metadata. Named environments are a no-op here, and an
-    // external binding has already been rejected above.
-    await this.ensureDefaultEnvReady(request.language, envName, runtimeRoot, session.sessionId)
+    // Inspection is approved as a read-only action, so it must not materialize a missing default env
+    // (which can download packages and write the runtime prefix). Refuse with an actionable boundary
+    // instead of silently returning `unknown` from a nonexistent interpreter. Notebook execution owns
+    // the existing mutating/first-use approval path; once it prepares the runtime, inspection can retry.
+    const isDefaultEnv = envName === this.defaultEnvNameFor(request.language)
+    const isDefaultReady =
+      request.language === 'r'
+        ? rReady(runtimeRoot, DEFAULT_ENV_VERSION)
+        : pythonReady(runtimeRoot, DEFAULT_ENV_VERSION)
+    if (isDefaultEnv && !isDefaultReady) {
+      throw new Error(
+        `DEFAULT_RUNTIME_NOT_READY: the app-managed ${request.language} runtime is not prepared, and ` +
+          'inspect_packages cannot create it under read-only package-metadata permission. Use ' +
+          `notebook_execute with language "${request.language}" to prepare the runtime under notebook ` +
+          'execution approval, then retry inspect_packages.'
+      )
+    }
 
     const target = this.environmentCaptureTarget(
       request.language,

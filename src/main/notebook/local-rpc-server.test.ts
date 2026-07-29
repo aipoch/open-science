@@ -1,13 +1,20 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { NotebookRuntimeService } from './runtime-service'
-import { NotebookRunRepository } from './repository'
+import { NotebookRunRepository, getRuntimeRoot } from './repository'
 import type { NotebookInputRunLease } from './input-registry'
+import {
+  DEFAULT_ENV_VERSION,
+  DEFAULT_PY_ENV,
+  envPrefix,
+  pythonBin,
+  writeReadyMarker
+} from './runtime-paths'
 
 let storageRoot: string | undefined
 
@@ -123,6 +130,11 @@ describe('notebook local RPC server', () => {
 
   it('dispatches read-only package inspection calls to the runtime service', async () => {
     const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const interpreter = pythonBin(envPrefix(runtimeRoot, DEFAULT_PY_ENV))
+    await mkdir(dirname(interpreter), { recursive: true })
+    await writeFile(interpreter, '', 'utf8')
+    writeReadyMarker(runtimeRoot, DEFAULT_ENV_VERSION, 'ready')
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,

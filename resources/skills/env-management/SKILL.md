@@ -16,6 +16,8 @@ A run that fails with `ImportError` / `ModuleNotFoundError` (Python) or `Error i
 
 Use `inspect_packages(language, packages)` when the user asks whether a package is installed in an app-managed runtime or which version is present, or when your code depends on a version-specific feature. It reads package metadata from the session's bound app-managed runtime without importing the package or changing the environment. An `installed` result does not prove the import will succeed; use `notebook_execute` when importability itself is the question.
 
+Inspection does not provision a missing app-managed default runtime. If it reports `DEFAULT_RUNTIME_NOT_READY`, use `notebook_execute` in that language to prepare the runtime under notebook execution approval, then retry `inspect_packages`.
+
 `inspect_packages` intentionally rejects a user-owned external runtime because reading its metadata executes that interpreter. Use `notebook_execute` for an external runtime so the user sees the normal notebook execution approval.
 
 Do not use inspection as a mandatory preflight for every install. For a clear missing-package error, call `manage_packages` directly; installation is the recovery action, while inspection is for explicit version and compatibility questions.
