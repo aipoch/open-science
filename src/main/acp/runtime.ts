@@ -664,6 +664,10 @@ class AcpRuntime {
   // entries appear once the active framework emits a usable context count.
   private contextUsageBySession = new Map<string, AcpContextUsage>()
   private readonly contextUsageTracker: ContextUsageTracker
+  // Identifies prompt turns that received provider-side context-bearing updates. A prompt rejected
+  // before its first update can be rolled back safely; once output/tool/usage events arrive, the live
+  // provider session may retain that partial turn and the estimator must retain it too.
+  private readonly contextUsageUpdatedPromptTurnsBySession = new Map<string, number>()
   private agentProcess: ChildProcessWithoutNullStreams | undefined
   // Latched by shutdown() on app quit. A connect can be mid-spawn (resolveSpawnConfig is async) when
   // quit fires, so this lets the post-spawn path kill a child that was created after killAgentProcess ran.
@@ -1608,6 +1612,7 @@ class AcpRuntime {
     // previous context size into the fresh conversation before its first usage_update arrives.
     this.contextUsageBySession.delete(request.sessionId)
     this.contextUsageTracker.deleteSession(request.sessionId)
+    this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
     this.appliedSessionModels.delete(request.sessionId)
 
     // Release the failed turn's in-flight lock now. Its own `finally` clears it too, but that runs only
@@ -2054,6 +2059,7 @@ class AcpRuntime {
     this.connection = undefined
     this.killAgentProcess()
     this.contextUsageTracker.clear()
+    this.contextUsageUpdatedPromptTurnsBySession.clear()
     this.appliedSessionModels.clear()
     void this.closeMcpHttpHost()
     void this.releaseResponsesBridgeLease()
@@ -2125,6 +2131,7 @@ class AcpRuntime {
     if (this.contextUsageBySession.size > 0) {
       this.contextUsageBySession.clear()
       this.contextUsageTracker.clear()
+      this.contextUsageUpdatedPromptTurnsBySession.clear()
       this.appliedSessionModels.clear()
       this.emitState()
     }
@@ -2285,6 +2292,7 @@ class AcpRuntime {
       // replay history into a fresh one; only that generation's own usage_update can repopulate it.
       this.contextUsageBySession.clear()
       this.contextUsageTracker.clear()
+      this.contextUsageUpdatedPromptTurnsBySession.clear()
       this.appliedSessionModels.clear()
 
       for (const session of this.sessions.values()) {
@@ -2736,6 +2744,14 @@ class AcpRuntime {
             promptTurn
           )
           this.contextUsageTracker.finalizeAssistantOutput(request.sessionId)
+          if (
+            this.restoreContextUsageBeforePromptIfPreflight(
+              request.sessionId,
+              contextUsageBeforePrompt
+            )
+          ) {
+            this.emitState()
+          }
           // Emit artifact metadata before stop so the renderer can attach files to the finished message.
           await this.emitArtifactRunEvent(request.sessionId, artifactRun)
           artifactEmitted = true
@@ -2785,11 +2801,24 @@ class AcpRuntime {
         !contextUsageEstimateCommitted &&
         !this.pendingProviderReconnect
       ) {
-        this.contextUsageTracker.restoreSession(request.sessionId, contextUsageCheckpoint)
-        if (contextUsageBeforePrompt) {
-          this.contextUsageBySession.set(request.sessionId, contextUsageBeforePrompt)
+        const partialTurnWasObserved =
+          this.contextUsageUpdatedPromptTurnsBySession.get(request.sessionId) === promptTurn
+        if (partialTurnWasObserved) {
+          // The provider may keep a turn that already streamed context-bearing updates even when its
+          // prompt request ultimately rejects. Preserve those prompt/tool/output estimates, but do not
+          // leave their transient preflight reading in place without a fresh authoritative total.
+          this.contextUsageTracker.finalizeAssistantOutput(request.sessionId)
+          this.restoreContextUsageBeforePromptIfPreflight(
+            request.sessionId,
+            contextUsageBeforePrompt
+          )
         } else {
-          this.contextUsageBySession.delete(request.sessionId)
+          this.contextUsageTracker.restoreSession(request.sessionId, contextUsageCheckpoint)
+          if (contextUsageBeforePrompt) {
+            this.contextUsageBySession.set(request.sessionId, contextUsageBeforePrompt)
+          } else {
+            this.contextUsageBySession.delete(request.sessionId)
+          }
         }
       }
       if (skillActivitiesStarted && !skillActivitiesFinalized) {
@@ -2870,6 +2899,9 @@ class AcpRuntime {
         this.claudeCodeMcpToolInputs.delete(request.sessionId)
         this.clearOpenCodePermissionToolContext(request.sessionId)
         this.currentPromptTurnBySession.delete(request.sessionId)
+        if (this.contextUsageUpdatedPromptTurnsBySession.get(request.sessionId) === promptTurn) {
+          this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
+        }
         this.promptInFlightSessionIds.delete(request.sessionId)
         if (this.skillImportTurnTokens.get(request.sessionId) === skillImportTurnToken) {
           this.skillImportTurnTokens.delete(request.sessionId)
@@ -3023,6 +3055,7 @@ class AcpRuntime {
     this.sessionBackendIds.delete(request.sessionId)
     this.contextUsageBySession.delete(request.sessionId)
     this.contextUsageTracker.deleteSession(request.sessionId)
+    this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
     this.appliedSessionModels.delete(request.sessionId)
     this.permissionProfiles.delete(request.sessionId)
     this.artifactSessionIds.delete(request.sessionId)
@@ -4903,6 +4936,23 @@ class AcpRuntime {
     this.emitState()
   }
 
+  private restoreContextUsageBeforePromptIfPreflight(
+    sessionId: string,
+    usageBeforePrompt: AcpContextUsage | undefined
+  ): boolean {
+    if (this.contextUsageBySession.get(sessionId)?.breakdown?.status !== 'preflight') return false
+
+    // Preflight is a generation-only projection. If this turn produced no authoritative update,
+    // return to the last Agent reading so compaction remains available; a prior preflight reading is
+    // not authoritative either, so clear it instead of carrying the transient state across turns.
+    if (usageBeforePrompt && usageBeforePrompt.breakdown?.status !== 'preflight') {
+      this.contextUsageBySession.set(sessionId, usageBeforePrompt)
+    } else {
+      this.contextUsageBySession.delete(sessionId)
+    }
+    return true
+  }
+
   private contextUsageSelectionFor(sessionId?: string): {
     model?: string
     contextWindow?: number
@@ -5052,6 +5102,18 @@ class AcpRuntime {
         )
       } else {
         this.contextUsageTracker.observeSessionUpdate(routed.sessionId, routed)
+      }
+
+      if (
+        event.contextUsage ||
+        routed.update.sessionUpdate === 'agent_message_chunk' ||
+        routed.update.sessionUpdate === 'tool_call' ||
+        routed.update.sessionUpdate === 'tool_call_update'
+      ) {
+        const promptTurn = this.currentPromptTurnBySession.get(routed.sessionId)
+        if (promptTurn !== undefined) {
+          this.contextUsageUpdatedPromptTurnsBySession.set(routed.sessionId, promptTurn)
+        }
       }
     }
 
@@ -5231,6 +5293,7 @@ class AcpRuntime {
     this.sessionProjectNames.clear()
     this.contextUsageBySession.clear()
     this.contextUsageTracker.clear()
+    this.contextUsageUpdatedPromptTurnsBySession.clear()
     this.appliedSessionModels.clear()
     this.artifactSessionIds.clear()
     this.notebookRoutingIds.clear()

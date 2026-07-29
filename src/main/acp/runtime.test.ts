@@ -15,7 +15,12 @@ import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime'
-import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
+import type {
+  AcpContextUsage,
+  AcpPermissionRequest,
+  AcpRuntimeEvent,
+  AcpStateSnapshot
+} from '../../shared/acp'
 import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import { terminateProcessTree } from '../process-tree'
 import { AgentMcpHttpHost } from './mcp-http-host'
@@ -6595,9 +6600,35 @@ describe('ACP runtime session management', () => {
     await prompt
   })
 
+  it('restores the last reconciled usage when a turn stops without a fresh usage update', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 96_000, size: 128_000 }
+    })
+    const usageBeforePrompt = runtime.getSnapshot().contextUsageBySession.s1
+
+    await runtime.sendPrompt({ sessionId: 's1', text: 'continue without a usage update' })
+
+    expect(runtime.getSnapshot().contextUsageBySession.s1).toEqual(usageBeforePrompt)
+    expect(runtime.getSnapshot().contextUsageBySession.s1.breakdown?.status).toBe('reconciled')
+  })
+
   it('does not auto-compact from a high local estimate before Agent reconciliation', async () => {
     const process = new FakeAgentProcess()
-    const fakeAgent = startFakeAgent(process, ['s1'])
+    const finishPrompt = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['s1'], {
+      onPrompt: () => finishPrompt.promise
+    })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
@@ -6612,13 +6643,19 @@ describe('ACP runtime session management', () => {
     })
 
     await runtime.createSession({ cwd: '/workspace' })
-    await runtime.sendPrompt({
+    const prompt = runtime.sendPrompt({
       sessionId: 's1',
       text: 'This deliberately long prompt makes the local estimate exceed the tiny test window.'
     })
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
 
     expect(runtime.getSnapshot().contextUsageBySession.s1.breakdown?.status).toBe('preflight')
     expect(fakeAgent.prompts.map(({ text }) => text)).not.toContain('/compact')
+
+    finishPrompt.resolve()
+    await prompt
+
+    expect(runtime.getSnapshot().contextUsageBySession.s1).toBeUndefined()
   })
 
   it('reconciles Codex PromptResponse usage when it equals the local estimate', async () => {
@@ -6762,6 +6799,64 @@ describe('ACP runtime session management', () => {
     ).rejects.toThrow()
 
     expect(runtime.getSnapshot().contextUsageBySession.s1).toEqual(beforeFailure)
+  })
+
+  it('retains partial turn context when an Agent prompt fails after streaming updates', async () => {
+    const process = new FakeAgentProcess()
+    let promptAttempt = 0
+    let secondTurnEstimate: AcpContextUsage['breakdown'] | undefined
+    startFakeAgent(process, ['s1'], {
+      onPrompt: ({ sessionId }) => {
+        promptAttempt += 1
+        if (promptAttempt === 1) {
+          handleSessionUpdate(runtime, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: 'partial-reply',
+              content: { type: 'text', text: 'partial assistant output retained by the provider' }
+            }
+          })
+          handleSessionUpdate(runtime, {
+            sessionId,
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'partial-tool',
+              status: 'completed',
+              rawOutput: { result: 'partial tool output retained by the provider' }
+            }
+          })
+          throw new Error('provider failed after partial output')
+        }
+
+        secondTurnEstimate = runtime.getSnapshot().contextUsageBySession[sessionId]?.breakdown
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 12, size: 128000 }
+    })
+    const usageBeforeFailure = runtime.getSnapshot().contextUsageBySession.s1
+
+    await expect(
+      runtime.sendPrompt({ sessionId: 's1', text: 'fail after using a tool' })
+    ).rejects.toThrow()
+
+    expect(runtime.getSnapshot().contextUsageBySession.s1).toEqual(usageBeforeFailure)
+
+    await runtime.sendPrompt({ sessionId: 's1', text: 'continue the retained turn' })
+
+    expect(secondTurnEstimate?.categories).toContainEqual(
+      expect.objectContaining({ key: 'tools', estimated: true })
+    )
   })
 
   it.each([
