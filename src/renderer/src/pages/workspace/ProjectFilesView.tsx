@@ -1504,29 +1504,31 @@ const ProjectFilesViewContent = ({
                 <TooltipContent>List view</TooltipContent>
               </Tooltip>
             </ToggleGroup.Root>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="text-text-100 hover:text-text-000"
-                  aria-label={isFilesExpanded ? 'Exit full screen files' : 'Expand files'}
-                  onClick={() =>
-                    setToolItemExpanded(isFilesExpanded ? null : PROJECT_FILES_PREVIEW_ID)
-                  }
-                >
-                  {isFilesExpanded ? (
-                    <Minimize2 className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
-                  ) : (
-                    <Maximize2 className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent className="z-[70]">
-                {isFilesExpanded ? 'Exit full screen' : 'Expand files'}
-              </TooltipContent>
-            </Tooltip>
+            <div className="flex h-8 shrink-0 items-center rounded-lg border border-border bg-card p-0.5">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="rounded-md text-text-300 hover:bg-muted hover:text-text-000"
+                    aria-label={isFilesExpanded ? 'Exit full screen files' : 'Expand files'}
+                    onClick={() =>
+                      setToolItemExpanded(isFilesExpanded ? null : PROJECT_FILES_PREVIEW_ID)
+                    }
+                  >
+                    {isFilesExpanded ? (
+                      <Minimize2 className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+                    ) : (
+                      <Maximize2 className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent className="z-[70]">
+                  {isFilesExpanded ? 'Exit full screen' : 'Expand files'}
+                </TooltipContent>
+              </Tooltip>
+            </div>
           </div>
         </TooltipProvider>
       </div>
