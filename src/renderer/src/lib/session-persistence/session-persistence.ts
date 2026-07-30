@@ -82,6 +82,7 @@ type SessionStoreSnapshot = {
 
 type SessionPersistenceState = {
   isHydrated: boolean
+  isLoading: boolean
   isReady: boolean
   loadError: string | undefined
   loadWarning: string | undefined
@@ -232,6 +233,7 @@ const createStoreSaver = (
 // Starts session persistence and returns health/recovery state so App can gate input and surface failures.
 const useSessionPersistence = (): SessionPersistenceState => {
   const [isHydrated, setIsHydrated] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const [isReady, setIsReady] = useState(false)
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
   const [loadWarning, setLoadWarning] = useState<string | undefined>(undefined)
@@ -241,6 +243,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const saverRef = useRef<StoreSaver | undefined>(undefined)
   const retryLoad = useCallback(() => {
     setIsHydrated(false)
+    setIsLoading(true)
     setIsReady(false)
     setLoadError(undefined)
     setLoadWarning(undefined)
@@ -290,6 +293,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
                 ? 'Saved conversations loaded, but storage recovery could not finish. Retry before creating or saving conversations.'
                 : 'Some saved conversations could not be read. Retry before creating or saving conversations.'
           )
+          setIsLoading(false)
           return
         }
 
@@ -318,11 +322,13 @@ const useSessionPersistence = (): SessionPersistenceState => {
           setLoadError(
             error instanceof Error ? error.message : 'Saved conversations could not be loaded.'
           )
+          setIsLoading(false)
         }
         return
       }
 
       setIsReady(true)
+      setIsLoading(false)
       // Snapshot the hydrated state as the diff baseline so hydration itself is not re-saved.
       const save = createStoreSaver(window.api.sessions, useSessionStore.getState(), {
         onFailure: (target, error) => {
@@ -360,7 +366,16 @@ const useSessionPersistence = (): SessionPersistenceState => {
     }
   }, [loadAttempt])
 
-  return { isHydrated, isReady, loadError, loadWarning, writeError, retryLoad, retryWrites }
+  return {
+    isHydrated,
+    isLoading,
+    isReady,
+    loadError,
+    loadWarning,
+    writeError,
+    retryLoad,
+    retryWrites
+  }
 }
 
 export { createStoreSaver, loadPersistedSessions, reconcilePendingArtifacts, useSessionPersistence }

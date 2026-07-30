@@ -46,6 +46,7 @@ const mocks = vi.hoisted(() => {
     },
     sessionPersistence: {
       isHydrated: true,
+      isLoading: false,
       isReady: true,
       loadError: undefined as string | undefined,
       loadWarning: undefined as string | undefined,
@@ -182,6 +183,7 @@ describe('App startup routing', () => {
     mocks.startupView = 'home'
     mocks.sessionPersistence.isReady = true
     mocks.sessionPersistence.isHydrated = true
+    mocks.sessionPersistence.isLoading = false
     mocks.sessionPersistence.loadError = undefined
     mocks.sessionPersistence.loadWarning = undefined
     mocks.sessionPersistence.writeError = undefined
@@ -286,6 +288,20 @@ describe('App startup routing', () => {
     await render()
 
     expect(container.querySelector('[data-testid="onboarding-page"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
+  })
+
+  it('blocks Home while the initial session snapshot is loading', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = false
+    mocks.sessionPersistence.isLoading = true
+    mocks.sessionPersistence.isReady = false
+
+    await render()
+
+    expect(
+      container.querySelector('[data-testid="session-persistence-startup-loading"]')
+    ).not.toBeNull()
     expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
   })
 

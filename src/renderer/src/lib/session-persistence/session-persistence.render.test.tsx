@@ -50,7 +50,11 @@ describe('session persistence startup', () => {
     const persistence: SessionPersistenceState = useSessionPersistence()
 
     return (
-      <div data-hydrated={String(persistence.isHydrated)} data-ready={String(persistence.isReady)}>
+      <div
+        data-hydrated={String(persistence.isHydrated)}
+        data-loading={String(persistence.isLoading)}
+        data-ready={String(persistence.isReady)}
+      >
         <span data-testid="load-error">{persistence.loadError ?? 'sessions available'}</span>
         <span data-testid="load-warning">{persistence.loadWarning ?? 'no load warnings'}</span>
         <span data-testid="write-error">{persistence.writeError ?? 'changes saved'}</span>
@@ -69,6 +73,7 @@ describe('session persistence startup', () => {
 
     expect(container.querySelector('div')?.dataset.ready).toBe('false')
     expect(container.querySelector('div')?.dataset.hydrated).toBe('false')
+    expect(container.querySelector('div')?.dataset.loading).toBe('false')
     expect(container.querySelector('[data-testid="load-error"]')?.textContent).toContain(
       'sessions directory unavailable'
     )
@@ -81,9 +86,36 @@ describe('session persistence startup', () => {
     expect(loadAll).toHaveBeenCalledTimes(2)
     expect(container.querySelector('div')?.dataset.ready).toBe('true')
     expect(container.querySelector('div')?.dataset.hydrated).toBe('true')
+    expect(container.querySelector('div')?.dataset.loading).toBe('false')
     expect(container.querySelector('[data-testid="load-error"]')?.textContent).toContain(
       'sessions available'
     )
+  })
+
+  it('keeps startup blocked while a failed load retry is pending', async () => {
+    await act(async () => root.render(<Probe />))
+
+    let resolveRetry: ((result: LoadAllSessionsResult) => void) | undefined
+    loadAll.mockImplementationOnce(
+      () =>
+        new Promise<LoadAllSessionsResult>((resolve) => {
+          resolveRetry = resolve
+        })
+    )
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-load"]')?.click()
+    )
+
+    expect(container.querySelector('div')?.dataset.hydrated).toBe('false')
+    expect(container.querySelector('div')?.dataset.loading).toBe('true')
+    expect(container.querySelector('div')?.dataset.ready).toBe('false')
+
+    await act(async () => resolveRetry?.(emptyLoadResult()))
+
+    expect(container.querySelector('div')?.dataset.hydrated).toBe('true')
+    expect(container.querySelector('div')?.dataset.loading).toBe('false')
+    expect(container.querySelector('div')?.dataset.ready).toBe('true')
   })
 
   it('surfaces a save failure and retries the latest in-memory session', async () => {

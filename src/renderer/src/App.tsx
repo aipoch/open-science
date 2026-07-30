@@ -33,6 +33,7 @@ const App = (): React.JSX.Element | null => {
   // Persistence is started once at the top so sessions stay loaded for both Home and Workspace.
   const sessionPersistence = useSessionPersistence()
   const isSessionPersistenceHydrated = sessionPersistence.isHydrated
+  const isSessionPersistenceLoading = sessionPersistence.isLoading
   const isSessionPersistenceReady = sessionPersistence.isReady
   const lifecycleSync = useLifecycleSync({ isSessionPersistenceHydrated })
   useDeepLinkNavigation(isSessionPersistenceReady)
@@ -215,6 +216,18 @@ const App = (): React.JSX.Element | null => {
     }) === 'onboarding'
   ) {
     return <OnboardingWizard />
+  }
+
+  if (!isSessionPersistenceHydrated && isSessionPersistenceLoading) {
+    return (
+      <main
+        data-testid="session-persistence-startup-loading"
+        role="status"
+        className="flex h-screen items-center justify-center bg-bg-10 text-sm text-text-300"
+      >
+        Loading saved conversations…
+      </main>
+    )
   }
 
   // A hard load failure leaves no trustworthy session snapshot. Keep the interactive surfaces
