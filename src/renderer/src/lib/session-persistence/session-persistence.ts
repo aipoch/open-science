@@ -305,11 +305,12 @@ const useSessionPersistence = (): SessionPersistenceState => {
 
     // Loads before subscribing so the initial empty store cannot overwrite disk state.
     const startPersistence = async (): Promise<void> => {
+      const preferredSelection = retrySelection.current
       try {
         const result = await loadPersistedSessions(
           window.api.sessions,
           () => isMounted,
-          retrySelection.current
+          preferredSelection
         )
         if (!result || !isMounted) return
         setIsHydrated(true)
@@ -372,9 +373,6 @@ const useSessionPersistence = (): SessionPersistenceState => {
         return
       }
 
-      retrySelection.current = undefined
-      setIsReady(true)
-      setIsLoading(false)
       // Snapshot the hydrated state as the diff baseline so hydration itself is not re-saved.
       const save = createStoreSaver(window.api.sessions, useSessionStore.getState(), {
         onFailure: (target, error) => {
@@ -408,6 +406,20 @@ const useSessionPersistence = (): SessionPersistenceState => {
         if (failedWriteTargets.current.size === 0) setWriteError(undefined)
         void save(state).catch(reportPersistenceError)
       })
+
+      // Hydration intentionally uses the user's live selection instead of the older disk manifest
+      // on retry. Force that tri-state selection (including an explicit empty selection) back to
+      // disk before declaring persistence ready, because the saver baseline already contains it.
+      if (preferredSelection !== undefined) {
+        await save(useSessionStore.getState(), {
+          forceTargets: new Set(['manifest'])
+        }).catch(reportPersistenceError)
+        if (!isMounted) return
+      }
+
+      retrySelection.current = undefined
+      setIsReady(true)
+      setIsLoading(false)
 
       // Recover any artifacts a prior crash left in `.pending`; runs after the saver subscribes so the
       // finalized references are persisted. Fire-and-forget: it must not delay the workspace becoming

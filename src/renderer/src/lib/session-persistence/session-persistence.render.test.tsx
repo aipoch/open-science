@@ -40,6 +40,7 @@ describe('session persistence startup', () => {
   let root: Root
   let loadAll: ReturnType<typeof vi.fn>
   let saveSession: ReturnType<typeof vi.fn>
+  let saveManifest: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     container = document.createElement('div')
@@ -51,12 +52,13 @@ describe('session persistence startup', () => {
         new Error('EACCES: /Users/private/.open-science/sessions could not be read')
       )
     saveSession = vi.fn(async (session) => session)
+    saveManifest = vi.fn().mockResolvedValue(undefined)
     window.api = {
       sessions: {
         loadAll,
         saveSession,
         deleteSession: vi.fn().mockResolvedValue(undefined),
-        saveManifest: vi.fn().mockResolvedValue(undefined)
+        saveManifest
       },
       artifacts: {
         reconcilePendingArtifacts: vi.fn().mockResolvedValue([])
@@ -319,18 +321,38 @@ describe('session persistence startup', () => {
         diagnostics: { isComplete: false, warnings: [] }
       })
       .mockResolvedValueOnce({ sessions, manifest })
+    let finishManifestSave: (() => void) | undefined
+    const manifestSave = new Promise<void>((resolve) => {
+      finishManifestSave = resolve
+    })
+    saveManifest.mockReturnValueOnce(manifestSave)
 
     await act(async () => root.render(<Probe />))
 
     expect(useSessionStore.getState().selectedSessionId).toBe(manifestSession.id)
     act(() => useSessionStore.getState().selectSession(selectedSession.id))
 
-    await act(async () =>
+    await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="retry-load"]')?.click()
-    )
+      await Promise.resolve()
+    })
+
+    expect(useSessionStore.getState().selectedSessionId).toBe(selectedSession.id)
+    expect(saveManifest).toHaveBeenCalledOnce()
+    expect(saveManifest).toHaveBeenCalledWith({
+      lastProjectId: selectedSession.projectId,
+      lastSessionId: selectedSession.id
+    })
+    expect(container.querySelector('div')?.dataset.ready).toBe('false')
+    expect(container.querySelector('div')?.dataset.loading).toBe('true')
+
+    await act(async () => {
+      finishManifestSave?.()
+      await manifestSave
+    })
 
     expect(container.querySelector('div')?.dataset.ready).toBe('true')
-    expect(useSessionStore.getState().selectedSessionId).toBe(selectedSession.id)
+    expect(container.querySelector('div')?.dataset.loading).toBe('false')
   })
 
   it('preserves an explicitly empty selection when retrying a partial recovery', async () => {
@@ -360,6 +382,11 @@ describe('session persistence startup', () => {
 
     expect(container.querySelector('div')?.dataset.ready).toBe('true')
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(saveManifest).toHaveBeenCalledOnce()
+    expect(saveManifest).toHaveBeenCalledWith({
+      lastProjectId: undefined,
+      lastSessionId: undefined
+    })
   })
 
   it('keeps persistence blocked when startup storage recovery is incomplete', async () => {
