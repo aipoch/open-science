@@ -185,7 +185,10 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(include).toContain('!define MUI_CUSTOMFUNCTION_ABORT restorePreservedOnAbort')
     expect(include).toContain('Function restorePreservedOnAbort')
     expect(include).toContain('Function .onInstFailed')
-    expect(include).toContain('Function .onGUIEnd')
+    // Normal GUI shutdown includes the unelevated -> elevated UAC handoff. Restoring there would
+    // race the inner installer's later HKCU uninstall pass; interrupted backups are deterministic
+    // and are adopted by the next installer instead.
+    expect(include).not.toContain('Function .onGUIEnd')
   })
 
   it('defers a shared machine-owned data root to the elevated inner installer', () => {

@@ -174,10 +174,6 @@ Var dataRestoreFailed
   Function .onInstFailed
     !insertmacro restoreAllNestedDataRoots
   FunctionEnd
-
-  Function .onGUIEnd
-    !insertmacro restoreAllNestedDataRoots
-  FunctionEnd
 !macroend
 
 # Resilient replacement for handleUninstallResult's default failure handling, installed via
