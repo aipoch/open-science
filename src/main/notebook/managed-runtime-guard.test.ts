@@ -32,6 +32,14 @@ describe('detectManagedRuntimeMutation', () => {
     ['bash', 'python -m pip list'],
     ['bash', `python -c 'import pip; print(pip.__version__)'`],
     ['python', 'subprocess.run([sys.executable, "-m", "pip", "show", "numpy"])'],
+    ['python', `os.system('echo "$OPEN_SCIENCE_RUNTIME_DIR"')`],
+    ['r', `system('echo "$OPEN_SCIENCE_RUNTIME_DIR"')`],
+    ['repl', `exec('echo "$OPEN_SCIENCE_RUNTIME_DIR"')`],
+    [
+      'python',
+      `subprocess.run(["cp", os.environ["OPEN_SCIENCE_RUNTIME_DIR"] + "/source.txt", "report.txt"])`
+    ],
+    ['python', `subprocess.run(["echo", "touch", os.environ["OPEN_SCIENCE_RUNTIME_DIR"] + "/x"])`],
     ['repl', 'execFile("python3", ["-m", "pip", "help"])'],
     ['powershell', `node -e 'require("child_process").execFileSync("pip", ["list"])'`],
     ['python', 'print(os.environ["OPEN_SCIENCE_RUNTIME_DIR"]); open("report.txt", "w")'],
@@ -100,6 +108,17 @@ describe('detectManagedRuntimeMutation', () => {
     ['bash', `tool=pip; verb=install; "$tool" "$verb" --user pandas`],
     ['python', 'open(os.path.join(os.environ["OPEN_SCIENCE_RUNTIME_DIR"], "x"), "w")'],
     ['python', 'Path(os.environ["OPEN_SCIENCE_RUNTIME_DIR"]).write_text("x")'],
+    ['python', `os.system('touch "$OPEN_SCIENCE_RUNTIME_DIR"/x')`],
+    ['r', `system('touch "$OPEN_SCIENCE_RUNTIME_DIR"/x')`],
+    ['repl', `exec('touch "$OPEN_SCIENCE_RUNTIME_DIR"/x')`],
+    [
+      'python',
+      `subprocess.run(["cp", "report.txt", os.environ["OPEN_SCIENCE_RUNTIME_DIR"] + "/x"])`
+    ],
+    [
+      'python',
+      `subprocess.run(["sudo", "-n", "touch", os.environ["OPEN_SCIENCE_RUNTIME_DIR"] + "/x"])`
+    ],
     [
       'python',
       'shutil.copy("report.txt", os.path.join(os.environ["OPEN_SCIENCE_RUNTIME_DIR"], "x"))'

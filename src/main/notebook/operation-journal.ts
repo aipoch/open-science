@@ -281,9 +281,10 @@ const journalRegistry = new Map<string, RuntimeOperationJournal>()
 
 // Durable, crash-recoverable journal of in-flight runtime operations for one app storage root. Writes
 // are atomic (temp file + rename) and serialized through a save queue so concurrent begins/completions
-// can never race a torn file; a missing or corrupt journal reads as empty (best-effort). The consumer
-// persists intent with begin() BEFORE performing an operation and calls complete() only after it has
-// committed, so pending() on the next startup is exactly the set of operations that were interrupted.
+// can never race a torn file. pending() is a best-effort probe, while recovery and durability-critical
+// mutations distinguish corruption and fail closed. The consumer persists intent with begin() BEFORE
+// performing an operation and calls complete() only after it has committed, so pending() on the next
+// startup is exactly the set of operations that were interrupted.
 //
 // Obtain instances via RuntimeOperationJournal.forPath(path) — never `new` directly — so all callers on
 // the same path share the one queue that makes the serialization guarantee hold.
@@ -349,8 +350,9 @@ export class RuntimeOperationJournal {
   }
 
   // The operations currently recorded as in-flight (empty when the journal is missing OR corrupt). The
-  // recovery path uses readState() instead, so it can fail safe on a corrupt journal; the runtime
-  // callers (begin/update/complete/hasRuntimeOperation) keep the best-effort empty-on-corrupt behavior.
+  // recovery path and durability-critical mutations use readState() instead, so they can fail safe on a
+  // corrupt journal; read-only probes and idempotent completion keep the best-effort empty-on-corrupt
+  // behavior.
   async pending(): Promise<RuntimeOperationRecord[]> {
     const state = await this.readState()
     return state === 'corrupt' ? [] : state.records
@@ -387,7 +389,17 @@ export class RuntimeOperationJournal {
   // A no-op when the operationId is not present (already completed, or never began).
   async update(operationId: string, patch: Partial<RuntimeOperationRecord>): Promise<void> {
     await this.enqueue(async () => {
-      const current = await this.pending()
+      const state = await this.readState()
+      // An update can strengthen recovery evidence (for example interrupted-install ->
+      // protected-identity-change). Treating corruption as an absent record would silently discard that
+      // transition and let the caller release its lock without durable evidence, so fail closed just as
+      // begin() does.
+      if (state === 'corrupt') {
+        throw new Error(
+          'RUNTIME_JOURNAL_CORRUPT: the operation journal is unreadable; refusing to overwrite it'
+        )
+      }
+      const current = state.records
       if (!current.some((entry) => entry.operationId === operationId)) return
       await this.write(
         current.map((entry) =>

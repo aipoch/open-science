@@ -95,6 +95,21 @@ describe('RuntimeOperationJournal', () => {
     expect((await journal.pending())[0].phase).toBe('downloading')
   })
 
+  it('update() fails closed when an in-flight journal becomes corrupt', async () => {
+    const path = await journalPath()
+    const journal = new RuntimeOperationJournal(path)
+    await journal.begin(
+      record({ kind: 'install', repairReason: 'interrupted-install', runtimeId: 'default-r' })
+    )
+
+    await writeFile(path, '{ not json', 'utf8')
+
+    await expect(
+      journal.update('op-1', { repairReason: 'protected-identity-change' })
+    ).rejects.toThrow(/RUNTIME_JOURNAL_CORRUPT/)
+    expect(await readFile(path, 'utf8')).toBe('{ not json')
+  })
+
   it('hasRuntimeOperation() guards against a second op on the same runtime', async () => {
     const journal = new RuntimeOperationJournal(await journalPath())
     await journal.begin(record({ operationId: 'a', runtimeId: 'default-python' }))

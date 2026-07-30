@@ -517,9 +517,11 @@ const shellRedirectionTargets = (command: string): string[] => {
   return targets
 }
 
-const shellRuntimeWriteTargets = (command: string): string[] => {
-  const redirections = shellRedirectionTargets(command)
-  const words = shellWords(command)
+const shellRuntimeWriteTargetsFromWords = (
+  words: string[],
+  redirections: string[] = [],
+  requireExecutablePosition = false
+): string[] => {
   const commandIndex = words.findIndex((word) =>
     /^(?:rm|mv|cp|install|mkdir|touch|truncate|chmod|chown|ln|tee|sed|perl|dd)(?:\.exe)?$/iu.test(
       word
@@ -529,6 +531,20 @@ const shellRuntimeWriteTargets = (command: string): string[] => {
     )
   )
   if (commandIndex < 0) return redirections
+  if (
+    requireExecutablePosition &&
+    commandIndex > 0 &&
+    !words.slice(0, commandIndex).every((word) => {
+      const token = unquoteWord(word)
+      return (
+        /^(?:sudo|env|command|exec)$/u.test(token) ||
+        token.startsWith('-') ||
+        /^[A-Za-z_][A-Za-z0-9_]*=/u.test(token)
+      )
+    })
+  ) {
+    return redirections
+  }
   const executable =
     words[commandIndex]
       .replace(/^['"]|['"]$/gu, '')
@@ -570,6 +586,9 @@ const shellRuntimeWriteTargets = (command: string): string[] => {
   }
   return [...redirections, ...positional]
 }
+
+const shellRuntimeWriteTargets = (command: string): string[] =>
+  shellRuntimeWriteTargetsFromWords(shellWords(command), shellRedirectionTargets(command))
 
 const commandName = (word: string | undefined): string =>
   (word ?? '')
@@ -764,8 +783,9 @@ const powerShellSequenceWritesRuntime = (
 
 // Scan only the resolved bridge call rather than restoring every string/comment in the cell. This
 // still catches literal subprocess/system/exec payloads, while `print("pip install"); system("echo")`
-// remains ordinary output. Dynamically assembled argv is enforced by the persistent runtime hooks and
-// the native process sandbox instead of guessed from unrelated source text.
+// remains ordinary output. Dynamically assembled argv is enforced by the persistent runtime hooks;
+// macOS additionally has the native Seatbelt layer below this policy. Linux and Windows intentionally
+// do not claim a hostile native-code sandbox.
 const executionBridgeCandidates = (
   source: string,
   surface: NotebookExecutionSurface,
@@ -1047,6 +1067,44 @@ const hasDirectManagedRuntimeWrite = (
   return false
 }
 
+const executionBridgeWritesRuntime = (
+  source: string,
+  surface: NotebookExecutionSurface,
+  runtimeRoot: string,
+  cwd: string
+): boolean => {
+  if (surface === 'bash' || surface === 'powershell') return false
+  const maskedSource =
+    surface === 'repl'
+      ? maskJavascriptQuotedAndCommentText(source)
+      : maskQuotedAndCommentText(source)
+  return executionBridgeCandidates(source, surface, maskedSource).some((call) => {
+    const openIndex = call.indexOf('(')
+    const firstArgument = openIndex >= 0 ? callArguments(call, openIndex)[0]?.trim() : undefined
+    if (!firstArgument) return false
+
+    if (bridgeUsesShellCommandString(call, surface)) {
+      const command = quotedLiteralValues(firstArgument)[0]
+      return command ? shellSequenceWritesRuntime(command, runtimeRoot, cwd) : false
+    }
+
+    if (
+      surface !== 'python' ||
+      !/\bsubprocess\.(?:run|call|Popen|check_call|check_output)\s*\(/u.test(call) ||
+      !/^\s*[[(]/u.test(firstArgument)
+    ) {
+      return false
+    }
+    const opening = firstArgument[0]
+    const closing = opening === '[' ? ']' : ')'
+    if (firstArgument.at(-1) !== closing) return false
+    const argv = callArguments(`(${firstArgument.slice(1, -1)})`, 0)
+    return shellRuntimeWriteTargetsFromWords(argv, [], true).some((target) =>
+      sequenceTargetWritesRuntime(target, runtimeRoot, cwd)
+    )
+  })
+}
+
 const hasManagedRuntimeWrite = (
   source: string,
   surface: NotebookExecutionSurface,
@@ -1055,6 +1113,7 @@ const hasManagedRuntimeWrite = (
   depth = 0
 ): boolean =>
   hasDirectManagedRuntimeWrite(source, surface, runtimeRoot, cwd) ||
+  executionBridgeWritesRuntime(source, surface, runtimeRoot, cwd) ||
   (depth < 8 &&
     executionPayloads(source, surface).some((payload) =>
       hasManagedRuntimeWrite(payload.source, payload.surface, runtimeRoot, cwd, depth + 1)
