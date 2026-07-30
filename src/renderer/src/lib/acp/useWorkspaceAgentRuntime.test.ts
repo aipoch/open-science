@@ -1898,6 +1898,49 @@ describe('resuming an interrupted session on demand', () => {
     expect(session.interrupted).toBeUndefined()
   })
 
+  it('restores the interrupted user turn when re-send preparation fails', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Do not lose this interrupted prompt',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(),
+      resumeSession: vi
+        .fn()
+        .mockResolvedValueOnce({ sessionId: 'session-1', cwd: '/workspace/project' })
+        .mockRejectedValueOnce(new Error('adoption failed')),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.messages.filter((message) => message.role === 'user')).toEqual([
+      expect.objectContaining({ content: 'Do not lose this interrupted prompt' })
+    ])
+    expect(session.interrupted).toBe(true)
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+
+    runtime.state = createSnapshot(['session-1'])
+    runtime.sendPrompt.mockResolvedValue(createSnapshot(['session-1']))
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    await flushRuntimeTasks()
+
+    expect(runtime.resumeSession).toHaveBeenCalledTimes(2)
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
+    expect(
+      useSessionStore.getState().sessions[0].messages.filter((message) => message.role === 'user')
+    ).toEqual([expect.objectContaining({ content: 'Do not lose this interrupted prompt' })])
+  })
+
   it('replays a history preamble when an interrupted resume adopts a fresh agent session', async () => {
     // A completed prior turn that must be replayed once the agent's context is gone.
     useSessionStore.getState().appendUserMessage({
@@ -2443,6 +2486,35 @@ describe('recovering from a request-size overflow', () => {
     expect(recovered).toBe(false)
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]?.status).toBe('error')
+  })
+
+  it('restores the overflowed user turn when retry preparation fails', async () => {
+    seedOverflowedConversation()
+
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockRejectedValue(new Error('adoption failed')),
+      resetSessionContext: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true
+      }),
+      sendPrompt: vi.fn()
+    }
+
+    const recovered = await recoverContextOverflowWorkspaceSession(runtime, 'session-1')
+
+    expect(recovered).toBe(false)
+    expect(useSessionStore.getState().sessions[0]?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'user',
+          content: 'now compare with this new screenshot'
+        })
+      ])
+    )
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
   it('triggers recovery once per overflow error event for an attached session', () => {

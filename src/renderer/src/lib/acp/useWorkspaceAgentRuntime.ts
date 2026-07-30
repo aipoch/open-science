@@ -32,7 +32,7 @@ import {
   RESUME_WORKSPACE_MISSING_MESSAGE
 } from '../../../../shared/run-error-classification'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
-import { useSessionStore, type ChatMessage } from '../../stores/session-store'
+import { useSessionStore, type ChatMessage, type ChatSession } from '../../stores/session-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useAcpRuntime } from './useAcpRuntime'
 import { buildHistoryPreamble, buildHistoryReplayMedia } from './history-preamble'
@@ -853,6 +853,37 @@ const findInterruptedUserTurn = (messages: ChatMessage[]): ChatMessage | undefin
   return undefined
 }
 
+// removeMessage creates an abandoned Branch before retry. If preparation fails before the shared send
+// appends a replacement prompt, restore the exact transcript/graph projection while preserving newer
+// runtime metadata and the failure recorded on the live session.
+const restoreRemovedTurnProjection = (
+  sessionBeforeRemoval: ChatSession,
+  options?: { interrupted?: boolean }
+): void => {
+  useSessionStore.setState((state) => ({
+    sessions: state.sessions.map((session) => {
+      if (session.id !== sessionBeforeRemoval.id) return session
+
+      return {
+        ...session,
+        messages: sessionBeforeRemoval.messages,
+        conversationGraph: sessionBeforeRemoval.conversationGraph,
+        filesRevision: sessionBeforeRemoval.filesRevision,
+        ...(options?.interrupted
+          ? {
+              status: 'error' as const,
+              activeRun: undefined,
+              interrupted: true,
+              compacting: undefined,
+              error: session.error ?? sessionBeforeRemoval.error
+            }
+          : {}),
+        updatedAt: Date.now()
+      }
+    })
+  }))
+}
+
 // Explicitly re-attaches an interrupted session's ACP runtime so the user can keep chatting. On
 // success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
 const resumeInterruptedWorkspaceSession = async (
@@ -865,11 +896,17 @@ const resumeInterruptedWorkspaceSession = async (
 
   if (!session) return
 
-  // Already attached (e.g. a redundant click after a prior resume): just clear the banner.
-  if (runtime.state.sessionIds.includes(sessionId)) {
+  const interruptedTurn = findInterruptedUserTurn(session.messages)
+  const runtimeAlreadyAttached = runtime.state.sessionIds.includes(sessionId)
+
+  // Already attached and no unanswered retry remains (e.g. a redundant click after a prior resume):
+  // just clear the banner. A failed post-resume preparation deliberately keeps `interrupted` set so a
+  // second click skips provider resume but still re-attempts the preserved prompt below.
+  if (runtimeAlreadyAttached && !interruptedTurn) {
     useSessionStore.getState().markResumed(sessionId)
     return
   }
+  if (runtimeAlreadyAttached) useSessionStore.getState().markResumed(sessionId)
 
   // Empty string is treated as missing; fall back to runtime cwd
   const resumeCwd = session.cwd || runtime.state.cwd
@@ -881,37 +918,37 @@ const resumeInterruptedWorkspaceSession = async (
 
   let contextReset = false
 
-  try {
-    const resumeResult = await runtime.resumeSession(
-      sessionId,
-      resumeCwd,
-      session.projectId,
-      session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-      session.agentFrameworkId,
-      session.agentBackendId,
-      session.specialistId
-    )
-    // Adopting a fresh agent session (framework switch, or an unresumable restart) wipes the agent's
-    // context; capture that so the re-sent turn below replays the transcript. The shared send path's
-    // own re-resume can't observe this — by then the session is already attached.
-    contextReset = Boolean(resumeResult?.contextReset)
-    useSessionStore
-      .getState()
-      .markResumed(sessionId, resumeResult?.frameworkId, resumeResult?.backendId)
-  } catch (error) {
-    useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
-    return
+  if (!runtimeAlreadyAttached) {
+    try {
+      const resumeResult = await runtime.resumeSession(
+        sessionId,
+        resumeCwd,
+        session.projectId,
+        session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+        session.agentFrameworkId,
+        session.agentBackendId,
+        session.specialistId
+      )
+      // Adopting a fresh agent session (framework switch, or an unresumable restart) wipes the agent's
+      // context; capture that so the re-sent turn below replays the transcript. The shared send path's
+      // own re-resume can't observe this — by then the session is already attached.
+      contextReset = Boolean(resumeResult?.contextReset)
+      useSessionStore
+        .getState()
+        .markResumed(sessionId, resumeResult?.frameworkId, resumeResult?.backendId)
+    } catch (error) {
+      useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
+      return
+    }
   }
 
   // Continue the interrupted turn if it never got a successful reply. Removing the stale user message
   // first avoids a duplicate bubble, since the shared send path re-appends and re-prompts it once.
-  const interruptedTurn = findInterruptedUserTurn(session.messages)
-
   if (!interruptedTurn) return
 
   useSessionStore.getState().removeMessage(sessionId, interruptedTurn.id)
 
-  await sendWorkspaceMessage(runtime, {
+  const resent = await sendWorkspaceMessage(runtime, {
     sessionId,
     text: interruptedTurn.content,
     attachments: (interruptedTurn.uploads ?? []).map((upload) =>
@@ -926,6 +963,8 @@ const resumeInterruptedWorkspaceSession = async (
     supportsImageInput,
     agentModel
   })
+
+  if (!resent) restoreRemovedTurnProjection(session, { interrupted: true })
 }
 
 // After an auto-recovery, ignore further overflow events for this session for a short window so a retry
@@ -1096,6 +1135,8 @@ const recoverContextOverflowWorkspaceSession = async (
     allowCompactionRecovery: true,
     agentModel: session.agentModel
   })
+
+  if (!retried) restoreRemovedTurnProjection(session)
 
   return Boolean(retried)
 }
