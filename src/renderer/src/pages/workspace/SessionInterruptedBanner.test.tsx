@@ -36,6 +36,7 @@ describe('SessionInterruptedBanner', () => {
       root.render(
         <SessionInterruptedBanner
           message="Session was interrupted before the app closed."
+          isDisabled={false}
           isResuming={false}
           onResume={onResume}
         />
@@ -58,13 +59,42 @@ describe('SessionInterruptedBanner', () => {
     const onResume = vi.fn()
     act(() => {
       root.render(
-        <SessionInterruptedBanner message="Interrupted." isResuming onResume={onResume} />
+        <SessionInterruptedBanner
+          message="Interrupted."
+          isDisabled={false}
+          isResuming
+          onResume={onResume}
+        />
       )
     })
 
     const button = getResumeButton()
     expect(button.disabled).toBe(true)
     expect(button.textContent).toContain('Resuming')
+
+    act(() => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(onResume).not.toHaveBeenCalled()
+  })
+
+  it('disables the button and ignores clicks while Session persistence is unavailable', () => {
+    const onResume = vi.fn()
+    act(() => {
+      root.render(
+        <SessionInterruptedBanner
+          message="Interrupted."
+          isDisabled
+          isResuming={false}
+          onResume={onResume}
+        />
+      )
+    })
+
+    const button = getResumeButton()
+    expect(button.disabled).toBe(true)
+    expect(button.textContent).toContain('Resume')
 
     act(() => {
       button.dispatchEvent(new MouseEvent('click', { bubbles: true }))

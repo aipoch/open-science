@@ -1049,9 +1049,11 @@ const WorkspacePage = ({
     void cancelRun(sessionId)
   }
 
-  // Re-attaches the visible interrupted session so the user can keep chatting; awaited by the banner.
+  // Re-attaches the visible interrupted session only after durable Session writes are available;
+  // awaited by the banner so it can keep duplicate clicks disabled while reconnecting.
   const resumeActiveSession = async (): Promise<void> => {
-    if (activeSession) await resumeInterruptedSession(activeSession.id)
+    if (!isSessionPersistenceReady || !activeSession) return
+    await resumeInterruptedSession(activeSession.id)
   }
 
   // Forwards visible permission decisions to the runtime bridge.
@@ -1183,6 +1185,7 @@ const WorkspacePage = ({
             draftDoc={draftDoc}
             canSendMessage={canSendMessage}
             canEditDraft={canEditDraft}
+            canResumeSession={isSessionPersistenceReady}
             actionError={visibleActionError}
             isPreviewPanelCollapsed={previewPanelState === 'collapsed'}
             attachments={attachments}

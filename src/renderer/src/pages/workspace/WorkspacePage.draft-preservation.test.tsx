@@ -25,9 +25,11 @@ let conversationProps: {
   draftDoc: ComposerDoc
   attachments: UploadedAttachment[]
   attachmentTransfers: ComposerUploadTransfer[]
+  canResumeSession: boolean
   onDraftDocChange: (doc: ComposerDoc) => void
   onSendMessage: (forcedSkillIds: string[]) => void
   onStageAttachmentFiles: (files: File[]) => void
+  onResumeSession: () => Promise<void>
 }
 let sidebarProps: {
   canDeleteConversations: boolean
@@ -45,6 +47,7 @@ let deleteDialogProps: {
 const runtime = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   cancelRun: vi.fn(),
+  resumeInterruptedSession: vi.fn(),
   deleteRuntimeSession: vi.fn(),
   respondToPermission: vi.fn()
 }))
@@ -62,6 +65,7 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
     pendingPermissions: [],
     sendMessage: runtime.sendMessage,
     cancelRun: runtime.cancelRun,
+    resumeInterruptedSession: runtime.resumeInterruptedSession,
     deleteRuntimeSession: runtime.deleteRuntimeSession,
     respondToPermission: runtime.respondToPermission
   })
@@ -406,6 +410,38 @@ describe('WorkspacePage draft preservation', () => {
     expect(useSessionStore.getState().sessions).not.toContainEqual(
       expect.objectContaining({ id: 'sess-b' })
     )
+  })
+
+  it('blocks interrupted-session resume while Session persistence is recovering', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'sess-a' ? { ...session, interrupted: true } : session
+      )
+    }))
+
+    await renderPage(false)
+
+    expect(conversationProps.canResumeSession).toBe(false)
+    await act(async () => {
+      await conversationProps.onResumeSession()
+    })
+    expect(runtime.resumeInterruptedSession).not.toHaveBeenCalled()
+
+    await act(async () => {
+      root.render(
+        <WorkspacePage
+          isSessionPersistenceHydrated={true}
+          isSessionPersistenceReady={true}
+          canDeleteConversations={true}
+        />
+      )
+    })
+
+    expect(conversationProps.canResumeSession).toBe(true)
+    await act(async () => {
+      await conversationProps.onResumeSession()
+    })
+    expect(runtime.resumeInterruptedSession).toHaveBeenCalledWith('sess-a')
   })
 
   it('blocks session deletion when Project deletion recovery is incomplete', async () => {

@@ -109,6 +109,7 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         draftDoc={emptyDoc}
         canSendMessage={false}
         canEditDraft
+        canResumeSession
         actionError={null}
         isPreviewPanelCollapsed={false}
         attachments={[]}
@@ -318,6 +319,40 @@ describe('ConversationPanel composer intake', () => {
     })
 
     expect(onDraftDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'hello' }] })
+  })
+})
+
+describe('ConversationPanel interrupted Session recovery', () => {
+  it('keeps Resume disabled while Session persistence is unavailable', () => {
+    const onResumeSession = vi.fn().mockResolvedValue(undefined)
+    const interruptedSession: ChatSession = {
+      id: 'session-interrupted',
+      projectId: 'project-a',
+      title: 'Interrupted session',
+      cwd: '/workspace',
+      status: 'idle',
+      interrupted: true,
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }
+
+    renderPanel({
+      activeSession: interruptedSession,
+      canResumeSession: false,
+      onResumeSession
+    })
+
+    const resumeButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Resume session"]'
+    )
+    expect(resumeButton?.disabled).toBe(true)
+    expect(resumeButton?.dataset.slot).toBe('button')
+    expect(resumeButton?.className).toContain('focus-visible:ring-3')
+    expect(resumeButton?.className).toContain('disabled:pointer-events-none')
+
+    act(() => resumeButton?.click())
+    expect(onResumeSession).not.toHaveBeenCalled()
   })
 })
 

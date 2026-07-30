@@ -1,33 +1,34 @@
 import { Loader2, Play } from 'lucide-react'
 
-import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
 
 type SessionInterruptedBannerProps = {
   message: string
+  isDisabled: boolean
   isResuming: boolean
   onResume: () => void
 }
 
-const resumeButtonClassName = cn(
-  'flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium text-text-000',
-  'cursor-pointer transition-colors duration-200 ease-out hover:bg-bg-300',
-  'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent'
-)
+const resumeButtonClassName =
+  'gap-1.5 rounded-md text-[12px] text-text-000 hover:bg-bg-300 hover:text-text-000'
 
 // Neutral recovery banner for a session interrupted by an app restart. The Resume button re-attaches
 // the ACP runtime; while that request is in flight it is disabled so a second click cannot double-resume.
 const SessionInterruptedBanner = ({
   message,
+  isDisabled,
   isResuming,
   onResume
 }: SessionInterruptedBannerProps): React.JSX.Element => (
   <div className="mb-2 flex items-center gap-3 rounded-lg border border-border-200 bg-bg-200 px-3 py-2">
     <p className="min-w-0 flex-1 text-[12px] leading-5 text-text-100">{message}</p>
-    <button
+    <Button
       type="button"
+      variant="ghost"
+      size="sm"
       className={resumeButtonClassName}
       onClick={onResume}
-      disabled={isResuming}
+      disabled={isDisabled || isResuming}
       aria-label="Resume session"
     >
       {isResuming ? (
@@ -36,7 +37,7 @@ const SessionInterruptedBanner = ({
         <Play className="size-3.5" strokeWidth={2} aria-hidden="true" />
       )}
       {isResuming ? 'Resuming…' : 'Resume'}
-    </button>
+    </Button>
   </div>
 )
 

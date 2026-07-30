@@ -100,6 +100,7 @@ type ConversationPanelProps = {
   draftDoc: ComposerDoc
   canSendMessage: boolean
   canEditDraft: boolean
+  canResumeSession: boolean
   actionError: string | null
   isPreviewPanelCollapsed: boolean
   attachments: UploadedAttachment[]
@@ -153,6 +154,7 @@ const ConversationPanel = ({
   draftDoc,
   canSendMessage,
   canEditDraft,
+  canResumeSession,
   actionError,
   isPreviewPanelCollapsed,
   attachments,
@@ -216,7 +218,7 @@ const ConversationPanel = ({
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
-    if (isResuming) return
+    if (!canResumeSession || isResuming) return
 
     setIsResuming(true)
     try {
@@ -309,6 +311,7 @@ const ConversationPanel = ({
                 {activeSession?.interrupted ? (
                   <SessionInterruptedBanner
                     message={activeSession.error ?? 'This session was interrupted.'}
+                    isDisabled={!canResumeSession}
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
                   />
