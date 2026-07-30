@@ -20,6 +20,7 @@ import type {
   ArtifactFile,
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
+  FinalizeRunArtifactsResult,
   ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest,
@@ -500,7 +501,9 @@ type OpenScienceAPI = {
   }
   artifacts: {
     // Finalizes files produced during one runtime event after the renderer has selected a message.
-    finalizeRunArtifacts: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
+    finalizeRunArtifacts: (
+      request: FinalizeRunArtifactsRequest
+    ) => Promise<FinalizeRunArtifactsResult>
     // Lists every on-disk artifact for a project so orphaned files (owning session deleted) still show.
     listProjectFiles: (request: ListProjectArtifactsRequest) => Promise<ArtifactFile[]>
     // Re-finalizes pending artifacts left behind by a crash, returning the message's finalized files.
@@ -1072,7 +1075,7 @@ const api: OpenScienceAPI = {
   artifacts: {
     // Keep generated file movement in the main process where filesystem trust checks live.
     finalizeRunArtifacts: (request) =>
-      ipcRenderer.invoke('artifacts:finalize-run', request) as Promise<ArtifactFile[]>,
+      ipcRenderer.invoke('artifacts:finalize-run', request) as Promise<FinalizeRunArtifactsResult>,
     // Lists every on-disk artifact for a project so orphaned files (owning session deleted) still show.
     listProjectFiles: (request) =>
       ipcRenderer.invoke('artifacts:list-project-files', request) as Promise<ArtifactFile[]>,

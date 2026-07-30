@@ -21,7 +21,10 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import { NotebookRunRepository } from '../notebook/repository'
 import { createPngBytes, createPngInlineSource } from './artifact-test-fixtures'
-import { ArtifactProvenanceRepository } from './provenance-repository'
+import {
+  ArtifactOwnershipPersistenceRaceError,
+  ArtifactProvenanceRepository
+} from './provenance-repository'
 import { ArtifactRepository } from './repository'
 
 let storageRoot: string | undefined
@@ -2022,7 +2025,7 @@ describe('artifact provenance repository', () => {
         messageBranchAncestry: [branch.id],
         messageAncestry: [prompt.id, 'message-forged']
       })
-    ).rejects.toThrow(/durable Session graph|Branch descendant/i)
+    ).rejects.toBeInstanceOf(ArtifactOwnershipPersistenceRaceError)
 
     const durablePrompt = conversationGraph.messages.find((message) => message.id === prompt.id)!
     durablePrompt.status = 'streaming'
@@ -2035,12 +2038,25 @@ describe('artifact provenance repository', () => {
         ...context,
         messageId: assistant.id
       })
-    ).rejects.toThrow(/Branch descendant/i)
+    ).rejects.toMatchObject({ name: 'ArtifactFinalizationProofError' })
 
     durablePrompt.status = 'complete'
     const durableAssistant = conversationGraph.messages.find(
       (message) => message.id === assistant.id
     )!
+    durableAssistant.role = 'user'
+    await expect(
+      repository.validateFinalizationOwnership({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactRunId: 'artifact-run-1',
+        artifactVersionIds: [version.versionId],
+        ...context,
+        messageId: assistant.id
+      })
+    ).rejects.toMatchObject({ name: 'ArtifactFinalizationProofError' })
+
+    durableAssistant.role = 'agent'
     durableAssistant.status = 'streaming'
     await expect(
       repository.validateFinalizationOwnership({
@@ -2257,7 +2273,7 @@ describe('artifact provenance repository', () => {
 
     await expect(
       repository.finalizeRun({ ...finalizeRequest, messageId: 'message-2' })
-    ).rejects.toThrow(/Branch descendant|different message/i)
+    ).rejects.toBeInstanceOf(ArtifactOwnershipPersistenceRaceError)
     await expect(
       repository.finalizeRun({
         ...finalizeRequest,

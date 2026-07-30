@@ -227,10 +227,17 @@ type ArtifactFinalizationContext = Pick<
 
 type PreparedArtifactFinalizationContext = Omit<ArtifactFinalizationContext, 'messageId'>
 
-class ArtifactFinalizationProofError extends Error {
+export class ArtifactFinalizationProofError extends Error {
   constructor(message: string, cause?: unknown) {
     super(message, cause === undefined ? undefined : { cause })
     this.name = 'ArtifactFinalizationProofError'
+  }
+}
+
+export class ArtifactOwnershipPersistenceRaceError extends ArtifactFinalizationProofError {
+  constructor(message = 'Artifact finalization ownership is not durable yet.') {
+    super(message)
+    this.name = 'ArtifactOwnershipPersistenceRaceError'
   }
 }
 
@@ -258,18 +265,26 @@ const validateDurableMessageOwnership = (
 ): { messageBranchAncestry: string[]; messageAncestry: string[] } => {
   const graph = materializeSessionConversationGraph(session).conversationGraph!
   if (graph.rootFrameId !== context.rootFrameId) {
-    throw new Error('Artifact finalization root Frame does not match the durable Session graph.')
+    throw new ArtifactFinalizationProofError(
+      'Artifact finalization root Frame does not match the durable Session graph.'
+    )
   }
   const frame = graph.frames.find((candidate) => candidate.id === context.agentFrameId)
   const branch = graph.branches.find((candidate) => candidate.id === context.messageBranchId)
   if (!frame || !branch || branch.agentFrameId !== frame.id) {
-    throw new Error('Artifact finalization Branch does not belong to the declared Agent Frame.')
+    throw new ArtifactFinalizationProofError(
+      'Artifact finalization Branch does not belong to the declared Agent Frame.'
+    )
   }
   const segment = graph.runtimeSegments.find(
     (candidate) =>
       candidate.id === context.runtimeSegmentId && candidate.agentFrameId === context.agentFrameId
   )
-  if (!segment) throw new Error('Artifact finalization Runtime Segment is not durable.')
+  if (!segment) {
+    throw new ArtifactFinalizationProofError(
+      'Artifact finalization Runtime Segment is not durable.'
+    )
+  }
   const path = resolveMessageBranchPath(graph, context.messageBranchId)
   const promptIndex = path.findIndex((message) => message.id === context.promptMessageId)
   const finalIndex = path.findIndex((message) => message.id === context.messageId)
@@ -281,20 +296,32 @@ const validateDurableMessageOwnership = (
   // Runtime Segment, role, and ordered path identity remain the fail-closed ownership boundary.
   if (
     promptIndex < 0 ||
-    finalIndex <= promptIndex ||
     !promptMessage ||
     promptMessage.role !== 'user' ||
     promptMessage.status !== 'complete' ||
     promptMessage.agentFrameId !== context.agentFrameId ||
     promptMessage.introducedOnBranchId !== context.messageBranchId ||
-    promptMessage.runtimeSegmentId !== context.runtimeSegmentId ||
-    !finalMessage ||
+    promptMessage.runtimeSegmentId !== context.runtimeSegmentId
+  ) {
+    throw new ArtifactFinalizationProofError(
+      'Artifact finalization prompt does not match the declared durable ownership.'
+    )
+  }
+  if (finalIndex < 0 || !finalMessage) {
+    throw new ArtifactOwnershipPersistenceRaceError(
+      'Artifact finalization message is not durable yet.'
+    )
+  }
+  if (
+    finalIndex <= promptIndex ||
     finalMessage.role !== 'agent' ||
     finalMessage.agentFrameId !== context.agentFrameId ||
     finalMessage.introducedOnBranchId !== context.messageBranchId ||
     finalMessage.runtimeSegmentId !== context.runtimeSegmentId
   ) {
-    throw new Error('Artifact finalization message is not a Branch descendant of its prompt.')
+    throw new ArtifactFinalizationProofError(
+      'Artifact finalization message does not match the declared durable ownership.'
+    )
   }
   const branches = new Map(graph.branches.map((candidate) => [candidate.id, candidate]))
   const branchAncestry: string[] = []

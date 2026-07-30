@@ -18,6 +18,7 @@ import type {
   ArtifactFile,
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
+  FinalizeRunArtifactsResult,
   ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest,
@@ -455,7 +456,7 @@ interface OpenScienceAPI {
     onState(listener: (state: OfficePreviewRuntimeState) => void): RemoveListener
   }
   artifacts: {
-    finalizeRunArtifacts(request: FinalizeRunArtifactsRequest): Promise<ArtifactFile[]>
+    finalizeRunArtifacts(request: FinalizeRunArtifactsRequest): Promise<FinalizeRunArtifactsResult>
     listProjectFiles(request: ListProjectArtifactsRequest): Promise<ArtifactFile[]>
     reconcilePendingArtifacts(request: ReconcilePendingArtifactsRequest): Promise<ArtifactFile[]>
     openFile(request: OpenArtifactFileRequest): Promise<void>

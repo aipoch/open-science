@@ -86,6 +86,16 @@ export type FinalizeRunArtifactsRequest = {
   messageId: string
 }
 
+// The only finalization failure the renderer may recover inside one event delivery. Other failures
+// remain rejected IPC calls so proof and compatibility errors cannot accidentally become retryable.
+export const ARTIFACT_OWNERSHIP_PERSISTENCE_RACE = 'ownership-persistence-race' as const
+
+export type ArtifactFinalizationErrorCode = typeof ARTIFACT_OWNERSHIP_PERSISTENCE_RACE
+
+export type FinalizeRunArtifactsResult =
+  | { ok: true; artifacts: ArtifactFile[] }
+  | { ok: false; code: ArtifactFinalizationErrorCode; message: string }
+
 // Renderer request to open one managed artifact through main-process path validation.
 export type OpenArtifactFileRequest = {
   path: string

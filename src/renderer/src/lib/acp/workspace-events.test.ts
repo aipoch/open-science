@@ -1,5 +1,8 @@
 import type { AcpRuntimeEvent, AcpPermissionRequest } from '../../../../shared/acp'
-import type { ArtifactFile } from '../../../../shared/artifacts'
+import {
+  ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
+  type ArtifactFile
+} from '../../../../shared/artifacts'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -1180,7 +1183,10 @@ describe('workspace runtime events', () => {
       .fn()
       .mockImplementationOnce(async () => {
         operationOrder.push('finalize')
-        throw new Error('Artifact finalization message is not a Branch descendant of its prompt.')
+        throw Object.assign(
+          new Error('The durable projection has not caught up with the selected message yet.'),
+          { code: ARTIFACT_OWNERSHIP_PERSISTENCE_RACE }
+        )
       })
       .mockImplementationOnce(async () => {
         operationOrder.push('finalize')
@@ -1205,6 +1211,79 @@ describe('workspace runtime events', () => {
     expect(operationOrder).toEqual(['save', 'finalize', 'save', 'finalize', 'save'])
     expect(finalizeRunArtifacts).toHaveBeenCalledTimes(2)
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
+  })
+
+  it('keeps a proof failure terminal when only its human message resembles the old race text', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-event-terminal-proof',
+        role: 'assistant',
+        messageId: 'assistant-message-terminal-proof',
+        text: 'Saved the plot.'
+      })
+    )
+    const operationOrder: string[] = []
+    const saveSession = vi.fn().mockImplementation(async () => {
+      operationOrder.push('save')
+    })
+    const finalizeRunArtifacts = vi.fn().mockImplementation(async () => {
+      operationOrder.push('finalize')
+      throw new Error('Artifact finalization message is not a Branch descendant of its prompt.')
+    })
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'stop-before-terminal-proof', kind: 'stop' })
+    )
+
+    await expect(
+      applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: 'artifact-event-terminal-proof',
+          kind: 'artifact',
+          runId: 'artifact-run-terminal-proof',
+          artifactClaimId: 'claim-terminal-proof',
+          artifacts: [createArtifactFile({ runId: 'artifact-run-terminal-proof' })]
+        }),
+        { finalizeRunArtifacts, saveSession }
+      )
+    ).rejects.toThrow(/Branch descendant/)
+
+    expect(operationOrder).toEqual(['save', 'finalize'])
+    expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
+  })
+
+  it('attempts the recoverable ownership persistence race at most twice', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-event-repeated-race',
+        role: 'assistant',
+        messageId: 'assistant-message-repeated-race',
+        text: 'Saved the plot.'
+      })
+    )
+    const race = Object.assign(new Error('Durable ownership is still unavailable.'), {
+      code: ARTIFACT_OWNERSHIP_PERSISTENCE_RACE
+    })
+    const finalizeRunArtifacts = vi.fn().mockRejectedValue(race)
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-repeated-race', kind: 'stop' }))
+
+    await expect(
+      applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: 'artifact-event-repeated-race',
+          kind: 'artifact',
+          runId: 'artifact-run-repeated-race',
+          artifactClaimId: 'claim-repeated-race',
+          artifacts: [createArtifactFile({ runId: 'artifact-run-repeated-race' })]
+        }),
+        { finalizeRunArtifacts, saveSession }
+      )
+    ).rejects.toThrow('Durable ownership is still unavailable.')
+
+    expect(finalizeRunArtifacts).toHaveBeenCalledTimes(2)
+    expect(saveSession).toHaveBeenCalledTimes(2)
   })
 
   it('auto-opens a generated molecule artifact in the preview panel', async () => {
@@ -1677,6 +1756,8 @@ describe('workspace runtime events', () => {
     await expect(
       applyWorkspaceRuntimeEvent(artifactEvent, { finalizeRunArtifacts, saveSession })
     ).rejects.toThrow('move failed')
+
+    expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'error',

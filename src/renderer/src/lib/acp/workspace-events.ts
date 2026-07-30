@@ -1,5 +1,9 @@
 import type { AcpRuntimeEvent, AcpPermissionRequest } from '../../../../shared/acp'
-import type { ArtifactFile, FinalizeRunArtifactsRequest } from '../../../../shared/artifacts'
+import {
+  ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
+  type ArtifactFile,
+  type FinalizeRunArtifactsRequest
+} from '../../../../shared/artifacts'
 import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../shared/reviewer'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
 import { createPreviewFileItemFromArtifact } from '../../pages/workspace/preview-file-item'
@@ -81,15 +85,12 @@ const getEventErrorText = (event: AcpRuntimeEvent): string =>
 const getErrorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
-// A terminal message and its Branch projection are persisted by separate runtime events. Even though
-// Artifact finalization explicitly saves first, an already-queued Session save can briefly leave the
-// main process observing the prior Branch head. Retry only this narrow, fail-closed ownership race;
-// root/Frame/Branch identity mismatches and every other validation failure remain terminal.
+// A terminal message and its Branch projection are persisted by separate runtime events. Retry only
+// the main process's explicit persistence-race code; proof identity and publication failures remain
+// terminal regardless of their human-readable wording.
 const isArtifactOwnershipPersistenceRace = (error: unknown): boolean =>
   error instanceof Error &&
-  /Artifact finalization (?:message is not a Branch descendant of its prompt|ancestry does not prove message Branch ownership)/.test(
-    error.message
-  )
+  (error as Error & { code?: unknown }).code === ARTIFACT_OWNERSHIP_PERSISTENCE_RACE
 
 // Codex writes two informational diagnostics to stderr during otherwise-successful turns: skill
 // descriptions may be compacted to their context budget, and a timed-out WebSocket attempt may fall
@@ -115,8 +116,16 @@ type WorkspaceRuntimeEventDependencies = {
 }
 
 // Defaults to the preload artifact API while allowing tests to inject a fake finalizer.
-const finalizeRunArtifacts = (request: FinalizeRunArtifactsRequest): Promise<ArtifactFile[]> =>
-  window.api.artifacts.finalizeRunArtifacts(request)
+const finalizeRunArtifacts = async (
+  request: FinalizeRunArtifactsRequest
+): Promise<ArtifactFile[]> => {
+  const result = await window.api.artifacts.finalizeRunArtifacts(request)
+  if (result.ok) return result.artifacts
+
+  const error = new Error(result.message) as Error & { code: typeof result.code }
+  error.code = result.code
+  throw error
+}
 
 // Artifact finalization validates its renderer-selected Message against the durable Session graph.
 // Persist that graph explicitly instead of relying on the asynchronous store saver to win the IPC race.

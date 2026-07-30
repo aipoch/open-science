@@ -1,6 +1,11 @@
 import { ipcMain, shell } from 'electron'
 
-import type { ArtifactFile, ArtifactPreviewResult } from '../../shared/artifacts'
+import {
+  ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
+  type ArtifactFile,
+  type ArtifactPreviewResult,
+  type FinalizeRunArtifactsResult
+} from '../../shared/artifacts'
 import type {
   ArtifactLineageProvenance,
   ArtifactVersionExecutionProvenance,
@@ -21,9 +26,16 @@ import type {
 import { resolveDataRoot } from '../storage-root'
 import { withDataRootWrite } from '../storage/migration-state'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
+import { createLogger, type Logger } from '../logger'
 import { ArtifactRepository } from './repository'
 import { ArtifactRunRegistry } from './run-registry'
-import type { ArtifactProvenanceRepository } from './provenance-repository'
+import {
+  ArtifactFinalizationProofError,
+  ArtifactOwnershipPersistenceRaceError,
+  type ArtifactProvenanceRepository
+} from './provenance-repository'
+
+const log = createLogger('artifacts:finalization')
 
 type ArtifactHandlers = {
   finalizeRunArtifacts: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
@@ -48,6 +60,7 @@ type ArtifactHandlers = {
 
 type ArtifactHandlerDependencies = {
   openPath?: (path: string) => Promise<string>
+  logger?: Pick<Logger, 'error'>
   // Run ids of turns in flight right now (live runtime state). Their pending files are still being
   // written, so the orphan scan excludes them; a crashed run is absent here and correctly surfaces.
   getActiveArtifactRunIds?: () => string[]
@@ -121,7 +134,13 @@ const createArtifactHandlers = (
         withClaimLock(finalizeLocks, request.claimId, () => {
           const claim = runRegistry.resolve(request.claimId)
           const finalize = (): Promise<ArtifactFile[]> =>
-            finalizeRunArtifacts(repository, runRegistry, request, dependencies.provenance)
+            finalizeRunArtifacts(
+              repository,
+              runRegistry,
+              request,
+              dependencies.provenance,
+              dependencies.logger ?? log
+            )
           return dependencies.withSessionMutation
             ? dependencies.withSessionMutation(claim.projectName, claim.sessionId, finalize)
             : finalize()
@@ -181,7 +200,8 @@ const finalizeRunArtifacts = async (
   repository: ArtifactRepository,
   runRegistry: ArtifactRunRegistry,
   request: FinalizeRunArtifactsRequest,
-  provenance?: Pick<ArtifactProvenanceRepository, 'finalizeRun'>
+  provenance?: Pick<ArtifactProvenanceRepository, 'finalizeRun'>,
+  logger: Pick<Logger, 'error'> = log
 ): Promise<ArtifactFile[]> => {
   const claim = runRegistry.resolve(request.claimId)
 
@@ -200,67 +220,103 @@ const finalizeRunArtifacts = async (
     })
   }
 
-  let provenanceArtifacts: ArtifactFile[] | undefined
-  let provenanceRequest: Parameters<ArtifactProvenanceRepository['finalizeRun']>[0] | undefined
-  if (provenance) {
-    if (
-      !claim.rootFrameId ||
-      !claim.agentFrameId ||
-      !claim.messageBranchId ||
-      !claim.runtimeSegmentId ||
-      !claim.promptMessageId
-    ) {
-      throw new Error('Artifact run claim is missing complete provenance context.')
-    }
-    if (!claim.artifactVersionIds || claim.artifactVersionIds.length === 0) {
-      throw new Error('Artifact run claim is missing exact Artifact Version ids.')
-    }
-    provenanceRequest = {
-      projectId: claim.projectName,
-      appSessionId: claim.sessionId,
-      artifactRunId: claim.runId,
-      artifactVersionIds: [...claim.artifactVersionIds],
-      rootFrameId: claim.rootFrameId,
-      agentFrameId: claim.agentFrameId,
-      messageBranchId: claim.messageBranchId,
-      runtimeSegmentId: claim.runtimeSegmentId,
-      promptMessageId: claim.promptMessageId,
-      messageId: request.messageId
-    }
-    // Commit the complete provenance proof and immutable message ownership before compatibility bytes
-    // move. A later compatibility failure is retryable because the prepared marker remains durable.
-    provenanceArtifacts = await provenance.finalizeRun(provenanceRequest)
-  }
+  let durableFinalizationCompleted = false
+  let compatibilityPublicationCompleted = false
+  let stage: 'durable-finalization' | 'compatibility-publication' = 'durable-finalization'
 
-  // Publish compatibility bytes only after the complete provenance transaction succeeds. The move is
-  // idempotent, so a finalized-but-unlinked run can replay here or during prepared-marker recovery.
-  const artifacts = await repository.finalizeRunArtifacts({
-    projectName: claim.projectName,
-    sourceSessionId: claim.artifactSessionId,
-    sessionId: claim.sessionId,
-    runId: claim.runId,
-    messageId: request.messageId,
-    ...(claim.artifactVersionIds ? { artifactVersionIds: claim.artifactVersionIds } : {}),
-    ...(claim.rootFrameId &&
-    claim.agentFrameId &&
-    claim.messageBranchId &&
-    claim.runtimeSegmentId &&
-    claim.promptMessageId
-      ? {
-          provenanceContext: {
-            rootFrameId: claim.rootFrameId,
-            agentFrameId: claim.agentFrameId,
-            messageBranchId: claim.messageBranchId,
-            runtimeSegmentId: claim.runtimeSegmentId,
-            promptMessageId: claim.promptMessageId
+  try {
+    let provenanceArtifacts: ArtifactFile[] | undefined
+    let provenanceRequest: Parameters<ArtifactProvenanceRepository['finalizeRun']>[0] | undefined
+    if (provenance) {
+      if (
+        !claim.rootFrameId ||
+        !claim.agentFrameId ||
+        !claim.messageBranchId ||
+        !claim.runtimeSegmentId ||
+        !claim.promptMessageId
+      ) {
+        throw new ArtifactFinalizationProofError(
+          'Artifact run claim is missing complete provenance context.'
+        )
+      }
+      if (!claim.artifactVersionIds || claim.artifactVersionIds.length === 0) {
+        throw new ArtifactFinalizationProofError(
+          'Artifact run claim is missing exact Artifact Version ids.'
+        )
+      }
+      provenanceRequest = {
+        projectId: claim.projectName,
+        appSessionId: claim.sessionId,
+        artifactRunId: claim.runId,
+        artifactVersionIds: [...claim.artifactVersionIds],
+        rootFrameId: claim.rootFrameId,
+        agentFrameId: claim.agentFrameId,
+        messageBranchId: claim.messageBranchId,
+        runtimeSegmentId: claim.runtimeSegmentId,
+        promptMessageId: claim.promptMessageId,
+        messageId: request.messageId
+      }
+      // Commit the complete provenance proof and immutable message ownership before compatibility bytes
+      // move. A later compatibility failure is retryable because the prepared marker remains durable.
+      provenanceArtifacts = await provenance.finalizeRun(provenanceRequest)
+      durableFinalizationCompleted = true
+    }
+
+    stage = 'compatibility-publication'
+    // Publish compatibility bytes only after the complete provenance transaction succeeds. The move is
+    // idempotent, so a finalized-but-unlinked run can replay here or during prepared-marker recovery.
+    const artifacts = await repository.finalizeRunArtifacts({
+      projectName: claim.projectName,
+      sourceSessionId: claim.artifactSessionId,
+      sessionId: claim.sessionId,
+      runId: claim.runId,
+      messageId: request.messageId,
+      ...(claim.artifactVersionIds ? { artifactVersionIds: claim.artifactVersionIds } : {}),
+      ...(claim.rootFrameId &&
+      claim.agentFrameId &&
+      claim.messageBranchId &&
+      claim.runtimeSegmentId &&
+      claim.promptMessageId
+        ? {
+            provenanceContext: {
+              rootFrameId: claim.rootFrameId,
+              agentFrameId: claim.agentFrameId,
+              messageBranchId: claim.messageBranchId,
+              runtimeSegmentId: claim.runtimeSegmentId,
+              promptMessageId: claim.promptMessageId
+            }
           }
-        }
-      : {})
-  })
+        : {})
+    })
+    compatibilityPublicationCompleted = true
 
-  runRegistry.markFinalized(request.claimId, request.messageId)
+    runRegistry.markFinalized(request.claimId, request.messageId)
 
-  return provenanceArtifacts ?? artifacts
+    return provenanceArtifacts ?? artifacts
+  } catch (error) {
+    const failureKind =
+      error instanceof ArtifactOwnershipPersistenceRaceError
+        ? ARTIFACT_OWNERSHIP_PERSISTENCE_RACE
+        : error instanceof ArtifactFinalizationProofError
+          ? 'invalid-proof'
+          : 'operational-failure'
+    logger.error('artifact finalization attempt failed', {
+      stage,
+      failureKind,
+      durableFinalizationCompleted,
+      compatibilityPublicationCompleted,
+      claimId: request.claimId,
+      artifactRunId: claim.runId,
+      messageId: request.messageId,
+      ...(claim.artifactVersionIds ? { artifactVersionIds: [...claim.artifactVersionIds] } : {}),
+      ...(claim.rootFrameId ? { rootFrameId: claim.rootFrameId } : {}),
+      ...(claim.agentFrameId ? { agentFrameId: claim.agentFrameId } : {}),
+      ...(claim.messageBranchId ? { messageBranchId: claim.messageBranchId } : {}),
+      ...(claim.runtimeSegmentId ? { runtimeSegmentId: claim.runtimeSegmentId } : {}),
+      ...(claim.promptMessageId ? { promptMessageId: claim.promptMessageId } : {})
+    })
+    throw error
+  }
 }
 
 // Artifacts are data-class: they follow the configurable data root (defaults to the config root).
@@ -291,8 +347,20 @@ const registerArtifactIpcHandlers = (
     withSessionMutation
   })
 
-  ipcMain.handle('artifacts:finalize-run', (_event, request: FinalizeRunArtifactsRequest) =>
-    handlers.finalizeRunArtifacts(request)
+  ipcMain.handle(
+    'artifacts:finalize-run',
+    async (_event, request: FinalizeRunArtifactsRequest): Promise<FinalizeRunArtifactsResult> => {
+      try {
+        return { ok: true, artifacts: await handlers.finalizeRunArtifacts(request) }
+      } catch (error) {
+        if (!(error instanceof ArtifactOwnershipPersistenceRaceError)) throw error
+        return {
+          ok: false,
+          code: ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
+          message: error.message
+        }
+      }
+    }
   )
   ipcMain.handle('artifacts:list-project-files', (_event, request: ListProjectArtifactsRequest) =>
     handlers.listProjectFiles(request)
