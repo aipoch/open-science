@@ -23,7 +23,7 @@ type ProjectSessionDeletionResult =
   { status: 'completed' } | { status: 'orphan-retained'; reason: 'missing-upload-authority' }
 
 type SessionMutationRepository = {
-  loadAllWithDiagnostics(): Promise<{
+  loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
     result: LoadAllSessionsResult
     isComplete: boolean
     warnings?: SessionLoadWarning[]
@@ -257,7 +257,7 @@ class SessionPersistenceCoordinator {
       // treat the process as an untouched startup boundary for destructive cleanup.
       this.destructiveStartupWindowOpen = false
       this.fileIndex.markReconciliationIncomplete()
-      const scan = await this.repository.loadAllWithDiagnostics()
+      const scan = await this.repository.loadAllWithDiagnostics({ mode: 'read-only' })
 
       return {
         ...scan.result,

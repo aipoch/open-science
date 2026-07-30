@@ -165,7 +165,7 @@ const WorkspacePage = ({
   } = useWorkspaceAgentRuntime()
 
   // Auto-trigger an analysis turn when a remote job finishes (design §11).
-  useJobAnalysisEffect({ sendMessage })
+  useJobAnalysisEffect({ enabled: isSessionPersistenceReady, sendMessage })
   const [draftDoc, setDraftDoc] = useState<ComposerDoc>(emptyDoc)
   const [newConversationPermissionProfile, setNewConversationPermissionProfile] =
     useState<PermissionProfileId>(DEFAULT_PERMISSION_PROFILE)

@@ -31,6 +31,10 @@ type SessionLoadDiagnostics = {
   failure?: SessionLoadFailure
 }
 
+type SessionScanOptions = {
+  mode?: 'repair' | 'read-only'
+}
+
 type SessionLoadDiagnostic =
   | { status: 'found'; session: PersistedChatSession }
   | { status: 'missing' }
@@ -193,9 +197,12 @@ class SessionRepository {
 
   // Reports whether the live sessions tree was fully scanned so DB reconciliation never acts on a
   // partial read. Project recovery owns tombstone cleanup before ordinary hydration is allowed.
-  async loadAllWithDiagnostics(): Promise<SessionLoadDiagnostics> {
-    const { sessions, isComplete, warnings } = await this.readAllSessions()
-    const manifestRead = await this.readManifest()
+  async loadAllWithDiagnostics(options: SessionScanOptions = {}): Promise<SessionLoadDiagnostics> {
+    const quarantineInvalidFiles = options.mode !== 'read-only'
+    const { sessions, isComplete, warnings } = await this.readAllSessions({
+      quarantineInvalidFiles
+    })
+    const manifestRead = await this.readManifest({ quarantineInvalidFiles })
 
     return {
       result: { sessions, manifest: manifestRead.manifest },
@@ -460,7 +467,7 @@ class SessionRepository {
     }
   }
 
-  private async readManifest(): Promise<{
+  private async readManifest(options: { quarantineInvalidFiles: boolean }): Promise<{
     manifest: PersistedSessionManifest
     warning?: SessionLoadWarning
   }> {
@@ -492,7 +499,8 @@ class SessionRepository {
         manifest: normalizeSessionManifest(parsed)
       }
     } catch {
-      const wasQuarantined = await this.tryBackupInvalidFile(this.manifestPath)
+      const wasQuarantined =
+        options.quarantineInvalidFiles && (await this.tryBackupInvalidFile(this.manifestPath))
       return {
         manifest: createEmptySessionManifest(),
         warning: {
@@ -505,8 +513,9 @@ class SessionRepository {
   }
 
   // Reads every project directory's session files and propagates completeness across every level.
-  // Invalid JSON is quarantined, while I/O errors keep reconciliation disabled until the next repair.
-  private async readAllSessions(): Promise<{
+  // Repair scans quarantine invalid data; read-only scans report it in place. I/O errors keep
+  // reconciliation disabled until the next repair.
+  private async readAllSessions(options: { quarantineInvalidFiles: boolean }): Promise<{
     sessions: PersistedChatSession[]
     isComplete: boolean
     warnings: SessionLoadWarning[]
@@ -519,6 +528,7 @@ class SessionRepository {
     for (const projectId of projectDirectories.names) {
       const project = await this.readProjectSessions(projectId, {
         missingDirectoryIsIncomplete: true,
+        quarantineInvalidFiles: options.quarantineInvalidFiles,
         warnings
       })
       sessions.push(...project.sessions)
@@ -533,6 +543,7 @@ class SessionRepository {
     options: {
       missingDirectoryIsIncomplete?: boolean
       quarantinedIsIncomplete?: boolean
+      quarantineInvalidFiles?: boolean
       warnings?: SessionLoadWarning[]
     } = {}
   ): Promise<ProjectSessionLoadDiagnostics> {
@@ -550,6 +561,7 @@ class SessionRepository {
     options: {
       missingDirectoryIsIncomplete?: boolean
       quarantinedIsIncomplete?: boolean
+      quarantineInvalidFiles?: boolean
       warnings?: SessionLoadWarning[]
     } = {}
   ): Promise<ProjectSessionLoadDiagnostics> {
@@ -564,7 +576,8 @@ class SessionRepository {
     for (const fileName of sessionFiles.names) {
       // The directory is the authoritative owning project, regardless of the file's stored projectId.
       const read = await this.readSessionFile(join(projectDir, fileName), projectId, {
-        missingIsIncomplete: true
+        missingIsIncomplete: true,
+        quarantineInvalidFiles: options.quarantineInvalidFiles
       })
       isComplete &&= read.isComplete
       if (options.quarantinedIsIncomplete && read.wasQuarantined) isComplete = false
@@ -597,7 +610,7 @@ class SessionRepository {
   private async readSessionFile(
     filePath: string,
     projectId: string,
-    options: { missingIsIncomplete?: boolean } = {}
+    options: { missingIsIncomplete?: boolean; quarantineInvalidFiles?: boolean } = {}
   ): Promise<{
     session?: PersistedChatSession
     isComplete: boolean
@@ -625,7 +638,8 @@ class SessionRepository {
         preserveLegacyUploadPaths: true
       })
       if (!session) {
-        const wasQuarantined = await this.tryBackupInvalidFile(filePath)
+        const wasQuarantined =
+          options.quarantineInvalidFiles !== false && (await this.tryBackupInvalidFile(filePath))
         return {
           isComplete: wasQuarantined,
           wasQuarantined,
@@ -640,7 +654,8 @@ class SessionRepository {
 
       return { session: decodeSessionDataPaths({ ...session, projectId }), isComplete: true }
     } catch {
-      const wasQuarantined = await this.tryBackupInvalidFile(filePath)
+      const wasQuarantined =
+        options.quarantineInvalidFiles !== false && (await this.tryBackupInvalidFile(filePath))
       return {
         isComplete: wasQuarantined,
         wasQuarantined,

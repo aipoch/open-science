@@ -803,6 +803,95 @@ describe('App startup routing', () => {
     expect(mocks.openSessionById).toHaveBeenCalledWith(target.sessionId, 'notification')
   })
 
+  it('does not let a pre-navigation queued task discard a later notification click', async () => {
+    const target = { sessionId: 's-new', token: 7 }
+    let pending: typeof target | null = null
+    let resolveFirstPeek: ((value: typeof target | null) => void) | undefined
+    let peekCount = 0
+    mocks.settings.isLoaded = true
+    mocks.sessions = [{ id: target.sessionId }]
+    mocks.notifications.peekPendingOpenSession.mockImplementation(() => {
+      peekCount += 1
+      if (peekCount === 1) {
+        return new Promise((resolve) => {
+          resolveFirstPeek = resolve
+        })
+      }
+      return Promise.resolve(pending ? { ...pending } : null)
+    })
+    mocks.notifications.takePendingOpenSession.mockImplementation(async (token: number) => {
+      if (pending?.token !== token) return null
+      const consumed = pending
+      pending = null
+      return consumed
+    })
+
+    await render()
+    expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledOnce()
+
+    const nudge = mocks.notificationNudgeBox.current
+    nudge?.()
+    await act(async () => {
+      const previousNavigation = { ...mocks.navigation }
+      mocks.navigation.userNavigationRevision += 1
+      for (const listener of mocks.navigationListeners) {
+        listener(mocks.navigation, previousNavigation)
+      }
+    })
+
+    pending = target
+    nudge?.()
+    await act(async () => {
+      resolveFirstPeek?.(null)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith(target.token)
+    expect(mocks.openSessionById).toHaveBeenCalledWith(target.sessionId, 'notification')
+  })
+
+  it('does not let a notification queued before navigation override that navigation', async () => {
+    const target = { sessionId: 's-old', token: 6 }
+    let pending: typeof target | null = null
+    let resolveFirstPeek: ((value: typeof target | null) => void) | undefined
+    let peekCount = 0
+    mocks.settings.isLoaded = true
+    mocks.sessions = [{ id: target.sessionId }]
+    mocks.notifications.peekPendingOpenSession.mockImplementation(() => {
+      peekCount += 1
+      if (peekCount === 1) {
+        return new Promise((resolve) => {
+          resolveFirstPeek = resolve
+        })
+      }
+      return Promise.resolve(pending ? { ...pending } : null)
+    })
+    mocks.notifications.takePendingOpenSession.mockImplementation(async (token: number) => {
+      if (pending?.token !== token) return null
+      const consumed = pending
+      pending = null
+      return consumed
+    })
+
+    await render()
+    expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledOnce()
+
+    pending = target
+    mocks.notificationNudgeBox.current?.()
+    await act(async () => {
+      const previousNavigation = { ...mocks.navigation }
+      mocks.navigation.userNavigationRevision += 1
+      for (const listener of mocks.navigationListeners) {
+        listener(mocks.navigation, previousNavigation)
+      }
+      resolveFirstPeek?.(null)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith(target.token)
+    expect(mocks.openSessionById).not.toHaveBeenCalled()
+  })
+
   it('discards a deferred notification when the user navigates elsewhere', async () => {
     let pending: { sessionId: string; token: number } | null = { sessionId: 's-3', token: 3 }
     mocks.settings.isLoaded = true

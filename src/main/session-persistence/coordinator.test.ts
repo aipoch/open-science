@@ -510,6 +510,7 @@ describe('SessionPersistenceCoordinator', () => {
     })
 
     expect(fileIndex.markReconciliationIncomplete).toHaveBeenCalledOnce()
+    expect(repository.loadAllWithDiagnostics).toHaveBeenCalledWith({ mode: 'read-only' })
     expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
     expect(fileIndex.syncSession).not.toHaveBeenCalled()
     expect(repository.saveSession).not.toHaveBeenCalled()

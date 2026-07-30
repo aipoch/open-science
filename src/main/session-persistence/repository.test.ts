@@ -331,6 +331,66 @@ describe('session persistence repository (per-session files)', () => {
     expect(nextScan.warnings).toEqual(scan.warnings)
   })
 
+  it('reports corrupt authority without moving files during a read-only scan', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const sessionsDir = join(storageRoot!, 'sessions')
+    const projectDir = join(sessionsDir, 'project-a')
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(join(projectDir, 'broken.json'), '{broken session', 'utf8')
+    await writeFile(join(sessionsDir, 'manifest.json'), '{broken manifest', 'utf8')
+
+    const scan = await repository.loadAllWithDiagnostics({ mode: 'read-only' })
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+    expect(scan.warnings).toEqual([
+      {
+        kind: 'corrupt',
+        projectId: 'project-a',
+        fileName: 'broken.json',
+        recovered: false
+      },
+      {
+        kind: 'manifest-corrupt',
+        fileName: 'manifest.json',
+        recovered: false
+      }
+    ])
+    await expect(readFile(join(projectDir, 'broken.json'), 'utf8')).resolves.toBe('{broken session')
+    await expect(readFile(join(sessionsDir, 'manifest.json'), 'utf8')).resolves.toBe(
+      '{broken manifest'
+    )
+    expect(await readdir(projectDir)).toEqual(['broken.json'])
+    expect((await readdir(sessionsDir)).sort()).toEqual(['manifest.json', 'project-a'])
+  })
+
+  it('leaves structurally corrupt Session JSON in place during a read-only scan', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const projectDir = join(storageRoot!, 'sessions', 'project-a')
+    const damagedPath = join(projectDir, 'damaged.json')
+    const damagedJson = JSON.stringify({
+      version: 2,
+      session: { id: 'damaged', messages: 'not-an-array' }
+    })
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(damagedPath, damagedJson, 'utf8')
+
+    const scan = await repository.loadAllWithDiagnostics({ mode: 'read-only' })
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+    expect(scan.warnings).toEqual([
+      {
+        kind: 'corrupt',
+        projectId: 'project-a',
+        fileName: 'damaged.json',
+        recovered: false
+      }
+    ])
+    await expect(readFile(damagedPath, 'utf8')).resolves.toBe(damagedJson)
+    await expect(readdir(projectDir)).resolves.toEqual(['damaged.json'])
+  })
+
   it('quarantines a structurally corrupt Session instead of normalizing it to empty', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     const projectDir = join(storageRoot!, 'sessions', 'project-a')
