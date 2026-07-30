@@ -49,4 +49,16 @@ describe('PR Check platform test coverage', () => {
       expect(step.run).toContain(testFile)
     }
   })
+
+  it('hard-gates the Windows notebook shell integration test', () => {
+    const step = getStep('Test Windows notebook shell behavior')
+
+    expect(step.if).toBe("matrix.os == 'windows-latest'")
+    expect(step['continue-on-error']).toBeUndefined()
+    expect(step.run).toContain('src/main/notebook/runtime-service.test.ts')
+    expect(step.run).toContain('--testNamePattern')
+    expect(step.run).toContain(
+      'isolates commands, propagates PowerShell failures, and preserves UTF-8 output on Windows'
+    )
+  })
 })

@@ -1095,7 +1095,9 @@ describe('notebook runtime service', () => {
         expect(unicodeOutput).toMatchObject({ exitCode: 0 })
         expect(unicodeOutput.stdout).toContain('分析完成')
         expect(trailingContinuation.exitCode).toBe(1)
-      }
+      },
+      // Four fresh PowerShell processes can exceed the shared 15s budget on a loaded Windows runner.
+      30_000
     )
 
     // POSIX-only: reads env via the shell. bash must NOT inherit arbitrary host env (secrets), only an
