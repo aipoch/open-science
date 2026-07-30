@@ -1,3 +1,5 @@
+import { X } from 'lucide-react'
+
 import { Button } from '@/components/ui/button'
 
 type SessionPersistenceAlertProps = {
@@ -5,6 +7,7 @@ type SessionPersistenceAlertProps = {
   message: string
   variant?: 'error' | 'warning'
   inline?: boolean
+  onDismiss?: () => void
   onRetry?: () => void
 }
 
@@ -13,6 +16,7 @@ const SessionPersistenceAlert = ({
   message,
   variant = 'error',
   inline = false,
+  onDismiss,
   onRetry
 }: SessionPersistenceAlertProps): React.JSX.Element => (
   <div
@@ -36,6 +40,19 @@ const SessionPersistenceAlert = ({
         className="shrink-0"
       >
         Retry
+      </Button>
+    ) : null}
+    {onDismiss ? (
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label="Dismiss storage warning"
+        data-testid="session-persistence-dismiss"
+        onClick={onDismiss}
+        className="shrink-0"
+      >
+        <X aria-hidden="true" />
       </Button>
     ) : null}
   </div>

@@ -89,6 +89,7 @@ type SessionPersistenceState = {
   loadError: string | undefined
   loadWarning: string | undefined
   writeError: string | undefined
+  dismissLoadWarning: () => void
   retryLoad: () => void
   retryWrites: () => void
 }
@@ -121,6 +122,8 @@ const reportPersistenceError = (error: unknown): void => {
 
 const SAFE_SESSION_LOAD_ERROR =
   'Open Science could not read saved conversation data. Retry to continue.'
+const SAFE_SESSION_WRITE_ERROR =
+  'Open Science could not save the latest conversation changes. Retry before closing the app.'
 
 // Hydrates the in-memory session store from the per-session files loaded by the main process.
 const loadPersistedSessions = async (
@@ -265,6 +268,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const failedWriteTargets = useRef(new Set<string>())
   const retryManifestWritePending = useRef(false)
   const saverRef = useRef<StoreSaver | undefined>(undefined)
+  const dismissLoadWarning = useCallback(() => setLoadWarning(undefined), [])
   const retryLoad = useCallback(() => {
     // A partial snapshot remains interactive. Keep the session the user chose from that snapshot so
     // a successful retry cannot replay the older on-disk manifest over their live navigation.
@@ -386,7 +390,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
 
       // Snapshot the hydrated state as the diff baseline so hydration itself is not re-saved.
       const save = createStoreSaver(window.api.sessions, useSessionStore.getState(), {
-        onFailure: (target, error) => {
+        onFailure: (target) => {
           if (!isMounted) return
           failedWriteTargets.current.add(target)
           pruneRemovedSessionWriteTargets(
@@ -399,9 +403,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
             if (failedWriteTargets.current.size === 0) setWriteError(undefined)
             return
           }
-          setWriteError(
-            error instanceof Error ? error.message : 'Conversation changes could not be saved.'
-          )
+          setWriteError(SAFE_SESSION_WRITE_ERROR)
         },
         onSuccess: (target) => {
           if (!isMounted) return
@@ -463,6 +465,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     loadError,
     loadWarning,
     writeError,
+    dismissLoadWarning,
     retryLoad,
     retryWrites
   }

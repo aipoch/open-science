@@ -70,4 +70,28 @@ describe('SessionPersistenceAlert', () => {
     act(() => retry?.click())
     expect(onRetry).toHaveBeenCalledOnce()
   })
+
+  it('renders a labelled shared Button for dismissing a persistent warning', () => {
+    const onDismiss = vi.fn()
+    act(() =>
+      root.render(
+        <SessionPersistenceAlert
+          variant="warning"
+          title="Saved conversation data was damaged"
+          message="The damaged file was moved aside."
+          onDismiss={onDismiss}
+        />
+      )
+    )
+
+    const dismiss = container.querySelector<HTMLButtonElement>(
+      '[data-testid="session-persistence-dismiss"]'
+    )
+
+    expect(dismiss?.dataset.slot).toBe('button')
+    expect(dismiss?.getAttribute('aria-label')).toBe('Dismiss storage warning')
+    expect(dismiss?.className).toContain('focus-visible:ring-3')
+    act(() => dismiss?.click())
+    expect(onDismiss).toHaveBeenCalledOnce()
+  })
 })

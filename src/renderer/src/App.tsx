@@ -363,7 +363,7 @@ const App = (): React.JSX.Element | null => {
       ) : sessionPersistence.writeError ? (
         <SessionPersistenceAlert
           title="Conversation storage needs attention"
-          message={`${sessionPersistence.writeError} Open Science could not confirm that the latest changes were fully saved. Retry before closing the app.`}
+          message={sessionPersistence.writeError}
           onRetry={sessionPersistence.retryWrites}
         />
       ) : sessionPersistence.loadWarning ? (
@@ -371,6 +371,7 @@ const App = (): React.JSX.Element | null => {
           title="Saved conversation data was damaged"
           message={sessionPersistence.loadWarning}
           variant="warning"
+          onDismiss={sessionPersistence.dismissLoadWarning}
         />
       ) : null}
       {view === 'home' ? (

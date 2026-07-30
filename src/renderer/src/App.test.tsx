@@ -62,6 +62,7 @@ const mocks = vi.hoisted(() => {
       loadError: undefined as string | undefined,
       loadWarning: undefined as string | undefined,
       writeError: undefined as string | undefined,
+      dismissLoadWarning: vi.fn(),
       retryLoad: vi.fn(),
       retryWrites: vi.fn()
     },
@@ -235,6 +236,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.loadError = undefined
     mocks.sessionPersistence.loadWarning = undefined
     mocks.sessionPersistence.writeError = undefined
+    mocks.sessionPersistence.dismissLoadWarning.mockClear()
     mocks.sessionPersistence.retryLoad.mockClear()
     mocks.sessionPersistence.retryWrites.mockClear()
     mocks.settings.pendingApprovals = []
@@ -530,13 +532,17 @@ describe('App startup routing', () => {
 
   it('warns that in-memory conversation changes are not durable and retries them', async () => {
     mocks.settings.isLoaded = true
-    mocks.sessionPersistence.writeError = 'disk full'
+    mocks.sessionPersistence.writeError =
+      'Open Science could not save the latest conversation changes. Retry before closing the app.'
 
     await render()
 
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert?.textContent).toContain('Conversation storage needs attention')
-    expect(alert?.textContent).toContain('disk full')
+    expect(alert?.textContent).toContain(
+      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+    )
+    expect(alert?.textContent).not.toContain('could not confirm')
 
     container.querySelector<HTMLButtonElement>('[data-testid="session-persistence-retry"]')?.click()
     expect(mocks.sessionPersistence.retryWrites).toHaveBeenCalledOnce()
@@ -554,6 +560,10 @@ describe('App startup routing', () => {
     expect(alert?.textContent).toContain('Saved conversation data was damaged')
     expect(alert?.textContent).toContain('damaged and moved aside')
     expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
+    container
+      .querySelector<HTMLButtonElement>('[data-testid="session-persistence-dismiss"]')
+      ?.click()
+    expect(mocks.sessionPersistence.dismissLoadWarning).toHaveBeenCalledOnce()
     expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
     expect(
       container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset

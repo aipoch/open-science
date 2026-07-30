@@ -94,6 +94,13 @@ describe('session persistence startup', () => {
         <button type="button" data-testid="retry-writes" onClick={persistence.retryWrites}>
           Retry writes
         </button>
+        <button
+          type="button"
+          data-testid="dismiss-load-warning"
+          onClick={persistence.dismissLoadWarning}
+        >
+          Dismiss warning
+        </button>
       </div>
     )
   }
@@ -157,7 +164,11 @@ describe('session persistence startup', () => {
     let writesFail = true
     loadAll.mockReset().mockResolvedValue(emptyLoadResult())
     saveSession.mockImplementation(async (session) => {
-      if (writesFail) throw new Error('disk full')
+      if (writesFail) {
+        throw new Error(
+          'ENOENT: could not write /Users/private/.open-science/sessions/project-a/session-1.json'
+        )
+      }
       return session
     })
 
@@ -172,8 +183,11 @@ describe('session persistence startup', () => {
       })
       await Promise.resolve()
     })
-    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
-      'disk full'
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+    )
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).not.toContain(
+      '/Users/private'
     )
 
     await act(async () => {
@@ -213,8 +227,8 @@ describe('session persistence startup', () => {
       })
       await Promise.resolve()
     })
-    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
-      'disk full'
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+      'Open Science could not save the latest conversation changes. Retry before closing the app.'
     )
 
     await act(async () => {
@@ -447,8 +461,8 @@ describe('session persistence startup', () => {
     expect(saveManifest).toHaveBeenCalledOnce()
     expect(container.querySelector('div')?.dataset.ready).toBe('false')
     expect(container.querySelector('div')?.dataset.loading).toBe('false')
-    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
-      'manifest disk full'
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+      'Open Science could not save the latest conversation changes. Retry before closing the app.'
     )
     expect(reconcilePendingArtifactsApi).not.toHaveBeenCalled()
 
@@ -507,6 +521,36 @@ describe('session persistence startup', () => {
     expect(container.querySelector('[data-testid="load-warning"]')?.textContent).toContain(
       'damaged and moved aside'
     )
+  })
+
+  it('dismisses a recovery warning without blocking healthy conversations', async () => {
+    loadAll.mockReset().mockResolvedValue({
+      ...emptyLoadResult(),
+      diagnostics: {
+        isComplete: true,
+        warnings: [
+          {
+            kind: 'corrupt',
+            projectId: 'project-a',
+            fileName: 'broken.json',
+            recovered: true
+          }
+        ]
+      }
+    })
+
+    await act(async () => root.render(<Probe />))
+
+    expect(container.querySelector('[data-testid="load-warning"]')?.textContent).toContain(
+      'damaged and moved aside'
+    )
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="dismiss-load-warning"]')?.click()
+    })
+    expect(container.querySelector('[data-testid="load-warning"]')?.textContent).toBe(
+      'no load warnings'
+    )
+    expect(container.querySelector('div')?.dataset.ready).toBe('true')
   })
 
   it('loads conversations after corrupt selection data is isolated', async () => {
