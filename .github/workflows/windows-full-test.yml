@@ -50,6 +50,6 @@ jobs:
 
       - name: Test complete suite shard
         # SQLite-heavy integration suites contend heavily for Windows disk I/O when Vitest uses
-        # every available core. Keep modest file-level parallelism so individual tests stay within
+        # every available core. Run files serially so individual tests stay within
         # their normal timeout without masking hangs by raising the timeout itself.
-        run: npm test -- --shard=${{ matrix.shard }}/2 --maxWorkers=2
+        run: npm test -- --shard=${{ matrix.shard }}/2 --maxWorkers=1
