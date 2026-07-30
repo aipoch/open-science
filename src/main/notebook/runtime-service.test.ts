@@ -4750,7 +4750,12 @@ describe('v4 runtime bindings & agent tools', () => {
       // Cache selection and Windows ACL hardening are covered separately. Keep this integration test
       // focused on the provisioner-to-recovery journal boundary and independent of host ACL latency.
       cache: { path: cachePath, lockKey: cachePath },
-      fetchBundle: async (spec) => ({ lockPath: join(runtimeRoot, `${spec.name}.lock`) }),
+      fetchBundle: async (spec) => ({
+        lockPath: join(runtimeRoot, `${spec.name}.lock`),
+        // This fake lock has no package paths. Avoid applying the production bundle's worst-case
+        // Windows path budget to the deliberately long temporary test root.
+        pathBudget: { maxCacheRelativePath: 1, maxEnvRelativePath: 1 }
+      }),
       // Real runMicromamba calls onBeforeSpawn right before spawning; mimic that (write the intent) then
       // hang, modelling a crash after spawn but before the PID is recorded.
       runArgv: (_argv, _signal, _onChild, onBeforeSpawn) => {
