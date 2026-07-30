@@ -13,6 +13,7 @@ import {
   findSetupInstaller,
   installerVersion,
   packagedResourcePaths,
+  parsePackagedAppEndpoint,
   requestPackagedAppShutdown,
   waitForShutdownExit,
   windowsProfileEnvironment,
@@ -81,6 +82,19 @@ describe('Windows installer smoke plan', () => {
       method: 'POST'
     })
     expect(text).toHaveBeenCalledOnce()
+  })
+
+  it('discovers the authenticated service endpoint from packaged app output', () => {
+    expect(
+      parsePackagedAppEndpoint(`
+[main] app starting
+Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0CrcdTs42uvLE
+`)
+    ).toEqual({
+      auth: 'token=iUFHGSACwBz2k1kSJfPixHbclDywVg0CrcdTs42uvLE',
+      endpoint: 'http://127.0.0.1:52378'
+    })
+    expect(parsePackagedAppEndpoint('[main] app starting')).toBeUndefined()
   })
 
   it('gives shutdown its own timeout budget after startup completes', async () => {

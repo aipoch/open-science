@@ -77,6 +77,21 @@ const requestPackagedAppShutdown = async (endpoint, auth, fetchImpl = fetchWithT
   }
 }
 
+const parsePackagedAppEndpoint = (output) => {
+  const match = output.match(
+    /Open Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/\?token=[A-Za-z0-9_-]+)/
+  )
+  if (!match) return undefined
+
+  const url = new URL(match[1])
+  const token = url.searchParams.get('token')
+  if (!token) return undefined
+  return {
+    endpoint: url.origin,
+    auth: `token=${encodeURIComponent(token)}`
+  }
+}
+
 const terminateProcessTree = async (child) => {
   if (!child.pid) return
   await new Promise((resolveTermination) => {
@@ -246,12 +261,8 @@ const assertUpgradeProfilePreserved = async (profileDirectory) => {
   }
 }
 
-const launchAndProbe = async ({ installDirectory, profileDirectory, expectedVersion, env }) => {
+const launchAndProbe = async ({ installDirectory, expectedVersion, env }) => {
   const executable = join(installDirectory, APP_EXECUTABLE)
-  const configRoot = join(profileDirectory, CONFIG_DIRECTORY)
-  const statePath = join(configRoot, 'web-service.json')
-  const tokenPath = join(configRoot, 'web-token')
-  await rm(statePath, { force: true })
 
   const child = spawn(executable, ['--open-science-headless', '--serve=0'], {
     env,
@@ -271,20 +282,14 @@ const launchAndProbe = async ({ installDirectory, profileDirectory, expectedVers
   const exit = observeChildExit(child)
 
   try {
-    const { state, token } = await Promise.race([
+    const { endpoint, auth } = await Promise.race([
       waitFor('the installed app web service', async () => {
-        if (!(await pathExists(statePath)) || !(await pathExists(tokenPath))) return undefined
-        return {
-          state: JSON.parse(await readFile(statePath, 'utf8')),
-          token: (await readFile(tokenPath, 'utf8')).trim()
-        }
+        return parsePackagedAppEndpoint(output())
       }),
       exit.then((code) => {
         throw new Error(`Installed app exited before becoming healthy (${code}).\n${output()}`)
       })
     ])
-    const endpoint = `http://127.0.0.1:${state.port}`
-    const auth = `token=${encodeURIComponent(token)}`
     const response = await fetchWithTimeout(`${endpoint}/api/bootstrap?${auth}`)
     if (!response.ok)
       throw new Error(`Installed app health probe returned HTTP ${response.status}.`)
@@ -310,14 +315,13 @@ const launchAndProbe = async ({ installDirectory, profileDirectory, expectedVers
   }
 }
 
-const installAndProbe = async ({ installer, installDirectory, profileDirectory, phase, env }) => {
+const installAndProbe = async ({ installer, installDirectory, phase, env }) => {
   console.log(`Smoke testing ${phase} installer: ${basename(installer)}`)
   await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
   await assertPackagedResources(installDirectory)
   await runProcess(join(installDirectory, 'resources', 'micromamba.exe'), ['--version'], { env })
   await launchAndProbe({
     installDirectory,
-    profileDirectory,
     expectedVersion: installerVersion(installer),
     env
   })
@@ -405,7 +409,7 @@ const main = async () => {
     await executeSmokePlan(
       buildSmokePlan({ currentInstaller, previousInstaller }),
       async (cycle) => {
-        await installAndProbe({ ...cycle, installDirectory, profileDirectory, env })
+        await installAndProbe({ ...cycle, installDirectory, env })
         if (previousInstaller && cycle.phase === 'previous') {
           await writeUpgradeSentinel(profileDirectory)
         } else if (previousInstaller && cycle.phase === 'current') {
@@ -441,6 +445,7 @@ export {
   findSetupInstaller,
   installerVersion,
   packagedResourcePaths,
+  parsePackagedAppEndpoint,
   requestPackagedAppShutdown,
   waitForShutdownExit,
   windowsProfileEnvironment,
