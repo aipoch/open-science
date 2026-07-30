@@ -121,6 +121,16 @@ describe('resolveShellInvocation', () => {
     const script = Buffer.from(invocation.args.at(-1) ?? '', 'base64').toString('utf16le')
     expect(script).toContain('[Console]::OutputEncoding = $openScienceUtf8')
     expect(script).toContain('$OutputEncoding = $openScienceUtf8')
+    expect(script).toContain('$env:PSModulePath = $env:OPEN_SCIENCE_PSMODULEPATH')
+    expect(script).toContain(
+      'Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Management\\Microsoft.PowerShell.Management.psd1" -ErrorAction Stop'
+    )
+    expect(script).toContain(
+      'Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1" -ErrorAction Stop'
+    )
+    expect(script).toContain(
+      "[System.Environment]::SetEnvironmentVariable('OPEN_SCIENCE_PSMODULEPATH', $null, [System.EnvironmentVariableTarget]::Process)"
+    )
     expect(script).toContain("$ProgressPreference = 'SilentlyContinue'")
     expect(script).toContain("$ErrorActionPreference = 'Stop'")
     expect(script).toContain('catch {')
@@ -189,12 +199,14 @@ describe('Windows shell support', () => {
   it('keeps Windows shell runtime variables while excluding host secrets', () => {
     const env = buildShellEnv('/notebook/handoff', 'win32', {
       PATH: 'C:\\Windows\\System32',
+      ProgramFiles: 'C:\\Program Files',
       SystemRoot: 'C:\\Windows',
       WINDIR: 'C:\\Windows',
       ComSpec: 'C:\\Windows\\System32\\cmd.exe',
       PATHEXT: '.COM;.EXE;.BAT;.CMD',
       USERPROFILE: 'C:\\Users\\Ada',
       PSModulePath: 'C:\\host\\third-party-modules',
+      OPEN_SCIENCE_PSMODULEPATH: 'C:\\host\\controlled-modules',
       OPEN_SCIENCE_TEST_SECRET: 'must-not-leak'
     })
 
@@ -205,9 +217,13 @@ describe('Windows shell support', () => {
       ComSpec: 'C:\\Windows\\System32\\cmd.exe',
       PATHEXT: '.COM;.EXE;.BAT;.CMD',
       USERPROFILE: 'C:\\Users\\Ada',
-      PSModulePath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
+      PSModulePath:
+        'C:\\Program Files\\WindowsPowerShell\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
+      OPEN_SCIENCE_PSMODULEPATH:
+        'C:\\Program Files\\WindowsPowerShell\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
       OPEN_SCIENCE_HANDOFF_DIR: '/notebook/handoff'
     })
+    expect(env.ProgramFiles).toBeUndefined()
     expect(env.OPEN_SCIENCE_TEST_SECRET).toBeUndefined()
   })
 

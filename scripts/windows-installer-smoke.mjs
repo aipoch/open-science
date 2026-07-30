@@ -1,9 +1,10 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { basename, join, resolve, win32 } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const APP_EXECUTABLE = 'open-science.exe'
@@ -12,8 +13,9 @@ const PROCESS_TIMEOUT_MS = 120_000
 const STARTUP_TIMEOUT_MS = 60_000
 const SHUTDOWN_TIMEOUT_MS = 60_000
 const HTTP_REQUEST_TIMEOUT_MS = 15_000
+const TERMINATION_TIMEOUT_MS = 10_000
 const SMOKE_ROOT_PREFIX = 'open-science-installer-smoke-'
-const UPGRADE_SENTINEL_NAME = 'installer-smoke-upgrade-sentinel'
+const UPGRADE_SENTINEL_PREFIX = 'installer-smoke-upgrade-sentinel-'
 const UPGRADE_SENTINEL_CONTENT = 'previous-version-profile-preserved\n'
 
 const delay = (milliseconds) =>
@@ -92,18 +94,106 @@ const parsePackagedAppEndpoint = (output) => {
   }
 }
 
-const terminateProcessTree = async (child) => {
+const readPackagedAppConfigRoot = async (
+  bootstrap,
+  expectedVersion,
+  { auth, legacyConfigRoots = [], readToken = readFile } = {}
+) => {
+  if (
+    bootstrap.appName !== 'Open Science' ||
+    bootstrap.appVersion !== expectedVersion ||
+    bootstrap.platform !== 'win32'
+  ) {
+    throw new Error(`Unexpected installed app bootstrap: ${JSON.stringify(bootstrap)}`)
+  }
+  if (bootstrap.configRoot !== undefined) {
+    if (typeof bootstrap.configRoot !== 'string' || !win32.isAbsolute(bootstrap.configRoot)) {
+      throw new Error('Installed app did not report an absolute Windows config root.')
+    }
+    return bootstrap.configRoot
+  }
+
+  const candidates = [
+    ...new Map(
+      legacyConfigRoots
+        .filter((candidate) => typeof candidate === 'string' && win32.isAbsolute(candidate))
+        .map((candidate) => [win32.resolve(candidate).toLowerCase(), candidate])
+    ).values()
+  ]
+  if (candidates.length === 0) {
+    throw new Error('Installed app did not report an absolute Windows config root.')
+  }
+  const endpointToken = auth ? new URLSearchParams(auth).get('token') : undefined
+  if (!endpointToken) {
+    throw new Error('Cannot authenticate the legacy installed app config root without its token.')
+  }
+  // Older packaged builds do not report configRoot. Electron has ignored the child USERPROFILE in
+  // hosted runs, but retain the isolated profile as a compatibility candidate. The endpoint token
+  // authenticates whichever directory the previous app actually used instead of trusting either.
+  for (const candidate of candidates) {
+    try {
+      const storedToken = (await readToken(win32.join(candidate, 'web-token'), 'utf8')).trim()
+      if (storedToken === endpointToken) return candidate
+    } catch {
+      // Try the next authenticated candidate.
+    }
+  }
+  throw new Error('Cannot authenticate the legacy installed app config root from its token file.')
+}
+
+const terminateProcessTree = async (
+  child,
+  timeoutMs = TERMINATION_TIMEOUT_MS,
+  spawnProcess = spawn
+) => {
   if (!child.pid) return
-  await new Promise((resolveTermination) => {
-    const terminator = spawn('taskkill.exe', ['/pid', String(child.pid), '/T', '/F'], {
+  const killDirectly = () => {
+    try {
+      child.kill()
+    } catch {
+      // Best effort: the process may already have exited between the timeout and fallback.
+    }
+  }
+  let terminator
+  try {
+    terminator = spawnProcess('taskkill.exe', ['/pid', String(child.pid), '/T', '/F'], {
+      stdio: 'ignore',
       windowsHide: true
     })
-    terminator.once('error', () => resolveTermination())
-    terminator.once('exit', () => resolveTermination())
+  } catch {
+    killDirectly()
+    return
+  }
+  await new Promise((resolveTermination) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolveTermination()
+    }
+    const timer = setTimeout(() => {
+      try {
+        terminator.kill()
+      } catch {
+        // The taskkill process may have exited without delivering its event yet.
+      }
+      terminator.unref?.()
+      killDirectly()
+      finish()
+    }, timeoutMs)
+    terminator.once('error', () => {
+      killDirectly()
+      finish()
+    })
+    terminator.once('exit', (code) => {
+      if (code !== 0 && code !== null) killDirectly()
+      finish()
+    })
   })
 }
 
-const runProcess = (executable, args, options = {}) =>
+const runProcess = (executable, args, options = {}, terminate = terminateProcessTree) =>
   new Promise((resolveProcess, rejectProcess) => {
     const child = spawn(executable, args, {
       cwd: options.cwd,
@@ -113,6 +203,7 @@ const runProcess = (executable, args, options = {}) =>
     let stdout = ''
     let stderr = ''
     let settled = false
+    let timedOut = false
 
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
@@ -132,17 +223,24 @@ const runProcess = (executable, args, options = {}) =>
     }
 
     const timer = setTimeout(() => {
-      void terminateProcessTree(child).finally(() => {
+      timedOut = true
+      const finishTimeout = () => {
         finish(
           new Error(
             `${basename(executable)} timed out after ${options.timeoutMs ?? PROCESS_TIMEOUT_MS}ms.`
           )
         )
-      })
+      }
+      void Promise.resolve()
+        .then(() => terminate(child))
+        .then(finishTimeout, finishTimeout)
     }, options.timeoutMs ?? PROCESS_TIMEOUT_MS)
 
-    child.once('error', (error) => finish(error))
+    child.once('error', (error) => {
+      if (!timedOut) finish(error)
+    })
     child.once('exit', (code) => {
+      if (timedOut) return
       if (code !== 0 && !options.allowNonZero) {
         finish(
           new Error(
@@ -240,19 +338,20 @@ const assertPackagedResources = async (installDirectory) => {
   }
 }
 
-const upgradeSentinelPath = (profileDirectory) =>
-  join(profileDirectory, CONFIG_DIRECTORY, UPGRADE_SENTINEL_NAME)
+const upgradeSentinelPath = (configRoot, sentinelName) => join(configRoot, sentinelName)
 
-const writeUpgradeSentinel = async (profileDirectory) => {
-  const configDirectory = join(profileDirectory, CONFIG_DIRECTORY)
-  await mkdir(configDirectory, { recursive: true })
-  await writeFile(upgradeSentinelPath(profileDirectory), UPGRADE_SENTINEL_CONTENT, 'utf8')
+const writeUpgradeSentinel = async (configRoot, sentinelName) => {
+  await mkdir(configRoot, { recursive: true })
+  await writeFile(upgradeSentinelPath(configRoot, sentinelName), UPGRADE_SENTINEL_CONTENT, {
+    encoding: 'utf8',
+    flag: 'wx'
+  })
 }
 
-const assertUpgradeProfilePreserved = async (profileDirectory) => {
+const assertUpgradeProfilePreserved = async (configRoot, sentinelName) => {
   let content
   try {
-    content = await readFile(upgradeSentinelPath(profileDirectory), 'utf8')
+    content = await readFile(upgradeSentinelPath(configRoot, sentinelName), 'utf8')
   } catch {
     throw new Error('The Windows upgrade did not preserve the previous application profile.')
   }
@@ -261,7 +360,48 @@ const assertUpgradeProfilePreserved = async (profileDirectory) => {
   }
 }
 
-const launchAndProbe = async ({ installDirectory, expectedVersion, env }) => {
+const createUpgradeProfileGuard = (
+  enabled,
+  sentinelName = `${UPGRADE_SENTINEL_PREFIX}${randomUUID()}`
+) => {
+  let previousConfigRoot
+  let sentinelCreated = false
+
+  const verifyCycle = async (phase, configRoot) => {
+    if (!enabled) return
+    if (phase === 'previous') {
+      previousConfigRoot = configRoot
+      await writeUpgradeSentinel(configRoot, sentinelName)
+      sentinelCreated = true
+      return
+    }
+    if (!previousConfigRoot) {
+      throw new Error('The Windows upgrade did not report the previous application config root.')
+    }
+    if (resolve(previousConfigRoot).toLowerCase() !== resolve(configRoot).toLowerCase()) {
+      throw new Error(
+        `The Windows upgrade config root changed from ${previousConfigRoot} to ${configRoot}.`
+      )
+    }
+    await assertUpgradeProfilePreserved(configRoot, sentinelName)
+  }
+
+  const cleanup = async (primaryError) => {
+    if (!sentinelCreated || !previousConfigRoot) return
+    try {
+      await rm(upgradeSentinelPath(previousConfigRoot, sentinelName), { force: true })
+      sentinelCreated = false
+    } catch (cleanupError) {
+      if (!primaryError) throw cleanupError
+      const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+      console.warn(`Windows upgrade sentinel cleanup also failed: ${message}`)
+    }
+  }
+
+  return { cleanup, verifyCycle }
+}
+
+const launchAndProbe = async ({ installDirectory, expectedVersion, env, legacyConfigRoots }) => {
   const executable = join(installDirectory, APP_EXECUTABLE)
 
   const child = spawn(executable, ['--open-science-headless', '--serve=0'], {
@@ -294,17 +434,15 @@ const launchAndProbe = async ({ installDirectory, expectedVersion, env }) => {
     if (!response.ok)
       throw new Error(`Installed app health probe returned HTTP ${response.status}.`)
     const bootstrap = await response.json()
-    if (
-      bootstrap.appName !== 'Open Science' ||
-      bootstrap.appVersion !== expectedVersion ||
-      bootstrap.platform !== 'win32'
-    ) {
-      throw new Error(`Unexpected installed app bootstrap: ${JSON.stringify(bootstrap)}`)
-    }
+    const configRoot = await readPackagedAppConfigRoot(bootstrap, expectedVersion, {
+      auth,
+      legacyConfigRoots
+    })
 
     await requestPackagedAppShutdown(endpoint, auth)
     const exitCode = await waitForShutdownExit(exit, child, output)
     if (exitCode !== 0) throw new Error(`Installed app exited with ${exitCode}.\n${output()}`)
+    return configRoot
   } catch (error) {
     await terminateProcessTree(child)
     const processOutput = output().trim()
@@ -315,15 +453,16 @@ const launchAndProbe = async ({ installDirectory, expectedVersion, env }) => {
   }
 }
 
-const installAndProbe = async ({ installer, installDirectory, phase, env }) => {
+const installAndProbe = async ({ installer, installDirectory, phase, env, legacyConfigRoots }) => {
   console.log(`Smoke testing ${phase} installer: ${basename(installer)}`)
   await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
   await assertPackagedResources(installDirectory)
   await runProcess(join(installDirectory, 'resources', 'micromamba.exe'), ['--version'], { env })
-  await launchAndProbe({
+  return launchAndProbe({
     installDirectory,
     expectedVersion: installerVersion(installer),
-    env
+    env,
+    legacyConfigRoots
   })
 }
 
@@ -397,7 +536,12 @@ const main = async () => {
   const root = await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), SMOKE_ROOT_PREFIX))
   const installDirectory = join(root, 'app')
   const profileDirectory = join(root, 'profile')
+  const legacyConfigRoots = [
+    win32.join(homedir(), CONFIG_DIRECTORY),
+    win32.join(profileDirectory, CONFIG_DIRECTORY)
+  ]
   const env = windowsProfileEnvironment(profileDirectory)
+  const upgradeProfileGuard = createUpgradeProfileGuard(Boolean(previousInstaller))
   await Promise.all([
     mkdir(env.APPDATA, { recursive: true }),
     mkdir(env.LOCALAPPDATA, { recursive: true }),
@@ -409,22 +553,30 @@ const main = async () => {
     await executeSmokePlan(
       buildSmokePlan({ currentInstaller, previousInstaller }),
       async (cycle) => {
-        await installAndProbe({ ...cycle, installDirectory, env })
-        if (previousInstaller && cycle.phase === 'previous') {
-          await writeUpgradeSentinel(profileDirectory)
-        } else if (previousInstaller && cycle.phase === 'current') {
-          await assertUpgradeProfilePreserved(profileDirectory)
-        }
+        const configRoot = await installAndProbe({
+          ...cycle,
+          installDirectory,
+          env,
+          legacyConfigRoots: cycle.phase === 'previous' ? legacyConfigRoots : undefined
+        })
+        await upgradeProfileGuard.verifyCycle(cycle.phase, configRoot)
       }
     )
     await uninstallAndVerify(installDirectory, env)
     console.log('Windows installer smoke completed successfully.')
   } catch (error) {
     primaryError = error
-    throw error
-  } finally {
-    await cleanupSmokeRoot(root, primaryError)
   }
+
+  let sentinelCleanupError
+  try {
+    await upgradeProfileGuard.cleanup(primaryError)
+  } catch (error) {
+    sentinelCleanupError = error
+  }
+  await cleanupSmokeRoot(root, primaryError ?? sentinelCleanupError)
+  if (primaryError) throw primaryError
+  if (sentinelCleanupError) throw sentinelCleanupError
 }
 
 const invokedAsScript =
@@ -440,13 +592,17 @@ export {
   assertUpgradeProfilePreserved,
   buildSmokePlan,
   cleanupSmokeRoot,
+  createUpgradeProfileGuard,
   executeSmokePlan,
   fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
   packagedResourcePaths,
   parsePackagedAppEndpoint,
+  readPackagedAppConfigRoot,
   requestPackagedAppShutdown,
+  runProcess,
+  terminateProcessTree,
   waitForShutdownExit,
   windowsProfileEnvironment,
   writeUpgradeSentinel

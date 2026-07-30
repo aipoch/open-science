@@ -66,6 +66,7 @@ describe('createWebServiceController', () => {
 
     expect(result).toEqual({ port: 44100, url: 'http://127.0.0.1:44100/?token=tok-123' })
     expect(h.startServer).toHaveBeenCalledTimes(1)
+    expect(h.lastOptions().bootstrap.configRoot).toBe('/fake/root')
     expect(h.writeState).toHaveBeenCalledWith(
       '/fake/root',
       expect.objectContaining({ pid: 4242, port: 44100, appVersion: '9.9.9', attached: true })

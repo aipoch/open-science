@@ -65,35 +65,6 @@ jobs:
       - name: Check CLI package
         run: npm run check:cli-package
 
-  # Preserve complete real-Windows coverage after merge without putting its ~11-minute runtime back
-  # on every PR. Two shards run in parallel with packaging. This remains advisory while the suite has
-  # known POSIX-only path assertions; the focused PR gate and packaged-app smoke below are blocking.
-  windows_full_test:
-    name: Windows full test (${{ matrix.shard }}/2, advisory)
-    if: ${{ !inputs.skip_verify && !inputs.mac_only }}
-    runs-on: windows-latest
-    continue-on-error: true
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Test complete suite shard
-        run: npm test -- --shard=${{ matrix.shard }}/2
-
   # Resolve the platform matrix. mac_only trims it to the two mac archs — used by the notarization
   # dry-run (notarize-dryrun.yml), which only needs a signed mac build. With mac_only false (the
   # release.yml / nightly.yml callers) the full matrix is emitted, so their behavior is unchanged.
@@ -258,6 +229,7 @@ jobs:
       # Windows runtime resources, request a clean shutdown, then silently uninstall it.
       - name: Smoke test Windows installer
         if: matrix.platform == 'win'
+        timeout-minutes: 10
         run: node scripts/windows-installer-smoke.mjs --installer-dir dist
 
       # Upload only the distributables + electron-updater metadata for the caller's publish job.

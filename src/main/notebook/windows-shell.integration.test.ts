@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import { runShellCommand } from './runtime-service'
@@ -10,6 +12,7 @@ const runPowerShell = (command: string): ReturnType<typeof runShellCommand> =>
     command,
     cwd: process.cwd(),
     handoffDir: process.cwd(),
+    runtimeRoot: join(process.cwd(), '.open-science-test-runtime'),
     // Cold Windows PowerShell 5.1 module discovery on hosted runners can exceed Vitest's 15-second
     // default, while native-only and parser-error paths finish in under a second. Production allows
     // 120 seconds; this tighter process budget still detects a genuinely stuck shell.
@@ -41,12 +44,27 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
   )
 
   it(
-    'preserves UTF-8 output',
+    'preserves UTF-8 output with only standard machine module paths',
     async () => {
-      const result = await runPowerShell('Write-Output "分析完成"')
+      const result = await runPowerShell(`
+Write-Output "分析完成"
+Write-Output "__OPEN_SCIENCE_PSMODULEPATH__=$env:PSModulePath"
+Write-Output "__OPEN_SCIENCE_INTERNAL__=[$env:OPEN_SCIENCE_PSMODULEPATH]"
+`)
 
       expect(result).toMatchObject({ exitCode: 0 })
       expect(result.stdout).toContain('分析完成')
+      const programFiles = process.env.ProgramFiles
+      const windowsRoot = process.env.SystemRoot ?? process.env.WINDIR
+      expect(programFiles).toBeTruthy()
+      expect(windowsRoot).toBeTruthy()
+      if (!programFiles || !windowsRoot) throw new Error('Missing standard Windows path variables.')
+      const modulePath = result.stdout.match(/^__OPEN_SCIENCE_PSMODULEPATH__=(.*)$/mu)?.[1]?.trim()
+      expect(modulePath?.split(';').map((entry) => entry.toLowerCase())).toEqual([
+        `${programFiles}\\WindowsPowerShell\\Modules`.toLowerCase(),
+        `${windowsRoot}\\System32\\WindowsPowerShell\\v1.0\\Modules`.toLowerCase()
+      ])
+      expect(result.stdout).toContain('__OPEN_SCIENCE_INTERNAL__=[]')
     },
     POWERSHELL_TEST_TIMEOUT_MS
   )

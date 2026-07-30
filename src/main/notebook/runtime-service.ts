@@ -654,13 +654,25 @@ const buildShellEnv = (
     if (value !== undefined) env[key] = value
   }
   if (platform === 'win32') {
+    const modulePaths: string[] = []
+    const programFiles = sourceEnv.ProgramFiles
+    if (programFiles) {
+      modulePaths.push(win32.join(programFiles, 'WindowsPowerShell', 'Modules'))
+    }
     const windowsRoot = sourceEnv.SystemRoot ?? sourceEnv.WINDIR
     if (windowsRoot) {
       // PowerShell's built-in cmdlets are module-backed. Supplying no PSModulePath makes Windows
       // PowerShell perform extremely slow first-use discovery on hosted machines, while inheriting
-      // the host value would expose arbitrary user/third-party modules. Pin discovery to the
-      // supported in-box module directory instead.
-      env.PSModulePath = win32.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules')
+      // the host value would expose arbitrary user/third-party modules. Preserve only the standard
+      // AllUsers and in-box module locations, excluding CurrentUser and host-specific additions.
+      modulePaths.push(win32.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules'))
+    }
+    if (modulePaths.length > 0) {
+      const controlledModulePath = modulePaths.join(win32.delimiter)
+      env.PSModulePath = controlledModulePath
+      // Windows PowerShell reconstructs PSModulePath at startup and can reinsert CurrentUser paths.
+      // Carry the controlled value through startup so the wrapper can restore it before user code.
+      env.OPEN_SCIENCE_PSMODULEPATH = controlledModulePath
     }
   }
   env.OPEN_SCIENCE_HANDOFF_DIR = handoffDir
@@ -728,6 +740,15 @@ type ShellInvocation = {
 const encodePowerShellCommand = (command: string): string => {
   const encodedCommand = Buffer.from(command, 'utf8').toString('base64')
   const script = [
+    'if ($env:OPEN_SCIENCE_PSMODULEPATH) {',
+    '  $env:PSModulePath = $env:OPEN_SCIENCE_PSMODULEPATH',
+    // Import the common in-box command modules by absolute path so their first use does not scan
+    // the larger AllUsers tree. Keep AllUsers first in PSModulePath so updated or additional
+    // machine modules retain Windows PowerShell's standard precedence for every other command.
+    '  Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Management\\Microsoft.PowerShell.Management.psd1" -ErrorAction Stop',
+    '  Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1" -ErrorAction Stop',
+    "  [System.Environment]::SetEnvironmentVariable('OPEN_SCIENCE_PSMODULEPATH', $null, [System.EnvironmentVariableTarget]::Process)",
+    '}',
     '$openScienceUtf8 = [System.Text.UTF8Encoding]::new($false)',
     '[Console]::OutputEncoding = $openScienceUtf8',
     '$OutputEncoding = $openScienceUtf8',

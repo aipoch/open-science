@@ -1,0 +1,52 @@
+name: Windows Full Test (Advisory)
+
+# Preserve complete real-Windows coverage after merge and on stable tags without adding its runtime
+# to the reusable build workflow. This workflow is intentionally independent from nightly/release
+# packaging and publishing; the focused PR gate and packaged-app smoke remain blocking.
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer main push supersedes stale advisory coverage. Stable tags use distinct refs and therefore
+# retain their own signal.
+concurrency:
+  group: windows-full-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows_full_test:
+    name: Windows full test (${{ matrix.shard }}/2, advisory)
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test complete suite shard
+        run: npm test -- --shard=${{ matrix.shard }}/2

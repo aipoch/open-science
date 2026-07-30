@@ -9,6 +9,7 @@ type WorkflowStep = {
   if?: string
   name?: string
   run?: string
+  'timeout-minutes'?: number
   uses?: string
   with?: Record<string, unknown>
 }
@@ -20,9 +21,16 @@ type WorkflowJob = {
   'runs-on'?: string
   steps?: WorkflowStep[]
   strategy?: { matrix?: Record<string, unknown> }
+  'timeout-minutes'?: number
 }
 
-type Workflow = { jobs: Record<string, WorkflowJob> }
+type Workflow = {
+  jobs: Record<string, WorkflowJob>
+  on?: {
+    push?: { branches?: string[]; tags?: string[] }
+    workflow_dispatch?: unknown
+  }
+}
 
 const readWorkflow = (name: string): Workflow =>
   load(readFileSync(join(process.cwd(), '.github', 'workflows', name), 'utf8')) as Workflow
@@ -34,15 +42,17 @@ const findStep = (job: WorkflowJob, name: string): WorkflowStep => {
 }
 
 describe('post-merge Windows validation', () => {
-  it('runs the complete Windows suite as two parallel advisory shards', () => {
-    const job = readWorkflow('build.yml').jobs.windows_full_test
+  it('runs the complete Windows suite independently from nightly and release publishing', () => {
+    const build = readWorkflow('build.yml')
+    const workflow = readWorkflow('windows-full-test.yml')
+    const job = workflow.jobs.windows_full_test
 
+    expect(build.jobs.windows_full_test).toBeUndefined()
+    expect(workflow.on?.push).toMatchObject({ branches: ['main'], tags: ['v*'] })
     expect(job).toMatchObject({
       'continue-on-error': true,
       'runs-on': 'windows-latest'
     })
-    expect(job.if).toContain('!inputs.skip_verify')
-    expect(job.if).toContain('!inputs.mac_only')
     expect(job.strategy?.matrix?.shard).toEqual([1, 2])
     expect(findStep(job, 'Test complete suite shard').run).toBe(
       'npm test -- --shard=${{ matrix.shard }}/2'
@@ -59,6 +69,7 @@ describe('post-merge Windows validation', () => {
 
     expect(smoke.if).toBe("matrix.platform == 'win'")
     expect(smoke.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
+    expect(smoke['timeout-minutes']).toBe(10)
     expect(buildIndex).toBeGreaterThan(-1)
     expect(smokeIndex).toBeGreaterThan(buildIndex)
     expect(uploadIndex).toBeGreaterThan(smokeIndex)
@@ -70,6 +81,7 @@ describe('post-merge Windows validation', () => {
 
     expect(upgrade['runs-on']).toBe('windows-latest')
     expect(upgrade.needs).toBe('build')
+    expect(upgrade['timeout-minutes']).toBe(20)
     expect(findStep(upgrade, 'Setup Node')).toMatchObject({
       uses: 'actions/setup-node@v7',
       with: { 'node-version': 22 }
