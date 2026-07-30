@@ -1007,6 +1007,10 @@ const WorkspacePage = ({
         // New-conversation only: the UUID is forwarded to createSession; main process reads latest Profile.
         specialistId: draftSpecialistId
       }).then((result) => {
+        // Adoption-in-progress duplicate submits are deliberately suppressed. The original send owns
+        // this draft, so restoring it here would make the already-sent prompt appear unsent again.
+        if (result === null) return
+
         if (!result) {
           setDraftDoc(doc)
           setAttachments(attachmentsForSend)

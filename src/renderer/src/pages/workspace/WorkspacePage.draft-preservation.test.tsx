@@ -369,6 +369,22 @@ describe('WorkspacePage draft preservation', () => {
     expect(deleteUpload).not.toHaveBeenCalled()
   })
 
+  it('does not restore a duplicate draft suppressed during session adoption', async () => {
+    runtime.sendMessage.mockResolvedValueOnce(null)
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('send once'))
+    })
+    await act(async () => {
+      conversationProps.onSendMessage([])
+    })
+
+    expect(runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'send once' }))
+    expect(conversationProps.draftDoc).toEqual(emptyDoc)
+    expect(conversationProps.attachments).toEqual([])
+  })
+
   it('drops a stored draft and deletes its staged files when the session is deleted', async () => {
     await renderPage()
 

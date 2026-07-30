@@ -1332,7 +1332,7 @@ describe('workspace agent message sending', () => {
       cwd: '/workspace/project'
     })
 
-    await expect(second).resolves.toBeUndefined()
+    await expect(second).resolves.toBeNull()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'idle',
       activeRun: undefined,

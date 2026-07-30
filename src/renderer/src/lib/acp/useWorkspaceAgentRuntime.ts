@@ -87,6 +87,10 @@ type SendWorkspaceMessageResult = {
   messageId: string
 }
 
+// `null` means a duplicate submit was intentionally suppressed while the selected runtime adopts
+// the session. Unlike `undefined` (a genuine send failure), this must not restore the cleared draft.
+type SendWorkspaceMessageOutcome = SendWorkspaceMessageResult | null
+
 // Payload of an inline edit resend: the adjusted prompt text plus the mentions it carries. The
 // session/message ids stay separate because they address the truncation point, not the prompt.
 type ResendEditedMessageInput = {
@@ -496,7 +500,7 @@ const sendWorkspaceMessage = async (
     branchContextAlreadyReset,
     specialistId
   }: SendWorkspaceMessageInput
-): Promise<SendWorkspaceMessageResult | undefined> => {
+): Promise<SendWorkspaceMessageOutcome | undefined> => {
   const content = text.trim()
 
   // Empty drafts are allowed only when the user attached at least one file.
@@ -646,7 +650,7 @@ const sendWorkspaceMessage = async (
     let contextResetFromResume = false
 
     if (resumeCwd) {
-      if (sessionSendAdoptionsInFlight.has(targetSessionId)) return undefined
+      if (sessionSendAdoptionsInFlight.has(targetSessionId)) return null
       sessionSendAdoptionsInFlight.add(targetSessionId)
       try {
         const resumeResult = await runtime.resumeSession(
@@ -1330,7 +1334,9 @@ const useWorkspaceAgentRuntime = (): {
   promptInFlightSessionIds: string[]
   nativeContextCompactionSessionIds: string[]
   compactContext: (sessionId: string) => Promise<boolean>
-  sendMessage: (input: SendWorkspaceMessageInput) => Promise<SendWorkspaceMessageResult | undefined>
+  sendMessage: (
+    input: SendWorkspaceMessageInput
+  ) => Promise<SendWorkspaceMessageOutcome | undefined>
   resendEditedMessage: (
     sessionId: string,
     messageId: string,
@@ -1415,7 +1421,7 @@ const useWorkspaceAgentRuntime = (): {
 
   // Creates a session if needed, records the user message, then starts the prompt in the background.
   const sendMessage = useCallback(
-    (input: SendWorkspaceMessageInput): Promise<SendWorkspaceMessageResult | undefined> =>
+    (input: SendWorkspaceMessageInput): Promise<SendWorkspaceMessageOutcome | undefined> =>
       sendWorkspaceMessage(runtime, {
         ...input,
         supportsImageInput,
