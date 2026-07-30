@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events'
+
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import {
@@ -248,5 +250,23 @@ describe('find overlay manager', () => {
     resizeListener!()
 
     expect(view.setBounds).toHaveBeenCalledWith(computeOverlayBounds(1400))
+  })
+
+  it('removes its resize listener when the main window is destroyed', () => {
+    const mainWindow = Object.assign(new EventEmitter(), {
+      contentView: { addChildView: vi.fn() },
+      getContentBounds: () => ({ width: 1000, height: 800 }),
+      webContents: { focus: vi.fn(), stopFindInPage: vi.fn() }
+    })
+    const manager = createFindOverlayManager({
+      mainWindow,
+      createView: vi.fn(),
+      preloadPath: PRELOAD_PATH,
+      overlayHtmlPath: HTML_PATH
+    })
+
+    expect(mainWindow.listenerCount('resize')).toBe(1)
+    expect(() => manager.destroy()).not.toThrow()
+    expect(mainWindow.listenerCount('resize')).toBe(0)
   })
 })

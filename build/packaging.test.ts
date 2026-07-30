@@ -106,6 +106,106 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(include).toContain('_?=${DIR}')
   })
 
+  it('runs the retry with TEMP and TMP on the old installation volume', () => {
+    // electron-builder's updated uninstall atomically moves the old installation into the
+    // uninstaller's $PLUGINSDIR. A custom D: install with the ordinary C: TEMP turns that into a
+    // cross-volume move/copy — including a nested OpenScience data root — and can abort with exit
+    // code 2. The recovery attempt must give the child uninstaller a same-volume plugin directory,
+    // then restore this installer's environment after ExecWait returns.
+    const recovery =
+      include.match(/!macro uninstallFailureRecoveryAt DIR([\s\S]*?)!macroend/)?.[1] ?? ''
+    const retryAt = recovery.indexOf('ExecWait')
+
+    expect(recovery).toContain('GetFullPathName $R2 "${DIR}\\.."')
+    expect(recovery).toContain('GetTempFileName $R5 "$R2"')
+    expect(recovery).toMatch(/SetEnvironmentVariable\(t, t\)i \("TEMP", "\$R5"\)/)
+    expect(recovery).toMatch(/SetEnvironmentVariable\(t, t\)i \("TMP", "\$R5"\)/)
+    expect(recovery.indexOf('("TEMP", "$R5")')).toBeLessThan(retryAt)
+    expect(recovery.indexOf('("TMP", "$R5")')).toBeLessThan(retryAt)
+    expect(recovery.lastIndexOf('("TEMP", "$R3")')).toBeGreaterThan(retryAt)
+    expect(recovery.lastIndexOf('("TMP", "$R4")')).toBeGreaterThan(retryAt)
+  })
+
+  it('preserves a nested OpenScience data root around the uninstall retry', () => {
+    // The reporter's configured data root is <install dir>\OpenScience. An updated NSIS
+    // uninstaller moves every child of the install directory into its disposable $PLUGINSDIR, so
+    // a successful retry must first move that data root to a separate sibling and restore it
+    // before the new installer continues.
+    const recovery =
+      include.match(/!macro uninstallFailureRecoveryAt DIR([\s\S]*?)!macroend/)?.[1] ?? ''
+    const preserveAt = recovery.indexOf('Rename "${DIR}\\OpenScience" "$R7"')
+    const retryAt = recovery.indexOf('ExecWait')
+    const restoreAt = recovery.indexOf('Rename "$R7" "${DIR}\\OpenScience"')
+    const preserveErrorAt = recovery.indexOf('Could not safely preserve')
+    const preserveQuitAt = recovery.indexOf('Quit', preserveErrorAt)
+    const restoreErrorAt = recovery.indexOf('The preserved data remains at: $R7')
+    const restoreQuitAt = recovery.indexOf('Quit', restoreErrorAt)
+    const retryResultAt = recovery.indexOf('${if} $R0 != 0', retryAt)
+    const clearPreservedPathAt = recovery.indexOf('StrCpy $R7 ""', restoreAt)
+
+    expect(preserveAt).toBeGreaterThan(-1)
+    expect(preserveAt).toBeLessThan(retryAt)
+    expect(preserveErrorAt).toBeLessThan(preserveQuitAt)
+    expect(preserveQuitAt).toBeLessThan(retryAt)
+    expect(restoreAt).toBeGreaterThan(retryAt)
+    expect(restoreAt).toBeLessThan(retryResultAt)
+    expect(restoreErrorAt).toBeLessThan(restoreQuitAt)
+    expect(restoreQuitAt).toBeLessThan(retryResultAt)
+    expect(clearPreservedPathAt).toBeGreaterThan(restoreQuitAt)
+  })
+
+  it('protects registered nested data roots before the first old-uninstaller attempt', () => {
+    // Recovery-only protection is too late: the first old uninstaller can succeed after moving
+    // <install>\OpenScience into its disposable $PLUGINSDIR. customInit runs before the install
+    // section, so it must move registered data roots out first; each post-uninstall hook restores
+    // its root even when the first attempt returns zero.
+    const init = include.match(/!macro customInit([\s\S]*?)!macroend/)?.[1] ?? ''
+    const shellCheck = include.match(/!macro customUnInstallCheck([\s\S]*?)!macroend/)?.[1] ?? ''
+    const userCheck =
+      include.match(/!macro customUnInstallCheckCurrentUser([\s\S]*?)!macroend/)?.[1] ?? ''
+
+    expect(init).toContain('ReadRegStr $perMachineInstallDirCache HKEY_LOCAL_MACHINE')
+    expect(init).toContain('ReadRegStr $perUserInstallDirCache HKEY_CURRENT_USER')
+    expect(init).not.toContain('ReadRegStr $shellInstallDirCache SHELL_CONTEXT')
+    expect(init.match(/!insertmacro preserveNestedDataRoot/g) ?? []).toHaveLength(2)
+    expect(init).toContain(
+      '!insertmacro preserveNestedDataRoot $perMachineInstallDirCache $perMachineDataBackup machine'
+    )
+    expect(init).toContain(
+      '!insertmacro preserveNestedDataRoot $perUserInstallDirCache $perUserDataBackup per-user'
+    )
+    expect(shellCheck.indexOf('!insertmacro restoreNestedDataRoot')).toBeGreaterThan(-1)
+    expect(shellCheck.indexOf('!insertmacro restoreNestedDataRoot')).toBeLessThan(
+      shellCheck.indexOf('${if} $R0 != 0')
+    )
+    expect(userCheck.indexOf('!insertmacro restoreNestedDataRoot')).toBeGreaterThan(-1)
+    expect(userCheck.indexOf('!insertmacro restoreNestedDataRoot')).toBeLessThan(
+      userCheck.indexOf('${if} $R0 != 0')
+    )
+    expect(include).toContain('!define MUI_CUSTOMFUNCTION_ABORT restorePreservedOnAbort')
+    expect(include).toContain('Function restorePreservedOnAbort')
+    expect(include).toContain('Function .onInstFailed')
+    expect(include).toContain('Function .onGUIEnd')
+  })
+
+  it('accepts a non-zero retry after the old executable was removed', () => {
+    // The old assisted uninstaller can finish removing the application and still leak exit code 2.
+    // Recovery already recognizes that result before retrying; it must make the same filesystem
+    // check after the retry instead of showing a fatal dialog for a completed uninstall.
+    const recovery =
+      include.match(/!macro uninstallFailureRecoveryAt DIR([\s\S]*?)!macroend/)?.[1] ?? ''
+    const afterRetry = recovery.slice(recovery.indexOf('ExecWait'))
+    const removedCheck = '${FileExists} "${DIR}' + '\\' + '${APP_EXECUTABLE_FILENAME}"'
+
+    expect(
+      recovery.match(/\$\{FileExists\} "\$\{DIR\}\\\$\{APP_EXECUTABLE_FILENAME\}"/g) ?? []
+    ).toHaveLength(2)
+    expect(afterRetry.indexOf(removedCheck)).toBeGreaterThan(afterRetry.indexOf('${if} $R0 != 0'))
+    expect(afterRetry.indexOf(removedCheck)).toBeLessThan(
+      afterRetry.indexOf('MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"')
+    )
+  })
+
   it('passes the install dir to PowerShell as an argument, with a directory-boundary match', () => {
     // Custom install dirs may contain apostrophes: interpolating the path into the script source
     // would break the command (or worse, inject into it). The dir goes in as $args[0] and the
@@ -124,11 +224,14 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(include).toMatch(/\$\{if\} \$perUserInstallDirCache == ""/)
     expect(include).toContain('!insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache')
     expect(include).toContain('!insertmacro uninstallFailureRecoveryAt $INSTDIR')
-    // The cache is declared inside customInit itself: a file-scope Var would be declared-but-
-    // unused in the uninstaller build, which makensis fails as a warning.
+    // The installer-only guard keeps the cache variables out of the separately compiled
+    // uninstaller, where file-scope declarations would be unused and fail makensis warnings.
     const initHook = include.match(/!macro customInit([\s\S]*?)!macroend/)?.[1] ?? ''
-    expect(initHook).toMatch(
-      /Var \/GLOBAL perUserInstallDirCache[\s\S]*ReadRegStr \$perUserInstallDirCache HKEY_CURRENT_USER "\$\{INSTALL_REGISTRY_KEY\}" InstallLocation/
+    expect(include).toMatch(
+      /!ifndef BUILD_UNINSTALLER[\s\S]*Var perUserInstallDirCache[\s\S]*!macro customInit/
+    )
+    expect(initHook).toContain(
+      'ReadRegStr $perUserInstallDirCache HKEY_CURRENT_USER "${INSTALL_REGISTRY_KEY}" InstallLocation'
     )
     // The hook itself must not re-read the registry after the pass — that pins the broken order.
     // (Comments may name the value while explaining; strip them before checking.)
@@ -177,14 +280,16 @@ describe('NSIS installer include (build/installer.nsh)', () => {
   })
 
   it('the installed electron-builder still inserts customInit before the uninstall passes', () => {
-    // The per-user install-dir cache only ever runs if installer.nsi keeps inserting customInit
-    // in .onInit. Losing that insertion point leaves the HKCU hook with an always-empty cache —
-    // the exact fatal-path regression the cache fixed — while every source-text test stays green.
+    // The install-dir cache and data preservation only run if installer.nsi keeps inserting
+    // customInit in .onInit, before the install section invokes either old uninstaller.
     const installerNsi = readFileSync(
       join(appBuilderLibRoot, 'templates/nsis/installer.nsi'),
       'utf8'
     )
     expect(installerNsi).toContain('!ifmacrodef customInit')
     expect(installerNsi).toContain('!insertmacro customInit')
+    expect(installerNsi.indexOf('!insertmacro customInit')).toBeLessThan(
+      installerNsi.indexOf('Section "install"')
+    )
   })
 })

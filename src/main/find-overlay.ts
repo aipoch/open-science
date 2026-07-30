@@ -171,7 +171,11 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
     },
 
     destroy: () => {
-      ;(deps.mainWindow.removeListener ?? deps.mainWindow.off)?.('resize', onResize)
+      if (deps.mainWindow.removeListener) {
+        deps.mainWindow.removeListener('resize', onResize)
+      } else {
+        deps.mainWindow.off?.('resize', onResize)
+      }
       view?.destroy?.()
       view = null
       loadPromise = null
