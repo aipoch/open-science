@@ -9,6 +9,7 @@ import {
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
+import { FinalizedArtifactBindingConflictError } from '../artifacts/provenance-message-snapshot'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import {
   OrphanLegacyUploadAuthorityMissingError,
@@ -197,6 +198,72 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durableSession.title).toBe('Durable latest')
     expect(repository.saveSession).not.toHaveBeenCalled()
     expect(provenance.captureFinalizedMessages).not.toHaveBeenCalled()
+  })
+
+  it('rebases explicitly changed safe fields onto the latest durable graph after a conflict', async () => {
+    const authoritativeSession = createSession({
+      title: 'Durable latest',
+      pinned: false,
+      messages: [
+        {
+          id: 'durable-message',
+          role: 'agent',
+          content: 'Artifact finalized',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ],
+      updatedAt: 3
+    })
+    const submittedSession = createSession({
+      title: 'Local rename',
+      pinned: true,
+      messages: [
+        {
+          id: 'stale-message',
+          role: 'user',
+          content: 'Stale graph',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      updatedAt: 4
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi
+        .fn()
+        .mockResolvedValue({ status: 'found', session: authoritativeSession })
+    })
+    const provenance = createProvenancePersistence({
+      validateFinalizedMessageBindings: vi
+        .fn()
+        .mockRejectedValueOnce(
+          new FinalizedArtifactBindingConflictError(
+            'Artifact-owning Message is outside its bound Branch.'
+          )
+        )
+        .mockResolvedValue(undefined)
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      provenance
+    )
+
+    const result = await coordinator.saveSession(submittedSession, {
+      conflictRebaseFields: ['title', 'pinned']
+    })
+
+    expect(result).toMatchObject({ title: 'Local rename', pinned: true, updatedAt: 4 })
+    expect(result.messages).toEqual(authoritativeSession.messages)
+    expect(repository.saveSession).toHaveBeenCalledWith(result)
+    expect(provenance.validateFinalizedMessageBindings).toHaveBeenCalledTimes(2)
+    expect(provenance.captureFinalizedMessages).toHaveBeenCalledWith(result)
   })
 
   it('restores DB visibility and clears the tombstone when JSON deletion fails', async () => {
@@ -511,6 +578,7 @@ describe('SessionPersistenceCoordinator', () => {
     })
     const fileIndex = createFileIndex()
     const provenance = {
+      validateFinalizedMessageBindings: vi.fn().mockResolvedValue(undefined),
       captureFinalizedMessages: vi.fn().mockResolvedValue(undefined),
       reconcileSessionDeletions: vi.fn().mockResolvedValue(undefined),
       prepareSessionDeletion: vi.fn(),

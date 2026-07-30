@@ -196,6 +196,26 @@ describe('renderer session persistence bridge', () => {
     )
   })
 
+  it('reports only changed safe fields for stale-graph conflict rebasing', async () => {
+    const persisted = createPersistedSession({
+      projectId: 'project-a',
+      title: 'Original',
+      pinned: false
+    })
+    useSessionStore.getState().hydrateSessions([persisted])
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    useSessionStore.getState().renameSession('session-1', 'Local rename')
+    useSessionStore.getState().togglePinned('session-1')
+    await save(useSessionStore.getState())
+
+    expect(api.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Local rename', pinned: true }),
+      { conflictRebaseFields: ['title', 'pinned'] }
+    )
+  })
+
   it('does not persist unbound pending sessions', async () => {
     const api = createApi()
     const save = createStoreSaver(api)

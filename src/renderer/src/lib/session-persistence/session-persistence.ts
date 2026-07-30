@@ -5,6 +5,8 @@ import type {
   DeleteSessionRequest,
   LoadAllSessionsResult,
   PersistedChatSession,
+  SaveSessionOptions,
+  SessionConflictRebaseField,
   SaveSessionManifestRequest
 } from '../../../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
@@ -17,12 +19,38 @@ import type { ChatSession, SessionHydrationSelection } from '../../stores/sessio
 
 type SessionPersistenceApi = {
   loadAll: () => Promise<LoadAllSessionsResult>
-  saveSession: (session: PersistedChatSession) => Promise<PersistedChatSession>
+  saveSession: (
+    session: PersistedChatSession,
+    options?: SaveSessionOptions
+  ) => Promise<PersistedChatSession>
   deleteSession: (request: DeleteSessionRequest) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
 
 type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'>
+
+const SESSION_CONFLICT_REBASE_FIELDS = [
+  'title',
+  'permissionProfile',
+  'autoReviewEnabled',
+  'enabledComputeHosts',
+  'pinned',
+  'specialistId'
+] as const satisfies readonly SessionConflictRebaseField[]
+
+const conflictRebaseFieldChanged = (
+  previous: ChatSession,
+  next: ChatSession,
+  field: SessionConflictRebaseField
+): boolean => {
+  if (field !== 'enabledComputeHosts') return previous[field] !== next[field]
+  const previousHosts = previous.enabledComputeHosts ?? []
+  const nextHosts = next.enabledComputeHosts ?? []
+  return (
+    previousHosts.length !== nextHosts.length ||
+    previousHosts.some((host, index) => host !== nextHosts[index])
+  )
+}
 
 // Serializes every renderer-originated Session write through one ordering seam. Callers enqueue the
 // snapshot immediately, so a later explicit Artifact save cannot be overtaken by an older store save
@@ -42,7 +70,8 @@ const createOrderedSessionPersistence = (
   }
 
   return {
-    saveSession: (session) => enqueue(() => api.saveSession(session)),
+    saveSession: (session, options) =>
+      enqueue(() => (options ? api.saveSession(session, options) : api.saveSession(session))),
     saveManifest: (request) => enqueue(() => api.saveManifest(request))
   }
 }
@@ -50,7 +79,10 @@ const createOrderedSessionPersistence = (
 // The Store saver and Artifact finalization share this instance in production. Its adapters resolve
 // window.api lazily, keeping module import safe in tests before the preload bridge is installed.
 const liveSessionPersistence = createOrderedSessionPersistence({
-  saveSession: (session) => window.api.sessions.saveSession(session),
+  saveSession: (session, options) =>
+    options
+      ? window.api.sessions.saveSession(session, options)
+      : window.api.sessions.saveSession(session),
   saveManifest: (request) => window.api.sessions.saveManifest(request)
 })
 
@@ -226,11 +258,20 @@ const createStoreSaver = (
         !session.conversationGraphSyncBlocked
       ) {
         const persisted = toPersistedSession(session)
+        const previousSession = previousById.get(session.id)
+        const conflictRebaseFields = previousSession
+          ? SESSION_CONFLICT_REBASE_FIELDS.filter((field) =>
+              conflictRebaseFieldChanged(previousSession, session, field)
+            )
+          : []
 
         tasks.push({
           target,
           run: async () => {
-            const durableSession = await persistence.saveSession(persisted)
+            const durableSession = await persistence.saveSession(
+              persisted,
+              conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+            )
             useSessionStore.getState().applyDurableSessionProjection({
               source: session,
               session: durableSession
@@ -418,33 +459,38 @@ const useSessionPersistence = (): SessionPersistenceState => {
       }
 
       // Snapshot the hydrated state as the diff baseline so hydration itself is not re-saved.
-      const save = createStoreSaver(window.api.sessions, useSessionStore.getState(), {
-        onFailure: (target) => {
-          if (!isMounted) return
-          failedWriteTargets.current.add(target)
-          pruneRemovedSessionWriteTargets(
-            failedWriteTargets.current,
-            useSessionStore.getState().sessions
-          )
-          // A queued save can lose a race with an authoritative deletion. Its tombstone rejection
-          // must not resurrect a retry target for a Session that no longer exists in the store.
-          if (!failedWriteTargets.current.has(target)) {
+      const save = createStoreSaver(
+        window.api.sessions,
+        useSessionStore.getState(),
+        {
+          onFailure: (target) => {
+            if (!isMounted) return
+            failedWriteTargets.current.add(target)
+            pruneRemovedSessionWriteTargets(
+              failedWriteTargets.current,
+              useSessionStore.getState().sessions
+            )
+            // A queued save can lose a race with an authoritative deletion. Its tombstone rejection
+            // must not resurrect a retry target for a Session that no longer exists in the store.
+            if (!failedWriteTargets.current.has(target)) {
+              if (failedWriteTargets.current.size === 0) setWriteError(undefined)
+              return
+            }
+            setWriteError(SAFE_SESSION_WRITE_ERROR)
+          },
+          onSuccess: (target) => {
+            if (!isMounted) return
+            failedWriteTargets.current.delete(target)
+            if (target === 'manifest' && retryManifestWritePending.current) {
+              retryManifestWritePending.current = false
+              setIsReady(true)
+              startPendingArtifactReconciliation()
+            }
             if (failedWriteTargets.current.size === 0) setWriteError(undefined)
-            return
           }
-          setWriteError(SAFE_SESSION_WRITE_ERROR)
         },
-        onSuccess: (target) => {
-          if (!isMounted) return
-          failedWriteTargets.current.delete(target)
-          if (target === 'manifest' && retryManifestWritePending.current) {
-            retryManifestWritePending.current = false
-            setIsReady(true)
-            startPendingArtifactReconciliation()
-          }
-          if (failedWriteTargets.current.size === 0) setWriteError(undefined)
-        }
-      }, liveSessionPersistence)
+        liveSessionPersistence
+      )
       activeSaver = save
       saverRef.current = save
 

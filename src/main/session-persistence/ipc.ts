@@ -4,6 +4,7 @@ import type {
   DeleteSessionRequest,
   LoadAllSessionsResult,
   PersistedChatSession,
+  SaveSessionOptions,
   SaveSessionManifestRequest
 } from '../../shared/session-persistence'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
@@ -17,7 +18,8 @@ import { withDataRootWrite } from '../storage/migration-state'
 type SessionPersistenceBackend = {
   loadAll: () => Promise<LoadAllSessionsResult>
   saveSession: (
-    session: PersistedChatSession
+    session: PersistedChatSession,
+    options?: SaveSessionOptions
   ) => Promise<{ created: boolean; session: PersistedChatSession }>
   deleteSession: (projectId: string, sessionId: string) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
@@ -26,7 +28,8 @@ type SessionPersistenceBackend = {
 type SessionPersistenceHandlers = {
   loadAll: () => Promise<LoadAllSessionsResult>
   saveSession: (
-    session: PersistedChatSession
+    session: PersistedChatSession,
+    options?: SaveSessionOptions
   ) => Promise<{ created: boolean; session: PersistedChatSession }>
   deleteSession: (request: DeleteSessionRequest) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
@@ -81,7 +84,8 @@ const createSessionPersistenceHandlers = (
   void reviewRepository
   return {
     loadAll: () => repository.loadAll(),
-    saveSession: (session) => repository.saveSession(session),
+    saveSession: (session, options) =>
+      options ? repository.saveSession(session, options) : repository.saveSession(session),
     // A session delete tombstones its origin graph but deliberately retains Review rows, findings and
     // scope snapshots. Provenance remains readable from Files; project deletion owns final cleanup.
     deleteSession: (request) => repository.deleteSession(request.projectId, request.sessionId),
@@ -107,19 +111,22 @@ const registerSessionPersistenceIpcHandlers = (
   // loadAll can replay pending deletions and every mutation can materialize provenance/upload bytes.
   // Hold the shared data-root lease at the IPC boundary so migration drains the complete operation.
   ipcMain.handle('sessions:load-all', () => withDataRootWrite(() => handlers.loadAll()))
-  ipcMain.handle('sessions:save-session', async (event, session: PersistedChatSession) => {
-    return withDataRootWrite(async () => {
-      const result = await handlers.saveSession(session)
-      broadcastLifecycleEvent(
-        result.created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,
-        {
-          session: result.session,
-          originClientId: getLifecycleClientId(event)
-        }
-      )
-      return result.session
-    })
-  })
+  ipcMain.handle(
+    'sessions:save-session',
+    async (event, session: PersistedChatSession, options?: SaveSessionOptions) => {
+      return withDataRootWrite(async () => {
+        const result = await handlers.saveSession(session, options)
+        broadcastLifecycleEvent(
+          result.created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,
+          {
+            session: result.session,
+            originClientId: getLifecycleClientId(event)
+          }
+        )
+        return result.session
+      })
+    }
+  )
   ipcMain.handle('sessions:delete-session', async (_event, request: DeleteSessionRequest) => {
     await withDataRootWrite(async () => {
       await handlers.deleteSession(request)

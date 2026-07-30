@@ -31,6 +31,13 @@ type SessionDeletionReceipt =
   | { kind: 'ordinary'; projectId: string; sessionId: string }
   | { kind: 'retained'; projectId: string; sessionId: string; operationId: string }
 
+class FinalizedArtifactBindingConflictError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'FinalizedArtifactBindingConflictError'
+  }
+}
+
 const storageKey = (...segments: string[]): string => segments.join('/')
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 const readOptionalText = async (path: string): Promise<string | undefined> =>
@@ -127,7 +134,9 @@ class ProvenanceMessageSnapshotRepository {
 
   async validateFinalizedMessageBindings(input: PersistedChatSession): Promise<void> {
     const session = materializeSessionConversationGraph(input)
-    if (!session.conversationGraph) throw new Error('Session conversation graph is unavailable.')
+    if (!session.conversationGraph) {
+      throw new FinalizedArtifactBindingConflictError('Session conversation graph is unavailable.')
+    }
     const client = await this.options.getClient()
     const versions = await client.artifactVersion.findMany({
       where: {
@@ -774,16 +783,26 @@ class ProvenanceMessageSnapshotRepository {
   ): { fullPath: PersistedMessageNode[]; terminalIndex: number } | undefined {
     if (!version.messageId || !session.conversationGraph) return undefined
     if (session.conversationGraph.rootFrameId !== version.rootFrameId) {
-      throw new Error('Artifact Message snapshot root Frame does not match the Session graph.')
+      throw new FinalizedArtifactBindingConflictError(
+        'Artifact Message snapshot root Frame does not match the Session graph.'
+      )
     }
     const branch = session.conversationGraph.branches.find(
       (candidate) =>
         candidate.id === version.messageBranchId && candidate.agentFrameId === version.agentFrameId
     )
-    if (!branch) throw new Error('Artifact Message snapshot Branch is unavailable.')
+    if (!branch) {
+      throw new FinalizedArtifactBindingConflictError(
+        'Artifact Message snapshot Branch is unavailable.'
+      )
+    }
     const fullPath = resolveMessageBranchPath(session.conversationGraph, branch.id)
     const terminalIndex = fullPath.findIndex((message) => message.id === version.messageId)
-    if (terminalIndex < 0) throw new Error('Artifact-owning Message is outside its bound Branch.')
+    if (terminalIndex < 0) {
+      throw new FinalizedArtifactBindingConflictError(
+        'Artifact-owning Message is outside its bound Branch.'
+      )
+    }
     return { fullPath, terminalIndex }
   }
 
@@ -891,5 +910,5 @@ class ProvenanceMessageSnapshotRepository {
   }
 }
 
-export { ProvenanceMessageSnapshotRepository }
+export { FinalizedArtifactBindingConflictError, ProvenanceMessageSnapshotRepository }
 export type { ProvenanceMessageSnapshotOptions, SessionDeletionReceipt }

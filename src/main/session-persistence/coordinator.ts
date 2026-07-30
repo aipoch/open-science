@@ -5,6 +5,7 @@ import type {
   LoadAllSessionsResult,
   PersistedArtifact,
   PersistedChatSession,
+  SaveSessionOptions,
   SaveSessionManifestRequest,
   SessionLoadFailure,
   SessionLoadWarning
@@ -12,7 +13,10 @@ import type {
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
 import type { ProjectSessionDeletionState } from './repository'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
-import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
+import {
+  FinalizedArtifactBindingConflictError,
+  type SessionDeletionReceipt
+} from '../artifacts/provenance-message-snapshot'
 import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
 import {
   OrphanLegacyUploadAuthorityMissingError,
@@ -145,6 +149,40 @@ const appendUnique = (existing: string[] | undefined, incoming: readonly string[
     result.push(value)
   }
   return result
+}
+
+const rebaseSafeSessionFields = (
+  authoritative: PersistedChatSession,
+  submitted: PersistedChatSession,
+  fields: NonNullable<SaveSessionOptions['conflictRebaseFields']>
+): PersistedChatSession => {
+  const rebased = { ...authoritative }
+  for (const field of fields) {
+    switch (field) {
+      case 'title':
+        rebased.title = submitted.title
+        break
+      case 'permissionProfile':
+        rebased.permissionProfile = submitted.permissionProfile
+        break
+      case 'autoReviewEnabled':
+        rebased.autoReviewEnabled = submitted.autoReviewEnabled
+        break
+      case 'enabledComputeHosts':
+        rebased.enabledComputeHosts = submitted.enabledComputeHosts
+          ? [...submitted.enabledComputeHosts]
+          : undefined
+        break
+      case 'pinned':
+        rebased.pinned = submitted.pinned
+        break
+      case 'specialistId':
+        rebased.specialistId = submitted.specialistId
+        break
+    }
+  }
+  rebased.updatedAt = Math.max(authoritative.updatedAt, submitted.updatedAt)
+  return rebased
 }
 
 // Reattach native Versions through the Session authority, preserving graph-only inactive Branches.
@@ -401,7 +439,10 @@ class SessionPersistenceCoordinator {
   // Persists authoritative JSON before updating the derived index. If indexing fails, the save stays
   // durable, the caller receives the error for its normal retry path, and Files is reset to show its
   // incomplete state rather than silently presenting stale metadata as complete.
-  saveSession(session: PersistedChatSession): Promise<PersistedChatSession> {
+  saveSession(
+    session: PersistedChatSession,
+    options: SaveSessionOptions = {}
+  ): Promise<PersistedChatSession> {
     return this.enqueue(async () => {
       if (this.deletedProjects.has(session.projectId)) {
         throw new Error('Cannot save a session whose project has been deleted.')
@@ -411,14 +452,40 @@ class SessionPersistenceCoordinator {
       }
 
       const materializedSession = materializeSessionConversationGraph(session)
-      const durableSession = this.uploads
+      let durableSession = this.uploads
         ? await this.uploads.upgradeLegacySessionUploads(materializedSession, {
             mode: 'live-save'
           })
         : materializedSession
       // Reject a stale graph before it can replace the authoritative Session JSON. Capture remains
       // after the durable write so immutable evidence never includes Message bytes that were not saved.
-      await this.provenance?.validateFinalizedMessageBindings(durableSession)
+      try {
+        await this.provenance?.validateFinalizedMessageBindings(durableSession)
+      } catch (error) {
+        const conflictRebaseFields = options.conflictRebaseFields ?? []
+        if (
+          !(error instanceof FinalizedArtifactBindingConflictError) ||
+          conflictRebaseFields.length === 0
+        ) {
+          throw error
+        }
+
+        const authoritative = await this.repository.loadSessionWithDiagnostics(
+          session.projectId,
+          session.id
+        )
+        if (authoritative.status !== 'found') throw error
+
+        const rebasedSession = rebaseSafeSessionFields(
+          authoritative.session,
+          durableSession,
+          conflictRebaseFields
+        )
+        durableSession = this.uploads
+          ? await this.uploads.upgradeLegacySessionUploads(rebasedSession, { mode: 'live-save' })
+          : rebasedSession
+        await this.provenance?.validateFinalizedMessageBindings(durableSession)
+      }
       await this.repository.saveSession(durableSession)
       await this.provenance?.captureFinalizedMessages(durableSession)
       let changedSources: ProjectFileSource[]

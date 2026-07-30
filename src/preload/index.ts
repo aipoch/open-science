@@ -133,6 +133,7 @@ import type {
   DeleteSessionRequest,
   LoadAllSessionsResult,
   PersistedChatSession,
+  SaveSessionOptions,
   SaveSessionManifestRequest
 } from '../shared/session-persistence'
 import type {
@@ -310,7 +311,10 @@ type OpenScienceAPI = {
   }
   sessions: {
     loadAll: () => Promise<LoadAllSessionsResult>
-    saveSession: (session: PersistedChatSession) => Promise<PersistedChatSession>
+    saveSession: (
+      session: PersistedChatSession,
+      options?: SaveSessionOptions
+    ) => Promise<PersistedChatSession>
     deleteSession: (request: DeleteSessionRequest) => Promise<void>
     saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
     onCreated: (listener: AcpListener<SessionUpsertEvent>) => RemoveListener
@@ -778,8 +782,10 @@ const api: OpenScienceAPI = {
     // Loads every per-session file plus the last-open manifest from the main process.
     loadAll: () => ipcRenderer.invoke('sessions:load-all') as Promise<LoadAllSessionsResult>,
     // Persists a single sanitized session file.
-    saveSession: (session) =>
-      ipcRenderer.invoke('sessions:save-session', session) as Promise<PersistedChatSession>,
+    saveSession: (session, options) =>
+      (options
+        ? ipcRenderer.invoke('sessions:save-session', session, options)
+        : ipcRenderer.invoke('sessions:save-session', session)) as Promise<PersistedChatSession>,
     // Removes one session file.
     deleteSession: (request) =>
       ipcRenderer.invoke('sessions:delete-session', request) as Promise<void>,

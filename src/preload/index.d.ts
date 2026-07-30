@@ -124,6 +124,7 @@ import type {
   DeleteSessionRequest,
   LoadAllSessionsResult,
   PersistedChatSession,
+  SaveSessionOptions,
   SaveSessionManifestRequest
 } from '../shared/session-persistence'
 import type {
@@ -274,7 +275,10 @@ interface OpenScienceAPI {
   }
   sessions: {
     loadAll(): Promise<LoadAllSessionsResult>
-    saveSession(session: PersistedChatSession): Promise<PersistedChatSession>
+    saveSession(
+      session: PersistedChatSession,
+      options?: SaveSessionOptions
+    ): Promise<PersistedChatSession>
     deleteSession(request: DeleteSessionRequest): Promise<void>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
     onCreated(listener: AcpListener<SessionUpsertEvent>): RemoveListener

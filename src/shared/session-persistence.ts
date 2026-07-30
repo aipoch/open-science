@@ -186,6 +186,20 @@ export type PersistedChatSession = {
   updatedAt: number
 }
 
+// Renderer-owned preferences that can be replayed onto a newer durable graph after a stale-graph
+// conflict. The field list records intent explicitly, including changes that clear optional values.
+export type SessionConflictRebaseField =
+  | 'title'
+  | 'permissionProfile'
+  | 'autoReviewEnabled'
+  | 'enabledComputeHosts'
+  | 'pinned'
+  | 'specialistId'
+
+export type SaveSessionOptions = {
+  conflictRebaseFields?: SessionConflictRebaseField[]
+}
+
 // Restored interrupted sessions carry this error verbatim; the renderer keys its resume banner off it.
 export const INTERRUPTED_SESSION_ERROR = 'Session was interrupted before the app closed.'
 
