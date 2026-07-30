@@ -154,6 +154,37 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(clearPreservedPathAt).toBeGreaterThan(restoreQuitAt)
   })
 
+  it('keeps registered data backups outside the install tree until recovery finishes', () => {
+    // A still-running old process can recreate <install>\OpenScience after customInit moved the
+    // registered data aside. Run force-kill + retry before restoring the authoritative backup in
+    // both uninstall hooks. If recovery also preserves a newly-created directory, retain it at
+    // its unique sibling path instead of overwriting either copy or feeding it to the uninstaller.
+    const recovery =
+      include.match(
+        /!macro uninstallFailureRecoveryAt DIR REGISTERED_BACKUP([\s\S]*?)!macroend/
+      )?.[1] ?? ''
+    const shellCheck = include.match(/!macro customUnInstallCheck([\s\S]*?)!macroend/)?.[1] ?? ''
+    const userCheck =
+      include.match(/!macro customUnInstallCheckCurrentUser([\s\S]*?)!macroend/)?.[1] ?? ''
+    const conflictBranch =
+      recovery.match(/\$\{if\} "\$\{REGISTERED_BACKUP\}" != ""([\s\S]*?)\$\{else\}/)?.[1] ?? ''
+    const shellRecoveryAt = shellCheck.indexOf('!insertmacro uninstallFailureRecoveryAt')
+    const shellRestoreAt = shellCheck.indexOf('!insertmacro restoreNestedDataRoot')
+    const userRecoveryAt = userCheck.indexOf('!insertmacro uninstallFailureRecoveryAt')
+    const userRestoreAt = userCheck.indexOf('!insertmacro restoreNestedDataRoot')
+
+    expect(shellRecoveryAt).toBeGreaterThan(-1)
+    expect(shellRecoveryAt).toBeLessThan(shellRestoreAt)
+    expect(userRecoveryAt).toBeGreaterThan(-1)
+    expect(userRecoveryAt).toBeLessThan(userRestoreAt)
+    expect(shellCheck).toContain('!insertmacro uninstallFailureRecoveryAt $INSTDIR $R8')
+    expect(userCheck).toContain(
+      '!insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache $perUserDataBackup'
+    )
+    expect(conflictBranch).toContain('Additional data created during the update remains at: $R7')
+    expect(conflictBranch).not.toContain('Rename "$R7" "${DIR}\\OpenScience"')
+  })
+
   it('protects registered nested data roots before the first old-uninstaller attempt', () => {
     // Recovery-only protection is too late: the first old uninstaller can succeed after moving
     // <install>\OpenScience into its disposable $PLUGINSDIR. customInit runs before the install
@@ -177,11 +208,11 @@ describe('NSIS installer include (build/installer.nsh)', () => {
       '!insertmacro preserveNestedDataRoot $perUserInstallDirCache $perUserDataBackup per-user'
     )
     expect(shellCheck.indexOf('!insertmacro restoreNestedDataRoot')).toBeGreaterThan(-1)
-    expect(shellCheck.indexOf('!insertmacro restoreNestedDataRoot')).toBeLessThan(
+    expect(shellCheck.indexOf('!insertmacro restoreNestedDataRoot')).toBeGreaterThan(
       shellCheck.indexOf('${if} $R0 != 0')
     )
     expect(userCheck.indexOf('!insertmacro restoreNestedDataRoot')).toBeGreaterThan(-1)
-    expect(userCheck.indexOf('!insertmacro restoreNestedDataRoot')).toBeLessThan(
+    expect(userCheck.indexOf('!insertmacro restoreNestedDataRoot')).toBeGreaterThan(
       userCheck.indexOf('${if} $R0 != 0')
     )
     expect(include).toContain('!define MUI_CUSTOMFUNCTION_ABORT restorePreservedOnAbort')
@@ -303,8 +334,10 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     // value and fall back to the default fatal handling only when no per-user install was
     // registered at install start.
     expect(include).toMatch(/\$\{if\} \$perUserInstallDirCache == ""/)
-    expect(include).toContain('!insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache')
-    expect(include).toContain('!insertmacro uninstallFailureRecoveryAt $INSTDIR')
+    expect(include).toContain(
+      '!insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache $perUserDataBackup'
+    )
+    expect(include).toContain('!insertmacro uninstallFailureRecoveryAt $INSTDIR $R8')
     // The installer-only guard keeps the cache variables out of the separately compiled
     // uninstaller, where file-scope declarations would be unused and fail makensis warnings.
     const initHook = include.match(/!macro customInit([\s\S]*?)!macroend/)?.[1] ?? ''

@@ -257,7 +257,7 @@ FunctionEnd
 # CHECK_APP_RUNNING declare their globals ($installationDir, $PowerShellPath, ...), and makensis
 # treats unknown variables as errors — so this stays self-contained: registers, built-in
 # constants, and the literal temp-uninstaller path uninstallOldVersion uses.
-!macro uninstallFailureRecoveryAt DIR
+!macro uninstallFailureRecoveryAt DIR REGISTERED_BACKUP
   ${ifNot} ${FileExists} "${DIR}\${APP_EXECUTABLE_FILENAME}"
     DetailPrint `Old uninstaller exited with $R0 but the previous installation is already removed; continuing.`
   ${else}
@@ -353,19 +353,29 @@ FunctionEnd
       ClearErrors
     ${endif}
     ${if} $R7 != ""
-      # The retry may have removed ${DIR}; recreate only the parent and put the preserved data
-      # back before deciding whether the retry's exit code represents success or failure.
-      CreateDirectory "${DIR}"
-      ClearErrors
-      Rename "$R7" "${DIR}\OpenScience"
-      ${if} ${Errors}
-        DetailPrint `The preserved data remains at: $R7`
-        MessageBox MB_OK|MB_ICONSTOP "Open Science could not restore its data folder after updating.$\r$\nYour data remains at:$\r$\n$R7"
-        !insertmacro restoreAllNestedDataRoots
-        SetErrorLevel 2
-        Quit
+      ${if} "${REGISTERED_BACKUP}" != ""
+      ${andIf} ${FileExists} "${REGISTERED_BACKUP}\*.*"
+        # customInit already holds the authoritative registered data outside the install tree.
+        # Do not overwrite either copy if the old process recreated data before it was killed;
+        # retain that additional directory at its unique sibling path for manual reconciliation.
+        DetailPrint `Additional data created during the update remains at: $R7`
+        MessageBox MB_OK|MB_ICONEXCLAMATION "Open Science found additional data created while closing the previous version.$\r$\nYour original data will be restored; the additional data remains at:$\r$\n$R7"
+      ${else}
+        # No registered backup exists (recovery can also be used independently). The retry may
+        # have removed ${DIR}; recreate only the parent and put the retry-local data back before
+        # deciding whether the retry's exit code represents success or failure.
+        CreateDirectory "${DIR}"
+        ClearErrors
+        Rename "$R7" "${DIR}\OpenScience"
+        ${if} ${Errors}
+          DetailPrint `The preserved data remains at: $R7`
+          MessageBox MB_OK|MB_ICONSTOP "Open Science could not restore its data folder after updating.$\r$\nYour data remains at:$\r$\n$R7"
+          !insertmacro restoreAllNestedDataRoots
+          SetErrorLevel 2
+          Quit
+        ${endif}
+        StrCpy $R7 ""
       ${endif}
-      StrCpy $R7 ""
     ${endif}
     ${if} $R0 != 0
       ${ifNot} ${FileExists} "${DIR}\${APP_EXECUTABLE_FILENAME}"
@@ -383,8 +393,20 @@ FunctionEnd
 
 !macro customUnInstallCheck
   # SHELL_CONTEXT resolves from the FINAL install-mode page selection, not the mode seen by
-  # customInit. A current-user install has no second pass, so restore every cached root. An
-  # all-users install restores HKLM here and keeps HKCU protected for the following explicit pass.
+  # customInit. Keep registered data outside the install tree through any non-zero-exit recovery:
+  # a live old process can recreate OpenScience, and restoring first would make the recovery path
+  # abort on that destination conflict. $R8 selects the authoritative backup for this pass.
+  ${if} $R0 != 0
+    StrCpy $R8 $perUserDataBackup
+    ${if} $installMode == "all"
+      StrCpy $R8 $perMachineDataBackup
+    ${endif}
+    # SHELL_CONTEXT pass: the old installation sits at $INSTDIR (an update installs over it).
+    !insertmacro uninstallFailureRecoveryAt $INSTDIR $R8
+  ${endif}
+
+  # A current-user install has no second pass, so restore every cached root. An all-users install
+  # restores HKLM here and keeps HKCU protected for the following explicit pass.
   ${if} $installMode == "all"
     ${if} $perMachineInstallDirCache == $perUserInstallDirCache
       DetailPrint `Keeping the shared data folder protected for the matching per-user uninstall pass.`
@@ -396,17 +418,9 @@ FunctionEnd
     !insertmacro restoreAllNestedDataRoots
     !insertmacro quitIfDataRestoreFailed
   ${endif}
-  ${if} $R0 != 0
-    # SHELL_CONTEXT pass: the old installation sits at $INSTDIR (an update installs over it).
-    !insertmacro uninstallFailureRecoveryAt $INSTDIR
-  ${endif}
 !macroend
 
 !macro customUnInstallCheckCurrentUser
-  # The old uninstall may have removed its registry key, so restore using the path cached before
-  # either pass rather than reading InstallLocation here.
-  !insertmacro restoreNestedDataRoot $perUserInstallDirCache $perUserDataBackup
-  !insertmacro quitIfDataRestoreFailed
   ${if} $R0 != 0
     # installMode==all pass: it removes a stray PER-USER install, which may live anywhere —
     # $INSTDIR/$appExe describe the new (machine-wide) target, not it. Use the location cached in
@@ -421,8 +435,13 @@ FunctionEnd
       SetErrorLevel 2
       Quit
     ${endif}
-    !insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache
+    !insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache $perUserDataBackup
   ${endif}
+  # The old uninstall may have removed its registry key, so restore using the path cached before
+  # either pass rather than reading InstallLocation here. Recovery must finish first because the
+  # still-preserved backup is what keeps a recreated data directory from short-circuiting retry.
+  !insertmacro restoreNestedDataRoot $perUserInstallDirCache $perUserDataBackup
+  !insertmacro quitIfDataRestoreFailed
 !macroend
 
 !endif
