@@ -113,7 +113,35 @@ Var dataRestoreFailed
 
   # Protect HKCU independently of the mode selected during .onInit: the user can still switch to
   # all-users on the assisted install-mode page, so that early mode is not the uninstall verdict.
-  !insertmacro preserveNestedDataRoot $perUserInstallDirCache $perUserDataBackup per-user
+  # One exception needs a non-destructive write probe: both registry entries may point at the
+  # same machine-owned Program Files tree. An unelevated outer process must defer that shared path
+  # to the inner installer instead of failing before the user has a chance to approve UAC.
+  StrCpy $R8 "1"
+  ${if} $perUserInstallDirCache != ""
+  ${andIf} $perMachineInstallDirCache == $perUserInstallDirCache
+  ${andIfNot} ${UAC_IsAdmin}
+    StrCpy $R8 "0"
+    StrCpy $R9 ""
+    ClearErrors
+    GetFullPathName $R2 "$perUserInstallDirCache\.."
+    ${ifNot} ${Errors}
+      GetTempFileName $R9 "$R2"
+      ${ifNot} ${Errors}
+        ClearErrors
+        Delete "$R9"
+        ${ifNot} ${Errors}
+          StrCpy $R8 "1"
+        ${endif}
+      ${endif}
+    ${endif}
+    ${if} $R8 == "0"
+      DetailPrint `Deferring shared data-folder protection to the elevated installer.`
+      ClearErrors
+    ${endif}
+  ${endif}
+  ${if} $R8 == "1"
+    !insertmacro preserveNestedDataRoot $perUserInstallDirCache $perUserDataBackup per-user
+  ${endif}
 
   # An assisted per-machine install elevates into a second installer process. An unelevated outer
   # process must not fail merely because it cannot rename a machine installation; the inner/admin

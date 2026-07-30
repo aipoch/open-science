@@ -188,6 +188,23 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(include).toContain('Function .onGUIEnd')
   })
 
+  it('defers a shared machine-owned data root to the elevated inner installer', () => {
+    // With matching HKCU/HKLM registrations, an unelevated assisted outer process may not be
+    // allowed to rename a Program Files child. Probe the sibling directory non-destructively and
+    // defer to the elevated inner .onInit when it is not writable, instead of aborting before UAC.
+    const init = include.match(/!macro customInit([\s\S]*?)!macroend/)?.[1] ?? ''
+    const probeAt = init.indexOf('GetTempFileName $R9 "$R2"')
+    const preserveAt = init.indexOf(
+      '!insertmacro preserveNestedDataRoot $perUserInstallDirCache $perUserDataBackup per-user'
+    )
+
+    expect(init).toContain('${andIfNot} ${UAC_IsAdmin}')
+    expect(init).toContain('$perMachineInstallDirCache == $perUserInstallDirCache')
+    expect(probeAt).toBeGreaterThan(-1)
+    expect(probeAt).toBeLessThan(preserveAt)
+    expect(init).toContain('Deferring shared data-folder protection to the elevated installer.')
+  })
+
   it('accepts a non-zero retry after the old executable was removed', () => {
     // The old assisted uninstaller can finish removing the application and still leak exit code 2.
     // Recovery already recognizes that result before retrying; it must make the same filesystem
