@@ -38,6 +38,7 @@ const createFakeRuntime = (options: {
   callbacks: AcpRuntimeCallbacks
   permissionGrantStore?: ConversationPermissionGrantStore
   beforePromptStart?: () => Promise<void>
+  beforeResume?: () => Promise<void>
   eligibleAttachmentUri?: string
   prompt?: (sessionId: string) => Promise<unknown>
 }): {
@@ -73,6 +74,7 @@ const createFakeRuntime = (options: {
     return { sessionId, cwd: '/workspace', frameworkId: options.frameworkId }
   })
   const resumeSession = vi.fn(async ({ sessionId }: { sessionId: string }) => {
+    await options.beforeResume?.()
     snapshot = {
       ...snapshot,
       sessionId,
@@ -629,8 +631,9 @@ describe('AcpRuntimeCoordinator', () => {
     await reloadRequest
   })
 
-  it('drops late Codex tool events after Claude Code adopts the switched session', async () => {
+  it('isolates late Codex events while preserving Artifact finalization during adoption', async () => {
     const retirement = createDeferred<void>()
+    const adoption = createDeferred<void>()
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const forwardedEvents: AcpRuntimeEvent[] = []
     const coordinator = new AcpRuntimeCoordinator(
@@ -638,7 +641,8 @@ describe('AcpRuntimeCoordinator', () => {
         const fake = createFakeRuntime({
           frameworkId: created.length === 0 ? 'codex' : 'claude-code',
           sessionIds: [`agent-session-${created.length + 1}`],
-          callbacks
+          callbacks,
+          ...(created.length === 0 ? {} : { beforeResume: () => adoption.promise })
         })
         created.push(fake)
         return fake.runtime
@@ -672,33 +676,108 @@ describe('AcpRuntimeCoordinator', () => {
       expect.stringMatching(runtimeEventId(1, 'owner-tool'))
     ])
 
-    await coordinator.resumeSession({
+    await coordinator.connect()
+    const resumeRequest = coordinator.resumeSession({
       sessionId: session.sessionId,
       cwd: '/workspace',
       previousFrameworkId: 'codex'
     })
+    await vi.waitFor(() => expect(created[1].resumeSession).toHaveBeenCalledOnce())
 
     created[0].emitEvent(
       toolEvent('late-codex-tool', 'mcp.open-science-artifacts.write_artifact_file')
     )
+    created[0].emitEvent({
+      id: 'late-codex-artifact',
+      timestamp: 2,
+      kind: 'artifact',
+      level: 'info',
+      sessionId: session.sessionId,
+      runId: 'old-run',
+      promptMessageId: 'old-prompt',
+      artifactClaimId: 'old-claim',
+      artifacts: [
+        {
+          id: 'artifact-version-1',
+          projectName: 'project-1',
+          sessionId: session.sessionId,
+          name: 'result.csv',
+          path: '/workspace/result.csv',
+          fileUrl: 'file:///workspace/result.csv',
+          size: 12,
+          mtimeMs: 2
+        }
+      ]
+    })
     expect(forwardedEvents.map((event) => event.id)).toEqual([
-      expect.stringMatching(runtimeEventId(1, 'owner-tool'))
+      expect.stringMatching(runtimeEventId(1, 'owner-tool')),
+      expect.stringMatching(runtimeEventId(1, 'late-codex-artifact'))
     ])
-    expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([])
+    expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(1, 'late-codex-artifact'))
+    ])
+
+    adoption.resolve()
+    await resumeRequest
 
     created[1].emitEvent(
       toolEvent('fresh-claude-tool', 'mcp__open-science-artifacts__write_artifact_file')
     )
     expect(forwardedEvents.map((event) => event.id)).toEqual([
       expect.stringMatching(runtimeEventId(1, 'owner-tool')),
+      expect.stringMatching(runtimeEventId(1, 'late-codex-artifact')),
       expect.stringMatching(runtimeEventId(2, 'fresh-claude-tool'))
     ])
     expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([
-      expect.stringMatching(runtimeEventId(2, 'fresh-claude-tool'))
+      expect.stringMatching(runtimeEventId(2, 'fresh-claude-tool')),
+      expect.stringMatching(runtimeEventId(1, 'late-codex-artifact'))
     ])
 
     retirement.resolve()
     await switchRequest
+  })
+
+  it('restores the draining runtime owner when fresh runtime adoption fails before attachment', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const forwardedEvents: AcpRuntimeEvent[] = []
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'codex' : 'claude-code',
+          sessionIds: [`agent-session-${created.length + 1}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      { onEvent: (event) => forwardedEvents.push(event) }
+    )
+
+    const session = await coordinator.createSession()
+    await coordinator.requestAgentFrameworkSwitch()
+    await coordinator.connect()
+    created[1].resumeSession.mockRejectedValue(new Error('resume failed'))
+
+    await expect(
+      coordinator.resumeSession({
+        sessionId: session.sessionId,
+        cwd: '/workspace',
+        previousFrameworkId: 'codex'
+      })
+    ).rejects.toThrow('resume failed')
+
+    created[0].emitEvent({
+      id: 'restored-owner-event',
+      timestamp: 1,
+      kind: 'message',
+      level: 'info',
+      sessionId: session.sessionId,
+      role: 'assistant',
+      text: 'old runtime remains authoritative'
+    })
+    expect(forwardedEvents.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(1, 'restored-owner-event'))
+    ])
   })
 
   it('drops late recoverable overflow events from a previous session owner', async () => {

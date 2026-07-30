@@ -242,7 +242,38 @@ class AcpRuntimeCoordinator {
     await this.waitForInitialization()
     const owner = this.findRuntimeForSession(request.sessionId)
     const runtime = owner && !this.retiredRuntimes.has(owner) ? owner : this.getActiveRuntime()
-    const response = await runtime.resumeSession(request)
+    const transfersOwnership = runtime !== owner
+
+    // An optimistic prompt may already point at the incoming Runtime Segment while resume is still in
+    // flight. Transfer routing ownership before awaiting the provider so events from a draining
+    // generation cannot settle or mutate that new turn during the adoption window.
+    if (transfersOwnership) this.sessionRuntimes.set(request.sessionId, runtime)
+
+    let response: AcpCreateSessionResponse
+    try {
+      response = await runtime.resumeSession(request)
+    } catch (error) {
+      // A runtime may report its attached session before a later resume step fails. Keep that runtime
+      // as owner when attachment really happened; otherwise roll routing back to the prior generation
+      // and republish its snapshot so events suppressed during the failed adoption remain observable.
+      if (
+        transfersOwnership &&
+        this.sessionRuntimes.get(request.sessionId) === runtime &&
+        !runtime.getSnapshot().sessionIds.includes(request.sessionId)
+      ) {
+        if (owner) this.sessionRuntimes.set(request.sessionId, owner)
+        else this.sessionRuntimes.delete(request.sessionId)
+        this.callbacks.onStateChanged?.(this.getSnapshot())
+      }
+      throw error
+    }
+
+    if (
+      response.sessionId !== request.sessionId &&
+      this.sessionRuntimes.get(request.sessionId) === runtime
+    ) {
+      this.sessionRuntimes.delete(request.sessionId)
+    }
     this.sessionRuntimes.set(response.sessionId, runtime)
     this.lastRuntime = runtime
     return response
@@ -675,13 +706,14 @@ class AcpRuntimeCoordinator {
   }
 
   private shouldPublishEvent(runtime: AcpRuntime, event: AcpRuntimeEvent): boolean {
-    if (!event.sessionId) return true
+    if (!event.sessionId || event.kind === 'artifact') return true
 
     const owner = this.sessionRuntimes.get(event.sessionId)
     // Every session-scoped event belongs to the runtime generation that emitted it. Once a fresh
     // generation adopts the same logical session, late tool/message/stop events from the draining
-    // generation must not mutate the new Runtime Segment. Preserve events while ownership is unknown
-    // so discovery and pre-adoption behavior stay intact.
+    // generation must not mutate the new Runtime Segment. Artifact claims are the exception above:
+    // providers may publish them after stop, and their explicit run/prompt ids finalize the prior turn.
+    // Preserve events while ownership is unknown so discovery and pre-adoption behavior stay intact.
     return owner === undefined || owner === runtime
   }
 

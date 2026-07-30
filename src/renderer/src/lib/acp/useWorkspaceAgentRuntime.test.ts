@@ -347,6 +347,81 @@ describe('workspace agent message sending', () => {
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBeUndefined()
   })
 
+  it('adopts the selected framework when a Branch reset and framework switch share a turn', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Original Claude branch turn',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code',
+      agentBackendId: 'claude-code:anthropic'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        branchContextResetRequired: true
+      }))
+    }))
+    const shutdown = vi.fn().mockResolvedValue({
+      sessionId: 'transport-session-1',
+      status: 'shutdown'
+    })
+    vi.stubGlobal('window', { api: { notebook: { shutdown } } })
+    const resumeSession = vi.fn().mockResolvedValue({
+      sessionId: 'transport-session-1',
+      cwd: '/workspace/project',
+      contextReset: true,
+      frameworkId: 'codex',
+      backendId: 'codex:builtin-codex-subscription'
+    })
+    const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    const runtime = {
+      // A draining runtime may still expose the logical session while the selected runtime takes over.
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession,
+      resetSessionContext: vi.fn(),
+      sendPrompt
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Continue this branch with Codex',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:builtin-codex-subscription'
+    })
+    await flushRuntimeTasks()
+
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(resumeSession).toHaveBeenCalledWith(
+      'transport-session-1',
+      '/workspace/project',
+      'project-1',
+      'ask',
+      'claude-code',
+      'claude-code:anthropic'
+    )
+    expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(
+      resumeSession.mock.invocationCallOrder[0]
+    )
+    expect(resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
+      sendPrompt.mock.invocationCallOrder[0]
+    )
+    const switchedSession = useSessionStore.getState().sessions[0]
+    const promptContext = sendPrompt.mock.calls[0]?.[9]
+    const promptSegment = switchedSession.conversationGraph?.runtimeSegments.find(
+      (segment) => segment.id === promptContext?.runtimeSegmentId
+    )
+    expect(promptSegment).toMatchObject({
+      frameworkId: 'codex',
+      backendId: 'codex:builtin-codex-subscription'
+    })
+    expect(switchedSession.branchContextResetRequired).toBeUndefined()
+  })
+
   it('keeps Branch replay required when the reset prompt is rejected', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',

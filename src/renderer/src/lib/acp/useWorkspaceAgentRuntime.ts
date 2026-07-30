@@ -550,10 +550,27 @@ const sendWorkspaceMessage = async (
       return appended
     }
 
+    // A framework/backend selection change takes effect at this turn boundary. A retired generation
+    // may still expose the old session briefly, so persisted ownership participates in this decision.
+    const frameworkChanged = Boolean(
+      agentFrameworkId &&
+      currentSession?.agentFrameworkId &&
+      agentFrameworkId !== currentSession.agentFrameworkId
+    )
+    const backendChanged = Boolean(
+      agentBackendId &&
+      currentSession?.agentBackendId &&
+      agentBackendId !== currentSession.agentBackendId
+    )
+    const runtimeMustAdoptSession =
+      frameworkChanged || backendChanged || !runtime.state.sessionIds.includes(targetSessionId)
+
     // Branch activation changes only the durable projection. Before the first continuation on that
     // path, drop both volatile contexts so neither the provider nor a live kernel can leak sibling-
-    // Branch state into the prompt. The active Branch transcript is replayed below after reset.
+    // Branch state into the prompt. When another runtime must adopt the session, its resume creates the
+    // fresh Agent context; resetting the old runtime first would execute this turn under the wrong owner.
     let branchContextResetPerformed = Boolean(branchContextAlreadyReset)
+    let agentContextResetPerformed = Boolean(branchContextAlreadyReset)
     if (currentSession?.branchContextResetRequired && !branchContextAlreadyReset) {
       const resetCwd = targetCwd || currentSession.cwd || runtime.state.cwd
       if (!resetCwd) {
@@ -562,15 +579,18 @@ const sendWorkspaceMessage = async (
       }
       try {
         await shutdownNotebookForBranchChange(targetSessionId, resetCwd, sessionProjectName)
-        const reset = await runtime.resetSessionContext(
-          targetSessionId,
-          resetCwd,
-          sessionProjectName,
-          currentSession.permissionProfile ?? permissionProfile
-        )
-        useSessionStore
-          .getState()
-          .markResumed(targetSessionId, reset?.frameworkId, reset?.backendId)
+        if (!runtimeMustAdoptSession) {
+          const reset = await runtime.resetSessionContext(
+            targetSessionId,
+            resetCwd,
+            sessionProjectName,
+            currentSession.permissionProfile ?? permissionProfile
+          )
+          useSessionStore
+            .getState()
+            .markResumed(targetSessionId, reset?.frameworkId, reset?.backendId)
+          agentContextResetPerformed = true
+        }
         branchContextResetPerformed = true
       } catch (error) {
         useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
@@ -586,16 +606,7 @@ const sendWorkspaceMessage = async (
       useSessionStore.getState().clearSpecialistSwitchResetRequired(targetSessionId)
     }
 
-    // A framework switch applies at the next turn boundary. The retiring runtime may still expose the
-    // old session for a brief teardown window, so compare persisted ownership as well as the snapshot.
-    const frameworkChanged = Boolean(
-      agentFrameworkId &&
-      currentSession?.agentFrameworkId &&
-      agentFrameworkId !== currentSession.agentFrameworkId
-    )
-    const shouldResumeSession =
-      !branchContextResetPerformed &&
-      (frameworkChanged || !runtime.state.sessionIds.includes(targetSessionId))
+    const shouldResumeSession = !agentContextResetPerformed && runtimeMustAdoptSession
     let resumeCwd: string | undefined
 
     if (shouldResumeSession) {
@@ -619,11 +630,12 @@ const sendWorkspaceMessage = async (
           parts,
           cwd: targetCwd,
           projectId: projectId ?? currentSession?.projectId,
-          // Bind the optimistic prompt to the selected Runtime Segment before async resume. Existing
-          // Session ownership fields are committed only by markResumed, while synchronizeSessionGraph
-          // can still attribute this turn and its Artifact provenance to the incoming framework/backend.
-          agentFrameworkId,
-          agentBackendId,
+          // Bind the optimistic prompt to the selected Runtime Segment only when this send will adopt
+          // that runtime. A local Branch reset otherwise continues on the current owner.
+          agentFrameworkId: shouldResumeSession
+            ? agentFrameworkId
+            : currentSession?.agentFrameworkId,
+          agentBackendId: shouldResumeSession ? agentBackendId : currentSession?.agentBackendId,
           agentModel
         })
 
