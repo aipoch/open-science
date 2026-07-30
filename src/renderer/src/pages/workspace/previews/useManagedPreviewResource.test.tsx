@@ -40,6 +40,18 @@ const Probe = ({
   return <div data-state={state.status}>{state.resource?.id}</div>
 }
 
+const StrictProbe = ({
+  item,
+  maxBytes
+}: {
+  item: PreviewFileItem
+  maxBytes: number
+}): React.JSX.Element => {
+  const state = useManagedPreviewResource({ ...item, maxBytes })
+
+  return <div data-state={state.status}>{state.resource?.id}</div>
+}
+
 describe('useManagedPreviewResource', () => {
   let container: HTMLDivElement
   let root: Root
@@ -159,5 +171,25 @@ describe('useManagedPreviewResource', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
     expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-v1' })
     expect(container.textContent).toBe('resource-v2')
+  })
+
+  it('passes a strict byte limit through capability acquisition', async () => {
+    vi.mocked(window.api.previewResources.acquire).mockResolvedValue({
+      id: 'strict-resource',
+      url: 'open-science-preview://strict-resource/first.pdf',
+      size: 12,
+      mimeType: 'application/pdf',
+      version: 1
+    })
+    root = createRoot(container)
+
+    await act(async () => root.render(<StrictProbe item={firstItem} maxBytes={4096} />))
+
+    expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+      source: 'artifact',
+      path: '/managed/first.pdf',
+      sessionId: 'session-1',
+      maxBytes: 4096
+    })
   })
 })

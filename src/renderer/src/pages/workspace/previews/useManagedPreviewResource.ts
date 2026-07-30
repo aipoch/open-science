@@ -21,12 +21,13 @@ type ManagedPreviewResourceResult =
 // Acquires and releases one managed-file capability with the component lifecycle.
 const useManagedPreviewResource = (
   item: Pick<PreviewFileItem, 'path' | 'source' | 'mimeType' | 'size' | 'mtimeMs'> &
-    Partial<Pick<PreviewFileItem, 'projectId' | 'sessionId'>>,
+    Partial<Pick<PreviewFileItem, 'projectId' | 'sessionId'>> & { maxBytes?: number },
   enabled = true
 ): ManagedPreviewResourceState => {
   const [result, setResult] = useState<ManagedPreviewResourceResult | null>(null)
   // File metadata invalidates a capability when the same path is replaced in place.
   const requestKey = createPreviewResourceKey(item)
+  const requestScope = createPreviewRequestScope(item)
 
   useEffect(() => {
     if (!enabled) return
@@ -38,8 +39,10 @@ const useManagedPreviewResource = (
       .acquire({
         source: item.source ?? 'artifact',
         path: item.path,
-        ...createPreviewRequestScope(item),
-        ...(item.mimeType ? { mimeType: item.mimeType } : {})
+        ...(requestScope.projectId ? { projectId: requestScope.projectId } : {}),
+        ...(requestScope.sessionId ? { sessionId: requestScope.sessionId } : {}),
+        ...(item.mimeType ? { mimeType: item.mimeType } : {}),
+        ...(item.maxBytes === undefined ? {} : { maxBytes: item.maxBytes })
       })
       .then((resource) => {
         // Release acquisitions that complete after the consumer was unmounted or disabled.
@@ -76,12 +79,15 @@ const useManagedPreviewResource = (
   }, [
     enabled,
     item.mimeType,
+    item.maxBytes,
     item.mtimeMs,
     item.path,
     item.projectId,
     item.sessionId,
     item.size,
     item.source,
+    requestScope.projectId,
+    requestScope.sessionId,
     requestKey
   ])
 

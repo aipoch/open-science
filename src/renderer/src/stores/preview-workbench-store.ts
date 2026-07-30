@@ -15,6 +15,7 @@ export type PreviewFileFormat =
   | 'fasta'
   | 'html'
   | 'image'
+  | 'tiff'
   | 'pdb'
   | 'molecule'
   | 'pdf'

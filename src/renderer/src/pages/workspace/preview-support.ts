@@ -9,6 +9,8 @@ const PREVIEW_SUPPORTED_EXTENSIONS: Record<string, PreviewFileFormat> = {
   jpg: 'image',
   png: 'image',
   svg: 'image',
+  tif: 'tiff',
+  tiff: 'tiff',
   webp: 'image',
   csv: 'csv',
   tsv: 'csv',
@@ -61,6 +63,7 @@ const PREVIEW_SUPPORTED_EXTENSIONS: Record<string, PreviewFileFormat> = {
 const getPreviewFormatForMimeType = (mimeType: string): PreviewFileFormat => {
   const normalizedMimeType = mimeType.toLowerCase().split(';')[0]?.trim() ?? ''
 
+  if (normalizedMimeType === 'image/tiff' || normalizedMimeType === 'image/x-tiff') return 'tiff'
   if (normalizedMimeType.startsWith('image/')) return 'image'
   if (normalizedMimeType === 'application/json' || normalizedMimeType.endsWith('+json')) {
     return 'json'

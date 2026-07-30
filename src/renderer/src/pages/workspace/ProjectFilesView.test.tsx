@@ -3131,6 +3131,64 @@ describe('ProjectFilesView', () => {
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
   })
 
+  it('does not acquire a TIFF thumbnail until its grid tile is near the viewport', async () => {
+    const observed = new Map<Element, IntersectionObserverCallback>()
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe = vi.fn((element: Element) => observed.set(element, this.callback))
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+
+        constructor(private readonly callback: IntersectionObserverCallback) {}
+      }
+    )
+    await renderView([
+      createSession({
+        artifacts: [
+          {
+            id: 'artifact-tiff',
+            kind: 'managed-file',
+            path: '/workspace/chart.tiff',
+            fileUrl: 'file:///workspace/chart.tiff',
+            name: 'chart.tiff',
+            mimeType: 'image/tiff',
+            size: 152,
+            mtimeMs: 1710000002000
+          }
+        ]
+      })
+    ])
+    const artifactSentinel = container.querySelector(
+      '[data-testid="artifact-page-sentinel:session-1"]'
+    )
+    await act(async () => {
+      observed.get(artifactSentinel as Element)?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const tile = container.querySelector('[aria-label="Preview generated file chart.tiff"]')
+    expect(tile).not.toBeNull()
+    expect(window.api.previewResources.acquire).not.toHaveBeenCalled()
+
+    await act(async () => {
+      observed.get(tile as Element)?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+      await Promise.resolve()
+    })
+
+    await vi.waitFor(() =>
+      expect(window.api.previewResources.acquire).toHaveBeenCalledWith(
+        expect.objectContaining({ path: '/workspace/chart.tiff' })
+      )
+    )
+  })
+
   it('does not restart a pending thumbnail read when another tile becomes visible', async () => {
     const observed = new Map<Element, IntersectionObserverCallback>()
     vi.stubGlobal(

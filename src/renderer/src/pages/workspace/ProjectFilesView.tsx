@@ -577,6 +577,7 @@ const FileTile = ({
             source={source}
             projectId={projectId}
             sessionId={sessionId}
+            isVisible={isNearViewport}
           />
           {missing ? (
             <span className="absolute left-1.5 top-1.5 rounded bg-text-000/75 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">

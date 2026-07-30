@@ -1,4 +1,4 @@
-import { mkdtemp, rm, truncate, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, truncate, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -85,10 +85,15 @@ describe('ManagedPreviewResources', () => {
       createId
     })
 
-    await expect(resources.inspect({ source: 'artifact', path: filePath })).resolves.toEqual({
+    const snapshot = await resources.inspect({ source: 'artifact', path: filePath })
+
+    expect(snapshot).toMatchObject({
       size: 6,
       version: expect.any(Number)
     })
+    expect(typeof snapshot.dev).toBe('bigint')
+    expect(typeof snapshot.ino).toBe('bigint')
+    expect(typeof snapshot.mtimeNs).toBe('bigint')
     expect(createId).not.toHaveBeenCalled()
   })
 
@@ -120,6 +125,30 @@ describe('ManagedPreviewResources', () => {
     const request = { source: 'artifact' as const, path: filePath }
     const snapshot = await resources.inspect(request)
     await writeFile(filePath, Buffer.from('changed-size'))
+
+    await expect(
+      resources.acquire(17, request, { snapshot, maxBytes: 40 * 1024 * 1024 })
+    ).rejects.toThrow(/changed/i)
+    expect(createId).not.toHaveBeenCalled()
+  })
+
+  it('rejects a different inode with the same admitted size and timestamp', async () => {
+    const filePath = await createFile(Buffer.from('before'))
+    const replacementPath = join(temporaryDirectory!, 'replacement.pdf')
+    await writeFile(replacementPath, Buffer.from('after!'))
+    const fixedTimestamp = new Date('2024-01-01T00:00:00.000Z')
+    await Promise.all([
+      utimes(filePath, fixedTimestamp, fixedTimestamp),
+      utimes(replacementPath, fixedTimestamp, fixedTimestamp)
+    ])
+    const resolvePath = vi
+      .fn()
+      .mockResolvedValueOnce(filePath)
+      .mockResolvedValueOnce(replacementPath)
+    const createId = vi.fn(() => 'resource-1')
+    const resources = new ManagedPreviewResources({ resolvePath, createId })
+    const request = { source: 'artifact' as const, path: filePath }
+    const snapshot = await resources.inspect(request)
 
     await expect(
       resources.acquire(17, request, { snapshot, maxBytes: 40 * 1024 * 1024 })
@@ -245,6 +274,21 @@ describe('ManagedPreviewResources', () => {
 
     expect(resource.mimeType).toBe('text/html; charset=utf-8')
   })
+
+  it.each(['chart.tif', 'chart.tiff'])(
+    'infers image/tiff for %s preview resources',
+    async (name) => {
+      const filePath = await createFile(Buffer.from('tiff-bytes'), name)
+      const resources = new ManagedPreviewResources({
+        resolvePath: async () => filePath,
+        createId: () => 'tiff-resource'
+      })
+
+      const resource = await resources.acquire(17, { source: 'artifact', path: filePath })
+
+      expect(resource.mimeType).toBe('image/tiff')
+    }
+  )
 
   it('treats a second release for the same owner as a silent no-op', async () => {
     const filePath = await createFile(Buffer.from('silent-release'))
