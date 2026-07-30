@@ -487,20 +487,23 @@ describe('HeadlessTaskApi', () => {
         throw new Error('raw provider failure')
       }
       if (channel === 'artifacts:finalize-run') {
-        return [
-          {
-            id: 'artifact-1',
-            projectName: project.id,
-            sessionId: 'session-failed',
-            messageId: 'agent-message',
-            name: 'partial-report.md',
-            path: '/artifacts/partial-report.md',
-            fileUrl: 'open-science-preview://artifact-1/partial-report.md',
-            mimeType: 'text/markdown',
-            size: 10,
-            mtimeMs: 12
-          }
-        ]
+        return {
+          ok: true,
+          artifacts: [
+            {
+              id: 'artifact-1',
+              projectName: project.id,
+              sessionId: 'session-failed',
+              messageId: 'agent-message',
+              name: 'partial-report.md',
+              path: '/artifacts/partial-report.md',
+              fileUrl: 'open-science-preview://artifact-1/partial-report.md',
+              mimeType: 'text/markdown',
+              size: 10,
+              mtimeMs: 12
+            }
+          ]
+        }
       }
       throw new Error(`Unexpected RPC channel: ${channel}`)
     })

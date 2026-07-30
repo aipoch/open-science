@@ -7,7 +7,7 @@ import {
   type AcpPromptRequest,
   type AcpRuntimeEvent
 } from '../../shared/acp'
-import type { ArtifactFile } from '../../shared/artifacts'
+import type { ArtifactFile, FinalizeRunArtifactsResult } from '../../shared/artifacts'
 import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import type { Project } from '../../shared/projects'
 import type {
@@ -478,11 +478,14 @@ class HeadlessTaskApi {
     const finalizedArtifacts: ArtifactFile[] = []
     for (const event of events) {
       if (event.kind !== 'artifact' || !event.artifactClaimId) continue
-      const artifacts = (await this.invoke('artifacts:finalize-run', {
+      const result = (await this.invoke('artifacts:finalize-run', {
         claimId: event.artifactClaimId,
         messageId: assistantMessageId
-      })) as ArtifactFile[]
-      finalizedArtifacts.push(...artifacts)
+      })) as FinalizeRunArtifactsResult
+      if (!result.ok) {
+        throw new Error(result.message)
+      }
+      finalizedArtifacts.push(...result.artifacts)
     }
     const assistantMessage: PersistedChatMessage = {
       id: assistantMessageId,
