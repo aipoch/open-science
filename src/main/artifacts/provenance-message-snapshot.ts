@@ -143,6 +143,12 @@ class ProvenanceMessageSnapshotRepository {
         state: 'finalized',
         messageId: { not: null },
         artifact: { is: { projectId: session.projectId, sessionId: session.id } }
+      },
+      select: {
+        rootFrameId: true,
+        agentFrameId: true,
+        messageBranchId: true,
+        messageId: true
       }
     })
     const scopes = new Map<string, (typeof versions)[number]>()
@@ -173,6 +179,12 @@ class ProvenanceMessageSnapshotRepository {
         messageId: { not: null },
         messageSnapshotId: null,
         artifact: { is: { projectId: session.projectId, sessionId: session.id } }
+      },
+      select: {
+        rootFrameId: true,
+        agentFrameId: true,
+        messageBranchId: true,
+        messageId: true
       }
     })
     const scopes = new Map<string, (typeof versions)[number]>()

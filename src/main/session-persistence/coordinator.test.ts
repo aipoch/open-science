@@ -222,12 +222,77 @@ describe('SessionPersistenceCoordinator', () => {
       await expect(coordinator.saveSession(createSession())).resolves.toMatchObject({
         id: 'session-1'
       })
+      await expect(
+        coordinator.saveSession(createSession({ title: 'Retry validation' }))
+      ).resolves.toMatchObject({ id: 'session-1' })
     } finally {
       warn.mockRestore()
     }
 
-    expect(repository.saveSession).toHaveBeenCalledOnce()
-    expect(provenance.captureFinalizedMessages).toHaveBeenCalledOnce()
+    expect(provenance.validateFinalizedMessageBindings).toHaveBeenCalledTimes(2)
+    expect(repository.saveSession).toHaveBeenCalledTimes(2)
+    expect(provenance.captureFinalizedMessages).toHaveBeenCalledTimes(2)
+  })
+
+  it('revalidates finalized bindings only when topology or artifact bindings change', async () => {
+    const provenance = createProvenancePersistence()
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository(),
+      createFileIndex(),
+      undefined,
+      provenance
+    )
+    const firstMessage = {
+      id: 'message-1',
+      role: 'agent' as const,
+      content: 'streaming',
+      status: 'streaming' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    await coordinator.saveSession(createSession({ messages: [firstMessage] }))
+    await coordinator.saveSession(
+      createSession({
+        title: 'Renamed while streaming',
+        messages: [{ ...firstMessage, content: 'more text', updatedAt: 2 }]
+      })
+    )
+
+    expect(provenance.validateFinalizedMessageBindings).toHaveBeenCalledOnce()
+
+    const secondMessage = {
+      id: 'message-2',
+      role: 'user' as const,
+      content: 'continue',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 3,
+      updatedAt: 3
+    }
+    await coordinator.saveSession(
+      createSession({
+        messages: [
+          { ...firstMessage, content: 'complete', status: 'complete', updatedAt: 2 },
+          secondMessage
+        ]
+      })
+    )
+
+    expect(provenance.validateFinalizedMessageBindings).toHaveBeenCalledTimes(2)
+
+    await coordinator.runSessionMutation('project-1', 'session-1', async () => undefined)
+    await coordinator.saveSession(
+      createSession({
+        messages: [
+          { ...firstMessage, content: 'complete', status: 'complete', updatedAt: 2 },
+          { ...secondMessage, content: 'continue after artifact finalization', updatedAt: 4 }
+        ]
+      })
+    )
+
+    expect(provenance.validateFinalizedMessageBindings).toHaveBeenCalledTimes(3)
   })
 
   it('rebases explicitly changed safe fields onto the latest durable graph after a conflict', async () => {

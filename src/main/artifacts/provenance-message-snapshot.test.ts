@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createLinearConversationGraph,
@@ -158,6 +158,7 @@ describe('Provenance Message snapshots', () => {
       storageRoot,
       getClient: () => Promise.resolve(client)
     })
+    const findVersions = vi.spyOn(client.artifactVersion, 'findMany')
 
     const staleSession = structuredClone(session)
     if (!staleSession.conversationGraph) {
@@ -167,6 +168,16 @@ describe('Provenance Message snapshots', () => {
     staleSession.messages = staleSession.messages.filter((message) => message.id === 'prompt-1')
     await expect(snapshots.validateFinalizedMessageBindings(staleSession)).rejects.toThrow(
       'Artifact-owning Message is outside its bound Branch.'
+    )
+    expect(findVersions).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        select: {
+          rootFrameId: true,
+          agentFrameId: true,
+          messageBranchId: true,
+          messageId: true
+        }
+      })
     )
     await expect(snapshots.validateFinalizedMessageBindings(session)).resolves.toBeUndefined()
 
