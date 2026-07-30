@@ -24,7 +24,8 @@ beforeEach(() => {
   useNavigationStore.setState({
     view: 'home',
     activeProjectId: undefined,
-    userNavigationRevision: 0
+    userNavigationRevision: 0,
+    explicitNavigationRevision: 0
   })
 })
 
@@ -87,7 +88,7 @@ describe('navigation store', () => {
         version: SESSION_MANIFEST_VERSION
       })
 
-    useNavigationStore.getState().openSessionById('a', 'automatic')
+    useNavigationStore.getState().openSessionById('a', 'notification')
 
     expect(useNavigationStore.getState().view).toBe('workspace')
     expect(useNavigationStore.getState().activeProjectId).toBe('project-a')
@@ -95,7 +96,7 @@ describe('navigation store', () => {
   })
 
   it('stays put when a notification names a session that no longer exists', () => {
-    useNavigationStore.getState().openSessionById('gone', 'automatic')
+    useNavigationStore.getState().openSessionById('gone', 'notification')
 
     expect(useNavigationStore.getState().view).toBe('home')
     expect(useNavigationStore.getState().activeProjectId).toBeUndefined()
@@ -112,11 +113,18 @@ describe('navigation store', () => {
   it('advances user navigation revision only for explicit user actions', () => {
     useNavigationStore.getState().goHome('automatic')
     expect(useNavigationStore.getState().userNavigationRevision).toBe(0)
+    expect(useNavigationStore.getState().explicitNavigationRevision).toBe(0)
+
+    useNavigationStore.getState().goHome('notification')
+    expect(useNavigationStore.getState().userNavigationRevision).toBe(0)
+    expect(useNavigationStore.getState().explicitNavigationRevision).toBe(1)
 
     useNavigationStore.getState().goHome('user')
     expect(useNavigationStore.getState().userNavigationRevision).toBe(1)
+    expect(useNavigationStore.getState().explicitNavigationRevision).toBe(2)
 
     useNavigationStore.getState().recordUserNavigation()
     expect(useNavigationStore.getState().userNavigationRevision).toBe(2)
+    expect(useNavigationStore.getState().explicitNavigationRevision).toBe(3)
   })
 })

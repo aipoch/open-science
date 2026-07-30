@@ -535,7 +535,7 @@ describe('App startup routing', () => {
     })
 
     expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith('s-9')
-    expect(mocks.openSessionById).toHaveBeenCalledWith('s-9', 'automatic')
+    expect(mocks.openSessionById).toHaveBeenCalledWith('s-9', 'notification')
   })
 
   it('opens an already-hydrated notification target during partial recovery', async () => {
@@ -559,7 +559,7 @@ describe('App startup routing', () => {
     })
 
     expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith('s-3')
-    expect(mocks.openSessionById).toHaveBeenCalledWith('s-3', 'automatic')
+    expect(mocks.openSessionById).toHaveBeenCalledWith('s-3', 'notification')
   })
 
   it('discards a deferred notification when the user navigates elsewhere', async () => {
@@ -632,6 +632,6 @@ describe('App startup routing', () => {
     })
 
     expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith('s-4')
-    expect(mocks.openSessionById).toHaveBeenCalledWith('s-4', 'automatic')
+    expect(mocks.openSessionById).toHaveBeenCalledWith('s-4', 'notification')
   })
 })

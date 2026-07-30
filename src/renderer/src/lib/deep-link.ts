@@ -56,17 +56,16 @@ const useDeepLinkNavigation = ({ isHydrated, isReady }: DeepLinkNavigationReadin
   const initialized = useRef(!isWebLocation())
   const [isInitialized, setIsInitialized] = useState(() => !isWebLocation())
 
-  // While an initial target is deferred by partial recovery, any explicit navigation means the user
-  // has taken control. Drop the stale target so a later storage retry cannot override their choice.
-  // Session hydration itself does not touch this store, so background recovery is not mistaken for
-  // user navigation.
+  // While an initial target is deferred by partial recovery, an explicit in-app or notification
+  // navigation takes control. Drop the stale target so later loading cannot override that choice.
+  // Lifecycle redirects and Session hydration do not advance this revision.
   useEffect(() => {
     if (isInitialized) return
 
     return useNavigationStore.subscribe((state, previousState) => {
       if (
         initialized.current ||
-        state.userNavigationRevision === previousState.userNavigationRevision
+        state.explicitNavigationRevision === previousState.explicitNavigationRevision
       ) {
         return
       }

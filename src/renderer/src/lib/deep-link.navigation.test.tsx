@@ -53,7 +53,8 @@ beforeEach(() => {
   useNavigationStore.setState({
     view: 'home',
     activeProjectId: undefined,
-    userNavigationRevision: 0
+    userNavigationRevision: 0,
+    explicitNavigationRevision: 0
   })
   useProjectStore.setState(createInitialProjectState())
   useSessionStore.setState(createInitialSessionState())
@@ -94,6 +95,41 @@ describe('deep-link navigation', () => {
       activeProjectId: project.id
     })
     expect(useSessionStore.getState().selectedSessionId).toBe(session.id)
+  })
+
+  it('preserves notification navigation over a deferred startup deep link', async () => {
+    const notificationProject: Project = {
+      ...project,
+      id: 'project-2',
+      name: 'Notification research'
+    }
+    const notificationSession: ChatSession = {
+      ...session,
+      id: 'session-2',
+      projectId: notificationProject.id,
+      title: 'Notification session'
+    }
+    window.history.replaceState({}, '', '/?project=project-1&session=session-1')
+    useProjectStore.setState({
+      projects: [project, notificationProject],
+      isLoaded: false
+    })
+    useSessionStore.setState({ sessions: [session, notificationSession] })
+
+    await renderHook({ isHydrated: true, isReady: true })
+
+    act(() =>
+      useNavigationStore
+        .getState()
+        .openSession(notificationProject.id, notificationSession.id, 'notification')
+    )
+    act(() => useProjectStore.setState({ isLoaded: true }))
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: notificationProject.id
+    })
+    expect(useSessionStore.getState().selectedSessionId).toBe(notificationSession.id)
   })
 
   it('opens an already-hydrated session during partial recovery', async () => {

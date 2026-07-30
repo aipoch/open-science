@@ -165,7 +165,7 @@ const App = (): React.JSX.Element | null => {
       return
     }
 
-    useNavigationStore.getState().openSessionById(consumed.sessionId, 'automatic')
+    useNavigationStore.getState().openSessionById(consumed.sessionId, 'notification')
   }, [isSessionPersistenceHydrated, isSessionPersistenceReady])
 
   // If a missing target is waiting for a persistence retry, explicit navigation transfers control
