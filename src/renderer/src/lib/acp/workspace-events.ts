@@ -16,6 +16,7 @@ import {
 } from '../../../../shared/activity-groups'
 import { toPersistedSession, useSessionStore } from '../../stores/session-store'
 import { useSettingsStore } from '../../stores/settings-store'
+import { saveSessionInOrder } from '../session-persistence/session-persistence'
 import {
   createRuntimeStreamId,
   getAcpRuntimeEventImage,
@@ -131,7 +132,7 @@ const finalizeRunArtifacts = async (
 // Persist that graph explicitly instead of relying on the asynchronous store saver to win the IPC race.
 const saveSessionForArtifactFinalization = (
   session: PersistedChatSession
-): Promise<PersistedChatSession> => window.api.sessions.saveSession(session)
+): Promise<PersistedChatSession> => saveSessionInOrder(session)
 
 const finalizeArtifactEvent = async (
   event: AcpRuntimeEvent,

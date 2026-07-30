@@ -159,6 +159,17 @@ describe('Provenance Message snapshots', () => {
       getClient: () => Promise.resolve(client)
     })
 
+    const staleSession = structuredClone(session)
+    if (!staleSession.conversationGraph) {
+      throw new Error('Expected the Session conversation graph.')
+    }
+    staleSession.conversationGraph.branches[0].headMessageId = 'prompt-1'
+    staleSession.messages = staleSession.messages.filter((message) => message.id === 'prompt-1')
+    await expect(snapshots.validateFinalizedMessageBindings(staleSession)).rejects.toThrow(
+      'Artifact-owning Message is outside its bound Branch.'
+    )
+    await expect(snapshots.validateFinalizedMessageBindings(session)).resolves.toBeUndefined()
+
     const streamingSession = structuredClone(session)
     const streamingMessage = streamingSession.conversationGraph?.messages.find(
       (message) => message.id === 'message-1'
@@ -189,6 +200,10 @@ describe('Provenance Message snapshots', () => {
       messageCount: 2,
       checksum: expect.stringMatching(/^[a-f0-9]{64}$/u)
     })
+    await expect(snapshots.validateFinalizedMessageBindings(staleSession)).rejects.toThrow(
+      'Artifact-owning Message is outside its bound Branch.'
+    )
+    await expect(snapshots.validateFinalizedMessageBindings(session)).resolves.toBeUndefined()
     const read = await provenance.getVersionProvenance({
       projectId: 'project-1',
       appSessionId: 'session-1',

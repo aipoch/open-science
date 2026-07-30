@@ -73,6 +73,7 @@ type SessionFileIndex = {
 }
 
 type SessionProvenancePersistence = {
+  validateFinalizedMessageBindings(session: PersistedChatSession): Promise<void>
   captureFinalizedMessages(session: PersistedChatSession): Promise<void>
   reconcileSessionDeletions(activeSessions: PersistedChatSession[]): Promise<void>
   prepareSessionDeletion(session: PersistedChatSession): Promise<SessionDeletionReceipt>
@@ -415,6 +416,9 @@ class SessionPersistenceCoordinator {
             mode: 'live-save'
           })
         : materializedSession
+      // Reject a stale graph before it can replace the authoritative Session JSON. Capture remains
+      // after the durable write so immutable evidence never includes Message bytes that were not saved.
+      await this.provenance?.validateFinalizedMessageBindings(durableSession)
       await this.repository.saveSession(durableSession)
       await this.provenance?.captureFinalizedMessages(durableSession)
       let changedSources: ProjectFileSource[]

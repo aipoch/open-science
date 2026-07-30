@@ -171,6 +171,34 @@ describe('SessionPersistenceCoordinator', () => {
     expect(repository.saveSession).toHaveBeenCalledWith(durableSession)
   })
 
+  it('does not overwrite Session JSON when finalized Artifact bindings reject the snapshot', async () => {
+    let durableSession = createSession({ title: 'Durable latest' })
+    const repository = createSessionRepository({
+      saveSession: vi.fn(async (session) => {
+        durableSession = session
+      })
+    })
+    const provenance = createProvenancePersistence({
+      validateFinalizedMessageBindings: vi
+        .fn()
+        .mockRejectedValue(new Error('Artifact-owning Message is outside its bound Branch.'))
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      provenance
+    )
+
+    await expect(coordinator.saveSession(createSession({ title: 'Queued stale' }))).rejects.toThrow(
+      'Artifact-owning Message is outside its bound Branch.'
+    )
+
+    expect(durableSession.title).toBe('Durable latest')
+    expect(repository.saveSession).not.toHaveBeenCalled()
+    expect(provenance.captureFinalizedMessages).not.toHaveBeenCalled()
+  })
+
   it('restores DB visibility and clears the tombstone when JSON deletion fails', async () => {
     const repository = createSessionRepository({
       deleteSession: vi.fn().mockRejectedValueOnce(new Error('disk locked'))
@@ -200,6 +228,7 @@ describe('SessionPersistenceCoordinator', () => {
     const fileIndex = createFileIndex()
     const onFilesChanged = vi.fn()
     const provenance = {
+      validateFinalizedMessageBindings: vi.fn().mockResolvedValue(undefined),
       captureFinalizedMessages: vi.fn().mockResolvedValue(undefined),
       reconcileSessionDeletions: vi.fn().mockResolvedValue(undefined),
       prepareSessionDeletion: vi.fn().mockResolvedValue({
@@ -298,6 +327,7 @@ describe('SessionPersistenceCoordinator', () => {
       })
     }
     const provenance = {
+      validateFinalizedMessageBindings: vi.fn().mockResolvedValue(undefined),
       captureFinalizedMessages: vi.fn().mockResolvedValue(undefined),
       reconcileSessionDeletions: vi.fn().mockResolvedValue(undefined),
       prepareSessionDeletion: vi.fn(async () => {
@@ -389,6 +419,7 @@ describe('SessionPersistenceCoordinator', () => {
       operationId: 'origin-delete-1'
     }
     const provenance = {
+      validateFinalizedMessageBindings: vi.fn().mockResolvedValue(undefined),
       captureFinalizedMessages: vi.fn().mockResolvedValue(undefined),
       reconcileSessionDeletions: vi.fn().mockResolvedValue(undefined),
       prepareSessionDeletion: vi.fn().mockResolvedValue(receipt),
@@ -1433,6 +1464,7 @@ describe('SessionPersistenceCoordinator', () => {
     const markReconciliationIncomplete = vi.fn()
     const fileIndex = createFileIndex({ markReconciliationIncomplete })
     const provenance = {
+      validateFinalizedMessageBindings: vi.fn(),
       captureFinalizedMessages: vi.fn(),
       reconcileSessionDeletions: vi.fn().mockRejectedValue(new Error('recovery failed')),
       prepareSessionDeletion: vi.fn(),
@@ -2226,6 +2258,7 @@ const createSessionDeletionHandlers = (
 const createProvenancePersistence = (
   overrides: Partial<SessionProvenancePersistence> = {}
 ): SessionProvenancePersistence => ({
+  validateFinalizedMessageBindings: vi.fn().mockResolvedValue(undefined),
   captureFinalizedMessages: vi.fn().mockResolvedValue(undefined),
   reconcileSessionDeletions: vi.fn().mockResolvedValue(undefined),
   prepareSessionDeletion: vi

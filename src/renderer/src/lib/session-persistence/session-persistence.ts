@@ -22,6 +22,41 @@ type SessionPersistenceApi = {
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
 
+type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'>
+
+// Serializes every renderer-originated Session write through one ordering seam. Callers enqueue the
+// snapshot immediately, so a later explicit Artifact save cannot be overtaken by an older store save
+// that was still waiting behind an in-flight write.
+const createOrderedSessionPersistence = (
+  api: OrderedSessionPersistence
+): OrderedSessionPersistence => {
+  let queue: Promise<unknown> = Promise.resolve()
+
+  const enqueue = <Result>(task: () => Promise<Result>): Promise<Result> => {
+    const run = queue.then(task, task)
+    queue = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
+  return {
+    saveSession: (session) => enqueue(() => api.saveSession(session)),
+    saveManifest: (request) => enqueue(() => api.saveManifest(request))
+  }
+}
+
+// The Store saver and Artifact finalization share this instance in production. Its adapters resolve
+// window.api lazily, keeping module import safe in tests before the preload bridge is installed.
+const liveSessionPersistence = createOrderedSessionPersistence({
+  saveSession: (session) => window.api.sessions.saveSession(session),
+  saveManifest: (request) => window.api.sessions.saveManifest(request)
+})
+
+const saveSessionInOrder = (session: PersistedChatSession): Promise<PersistedChatSession> =>
+  liveSessionPersistence.saveSession(session)
+
 // The one artifact command startup reconciliation needs; kept narrow so it is trivial to fake in tests.
 type ArtifactReconcileApi = {
   reconcilePendingArtifacts: (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
@@ -161,18 +196,11 @@ const hasStagedUploads = (session: ChatSession): boolean =>
 const createStoreSaver = (
   api: SessionPersistenceApi,
   initial: SessionStoreSnapshot = useSessionStore.getState(),
-  observer: StoreSaverObserver = {}
+  observer: StoreSaverObserver = {},
+  persistence: OrderedSessionPersistence = createOrderedSessionPersistence(api)
 ): StoreSaver => {
   let previousSessions = initial.sessions
   let previousSelection = initial.selectedSessionId
-  let queue: Promise<unknown> = Promise.resolve()
-
-  // Runs each write regardless of whether an earlier one rejected, preserving order.
-  const enqueue = (task: () => Promise<unknown>): Promise<unknown> => {
-    queue = queue.then(task, task)
-
-    return queue
-  }
 
   return (state, options) => {
     const nextSessions = state.sessions
@@ -202,7 +230,7 @@ const createStoreSaver = (
         tasks.push({
           target,
           run: async () => {
-            const durableSession = await api.saveSession(persisted)
+            const durableSession = await persistence.saveSession(persisted)
             useSessionStore.getState().applyDurableSessionProjection({
               source: session,
               session: durableSession
@@ -225,7 +253,7 @@ const createStoreSaver = (
         tasks.push({
           target: 'manifest',
           run: () =>
-            api.saveManifest({
+            persistence.saveManifest({
               lastSessionId: state.selectedSessionId,
               lastProjectId: selectedSession?.projectId
             })
@@ -236,18 +264,19 @@ const createStoreSaver = (
     previousSessions = nextSessions
     previousSelection = state.selectedSessionId
 
-    const scheduledTasks = tasks.map(({ target, run }) =>
-      enqueue(async () => {
-        try {
-          const result = await run()
+    const scheduledTasks = tasks.map(({ target, run }) => {
+      // Invoke every task now so it takes its place in the shared persistence queue at snapshot time.
+      return run().then(
+        (result) => {
           observer.onSuccess?.(target)
           return result
-        } catch (error) {
+        },
+        (error: unknown) => {
           observer.onFailure?.(target, error)
           throw error
         }
-      })
-    )
+      )
+    })
 
     return Promise.all(scheduledTasks).then(() => undefined)
   }
@@ -415,7 +444,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
           }
           if (failedWriteTargets.current.size === 0) setWriteError(undefined)
         }
-      })
+      }, liveSessionPersistence)
       activeSaver = save
       saverRef.current = save
 
@@ -471,5 +500,17 @@ const useSessionPersistence = (): SessionPersistenceState => {
   }
 }
 
-export { createStoreSaver, loadPersistedSessions, reconcilePendingArtifacts, useSessionPersistence }
-export type { ArtifactReconcileApi, SessionPersistenceApi, SessionPersistenceState }
+export {
+  createOrderedSessionPersistence,
+  createStoreSaver,
+  loadPersistedSessions,
+  reconcilePendingArtifacts,
+  saveSessionInOrder,
+  useSessionPersistence
+}
+export type {
+  ArtifactReconcileApi,
+  OrderedSessionPersistence,
+  SessionPersistenceApi,
+  SessionPersistenceState
+}

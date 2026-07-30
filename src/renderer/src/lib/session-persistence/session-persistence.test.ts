@@ -9,9 +9,11 @@ import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
 import {
   createInitialSessionState,
   isExternallyHydratedSession,
+  toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
 import {
+  createOrderedSessionPersistence,
   createStoreSaver,
   loadPersistedSessions,
   reconcilePendingArtifacts,
@@ -607,6 +609,43 @@ describe('renderer session persistence bridge', () => {
     await expect(save(useSessionStore.getState())).rejects.toThrow('disk full')
     expect(api.saveSession).toHaveBeenCalledOnce()
     expect(api.saveManifest).toHaveBeenCalledOnce()
+  })
+
+  it('keeps an explicit latest Session save after older store snapshots', async () => {
+    const firstSave = createDeferred<void>()
+    let durableTitle = ''
+    const saveSession = vi.fn(async (submitted: PersistedChatSession) => {
+      if (submitted.title === 'Queued first') await firstSave.promise
+      durableTitle = submitted.title
+      return submitted
+    })
+    const api = createApi({ saveSession })
+    const persistence = createOrderedSessionPersistence(api)
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'First',
+      cwd: '/workspace/project',
+      projectId: 'project-a'
+    })
+    const save = createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+
+    useSessionStore.getState().renameSession('session-1', 'Queued first')
+    const queuedFirst = save(useSessionStore.getState())
+    useSessionStore.getState().renameSession('session-1', 'Queued stale')
+    const queuedStale = save(useSessionStore.getState())
+    useSessionStore.getState().renameSession('session-1', 'Artifact latest')
+    const latestSession = toPersistedSession(useSessionStore.getState().sessions[0])
+    const explicitLatest = persistence.saveSession(latestSession)
+
+    await flushMicrotasks()
+    expect(saveSession).toHaveBeenCalledOnce()
+
+    firstSave.resolve()
+    await Promise.all([queuedFirst, queuedStale, explicitLatest])
+
+    expect(saveSession).toHaveBeenCalledTimes(3)
+    expect(durableTitle).toBe('Artifact latest')
   })
 })
 

@@ -9,7 +9,12 @@ import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '../../stores/preview-workbench-store'
-import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
+import {
+  createInitialSessionState,
+  toPersistedSession,
+  useSessionStore
+} from '../../stores/session-store'
+import { saveSessionInOrder } from '../session-persistence/session-persistence'
 import {
   applyWorkspaceRuntimeEvent,
   assembleReviewRunRequest,
@@ -760,6 +765,76 @@ describe('workspace runtime events', () => {
     expect(session.messages[1].artifactIds).toEqual([
       `transport-session-1:${responseMessageId}:result.txt`
     ])
+  })
+
+  it('keeps Artifact persistence behind an older queued Session save', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-event-ordered-save',
+        role: 'assistant',
+        messageId: 'assistant-message-ordered-save',
+        text: 'Saved the plot.'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-ordered-save', kind: 'stop' }))
+
+    let releaseQueuedSave!: () => void
+    const queuedSaveBlocked = new Promise<void>((resolve) => {
+      releaseQueuedSave = resolve
+    })
+    let durableTitle = ''
+    const saveSession = vi.fn(async (submitted: ReturnType<typeof toPersistedSession>) => {
+      if (submitted.title === 'Queued stale') await queuedSaveBlocked
+      durableTitle = submitted.title
+      return submitted
+    })
+    vi.stubGlobal('window', {
+      api: {
+        sessions: {
+          saveSession,
+          saveManifest: vi.fn()
+        }
+      }
+    })
+
+    try {
+      const staleSession = toPersistedSession(useSessionStore.getState().sessions[0])
+      const queuedSave = saveSessionInOrder({ ...staleSession, title: 'Queued stale' })
+      await Promise.resolve()
+      await Promise.resolve()
+      useSessionStore.getState().renameSession('transport-session-1', 'Artifact latest')
+      const responseMessageId = useSessionStore.getState().sessions[0].messages[1].id
+      const finalizedArtifact = createArtifactFile({
+        id: `transport-session-1:${responseMessageId}:result.txt`,
+        sessionId: 'transport-session-1',
+        messageId: responseMessageId,
+        runId: undefined
+      })
+      const artifactSave = applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: 'artifact-event-ordered-save',
+          kind: 'artifact',
+          runId: 'artifact-run-ordered-save',
+          promptMessageId,
+          artifactSessionId: 'artifact-session-1',
+          artifactClaimId: 'claim-ordered-save',
+          artifacts: [createArtifactFile({ runId: 'artifact-run-ordered-save' })]
+        }),
+        { finalizeRunArtifacts: vi.fn().mockResolvedValue([finalizedArtifact]) }
+      )
+
+      await Promise.resolve()
+      await Promise.resolve()
+      const writesBeforeRelease = saveSession.mock.calls.length
+      releaseQueuedSave()
+      await Promise.all([queuedSave, artifactSave])
+
+      expect(writesBeforeRelease).toBe(1)
+      expect(durableTitle).toBe('Artifact latest')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('retains an unchanged post-stop Artifact after switching an edited Branch away and back', async () => {
