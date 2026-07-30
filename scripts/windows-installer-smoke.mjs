@@ -10,6 +10,7 @@ const APP_EXECUTABLE = 'open-science.exe'
 const CONFIG_DIRECTORY = '.open-science'
 const PROCESS_TIMEOUT_MS = 120_000
 const STARTUP_TIMEOUT_MS = 60_000
+const SHUTDOWN_TIMEOUT_MS = 60_000
 const HTTP_REQUEST_TIMEOUT_MS = 15_000
 const SMOKE_ROOT_PREFIX = 'open-science-installer-smoke-'
 const UPGRADE_SENTINEL_NAME = 'installer-smoke-upgrade-sentinel'
@@ -156,7 +157,19 @@ const waitFor = async (description, check, timeoutMs = STARTUP_TIMEOUT_MS) => {
   )
 }
 
-const waitForChildExit = (child, timeoutMs, output) =>
+const observeChildExit = (child) =>
+  new Promise((resolveExit, rejectExit) => {
+    child.once('error', rejectExit)
+    child.once('exit', resolveExit)
+  })
+
+const waitForShutdownExit = (
+  exit,
+  child,
+  output,
+  timeoutMs = SHUTDOWN_TIMEOUT_MS,
+  terminate = terminateProcessTree
+) =>
   new Promise((resolveExit, rejectExit) => {
     let settled = false
     const finish = (error, code) => {
@@ -167,12 +180,16 @@ const waitForChildExit = (child, timeoutMs, output) =>
       else resolveExit(code)
     }
     const timer = setTimeout(() => {
-      void terminateProcessTree(child).finally(() => {
-        finish(new Error(`Installed app did not exit after shutdown.\n${output()}`))
+      if (settled) return
+      settled = true
+      void terminate(child).finally(() => {
+        rejectExit(new Error(`Installed app did not exit after shutdown.\n${output()}`))
       })
     }, timeoutMs)
-    child.once('error', (error) => finish(error))
-    child.once('exit', (code) => finish(undefined, code))
+    exit.then(
+      (code) => finish(undefined, code),
+      (error) => finish(error)
+    )
   })
 
 const packagedResourcePaths = (installDirectory) => [
@@ -251,7 +268,7 @@ const launchAndProbe = async ({ installDirectory, profileDirectory, expectedVers
     stderr += chunk
   })
   const output = () => `${stdout}${stderr ? `\n${stderr}` : ''}`
-  const exit = waitForChildExit(child, STARTUP_TIMEOUT_MS, output)
+  const exit = observeChildExit(child)
 
   try {
     const { state, token } = await Promise.race([
@@ -281,7 +298,7 @@ const launchAndProbe = async ({ installDirectory, profileDirectory, expectedVers
     }
 
     await requestPackagedAppShutdown(endpoint, auth)
-    const exitCode = await exit
+    const exitCode = await waitForShutdownExit(exit, child, output)
     if (exitCode !== 0) throw new Error(`Installed app exited with ${exitCode}.\n${output()}`)
   } catch (error) {
     await terminateProcessTree(child)
@@ -425,6 +442,7 @@ export {
   installerVersion,
   packagedResourcePaths,
   requestPackagedAppShutdown,
+  waitForShutdownExit,
   windowsProfileEnvironment,
   writeUpgradeSentinel
 }

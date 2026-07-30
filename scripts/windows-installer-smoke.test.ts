@@ -14,6 +14,7 @@ import {
   installerVersion,
   packagedResourcePaths,
   requestPackagedAppShutdown,
+  waitForShutdownExit,
   windowsProfileEnvironment,
   writeUpgradeSentinel
 } from './windows-installer-smoke.mjs'
@@ -80,6 +81,24 @@ describe('Windows installer smoke plan', () => {
       method: 'POST'
     })
     expect(text).toHaveBeenCalledOnce()
+  })
+
+  it('gives shutdown its own timeout budget after startup completes', async () => {
+    vi.useFakeTimers()
+    const terminate = vi.fn().mockResolvedValue(undefined)
+    const exit = new Promise<number>(() => undefined)
+
+    const result = waitForShutdownExit(exit, {}, () => 'still running', 60_000, terminate)
+    const assertion = expect(result).rejects.toThrow(
+      'Installed app did not exit after shutdown.\nstill running'
+    )
+
+    await vi.advanceTimersByTimeAsync(59_999)
+    expect(terminate).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    await assertion
+    expect(terminate).toHaveBeenCalledOnce()
+    vi.useRealTimers()
   })
 
   it('detects when an upgrade removes the previous profile', async () => {
