@@ -13,11 +13,13 @@ import {
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import { useProjectStore } from '@/stores/project-store'
+import { createInitialReviewState, useReviewStore } from '@/stores/review-store'
 import {
   createInitialSessionState,
   useSessionStore,
   type ChatSession
 } from '@/stores/session-store'
+import type { ReviewWithChecks } from '../../../../shared/reviewer'
 
 import { type ComposerDoc } from './composer/composer-doc'
 
@@ -112,6 +114,7 @@ describe('WorkspacePage send gate while compacting', () => {
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useProjectStore.setState({ projects: [] })
+    useReviewStore.setState(createInitialReviewState())
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'proj-1' })
     useSessionStore.setState({
       ...createInitialSessionState(),
@@ -182,6 +185,50 @@ describe('WorkspacePage send gate while compacting', () => {
       useSessionStore.getState().finishRun('sess-a')
     })
     expect(conversationProps.canSendMessage).toBe(true)
+  })
+
+  it('blocks message-branch changes only while the project-scoped review is running', async () => {
+    await renderPage()
+    expect(conversationProps.canEditMessage).toBe(true)
+
+    const runningReview: ReviewWithChecks = {
+      id: 'review-1',
+      projectId: 'proj-1',
+      sessionId: 'sess-a',
+      turnMessageId: 'reply-1',
+      scope: {
+        turnMessageId: 'reply-1',
+        messageBranchId: 'message-branch-1',
+        blocks: [],
+        artifactVersionIds: []
+      },
+      lifecycle: 'running',
+      outcome: null,
+      model: 'test-model',
+      reviewerLog: [],
+      createdAt: 1_000,
+      updatedAt: 1_000,
+      checks: []
+    }
+
+    await act(async () => {
+      useReviewStore.getState().handleReviewUpdate({ review: runningReview })
+    })
+    expect(conversationProps.canEditMessage).toBe(false)
+    expect(useSessionStore.getState().sessions[0]?.branchSwitchBlocked).toBe(true)
+
+    await act(async () => {
+      useReviewStore.getState().handleReviewUpdate({
+        review: {
+          ...runningReview,
+          lifecycle: 'complete',
+          outcome: 'pass',
+          updatedAt: 2_000
+        }
+      })
+    })
+    expect(conversationProps.canEditMessage).toBe(true)
+    expect(useSessionStore.getState().sessions[0]?.branchSwitchBlocked).not.toBe(true)
   })
 
   it('disables sending while the runtime owns an otherwise idle session', async () => {

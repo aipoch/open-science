@@ -1,4 +1,4 @@
-import { useReviewStore } from '@/stores/review-store'
+import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { PreviewToolItem } from '@/stores/preview-workbench-store'
 
@@ -19,10 +19,11 @@ const SessionReviewerContent = ({
   projectId?: string
 }): React.JSX.Element | null => {
   const sessionId = item.reviewerSessionId ?? ''
-  const getReviewsForSession = useReviewStore((state) => state.getReviewsForSession)
+  const reviews = useReviewStore((state) =>
+    selectProjectSessionReviews(state.reviewsBySession, projectId, sessionId)
+  )
   // Select the review the finding actually points at; fall back to the newest when the item carries
   // no reviewId (e.g. a session-level entry point) or that review is gone.
-  const reviews = getReviewsForSession(sessionId, projectId)
   const review = reviews.find((r) => r.id === item.reviewerReviewId) ?? reviews[0]
 
   if (!review) {

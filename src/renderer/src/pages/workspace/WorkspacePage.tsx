@@ -21,7 +21,7 @@ import {
 } from '@/stores/preview-workbench-store'
 import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
-import { useReviewStore } from '@/stores/review-store'
+import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-store'
 import {
   assembleReviewRunRequest,
   suppressNextAutoReview,
@@ -271,12 +271,16 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     ? (activeSession.enabledComputeHosts ?? [])
     : newConversationEnabledComputeHosts
   // True while any review for the active session is in the 'running' lifecycle.
-  // Using a shallow comparison via reviewsBySession to avoid new array reference on every render.
+  // Select the Project-scoped review array so pushes stay reactive without cross-Project collisions.
   const activeSessionId = activeSession?.id
   const isReviewing = useReviewStore((state) => {
     if (!activeSessionId) return false
-    const reviews = state.reviewsBySession[activeSessionId]
-    return reviews ? reviews.some((review) => review.lifecycle === 'running') : false
+    const reviews = selectProjectSessionReviews(
+      state.reviewsBySession,
+      activeSession?.projectId,
+      activeSessionId
+    )
+    return reviews.some((review) => review.lifecycle === 'running')
   })
   // "Request review" is disabled when:
   //   - there is no active session or no completed agent turn yet, OR
@@ -290,15 +294,17 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     const lastAgentMessage = [...activeSession.messages].reverse().find((m) => m.role === 'agent')
     if (!lastAgentMessage) return true
     if (isReviewing) return true
-    const reviews = state.reviewsBySession[activeSessionId]
-    if (reviews) {
-      // Newest-first, so find() returns the most recent review for the last turn. Only a fresh,
-      // completed verdict blocks a new review; a stale one (turn changed) or an errored one must stay
-      // retriable so the user isn't stuck without any review entry point.
-      const lastTurnReview = reviews.find((r) => r.turnMessageId === lastAgentMessage.id)
-      if (lastTurnReview && lastTurnReview.lifecycle === 'complete' && !lastTurnReview.stale) {
-        return true
-      }
+    const reviews = selectProjectSessionReviews(
+      state.reviewsBySession,
+      activeSession.projectId,
+      activeSessionId
+    )
+    // Newest-first, so find() returns the most recent review for the last turn. Only a fresh,
+    // completed verdict blocks a new review; a stale one (turn changed) or an errored one must stay
+    // retriable so the user isn't stuck without any review entry point.
+    const lastTurnReview = reviews.find((r) => r.turnMessageId === lastAgentMessage.id)
+    if (lastTurnReview && lastTurnReview.lifecycle === 'complete' && !lastTurnReview.stale) {
+      return true
     }
     return false
   })

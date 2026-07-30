@@ -3,8 +3,10 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
+import { createInitialReviewState, useReviewStore } from '@/stores/review-store'
 import { createUploadVersionReference, type UploadedAttachment } from '../../../../shared/uploads'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ReviewWithChecks } from '../../../../shared/reviewer'
 
 // pdfjs-dist references DOMMatrix at module load, which jsdom does not provide. This suite exercises
 // click/scroll behavior, not PDF rendering, so stub the library to keep the import graph loadable.
@@ -105,6 +107,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
   beforeEach(() => {
     upsertAndActivateItem.mockClear()
     announceWindowFindReady.mockClear()
+    useReviewStore.setState(createInitialReviewState())
     container = document.createElement('div')
     document.body.appendChild(container)
     window.api = {
@@ -133,6 +136,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
           .fn()
           .mockResolvedValue({ content: '', encoding: 'utf8', size: 0, truncated: false })
       },
+      reviewer: {
+        getForSession: vi.fn().mockResolvedValue([])
+      },
       window: {
         announceWindowFindReady
       }
@@ -144,6 +150,72 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       root.unmount()
     })
     container.remove()
+  })
+
+  it('updates the visible message-branch review card when a running review completes', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const runningReview: ReviewWithChecks = {
+      id: 'review-1',
+      projectId: 'default',
+      sessionId: 'session-1',
+      turnMessageId: 'reply-1',
+      scope: {
+        turnMessageId: 'reply-1',
+        messageBranchId: 'message-branch-1',
+        blocks: [],
+        artifactVersionIds: []
+      },
+      lifecycle: 'running',
+      outcome: null,
+      model: 'test-model',
+      reviewerLog: [],
+      createdAt: 1_000,
+      updatedAt: 1_000,
+      checks: []
+    }
+    useReviewStore.getState().handleReviewUpdate({ review: runningReview })
+
+    const session = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'prompt-1' }),
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Completed work',
+          responseToMessageId: 'prompt-1'
+        })
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={session}
+          canEditMessage={false}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    expect(container.textContent).toContain('Reviewing…')
+
+    await act(async () => {
+      useReviewStore.getState().handleReviewUpdate({
+        review: {
+          ...runningReview,
+          lifecycle: 'complete',
+          outcome: 'pass',
+          updatedAt: 2_000
+        }
+      })
+    })
+
+    expect(
+      useReviewStore.getState().getReviewForTurn('session-1', 'reply-1', 'default')?.lifecycle
+    ).toBe('complete')
+    expect(container.textContent).toContain('No issues found')
+    expect(container.textContent).not.toContain('Reviewing…')
   })
 
   it('upserts and activates the clicked artifact in the preview store, scoped to the active session', async () => {

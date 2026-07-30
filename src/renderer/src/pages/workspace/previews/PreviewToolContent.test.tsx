@@ -13,9 +13,13 @@ vi.mock('@/stores/navigation-store', () => ({
     selector({ activeProjectId: mocks.activeProjectId })
 }))
 vi.mock('@/stores/review-store', () => ({
-  useReviewStore: <T,>(
-    selector: (state: { getReviewsForSession: typeof mocks.getReviewsForSession }) => T
-  ): T => selector({ getReviewsForSession: mocks.getReviewsForSession })
+  selectProjectSessionReviews: (
+    _reviewsBySession: Record<string, never[]>,
+    projectId: string | undefined,
+    sessionId: string
+  ) => mocks.getReviewsForSession(sessionId, projectId),
+  useReviewStore: <T,>(selector: (state: { reviewsBySession: Record<string, never[]> }) => T): T =>
+    selector({ reviewsBySession: {} })
 }))
 vi.mock('../NotebookPreview', () => ({
   NotebookPreview: ({ item }: { item: PreviewToolItem }): React.JSX.Element => (

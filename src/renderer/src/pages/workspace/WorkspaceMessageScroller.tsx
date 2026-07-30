@@ -9,7 +9,7 @@ import {
   usePreviewWorkbenchStore,
   createSessionReviewerPreviewItem
 } from '@/stores/preview-workbench-store'
-import { useReviewStore } from '@/stores/review-store'
+import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -125,7 +125,9 @@ const WorkspaceMessageScroller = ({
     const stop = window.api?.window?.announceWindowFindReady?.()
     return () => stop?.()
   }, [])
-  const getReviewForTurn = useReviewStore((state) => state.getReviewForTurn)
+  const currentSessionReviews = useReviewStore((state) =>
+    selectProjectSessionReviews(state.reviewsBySession, currentProjectId, currentSessionId)
+  )
   const loadReviewsForSession = useReviewStore((state) => state.loadReviewsForSession)
 
   // Job store for binding and CompletedJobCard rendering
@@ -457,7 +459,9 @@ const WorkspaceMessageScroller = ({
                     // Look up any review for this agent message (its id is the turnMessageId).
                     const review =
                       currentSessionId && item.message.role === 'agent'
-                        ? getReviewForTurn(currentSessionId, item.message.id, currentProjectId)
+                        ? currentSessionReviews.find(
+                            (candidate) => candidate.turnMessageId === item.message.id
+                          )
                         : undefined
 
                     // Jobs pre-assigned to this slot: each job appears in exactly one slot.

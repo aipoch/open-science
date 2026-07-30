@@ -81,6 +81,19 @@ export const createInitialReviewState = (): ReviewStoreData => ({
 const loadsInFlight = new Set<string>()
 const reviewSessionKey = (projectId: string, sessionId: string): string =>
   `${projectId}\0${sessionId}`
+const EMPTY_REVIEWS: ReviewWithChecks[] = []
+
+// Reactive consumers must select the scoped review array itself instead of selecting one of the
+// store's stable query functions. That gives Zustand a value whose identity changes when a reviewer
+// push updates this Project + Session, while keeping unrelated Sessions from causing a render.
+export const selectProjectSessionReviews = (
+  reviewsBySession: Record<string, ReviewWithChecks[]>,
+  projectId: string | undefined,
+  sessionId: string | undefined
+): ReviewWithChecks[] => {
+  if (!sessionId) return EMPTY_REVIEWS
+  return reviewsBySession[reviewSessionKey(projectId ?? '', sessionId)] ?? EMPTY_REVIEWS
+}
 
 export const useReviewStore = create<ReviewStore>((set, get) => ({
   ...createInitialReviewState(),
@@ -123,7 +136,7 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
 
   getReviewsForSession: (sessionId: string, projectId?: string) =>
     projectId !== undefined
-      ? (get().reviewsBySession[reviewSessionKey(projectId, sessionId)] ?? [])
+      ? selectProjectSessionReviews(get().reviewsBySession, projectId, sessionId)
       : Object.values(get().reviewsBySession)
           .flat()
           .filter((review) => review.sessionId === sessionId)

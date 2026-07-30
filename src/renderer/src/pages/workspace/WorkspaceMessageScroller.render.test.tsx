@@ -73,14 +73,15 @@ vi.mock('@/stores/preview-workbench-store', () => ({
 }))
 
 vi.mock('@/stores/review-store', () => ({
+  selectProjectSessionReviews: () => [],
   useReviewStore: (
     selector: (state: {
-      getReviewForTurn: () => undefined
+      reviewsBySession: Record<string, never[]>
       loadReviewsForSession: () => Promise<void>
     }) => unknown
   ) =>
     selector({
-      getReviewForTurn: () => undefined,
+      reviewsBySession: {},
       loadReviewsForSession: () => Promise.resolve()
     })
 }))
