@@ -52,7 +52,7 @@ import {
   type AgentFramework,
   type ResolvedAgentBackend
 } from '../agent-framework'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import { terminateProcessTree } from '../process-tree'
 import {
   extractProviderToolName,
@@ -905,6 +905,16 @@ class AcpRuntime {
     }, options.permissionGrantStore)
   }
 
+  // Boundary-safe context for session-creation and process-spawn diagnostics. Keep this list explicit:
+  // workspace paths, request/provider payloads, model research content, and credentials do not belong
+  // in these lifecycle records.
+  private diagnosticContext(
+    framework: AgentFramework['id'] = this.framework.id,
+    generation = this.connectionGeneration
+  ): { framework: AgentFramework['id']; generation: number; status: AcpStateSnapshot['status'] } {
+    return { framework, generation, status: this.status }
+  }
+
   // Returns an immutable renderer-facing view of connection and session state.
   getSnapshot(): AcpStateSnapshot {
     const sessionIds = Array.from(this.sessions.keys())
@@ -978,12 +988,7 @@ class AcpRuntime {
     }
 
     this.permissionProfiles.set(appSessionId, application.state)
-    log.info('permission profile applied', {
-      sessionId: appSessionId,
-      selectedProfile: profile,
-      effectiveMode: application.state.currentModeId,
-      autoReviewStrategy: application.state.autoReviewStrategy
-    })
+    log.info('permission profile applied', this.diagnosticContext())
   }
 
   // Applies the active model to a freshly built/resumed session via the ACP model configOption, for
@@ -1004,7 +1009,7 @@ class AcpRuntime {
     const selection = matchSessionModelOption(configOptions, this.pendingSessionModel)
 
     if (!selection) {
-      log.info('no matching session model option', { desiredModel: this.pendingSessionModel })
+      log.info('no matching session model option', this.diagnosticContext())
       if (this.pendingSessionModelRequired) {
         session.dispose()
         throw new Error(
@@ -1019,10 +1024,7 @@ class AcpRuntime {
     // redundant session/set_config_option round-trip: codex-acp reloads on every call, and even
     // sending the same value back stalled the first prompt of a new session for ~2 min (issue #277).
     if (selection.alreadyCurrent) {
-      log.info('session model already current', {
-        sessionId: session.sessionId,
-        model: selection.value
-      })
+      log.info('session model already current', this.diagnosticContext())
       this.appliedSessionModels.set(session.sessionId, selection.value)
       return configOptions ?? null
     }
@@ -1036,7 +1038,7 @@ class AcpRuntime {
           value: selection.value
         }
       )) as { configOptions?: SessionConfigOption[] | null }
-      log.info('session model applied', { sessionId: session.sessionId, model: selection.value })
+      log.info('session model applied', this.diagnosticContext())
       this.appliedSessionModels.set(session.sessionId, selection.value)
       // The model switch rebuilds the agent's options (effort rungs are model-dependent). The
       // caller commits the fresh set to latestSessionConfigOptions once the session is registered,
@@ -1045,8 +1047,8 @@ class AcpRuntime {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       log.warn('set session model failed', {
-        sessionId: session.sessionId,
-        error: message
+        ...diagnosticErrorFields(error),
+        ...this.diagnosticContext()
       })
       if (this.pendingSessionModelRequired) {
         session.dispose()
@@ -1078,7 +1080,7 @@ class AcpRuntime {
     const selection = resolveSessionEffortOption(effectiveOptions, this.pendingSessionEffort)
 
     if (!selection) {
-      log.info('no session effort option to apply', { desiredEffort: this.pendingSessionEffort })
+      log.info('no session effort option to apply', this.diagnosticContext())
       return
     }
 
@@ -1116,10 +1118,7 @@ class AcpRuntime {
       const selection = resolveSessionEffortOption(configOptions, effort)
 
       if (!selection) {
-        log.info('no session effort option to apply', {
-          desiredEffort: effort,
-          sessionId: session.sessionId
-        })
+        log.info('no session effort option to apply', this.diagnosticContext())
         continue
       }
 
@@ -1152,12 +1151,12 @@ class AcpRuntime {
         configId: selection.configId,
         value: selection.value
       })
-      log.info('session effort applied', { sessionId: session.sessionId, effort: selection.value })
+      log.info('session effort applied', this.diagnosticContext())
       return true
     } catch (error) {
       log.warn('set session effort failed', {
-        sessionId: session.sessionId,
-        error: error instanceof Error ? error.message : String(error)
+        ...diagnosticErrorFields(error),
+        ...this.diagnosticContext()
       })
       return false
     }
@@ -1190,12 +1189,11 @@ class AcpRuntime {
     request: AcpConnectRequest = {},
     generation: number
   ): Promise<AcpStateSnapshot> {
-    // Resolved up front (not this.cwd, which the pre-connect teardown below may still be mutating) so the
-    // failure log always names the target workspace even if we throw before assigning this.cwd.
+    // Resolve up front rather than reading this.cwd after the pre-connect teardown, which may still be
+    // mutating runtime state.
     const cwd = resolve(request.cwd || this.options.defaultCwd)
-    // Captured at function scope so the catch can log the spawned child's pid/killed state on *every*
-    // failure path — including "superseded during spawn", where the process is deliberately never
-    // assigned to this.agentProcess.
+    // Captured at function scope so the catch can clean up the spawned child on every failure path —
+    // including "superseded during spawn", where it is never assigned to this.agentProcess.
     let agentProcess: ChildProcessWithoutNullStreams | undefined
     // The framework THIS connect spawned under, bound atomically to the spawn (spawnAgentProcess returns
     // it alongside the process, and tags a spawn-throw with it) rather than re-read from the mutable
@@ -1212,7 +1210,7 @@ class AcpRuntime {
       this.cwd = cwd
       this.error = undefined
       this.setStatus('connecting')
-      log.info('connecting agent', { cwd: this.cwd, generation })
+      log.info('connecting agent', this.diagnosticContext(this.framework.id, generation))
 
       const spawned = await this.spawnAgentProcess()
       agentProcess = spawned.process
@@ -1243,7 +1241,7 @@ class AcpRuntime {
 
       this.applyResolvedBackend(spawned.backend)
       this.agentProcess = agentProcess
-      this.attachAgentProcessEvents(this.agentProcess)
+      this.attachAgentProcessEvents(this.agentProcess, generation)
 
       const stream = acp.ndJsonStream(
         Writable.toWeb(this.agentProcess.stdin) as WritableStream<Uint8Array>,
@@ -1332,18 +1330,12 @@ class AcpRuntime {
       // renderer broadcast, or a teardown hook — the original `cause` is still re-thrown below and never
       // replaced by a handling-time error.
       try {
-        // Shared process context so both the abandoned and the failed paths name the child — including
-        // the superseded-during-spawn case, where the local `agentProcess` holds the child
-        // this.agentProcess never received.
-        const processFields = {
-          cwd,
-          generation,
-          currentGeneration: this.connectionGeneration,
-          framework: spawnFailure ? spawnFailure.framework : spawnedFramework,
-          shuttingDown: this.shuttingDown,
-          agentProcessPid: agentProcess?.pid,
-          agentProcessKilled: agentProcess?.killed
-        }
+        // Shared lifecycle context keeps the resolved framework and attempted generation attached to
+        // both the abandoned and failed paths without retaining process or workspace details.
+        const processFields = this.diagnosticContext(
+          spawnFailure ? spawnFailure.framework : spawnedFramework,
+          generation
+        )
 
         if (generation !== this.connectionGeneration) {
           // Superseded (a newer reconnect bumped the generation) or shutting down: the fast-path re-throw
@@ -1351,7 +1343,7 @@ class AcpRuntime {
           // the failures that are otherwise invisible.
           try {
             log.warn('agent connection abandoned (superseded or shutting down)', {
-              ...errorLogFields(cause),
+              ...diagnosticErrorFields(cause),
               ...processFields
             })
           } catch {
@@ -1359,7 +1351,10 @@ class AcpRuntime {
           }
         } else {
           this.error = errorMessage(cause)
-          safeLogError('agent connection failed', { ...errorLogFields(cause), ...processFields })
+          safeLogError('agent connection failed', {
+            ...diagnosticErrorFields(cause),
+            ...processFields
+          })
           // A notification sink that throws synchronously must not skip cleanup or the re-throw.
           try {
             this.pushEvent({
@@ -1369,10 +1364,10 @@ class AcpRuntime {
               text: this.error
             })
           } catch (notifyError) {
-            safeLogError(
-              'agent connection failure notification failed',
-              errorLogFields(notifyError)
-            )
+            safeLogError('agent connection failure notification failed', {
+              ...diagnosticErrorFields(notifyError),
+              ...processFields
+            })
           }
           // Cleanup must not mask the original failure: a throw from session.dispose(),
           // connection.close(), or a teardown hook is logged with context but never replaces `cause`.
@@ -1380,7 +1375,7 @@ class AcpRuntime {
             await this.disconnectCurrent(false)
           } catch (cleanupError) {
             safeLogError('agent connection cleanup failed', {
-              ...errorLogFields(cleanupError),
+              ...diagnosticErrorFields(cleanupError),
               ...processFields
             })
           }
@@ -1388,14 +1383,23 @@ class AcpRuntime {
           try {
             this.emitState()
           } catch (notifyError) {
-            safeLogError('agent connection emitState failed', errorLogFields(notifyError))
+            safeLogError('agent connection emitState failed', {
+              ...diagnosticErrorFields(notifyError),
+              ...processFields
+            })
           }
         }
       } catch (handlingError) {
         // Last-resort guard: even the logger threw. Swallow it (best-effort re-log) so the original
         // cause below is what propagates.
         try {
-          log.error('error while handling agent connection failure', errorLogFields(handlingError))
+          log.error('error while handling agent connection failure', {
+            ...diagnosticErrorFields(handlingError),
+            ...this.diagnosticContext(
+              spawnFailure ? spawnFailure.framework : spawnedFramework,
+              generation
+            )
+          })
         } catch {
           /* nothing more we can safely do */
         }
@@ -1416,20 +1420,16 @@ class AcpRuntime {
     request: AcpCreateSessionRequest = {}
   ): Promise<AcpCreateSessionResponse> {
     try {
-      log.info('createSession: starting', { request })
+      log.info('createSession: starting', this.diagnosticContext())
       const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
       const projectName = this.normalizeProjectName(request.projectName)
-      log.info('createSession: ensureConnected', { sessionCwd, projectName })
+      log.info('createSession: ensureConnected', this.diagnosticContext())
       const connection = await this.ensureConnected(sessionCwd)
       const artifactSessionId = this.createArtifactSessionId()
       const notebookSessionId = this.createNotebookSessionId()
       const skillImportSessionId = this.createSkillImportSessionId()
 
-      log.info('createSession: createMcpServers', {
-        artifactSessionId,
-        notebookSessionId,
-        skillImportSessionId
-      })
+      log.info('createSession: createMcpServers', this.diagnosticContext())
       const mcpServers = await this.createMcpServers({
         artifactSessionId,
         notebookSessionId,
@@ -1437,7 +1437,7 @@ class AcpRuntime {
         sessionCwd,
         projectName
       })
-      log.info('createSession: buildSession', { mcpServersCount: mcpServers.length })
+      log.info('createSession: buildSession', this.diagnosticContext())
       const session = await connection.agent
         .buildSession({
           cwd: sessionCwd,
@@ -1446,7 +1446,7 @@ class AcpRuntime {
         })
         .start()
 
-      log.info('createSession: configurePermissionProfile', { sessionId: session.sessionId })
+      log.info('createSession: configurePermissionProfile', this.diagnosticContext())
       try {
         await this.configurePermissionProfile(
           session.sessionId,
@@ -1454,12 +1454,15 @@ class AcpRuntime {
           normalizePermissionProfile(request.permissionProfile)
         )
       } catch (error) {
-        safeLogError('createSession: configurePermissionProfile failed', errorLogFields(error))
+        safeLogError('createSession: configurePermissionProfile failed', {
+          ...diagnosticErrorFields(error),
+          ...this.diagnosticContext()
+        })
         session.dispose()
         throw error
       }
 
-      log.info('createSession: applySessionModel', { sessionId: session.sessionId })
+      log.info('createSession: applySessionModel', this.diagnosticContext())
       const updatedConfigOptions = await this.applySessionModel(session)
       await this.applySessionEffort(session, updatedConfigOptions)
 
@@ -1488,7 +1491,7 @@ class AcpRuntime {
       })
       this.emitState()
 
-      log.info('createSession: completed successfully', { sessionId: session.sessionId })
+      log.info('createSession: completed successfully', this.diagnosticContext())
       return {
         sessionId: session.sessionId,
         cwd: sessionCwd,
@@ -1496,7 +1499,10 @@ class AcpRuntime {
         ...(this.backendId ? { backendId: this.backendId } : {})
       }
     } catch (error) {
-      safeLogError('createSession: failed', errorLogFields(error))
+      safeLogError('createSession: failed', {
+        ...diagnosticErrorFields(error),
+        ...this.diagnosticContext()
+      })
       throw error
     }
   }
@@ -2412,20 +2418,9 @@ class AcpRuntime {
       throw new Error('ACP agent spawn configuration is not available.')
     }
 
-    // Surfaces which backend + model this connect uses, so a fallback to the framework's own default
-    // model (e.g. opencode with no app model to inject) is diagnosable in the log rather than silent.
-    log.info('agent backend resolved', {
-      framework: backend.framework.id,
-      backendId: backend.backendId ?? '(unspecified)',
-      sessionModel: backend.sessionModel ?? '(framework default)',
-      contextUsageModel: backend.contextUsageModel ?? '(framework fallback)',
-      sessionEffort: backend.sessionEffort ?? '(agent default)',
-      contextWindow: backend.contextWindow ?? '(adapter reported)',
-      args: backend.args ?? [],
-      executablePath: backend.executablePath,
-      // Log env keys but not values (may contain credentials)
-      envKeys: Object.keys(backend.env ?? {})
-    })
+    // Record the resolved framework without retaining executable paths, arguments, environment names,
+    // provider identifiers, or model selections from the spawn configuration.
+    log.info('agent backend resolved', this.diagnosticContext(backend.framework.id))
 
     let process: ChildProcessWithoutNullStreams
     try {
@@ -2443,10 +2438,7 @@ class AcpRuntime {
       throw new SpawnFailure(backend.framework.id, error)
     }
 
-    log.info('agent process spawned', {
-      framework: backend.framework.id,
-      pid: process.pid
-    })
+    log.info('agent process spawned', this.diagnosticContext(backend.framework.id))
 
     return { process, framework: backend.framework.id, backend }
   }
@@ -3623,24 +3615,27 @@ class AcpRuntime {
       return this.connection
     }
 
-    log.info('ensureConnected: attempting connection', { cwd, status: this.status })
+    log.info('ensureConnected: attempting connection', this.diagnosticContext())
 
     try {
       await this.connect({ cwd })
     } catch (error) {
-      safeLogError('ensureConnected: connect failed', { cwd, ...errorLogFields(error) })
+      safeLogError('ensureConnected: connect failed', {
+        ...diagnosticErrorFields(error),
+        ...this.diagnosticContext()
+      })
       throw error
     }
 
     if (!this.connection) {
       safeLogError('ensureConnected: connection is null after connect', {
-        cwd,
-        status: this.status
+        ...this.diagnosticContext(),
+        errorCategory: 'connection-unavailable'
       })
       throw new Error('ACP connection failed')
     }
 
-    log.info('ensureConnected: connection established', { cwd })
+    log.info('ensureConnected: connection established', this.diagnosticContext())
     return this.connection
   }
 
@@ -3932,14 +3927,11 @@ class AcpRuntime {
       )
     }
 
-    // Log the MCP server launch specs (command/url, no secrets) — a bad command/entry path or an
-    // unstarted host can make the agent stall while it waits on an MCP server that never responds.
+    // Keep only the count plus lifecycle context. MCP launch specs can contain local paths or provider
+    // details and are not safe session-creation diagnostics.
     log.info('session MCP servers', {
-      count: servers.length,
-      servers: servers.map((server) => {
-        const record = server as { name?: string; command?: string; url?: string; args?: unknown }
-        return { name: record.name, command: record.command, url: record.url, args: record.args }
-      })
+      ...this.diagnosticContext(),
+      count: servers.length
     })
 
     return servers
@@ -5245,7 +5237,10 @@ class AcpRuntime {
   }
 
   // Captures process stderr/errors/exits and converts unexpected ones to events.
-  private attachAgentProcessEvents(agentProcess: ChildProcessWithoutNullStreams): void {
+  private attachAgentProcessEvents(
+    agentProcess: ChildProcessWithoutNullStreams,
+    generation: number
+  ): void {
     // Bind the framework this process was spawned under now. During a reconnect the runtime's
     // this.framework may already point at a new backend, so reading it inside the async handlers would
     // mislabel a late stderr/exit from the old process.
@@ -5286,10 +5281,8 @@ class AcpRuntime {
 
     agentProcess.on('error', (error) => {
       log.error('agent process error event', {
-        ...errorLogFields(error),
-        framework,
-        status: this.status,
-        pid: agentProcess.pid
+        ...diagnosticErrorFields(error),
+        ...this.diagnosticContext(framework, generation)
       })
 
       if (this.expectedProcessExits.has(agentProcess)) {
