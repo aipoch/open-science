@@ -194,6 +194,7 @@ describe('Windows shell support', () => {
       ComSpec: 'C:\\Windows\\System32\\cmd.exe',
       PATHEXT: '.COM;.EXE;.BAT;.CMD',
       USERPROFILE: 'C:\\Users\\Ada',
+      PSModuleAnalysisCachePath: 'host-value-must-not-win',
       PSDisableModuleAnalysisCacheCleanup: 'host-value-must-not-win',
       OPEN_SCIENCE_TEST_SECRET: 'must-not-leak'
     })
@@ -205,6 +206,7 @@ describe('Windows shell support', () => {
       ComSpec: 'C:\\Windows\\System32\\cmd.exe',
       PATHEXT: '.COM;.EXE;.BAT;.CMD',
       USERPROFILE: 'C:\\Users\\Ada',
+      PSModuleAnalysisCachePath: 'nul',
       PSDisableModuleAnalysisCacheCleanup: '1',
       OPEN_SCIENCE_HANDOFF_DIR: '/notebook/handoff'
     })
