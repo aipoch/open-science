@@ -194,6 +194,7 @@ describe('Windows shell support', () => {
       ComSpec: 'C:\\Windows\\System32\\cmd.exe',
       PATHEXT: '.COM;.EXE;.BAT;.CMD',
       USERPROFILE: 'C:\\Users\\Ada',
+      PSModulePath: 'C:\\host\\third-party-modules',
       OPEN_SCIENCE_TEST_SECRET: 'must-not-leak'
     })
 
@@ -204,6 +205,7 @@ describe('Windows shell support', () => {
       ComSpec: 'C:\\Windows\\System32\\cmd.exe',
       PATHEXT: '.COM;.EXE;.BAT;.CMD',
       USERPROFILE: 'C:\\Users\\Ada',
+      PSModulePath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
       OPEN_SCIENCE_HANDOFF_DIR: '/notebook/handoff'
     })
     expect(env.OPEN_SCIENCE_TEST_SECRET).toBeUndefined()

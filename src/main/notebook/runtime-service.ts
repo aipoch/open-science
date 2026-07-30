@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { readFile, realpath, rm, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep, win32 } from 'node:path'
 
 import type {
   NotebookCell,
@@ -652,6 +652,16 @@ const buildShellEnv = (
   for (const key of keys) {
     const value = sourceEnv[key]
     if (value !== undefined) env[key] = value
+  }
+  if (platform === 'win32') {
+    const windowsRoot = sourceEnv.SystemRoot ?? sourceEnv.WINDIR
+    if (windowsRoot) {
+      // PowerShell's built-in cmdlets are module-backed. Supplying no PSModulePath makes Windows
+      // PowerShell perform extremely slow first-use discovery on hosted machines, while inheriting
+      // the host value would expose arbitrary user/third-party modules. Pin discovery to the
+      // supported in-box module directory instead.
+      env.PSModulePath = win32.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules')
+    }
   }
   env.OPEN_SCIENCE_HANDOFF_DIR = handoffDir
   return env
