@@ -14,6 +14,7 @@ import iconWindows from '../../resources/icon-light.ico?asset'
 import { isAllowedExternalNavigation, isAllowedFrameNavigation } from './navigation-policy'
 import { createFindOverlayManager, type FindOverlayDeps } from './find-overlay'
 import { registerFindOverlayOwner } from './find-overlay-registry'
+import { createLogger } from './logger'
 import {
   CLOSE_ACTIVE_PANE_CHANNEL,
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
@@ -34,6 +35,7 @@ const icon = process.platform === 'win32' ? iconWindows : iconPng
 // The find overlay is a static page (no bundler entry) shipped under resources/, so it resolves the
 // same way in dev (project root) and packaged (asar root) via app.getAppPath().
 const findOverlayEntry = join(app.getAppPath(), 'resources/find-overlay/index.html')
+const log = createLogger('window')
 
 const loadRenderer = (window: BrowserWindow): void => {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -112,6 +114,7 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
   let rendererListenerReady = false
   let windowFindListenerReady = false
   let rendererResponsive = true
+  let rendererUnresponsiveAt: number | undefined
   const onListenerReady = (event: IpcMainEvent): void => {
     if (event.sender !== window.webContents) return
     rendererListenerReady = true
@@ -154,17 +157,39 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
       findOverlay.close()
     }
   })
-  window.webContents.on('render-process-gone', () => {
+  // Persist only fixed Electron lifecycle vocabulary and numeric timing/exit metadata. Current URLs,
+  // Session content, renderer console output, process arguments, and local paths stay out of main.log.
+  window.webContents.on('render-process-gone', (_event, details) => {
+    const wasUnresponsive = !rendererResponsive
+    log.error('renderer process gone', {
+      reason: details.reason,
+      exitCode: details.exitCode,
+      wasUnresponsive,
+      ...(rendererUnresponsiveAt === undefined
+        ? {}
+        : { unresponsiveDurationMs: Math.max(0, Date.now() - rendererUnresponsiveAt) })
+    })
     rendererListenerReady = false
     windowFindListenerReady = false
+    rendererUnresponsiveAt = undefined
     findOverlay.close()
   })
   window.webContents.on('unresponsive', () => {
+    if (rendererResponsive) {
+      rendererUnresponsiveAt = Date.now()
+      log.warn('renderer became unresponsive')
+    }
     rendererResponsive = false
     findOverlay.close()
   })
   window.webContents.on('responsive', () => {
+    if (!rendererResponsive && rendererUnresponsiveAt !== undefined) {
+      log.info('renderer became responsive', {
+        unresponsiveDurationMs: Math.max(0, Date.now() - rendererUnresponsiveAt)
+      })
+    }
     rendererResponsive = true
+    rendererUnresponsiveAt = undefined
   })
   window.on('closed', () => {
     ipcMain.removeListener(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)

@@ -17,6 +17,18 @@ const { openExternalMock, ipcMainOnMock, ipcMainRemoveListenerMock } = vi.hoiste
   ipcMainRemoveListenerMock: vi.fn()
 }))
 
+const { windowLogSpies } = vi.hoisted(() => ({
+  windowLogSpies: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn()
+  }
+}))
+
+vi.mock('./logger', () => ({
+  createLogger: () => windowLogSpies
+}))
+
 // The overlay manager is a collaborator with its own deep test suite; here we only need to observe
 // that the chord/Escape wiring drives it, so the real module is replaced with a spy object.
 const { findOverlayMock } = vi.hoisted(() => ({
@@ -261,6 +273,9 @@ describe('close chord interception', () => {
     findOverlayMock.destroy.mockClear()
     findOverlayMock.updateAppearance.mockClear()
     findOverlayMock.isOpen.mockReturnValue(false)
+    windowLogSpies.info.mockClear()
+    windowLogSpies.warn.mockClear()
+    windowLogSpies.error.mockClear()
   })
 
   // Fires an ipcMain handshake signal that main registered via ipcMain.on, spoofing the sender as this
@@ -489,12 +504,46 @@ describe('close chord interception', () => {
 
     signalRendererReady(window)
     // The renderer crashed; its listener died with the process until a fresh one re-handshakes.
-    fireWebContentsEvent(window, 'render-process-gone')
+    fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 1 })
 
     fireInput(window, closeChord())
 
     expect(window.closeMock).toHaveBeenCalledTimes(1)
     expect(window.sendMock).not.toHaveBeenCalled()
+  })
+
+  it('records why the renderer process terminated', () => {
+    createMainWindow()
+    const window = currentWindow!
+
+    fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 139 })
+
+    expect(windowLogSpies.error).toHaveBeenCalledWith('renderer process gone', {
+      reason: 'crashed',
+      exitCode: 139,
+      wasUnresponsive: false
+    })
+  })
+
+  it('records the known hang duration when an unresponsive renderer terminates', () => {
+    const now = vi.spyOn(Date, 'now')
+    now.mockReturnValueOnce(2_000).mockReturnValueOnce(6_500)
+    try {
+      createMainWindow()
+      const window = currentWindow!
+
+      fireWebContentsEvent(window, 'unresponsive')
+      fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'oom', exitCode: 5 })
+
+      expect(windowLogSpies.error).toHaveBeenCalledWith('renderer process gone', {
+        reason: 'oom',
+        exitCode: 5,
+        wasUnresponsive: true,
+        unresponsiveDurationMs: 4_500
+      })
+    } finally {
+      now.mockRestore()
+    }
   })
 
   it('closes the find overlay when the renderer process is gone', () => {
@@ -504,7 +553,7 @@ describe('close chord interception', () => {
     fireInput(window, findChord())
     findOverlayMock.close.mockClear()
 
-    fireWebContentsEvent(window, 'render-process-gone')
+    fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 1 })
 
     expect(findOverlayMock.close).toHaveBeenCalledTimes(1)
   })
@@ -540,6 +589,33 @@ describe('close chord interception', () => {
     expect(findOverlayMock.close).toHaveBeenCalledTimes(1)
   })
 
+  it('records when the renderer becomes unresponsive', () => {
+    createMainWindow()
+    const window = currentWindow!
+
+    fireWebContentsEvent(window, 'unresponsive')
+
+    expect(windowLogSpies.warn).toHaveBeenCalledWith('renderer became unresponsive')
+  })
+
+  it('records renderer recovery with the unresponsive duration', () => {
+    const now = vi.spyOn(Date, 'now')
+    now.mockReturnValueOnce(1_000).mockReturnValueOnce(3_750)
+    try {
+      createMainWindow()
+      const window = currentWindow!
+
+      fireWebContentsEvent(window, 'unresponsive')
+      fireWebContentsEvent(window, 'responsive')
+
+      expect(windowLogSpies.info).toHaveBeenCalledWith('renderer became responsive', {
+        unresponsiveDurationMs: 2_750
+      })
+    } finally {
+      now.mockRestore()
+    }
+  })
+
   it('forwards again after unresponsive -> crash -> reload -> ready, with no responsive event', () => {
     createMainWindow()
     const window = currentWindow!
@@ -549,7 +625,7 @@ describe('close chord interception', () => {
     // process never emits 'responsive' (that is a same-process recovery signal), so READY alone must
     // clear the stale unresponsive state or the chord stays a direct close forever.
     fireWebContentsEvent(window, 'unresponsive')
-    fireWebContentsEvent(window, 'render-process-gone')
+    fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 1 })
     fireWebContentsEvent(window, 'did-start-navigation', mainFrameNavigation)
     signalRendererReady(window)
 
