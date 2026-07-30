@@ -2553,10 +2553,32 @@ class NotebookRuntimeService {
       this.notifyNotebookChanged(session)
     }
 
+    const recordedEnvs = new Set<string>()
+    const boundEnvs = new Set<string>()
+    for (const language of ['python', 'r'] as const) {
+      const languageRuns = imported.runs.filter((run) => run.kernelKind === language)
+      if (languageRuns.length === 0) continue
+      const bound = this.resolveRunEnv(session, language)
+      for (const run of languageRuns) {
+        if (run.environment && run.environment !== bound) {
+          recordedEnvs.add(run.environment)
+          boundEnvs.add(bound)
+        }
+      }
+    }
+
     return {
       imported: true,
       cellCount: imported.runs.length,
-      skippedCellCount: imported.skippedCellCount
+      skippedCellCount: imported.skippedCellCount,
+      ...(recordedEnvs.size > 0
+        ? {
+            environmentNotice: {
+              recorded: Array.from(recordedEnvs),
+              bound: Array.from(boundEnvs)
+            }
+          }
+        : {})
     }
   }
 

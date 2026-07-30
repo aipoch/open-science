@@ -9,7 +9,11 @@ import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
 
 import { resolveDataKernelForTab } from '../../../../shared/notebook'
-import type { NotebookKernelKind, NotebookRunRecord } from '../../../../shared/notebook'
+import type {
+  ImportNotebookResult,
+  NotebookKernelKind,
+  NotebookRunRecord
+} from '../../../../shared/notebook'
 import { NotebookCodeBlock } from './notebook-code'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
 import { NotebookInputDataStrip } from './NotebookInputDataStrip'
@@ -34,6 +38,23 @@ const getErrorMessage = (error: unknown): string =>
 // Renders "N word" with correct singular/plural for the summary counts.
 const pluralize = (count: number, word: string): string =>
   `${count} ${word}${count === 1 ? '' : 's'}`
+
+const IMPORTED_RUN_BADGE_TITLE =
+  'Snapshot from the source .ipynb — re-running appends a new run'
+
+// Composes the Session Notebook footer status for an import result. Cancelled picks return
+// undefined; successful imports surface cell counts and any recorded-vs-bound env mismatch.
+const formatImportResultMessage = (result: ImportNotebookResult): string | undefined => {
+  if (!result.imported) return undefined
+  const summary = `Imported ${pluralize(result.cellCount, 'cell')}`
+  const withSkipped =
+    result.skippedCellCount > 0 ? `${summary} (skipped ${result.skippedCellCount})` : summary
+  const notice = result.environmentNotice
+  if (!notice || notice.recorded.length === 0) return withSkipped
+  const recorded = notice.recorded.map((name) => `"${name}"`).join(', ')
+  const bound = notice.bound.join(', ')
+  return `${withSkipped} — recorded env ${recorded}; re-runs use ${bound}`
+}
 
 // One persisted run rendered as a notebook cell: header badges, code, and split stdout/stderr. The
 // zero-based index is the cell number shown in [n], aligning the display with a notebook's cells.
@@ -69,6 +90,7 @@ const NotebookDialogCell = ({
             <span
               className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200"
               data-testid="session-notebook-imported-badge"
+              title={IMPORTED_RUN_BADGE_TITLE}
             >
               imported
             </span>
@@ -519,10 +541,7 @@ const SessionNotebookDialog = ({
                 if (!result.imported) return undefined
                 setRuns(await loadSessionNotebookRuns(window.api.notebook, request))
                 setStatus('ready')
-                const summary = `Imported ${pluralize(result.cellCount, 'cell')}`
-                return result.skippedCellCount > 0
-                  ? `${summary} (skipped ${result.skippedCellCount})`
-                  : summary
+                return formatImportResultMessage(result)
               }}
             />
           ) : null}
@@ -532,4 +551,9 @@ const SessionNotebookDialog = ({
   )
 }
 
-export { NotebookDialogCell, SessionNotebookContent, SessionNotebookDialog }
+export {
+  formatImportResultMessage,
+  NotebookDialogCell,
+  SessionNotebookContent,
+  SessionNotebookDialog
+}

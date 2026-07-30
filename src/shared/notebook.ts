@@ -514,6 +514,9 @@ export type ImportNotebookResult =
       imported: true
       cellCount: number
       skippedCellCount: number
+      // Present only when imported python/r cells recorded env names that differ from the
+      // session's bound env for that language. Renderer composes the footer notice from it.
+      environmentNotice?: { recorded: string[]; bound: string[] }
     }
 
 // Starts a streamed code write into a notebook cell.

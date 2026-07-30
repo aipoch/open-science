@@ -84,6 +84,9 @@ const getRunOutputText = (run: NotebookRunRecord | undefined): string => {
     .join('\n')
 }
 
+const IMPORTED_RUN_BADGE_TITLE =
+  'Snapshot from the source .ipynb — re-running appends a new run'
+
 // Displays one durable execution record from run.json in chronological order. The zero-based index
 // is the cell number shown in [n], and a failed run marks the offending line.
 const NotebookRunCell = ({
@@ -115,6 +118,14 @@ const NotebookRunCell = ({
             ) : (
               <span className="rounded bg-danger-900 px-1.5 py-0.5 text-danger-000">error</span>
             )
+          ) : run.status === 'imported' ? (
+            <span
+              className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200"
+              data-testid="notebook-imported-badge"
+              title={IMPORTED_RUN_BADGE_TITLE}
+            >
+              imported
+            </span>
           ) : null}
         </div>
         {originLabel ? (
@@ -527,4 +538,4 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   )
 }
 
-export { NotebookPreview }
+export { NotebookPreview, NotebookRunCell }

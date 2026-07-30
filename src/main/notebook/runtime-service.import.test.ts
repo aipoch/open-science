@@ -96,6 +96,89 @@ describe('NotebookRuntimeService importIpynb', () => {
     ])
   })
 
+  it('surfaces an environment notice when recorded env differs from the bound default', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-ipynb-import-env-'))
+    roots.push(root)
+    const filePath = join(root, 'source.ipynb')
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        nbformat: 4,
+        metadata: { kernelspec: { name: 'python3', language: 'python' } },
+        cells: [
+          {
+            cell_type: 'code',
+            source: 'print(1)',
+            execution_count: null,
+            metadata: { open_science: { kernel: 'python', environment: 'analysis' } },
+            outputs: []
+          }
+        ]
+      })
+    )
+    const stored = document(root)
+    const repository = {
+      loadOrCreate: vi.fn().mockResolvedValue(stored),
+      appendRuns: vi.fn().mockImplementation(async ({ runs }) => ({ ...stored, runs }))
+    } as unknown as NotebookRunRepository
+    const service = new NotebookRuntimeService({
+      configRoot: join(root, 'config'),
+      dataRoot: root,
+      projectName: 'default-project',
+      repository,
+      executorFactory: () => executor,
+      pickIpynb: async () => filePath
+    })
+
+    await expect(
+      service.importIpynb({ sessionId: 'session-1', workspaceCwd: '/workspace' })
+    ).resolves.toEqual({
+      imported: true,
+      cellCount: 1,
+      skippedCellCount: 0,
+      environmentNotice: { recorded: ['analysis'], bound: ['default-python'] }
+    })
+  })
+
+  it('omits environmentNotice when recorded env matches the bound default', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-ipynb-import-match-'))
+    roots.push(root)
+    const filePath = join(root, 'source.ipynb')
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        nbformat: 4,
+        metadata: { kernelspec: { name: 'python3', language: 'python' } },
+        cells: [
+          {
+            cell_type: 'code',
+            source: 'print(1)',
+            execution_count: null,
+            metadata: { open_science: { kernel: 'python', environment: 'default-python' } },
+            outputs: []
+          }
+        ]
+      })
+    )
+    const stored = document(root)
+    const repository = {
+      loadOrCreate: vi.fn().mockResolvedValue(stored),
+      appendRuns: vi.fn().mockImplementation(async ({ runs }) => ({ ...stored, runs }))
+    } as unknown as NotebookRunRepository
+    const service = new NotebookRuntimeService({
+      configRoot: join(root, 'config'),
+      dataRoot: root,
+      projectName: 'default-project',
+      repository,
+      executorFactory: () => executor,
+      pickIpynb: async () => filePath
+    })
+
+    await expect(
+      service.importIpynb({ sessionId: 'session-1', workspaceCwd: '/workspace' })
+    ).resolves.toEqual({ imported: true, cellCount: 1, skippedCellCount: 0 })
+  })
+
   it('returns a cancellation result without reading or creating a session', async () => {
     const repository = {
       loadOrCreate: vi.fn()

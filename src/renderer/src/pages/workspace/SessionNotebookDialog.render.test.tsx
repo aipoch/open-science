@@ -1,7 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
-import { SessionNotebookContent } from './SessionNotebookDialog'
+import {
+  formatImportResultMessage,
+  SessionNotebookContent
+} from './SessionNotebookDialog'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 
 const makeRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord => ({
@@ -109,7 +112,25 @@ describe('SessionNotebookContent', () => {
 
     expect(html).toContain('data-testid="session-notebook-imported-badge"')
     expect(html).toContain('imported')
+    expect(html).toContain(
+      'title="Snapshot from the source .ipynb — re-running appends a new run"'
+    )
     expect(html).not.toContain('error (line')
+  })
+
+  it('formats import result footer messages including env notices', () => {
+    expect(formatImportResultMessage({ imported: false })).toBeUndefined()
+    expect(
+      formatImportResultMessage({ imported: true, cellCount: 2, skippedCellCount: 0 })
+    ).toBe('Imported 2 cells')
+    expect(
+      formatImportResultMessage({
+        imported: true,
+        cellCount: 1,
+        skippedCellCount: 1,
+        environmentNotice: { recorded: ['analysis'], bound: ['default-python'] }
+      })
+    ).toBe('Imported 1 cell (skipped 1) — recorded env "analysis"; re-runs use default-python')
   })
 
   it('enables .ipynb export for a loaded notebook and disables it when empty', () => {
