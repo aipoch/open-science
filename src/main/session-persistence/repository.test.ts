@@ -409,6 +409,31 @@ describe('session persistence repository (per-session files)', () => {
     expect(readSessionFile).toHaveBeenCalledOnce()
   })
 
+  it('keeps the scan incomplete when a listed Session disappears before it can be read', async () => {
+    const root = await createStorageRoot()
+    const session = createSession()
+    await new SessionRepository(root).saveSession(session)
+    const readSessionFile = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error('file disappeared during scan'), { code: 'ENOENT' })
+      )
+    const repository = new SessionRepository(root, { readSessionFile })
+
+    const scan = await repository.loadAllWithDiagnostics()
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+    expect(scan.warnings).toEqual([
+      {
+        kind: 'unreadable',
+        projectId: session.projectId,
+        fileName: `${session.id}.json`,
+        recovered: false
+      }
+    ])
+  })
+
   it('distinguishes an unreadable Session from an absent Session for terminal mutations', async () => {
     const root = await createStorageRoot()
     const session = createSession()

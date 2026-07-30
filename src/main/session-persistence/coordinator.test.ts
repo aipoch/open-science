@@ -1277,6 +1277,28 @@ describe('SessionPersistenceCoordinator', () => {
     expect(syncSession).toHaveBeenCalledOnce()
   })
 
+  it('marks startup reconciliation incomplete when a Session file-index sync fails', async () => {
+    const session = createSession()
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const markReconciliationIncomplete = vi.fn()
+    const fileIndex = createFileIndex({
+      markReconciliationIncomplete,
+      syncSession: vi.fn().mockRejectedValue(new Error('file index database is locked'))
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+
+    await expect(coordinator.loadAll()).resolves.toMatchObject({
+      diagnostics: {
+        isComplete: false,
+        failure: 'startup-reconciliation-failed'
+      }
+    })
+    expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+  })
+
   it('retries surviving project sessions after deleting a collision owner', async () => {
     const owner = createSession()
     const survivor = createSession({ id: 'session-2' })

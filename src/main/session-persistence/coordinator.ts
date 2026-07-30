@@ -335,6 +335,9 @@ class SessionPersistenceCoordinator {
         // Reconciliation restores active owners left soft-deleted by an interrupted delete before any
         // scan-order-dependent sync can offer their canonical rows to another session.
         await this.fileIndex.reconcileActiveSessions(sessions)
+        for (const session of sessions) {
+          await this.fileIndex.syncSession(session)
+        }
       } catch (error) {
         this.fileIndex.markReconciliationIncomplete()
         console.error('[session-persistence] startup reconciliation failed', error)
@@ -345,10 +348,6 @@ class SessionPersistenceCoordinator {
           failure: 'startup-reconciliation-failed'
         }
         return result
-      }
-
-      for (const session of sessions) {
-        await this.fileIndex.syncSession(session).catch(() => undefined)
       }
 
       return result

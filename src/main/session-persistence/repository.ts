@@ -545,7 +545,9 @@ class SessionRepository {
 
     for (const fileName of sessionFiles.names) {
       // The directory is the authoritative owning project, regardless of the file's stored projectId.
-      const read = await this.readSessionFile(join(projectDir, fileName), projectId)
+      const read = await this.readSessionFile(join(projectDir, fileName), projectId, {
+        missingIsIncomplete: true
+      })
       isComplete &&= read.isComplete
       if (options.quarantinedIsIncomplete && read.wasQuarantined) isComplete = false
       if (read.warning) {
@@ -576,7 +578,8 @@ class SessionRepository {
 
   private async readSessionFile(
     filePath: string,
-    projectId: string
+    projectId: string,
+    options: { missingIsIncomplete?: boolean } = {}
   ): Promise<{
     session?: PersistedChatSession
     isComplete: boolean
@@ -587,7 +590,7 @@ class SessionRepository {
     try {
       raw = await this.dependencies.readSessionFile(filePath)
     } catch (error) {
-      if (isMissingFileError(error)) return { isComplete: true }
+      if (isMissingFileError(error) && !options.missingIsIncomplete) return { isComplete: true }
       return {
         isComplete: false,
         warning: {

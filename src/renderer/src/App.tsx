@@ -10,6 +10,7 @@ import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { LifecycleToast } from '@/components/LifecycleToast'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { UpdateDialog } from '@/components/UpdateDialog'
+import { Button } from '@/components/ui/button'
 import { HomePage } from '@/pages/home/HomePage'
 import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
 import { resolveStartupView } from '@/pages/onboarding/startup-gate'
@@ -244,20 +245,23 @@ const App = (): React.JSX.Element | null => {
       return (
         <main
           role="alert"
-          className="flex h-screen items-center justify-center bg-bg-10 p-6 text-text-100"
+          className="flex h-screen items-center justify-center bg-background p-6 text-muted-foreground"
         >
-          <div className="w-full max-w-md rounded-xl border border-border-200 bg-bg-100 p-5 shadow-dialog">
-            <h1 className="text-base font-semibold text-text-000">Settings could not be loaded</h1>
-            <p className="mt-2 break-words text-sm text-text-300">{settingsLoadError}</p>
-            <button
+          <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 text-card-foreground shadow-sm">
+            <h1 className="text-base font-semibold text-foreground">
+              Settings could not be loaded
+            </h1>
+            <p className="mt-2 break-words text-sm text-muted-foreground">{settingsLoadError}</p>
+            <Button
               type="button"
+              variant="outline"
               data-testid="settings-startup-retry"
               disabled={isSettingsLoading}
               onClick={() => void retrySettingsInitialization()}
-              className="mt-4 rounded-lg border border-border-200 px-3 py-1.5 text-sm font-medium text-text-000 hover:bg-bg-200 disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-4"
             >
               {isSettingsLoading ? 'Retrying…' : 'Retry'}
-            </button>
+            </Button>
           </div>
         </main>
       )
@@ -267,7 +271,7 @@ const App = (): React.JSX.Element | null => {
       <main
         data-testid="settings-startup-loading"
         role="status"
-        className="flex h-screen items-center justify-center bg-bg-10 text-sm text-text-300"
+        className="flex h-screen items-center justify-center bg-background text-sm text-muted-foreground"
       >
         Loading settings…
       </main>
@@ -287,7 +291,7 @@ const App = (): React.JSX.Element | null => {
       <main
         data-testid="session-persistence-startup-loading"
         role="status"
-        className="flex h-screen items-center justify-center bg-bg-10 text-sm text-text-300"
+        className="flex h-screen items-center justify-center bg-background text-sm text-muted-foreground"
       >
         Loading saved conversations…
       </main>
@@ -300,7 +304,7 @@ const App = (): React.JSX.Element | null => {
     return (
       <main
         data-testid="session-persistence-startup-error"
-        className="flex h-screen items-center justify-center bg-bg-10 p-6 text-text-100"
+        className="flex h-screen items-center justify-center bg-background p-6 text-muted-foreground"
       >
         <SessionPersistenceAlert
           title="Saved conversations could not be loaded"

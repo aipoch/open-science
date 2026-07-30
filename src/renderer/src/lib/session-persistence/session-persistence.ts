@@ -102,6 +102,16 @@ type StoreSaverObserver = {
 
 type StoreSaver = (state: SessionStoreSnapshot, options?: StoreSaverOptions) => Promise<unknown>
 
+const pruneRemovedSessionWriteTargets = (
+  targets: Set<string>,
+  sessions: readonly Pick<ChatSession, 'id'>[]
+): void => {
+  const activeSessionTargets = new Set(sessions.map((session) => `session:${session.id}`))
+  for (const target of targets) {
+    if (target.startsWith('session:') && !activeSessionTargets.has(target)) targets.delete(target)
+  }
+}
+
 // Retains full diagnostics in the console while the hook exposes renderer-safe recovery state.
 const reportPersistenceError = (error: unknown): void => {
   console.warn('Session persistence failed', error)
@@ -271,12 +281,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     if (!saver || failedWriteTargets.current.size === 0) return
 
     const state = useSessionStore.getState()
-    const activeSessionTargets = new Set(state.sessions.map((session) => `session:${session.id}`))
-    for (const target of failedWriteTargets.current) {
-      if (target.startsWith('session:') && !activeSessionTargets.has(target)) {
-        failedWriteTargets.current.delete(target)
-      }
-    }
+    pruneRemovedSessionWriteTargets(failedWriteTargets.current, state.sessions)
     if (failedWriteTargets.current.size === 0) {
       setWriteError(undefined)
       return
@@ -380,6 +385,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
       saverRef.current = save
 
       unsubscribe = useSessionStore.subscribe((state) => {
+        pruneRemovedSessionWriteTargets(failedWriteTargets.current, state.sessions)
+        if (failedWriteTargets.current.size === 0) setWriteError(undefined)
         void save(state).catch(reportPersistenceError)
       })
 

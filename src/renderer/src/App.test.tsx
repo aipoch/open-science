@@ -275,6 +275,9 @@ describe('App startup routing', () => {
       '[data-testid="settings-startup-retry"]'
     )
     expect(retry).not.toBeNull()
+    expect(retry?.dataset.slot).toBe('button')
+    expect(retry?.className).toContain('focus-visible:ring-3')
+    expect(retry?.className).toContain('disabled:pointer-events-none')
     await act(async () => retry?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
     expect(mocks.settings.load).toHaveBeenCalledTimes(2)
@@ -313,7 +316,7 @@ describe('App startup routing', () => {
     ).toBe('true')
   })
 
-  it('renders the partial session recovery alert on an opaque surface', async () => {
+  it('renders the partial session recovery alert on an opaque semantic surface', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.isHydrated = true
     mocks.sessionPersistence.isReady = false
@@ -323,7 +326,8 @@ describe('App startup routing', () => {
 
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert).not.toBeNull()
-    expect(alert?.classList.contains('bg-bg-000')).toBe(true)
+    expect(alert?.classList.contains('bg-card')).toBe(true)
+    expect(alert?.classList.contains('bg-bg-000')).toBe(false)
     expect(alert?.classList.contains('bg-bg-100')).toBe(false)
     expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
   })
@@ -404,7 +408,12 @@ describe('App startup routing', () => {
     expect(alert?.textContent).toContain('sessions directory unavailable')
     expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
 
-    container.querySelector<HTMLButtonElement>('[data-testid="session-persistence-retry"]')?.click()
+    const retry = container.querySelector<HTMLButtonElement>(
+      '[data-testid="session-persistence-retry"]'
+    )
+    expect(retry?.dataset.slot).toBe('button')
+    expect(retry?.className).toContain('focus-visible:ring-3')
+    retry?.click()
     expect(mocks.sessionPersistence.retryLoad).toHaveBeenCalledOnce()
   })
 

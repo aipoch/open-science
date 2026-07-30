@@ -178,7 +178,7 @@ describe('session persistence startup', () => {
     )
   })
 
-  it('clears a failed write target after its session is durably deleted', async () => {
+  it('automatically clears a failed write target after its session is durably deleted', async () => {
     loadAll.mockReset().mockResolvedValue(emptyLoadResult())
     saveSession.mockRejectedValue(new Error('disk full'))
 
@@ -202,9 +202,6 @@ describe('session persistence startup', () => {
       useSessionStore.getState().deleteSession('session-1')
       await Promise.resolve()
     })
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>('[data-testid="retry-writes"]')?.click()
-    )
 
     expect(saveSession).toHaveBeenCalledTimes(1)
     expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
