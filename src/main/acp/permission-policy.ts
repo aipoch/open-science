@@ -11,13 +11,18 @@ import {
   isActivityGroupToolEvent
 } from '../../shared/activity-groups'
 import { extractProviderToolName } from './runtime-events'
+import {
+  appMcpServerAliases,
+  canonicalAppMcpServerName,
+  resolveCanonicalMcpToolIdentity
+} from '../agent-framework/app-mcp-names'
 
 type PermissionPolicyContext = {
   profile: PermissionProfileId
   frameworkId?: AgentFrameworkId
   autoReviewStrategy?: PermissionAutoReviewStrategy
   cwd?: string
-  // Agent-visible MCP server names, so MCP tools can be recognized across frameworks (see isMcpToolName).
+  // Canonical MCP server names, so framework-visible tools can resolve to stable policy identities.
   mcpServerNames?: readonly string[]
 }
 
@@ -55,8 +60,9 @@ const resolveMcpProviderLeafIdentity = (
 
   const identities = new Set(
     mcpServerNames.flatMap((server) => {
-      const tool = MCP_PROVIDER_LEAF_ALIASES[server]?.[name]
-      return tool ? [`${server}/${tool}`] : []
+      const canonicalServer = canonicalAppMcpServerName(server)
+      const tool = MCP_PROVIDER_LEAF_ALIASES[canonicalServer]?.[name]
+      return tool ? [`${canonicalServer}/${tool}`] : []
     })
   )
 
@@ -71,13 +77,15 @@ const isMcpToolName = (
 ): boolean =>
   name != null &&
   (name.startsWith(MCP_TOOL_PREFIX) ||
-    mcpServerNames.some(
-      (server) =>
-        name === server ||
-        name.startsWith(`${CODEX_MCP_TOOL_PREFIX}${server}.`) ||
-        name.startsWith(`${server}_`) ||
-        MCP_PROVIDER_LEAF_ALIASES[server]?.[name] != null
-    ))
+    resolveCanonicalMcpToolIdentity(name, mcpServerNames) != null ||
+    mcpServerNames.some((server) => {
+      const canonicalServer = canonicalAppMcpServerName(server)
+      return (
+        appMcpServerAliases(canonicalServer).includes(name) ||
+        name.startsWith(`${CODEX_MCP_TOOL_PREFIX}${canonicalServer}.`) ||
+        MCP_PROVIDER_LEAF_ALIASES[canonicalServer]?.[name] != null
+      )
+    }))
 
 // Tests whether a tool-reported path stays within the workspace after resolving relative paths.
 const isWithinWorkspace = (path: string, cwd: string): boolean => {
@@ -129,7 +137,8 @@ const isArtifactSaveTool = (
   params: RequestPermissionRequest,
   mcpServerNames: readonly string[]
 ): boolean => {
-  if (!mcpServerNames.includes('open-science-artifacts')) return false
+  if (!mcpServerNames.map(canonicalAppMcpServerName).includes('open-science-artifacts'))
+    return false
 
   // title is presentation text controlled by the Agent and cannot prove which provider capability
   // ACP is asking to execute. Only framework metadata supplied with the tool call may claim the
@@ -141,10 +150,8 @@ const isArtifactSaveTool = (
 
   return (
     trustedMcpIdentity === 'open-science-artifacts/write_artifact_file' ||
-    providerToolName === 'mcp__open-science-artifacts__write_artifact_file' ||
-    providerToolName === 'mcp__open_science_artifacts__write_artifact_file' ||
-    providerToolName === 'mcp.open-science-artifacts.write_artifact_file' ||
-    providerToolName === 'open-science-artifacts_write_artifact_file' ||
+    resolveCanonicalMcpToolIdentity(providerToolName, mcpServerNames) ===
+      'open-science-artifacts/write_artifact_file' ||
     resolveMcpProviderLeafIdentity(providerToolName, mcpServerNames) ===
       'open-science-artifacts/write_artifact_file'
   )

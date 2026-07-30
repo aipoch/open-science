@@ -95,12 +95,21 @@ describe('permission policy', () => {
   })
 
   it('recognizes MCP tool names across frameworks', () => {
-    const servers = ['open-science-artifacts', 'open-science-notebook']
+    const servers = [
+      'open-science-activity',
+      'open-science-artifacts',
+      'open-science-notebook',
+      'open-science-skills'
+    ]
 
     // Claude namespaces MCP tools mcp__<server>__<tool> — matched by prefix regardless of server list.
     expect(isMcpToolName('mcp__pencil__batch_get', [])).toBe(true)
     // opencode joins them <server>_<tool> — matched only against the session's known server names.
     expect(isMcpToolName('open-science-artifacts_write_artifact_file', servers)).toBe(true)
+    expect(isMcpToolName('open_science_activity_begin_activity_group', servers)).toBe(true)
+    expect(isMcpToolName('open_science_artifacts_write_artifact_file', servers)).toBe(true)
+    expect(isMcpToolName('open_science_notebook_notebook_execute', servers)).toBe(true)
+    expect(isMcpToolName('open_science_skills_request_skill_import', servers)).toBe(true)
     expect(isMcpToolName('open-science-notebook', servers)).toBe(true)
     // Codex uses mcp.<server>.<tool> — the generic mcp. prefix is not trusted without a known server.
     expect(isMcpToolName('mcp.open-science-notebook.notebook_execute', servers)).toBe(true)
@@ -190,6 +199,7 @@ describe('permission policy', () => {
       'mcp__open_science_artifacts__write_artifact_file',
       'mcp.open-science-artifacts.write_artifact_file',
       'open-science-artifacts_write_artifact_file',
+      'open_science_artifacts_write_artifact_file',
       'write'
     ]) {
       expect(

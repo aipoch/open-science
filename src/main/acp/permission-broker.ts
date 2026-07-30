@@ -13,6 +13,7 @@ import {
   resolveAutomaticPermission,
   type PermissionPolicyContext
 } from './permission-policy'
+import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
 
 type PendingPermission = {
   request: AcpPermissionRequest
@@ -105,34 +106,9 @@ const resolvePermissionTitle = (params: RequestPermissionRequest, isMcp: boolean
 const resolveMcpToolIdentity = (
   name: string | null | undefined,
   mcpServerNames: readonly string[]
-): string | undefined => {
-  if (!name) return undefined
-
-  if (name.startsWith('mcp__')) {
-    const [reportedServer, ...toolParts] = name.slice('mcp__'.length).split('__')
-    if (!reportedServer || toolParts.length === 0) return undefined
-
-    // Some bridges sanitize MCP server names for tool-call compatibility (hyphens become
-    // underscores). Project back to the configured server identity so the same app-owned grant is
-    // reused after a framework/runtime switch instead of creating a second category.
-    const server =
-      mcpServerNames.find(
-        (candidate) =>
-          candidate === reportedServer || candidate.replaceAll('-', '_') === reportedServer
-      ) ?? reportedServer
-    return `${server}/${toolParts.join('__')}`
-  }
-
-  for (const server of [...mcpServerNames].sort((left, right) => right.length - left.length)) {
-    const codexPrefix = `mcp.${server}.`
-    if (name.startsWith(codexPrefix)) return `${server}/${name.slice(codexPrefix.length)}`
-
-    const opencodePrefix = `${server}_`
-    if (name.startsWith(opencodePrefix)) return `${server}/${name.slice(opencodePrefix.length)}`
-  }
-
-  return resolveMcpProviderLeafIdentity(name, mcpServerNames)
-}
+): string | undefined =>
+  resolveCanonicalMcpToolIdentity(name, mcpServerNames) ??
+  resolveMcpProviderLeafIdentity(name, mcpServerNames)
 
 const commandSignature = (command: string): string => command.trim()
 

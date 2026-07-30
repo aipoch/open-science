@@ -5,14 +5,21 @@ import { contextUsageMcpSections } from './context-usage-static-context'
 describe('contextUsageMcpSections', () => {
   it('uses OpenCode MCP tool names in its serialized schema baseline', () => {
     const sections = contextUsageMcpSections('opencode', {
-      activity: false,
-      artifacts: false,
+      activity: true,
+      artifacts: true,
       notebook: true,
-      skillImport: false
+      skillImport: true
     })
 
     const text = sections.map((section) => section.text).join('\n')
-    expect(text).toContain('open-science-notebook_notebook_execute')
+    expect(text).toContain('open_science_activity_begin_activity_group')
+    expect(text).toContain('open_science_artifacts_write_artifact_file')
+    expect(text).toContain('open_science_notebook_notebook_execute')
+    expect(text).toContain('open_science_skills_request_skill_import')
+    expect(text).not.toContain('open-science-activity_begin_activity_group')
+    expect(text).not.toContain('open-science-artifacts_write_artifact_file')
+    expect(text).not.toContain('open-science-notebook_notebook_execute')
+    expect(text).not.toContain('open-science-skills_request_skill_import')
     expect(text).not.toContain('mcp__open_science_notebook__notebook_execute')
   })
 

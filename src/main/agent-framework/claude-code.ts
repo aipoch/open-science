@@ -16,32 +16,7 @@ import type {
   SessionSetup,
   SessionSetupContext
 } from './types'
-
-// Claude exposes ACP-provided MCP tools as mcp__<server>__<tool>; shared prompts stay framework-neutral.
-const CLAUDE_MCP_TOOL_NAMES = [
-  ['begin_activity_group', 'mcp__open-science-activity__begin_activity_group'],
-  ['write_artifact_file', 'mcp__open-science-artifacts__write_artifact_file'],
-  ['notebook_execute', 'mcp__open-science-notebook__notebook_execute'],
-  ['repl_execute', 'mcp__open-science-notebook__repl_execute'],
-  ['bash_execute', 'mcp__open-science-notebook__bash_execute'],
-  ['notebook_state', 'mcp__open-science-notebook__notebook_state'],
-  ['list_notebook_runtimes', 'mcp__open-science-notebook__list_notebook_runtimes'],
-  ['notebook_bind_runtime', 'mcp__open-science-notebook__notebook_bind_runtime'],
-  ['notebook_switch_runtime', 'mcp__open-science-notebook__notebook_switch_runtime'],
-  ['notebook_restart', 'mcp__open-science-notebook__notebook_restart'],
-  ['notebook_shutdown', 'mcp__open-science-notebook__notebook_shutdown'],
-  ['inspect_packages', 'mcp__open-science-notebook__inspect_packages'],
-  ['manage_packages', 'mcp__open-science-notebook__manage_packages'],
-  ['manage_environments', 'mcp__open-science-notebook__manage_environments'],
-  ['request_skill_import', 'mcp__open-science-skills__request_skill_import']
-] as const
-
-const renderClaudeMcpToolNames = (append: string): string =>
-  CLAUDE_MCP_TOOL_NAMES.reduce(
-    (rendered, [toolName, callableName]) =>
-      rendered.replace(new RegExp(`\\b${toolName}\\b`, 'g'), callableName),
-    append
-  )
+import { renderAppMcpToolReferences } from './app-mcp-names'
 
 // Select Claude Code's complete built-in tool set explicitly instead of relying on
 // claude-agent-acp's current fallback. This keeps WebFetch/WebSearch available if the adapter's
@@ -100,7 +75,7 @@ export const claudeCodeFramework: AgentFramework = {
     }
 
     const persistentSystemPrompt = ctx.systemPromptAppends
-      .map(renderClaudeMcpToolNames)
+      .map((append) => renderAppMcpToolReferences('claude-code', append))
       .filter(Boolean)
       .join('\n\n')
     if (persistentSystemPrompt) {
@@ -112,7 +87,7 @@ export const claudeCodeFramework: AgentFramework = {
     }
 
     const promptPrefix = ctx.turnPromptReminders
-      ?.map(renderClaudeMcpToolNames)
+      ?.map((append) => renderAppMcpToolReferences('claude-code', append))
       .filter(Boolean)
       .join('\n\n')
 

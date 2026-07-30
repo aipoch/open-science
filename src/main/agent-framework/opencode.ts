@@ -21,6 +21,7 @@ import type {
   SessionSetup,
   SessionSetupContext
 } from './types'
+import { renderAppMcpToolReferences } from './app-mcp-names'
 
 // opencode speaks ACP over `opencode acp` (stdio JSON-RPC). Only the shapes that differ from Claude
 // are implemented here: model config (a generated opencode.json, not ANTHROPIC_* env), system-prompt
@@ -417,7 +418,11 @@ export const opencodeFramework: AgentFramework = {
     // No claude_code preset here; deliver appends as a prompt prefix instead of session meta.
     return {
       promptPrefix:
-        ctx.systemPromptAppends.length > 0 ? ctx.systemPromptAppends.join('\n\n') : undefined
+        ctx.systemPromptAppends.length > 0
+          ? ctx.systemPromptAppends
+              .map((append) => renderAppMcpToolReferences('opencode', append))
+              .join('\n\n')
+          : undefined
     }
   },
 

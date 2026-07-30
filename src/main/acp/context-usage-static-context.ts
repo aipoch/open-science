@@ -12,6 +12,7 @@ import {
   requestSkillImportToolDefinition
 } from '../skills/mcp-server'
 import type { AgentFrameworkId } from '../agent-framework/types'
+import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
 import { REQUEST_SKILL_IMPORT_TOOL_NAME } from '../../shared/skill-import'
 
 type ContextUsageMcpOptions = {
@@ -34,17 +35,6 @@ type ToolDefinition = {
   annotations?: Record<string, unknown>
 }
 
-const modelFacingMcpToolName = (
-  frameworkId: AgentFrameworkId,
-  codexBridgeAliases: boolean,
-  server: string,
-  tool: string
-): string => {
-  if (frameworkId === 'codex' && !codexBridgeAliases) return `mcp.${server}.${tool}`
-  if (frameworkId === 'opencode') return `${server}_${tool}`
-  return `mcp__${server.replace(/[^a-zA-Z0-9_]/g, '_')}__${tool}`
-}
-
 const serializeToolDefinitions = (
   frameworkId: AgentFrameworkId,
   codexBridgeAliases: boolean,
@@ -57,7 +47,7 @@ const serializeToolDefinitions = (
   // guessed here. Compact JSON best matches the wire representation without counting whitespace.
   text: JSON.stringify(
     tools.map(({ name, definition }) => ({
-      name: modelFacingMcpToolName(frameworkId, codexBridgeAliases, server, name),
+      name: modelFacingAppMcpToolName(frameworkId, server, name, codexBridgeAliases),
       title: definition.title,
       description: definition.description,
       inputSchema: z.toJSONSchema(z.object(definition.inputSchema), { target: 'draft-7' }),

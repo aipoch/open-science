@@ -52,6 +52,11 @@ import {
   type AgentFramework,
   type ResolvedAgentBackend
 } from '../agent-framework'
+import {
+  canonicalAppMcpServerName,
+  modelFacingAppMcpServerName,
+  resolveCanonicalMcpToolIdentity
+} from '../agent-framework/app-mcp-names'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import { terminateProcessTree } from '../process-tree'
 import {
@@ -698,8 +703,9 @@ class AcpRuntime {
   // compaction with `media_unstrippable`. Cleared after successful native compaction, on session
   // delete, and on disconnect.
   private readonly sessionInlineImageBytes = new Map<string, number>()
-  // Per-session names of the MCP servers the agent was actually given (from createMcpServers), so
-  // MCP-originated tool calls can be recognized across frameworks (Claude's mcp__<server>__<tool> vs
+  // Per-session canonical names of the MCP servers the agent was actually given (from
+  // createMcpServers), so MCP-originated tool calls can be recognized across frameworks (Claude's
+  // mcp__<server>__<tool> vs
   // opencode's <server>_<tool>) and never conservatively auto-approved. Derived per session rather
   // than hardcoded so it can't drift from what createMcpServers wires up.
   private readonly sessionMcpServerNames = new Map<string, string[]>()
@@ -3934,15 +3940,22 @@ class AcpRuntime {
       count: servers.length
     })
 
-    return servers
+    return servers.map((server) => {
+      const name = (server as { name?: unknown }).name
+      if (typeof name !== 'string') return server
+
+      const modelFacingName = modelFacingAppMcpServerName(this.framework.id, name)
+      return modelFacingName === name ? server : { ...server, name: modelFacingName }
+    })
   }
 
-  // Extracts the names of the MCP servers handed to a session so MCP-origin tool calls can be
+  // Extracts canonical names from the MCP servers handed to a session so MCP-origin tool calls can be
   // recognized later (see sessionMcpServerNames). Both stdio and http McpServer configs carry a name.
   private mcpServerNamesOf(servers: McpServer[]): string[] {
     return servers
       .map((server) => (server as { name?: unknown }).name)
       .filter((name): name is string => typeof name === 'string')
+      .map(canonicalAppMcpServerName)
   }
 
   // Drops one session's app-tool registrations from the http MCP host (no-op without a host).
@@ -4444,7 +4457,8 @@ class AcpRuntime {
       isMcpToolName(normalizedParams.toolCall?.title, mcpServerNames) ||
       isMcpToolName(toolName, mcpServerNames)
     log.info('permission request received', {
-      tool: toolName ?? normalizedParams.toolCall?.kind,
+      tool:
+        this.toolIdentityForDiagnostics(toolName, appSessionId) ?? normalizedParams.toolCall?.kind,
       isMcp,
       toolCallId: normalizedParams.toolCall?.toolCallId,
       sessionId: params.sessionId,
@@ -4489,7 +4503,11 @@ class AcpRuntime {
     } catch (error) {
       log.error('permission request failed', {
         message: errorMessage(error),
-        tool: extractProviderToolName(params.toolCall) ?? params.toolCall?.kind,
+        tool:
+          this.toolIdentityForDiagnostics(
+            extractProviderToolName(normalizedParams.toolCall),
+            appSessionId
+          ) ?? normalizedParams.toolCall?.kind,
         toolCallId: params.toolCall?.toolCallId,
         sessionId: params.sessionId
       })
@@ -5222,7 +5240,9 @@ class AcpRuntime {
     // raw output, or the URL/command-bearing title, to keep user data out of the log.
     if (event.kind === 'tool' && event.status === 'failed') {
       log.warn('tool call failed', {
-        tool: event.providerToolName ?? event.toolKind,
+        tool:
+          this.toolIdentityForDiagnostics(event.providerToolName, routed.sessionId) ??
+          event.toolKind,
         toolCallId: event.toolCallId,
         sessionId: event.sessionId,
         reason: extractToolFailureText(event.toolContent)
@@ -5234,6 +5254,20 @@ class AcpRuntime {
     }
 
     this.pushEvent(event)
+  }
+
+  private toolIdentityForDiagnostics(
+    providerToolName: string | undefined,
+    sessionId: string
+  ): string | undefined {
+    if (!providerToolName) return undefined
+
+    return (
+      resolveCanonicalMcpToolIdentity(
+        providerToolName,
+        this.sessionMcpServerNames.get(sessionId) ?? []
+      ) ?? providerToolName
+    )
   }
 
   // Captures process stderr/errors/exits and converts unexpected ones to events.

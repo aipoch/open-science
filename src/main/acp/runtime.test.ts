@@ -1011,7 +1011,10 @@ describe('ACP runtime session management', () => {
       await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Inspect the project' })
 
       expect(fakeAgent.newSessions[0].mcpServers).toEqual([
-        expect.objectContaining({ name: ACTIVITY_GROUP_MCP_SERVER_NAME })
+        expect.objectContaining({
+          name:
+            framework.id === 'opencode' ? 'open_science_activity' : ACTIVITY_GROUP_MCP_SERVER_NAME
+        })
       ])
       expect(fakeAgent.prompts[0].text).toContain(BEGIN_ACTIVITY_GROUP_TOOL_NAME)
       expect(fakeAgent.prompts[0].text).toContain(
@@ -1019,6 +1022,64 @@ describe('ACP runtime session management', () => {
       )
     }
   )
+
+  it('gives OpenCode stable underscore names for every app-owned MCP on create and resume', async () => {
+    const root = await createTemporaryRoot()
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['opencode-session'], { supportsResume: true })
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework,
+      activityGroups: { mcpEntryPath: '/app/out/main/index.js' },
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js'
+      },
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+      },
+      skillImport: {
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4568',
+          token: 'skill'
+        })
+      }
+    })
+
+    const created = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: created.sessionId, text: 'Use every app tool' })
+    await runtime.resumeSession({ sessionId: 'resumed-opencode-session', cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: 'resumed-opencode-session', text: 'Continue with tools' })
+
+    const expectedServerNames = [
+      'open_science_activity',
+      'open_science_artifacts',
+      'open_science_notebook',
+      'open_science_skills'
+    ]
+    expect(
+      fakeAgent.newSessions[0].mcpServers.map((server) => (server as { name: string }).name)
+    ).toEqual(expectedServerNames)
+    expect(
+      fakeAgent.resumedSessions[0].mcpServers.map((server) => (server as { name: string }).name)
+    ).toEqual(expectedServerNames)
+
+    for (const prompt of fakeAgent.prompts) {
+      expect(prompt.text).toContain('`open_science_activity_begin_activity_group`')
+      expect(prompt.text).toContain('`open_science_artifacts_write_artifact_file`')
+      expect(prompt.text).toContain('`open_science_notebook_notebook_execute`')
+      expect(prompt.text).toContain('open_science_skills_request_skill_import')
+      expect(prompt.text).not.toContain('`open-science-')
+    }
+  })
+
   it('applies native Full access before the first prompt', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['full-session'], {
@@ -2318,7 +2379,7 @@ describe('ACP runtime session management', () => {
             update: {
               sessionUpdate: 'tool_call',
               toolCallId,
-              title: 'open-science-notebook_notebook_execute',
+              title: 'open_science_notebook_notebook_execute',
               kind: 'other',
               status: 'pending',
               rawInput: { language: 'python', code: 'print(1)' }
@@ -2339,7 +2400,7 @@ describe('ACP runtime session management', () => {
           sessionId: ctx.params.sessionId,
           toolCall: {
             toolCallId,
-            title: 'open-science-notebook_notebook_execute',
+            title: 'open_science_notebook_notebook_execute',
             kind: 'other',
             status: 'pending',
             rawInput: {}
@@ -2354,7 +2415,7 @@ describe('ACP runtime session management', () => {
           update: {
             sessionUpdate: 'tool_call',
             toolCallId,
-            title: 'open-science-notebook_notebook_execute',
+            title: 'open_science_notebook_notebook_execute',
             kind: 'other',
             status: 'in_progress',
             rawInput: { language: 'r', code: 'print(2)' }
@@ -3631,15 +3692,15 @@ describe('ACP runtime session management', () => {
       expect(servers.map((server) => server.type)).toEqual(['http', 'http', 'http'])
       expect(servers.map((server) => server.name)).toEqual(
         expect.arrayContaining([
-          'open-science-artifacts',
-          'open-science-notebook',
-          'open-science-skills'
+          'open_science_artifacts',
+          'open_science_notebook',
+          'open_science_skills'
         ])
       )
-      const artifactServer = servers.find((server) => server.name === 'open-science-artifacts')
+      const artifactServer = servers.find((server) => server.name === 'open_science_artifacts')
       expect(artifactServer?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp\/artifact\//)
       expect(artifactServer?.headers?.[0]).toMatchObject({ name: 'authorization' })
-      const skillImportServer = servers.find((server) => server.name === 'open-science-skills')
+      const skillImportServer = servers.find((server) => server.name === 'open_science_skills')
       expect(skillImportServer?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp\/skill-import\//)
       expect(fakeAgent.prompts[0].text).toContain('request_skill_import')
 
@@ -4013,8 +4074,10 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().pendingPermissions).toEqual([])
   })
 
-  it('audits each permission request, classifying MCP origin without logging the tool title', async () => {
+  it('audits OpenCode MCP calls with canonical identities without logging raw tool titles', async () => {
     infoLogSpy.mockClear()
+    warnLogSpy.mockClear()
+    errorLogSpy.mockClear()
     const process = new FakeAgentProcess()
 
     acp
@@ -4031,12 +4094,22 @@ describe('ACP runtime session management', () => {
       }))
       .onRequest(acp.methods.agent.session.new, () => ({ sessionId: 'remote-session-1' }))
       .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
-        // opencode renames the artifact MCP tool <server>_<tool>; classification must not rely on mcp__.
+        await ctx.client.notify(acp.methods.client.session.update, {
+          sessionId: 'remote-session-1',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'tool-mcp',
+            title: 'open_science_artifacts_write_artifact_file',
+            kind: 'other',
+            status: 'pending',
+            rawInput: { filename: 'result.md', content: '# Result' }
+          }
+        })
         await ctx.client.request(acp.methods.client.session.requestPermission, {
           sessionId: 'remote-session-1',
           toolCall: {
             toolCallId: 'tool-mcp',
-            title: 'open-science-artifacts_write_artifact_file',
+            title: 'open_science_artifacts_write_artifact_file',
             kind: 'other',
             status: 'pending'
           },
@@ -4050,6 +4123,28 @@ describe('ACP runtime session management', () => {
             title: 'https://example.com/secret?token=abc123',
             kind: 'fetch',
             status: 'pending'
+          },
+          options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+        })
+        await ctx.client.notify(acp.methods.client.session.update, {
+          sessionId: 'remote-session-1',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'tool-failed',
+            title: 'open_science_artifacts_write_artifact_file',
+            kind: 'other',
+            status: 'failed',
+            _meta: { toolName: 'open_science_artifacts_write_artifact_file' }
+          }
+        })
+        await ctx.client.request(acp.methods.client.session.requestPermission, {
+          sessionId: 'remote-session-1',
+          toolCall: {
+            toolCallId: 'tool-error',
+            title: 'open_science_artifacts_delete_artifact',
+            kind: 'other',
+            status: 'pending',
+            _meta: { toolName: 'open_science_artifacts_delete_artifact' }
           },
           options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
         })
@@ -4070,6 +4165,7 @@ describe('ACP runtime session management', () => {
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework,
       artifacts: {
         configRoot: root,
         dataRoot: root,
@@ -4079,33 +4175,57 @@ describe('ACP runtime session management', () => {
       },
       callbacks: {
         onPermissionRequest: (request) => {
+          if (request.title === 'open_science_artifacts_delete_artifact') {
+            throw new Error('permission callback failed')
+          }
           runtime.respondToPermission({ requestId: request.requestId, optionId: 'allow-once' })
         }
       }
     })
     const session = await runtime.createSession({ cwd: '/workspace' })
 
-    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'trigger permission audit' })
+    await expect(
+      runtime.sendPrompt({ sessionId: session.sessionId, text: 'trigger permission audit' })
+    ).rejects.toThrow('Internal error')
 
     const auditCalls = infoLogSpy.mock.calls.filter(
       ([message]) => message === 'permission request received'
     )
-    expect(auditCalls).toHaveLength(2)
+    expect(auditCalls).toHaveLength(3)
 
     const dataFor = (toolCallId: string): Record<string, unknown> =>
       auditCalls.find(
         ([, data]) => (data as { toolCallId?: string }).toolCallId === toolCallId
       )?.[1] as Record<string, unknown>
 
-    // The opencode-named MCP tool is classified as MCP even though it lacks the mcp__ prefix.
+    // OpenCode's model-facing identity is classified as MCP but logged with the canonical identity.
     expect(dataFor('tool-mcp').isMcp).toBe(true)
+    expect(dataFor('tool-mcp').tool).toBe('open-science-artifacts/write_artifact_file')
     expect(dataFor('tool-fetch').isMcp).toBe(false)
 
-    // No audit payload may carry the raw tool title (MCP tool name or WebFetch URL are user/sensitive).
-    for (const [, data] of auditCalls) {
+    const failureAudit = warnLogSpy.mock.calls.find(([message]) => message === 'tool call failed')
+    expect(failureAudit?.[1]).toMatchObject({
+      tool: 'open-science-artifacts/write_artifact_file',
+      toolCallId: 'tool-failed'
+    })
+
+    const errorAudit = errorLogSpy.mock.calls.find(
+      ([message]) => message === 'permission request failed'
+    )
+    expect(errorAudit?.[1]).toMatchObject({
+      tool: 'open-science-artifacts/delete_artifact',
+      toolCallId: 'tool-error'
+    })
+
+    // No audit payload may carry the raw model-facing title or WebFetch URL.
+    for (const [, data] of [
+      ...auditCalls,
+      ...(failureAudit ? [failureAudit] : []),
+      ...(errorAudit ? [errorAudit] : [])
+    ]) {
       const serialized = JSON.stringify(data)
       expect(serialized).not.toContain('example.com')
-      expect(serialized).not.toContain('write_artifact_file')
+      expect(serialized).not.toContain('open_science_artifacts_write_artifact_file')
     }
   })
 
@@ -4284,7 +4404,7 @@ describe('ACP runtime session management', () => {
           update: {
             sessionUpdate: 'tool_call',
             toolCallId,
-            title: 'open-science-notebook_notebook_execute',
+            title: 'open_science_notebook_notebook_execute',
             kind: 'other',
             status: 'pending',
             rawInput: {}
@@ -4296,7 +4416,7 @@ describe('ACP runtime session management', () => {
             sessionId: ctx.params.sessionId,
             toolCall: {
               toolCallId,
-              title: 'open-science-notebook_notebook_execute',
+              title: 'open_science_notebook_notebook_execute',
               kind: 'other',
               status: 'pending',
               locations: [],
@@ -4399,6 +4519,66 @@ describe('ACP runtime session management', () => {
     ])
   })
 
+  it('maps an OpenCode underscore MCP permission to a canonical notebook grant', async () => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: AcpPermissionRequest[] = []
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'opencode-underscore-notebook-session',
+      toolCallId: 'opencode-underscore-notebook-call',
+      toolTitle: 'open_science_notebook_notebook_execute',
+      toolRawInput: { code: 'print(1)', language: 'python' },
+      permissionOptions: [
+        { optionId: 'once', kind: 'allow_once', name: 'Allow once' },
+        { optionId: 'always', kind: 'allow_always', name: 'Always allow' },
+        { optionId: 'reject', kind: 'reject_once', name: 'Reject' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework,
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+      },
+      callbacks: {
+        onPermissionRequest: (request) => {
+          permissionRequests.push(request)
+          const sessionOptionId = request.options.find(
+            (option) => option.scope === 'session'
+          )?.optionId
+          if (!sessionOptionId) throw new Error('Missing conversation permission option')
+          runtime.respondToPermission({ requestId: request.requestId, optionId: sessionOptionId })
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'run notebook code' })
+
+    expect(permissionRequests).toHaveLength(1)
+    expect(permissionRequests[0]).toMatchObject({
+      title: 'open_science_notebook_notebook_execute',
+      isMcp: true,
+      rawInput: { code: 'print(1)', language: 'python' }
+    })
+    expect(permissionResponse).toEqual({ outcome: { outcome: 'selected', optionId: 'once' } })
+    expect(runtime.getSnapshot().permissionGrants[session.sessionId]).toEqual([
+      {
+        categoryKey: 'mcp:open-science-notebook/notebook_execute:python',
+        kind: 'mcp',
+        label: 'Notebook REPL (Python)',
+        scope: 'session'
+      }
+    ])
+  })
+
   it('auto-allows the app-owned Artifact save without emitting a renderer permission', async () => {
     const process = new FakeAgentProcess()
     const permissionRequests: AcpPermissionRequest[] = []
@@ -4421,7 +4601,7 @@ describe('ACP runtime session management', () => {
           update: {
             sessionUpdate: 'tool_call',
             toolCallId,
-            title: 'open-science-artifacts_write_artifact_file',
+            title: 'open_science_artifacts_write_artifact_file',
             kind: 'other',
             status: 'pending',
             rawInput: {}
@@ -4432,7 +4612,7 @@ describe('ACP runtime session management', () => {
           sessionId: ctx.params.sessionId,
           toolCall: {
             toolCallId,
-            title: 'open-science-artifacts_write_artifact_file',
+            title: 'open_science_artifacts_write_artifact_file',
             kind: 'other',
             status: 'pending',
             rawInput: {}
@@ -4488,6 +4668,44 @@ describe('ACP runtime session management', () => {
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'write artifact' })
 
     expect(permissionRequests).toHaveLength(0)
+  })
+
+  it('auto-allows the OpenCode underscore Activity group declaration', async () => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: AcpPermissionRequest[] = []
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'opencode-underscore-activity-session',
+      toolCallId: 'opencode-underscore-activity-call',
+      toolTitle: 'open_science_activity_begin_activity_group',
+      toolRawInput: { title: 'Inspect the project' },
+      permissionOptions: [
+        { optionId: 'once', kind: 'allow_once', name: 'Allow once' },
+        { optionId: 'reject', kind: 'reject_once', name: 'Reject' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework,
+      activityGroups: { mcpEntryPath: '/app/out/main/index.js' },
+      callbacks: {
+        onPermissionRequest: (request) => {
+          permissionRequests.push(request)
+          runtime.respondToPermission({ requestId: request.requestId, cancelled: true })
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'inspect the project' })
+
+    expect(permissionRequests).toHaveLength(0)
+    expect(permissionResponse).toEqual({ outcome: { outcome: 'selected', optionId: 'once' } })
   })
 
   it('auto-allows a Codex Artifact save restored from its sparse MCP approval', async () => {

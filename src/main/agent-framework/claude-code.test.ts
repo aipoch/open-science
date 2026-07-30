@@ -59,13 +59,23 @@ describe('claudeCodeFramework', () => {
     expect(setup.persistentSystemPrompt).toBe(systemPrompt.append)
   })
 
-  it.each([
-    ['Codex', codexFramework],
-    ['OpenCode', opencodeFramework]
-  ])('keeps generic MCP tool references unchanged for %s', (_name, framework) => {
+  it('keeps generic MCP tool references unchanged for Codex', () => {
     const append = 'Use `notebook_execute` and then `write_artifact_file`.'
 
-    expect(framework.buildSessionSetup({ systemPromptAppends: [append] }).promptPrefix).toBe(append)
+    expect(codexFramework.buildSessionSetup({ systemPromptAppends: [append] }).promptPrefix).toBe(
+      append
+    )
+  })
+
+  it('renders generic MCP tool references as OpenCode callable names', () => {
+    const append =
+      'Use `notebook_execute` from `open-science-notebook`, then `write_artifact_file`.'
+
+    expect(
+      opencodeFramework.buildSessionSetup({ systemPromptAppends: [append] }).promptPrefix
+    ).toBe(
+      'Use `open_science_notebook_notebook_execute` from `open_science_notebook`, then `open_science_artifacts_write_artifact_file`.'
+    )
   })
 
   it('keeps already-namespaced Claude MCP tool references unchanged', () => {
