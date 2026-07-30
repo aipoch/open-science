@@ -645,6 +645,22 @@ describe('workspace tool activity details', () => {
     expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).not.toContain('a,b')
   })
 
+  it('does not classify artifact-file lookalikes as managed writes', () => {
+    const activity = createActivity({
+      providerToolName: 'delete_artifact_file',
+      toolKind: 'other',
+      title: 'Delete artifact file',
+      rawInput: { filename: 'obsolete.csv' },
+      rawOutput: { deleted: true }
+    })
+
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('delete_artifact_file')
+    expect(details?.sections.map((section) => section.label)).toEqual(['Input', 'Output'])
+    expect(details?.sections[1]?.kind === 'code' && details.sections[1].text).toContain('deleted')
+  })
+
   it('summarizes a Codex artifact receipt envelope when the MCP identity is only in the title', () => {
     const artifactReceipt = {
       artifact: {

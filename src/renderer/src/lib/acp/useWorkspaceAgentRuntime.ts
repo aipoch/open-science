@@ -63,19 +63,14 @@ type SendWorkspaceMessageInput = {
   // internal re-resume below runs against an already-attached session and can't report the reset
   // again, so this forces the prior turns to be replayed as a history preamble on the re-sent turn.
   forceHistoryReplay?: boolean
-  // Set by the edit-resend path, which appends the adjusted prompt optimistically (with its run
-  // already marked) so the bubble and waiting indicator show immediately. The duplicate-submit
-  // guard and the local append are skipped, and the replayed history stops before this message.
-  preAppendedMessageId?: string
   // Current Provider capability, injected by the hook so context replay cannot bypass image gating.
   supportsImageInput?: boolean
+  // Internal edit-resend seam: reset the selected runtime first, then replace the active Branch from
+  // this message and replay only the retained prefix into the fresh context.
+  truncateFromMessageId?: string
   // Internal overflow-recovery handoff: that flow owns the compacting state and replaces it with the
   // retried run synchronously. Ordinary composer sends must never bypass the local compaction gate.
   allowCompactionRecovery?: boolean
-  // Edit-resend performs the reset itself so it can roll back the optimistic Branch on failure. The
-  // common send path still owns replay completion and clears the durable retry marker only after the
-  // provider accepts the prompt.
-  branchContextAlreadyReset?: boolean
   // Immutable Specialist UUID from the new-conversation draft picker. Only used when creating a new
   // ACP session (sessionId === undefined). The renderer sends only the UUID; the main process reads
   // the latest Profile. Never passed for existing sessions (specialist binding is immutable).
@@ -88,6 +83,7 @@ type SendWorkspaceMessageResult = {
 }
 
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
+type RuntimeEventDrain = () => Promise<void>
 
 // Payload of an inline edit resend: the adjusted prompt text plus the mentions it carries. The
 // session/message ids stay separate because they address the truncation point, not the prompt.
@@ -99,6 +95,15 @@ type ResendEditedMessageInput = {
   forcedSkillIds?: string[]
   // Files referenced via `@` mentions in the inline editor; attached to the resent prompt.
   referencedArtifacts?: FileReference[]
+}
+
+type ResendEditedWorkspaceMessageOptions = {
+  supportsImageInput?: boolean
+  agentFrameworkId?: AgentFrameworkId
+  agentBackendId?: string
+  agentModel?: string
+  onSendPreparationStateChange?: SendPreparationStateChange
+  drainRuntimeEvents?: RuntimeEventDrain
 }
 
 type WorkspaceMessageRuntime = Pick<
@@ -492,13 +497,13 @@ const sendWorkspaceMessage = async (
     referencedArtifacts,
     parts,
     forceHistoryReplay,
-    preAppendedMessageId,
     supportsImageInput,
+    truncateFromMessageId,
     allowCompactionRecovery,
-    branchContextAlreadyReset,
     specialistId
   }: SendWorkspaceMessageInput,
-  onSendPreparationStateChange?: SendPreparationStateChange
+  onSendPreparationStateChange?: SendPreparationStateChange,
+  drainRuntimeEvents?: RuntimeEventDrain
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   const content = text.trim()
 
@@ -514,12 +519,11 @@ const sendWorkspaceMessage = async (
       .sessions.find((session) => session.id === targetSessionId)
 
     // Runtime ownership is authoritative while native compaction or another control turn is active.
-    // A pre-appended prompt may bypass only the local status guard because it marked its own run.
     if (
       runtime.state.promptInFlightSessionIds.includes(targetSessionId) ||
       (currentSession?.compacting && !allowCompactionRecovery) ||
-      (!preAppendedMessageId &&
-        (currentSession?.status === 'running' || currentSession?.status === 'waiting-permission'))
+      currentSession?.status === 'running' ||
+      currentSession?.status === 'waiting-permission'
     ) {
       return undefined
     }
@@ -574,7 +578,7 @@ const sendWorkspaceMessage = async (
     const runtimeDetached = !runtime.state.sessionIds.includes(targetSessionId)
     const runtimeMustAdoptSession = selectedRuntimeChanged || runtimeDetached
     const branchResetRequired = Boolean(
-      currentSession?.branchContextResetRequired && !branchContextAlreadyReset
+      truncateFromMessageId || currentSession?.branchContextResetRequired
     )
     const sendPreparationRequired = branchResetRequired || runtimeMustAdoptSession
 
@@ -588,8 +592,8 @@ const sendWorkspaceMessage = async (
     // Notebook context and guarantee a fresh Agent context. A selected-runtime change must adopt first
     // so any required reset executes on the new owner. Only an already-attached selected runtime can
     // reset directly; detached sessions adopt first so a stale coordinator owner cannot receive it.
-    let branchContextResetPerformed = Boolean(branchContextAlreadyReset)
-    let agentContextResetPerformed = Boolean(branchContextAlreadyReset)
+    let branchContextResetPerformed = false
+    let agentContextResetPerformed = false
     let shouldResumeSession = false
     let contextResetFromResume = false
 
@@ -663,6 +667,11 @@ const sendWorkspaceMessage = async (
             .markResumed(targetSessionId, reset?.frameworkId, reset?.backendId)
           contextResetFromResume = true
         }
+
+        // The coordinator waits for the prior owner to stop before committing adoption, but its
+        // retained events still cross the asynchronous renderer bridge. Apply the latest accepted
+        // snapshot before opening the new optimistic run so a terminal event cannot settle that run.
+        await drainRuntimeEvents?.()
       }
     } catch (error) {
       useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
@@ -674,16 +683,21 @@ const sendWorkspaceMessage = async (
       }
     }
 
-    // A pre-appended prompt replays only the turns that precede it, so the resent turn is not
-    // duplicated into its own preamble.
-    const preAppendedCutIndex =
-      preAppendedMessageId && currentSession
-        ? currentSession.messages.findIndex((message) => message.id === preAppendedMessageId)
+    const preparedSession = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === targetSessionId)
+
+    // An edited resend replays only the retained Branch prefix.
+    const historyCutMessageId = truncateFromMessageId
+    const historyCutIndex =
+      historyCutMessageId && preparedSession
+        ? preparedSession.messages.findIndex((message) => message.id === historyCutMessageId)
         : -1
+    if (truncateFromMessageId && historyCutIndex < 0) return undefined
     const historyMessages =
-      currentSession && preAppendedCutIndex >= 0
-        ? currentSession.messages.slice(0, preAppendedCutIndex)
-        : currentSession?.messages
+      preparedSession && historyCutIndex >= 0
+        ? preparedSession.messages.slice(0, historyCutIndex)
+        : preparedSession?.messages
 
     // Resume before creating the optimistic run. A draining runtime can emit its terminal event while
     // adoption is in flight; keeping the old Runtime Segment active until resume succeeds lets that
@@ -692,23 +706,23 @@ const sendWorkspaceMessage = async (
     let historyAttachments: UploadedAttachment[] | undefined
     let historyImages: AcpMessageImage[] | undefined
 
-    const appended = preAppendedMessageId
-      ? { sessionId: targetSessionId, messageId: preAppendedMessageId }
-      : useSessionStore.getState().appendUserMessage({
-          sessionId: targetSessionId,
-          content,
-          attachments,
-          parts,
-          cwd: targetCwd,
-          projectId: projectId ?? currentSession?.projectId,
-          // Bind the optimistic prompt to the selected Runtime Segment only when this send adopted
-          // that runtime. A local Branch reset otherwise continues on the current owner.
-          agentFrameworkId: shouldResumeSession
-            ? agentFrameworkId
-            : currentSession?.agentFrameworkId,
-          agentBackendId: shouldResumeSession ? agentBackendId : currentSession?.agentBackendId,
-          agentModel
-        })
+    if (truncateFromMessageId) {
+      useSessionStore.getState().truncateSessionFromMessage(targetSessionId, truncateFromMessageId)
+    }
+
+    const appended = useSessionStore.getState().appendUserMessage({
+      sessionId: targetSessionId,
+      content,
+      attachments,
+      parts,
+      cwd: targetCwd,
+      projectId: projectId ?? preparedSession?.projectId,
+      // Bind the optimistic prompt to the selected Runtime Segment only when this send adopted
+      // that runtime. A local Branch reset otherwise continues on the current owner.
+      agentFrameworkId: shouldResumeSession ? agentFrameworkId : preparedSession?.agentFrameworkId,
+      agentBackendId: shouldResumeSession ? agentBackendId : preparedSession?.agentBackendId,
+      agentModel
+    })
 
     // appendUserMessage can reject stale session ids after local deletion or hydration changes.
     if (!appended) return undefined
@@ -1170,8 +1184,14 @@ const cancelWorkspaceRun = async (
 const resendEditedWorkspaceMessage = async (
   runtime: WorkspaceMessageRuntime,
   input: ResendEditedMessageInput & { sessionId: string; messageId: string },
-  supportsImageInput?: boolean,
-  agentModel?: string
+  {
+    supportsImageInput,
+    agentFrameworkId,
+    agentBackendId,
+    agentModel,
+    onSendPreparationStateChange,
+    drainRuntimeEvents
+  }: ResendEditedWorkspaceMessageOptions = {}
 ): Promise<boolean> => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === input.sessionId)
 
@@ -1206,59 +1226,30 @@ const resendEditedWorkspaceMessage = async (
     return false
   }
 
-  // The optimistic Branch projection + append replaces the visible downstream path while retaining
-  // the original Branch in Session JSON; the adjusted prompt becomes a live run immediately.
-  const preEditSession = session
-  useSessionStore.getState().truncateSessionFromMessage(input.sessionId, input.messageId)
-  const appended = useSessionStore.getState().appendUserMessage({
-    sessionId: input.sessionId,
-    content,
-    attachments: [],
-    parts: input.parts,
-    cwd: resumeCwd,
-    projectId: session.projectId,
-    agentModel
-  })
+  const resent = await sendWorkspaceMessage(
+    runtime,
+    {
+      sessionId: input.sessionId,
+      text: content,
+      attachments: [],
+      parts: input.parts,
+      cwd: resumeCwd,
+      projectId: session.projectId,
+      permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+      forcedSkillIds: input.forcedSkillIds,
+      referencedArtifacts: input.referencedArtifacts,
+      agentFrameworkId,
+      agentBackendId,
+      agentModel,
+      // Reset/adopt while the old Branch remains visible, then replace it only after preparation.
+      truncateFromMessageId: input.messageId,
+      supportsImageInput
+    },
+    onSendPreparationStateChange,
+    drainRuntimeEvents
+  )
 
-  if (!appended) return false
-
-  try {
-    await shutdownNotebookForBranchChange(input.sessionId, resumeCwd, session.projectId)
-    await runtime.resetSessionContext(
-      input.sessionId,
-      resumeCwd,
-      session.projectId,
-      session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
-    )
-  } catch (error) {
-    // Roll the transcript back to the pre-edit state so a failed reset deletes nothing, then
-    // surface the failure on the restored conversation.
-    useSessionStore.setState((state) => ({
-      sessions: state.sessions.map((item) => (item.id === input.sessionId ? preEditSession : item))
-    }))
-    useSessionStore.getState().failRun(input.sessionId, getResumeFailureMessage(error))
-    return false
-  }
-
-  await sendWorkspaceMessage(runtime, {
-    sessionId: input.sessionId,
-    text: content,
-    attachments: [],
-    parts: input.parts,
-    cwd: resumeCwd,
-    projectId: session.projectId,
-    permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-    forcedSkillIds: input.forcedSkillIds,
-    referencedArtifacts: input.referencedArtifacts,
-    // The fresh agent session lost the prior context, so replay the truncated transcript.
-    forceHistoryReplay: true,
-    preAppendedMessageId: appended.messageId,
-    supportsImageInput,
-    branchContextAlreadyReset: true,
-    agentModel
-  })
-
-  return true
+  return Boolean(resent)
 }
 
 // Scans runtime error events for the request-size overflow and triggers one auto-recovery per event.
@@ -1414,6 +1405,7 @@ const useWorkspaceAgentRuntime = (): {
   const activeModel = useSettingsStore((state) => state.activeModel)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const agentBackendId = activeProviderId ? `${agentFrameworkId}:${activeProviderId}` : undefined
   const [sendPreparationInFlightSessionIds, setSendPreparationInFlightSessionIds] = useState<
     string[]
   >([])
@@ -1428,6 +1420,10 @@ const useWorkspaceAgentRuntime = (): {
     []
   )
   const eventProcessor = useRef(createWorkspaceRuntimeEventProcessor())
+  const drainRuntimeEvents = useCallback(async (): Promise<void> => {
+    const snapshot = await window.api.acp.getState()
+    await eventProcessor.current.process(snapshot.events)
+  }, [])
   // Tracks the last connection status so the disconnect effect fires only on a transition, not on
   // every unrelated snapshot re-render.
   const previousStatusRef = useRef(runtime.state.status)
@@ -1498,18 +1494,20 @@ const useWorkspaceAgentRuntime = (): {
           ...input,
           supportsImageInput,
           agentFrameworkId,
-          agentBackendId: activeProviderId ? `${agentFrameworkId}:${activeProviderId}` : undefined,
+          agentBackendId,
           agentModel: activeModel
         },
-        handleSendPreparationStateChange
+        handleSendPreparationStateChange,
+        drainRuntimeEvents
       ),
     [
       runtime,
       supportsImageInput,
       agentFrameworkId,
-      activeProviderId,
+      agentBackendId,
       activeModel,
-      handleSendPreparationStateChange
+      handleSendPreparationStateChange,
+      drainRuntimeEvents
     ]
   )
 
@@ -1520,10 +1518,24 @@ const useWorkspaceAgentRuntime = (): {
       resendEditedWorkspaceMessage(
         runtime,
         { sessionId, messageId, ...input },
-        supportsImageInput,
-        activeModel
+        {
+          supportsImageInput,
+          agentFrameworkId,
+          agentBackendId,
+          agentModel: activeModel,
+          onSendPreparationStateChange: handleSendPreparationStateChange,
+          drainRuntimeEvents
+        }
       ),
-    [runtime, supportsImageInput, activeModel]
+    [
+      runtime,
+      supportsImageInput,
+      agentFrameworkId,
+      agentBackendId,
+      activeModel,
+      handleSendPreparationStateChange,
+      drainRuntimeEvents
+    ]
   )
 
   const compactContext = useCallback(

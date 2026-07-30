@@ -23,6 +23,12 @@ import { ConversationPermissionGrantStore } from './permission-broker'
 
 const MAX_EVENTS = 500
 
+const isOwnershipScopedControlEvent = (event: AcpRuntimeEvent): boolean =>
+  event.kind === 'compaction' || event.recoverable === 'context-overflow'
+
+const hasArtifactProvenance = (event: AcpRuntimeEvent): boolean =>
+  Boolean(event.runId && event.promptMessageId && event.artifactClaimId)
+
 type RuntimeFactory = (
   callbacks: AcpRuntimeCallbacks,
   permissionGrantStore: ConversationPermissionGrantStore
@@ -783,12 +789,23 @@ class AcpRuntimeCoordinator {
   }
 
   private shouldPublishEvent(runtime: AcpRuntime, event: AcpRuntimeEvent): boolean {
-    const publishedEventIds = this.publishedRuntimeEventIds.get(runtime)
-    if (publishedEventIds?.has(event.id)) return true
-
     const owner = event.sessionId ? this.sessionRuntimes.get(event.sessionId) : undefined
+    const belongsToPreviousOwner = owner !== undefined && owner !== runtime
+    const publishedEventIds = this.publishedRuntimeEventIds.get(runtime)
+    if (publishedEventIds?.has(event.id)) {
+      // Chat/tool/stop events admitted during the drain stay visible long enough for the renderer to
+      // consume them. Control events must not survive ownership transfer, because a remounted hook has
+      // no durable dedup state and would execute the old recovery lifecycle again.
+      if (belongsToPreviousOwner && isOwnershipScopedControlEvent(event)) return false
+      if (belongsToPreviousOwner && event.kind === 'artifact') return hasArtifactProvenance(event)
+      return true
+    }
+
     const shouldPublish =
-      !event.sessionId || event.kind === 'artifact' || owner === undefined || owner === runtime
+      !event.sessionId ||
+      owner === undefined ||
+      owner === runtime ||
+      (event.kind === 'artifact' && hasArtifactProvenance(event))
 
     if (shouldPublish) {
       const remembered = publishedEventIds ?? new Set<string>()

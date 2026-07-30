@@ -734,17 +734,29 @@ describe('AcpRuntimeCoordinator', () => {
         }
       ]
     })
+    created[0].emitEvent({
+      id: 'late-codex-unprovenanced-artifact',
+      timestamp: 4,
+      kind: 'artifact',
+      level: 'info',
+      sessionId: session.sessionId,
+      runId: 'old-run',
+      artifactClaimId: 'old-unprovenanced-claim',
+      artifacts: []
+    })
     expect(forwardedEvents.map((event) => event.id)).toEqual([
       expect.stringMatching(runtimeEventId(1, 'owner-tool')),
       expect.stringMatching(runtimeEventId(1, 'late-codex-tool')),
       expect.stringMatching(runtimeEventId(1, 'late-codex-stop')),
-      expect.stringMatching(runtimeEventId(1, 'late-codex-artifact'))
+      expect.stringMatching(runtimeEventId(1, 'late-codex-artifact')),
+      expect.stringMatching(runtimeEventId(1, 'late-codex-unprovenanced-artifact'))
     ])
     expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([
       expect.stringMatching(runtimeEventId(1, 'owner-tool')),
       expect.stringMatching(runtimeEventId(1, 'late-codex-tool')),
       expect.stringMatching(runtimeEventId(1, 'late-codex-stop')),
-      expect.stringMatching(runtimeEventId(1, 'late-codex-artifact'))
+      expect.stringMatching(runtimeEventId(1, 'late-codex-artifact')),
+      expect.stringMatching(runtimeEventId(1, 'late-codex-unprovenanced-artifact'))
     ])
 
     adoption.resolve()
@@ -756,6 +768,16 @@ describe('AcpRuntimeCoordinator', () => {
     })
 
     created[0].emitEvent(toolEvent('post-adoption-codex-tool', 'shell'))
+    created[0].emitEvent({
+      id: 'post-adoption-unprovenanced-artifact',
+      timestamp: 5,
+      kind: 'artifact',
+      level: 'info',
+      sessionId: session.sessionId,
+      runId: 'old-run',
+      artifactClaimId: 'post-adoption-unprovenanced-claim',
+      artifacts: []
+    })
     created[1].emitEvent(
       toolEvent('fresh-claude-tool', 'mcp__open-science-artifacts__write_artifact_file')
     )
@@ -764,6 +786,7 @@ describe('AcpRuntimeCoordinator', () => {
       expect.stringMatching(runtimeEventId(1, 'late-codex-tool')),
       expect.stringMatching(runtimeEventId(1, 'late-codex-stop')),
       expect.stringMatching(runtimeEventId(1, 'late-codex-artifact')),
+      expect.stringMatching(runtimeEventId(1, 'late-codex-unprovenanced-artifact')),
       expect.stringMatching(runtimeEventId(2, 'fresh-claude-tool'))
     ])
     const adoptedSnapshotEventIds = coordinator.getSnapshot().events.map((event) => event.id)
@@ -778,6 +801,16 @@ describe('AcpRuntimeCoordinator', () => {
     )
     expect(adoptedSnapshotEventIds).not.toEqual(
       expect.arrayContaining([expect.stringMatching(runtimeEventId(1, 'post-adoption-codex-tool'))])
+    )
+    expect(adoptedSnapshotEventIds).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(runtimeEventId(1, 'late-codex-unprovenanced-artifact'))
+      ])
+    )
+    expect(forwardedEvents.map((event) => event.id)).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(runtimeEventId(1, 'post-adoption-unprovenanced-artifact'))
+      ])
     )
 
     retirement.resolve()
@@ -1003,9 +1036,7 @@ describe('AcpRuntimeCoordinator', () => {
     expect(forwardedEvents.map((event) => event.id)).toEqual([
       expect.stringMatching(runtimeEventId(1, 'owner-overflow'))
     ])
-    expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([
-      expect.stringMatching(runtimeEventId(1, 'owner-overflow'))
-    ])
+    expect(coordinator.getSnapshot().events).toEqual([])
 
     created[1].emitEvent(overflowEvent('fresh-owner-overflow'))
     expect(forwardedEvents.map((event) => event.id)).toEqual([
@@ -1013,7 +1044,6 @@ describe('AcpRuntimeCoordinator', () => {
       expect.stringMatching(runtimeEventId(2, 'fresh-owner-overflow'))
     ])
     expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([
-      expect.stringMatching(runtimeEventId(1, 'owner-overflow')),
       expect.stringMatching(runtimeEventId(2, 'fresh-owner-overflow'))
     ])
 
@@ -1073,9 +1103,7 @@ describe('AcpRuntimeCoordinator', () => {
     expect(forwardedEvents.map((event) => event.id)).toEqual([
       expect.stringMatching(runtimeEventId(1, 'owner-compaction'))
     ])
-    expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([
-      expect.stringMatching(runtimeEventId(1, 'owner-compaction'))
-    ])
+    expect(coordinator.getSnapshot().events).toEqual([])
 
     created[1].emitEvent(compactionEvent('fresh-owner-compaction', 'completed'))
     expect(forwardedEvents.map((event) => event.id)).toEqual([
@@ -1083,7 +1111,6 @@ describe('AcpRuntimeCoordinator', () => {
       expect.stringMatching(runtimeEventId(2, 'fresh-owner-compaction'))
     ])
     expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([
-      expect.stringMatching(runtimeEventId(1, 'owner-compaction')),
       expect.stringMatching(runtimeEventId(2, 'fresh-owner-compaction'))
     ])
 

@@ -412,7 +412,8 @@ describe('workspace agent message sending', () => {
       'project-1',
       'ask',
       'claude-code',
-      'claude-code:anthropic'
+      'claude-code:anthropic',
+      undefined
     )
     expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(
       resumeSession.mock.invocationCallOrder[0]
@@ -511,7 +512,8 @@ describe('workspace agent message sending', () => {
       'project-1',
       'ask',
       'claude-code',
-      'claude-code:anthropic'
+      'claude-code:anthropic',
+      undefined
     )
     expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(
       resumeSession.mock.invocationCallOrder[0]
@@ -532,6 +534,72 @@ describe('workspace agent message sending', () => {
       backendId: 'codex:builtin-codex-subscription'
     })
     expect(switchedSession.branchContextResetRequired).toBeUndefined()
+  })
+
+  it('drains accepted runtime events before opening the adopted run', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Original prompt',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code',
+      agentBackendId: 'claude-code:anthropic'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+
+    const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockResolvedValue({
+        sessionId: 'transport-session-1',
+        cwd: '/workspace/project',
+        contextReset: true,
+        frameworkId: 'codex',
+        backendId: 'codex:builtin-codex-subscription'
+      }),
+      resetSessionContext: vi.fn(),
+      sendPrompt
+    }
+    const drainRuntimeEvents = vi.fn(async () => {
+      await applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: 'accepted-final-message',
+          sessionId: 'transport-session-1',
+          messageId: 'accepted-agent-message',
+          role: 'assistant',
+          text: 'Accepted final answer'
+        })
+      )
+      await applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: 'accepted-stop',
+          sessionId: 'transport-session-1',
+          kind: 'stop'
+        })
+      )
+    })
+
+    await sendWorkspaceMessage(
+      runtime,
+      {
+        sessionId: 'transport-session-1',
+        text: 'Continue with Codex',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:builtin-codex-subscription'
+      },
+      undefined,
+      drainRuntimeEvents
+    )
+
+    expect(drainRuntimeEvents).toHaveBeenCalledOnce()
+    expect(sendPrompt.mock.calls[0]?.[5]).toContain('Accepted final answer')
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'running',
+      activeRun: { promptMessageId: expect.any(String) }
+    })
   })
 
   it('keeps Branch replay required when the reset prompt is rejected', async () => {
@@ -2876,7 +2944,94 @@ describe('resendEditedWorkspaceMessage', () => {
     vi.unstubAllGlobals()
   })
 
-  it('shows the resent bubble as a live run immediately, then replays the kept history', async () => {
+  it('adopts the selected runtime before resetting and opening the edited run', async () => {
+    seedConversation()
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        agentFrameworkId: 'claude-code',
+        agentBackendId: 'claude-code:anthropic'
+      }))
+    }))
+
+    const resumeGate = createDeferred<{
+      sessionId: string
+      cwd: string
+      contextReset: boolean
+      frameworkId: 'codex'
+      backendId: string
+    }>()
+    const resetGate = createDeferred<{ sessionId: string; cwd: string; contextReset: boolean }>()
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(() => resumeGate.promise),
+      resetSessionContext: vi.fn(() => resetGate.promise),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+    const preparationChanged = vi.fn()
+    const drainRuntimeEvents = vi.fn().mockResolvedValue(undefined)
+    const originalMessages = useSessionStore.getState().sessions[0]?.messages
+
+    const resentPromise = resendEditedWorkspaceMessage(
+      runtime,
+      {
+        sessionId: 'session-1',
+        messageId: 'user-2',
+        text: 'second prompt, edited'
+      },
+      {
+        supportsImageInput: true,
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:builtin-codex-subscription',
+        onSendPreparationStateChange: preparationChanged,
+        drainRuntimeEvents
+      }
+    )
+
+    await vi.waitFor(() => expect(runtime.resumeSession).toHaveBeenCalledOnce())
+    expect(preparationChanged).toHaveBeenCalledWith('session-1', true)
+    expect(useSessionStore.getState().sessions[0]?.messages).toEqual(originalMessages)
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+
+    resumeGate.resolve({
+      sessionId: 'session-1',
+      cwd: '/workspace/project',
+      contextReset: false,
+      frameworkId: 'codex',
+      backendId: 'codex:builtin-codex-subscription'
+    })
+    await vi.waitFor(() => expect(runtime.resetSessionContext).toHaveBeenCalledOnce())
+    expect(useSessionStore.getState().sessions[0]?.messages).toEqual(originalMessages)
+    expect(preparationChanged).not.toHaveBeenCalledWith('session-1', false)
+
+    resetGate.resolve({ sessionId: 'session-1', cwd: '/workspace/project', contextReset: true })
+    await expect(resentPromise).resolves.toBe(true)
+
+    expect(runtime.resumeSession).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace/project',
+      'default-project',
+      'ask',
+      'claude-code',
+      'claude-code:anthropic',
+      undefined
+    )
+    expect(runtime.resetSessionContext).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace/project',
+      'default-project',
+      'ask'
+    )
+    expect(drainRuntimeEvents).toHaveBeenCalledOnce()
+    expect(preparationChanged).toHaveBeenLastCalledWith('session-1', false)
+    expect(
+      useSessionStore.getState().sessions[0]?.messages.map((message) => message.content)
+    ).toEqual(['first prompt', 'first answer', 'second prompt, edited'])
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('opens the resent run after reset, then replays the kept history', async () => {
     seedConversation()
 
     const resetGate = createDeferred<{ sessionId: string; cwd: string; contextReset: boolean }>()
@@ -2898,20 +3053,18 @@ describe('resendEditedWorkspaceMessage', () => {
     })
     await flushRuntimeTasks()
 
-    // While the context reset is still in flight, the transcript already shows the adjusted prompt
-    // as a live run — the same immediate feedback as a composer send.
+    // Keep the existing Branch visible until reset succeeds so a terminal event from the prior
+    // runtime cannot settle the edited run.
     const duringReset = useSessionStore.getState().sessions[0]
     expect(duringReset?.messages.map((message) => message.id)).toEqual([
       'user-1',
       'agent-1',
-      expect.any(String)
+      'user-2',
+      'agent-2',
+      'user-3'
     ])
-    expect(duringReset?.messages.at(-1)).toMatchObject({
-      role: 'user',
-      content: 'second prompt, edited'
-    })
-    expect(duringReset?.status).toBe('running')
-    expect(duringReset?.activeRun?.promptMessageId).toBe(duringReset?.messages.at(-1)?.id)
+    expect(duringReset?.status).toBe('idle')
+    expect(duringReset?.activeRun).toBeUndefined()
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
 
     resetGate.resolve({ sessionId: 'session-1', cwd: '/workspace/project', contextReset: true })
@@ -3030,7 +3183,7 @@ describe('resendEditedWorkspaceMessage', () => {
     const resent = await resendEditedWorkspaceMessage(
       runtime,
       { sessionId: 'session-1', messageId: 'user-2', text: 'second prompt, edited' },
-      false
+      { supportsImageInput: false }
     )
 
     // The incompatible replay is rejected before the destructive cut: no reset, no prompt, and the
@@ -3080,7 +3233,7 @@ describe('resendEditedWorkspaceMessage', () => {
     const resent = await resendEditedWorkspaceMessage(
       runtime,
       { sessionId: 'session-1', messageId: 'user-2', text: 'second prompt, edited' },
-      false
+      { supportsImageInput: false }
     )
 
     // User uploads replay as image attachments, so they are gated exactly like agent-emitted images.
@@ -3139,7 +3292,7 @@ describe('resendEditedWorkspaceMessage', () => {
     const resent = await resendEditedWorkspaceMessage(
       runtime,
       { sessionId: 'session-1', messageId: 'user-2', text: 'second prompt, edited' },
-      true
+      { supportsImageInput: true }
     )
     await flushRuntimeTasks()
 

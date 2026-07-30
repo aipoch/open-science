@@ -379,7 +379,7 @@ const buildGenericDetails = (activity: ToolActivity): ToolActivityDetails | unde
   }
 }
 
-const ARTIFACT_WRITE_ACTIVITY_TITLES = new Set([
+const ARTIFACT_WRITE_ACTIVITY_IDENTITIES = new Set([
   'write_artifact_file',
   'write artifact file',
   'save_artifacts',
@@ -396,10 +396,8 @@ const isArtifactWriteActivity = (activity: ToolActivity): boolean => {
   const title = trimDetail(activity.title)?.toLowerCase() ?? ''
 
   return (
-    providerName === 'save_artifacts' ||
-    providerName.includes('artifact_file') ||
-    providerName.includes('write_artifact') ||
-    ARTIFACT_WRITE_ACTIVITY_TITLES.has(title)
+    ARTIFACT_WRITE_ACTIVITY_IDENTITIES.has(providerName) ||
+    ARTIFACT_WRITE_ACTIVITY_IDENTITIES.has(title)
   )
 }
 

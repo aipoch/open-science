@@ -286,7 +286,13 @@ describe('WorkspacePage send gate while compacting', () => {
 
     runtime.sendPreparationInFlightSessionIds = ['sess-a']
     await act(async () => {
-      root.render(<WorkspacePage isSessionPersistenceReady={true} />)
+      root.render(
+        <WorkspacePage
+          isSessionPersistenceHydrated={true}
+          isSessionPersistenceReady={true}
+          canDeleteConversations={true}
+        />
+      )
     })
 
     expect(conversationProps.canEditDraft).toBe(false)
