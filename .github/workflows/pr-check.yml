@@ -96,6 +96,16 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: npx vitest run src/main/notebook/windows-shell.integration.test.ts
 
+      # Keep the public service boundary covered without running the rest of the heavy runtime-service
+      # suite. This verifies that Windows tree termination is persisted as a timed-out notebook run.
+      - name: Test Windows notebook shell service timeout
+        if: matrix.os == 'windows-latest'
+        run: >-
+          npx vitest run
+          src/main/notebook/runtime-service.test.ts
+          --testNamePattern
+          "kills a command that outlasts the timeout and returns a non-normal result"
+
       # Full test suite + coverage gate on macOS (thresholds live in vitest.config.ts).
       - name: Test (with coverage)
         if: matrix.os == 'macos-14'

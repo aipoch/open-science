@@ -57,4 +57,16 @@ describe('PR Check platform test coverage', () => {
     expect(step['continue-on-error']).toBeUndefined()
     expect(step.run).toBe('npx vitest run src/main/notebook/windows-shell.integration.test.ts')
   })
+
+  it('hard-gates the Windows notebook shell service timeout', () => {
+    const step = getStep('Test Windows notebook shell service timeout')
+
+    expect(step.if).toBe("matrix.os == 'windows-latest'")
+    expect(step['continue-on-error']).toBeUndefined()
+    expect(step.run).toContain('src/main/notebook/runtime-service.test.ts')
+    expect(step.run).toContain('--testNamePattern')
+    expect(step.run).toContain(
+      'kills a command that outlasts the timeout and returns a non-normal result'
+    )
+  })
 })

@@ -761,15 +761,20 @@ const resolveShellInvocation = (
       }
     : { executable: 'sh', args: ['-c', command] }
 
-// Returns true when it delegated the tree teardown to the Windows-specific terminator. The dependency
-// is injectable to keep this platform boundary covered without needing a Windows host in unit tests.
-const terminateShellOnTimeout = (
+// Returns true after the Windows-specific tree terminator settles. Waiting prevents the service from
+// reporting completion while taskkill still holds workspace files open. The dependency is injectable
+// to keep this platform boundary covered without needing a Windows host in unit tests.
+const terminateShellOnTimeout = async (
   child: ChildProcess,
   platform: NodeJS.Platform = process.platform,
   terminateTree: (process: ChildProcess) => Promise<unknown> = terminateProcessTree
-): boolean => {
+): Promise<boolean> => {
   if (platform !== 'win32') return false
-  void terminateTree(child)
+  try {
+    await terminateTree(child)
+  } catch {
+    // Preserve runShellCommand's never-reject contract even when the best-effort terminator fails.
+  }
   return true
 }
 
@@ -808,6 +813,10 @@ const runShellCommand = (options: {
     // running (e.g. SIGTERM-ignoring) process from a killed one — gate the SIGKILL escalation below
     // on this instead.
     let exited = false
+    // Once the timer fires, the timeout result owns settlement. In particular, taskkill causes an
+    // exit event before its promise resolves on Windows; that event must not be persisted as a normal
+    // failed exit instead of the timeout that initiated termination.
+    let timedOut = false
 
     const finish = (result: NotebookShellResult): void => {
       if (settled) return
@@ -817,33 +826,32 @@ const runShellCommand = (options: {
     }
 
     const timeoutTimer = setTimeout(() => {
-      if (terminateShellOnTimeout(child)) {
-        // child.kill() only reaches the PowerShell parent on Windows; a command it launched may
-        // survive. taskkill /T /F reaps the full tree while this promise still settles immediately.
-        finish({
-          stdout,
-          stderr:
-            stderr +
-            `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command timed out after ${timeoutMs}ms and was killed.`,
-          exitCode: null
-        })
-        return
-      }
-
-      // Escalate SIGTERM -> SIGKILL if the process ignores the polite signal; the promise itself
-      // settles immediately so a wedged process can never hang the caller past the timeout.
-      child.kill('SIGTERM')
-      const killTimer = setTimeout(() => {
-        if (!exited) child.kill('SIGKILL')
-      }, SHELL_KILL_GRACE_MS)
-      child.once('exit', () => clearTimeout(killTimer))
-
-      finish({
+      timedOut = true
+      const timeoutResult: NotebookShellResult = {
         stdout,
         stderr:
           stderr +
           `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command timed out after ${timeoutMs}ms and was killed.`,
         exitCode: null
+      }
+
+      void terminateShellOnTimeout(child).then((usedWindowsTerminator) => {
+        if (usedWindowsTerminator) {
+          // child.kill() only reaches the PowerShell parent on Windows; taskkill /T /F reaps the
+          // full tree. Settle only after it completes so callers can safely inspect or remove cwd.
+          finish(timeoutResult)
+          return
+        }
+
+        // Escalate SIGTERM -> SIGKILL if the process ignores the polite signal; the promise itself
+        // settles immediately so a wedged process can never hang the caller past the timeout.
+        child.kill('SIGTERM')
+        const killTimer = setTimeout(() => {
+          if (!exited) child.kill('SIGKILL')
+        }, SHELL_KILL_GRACE_MS)
+        child.once('exit', () => clearTimeout(killTimer))
+
+        finish(timeoutResult)
       })
     }, timeoutMs)
 
@@ -856,11 +864,11 @@ const runShellCommand = (options: {
       stderr += chunk
     })
     child.once('error', (error) => {
-      finish({ stdout, stderr: stderr || error.message, exitCode: null })
+      if (!timedOut) finish({ stdout, stderr: stderr || error.message, exitCode: null })
     })
     child.once('exit', (code) => {
       exited = true
-      finish({ stdout, stderr, exitCode: code })
+      if (!timedOut) finish({ stdout, stderr, exitCode: code })
     })
   })
 

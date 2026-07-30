@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { runShellCommand } from './runtime-service'
 
-const runPowerShell = (command: string) =>
+const runPowerShell = (command: string): ReturnType<typeof runShellCommand> =>
   runShellCommand({
     command,
     cwd: process.cwd(),

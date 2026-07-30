@@ -211,10 +211,20 @@ describe('Windows shell support', () => {
 
   it('uses the Windows process-tree terminator for a timed-out shell command', () => {
     const child = {} as Parameters<typeof terminateShellOnTimeout>[0]
-    const terminateTree = vi.fn().mockResolvedValue({ reaped: true })
+    let finishTermination: ((result: { reaped: boolean }) => void) | undefined
+    const terminateTree = vi.fn(
+      () =>
+        new Promise<{ reaped: boolean }>((resolve) => {
+          finishTermination = resolve
+        })
+    )
 
-    expect(terminateShellOnTimeout(child, 'win32', terminateTree)).toBe(true)
+    const termination = terminateShellOnTimeout(child, 'win32', terminateTree)
+
+    expect(termination).toBeInstanceOf(Promise)
     expect(terminateTree).toHaveBeenCalledWith(child)
+    finishTermination?.({ reaped: true })
+    return expect(termination).resolves.toBe(true)
   })
 })
 
