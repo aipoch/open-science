@@ -244,6 +244,13 @@ import type {
 } from '../shared/reviewer'
 import { REVIEWER_IPC } from '../shared/reviewer'
 import type {
+  ApproveRemotePairingRequest,
+  RemoteAccessSnapshot,
+  RemotePairingRequestId,
+  RevokeRemoteBrowserRequest,
+  SetRemoteAccessModeRequest
+} from '../shared/remote-access'
+import type {
   CreateSpecialistRequest,
   UpdateSpecialistRequest,
   SetSpecialistEnabledRequest,
@@ -431,6 +438,16 @@ type OpenScienceAPI = {
     respondSkillImportApproval: (response: ConversationSkillImportApprovalResponse) => Promise<void>
     respondConnectorApproval: (request: RespondApprovalRequest) => Promise<void>
     onInstallLog: (listener: AcpListener<ClaudeInstallEvent>) => RemoveListener
+  }
+  remoteAccess: {
+    getSnapshot: () => Promise<RemoteAccessSnapshot>
+    detect: () => Promise<RemoteAccessSnapshot>
+    disable: () => Promise<RemoteAccessSnapshot>
+    setMode: (request: SetRemoteAccessModeRequest) => Promise<RemoteAccessSnapshot>
+    approve: (request: ApproveRemotePairingRequest) => Promise<RemoteAccessSnapshot>
+    reject: (request: RemotePairingRequestId) => Promise<RemoteAccessSnapshot>
+    revokeBrowser: (request: RevokeRemoteBrowserRequest) => Promise<RemoteAccessSnapshot>
+    onChanged: (listener: () => void) => RemoveListener
   }
   specialist: {
     list: () => Promise<SpecialistListItem[]>
@@ -1020,6 +1037,21 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('connectors:approval-respond', request) as Promise<void>,
     // Streams live installer output while a one-click install runs.
     onInstallLog: (listener) => onIpcMessage('settings:install-log', listener)
+  },
+  remoteAccess: {
+    getSnapshot: () =>
+      ipcRenderer.invoke('remote-access:get-snapshot') as Promise<RemoteAccessSnapshot>,
+    detect: () => ipcRenderer.invoke('remote-access:detect') as Promise<RemoteAccessSnapshot>,
+    disable: () => ipcRenderer.invoke('remote-access:disable') as Promise<RemoteAccessSnapshot>,
+    setMode: (request) =>
+      ipcRenderer.invoke('remote-access:set-mode', request) as Promise<RemoteAccessSnapshot>,
+    approve: (request) =>
+      ipcRenderer.invoke('remote-access:approve', request) as Promise<RemoteAccessSnapshot>,
+    reject: (request) =>
+      ipcRenderer.invoke('remote-access:reject', request) as Promise<RemoteAccessSnapshot>,
+    revokeBrowser: (request) =>
+      ipcRenderer.invoke('remote-access:revoke-browser', request) as Promise<RemoteAccessSnapshot>,
+    onChanged: (listener) => onIpcMessage('remote-access:changed', () => listener())
   },
   specialist: {
     list: () => ipcRenderer.invoke(SPECIALIST_IPC.LIST) as Promise<SpecialistListItem[]>,

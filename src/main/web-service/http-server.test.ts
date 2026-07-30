@@ -30,6 +30,8 @@ describe('startWebHttpServer', () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html><title>Web test</title>')
+    const largeScript = `window.__compressed = "${'a'.repeat(5_000)}"`
+    await writeFile(join(staticRoot, 'app.js'), largeScript)
     const rpc = {
       channels: () => [
         'projects:list',
@@ -69,12 +71,21 @@ describe('startWebHttpServer', () => {
     const cookie = login.headers.get('set-cookie')!.split(';', 1)[0]
 
     const bootstrap = await fetch(`${base}/api/bootstrap`, { headers: { cookie } })
+    expect(Number(bootstrap.headers.get('content-length'))).toBeGreaterThan(0)
     expect(await bootstrap.json()).toMatchObject({
       appName: 'Open Science',
       configRoot: '/fake/root',
       rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
       rpcChannels: ['projects:list']
     })
+
+    const compressedStatic = await fetch(`${base}/app.js`, {
+      headers: { cookie, 'accept-encoding': 'gzip' }
+    })
+    expect(compressedStatic.headers.get('content-encoding')).toBe('gzip')
+    expect(compressedStatic.headers.get('vary')).toBe('Accept-Encoding')
+    expect(Number(compressedStatic.headers.get('content-length'))).toBeLessThan(largeScript.length)
+    expect(await compressedStatic.text()).toBe(largeScript)
 
     const rpcResponse = await fetch(`${base}/rpc/projects%3Alist`, {
       method: 'POST',
@@ -89,6 +100,9 @@ describe('startWebHttpServer', () => {
       protocolVersion: WEB_RPC_PROTOCOL_VERSION,
       ok: true,
       result: { value: 1 }
+    })
+    expect(rpc.invoke).toHaveBeenCalledWith('projects:list', 'test-client', [{ value: 1 }], {
+      canManageRemotePairing: false
     })
 
     const binary = Uint8Array.from([0, 1, 127, 128, 255])
@@ -218,6 +232,54 @@ describe('startWebHttpServer', () => {
     })
     expect(incompatible.status).toBe(426)
     expect(rpc.invoke).not.toHaveBeenCalled()
+  })
+
+  it('passes approved-browser pairing authority into Web RPC calls', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    const rpc = {
+      channels: () => ['remote-access:get-snapshot'],
+      invoke: vi.fn(async () => ({ canManagePairing: true })),
+      releaseClient: vi.fn(),
+      dispose: vi.fn()
+    }
+    const server = await startWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'local-token',
+      staticRoot,
+      rpc,
+      externalAccess: {
+        authorizeHttp: vi.fn().mockResolvedValue('authorized-pairing-manager'),
+        authorizeWebSocket: vi.fn().mockResolvedValue(true)
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/rpc/remote-access%3Aget-snapshot`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-open-science-client': 'trusted-phone'
+        },
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+      }
+    )
+
+    expect(response.status).toBe(200)
+    expect(rpc.invoke).toHaveBeenCalledWith('remote-access:get-snapshot', 'trusted-phone', [], {
+      canManageRemotePairing: true
+    })
   })
 
   it('authenticates shutdown requests before invoking the callback', async () => {

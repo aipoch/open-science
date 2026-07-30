@@ -5,7 +5,9 @@ import {
   Globe,
   LockKeyhole,
   Maximize2,
+  Menu,
   Minimize2,
+  MonitorSmartphone,
   ScrollText,
   Settings2,
   SlidersHorizontal,
@@ -25,6 +27,7 @@ import {
 import type { SpecialistListItem } from '../../../../shared/specialist'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import type { SettingsPanelId } from './settings-navigation'
@@ -36,6 +39,7 @@ import { GeneralPanel } from './GeneralPanel'
 import { NetworkPanel } from './NetworkPanel'
 import { StoragePanel } from './StoragePanel'
 import { RuntimesPanel } from './RuntimesPanel'
+import { RemoteControlPanel } from './RemoteControlPanel'
 import { SkillsPanel, type SkillsView } from './SkillsPanel'
 import { ConnectorsPanel, type ConnectorsView } from './ConnectorsPanel'
 import { SpecialistsPanel, type SpecialistsView } from './SpecialistsPanel'
@@ -142,6 +146,10 @@ const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<Sett
       { id: 'storage', label: 'Storage', Icon: Cloud },
       { id: 'general', label: 'General', Icon: Settings2 }
     ]
+  },
+  {
+    label: 'Remote access',
+    panels: [{ id: 'remote-control', label: 'Remote control', Icon: MonitorSmartphone }]
   }
 ]
 
@@ -208,6 +216,8 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
   const [historyIndex, setHistoryIndex] = useState(0)
   // Whether the dialog is enlarged to near-fullscreen via the maximize control.
   const [isExpanded, setIsExpanded] = useState(false)
+  const isMobile = useMediaQuery('(max-width: 767px)')
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
   const skills = useSettingsStore((state) => state.skills)
   const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
@@ -590,7 +600,14 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (next) return
+        setIsMobileNavOpen(false)
+        onClose()
+      }}
+    >
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none" />
         <Dialog.Content
@@ -604,8 +621,8 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
           className={cn(
             'fixed z-50 flex overflow-hidden overscroll-contain rounded-xl border border-border bg-card text-foreground shadow-dialog outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none',
             isExpanded
-              ? 'inset-4'
-              : 'left-1/2 top-1/2 h-[min(688px,calc(100vh-2rem))] w-[min(960px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2'
+              ? 'inset-0 rounded-none md:inset-4 md:rounded-xl'
+              : 'inset-0 h-[100dvh] w-screen rounded-none md:bottom-auto md:left-1/2 md:right-auto md:top-1/2 md:h-[min(688px,calc(100vh-2rem))] md:w-[min(960px,calc(100vw-2rem))] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-xl'
           )}
         >
           {/* Radix requires a Title/Description for a11y; the visible panel title lives in the header. */}
@@ -614,10 +631,24 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
             Manage your agent runtime and model providers.
           </Dialog.Description>
 
-          {/* Left navigation: grouped settings panels (Capabilities, Workspace). */}
+          {isMobileNavOpen ? (
+            <button
+              type="button"
+              className="fixed inset-0 z-[65] bg-black/45 md:hidden"
+              aria-label="Close settings navigation"
+              onClick={() => setIsMobileNavOpen(false)}
+            />
+          ) : null}
+
+          {/* Left navigation becomes an off-canvas drawer on narrow browser screens. */}
           <nav
             aria-label="Settings"
-            className="flex w-52 shrink-0 flex-col gap-4 border-r border-border bg-background p-3"
+            aria-hidden={isMobile && !isMobileNavOpen ? true : undefined}
+            inert={isMobile && !isMobileNavOpen ? true : undefined}
+            className={cn(
+              'fixed inset-y-0 left-0 z-[70] flex w-[min(86vw,320px)] shrink-0 flex-col gap-4 border-r border-border bg-background p-3 transition-transform duration-200 ease-out md:static md:z-auto md:w-52 md:translate-x-0',
+              isMobileNavOpen ? 'translate-x-0' : '-translate-x-full'
+            )}
           >
             {SETTINGS_GROUPS.map((group) => (
               <div key={group.label} className="flex flex-col gap-0.5">
@@ -640,6 +671,7 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
                         onClick={() => {
                           // Entering the Model branch expands its sub-item (sticky — see above).
                           if (id === 'model' || id === 'agent') setAgentMenuExpanded(true)
+                          setIsMobileNavOpen(false)
                           navigatePanel(id)
                         }}
                         className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
@@ -690,8 +722,23 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
           {/* Right column: header bar + scrollable panel content. */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-card">
             <TooltipProvider delayDuration={300}>
-              <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-3">
+              <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-2 md:px-3">
                 <div className="flex min-w-0 items-center gap-1">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => setIsMobileNavOpen(true)}
+                        aria-label="Open settings navigation"
+                        className="shrink-0 rounded-lg text-muted-foreground md:hidden"
+                      >
+                        <Menu className="size-4" aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Navigation</TooltipContent>
+                  </Tooltip>
                   {/* Browser-like history controls for the settings navigation. */}
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -859,6 +906,8 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
                   <NetworkPanel view={networkView} onNavigate={navigateNetwork} />
                 ) : activePanel === 'general' ? (
                   <GeneralPanel />
+                ) : activePanel === 'remote-control' ? (
+                  <RemoteControlPanel />
                 ) : activePanel === 'agent' ? (
                   <AgentPanel
                     title="Agent framework"

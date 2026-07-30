@@ -12,6 +12,7 @@ export type SettingsPanelId =
   | 'storage'
   | 'network'
   | 'runtimes'
+  | 'remote-control'
 
 const AGENT_REPAIR_CHECK_IDS: readonly EnvironmentCheckId[] = ['agent', 'install-network', 'system']
 

@@ -26,4 +26,4 @@ const parseWebModeOptions = (
   return { enabled, headless, port: parsedPort }
 }
 
-export { parseWebModeOptions }
+export { DEFAULT_WEB_PORT, parseWebModeOptions }

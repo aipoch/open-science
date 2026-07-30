@@ -135,6 +135,34 @@ const installApi = (): void => {
       install: vi.fn(),
       uninstall: vi.fn()
     },
+    remoteAccess: {
+      getSnapshot: vi.fn().mockResolvedValue({
+        canManage: true,
+        canManagePairing: true,
+        mode: 'off',
+        enabled: false,
+        lifecycle: 'disabled',
+        remoteIt: { installed: false, loggedIn: false, registered: false },
+        pendingRequests: [],
+        trustedBrowsers: []
+      }),
+      detect: vi.fn().mockResolvedValue({
+        canManage: true,
+        canManagePairing: true,
+        mode: 'off',
+        enabled: false,
+        lifecycle: 'disabled',
+        remoteIt: { installed: false, loggedIn: false, registered: false },
+        pendingRequests: [],
+        trustedBrowsers: []
+      }),
+      disable: vi.fn(),
+      setMode: vi.fn(),
+      approve: vi.fn(),
+      reject: vi.fn(),
+      revokeBrowser: vi.fn(),
+      onChanged: vi.fn(() => () => undefined)
+    },
     specialist: {
       list: vi.fn().mockResolvedValue([{ kind: 'reviewer', id: 'reviewer' }]),
       create: vi.fn(),
@@ -157,6 +185,7 @@ afterEach(() => {
   container.remove()
   document.body.innerHTML = ''
   delete (window as unknown as { api?: unknown }).api
+  vi.unstubAllGlobals()
 })
 
 // Opens the Agent sub-panel via the left nav (the agent framework lives there; the Model panel
@@ -173,6 +202,11 @@ const navButton = (label: string): HTMLButtonElement | undefined =>
   Array.from(
     document.body.querySelectorAll<HTMLButtonElement>('nav[aria-label="Settings"] button')
   ).find((candidate) => candidate.textContent?.trim() === label)
+
+const settingsSection = (title: string): HTMLElement | undefined =>
+  Array.from(document.body.querySelectorAll<HTMLElement>('[data-slot="settings-section"]')).find(
+    (section) => section.querySelector('h3')?.textContent?.trim() === title
+  )
 
 // The Agent sub-item's <li> wrapper, whose grid-rows class drives the expand/collapse animation.
 const agentItem = (): HTMLElement | null => navButton('Agent')?.closest('li') ?? null
@@ -211,14 +245,16 @@ describe('SettingsPage layout', () => {
 
     // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Compute, Network)
     // and Workspace (Model with its Agent sub-item, Permissions, Runtimes, Storage, General).
+    // Remote access stays isolated from both groups.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
     expect(nav?.nextElementSibling?.className).toContain('bg-card')
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
+    expect(nav?.textContent).toContain('Remote access')
     const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(11)
+    expect(navItems).toHaveLength(12)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
     expect(navItems[2]?.textContent).toContain('Specialists')
@@ -230,6 +266,7 @@ describe('SettingsPage layout', () => {
     expect(navItems[8]?.textContent).toContain('Runtimes')
     expect(navItems[9]?.textContent).toContain('Storage')
     expect(navItems[10]?.textContent).toContain('General')
+    expect(navItems[11]?.textContent).toContain('Remote control')
     // Model is the default active panel.
     expect(nav?.querySelector('[aria-current="page"]')?.textContent).toContain('Model')
 
@@ -619,6 +656,49 @@ describe('SettingsPage layout', () => {
     expect(agentItem()?.className).toContain('grid-rows-[1fr]')
   })
 
+  it('uses an off-canvas settings navigation on a narrow browser viewport', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        matches: query === '(max-width: 767px)',
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn()
+      }))
+    )
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    const nav = document.body.querySelector<HTMLElement>('nav[aria-label="Settings"]')
+    expect(nav?.getAttribute('aria-hidden')).toBe('true')
+    expect(document.body.querySelector('[data-slot="settings-surface"]')?.className).toContain(
+      'h-[100dvh]'
+    )
+
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Open settings navigation"]')
+        ?.click()
+    })
+    expect(nav?.getAttribute('aria-hidden')).toBeNull()
+
+    const generalTab = Array.from(nav?.querySelectorAll('button') ?? []).find((button) =>
+      /general/i.test(button.textContent ?? '')
+    )
+    await act(async () => generalTab?.click())
+    expect(nav?.getAttribute('aria-hidden')).toBe('true')
+    expect(
+      Array.from(document.body.querySelectorAll('h2')).some((heading) =>
+        heading.textContent?.includes('General')
+      )
+    ).toBe(true)
+  })
+
   it('opens Add provider as a history-driven sub-page and returns via the back arrow', () => {
     act(() => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -831,6 +911,548 @@ describe('SettingsPage layout', () => {
       (window as unknown as { api: { logs: { revealInFolder: ReturnType<typeof vi.fn> } } }).api
         .logs.revealInFolder
     ).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens the isolated Remote control panel with three scenario-based access modes', async () => {
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    const remoteTab = navButton('Remote control')
+    expect(remoteTab).not.toBeUndefined()
+
+    await act(async () => remoteTab?.click())
+    expect(document.body.textContent).toContain('Remote browser access')
+    expect(document.body.textContent).toContain('Off')
+    expect(document.body.textContent).toContain('App access')
+    expect(document.body.textContent).toContain('Browser access')
+    const remoteItDownload = document.body.querySelector<HTMLAnchorElement>(
+      'a[href="https://www.remote.it/download/"]'
+    )
+    expect(remoteItDownload?.textContent).toBe('Download Remote.It App')
+    expect(remoteItDownload?.closest('[data-slot="settings-section"]')).toBe(
+      settingsSection('Remote browser access')
+    )
+    expect(remoteItDownload?.closest('button')).toBeNull()
+    expect(settingsSection('Remote App Access')).toBeUndefined()
+    expect(settingsSection('Remote Browser Access')).toBeUndefined()
+    expect(document.body.textContent).not.toContain('Trusted browsers')
+    expect(document.body.textContent).not.toContain('Pairing requests')
+    const status = document.body.querySelector('[data-testid="remote-access-status"]')
+    expect(status?.textContent).toBe('Remote access is off')
+    expect(status?.className).toContain('sm:absolute')
+    expect(status?.className).toContain('sm:right-0')
+    expect(status?.className).toContain('sm:top-0')
+    expect(status?.parentElement?.className).toContain('w-full')
+    expect(status?.parentElement?.className).toContain('sm:w-auto')
+    expect(document.body.textContent).not.toContain('Recommended')
+    expect(status?.closest('[data-slot="settings-section"]')).toBe(
+      settingsSection('Remote browser access')
+    )
+    expect(
+      document.body.querySelector('[data-testid="remote-control-panel"]')?.className
+    ).toContain('space-y-5')
+    expect(settingsSection('Remote browser access')?.lastElementChild?.className).toContain(
+      'space-y-3'
+    )
+    const modeGrid = document.body.querySelector(
+      '[role="radiogroup"][aria-label="Remote access mode"]'
+    )
+    expect(modeGrid?.className).toContain('grid-cols-1')
+    expect(modeGrid?.className).toContain('sm:grid-cols-3')
+    expect(document.body.textContent).not.toContain('route on exit')
+    expect(document.body.textContent).not.toContain('service on exit')
+    expect(
+      (window as unknown as { api: { remoteAccess: { detect: ReturnType<typeof vi.fn> } } }).api
+        .remoteAccess.detect
+    ).toHaveBeenCalledOnce()
+  })
+
+  it('covers the whole app while a remote mode system command is still running', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            setMode: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+            onChanged: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const enabledSnapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'remoteit',
+      enabled: true,
+      lifecycle: 'running',
+      remoteIt: {
+        installed: true,
+        loggedIn: true,
+        registered: true,
+        service: {
+          id: 'service-1',
+          host: '127.0.0.1',
+          port: 44100,
+          enabled: true,
+          ready: true
+        }
+      },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    let finishModeChange!: (snapshot: typeof enabledSnapshot) => void
+    remoteAccess.setMode.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishModeChange = resolve
+        })
+    )
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Remote control')?.click())
+    const remoteItMode = document.body.querySelector<HTMLInputElement>(
+      'input[name="remote-access-mode"][aria-label="App access"]'
+    )
+
+    act(() => remoteItMode?.click())
+
+    const overlay = document.body.querySelector('[data-testid="remote-access-operation-overlay"]')
+    expect(overlay).not.toBeNull()
+    expect(overlay?.textContent).toContain('Applying remote access settings')
+    expect(overlay?.className).toContain('fixed')
+    expect(overlay?.className).toContain('inset-0')
+    expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
+      'Changing access mode…'
+    )
+
+    // The main process broadcasts lifecycle progress before the provider command has finished.
+    // Refreshing that progress must not dismiss the global operation overlay.
+    remoteAccess.getSnapshot.mockResolvedValue({
+      ...enabledSnapshot,
+      enabled: false,
+      lifecycle: 'starting'
+    })
+    const lifecycleListener = remoteAccess.onChanged.mock.calls[0]?.[0] as (() => void) | undefined
+    await act(async () => {
+      lifecycleListener?.()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(
+      document.body.querySelector('[data-testid="remote-access-operation-overlay"]')
+    ).not.toBeNull()
+    expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
+      'Changing access mode…'
+    )
+
+    await act(async () => {
+      finishModeChange(enabledSnapshot)
+      await Promise.resolve()
+    })
+    expect(
+      document.body.querySelector('[data-testid="remote-access-operation-overlay"]')
+    ).toBeNull()
+    expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
+      'App access is on'
+    )
+
+    let finishDetection!: (snapshot: typeof enabledSnapshot) => void
+    remoteAccess.detect.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishDetection = resolve
+        })
+    )
+    const detectButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Detect again')
+    )
+    act(() => detectButton?.click())
+    const detectOverlay = document.body.querySelector(
+      '[data-testid="remote-access-operation-overlay"]'
+    )
+    expect(detectOverlay?.textContent).toContain('Checking and setting up remote access')
+    expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
+      'Checking access…'
+    )
+
+    await act(async () => {
+      finishDetection(enabledSnapshot)
+      await Promise.resolve()
+    })
+    expect(
+      document.body.querySelector('[data-testid="remote-access-operation-overlay"]')
+    ).toBeNull()
+  })
+
+  it('does not attach a provider error to Off mode', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const staleOffSnapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'error',
+      error: 'The remote access app is not connected.',
+      remoteIt: { installed: true, loggedIn: true, registered: true },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    remoteAccess.getSnapshot.mockResolvedValue(staleOffSnapshot)
+    remoteAccess.detect.mockResolvedValue(staleOffSnapshot)
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Remote control')?.click())
+
+    expect(document.body.textContent).not.toContain('The remote access app is not connected')
+    expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
+      'Remote access is off'
+    )
+  })
+
+  it('keeps a failed provider selected and shows only that mode error', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const appErrorSnapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'remoteit',
+      enabled: false,
+      lifecycle: 'error',
+      error: 'The remote access app is installed but not signed in.',
+      remoteIt: { installed: true, loggedIn: false, registered: false },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    remoteAccess.getSnapshot.mockResolvedValue(appErrorSnapshot)
+    remoteAccess.detect.mockResolvedValue(appErrorSnapshot)
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Remote control')?.click())
+
+    expect(
+      document.body.querySelector<HTMLInputElement>(
+        'input[name="remote-access-mode"][aria-label="App access"]'
+      )?.checked
+    ).toBe(true)
+    expect(document.body.textContent).toContain(
+      'The remote access app is installed but not signed in'
+    )
+    expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
+      'Needs attention'
+    )
+    expect(settingsSection('Remote App Access')).not.toBeUndefined()
+    expect(settingsSection('Remote Browser Access')).toBeUndefined()
+  })
+
+  it('lets an approved Web browser manage two-step verification without desktop controls', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    remoteAccess.getSnapshot.mockResolvedValue({
+      canManage: false,
+      canManagePairing: true,
+      mode: 'remoteit-public',
+      enabled: true,
+      lifecycle: 'running',
+      accessUrl: 'https://open-science.connect.remote.it/',
+      remoteIt: { installed: true, loggedIn: true, registered: true },
+      pendingRequests: [
+        {
+          id: 'pending-1',
+          code: '123456',
+          browser: 'Google Chrome',
+          platform: 'Windows',
+          requestedAt: Date.now(),
+          expiresAt: Date.now() + 60_000
+        }
+      ],
+      trustedBrowsers: [
+        {
+          id: 'trusted-1',
+          browser: 'Chrome on iOS',
+          platform: 'iOS/iPadOS',
+          createdAt: Date.now(),
+          lastSeenAt: Date.now()
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Remote control')?.click())
+
+    expect(document.body.textContent).toContain('Chrome on iOS · iOS/iPadOS')
+    expect(document.body.textContent).toContain('Google Chrome · Windows')
+    expect(document.body.textContent).toContain('123456')
+    expect(document.body.textContent).toContain(
+      'Two-step verification requests and trusted browsers can be managed below'
+    )
+    expect(
+      document.body.querySelector<HTMLInputElement>('input[name="remote-access-mode"]:checked')
+        ?.disabled
+    ).toBe(true)
+    expect(settingsSection('Remote App Access')).toBeUndefined()
+    expect(settingsSection('Remote Browser Access')).not.toBeUndefined()
+    expect(remoteAccess.detect).not.toHaveBeenCalled()
+  })
+
+  it('shows the app-only Remote.It flow without asking for an IP address or port', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const remoteItSnapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'remoteit',
+      enabled: true,
+      lifecycle: 'running',
+      remoteIt: {
+        installed: true,
+        loggedIn: true,
+        registered: true,
+        account: 'person@example.com',
+        service: {
+          id: 'service-1',
+          host: '127.0.0.1',
+          port: 44100,
+          enabled: true,
+          ready: true
+        }
+      },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    remoteAccess.getSnapshot.mockResolvedValue(remoteItSnapshot)
+    remoteAccess.detect.mockResolvedValue(remoteItSnapshot)
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Remote control')?.click())
+
+    expect(document.body.textContent).toContain('Remote App Access')
+    expect(document.body.textContent).not.toContain('127.0.0.1:44100')
+    expect(
+      document.body.querySelector<HTMLAnchorElement>('a[href="https://www.remote.it/download/"]')
+    ).not.toBeNull()
+    expect(document.body.textContent).toContain('No six-digit verification is required')
+    expect(document.body.textContent).not.toContain('Pairing requests')
+    expect(settingsSection('Remote App Access')).not.toBeUndefined()
+    expect(settingsSection('Remote Browser Access')).toBeUndefined()
+    const connectedBadge = Array.from(
+      settingsSection('Remote App Access')?.querySelectorAll('[data-slot="badge"]') ?? []
+    ).find((badge) => badge.textContent === 'Connected')
+    expect(connectedBadge?.className).toContain('bg-primary/10')
+    expect(connectedBadge?.className).toContain('text-primary')
+    expect(connectedBadge?.className).toContain('border-0')
+    const guide = document.body.querySelector('[data-testid="remoteit-access-guide"]')
+    expect(guide?.textContent).toContain('1.')
+    expect(guide?.textContent).toContain('2.')
+    expect(guide?.textContent).toContain('3.')
+    const phoneIcon = guide?.querySelector('[data-testid="remoteit-guide-phone-icon"]')
+    expect(phoneIcon?.getAttribute('class')).toContain('size-5')
+    expect(phoneIcon?.getAttribute('class')).toContain('mt-0.5')
+    expect(phoneIcon?.parentElement?.className).not.toContain('bg-')
+  })
+
+  it('keeps the intermediate Ready provider status neutral', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const readySnapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'remoteit',
+      enabled: false,
+      lifecycle: 'starting',
+      remoteIt: {
+        installed: true,
+        loggedIn: true,
+        registered: true,
+        service: {
+          id: 'service-1',
+          host: '127.0.0.1',
+          port: 44100,
+          enabled: true,
+          ready: true
+        }
+      },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    remoteAccess.getSnapshot.mockResolvedValue(readySnapshot)
+    remoteAccess.detect.mockResolvedValue(readySnapshot)
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Remote control')?.click())
+
+    const readyBadge = Array.from(
+      settingsSection('Remote App Access')?.querySelectorAll('[data-slot="badge"]') ?? []
+    ).find((badge) => badge.textContent === 'Ready')
+    expect(readyBadge).not.toBeUndefined()
+    expect(readyBadge?.className).not.toContain('bg-primary/10')
+    expect(readyBadge?.className).not.toContain('text-primary')
+    expect(readyBadge?.className).not.toContain('border-0')
+  })
+
+  it('shows a paired Remote.It public browser URL with a scannable QR code', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const publicSnapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'remoteit-public',
+      enabled: true,
+      lifecycle: 'running',
+      accessUrl: 'https://open-science.connect.remote.it/',
+      remoteItPublicUrl: 'https://open-science.connect.remote.it/',
+      remoteIt: {
+        installed: true,
+        loggedIn: true,
+        registered: true,
+        account: 'person@example.com',
+        service: {
+          id: 'service-1',
+          host: '127.0.0.1',
+          port: 44100,
+          enabled: true,
+          ready: true
+        }
+      },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    remoteAccess.getSnapshot.mockResolvedValue(publicSnapshot)
+    remoteAccess.detect.mockResolvedValue(publicSnapshot)
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Remote control')?.click())
+
+    expect(document.body.textContent).toContain('Browser access is on')
+    expect(document.body.textContent).toContain('Remote Browser Access')
+    expect(document.body.textContent).toContain('Download Remote.It App')
+    expect(document.body.textContent).toContain('Browser link is ready')
+    expect(document.body.textContent).toContain('Scan to open')
+    expect(document.body.textContent).toContain('two-step verification')
+    expect(document.body.textContent).toContain('six-digit code')
+    expect(document.body.textContent).toContain('Trusted browsers')
+    expect(document.body.textContent).toContain('Pairing requests')
+    const guide = document.body.querySelector('[data-testid="remoteit-public-access-guide"]')
+    const qr = guide?.querySelector('[data-testid="remoteit-public-qr"]')
+    const steps = guide?.querySelector('ol')
+    expect(qr?.querySelector('svg')).not.toBeNull()
+    expect(steps?.parentElement?.className).toContain('border-t')
+    expect(guide?.firstElementChild?.className).toContain('sm:grid-cols-[minmax(0,1fr)_auto]')
+    expect(guide?.firstElementChild?.firstElementChild?.contains(steps ?? null)).toBe(true)
+    expect(guide?.firstElementChild?.lastElementChild).toBe(qr)
+    expect(
+      document.body.querySelector('input[aria-label="Remote.It Persistent Public URL"]')
+    ).toBeNull()
+    expect(settingsSection('Remote Browser Access')).not.toBeUndefined()
+    expect(settingsSection('Remote App Access')).toBeUndefined()
+  })
+
+  it('explains Remote.It Device setup after a pre-install selection failed', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const setupSnapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'remoteit',
+      enabled: false,
+      lifecycle: 'error',
+      error: 'Remote.It device setup is not complete.',
+      remoteIt: {
+        installed: true,
+        loggedIn: false,
+        registered: false,
+        version: '4.1.0'
+      },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    remoteAccess.getSnapshot.mockResolvedValue(setupSnapshot)
+    remoteAccess.detect.mockResolvedValue(setupSnapshot)
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Remote control')?.click())
+
+    expect(document.body.textContent).toContain('Detect again')
+    expect(document.body.textContent).toContain('added once')
+    const setupBadge = Array.from(
+      settingsSection('Remote App Access')?.querySelectorAll('[data-slot="badge"]') ?? []
+    ).find((badge) => badge.textContent === 'Device setup required')
+    expect(setupBadge?.className).not.toContain('bg-primary/10')
+    expect(document.body.textContent).not.toContain('Sign-in required')
   })
 
   it('switches to the Connectors panel and lists bundled connectors', async () => {

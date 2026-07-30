@@ -64,10 +64,10 @@ const sectionHeadingClassName =
 const listCardClassName = 'rounded-2xl border border-border-200/70 bg-bg-000 p-1.5 shadow-card'
 
 const rowClassName =
-  'group flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-colors duration-150 ease-out hover:bg-bg-300'
+  'group flex w-full items-center gap-2 rounded-xl px-2.5 py-2.5 text-left transition-colors duration-150 ease-out hover:bg-bg-300 sm:px-3'
 
 const rowActionClassName =
-  'shrink-0 rounded p-0.5 text-text-300 opacity-0 transition-[opacity,color,background-color] duration-150 ease-out hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100'
+  'shrink-0 rounded p-0.5 text-text-300 opacity-100 transition-[opacity,color,background-color] duration-150 ease-out hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 data-[state=open]:opacity-100'
 
 const menuContentClassName =
   'z-modal min-w-[9rem] rounded-xl border-[0.5px] border-border-200 bg-bg-000 p-1.5 shadow-menu'
@@ -253,8 +253,8 @@ const HomePage = ({
 
   return (
     <main className="min-h-svh bg-bg-10 text-text-000">
-      <div className="mx-auto max-w-[1080px] px-8 py-7 pb-16">
-        <header className="flex items-center justify-between">
+      <div className="mx-auto max-w-[1080px] px-4 py-5 pb-12 sm:px-8 sm:py-7 sm:pb-16">
+        <header className="flex items-start justify-between gap-3">
           <div>
             <a
               href={APP.links.website}
@@ -266,7 +266,7 @@ const HomePage = ({
             </a>
             <div className="mt-1 text-[11px] text-text-100">Beta</div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
             <UpdateCapsule />
             {requiredEnvironmentFailures.length > 0 && environmentRepairPanel ? (
               <button
@@ -276,14 +276,17 @@ const HomePage = ({
                 aria-label="Open environment repair"
               >
                 <CircleAlert className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                <span>
+                <span className="hidden sm:inline">
                   {requiredEnvironmentFailures.length === 1
                     ? `${requiredEnvironmentFailures[0].label} needs attention`
                     : `${requiredEnvironmentFailures.length} environment items need attention`}
                 </span>
+                <span className="sm:hidden">Environment</span>
               </button>
             ) : null}
-            <GitHubStarBadge />
+            <span className="hidden sm:inline-flex">
+              <GitHubStarBadge />
+            </span>
             <ThemePreferenceMenu />
             <button
               type="button"
@@ -301,13 +304,13 @@ const HomePage = ({
               onClick={openCreateDialog}
             >
               <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
-              New project
+              <span className="hidden sm:inline">New project</span>
             </Button>
           </div>
         </header>
 
-        <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-2">
-          <section aria-label="Projects">
+        <div className="mt-8 grid grid-cols-1 gap-7 sm:mt-10 sm:gap-8 lg:grid-cols-2">
+          <section className="min-w-0" aria-label="Projects">
             <h2 className={sectionHeadingClassName}>
               <Archive className="size-4 text-text-100" strokeWidth={2} aria-hidden="true" />
               Projects
@@ -348,7 +351,7 @@ const HomePage = ({
                         ? `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`
                         : 'Session count unavailable'}
                     </span>
-                    <span className="w-8 shrink-0 text-right text-xs text-text-300">
+                    <span className="hidden w-8 shrink-0 text-right text-xs text-text-300 sm:inline">
                       {formatRelativeTime(lastActivityAt)}
                     </span>
                     <DropdownMenu.Root>
@@ -393,7 +396,7 @@ const HomePage = ({
             )}
           </section>
 
-          <section aria-label="Recent sessions">
+          <section className="min-w-0" aria-label="Recent sessions">
             <h2 className={sectionHeadingClassName}>
               <Clock className="size-4 text-text-100" strokeWidth={2} aria-hidden="true" />
               Recent sessions

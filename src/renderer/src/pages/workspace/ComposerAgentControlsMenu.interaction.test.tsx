@@ -13,8 +13,13 @@ import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-
 
 // Select events fired through the mocked menu items, so tests can assert preventDefault
 // (i.e. the row keeps the real menu open instead of closing it).
-const { selectEvents } = vi.hoisted(() => ({
+const { mediaState, selectEvents } = vi.hoisted(() => ({
+  mediaState: { mobile: false },
   selectEvents: [] as Array<{ preventDefault: () => void; prevented: boolean }>
+}))
+
+vi.mock('@/hooks/useMediaQuery', () => ({
+  useMediaQuery: (): boolean => mediaState.mobile
 }))
 
 vi.mock('@/components/ui/dropdown-menu', () => ({
@@ -40,14 +45,17 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
   DropdownMenuItem: ({
     children,
     disabled,
-    onSelect
+    onSelect,
+    'data-testid': testId
   }: PropsWithChildren<{
     disabled?: boolean
     onSelect?: (event: { preventDefault: () => void }) => void
+    'data-testid'?: string
   }>): React.JSX.Element => (
     <button
       type="button"
       disabled={disabled}
+      data-testid={testId}
       onClick={() => {
         const event = {
           prevented: false,
@@ -143,6 +151,7 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
+  mediaState.mobile = false
   selectEvents.length = 0
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -210,6 +219,42 @@ describe('ComposerAgentControlsMenu', () => {
 
     expect(onProfileChange).toHaveBeenCalledWith('auto')
     expect(container.textContent).not.toContain('Enable Full access?')
+  })
+
+  it('opens permission choices inside the same menu on mobile and can return', () => {
+    mediaState.mobile = true
+
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).not.toContain('Auto-approve edits')
+
+    const permissionTrigger = container.querySelector<HTMLButtonElement>(
+      '[data-testid="mobile-permission-trigger"]'
+    )
+    if (!permissionTrigger) throw new Error('mobile permission trigger not found')
+    act(() => permissionTrigger.click())
+
+    expect(container.textContent).toContain('Auto-approve edits')
+    expect(container.textContent).not.toContain('Auto-review')
+    expect(selectEvents.at(-1)?.prevented).toBe(true)
+
+    const backButton = container.querySelector<HTMLButtonElement>(
+      '[data-testid="mobile-permission-back"]'
+    )
+    if (!backButton) throw new Error('mobile permission back button not found')
+    act(() => backButton.click())
+
+    expect(container.textContent).toContain('Auto-review')
+    expect(container.textContent).not.toContain('Auto-approve edits')
   })
 
   it('requires explicit confirmation before enabling Full access', () => {

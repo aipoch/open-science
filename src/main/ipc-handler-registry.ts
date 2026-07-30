@@ -9,6 +9,7 @@ type IpcHandler = Parameters<IpcMain['handle']>[1]
 class WebIpcSender extends EventEmitter {
   readonly id: number
   readonly lifecycleClientId: string
+  canManageRemotePairing = false
 
   constructor(id: number, clientId: string) {
     super()
@@ -23,7 +24,12 @@ class WebIpcSender extends EventEmitter {
 }
 
 export type WebRpcRouter = {
-  invoke: (channel: string, clientId: string, args: unknown[]) => Promise<unknown>
+  invoke: (
+    channel: string,
+    clientId: string,
+    args: unknown[],
+    context?: { canManageRemotePairing?: boolean }
+  ) => Promise<unknown>
   releaseClient: (clientId: string) => void
   dispose: () => void
   channels: () => string[]
@@ -55,11 +61,12 @@ const createIpcHandlerRegistry = (target: Pick<IpcMain, 'handle'>): IpcHandlerRe
   return {
     ipcMainHandle,
     webRpc: {
-      invoke: async (channel, clientId, args) => {
+      invoke: async (channel, clientId, args, context = {}) => {
         if (!isWebRpcChannel(channel)) throw new Error(`Unknown Web RPC channel: ${channel}`)
         const handler = webHandlers.get(channel)
         if (!handler) throw new Error(`Unregistered Web RPC channel: ${channel}`)
         const sender = senderFor(clientId)
+        sender.canManageRemotePairing = context.canManageRemotePairing === true
         const event = { sender } as unknown as IpcMainInvokeEvent
         return handler(event, ...args)
       },
@@ -77,9 +84,13 @@ const createIpcHandlerRegistry = (target: Pick<IpcMain, 'handle'>): IpcHandlerRe
   }
 }
 
+const isRemotePairingManagerSender = (event: IpcMainInvokeEvent): boolean =>
+  event.sender.id < 0 &&
+  (event.sender as unknown as { canManageRemotePairing?: boolean }).canManageRemotePairing === true
+
 const defaultRegistry = createIpcHandlerRegistry(ipcMain)
 
 const ipcMainHandle = defaultRegistry.ipcMainHandle
 const webRpc = defaultRegistry.webRpc
 
-export { createIpcHandlerRegistry, ipcMainHandle, webRpc }
+export { createIpcHandlerRegistry, ipcMainHandle, isRemotePairingManagerSender, webRpc }

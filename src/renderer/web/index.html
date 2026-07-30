@@ -1,15 +1,149 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Open Science</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="application-name" content="Open Science Remote" />
+    <meta name="apple-mobile-web-app-title" content="Open Science Remote" />
+    <title>Open Science Remote</title>
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; media-src 'self' https: blob:; frame-src 'self'; connect-src 'self' ws: wss:"
     />
+    <style>
+      :root {
+        --connection-background: #ffffff;
+        --connection-foreground: #171717;
+        --connection-muted: #737373;
+        --connection-spinner-track: #d4d4d4;
+      }
+      .dark {
+        --connection-background: #171717;
+        --connection-foreground: #fafafa;
+        --connection-muted: #a3a3a3;
+        --connection-spinner-track: #525252;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --connection-background: #171717;
+          --connection-foreground: #fafafa;
+          --connection-muted: #a3a3a3;
+          --connection-spinner-track: #525252;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      .open-science-connection-panel {
+        display: grid;
+        width: fit-content;
+        max-width: 420px;
+        justify-items: start;
+        text-align: left;
+      }
+      .open-science-connection-brand {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 10px;
+      }
+      .open-science-connection-logo {
+        display: block;
+        width: 40px;
+        height: 39px;
+        flex: none;
+        color: var(--connection-foreground);
+      }
+      .open-science-connection-logo svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      .open-science-connection-name {
+        font-family: Georgia, serif;
+        font-size: 28px;
+        letter-spacing: -0.02em;
+      }
+      .open-science-connection-progress {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 9px;
+        margin-top: 14px;
+        color: var(--connection-muted);
+      }
+      .open-science-connection-spinner {
+        width: 16px;
+        height: 16px;
+        flex: none;
+        border: 2px solid var(--connection-spinner-track);
+        border-top-color: currentColor;
+        border-radius: 999px;
+        animation: open-science-connection-spin 0.8s linear infinite;
+      }
+      .connection-failed .open-science-connection-spinner {
+        display: none;
+      }
+      @keyframes open-science-connection-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .open-science-connection-spinner {
+          animation-duration: 1.8s;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div
+        id="open-science-connection-state"
+        role="status"
+        aria-live="polite"
+        style="
+          box-sizing: border-box;
+          display: grid;
+          min-height: 100dvh;
+          place-items: center;
+          padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+          background: var(--connection-background);
+          color: var(--connection-foreground);
+          font-family:
+            Inter,
+            ui-sans-serif,
+            system-ui,
+            -apple-system,
+            BlinkMacSystemFont,
+            'Segoe UI',
+            sans-serif;
+        "
+      >
+        <div class="open-science-connection-panel">
+          <div class="open-science-connection-brand">
+            <span
+              id="open-science-connection-logo"
+              class="open-science-connection-logo"
+              aria-hidden="true"
+            ></span>
+            <div class="open-science-connection-name">Open Science</div>
+          </div>
+          <div class="open-science-connection-progress">
+            <span class="open-science-connection-spinner" aria-hidden="true"></span>
+            <p
+              id="open-science-connection-message"
+              style="margin: 0; color: var(--connection-muted); font-size: 14px; line-height: 1.6"
+            >
+              Connecting to remote computer…
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/bootstrap.ts"></script>
   </body>
 </html>

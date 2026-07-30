@@ -4,6 +4,8 @@ import { extname, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
+import { promisify } from 'node:util'
+import { gzip } from 'node:zlib'
 
 import { net } from 'electron'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -21,6 +23,8 @@ import type { StartTaskRunRequest } from '../../shared/task-api'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
+const MIN_GZIP_BYTES = 1_024
+const gzipAsync = promisify(gzip)
 
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -34,12 +38,15 @@ const MIME_TYPES: Record<string, string> = {
   '.woff2': 'font/woff2'
 }
 
+const COMPRESSIBLE_EXTENSIONS = new Set(['.css', '.html', '.js', '.json', '.svg'])
+
 type WebServerOptions = {
   host: string
   port: number
   token: string
   staticRoot: string
   rpc: WebRpcRouter
+  externalAccess?: ExternalWebAccess
   tasks?: Pick<
     HeadlessTaskApi,
     | 'listProjects'
@@ -62,18 +69,28 @@ type WebServerOptions = {
   }
 }
 
+export type ExternalWebAccessDecision =
+  'authorized' | 'authorized-pairing-manager' | 'handled' | 'denied'
+
+// Optional authentication boundary for a loopback reverse proxy. The normal localhost token path
+// remains unchanged; an isolated remote-access adapter can authenticate its own origin/cookies or
+// render a pairing page without coupling the web server to a tunnel provider.
+export type ExternalWebAccess = {
+  authorizeHttp: (
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL
+  ) => Promise<ExternalWebAccessDecision>
+  authorizeWebSocket: (request: IncomingMessage, url: URL) => Promise<boolean>
+}
+
 export type RunningWebServer = {
   port: number
   close: () => Promise<void>
 }
 
 const json = (response: ServerResponse, status: number, value: unknown): void => {
-  response.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff'
-  })
-  response.end(
+  const content = Buffer.from(
     JSON.stringify(value ?? null, (_key, child) => {
       if (child instanceof ArrayBuffer || ArrayBuffer.isView(child)) {
         const bytes =
@@ -85,6 +102,13 @@ const json = (response: ServerResponse, status: number, value: unknown): void =>
       return child
     })
   )
+  response.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': String(content.byteLength),
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff'
+  })
+  response.end(content)
 }
 
 const webRpcError = (
@@ -282,6 +306,7 @@ const handleTaskApiRequest = async (
 }
 
 const serveStatic = async (
+  request: IncomingMessage,
   response: ServerResponse,
   staticRoot: string,
   pathname: string
@@ -302,15 +327,27 @@ const serveStatic = async (
 
   try {
     const content = await readFile(filePath)
+    const extension = extname(filePath).toLowerCase()
+    const canCompress =
+      content.byteLength >= MIN_GZIP_BYTES && COMPRESSIBLE_EXTENSIONS.has(extension)
+    const acceptsGzip = /\bgzip\b/i.test(String(request.headers['accept-encoding'] ?? ''))
+    const body = canCompress && acceptsGzip ? await gzipAsync(content) : content
     response.writeHead(200, {
-      'content-type': MIME_TYPES[extname(filePath).toLowerCase()] ?? 'application/octet-stream',
+      'content-type': MIME_TYPES[extension] ?? 'application/octet-stream',
+      'content-length': String(body.byteLength),
       'cache-control': filePath.endsWith('index.html') ? 'no-store' : 'public, max-age=31536000',
-      'x-content-type-options': 'nosniff'
+      'x-content-type-options': 'nosniff',
+      ...(canCompress ? { vary: 'Accept-Encoding' } : {}),
+      ...(body !== content ? { 'content-encoding': 'gzip' } : {})
     })
-    response.end(content)
+    response.end(request.method === 'HEAD' ? undefined : body)
   } catch {
-    response.writeHead(503, { 'content-type': 'text/plain; charset=utf-8' })
-    response.end('Web UI is not built. Run npm run build:web first.')
+    const message = 'Web UI is not built. Run npm run build:web first.'
+    response.writeHead(503, {
+      'content-type': 'text/plain; charset=utf-8',
+      'content-length': String(Buffer.byteLength(message))
+    })
+    response.end(request.method === 'HEAD' ? undefined : message)
   }
 }
 
@@ -324,13 +361,21 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     try {
       const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
       const auth = authenticateRequest(request, url, options.token)
-      if (!auth.ok) {
+      let authorized = auth.ok
+      let canManageRemotePairing = false
+      if (!authorized && options.externalAccess) {
+        const decision = await options.externalAccess.authorizeHttp(request, response, url)
+        if (decision === 'handled') return
+        authorized = decision === 'authorized' || decision === 'authorized-pairing-manager'
+        canManageRemotePairing = decision === 'authorized-pairing-manager'
+      }
+      if (!authorized) {
         response.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' })
         response.end('Unauthorized')
         return
       }
 
-      if (auth.queryToken && request.method === 'GET' && url.pathname === '/') {
+      if (auth.ok && auth.queryToken && request.method === 'GET' && url.pathname === '/') {
         persistAuthCookie(response, options.token)
         url.searchParams.delete('token')
         response.writeHead(302, { location: `${url.pathname}${url.search}${url.hash}` })
@@ -416,7 +461,9 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         }
         const clientId = String(request.headers['x-open-science-client'] ?? 'web')
         try {
-          const result = await options.rpc.invoke(channel, clientId, parsed.data.args)
+          const result = await options.rpc.invoke(channel, clientId, parsed.data.args, {
+            canManageRemotePairing
+          })
           json(response, 200, {
             protocolVersion: WEB_RPC_PROTOCOL_VERSION,
             ok: true,
@@ -442,7 +489,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
 
       if (request.method === 'GET' || request.method === 'HEAD') {
-        await serveStatic(response, options.staticRoot, url.pathname)
+        await serveStatic(request, response, options.staticRoot, url.pathname)
         return
       }
 
@@ -455,16 +502,30 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   })
 
   server.on('upgrade', (request, socket, head) => {
-    const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
-    const auth = authenticateRequest(request, url, options.token)
-    if (!auth.ok || !['/events', '/api/v1/events'].includes(url.pathname)) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
-      socket.destroy()
-      return
-    }
-    wsServer.handleUpgrade(request, socket, head, (webSocket) => {
-      wsServer.emit('connection', webSocket, request)
-    })
+    void (async () => {
+      try {
+        const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
+        const auth = authenticateRequest(request, url, options.token)
+        const externallyAuthorized =
+          !auth.ok && options.externalAccess
+            ? await options.externalAccess.authorizeWebSocket(request, url)
+            : false
+        if (
+          (!auth.ok && !externallyAuthorized) ||
+          !['/events', '/api/v1/events'].includes(url.pathname)
+        ) {
+          socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
+          socket.destroy()
+          return
+        }
+        wsServer.handleUpgrade(request, socket, head, (webSocket) => {
+          wsServer.emit('connection', webSocket, request)
+        })
+      } catch {
+        socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
+        socket.destroy()
+      }
+    })()
   })
 
   wsServer.on('connection', (socket, request) => {

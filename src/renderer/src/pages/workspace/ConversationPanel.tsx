@@ -22,6 +22,8 @@ import {
   Flag,
   Image as ImageIcon,
   Loader2,
+  Menu,
+  PanelRight,
   Plus,
   ScanEye,
   Square,
@@ -105,6 +107,7 @@ type ConversationPanelProps = {
   canEditDraft: boolean
   canResumeSession: boolean
   actionError: string | null
+  isPreviewPanelCollapsed?: boolean
   attachments: UploadedAttachment[]
   attachmentTransfers: ComposerUploadTransfer[]
   isUploadingAttachments: boolean
@@ -129,6 +132,8 @@ type ConversationPanelProps = {
   onCancelRun: () => void
   onResumeSession: () => Promise<void>
   onOpenNotebook: (notebook: NotebookSessionReference) => void
+  onTogglePreviewPanel?: () => void
+  onOpenSidebar?: () => void
   onRespondToPermission: (requestId: string, optionId?: string) => Promise<void>
   onPermissionProfileChange: (profile: PermissionProfileId) => void
   onRevokePermissionGrant: (categoryKey: string) => void
@@ -168,6 +173,7 @@ const ConversationPanel = ({
   canEditDraft,
   canResumeSession,
   actionError,
+  isPreviewPanelCollapsed = false,
   attachments,
   attachmentTransfers,
   isUploadingAttachments,
@@ -190,6 +196,8 @@ const ConversationPanel = ({
   onCancelRun,
   onResumeSession,
   onOpenNotebook,
+  onTogglePreviewPanel = () => undefined,
+  onOpenSidebar,
   onRespondToPermission,
   onPermissionProfileChange,
   onRevokePermissionGrant,
@@ -305,17 +313,37 @@ const ConversationPanel = ({
   return (
     <ResizablePanel id="main-content" defaultSize="60%" minSize="30%">
       <section
-        className="flex h-full min-w-0 flex-col overflow-hidden bg-bg-10 p-2 pl-4"
+        className="flex h-full min-w-0 flex-col overflow-hidden bg-bg-10 p-2 pl-4 max-md:p-0"
         data-session-id={activeSession?.id ?? ''}
         data-agent-running={activeSession?.status === 'running' ? 'true' : 'false'}
       >
         <header
           data-testid="conversation-header"
-          className="flex shrink-0 items-center gap-2 px-4 pb-3 pt-2"
+          className="flex shrink-0 items-center gap-2 px-4 pb-3 pt-2 max-md:px-2 max-md:pb-2 max-md:pt-[max(env(safe-area-inset-top),0.5rem)]"
         >
+          <button
+            type="button"
+            className="grid size-9 shrink-0 place-items-center rounded-lg text-text-300 hover:bg-surface-control-hover hover:text-text-000 md:hidden"
+            aria-label="Open navigation"
+            onClick={onOpenSidebar}
+          >
+            <Menu className="size-5" strokeWidth={2} aria-hidden="true" />
+          </button>
           <h1 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-000">
             {activeSession?.title ?? 'New conversation'}
           </h1>
+          <button
+            type="button"
+            className={`flex size-7 shrink-0 items-center justify-center rounded-lg hover:bg-surface-control-hover md:hidden ${
+              isPreviewPanelCollapsed ? 'text-action-panel-toggle' : 'text-primary'
+            }`}
+            aria-label={isPreviewPanelCollapsed ? 'Expand preview panel' : 'Collapse preview panel'}
+            aria-expanded={!isPreviewPanelCollapsed}
+            aria-controls="right-panel"
+            onClick={onTogglePreviewPanel}
+          >
+            <PanelRight className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
+          </button>
         </header>
 
         <WorkspaceMessageScroller
@@ -330,7 +358,7 @@ const ConversationPanel = ({
             className="pointer-events-none absolute inset-x-0 -top-6 h-6 bg-gradient-to-t from-bg-10 to-bg-10/0"
           />
 
-          <div className="px-4 pb-2">
+          <div className="px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] md:px-4 md:pb-2">
             {/* Runtime and session errors stay near the composer so recovery is visible. */}
             <div className={composerContentClassName}>
               <div className="px-1 md:px-3">

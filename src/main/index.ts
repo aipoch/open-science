@@ -116,6 +116,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { createElectronCloseConfirm },
         { installWindowShortcuts },
         { createAppIconController, buildAppIconPreviews },
+        { RemoteAccessService, registerRemoteAccessIpcHandlers },
         { createDesktopAttentionController, wireDesktopAttention },
         { createDesktopBadgeAdapter, createWindowsBadgeBitmap },
         { UnreadTaskDbRepository },
@@ -139,6 +140,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./window-close-confirm'),
         import('./window-shortcuts'),
         import('./app-icon'),
+        import('./remote-access'),
         import('./notifications/desktop-attention'),
         import('./notifications/desktop-badge'),
         import('./notifications/unread-task-repository'),
@@ -276,13 +278,20 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         variantPaths: iconVariantPaths,
         initialVariant
       })
+      const remoteAccess = await RemoteAccessService.create()
       const webController = createWebServiceController({
         rpc: webRpc,
-        requestQuit: () => app.quit()
+        requestQuit: () => app.quit(),
+        externalAccess: remoteAccess.webAccess
       })
+      remoteAccess.attachWebController(webController)
+      registerRemoteAccessIpcHandlers(remoteAccess)
       // A launch that itself requested serving (a dedicated headless daemon, or an explicit --serve) is
       // not attached: stopping it quits the process. On-demand starts for a running instance are attached.
       if (webMode.enabled) await webController.ensureStarted(webMode.port, { attached: false })
+      // Restore a persisted remote-access preference only after the normal IPC/web surfaces exist.
+      // A missing or signed-out third-party remote-access installation must never delay the desktop window.
+      void remoteAccess.restore()
 
       return {
         installMigrationQuitGuard,
@@ -312,6 +321,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         log,
         webMode,
         webController,
+        remoteAccess,
         webRpc
       }
     },
@@ -355,6 +365,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           try {
             await ctx.shutdownCoordinator.runForQuit()
           } finally {
+            await ctx.remoteAccess.shutdown()
             await ctx.webController.close()
             ctx.webRpc.dispose()
           }

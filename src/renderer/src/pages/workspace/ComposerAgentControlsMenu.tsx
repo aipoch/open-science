@@ -18,6 +18,7 @@ import type { AcpPermissionGrant } from '../../../../shared/acp'
 import {
   AlertTriangle,
   Check,
+  ChevronLeft,
   ChevronRight,
   ScanEye,
   Server,
@@ -56,6 +57,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Switch } from '@/components/ui/switch'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -153,6 +155,8 @@ const ComposerAgentControlsMenu = ({
   onSpecialistChange
 }: ComposerAgentControlsMenuProps): React.JSX.Element => {
   const [confirmFullAccess, setConfirmFullAccess] = useState(false)
+  const [mobilePermissionOpen, setMobilePermissionOpen] = useState(false)
+  const isMobile = useMediaQuery('(max-width: 767px)')
   const selectedProfile = permissionProfiles.find((candidate) => candidate.id === profile)!
   const SelectedIcon = selectedProfile.icon
   const fullAccessUnavailable = profileState?.fullAccessAvailable === false
@@ -182,6 +186,7 @@ const ComposerAgentControlsMenu = ({
   const sshHosts = hosts.filter((host) => host.sshAlias)
 
   const handleOpenChange = (open: boolean): void => {
+    if (!open) setMobilePermissionOpen(false)
     if (open && !isLoaded) {
       void loadHosts()
     }
@@ -192,6 +197,87 @@ const ComposerAgentControlsMenu = ({
   const handleHostToggle = (providerId: string, currentlyEnabled: boolean): void => {
     onComputeHostToggle?.(providerId, !currentlyEnabled)
   }
+
+  const permissionOptions = (
+    <>
+      {permissionProfiles.map((candidate) => {
+        const ProfileIcon = candidate.icon
+        const isSelected = candidate.id === profile
+        const isFull = candidate.id === 'full'
+        const isDisabled = isFull && fullAccessUnavailable
+
+        return (
+          <DropdownMenuItem
+            key={candidate.id}
+            disabled={readOnly || isDisabled}
+            className="items-center gap-2 px-2 py-1.5"
+            onSelect={() => selectProfile(candidate.id)}
+          >
+            <ProfileIcon
+              className={cn(
+                'size-4 shrink-0',
+                isFull ? 'text-amber-600 dark:text-amber-400' : 'text-text-200'
+              )}
+              strokeWidth={2}
+              aria-hidden="true"
+            />
+            <span className="min-w-0 flex-1">
+              <span
+                className={cn(
+                  'block text-[13px] font-medium leading-5',
+                  isFull && 'text-amber-600 dark:text-amber-400'
+                )}
+              >
+                {candidate.label}
+              </span>
+              <span
+                className={cn(
+                  'block text-[11px] leading-4',
+                  isFull ? 'text-amber-600/70 dark:text-amber-400/70' : 'text-text-300'
+                )}
+              >
+                {isDisabled
+                  ? 'The current agent does not support native bypass mode.'
+                  : candidate.description}
+              </span>
+            </span>
+            {isSelected ? (
+              <Check className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+            ) : null}
+          </DropdownMenuItem>
+        )
+      })}
+      {profile === 'auto' && profileState?.autoReviewStrategy === 'conservative' ? (
+        <div className="mx-1 mt-1 rounded-md bg-bg-200 px-2 py-1.5 text-[11px] leading-4 text-text-200">
+          This agent has no native auto mode. Open Science auto-approves only edits to files inside
+          the workspace — commands, network, and MCP tools still ask.
+        </div>
+      ) : null}
+    </>
+  )
+
+  const permissionSummary = (
+    <>
+      <Shield className="size-4 shrink-0 text-text-200" strokeWidth={2} aria-hidden="true" />
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] font-medium leading-5">Permission mode</span>
+        <span className="block text-[11px] leading-4 text-text-300">
+          How much the agent can do without asking first.
+        </span>
+      </span>
+      <span
+        data-testid="profile-capsule"
+        className={cn(
+          'flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium leading-4',
+          profileCapsuleClassName[profile]
+        )}
+      >
+        <SelectedIcon className="size-3 shrink-0" strokeWidth={2} aria-hidden="true" />
+        {selectedProfile.shortLabel}
+        <ChevronRight className="size-3 shrink-0 opacity-60" strokeWidth={2} aria-hidden="true" />
+      </span>
+    </>
+  )
 
   return (
     <>
@@ -224,213 +310,168 @@ const ComposerAgentControlsMenu = ({
             ) : null}
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-72 p-1">
-          {/* Permission row mirrors the auto-review row: icon + label + description, with the
-              current level shown as a colored capsule on the right; levels live in the submenu. */}
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
-              <Shield
-                className="size-4 shrink-0 text-text-200"
-                strokeWidth={2}
-                aria-hidden="true"
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block text-[13px] font-medium leading-5">Permission mode</span>
-                <span className="block text-[11px] leading-4 text-text-300">
-                  How much the agent can do without asking first.
-                </span>
-              </span>
-              <span
-                data-testid="profile-capsule"
-                className={cn(
-                  'flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium leading-4',
-                  profileCapsuleClassName[profile]
-                )}
+        <DropdownMenuContent
+          side="top"
+          align="start"
+          sideOffset={8}
+          collisionPadding={8}
+          className="max-h-[calc(100dvh-1rem)] w-72 max-w-[calc(100vw-1rem)] overflow-y-auto p-1"
+        >
+          {isMobile && mobilePermissionOpen ? (
+            <>
+              {/* Mobile keeps the second level inside the same viewport-safe panel. */}
+              <DropdownMenuItem
+                className="items-center gap-2 px-2 py-1.5"
+                data-testid="mobile-permission-back"
+                onSelect={(event) => {
+                  event.preventDefault()
+                  setMobilePermissionOpen(false)
+                }}
               >
-                <SelectedIcon className="size-3 shrink-0" strokeWidth={2} aria-hidden="true" />
-                {selectedProfile.shortLabel}
-                <ChevronRight
-                  className="size-3 shrink-0 opacity-60"
+                <ChevronLeft className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+                <span className="text-[13px] font-medium leading-5">Permission mode</span>
+              </DropdownMenuItem>
+              <div className="mx-1 mb-1 border-t border-border-200" />
+              {permissionOptions}
+            </>
+          ) : (
+            <>
+              {/* On mobile, open the permission choices in this panel. Desktop keeps the submenu. */}
+              {isMobile ? (
+                <DropdownMenuItem
+                  className="items-center gap-2 px-2 py-1.5"
+                  data-testid="mobile-permission-trigger"
+                  onSelect={(event) => {
+                    event.preventDefault()
+                    setMobilePermissionOpen(true)
+                  }}
+                >
+                  {permissionSummary}
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
+                    {permissionSummary}
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent
+                    collisionPadding={8}
+                    className="max-h-[calc(100dvh-1rem)] w-72 max-w-[calc(100vw-1rem)] overflow-y-auto p-1"
+                  >
+                    {permissionOptions}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              )}
+
+              {/* The whole row toggles auto-review; the Switch is a visual indicator only. */}
+              <DropdownMenuItem
+                disabled={readOnly || autoReviewDisabled}
+                className="items-center gap-2 px-2 py-1.5"
+                onSelect={(event) => {
+                  event.preventDefault()
+                  onAutoReviewChange(!autoReviewEnabled)
+                }}
+              >
+                <ScanEye
+                  className="size-4 shrink-0 text-text-200"
                   strokeWidth={2}
                   aria-hidden="true"
                 />
-              </span>
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="w-72 p-1">
-              {permissionProfiles.map((candidate) => {
-                const ProfileIcon = candidate.icon
-                const isSelected = candidate.id === profile
-                const isFull = candidate.id === 'full'
-                const isDisabled = isFull && fullAccessUnavailable
-
-                return (
-                  <DropdownMenuItem
-                    key={candidate.id}
-                    disabled={readOnly || isDisabled}
-                    className="items-center gap-2 px-2 py-1.5"
-                    onSelect={() => selectProfile(candidate.id)}
-                  >
-                    {/* Full access reads as a warning row: amber icon/title, softer amber description. */}
-                    <ProfileIcon
-                      className={cn(
-                        'size-4 shrink-0',
-                        isFull ? 'text-amber-600 dark:text-amber-400' : 'text-text-200'
-                      )}
-                      strokeWidth={2}
-                      aria-hidden="true"
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span
-                        className={cn(
-                          'block text-[13px] font-medium leading-5',
-                          isFull && 'text-amber-600 dark:text-amber-400'
-                        )}
-                      >
-                        {candidate.label}
-                      </span>
-                      <span
-                        className={cn(
-                          'block text-[11px] leading-4',
-                          isFull ? 'text-amber-600/70 dark:text-amber-400/70' : 'text-text-300'
-                        )}
-                      >
-                        {isDisabled
-                          ? 'The current agent does not support native bypass mode.'
-                          : candidate.description}
-                      </span>
-                    </span>
-                    {isSelected ? (
-                      <Check className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-                    ) : null}
-                  </DropdownMenuItem>
-                )
-              })}
-              {profile === 'auto' && profileState?.autoReviewStrategy === 'conservative' ? (
-                <div className="mx-1 mt-1 rounded-md bg-bg-200 px-2 py-1.5 text-[11px] leading-4 text-text-200">
-                  This agent has no native auto mode. Open Science auto-approves only edits to files
-                  inside the workspace — commands, network, and MCP tools still ask.
-                </div>
-              ) : null}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-
-          {/* The whole row toggles auto-review; the Switch is a non-interactive indicator so
-              clicking it does not double-toggle. preventDefault keeps the menu open. */}
-          <DropdownMenuItem
-            disabled={readOnly || autoReviewDisabled}
-            className="items-center gap-2 px-2 py-1.5"
-            onSelect={(event) => {
-              event.preventDefault()
-              onAutoReviewChange(!autoReviewEnabled)
-            }}
-          >
-            <ScanEye className="size-4 shrink-0 text-text-200" strokeWidth={2} aria-hidden="true" />
-            <span className="min-w-0 flex-1">
-              <span className="block text-[13px] font-medium leading-5">Auto-review</span>
-              <span className="block text-[11px] leading-4 text-text-300">
-                A reviewer agent checks every change before it lands.
-              </span>
-            </span>
-            <Switch
-              size="sm"
-              checked={autoReviewEnabled}
-              tabIndex={-1}
-              aria-hidden="true"
-              className="pointer-events-none"
-            />
-          </DropdownMenuItem>
-
-          {hasGrants ? (
-            <div className="mt-1 border-t border-border-200 pt-1">
-              <div className="flex items-center justify-between px-2 pb-0.5">
-                <span className="text-[11px] font-medium uppercase tracking-wide text-text-300">
-                  Allowed this session
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-medium leading-5">Auto-review</span>
+                  <span className="block text-[11px] leading-4 text-text-300">
+                    A reviewer agent checks every change before it lands.
+                  </span>
                 </span>
-                {/* One-click clear for a long session; swallow the event so the menu stays open. */}
-                <button
-                  type="button"
-                  className="shrink-0 text-[11px] text-text-300 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-text-300"
-                  aria-label="Clear all session grants"
-                  disabled={grantActionsReadOnly}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    onClearGrants?.()
-                  }}
-                >
-                  Clear all
-                </button>
-              </div>
-              {/* Cap the list so a long session of grants scrolls instead of stretching the menu. */}
-              <div className="max-h-40 overflow-y-auto">
-                {grants!.map((grant) => (
-                  <div
-                    key={grant.categoryKey}
-                    className="flex items-center gap-2 rounded-md px-2 py-1 text-[11px] text-text-200"
-                  >
-                    <span
-                      className="min-w-0 flex-1 truncate font-mono leading-4"
-                      title={grant.label}
-                    >
-                      {grant.label}
+                <Switch
+                  size="sm"
+                  checked={autoReviewEnabled}
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  className="pointer-events-none"
+                />
+              </DropdownMenuItem>
+
+              {hasGrants ? (
+                <div className="mt-1 border-t border-border-200 pt-1">
+                  <div className="flex items-center justify-between px-2 pb-0.5">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-text-300">
+                      Allowed this session
                     </span>
-                    {/* Revoke must not close the menu or re-select a profile, so swallow the event. */}
                     <button
                       type="button"
-                      className="flex size-5 shrink-0 items-center justify-center rounded text-text-300 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-text-300"
-                      aria-label={`Revoke session grant for ${grant.label}`}
+                      className="shrink-0 text-[11px] text-text-300 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-text-300"
+                      aria-label="Clear all session grants"
                       disabled={grantActionsReadOnly}
                       onClick={(event) => {
                         event.preventDefault()
                         event.stopPropagation()
-                        onRevokeGrant?.(grant.categoryKey)
+                        onClearGrants?.()
                       }}
                     >
-                      <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                      Clear all
                     </button>
                   </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
+                  <div className="max-h-40 overflow-y-auto">
+                    {grants!.map((grant) => (
+                      <div
+                        key={grant.categoryKey}
+                        className="flex items-center gap-2 rounded-md px-2 py-1 text-[11px] text-text-200"
+                      >
+                        <span
+                          className="min-w-0 flex-1 truncate font-mono leading-4"
+                          title={grant.label}
+                        >
+                          {grant.label}
+                        </span>
+                        <button
+                          type="button"
+                          className="flex size-5 shrink-0 items-center justify-center rounded text-text-300 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-text-300"
+                          aria-label={`Revoke session grant for ${grant.label}`}
+                          disabled={grantActionsReadOnly}
+                          onClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            onRevokeGrant?.(grant.categoryKey)
+                          }}
+                        >
+                          <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
-          {/* Specialist + Compute live in hover-expanded submenus below the agent controls.
-              Specialist shows the personal-specialist picker (was a standalone toolbar button);
-              Compute folds the old inline SSH host list and "Manage compute…" into one submenu. */}
-          <DropdownMenuSeparator />
-          {showSpecialist ? (
-            <SpecialistSubmenu
-              selectedId={specialistId}
-              onChange={onSpecialistChange ?? (() => undefined)}
-              unavailable={specialistUnavailable}
-              readOnly={specialistReadOnly || readOnly}
-            />
-          ) : null}
+              {showSpecialist ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <SpecialistSubmenu
+                    selectedId={specialistId}
+                    onChange={onSpecialistChange ?? (() => undefined)}
+                    unavailable={specialistUnavailable}
+                    readOnly={specialistReadOnly || readOnly}
+                  />
+                </>
+              ) : null}
 
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
-              <Server
-                className="size-4 shrink-0 text-text-200"
-                strokeWidth={2}
-                aria-hidden="true"
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block text-[13px] font-medium leading-5">Compute</span>
-                <span className="block text-[11px] leading-4 text-text-300">
-                  Run jobs on a remote SSH host, or manage hosts.
+              {/* Keep compute controls visible in the viewport-safe primary panel. */}
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="flex items-center gap-2 px-2 py-1.5">
+                <Server
+                  className="size-4 shrink-0 text-text-200"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-medium leading-5">Compute</span>
+                  <span className="block text-[11px] leading-4 text-text-300">
+                    Run jobs on a remote SSH host, or manage hosts.
+                  </span>
                 </span>
-              </span>
-              <ChevronRight
-                className="size-4 shrink-0 opacity-60"
-                strokeWidth={2}
-                aria-hidden="true"
-              />
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="w-72 p-1">
-              {/* SSH hosts are single-select; Manage compute opens the settings panel. */}
+              </DropdownMenuLabel>
               {sshHosts.length > 0 ? (
                 <>
-                  <DropdownMenuLabel className="text-[10.5px] uppercase tracking-wide text-text-300 font-normal">
+                  <DropdownMenuLabel className="text-[10.5px] font-normal uppercase tracking-wide text-text-300">
                     SSH
                   </DropdownMenuLabel>
                   <DropdownMenuGroup>
@@ -454,8 +495,6 @@ const ComposerAgentControlsMenu = ({
                           >
                             {host.displayName}
                           </span>
-                          {/* pointer-events-none: the Switch is a visual indicator only;
-                              the row's onSelect is the single toggle entry point. */}
                           <Switch
                             size="sm"
                             checked={isEnabled}
@@ -481,8 +520,8 @@ const ComposerAgentControlsMenu = ({
                 <Settings className="size-4 shrink-0" aria-hidden="true" />
                 Manage compute...
               </DropdownMenuItem>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 

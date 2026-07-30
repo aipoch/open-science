@@ -234,6 +234,13 @@ import type {
   ReviewUpdateEvent
 } from '../shared/reviewer'
 import type {
+  ApproveRemotePairingRequest,
+  RemoteAccessSnapshot,
+  RemotePairingRequestId,
+  RevokeRemoteBrowserRequest,
+  SetRemoteAccessModeRequest
+} from '../shared/remote-access'
+import type {
   CreateSpecialistRequest,
   UpdateSpecialistRequest,
   SetSpecialistEnabledRequest,
@@ -391,6 +398,16 @@ interface OpenScienceAPI {
     respondSkillImportApproval(response: ConversationSkillImportApprovalResponse): Promise<void>
     respondConnectorApproval(request: RespondApprovalRequest): Promise<void>
     onInstallLog(listener: AcpListener<ClaudeInstallEvent>): RemoveListener
+  }
+  remoteAccess: {
+    getSnapshot(): Promise<RemoteAccessSnapshot>
+    detect(): Promise<RemoteAccessSnapshot>
+    disable(): Promise<RemoteAccessSnapshot>
+    setMode(request: SetRemoteAccessModeRequest): Promise<RemoteAccessSnapshot>
+    approve(request: ApproveRemotePairingRequest): Promise<RemoteAccessSnapshot>
+    reject(request: RemotePairingRequestId): Promise<RemoteAccessSnapshot>
+    revokeBrowser(request: RevokeRemoteBrowserRequest): Promise<RemoteAccessSnapshot>
+    onChanged(listener: () => void): RemoveListener
   }
   specialist: {
     list(): Promise<SpecialistListItem[]>

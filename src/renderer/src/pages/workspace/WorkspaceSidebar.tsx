@@ -12,7 +12,8 @@ import {
   PinOff,
   Plus,
   Settings,
-  Trash2
+  Trash2,
+  X
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -51,6 +52,9 @@ type WorkspaceSidebarProps = {
   onTogglePin: (session: ChatSession) => void
   onDeleteSession: (session: ChatSession) => void
   onOpenSettings: () => void
+  mobileMode?: boolean
+  isMobileOpen?: boolean
+  onMobileClose?: () => void
 }
 
 // Maps each session status to the left-side indicator dot using emitted theme colors.
@@ -101,7 +105,10 @@ const WorkspaceSidebar = ({
   onExportSession,
   onTogglePin,
   onDeleteSession,
-  onOpenSettings
+  onOpenSettings,
+  mobileMode = false,
+  isMobileOpen = false,
+  onMobileClose
 }: WorkspaceSidebarProps): React.JSX.Element => {
   // Partition sessions into pinned and unpinned groups; each group preserves the incoming order.
   const pinnedSessions = sessions.filter((s) => s.pinned)
@@ -114,27 +121,50 @@ const WorkspaceSidebar = ({
   sections.push({ label: 'Active', items: activeSessions })
 
   return (
-    <aside className="z-10 flex h-full w-full min-w-0 flex-col overflow-hidden">
+    <aside
+      aria-label="Workspace navigation"
+      aria-hidden={mobileMode && !isMobileOpen ? true : undefined}
+      inert={mobileMode && !isMobileOpen ? true : undefined}
+      data-mobile-open={isMobileOpen ? 'true' : 'false'}
+      className={cn(
+        mobileMode
+          ? 'fixed inset-y-0 left-0 z-[70] flex h-[100dvh] w-[min(86vw,320px)] min-w-0 shrink-0 flex-col bg-bg-10 transition-transform duration-200 ease-out'
+          : 'z-10 flex h-full w-full min-w-0 flex-col overflow-hidden',
+        mobileMode && (isMobileOpen ? 'translate-x-0' : '-translate-x-full')
+      )}
+    >
       <div className="m-2 flex min-h-0 flex-1 flex-col rounded-lg bg-rail-card-bg shadow-card">
         <div className="px-3 pt-3">
-          <div className="flex items-start pr-9">
-            <button
-              type="button"
-              onClick={onGoHome}
-              className={cn(
-                'flex min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-text-100 hover:bg-bg-300 hover:text-text-000',
-                sidebarInteractiveTransitionClassName
-              )}
-            >
-              <ChevronLeft className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
-              <span className="min-w-0 truncate">All projects</span>
-            </button>
-          </div>
-          <div
-            className="mt-1.5 truncate px-1.5 font-serif text-[16px] font-bold tracking-[-0.02em] text-text-000"
-            title={projectName}
-          >
-            {projectName}
+          <div className={cn('flex items-start', mobileMode ? 'gap-2' : 'pr-9')}>
+            <div className="min-w-0 flex-1">
+              <button
+                type="button"
+                onClick={onGoHome}
+                className={cn(
+                  'flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-text-100 hover:bg-bg-300 hover:text-text-000',
+                  sidebarInteractiveTransitionClassName
+                )}
+              >
+                <ChevronLeft className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                <span>All projects</span>
+              </button>
+              <div
+                className="mt-1.5 truncate px-1.5 font-serif text-[16px] font-bold tracking-[-0.02em] text-text-000"
+                title={projectName}
+              >
+                {projectName}
+              </div>
+            </div>
+            {mobileMode ? (
+              <button
+                type="button"
+                onClick={onMobileClose}
+                className="grid size-8 shrink-0 place-items-center rounded-lg text-text-300 hover:bg-bg-300 hover:text-text-000"
+                aria-label="Close navigation"
+              >
+                <X className="size-4" aria-hidden="true" />
+              </button>
+            ) : null}
           </div>
         </div>
 

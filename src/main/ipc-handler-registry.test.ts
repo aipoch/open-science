@@ -62,4 +62,21 @@ describe('createIpcHandlerRegistry', () => {
     expect(handle).toHaveBeenCalledTimes(1)
     registry.webRpc.dispose()
   })
+
+  it('scopes remote pairing authority to the current Web RPC invocation', async () => {
+    const registry = createIpcHandlerRegistry({ handle: vi.fn() } as never)
+    registry.ipcMainHandle('remote-access:get-snapshot', (event: unknown) =>
+      (event as { sender: { canManageRemotePairing?: boolean } }).sender.canManageRemotePairing ===
+      true
+    )
+
+    await expect(
+      registry.webRpc.invoke('remote-access:get-snapshot', 'browser-1', [], {
+        canManageRemotePairing: true
+      })
+    ).resolves.toBe(true)
+    await expect(
+      registry.webRpc.invoke('remote-access:get-snapshot', 'browser-1', [])
+    ).resolves.toBe(false)
+  })
 })

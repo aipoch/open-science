@@ -24,6 +24,10 @@ type PreviewPanelProps = {
   onResize: (panelSize: PanelSize, previousPanelSize: PanelSize | undefined) => void
 }
 
+type PreviewPanelSurfaceProps = {
+  className?: string
+}
+
 // Renders the active tab's content, or an empty state when nothing is previewed yet.
 const PreviewActiveContent = ({
   item
@@ -443,13 +447,9 @@ const PreviewToolPanel = ({ item }: { item: PreviewToolItem }): React.JSX.Elemen
   )
 }
 
-// Right-side workbench: a tab strip over every previewed file, plus content for the active tab.
-const PreviewPanel = ({
-  panelRef,
-  defaultSize,
-  minSize,
-  onResize
-}: PreviewPanelProps): React.JSX.Element => {
+// Shared workbench surface. Desktop wraps it in a resizable panel; mobile presents the exact same
+// tabs and active content inside a bottom sheet.
+const PreviewPanelSurface = ({ className }: PreviewPanelSurfaceProps): React.JSX.Element => {
   const items = usePreviewWorkbenchStore((state) => state.items)
   const activeItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const panelState = usePreviewWorkbenchStore((state) => state.panelState)
@@ -470,61 +470,88 @@ const PreviewPanel = ({
       : (activeItem?.id ?? 'empty')
 
   return (
-    <ResizablePanel
+    <aside
       id="right-panel"
+      className={cn(
+        'relative flex h-full w-full flex-col overflow-hidden bg-bg-10 py-[10px]',
+        className
+      )}
+    >
+      {items.length > 0 ? (
+        <div
+          data-testid="preview-panel-top-bar"
+          className="flex min-w-0 w-full shrink-0 items-start pr-11"
+        >
+          <PreviewTabBar
+            tabs={items}
+            activeItemId={activeItemId}
+            onActivate={activateItem}
+            onClose={removeItem}
+          />
+        </div>
+      ) : null}
+      <div className={cn('min-h-0 flex-1', activeItem?.type === 'file' && 'pl-2 pr-1')}>
+        {!activeItem ? <PreviewActiveContent key={activeContentKey} item={activeItem} /> : null}
+        {items.map((item) => {
+          const isActivePanel = item.id === activeItemId && panelState === 'open'
+          if (!isActivePanel) {
+            return (
+              <section
+                key={item.id}
+                role="tabpanel"
+                id={getPreviewPanelId(item.id)}
+                aria-labelledby={getPreviewTabId(item.id)}
+                hidden
+              />
+            )
+          }
+
+          return item.type === 'file' ? (
+            <PreviewFilePanel
+              key={item.id}
+              item={item}
+              contentKey={activeContentKey}
+              onClose={removeItem}
+            />
+          ) : (
+            <PreviewToolPanel key={item.id} item={item} />
+          )
+        })}
+      </div>
+    </aside>
+  )
+}
+
+// Desktop right-side workbench: a tab strip over every previewed file, plus active content.
+const PreviewPanel = ({
+  panelRef,
+  defaultSize,
+  minSize,
+  onResize
+}: PreviewPanelProps): React.JSX.Element => {
+  const handleResize = (
+    panelSize: PanelSize,
+    _panelId: string | number | undefined,
+    previousPanelSize: PanelSize | undefined
+  ): void => {
+    onResize(panelSize, previousPanelSize)
+  }
+
+  return (
+    <ResizablePanel
+      id="right-panel-resizable"
       // The parent drives expand/collapse in response to store open requests and header toggles.
       panelRef={panelRef}
       defaultSize={defaultSize}
       minSize={minSize}
       collapsible
       collapsedSize="0%"
-      onResize={(panelSize, _panelId, previousPanelSize) => onResize(panelSize, previousPanelSize)}
+      onResize={handleResize}
     >
-      <aside className="relative flex h-full w-full flex-col overflow-hidden bg-bg-10 py-[10px]">
-        {items.length > 0 ? (
-          <div
-            data-testid="preview-panel-top-bar"
-            className="flex min-w-0 w-full shrink-0 items-start pl-2 pr-11"
-          >
-            <PreviewTabBar
-              tabs={items}
-              activeItemId={activeItemId}
-              onActivate={activateItem}
-              onClose={removeItem}
-            />
-          </div>
-        ) : null}
-        <div className={cn('min-h-0 flex-1', activeItem?.type === 'file' && 'pl-2 pr-1')}>
-          {!activeItem ? <PreviewActiveContent key={activeContentKey} item={activeItem} /> : null}
-          {items.map((item) => {
-            const isActivePanel = item.id === activeItemId && panelState === 'open'
-            if (!isActivePanel) {
-              return (
-                <section
-                  key={item.id}
-                  role="tabpanel"
-                  id={getPreviewPanelId(item.id)}
-                  aria-labelledby={getPreviewTabId(item.id)}
-                  hidden
-                />
-              )
-            }
-
-            return item.type === 'file' ? (
-              <PreviewFilePanel
-                key={item.id}
-                item={item}
-                contentKey={activeContentKey}
-                onClose={removeItem}
-              />
-            ) : (
-              <PreviewToolPanel key={item.id} item={item} />
-            )
-          })}
-        </div>
-      </aside>
+      <PreviewPanelSurface />
     </ResizablePanel>
   )
 }
 
 export { PreviewPanel }
+export { PreviewPanelSurface }

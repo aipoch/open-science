@@ -12,6 +12,7 @@ import {
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 
 const workspacePageHarness = vi.hoisted(() => ({
+  isMobile: false,
   sidebarSize: 16,
   sidebarPanelDefaultSize: undefined as string | undefined,
   sidebarPanelMinSize: undefined as string | undefined,
@@ -147,11 +148,41 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
 }))
 
 vi.mock('./WorkspaceSidebar', () => ({
-  WorkspaceSidebar: (): React.JSX.Element => <aside data-testid="workspace-sidebar" />
+  WorkspaceSidebar: ({ isMobileOpen }: { isMobileOpen?: boolean }): React.JSX.Element => (
+    <aside data-mobile-open={isMobileOpen ? 'true' : 'false'} />
+  )
 }))
 
 vi.mock('./ConversationPanel', () => ({
-  ConversationPanel: (): React.JSX.Element => <section data-testid="conversation-panel" />
+  ConversationPanel: ({
+    isPreviewPanelCollapsed,
+    onTogglePreviewPanel,
+    onOpenSidebar
+  }: {
+    isPreviewPanelCollapsed: boolean
+    onTogglePreviewPanel: () => void
+    onOpenSidebar?: () => void
+  }): React.JSX.Element => (
+    <section data-testid="conversation-panel">
+      <button
+        type="button"
+        data-testid="preview-toggle"
+        data-collapsed={isPreviewPanelCollapsed ? 'true' : 'false'}
+        onClick={onTogglePreviewPanel}
+      >
+        Toggle preview
+      </button>
+      <button type="button" data-testid="navigation-toggle" onClick={onOpenSidebar}>
+        Toggle navigation
+      </button>
+    </section>
+  )
+}))
+
+vi.mock('./MobilePreviewSheet', () => ({
+  MobilePreviewSheet: ({ open }: { open: boolean }): React.JSX.Element => (
+    <div data-testid="mobile-preview-sheet" data-open={open ? 'true' : 'false'} />
+  )
 }))
 
 vi.mock('./PreviewPanel', () => ({
@@ -206,6 +237,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     workspacePageHarness.sidebarOnResize = undefined
     workspacePageHarness.sidebarPanelRef = undefined
     workspacePageHarness.previewSize = 0
+    workspacePageHarness.isMobile = false
     workspacePageHarness.previewPanelDefaultSize = undefined
     workspacePageHarness.previewPanelMinSize = undefined
     workspacePageHarness.previewOnResize = undefined
@@ -216,6 +248,16 @@ describe('WorkspacePage preview panel resize sync', () => {
       return 1
     })
     vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+    window.matchMedia = vi.fn((query: string) => ({
+      matches: query === '(max-width: 767px)' ? workspacePageHarness.isMobile : false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn()
+    }))
     window.api = {
       notebook: {
         onAvailable: vi.fn(() => vi.fn()),
@@ -449,6 +491,46 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(workspacePageHarness.previewPanelDefaultSize).toBe('0%')
     expect(workspacePageHarness.previewPanelHandle.resize).toHaveBeenCalledWith('0%')
     expect(motionHarness.animate).not.toHaveBeenCalled()
+  })
+
+  it('retries once when the desktop panel layout is still registering', async () => {
+    workspacePageHarness.previewSize = 40
+    workspacePageHarness.previewPanelHandle.getSize = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error('Layout not found for Panel right-panel-resizable')
+      })
+      .mockImplementation(() => ({
+        asPercentage: workspacePageHarness.previewSize,
+        inPixels: workspacePageHarness.previewSize * 10
+      }))
+
+    await renderPage()
+
+    expect(workspacePageHarness.previewPanelHandle.getSize).toHaveBeenCalledTimes(2)
+    expect(workspacePageHarness.previewPanelHandle.resize).toHaveBeenCalledWith('0%')
+  })
+
+  it('uses a navigation drawer and bottom preview sheet on mobile', async () => {
+    workspacePageHarness.isMobile = true
+    await renderPage()
+
+    expect(container.querySelector('[data-testid="preview-panel"]')).toBeNull()
+    expect(
+      container.querySelector('[data-testid="mobile-preview-sheet"]')?.getAttribute('data-open')
+    ).toBe('false')
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="navigation-toggle"]')?.click()
+    })
+    expect(container.querySelector('aside')?.getAttribute('data-mobile-open')).toBe('true')
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="preview-toggle"]')?.click()
+    })
+    expect(
+      container.querySelector('[data-testid="mobile-preview-sheet"]')?.getAttribute('data-open')
+    ).toBe('true')
   })
 
   it('keeps an explicit open request when expand animation emits a near-zero resize', async () => {

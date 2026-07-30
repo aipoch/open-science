@@ -1,0 +1,68 @@
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+
+import type {
+  ApproveRemotePairingRequest,
+  RemotePairingRequestId,
+  RevokeRemoteBrowserRequest,
+  SetRemoteAccessModeRequest
+} from '../../shared/remote-access'
+import { isRemotePairingManagerSender } from '../ipc-handler-registry'
+import { RemoteAccessService } from './service'
+
+const isDesktopSender = (event: IpcMainInvokeEvent): boolean => event.sender.id > 0
+
+const requireDesktopSender = (event: IpcMainInvokeEvent): void => {
+  if (!isDesktopSender(event)) {
+    throw new Error('This action must be approved from the Open Science desktop app.')
+  }
+}
+
+const canManagePairing = (event: IpcMainInvokeEvent): boolean =>
+  isDesktopSender(event) || isRemotePairingManagerSender(event)
+
+const requirePairingManager = (event: IpcMainInvokeEvent): void => {
+  if (!canManagePairing(event)) {
+    throw new Error(
+      'Pairing can only be managed from the Open Science desktop app or an approved browser.'
+    )
+  }
+}
+
+export const registerRemoteAccessIpcHandlers = (service: RemoteAccessService): void => {
+  ipcMain.handle('remote-access:get-snapshot', (event) => {
+    const desktop = isDesktopSender(event)
+    return service.snapshot(desktop, canManagePairing(event))
+  })
+  ipcMain.handle('remote-access:detect', async (event) => {
+    requireDesktopSender(event)
+    return service.detect()
+  })
+  ipcMain.handle('remote-access:set-mode', async (event, request: SetRemoteAccessModeRequest) => {
+    requireDesktopSender(event)
+    return service.setMode(request.mode)
+  })
+  ipcMain.handle('remote-access:disable', async (event) => {
+    requireDesktopSender(event)
+    return service.disable()
+  })
+  ipcMain.handle('remote-access:approve', async (event, request: ApproveRemotePairingRequest) => {
+    requirePairingManager(event)
+    const desktop = isDesktopSender(event)
+    return service.approve(request, desktop, canManagePairing(event))
+  })
+  ipcMain.handle('remote-access:reject', (event, request: RemotePairingRequestId) => {
+    requirePairingManager(event)
+    const desktop = isDesktopSender(event)
+    return service.reject(request.requestId, desktop, canManagePairing(event))
+  })
+  ipcMain.handle(
+    'remote-access:revoke-browser',
+    async (event, request: RevokeRemoteBrowserRequest) => {
+      requirePairingManager(event)
+      const desktop = isDesktopSender(event)
+      return service.revoke(request.browserId, desktop, canManagePairing(event))
+    }
+  )
+}
+
+export { canManagePairing, isDesktopSender, requireDesktopSender, requirePairingManager }

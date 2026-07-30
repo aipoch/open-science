@@ -300,7 +300,9 @@ describe('conversation message scroller integration', () => {
     expect(conversationPanelSource).toContain('bg-bg-10')
     expect(conversationPanelSource).toContain('composerContentClassName')
     expect(conversationPanelSource).toContain('mx-auto w-full max-w-4xl')
-    expect(conversationPanelSource).toContain('px-4 pb-2')
+    expect(conversationPanelSource).toContain(
+      'px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] md:px-4 md:pb-2'
+    )
     expect(conversationPanelSource).toContain('px-1 md:px-3')
     expect(workspaceMessageScrollerSource).toContain('bg-bg-10')
     expect(workspaceMessageScrollerSource).toContain('pb-[56px]')

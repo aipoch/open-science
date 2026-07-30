@@ -39,7 +39,12 @@ const SettingsSection = ({
     className={cn(separated && 'border-t border-border pt-5', className)}
     {...props}
   >
-    <div className={cn('flex items-start justify-between gap-4', headerClassName)}>
+    <div
+      className={cn(
+        'flex flex-wrap items-start justify-between gap-3 sm:gap-4',
+        headerClassName
+      )}
+    >
       <div className="min-w-0">
         <h3
           id={titleId}
@@ -85,7 +90,7 @@ const SettingsRow = ({
   <div
     data-slot="settings-row"
     className={cn(
-      'grid min-h-14 grid-cols-[minmax(0,1fr)_minmax(12rem,20rem)] items-center gap-6 py-3',
+      'grid min-h-14 grid-cols-1 items-center gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,20rem)] sm:gap-6',
       className
     )}
     {...props}
