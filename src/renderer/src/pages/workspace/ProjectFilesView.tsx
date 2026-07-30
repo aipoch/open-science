@@ -1510,7 +1510,7 @@ const ProjectFilesViewContent = ({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="rounded-md text-text-100 hover:bg-muted hover:text-text-000"
+                  className="rounded-md text-text-000 hover:bg-muted"
                   aria-label={isFilesExpanded ? 'Exit full screen files' : 'Expand files'}
                   onClick={() =>
                     setToolItemExpanded(isFilesExpanded ? null : PROJECT_FILES_PREVIEW_ID)
