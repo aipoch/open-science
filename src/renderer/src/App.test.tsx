@@ -290,6 +290,21 @@ describe('App startup routing', () => {
     ).toBe('true')
   })
 
+  it('renders the partial session recovery alert on an opaque surface', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = true
+    mocks.sessionPersistence.isReady = false
+    mocks.sessionPersistence.loadError = 'one saved conversation could not be read'
+
+    await render()
+
+    const alert = container.querySelector('[data-testid="session-persistence-alert"]')
+    expect(alert).not.toBeNull()
+    expect(alert?.classList.contains('bg-bg-000')).toBe(true)
+    expect(alert?.classList.contains('bg-bg-100')).toBe(false)
+    expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
+  })
+
   it('routes first-run users to onboarding after settings hydration', async () => {
     mocks.settings.isLoaded = true
     mocks.startupView = 'onboarding'
