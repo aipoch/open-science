@@ -30,11 +30,16 @@ let conversationProps: {
   onStageAttachmentFiles: (files: File[]) => void
 }
 let sidebarProps: {
+  canDeleteConversations: boolean
   onOpenSession: (id: string) => void
   onNewConversation: () => void
   onDeleteSession: (session: ChatSession) => void
 }
-let deleteDialogProps: { session: ChatSession | undefined; onConfirmDelete: () => void }
+let deleteDialogProps: {
+  session: ChatSession | undefined
+  canDelete: boolean
+  onConfirmDelete: () => void
+}
 
 // The runtime bridge is stubbed; sendMessage resolves truthy so the success path clears the composer.
 const runtime = vi.hoisted(() => ({
@@ -209,13 +214,17 @@ describe('WorkspacePage draft preservation', () => {
     container.remove()
   })
 
-  const renderPage = async (isSessionPersistenceReady = true): Promise<void> => {
+  const renderPage = async (
+    isSessionPersistenceReady = true,
+    canDeleteConversations = true
+  ): Promise<void> => {
     root = createRoot(container)
     await act(async () => {
       root.render(
         <WorkspacePage
           isSessionPersistenceHydrated={true}
           isSessionPersistenceReady={isSessionPersistenceReady}
+          canDeleteConversations={canDeleteConversations}
         />
       )
     })
@@ -383,7 +392,7 @@ describe('WorkspacePage draft preservation', () => {
   })
 
   it('allows target-validated session deletion while other persistence is recovering', async () => {
-    await renderPage(false)
+    await renderPage(false, true)
 
     const sessionB = useSessionStore.getState().sessions.find((session) => session.id === 'sess-b')!
     await act(async () => {
@@ -397,6 +406,51 @@ describe('WorkspacePage draft preservation', () => {
     expect(useSessionStore.getState().sessions).not.toContainEqual(
       expect.objectContaining({ id: 'sess-b' })
     )
+  })
+
+  it('blocks session deletion when Project deletion recovery is incomplete', async () => {
+    await renderPage(false, false)
+
+    const sessionB = useSessionStore.getState().sessions.find((session) => session.id === 'sess-b')!
+    await act(async () => {
+      sidebarProps.onDeleteSession(sessionB)
+    })
+    await act(async () => {
+      deleteDialogProps.onConfirmDelete()
+    })
+
+    expect(sidebarProps.canDeleteConversations).toBe(false)
+    expect(deleteDialogProps.session).toBeUndefined()
+    expect(deleteDialogProps.canDelete).toBe(false)
+    expect(runtime.deleteRuntimeSession).not.toHaveBeenCalled()
+  })
+
+  it('disables an open delete dialog when Project deletion recovery becomes incomplete', async () => {
+    await renderPage(false, true)
+
+    const sessionB = useSessionStore.getState().sessions.find((session) => session.id === 'sess-b')!
+    await act(async () => {
+      sidebarProps.onDeleteSession(sessionB)
+    })
+    expect(deleteDialogProps.session?.id).toBe('sess-b')
+    expect(deleteDialogProps.canDelete).toBe(true)
+
+    await act(async () => {
+      root.render(
+        <WorkspacePage
+          isSessionPersistenceHydrated={true}
+          isSessionPersistenceReady={false}
+          canDeleteConversations={false}
+        />
+      )
+    })
+    expect(deleteDialogProps.session?.id).toBe('sess-b')
+    expect(deleteDialogProps.canDelete).toBe(false)
+
+    await act(async () => {
+      deleteDialogProps.onConfirmDelete()
+    })
+    expect(runtime.deleteRuntimeSession).not.toHaveBeenCalled()
   })
 
   it('records explicit user takeover before starting Session deletion', async () => {

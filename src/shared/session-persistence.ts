@@ -1212,6 +1212,9 @@ export type SessionLoadDiagnostics = {
   isComplete: boolean
   warnings: SessionLoadWarning[]
   failure?: SessionLoadFailure
+  // The outer startup boundary stamps this after replaying pending Project deletions. Session and
+  // Project deletion IPC both enforce the same prerequisite, independently of scan completeness.
+  isProjectDeletionRecoveryComplete?: boolean
 }
 
 // IPC payloads for the per-session persistence surface.

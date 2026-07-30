@@ -155,6 +155,7 @@ describe('workspace session dialogs behavior wiring', () => {
     const onConfirmDelete = vi.fn()
     const tree = DeleteSessionDialog({
       session: createSession({ title: 'Dataset cleanup' }),
+      canDelete: true,
       onCancel,
       onConfirmDelete
     })
@@ -179,6 +180,7 @@ describe('workspace session dialogs behavior wiring', () => {
     const onCancel = vi.fn()
     const tree = DeleteSessionDialog({
       session: createSession({ title: 'Dataset cleanup' }),
+      canDelete: true,
       onCancel,
       onConfirmDelete: vi.fn()
     })
@@ -186,5 +188,20 @@ describe('workspace session dialogs behavior wiring', () => {
     expectSettingsDialogChrome(tree, 'w-[min(420px,calc(100vw-2rem))]', onCancel, {
       interceptsOutsideClick: false
     })
+  })
+
+  it('disables Session deletion when persistence deletion recovery is unavailable', async () => {
+    const { DeleteSessionDialog } = await import('./DeleteSessionDialog')
+    const tree = DeleteSessionDialog({
+      session: createSession({ title: 'Protected session' }),
+      canDelete: false,
+      onCancel: vi.fn(),
+      onConfirmDelete: vi.fn()
+    })
+    const deleteButton = collectElements(tree).find(
+      (element) => getTextContent(element).trim() === 'Delete' && element.props.onClick
+    )
+
+    expect(deleteButton?.props.disabled).toBe(true)
   })
 })

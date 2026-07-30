@@ -13,7 +13,12 @@ import { useSessionPersistence, type SessionPersistenceState } from './session-p
 
 const emptyLoadResult = (): LoadAllSessionsResult => ({
   sessions: [],
-  manifest: { version: SESSION_MANIFEST_VERSION }
+  manifest: { version: SESSION_MANIFEST_VERSION },
+  diagnostics: {
+    isComplete: true,
+    warnings: [],
+    isProjectDeletionRecoveryComplete: true
+  }
 })
 
 const createPersistedSession = (
@@ -74,6 +79,7 @@ describe('session persistence startup', () => {
         data-loading={String(persistence.isLoading)}
         data-ready={String(persistence.isReady)}
         data-catalog-complete={String(persistence.hasCompleteSessionCatalog)}
+        data-deletion-ready={String(persistence.canDeleteSessionsAndProjects)}
       >
         <span data-testid="load-error">{persistence.loadError ?? 'sessions available'}</span>
         <span data-testid="load-warning">{persistence.loadWarning ?? 'no load warnings'}</span>
@@ -109,6 +115,7 @@ describe('session persistence startup', () => {
     expect(loadAll).toHaveBeenCalledTimes(2)
     expect(container.querySelector('div')?.dataset.ready).toBe('true')
     expect(container.querySelector('div')?.dataset.catalogComplete).toBe('true')
+    expect(container.querySelector('div')?.dataset.deletionReady).toBe('true')
     expect(container.querySelector('div')?.dataset.hydrated).toBe('true')
     expect(container.querySelector('div')?.dataset.loading).toBe('false')
     expect(container.querySelector('[data-testid="load-error"]')?.textContent).toContain(
@@ -257,6 +264,7 @@ describe('session persistence startup', () => {
       ...emptyLoadResult(),
       diagnostics: {
         isComplete: false,
+        isProjectDeletionRecoveryComplete: true,
         warnings: [
           {
             kind: 'unreadable',
@@ -272,6 +280,7 @@ describe('session persistence startup', () => {
 
     expect(container.querySelector('div')?.dataset.ready).toBe('false')
     expect(container.querySelector('div')?.dataset.hydrated).toBe('true')
+    expect(container.querySelector('div')?.dataset.deletionReady).toBe('true')
     expect(container.querySelector('[data-testid="load-error"]')?.textContent).toContain(
       'could not be read'
     )
@@ -359,13 +368,15 @@ describe('session persistence startup', () => {
       diagnostics: {
         isComplete: false,
         warnings: [],
-        failure: 'startup-reconciliation-failed'
+        failure: 'startup-reconciliation-failed',
+        isProjectDeletionRecoveryComplete: false
       }
     })
 
     await act(async () => root.render(<Probe />))
 
     expect(container.querySelector('div')?.dataset.ready).toBe('false')
+    expect(container.querySelector('div')?.dataset.deletionReady).toBe('false')
     expect(container.querySelector('[data-testid="load-error"]')?.textContent).toContain(
       'storage recovery could not finish'
     )

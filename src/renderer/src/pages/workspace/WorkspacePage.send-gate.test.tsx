@@ -157,7 +157,11 @@ describe('WorkspacePage send gate while compacting', () => {
     root = createRoot(container)
     await act(async () => {
       root.render(
-        <WorkspacePage isSessionPersistenceHydrated={true} isSessionPersistenceReady={true} />
+        <WorkspacePage
+          isSessionPersistenceHydrated={true}
+          isSessionPersistenceReady={true}
+          canDeleteConversations={true}
+        />
       )
     })
   }
@@ -197,7 +201,11 @@ describe('WorkspacePage send gate while compacting', () => {
     runtime.promptInFlightSessionIds = ['sess-a']
     await act(async () => {
       root.render(
-        <WorkspacePage isSessionPersistenceHydrated={true} isSessionPersistenceReady={true} />
+        <WorkspacePage
+          isSessionPersistenceHydrated={true}
+          isSessionPersistenceReady={true}
+          canDeleteConversations={true}
+        />
       )
     })
     expect(conversationProps.canSendMessage).toBe(false)
@@ -205,7 +213,11 @@ describe('WorkspacePage send gate while compacting', () => {
     runtime.promptInFlightSessionIds = []
     await act(async () => {
       root.render(
-        <WorkspacePage isSessionPersistenceHydrated={true} isSessionPersistenceReady={true} />
+        <WorkspacePage
+          isSessionPersistenceHydrated={true}
+          isSessionPersistenceReady={true}
+          canDeleteConversations={true}
+        />
       )
     })
     expect(conversationProps.canSendMessage).toBe(true)

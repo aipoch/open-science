@@ -52,6 +52,7 @@ import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
   isSessionPersistenceReady: boolean
+  canDeleteConversations: boolean
 }
 
 // Converts unknown async failures into composer-visible text.
@@ -87,7 +88,8 @@ const getUploadFilename = (file: File, index: number): string => {
 // Renders the workspace shell and bridges the chat surface to the session store.
 const WorkspacePage = ({
   isSessionPersistenceHydrated,
-  isSessionPersistenceReady
+  isSessionPersistenceReady,
+  canDeleteConversations
 }: WorkspacePageProps): React.JSX.Element => {
   // The page owns the imperative panel handle because open requests come from outside PreviewPanel.
   const previewPanelRef = useRef<PanelImperativeHandle | null>(null)
@@ -966,17 +968,17 @@ const WorkspacePage = ({
     closeRenameDialog()
   }
 
-  // Explicit deletion is target-validated and fail-closed in main, so unrelated recovery warnings
-  // need not block cleanup of a readable Session after hydration has identified its durable key.
+  // Explicit deletion is target-validated and may remain available after a partial Session scan, but
+  // main requires Project deletion-journal recovery before either deletion IPC can safely run.
   const openDeleteDialog = (session: ChatSession): void => {
-    if (!isSessionPersistenceHydrated) return
+    if (!isSessionPersistenceHydrated || !canDeleteConversations) return
 
     setSessionToDelete(session)
   }
 
   // Deletes the selected session and repairs the chat surface if it was showing that session.
   const confirmDeleteSession = (): void => {
-    if (!isSessionPersistenceHydrated || !sessionToDelete) return
+    if (!isSessionPersistenceHydrated || !canDeleteConversations || !sessionToDelete) return
 
     // Cancel deferred notification/deep-link navigation before the asynchronous authoritative
     // deletion begins. The user's destructive action owns the view even if the target is unrelated.
@@ -1156,7 +1158,7 @@ const WorkspacePage = ({
           activeSessionId={selectedSessionId}
           canCreateConversation={isSessionPersistenceReady}
           canMutateConversations={isSessionPersistenceReady}
-          canDeleteConversations={isSessionPersistenceHydrated}
+          canDeleteConversations={canDeleteConversations}
           onGoHome={() => goHome('user')}
           onNewConversation={openNewConversation}
           isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
@@ -1252,6 +1254,7 @@ const WorkspacePage = ({
 
       <DeleteSessionDialog
         session={sessionToDelete}
+        canDelete={canDeleteConversations}
         onCancel={closeDeleteDialog}
         onConfirmDelete={confirmDeleteSession}
       />

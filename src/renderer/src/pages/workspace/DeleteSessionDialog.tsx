@@ -16,6 +16,7 @@ import type { ChatSession } from '@/stores/session-store'
 
 type DeleteSessionDialogProps = {
   session: ChatSession | undefined
+  canDelete: boolean
   onCancel: () => void
   onConfirmDelete: () => void
 }
@@ -26,6 +27,7 @@ const deleteDialogConfirmButtonClassName =
 // Destructive deletion requires confirmation before the session is removed from memory.
 const DeleteSessionDialog = ({
   session,
+  canDelete,
   onCancel,
   onConfirmDelete
 }: DeleteSessionDialogProps): React.JSX.Element => {
@@ -72,6 +74,7 @@ const DeleteSessionDialog = ({
               <Button
                 type="button"
                 className={deleteDialogConfirmButtonClassName}
+                disabled={!canDelete}
                 onClick={onConfirmDelete}
               >
                 Delete

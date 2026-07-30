@@ -85,6 +85,7 @@ type SessionPersistenceState = {
   isLoading: boolean
   isReady: boolean
   hasCompleteSessionCatalog: boolean
+  canDeleteSessionsAndProjects: boolean
   loadError: string | undefined
   loadWarning: string | undefined
   writeError: string | undefined
@@ -255,6 +256,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const [isLoading, setIsLoading] = useState(true)
   const [isReady, setIsReady] = useState(false)
   const [hasCompleteSessionCatalog, setHasCompleteSessionCatalog] = useState(false)
+  const [canDeleteSessionsAndProjects, setCanDeleteSessionsAndProjects] = useState(false)
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
   const [loadWarning, setLoadWarning] = useState<string | undefined>(undefined)
   const [writeError, setWriteError] = useState<string | undefined>(undefined)
@@ -272,6 +274,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setIsLoading(true)
     setIsReady(false)
     setHasCompleteSessionCatalog(false)
+    setCanDeleteSessionsAndProjects(false)
     setLoadError(undefined)
     setLoadWarning(undefined)
     setWriteError(undefined)
@@ -317,6 +320,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
         setHasCompleteSessionCatalog(
           result.diagnostics?.isComplete !== false && sessionWarningCount === 0
         )
+        setCanDeleteSessionsAndProjects(
+          result.diagnostics?.isProjectDeletionRecoveryComplete === true
+        )
 
         if (result.diagnostics?.isComplete === false) {
           setLoadError(
@@ -359,6 +365,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
         reportPersistenceError(error)
         if (isMounted) {
           setHasCompleteSessionCatalog(false)
+          setCanDeleteSessionsAndProjects(false)
           setLoadError(SAFE_SESSION_LOAD_ERROR)
           setIsLoading(false)
         }
@@ -422,6 +429,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     isLoading,
     isReady,
     hasCompleteSessionCatalog,
+    canDeleteSessionsAndProjects,
     loadError,
     loadWarning,
     writeError,

@@ -175,7 +175,11 @@ describe('WorkspacePage inline edit resend', () => {
     root = createRoot(container)
     await act(async () => {
       root.render(
-        <WorkspacePage isSessionPersistenceHydrated={true} isSessionPersistenceReady={true} />
+        <WorkspacePage
+          isSessionPersistenceHydrated={true}
+          isSessionPersistenceReady={true}
+          canDeleteConversations={true}
+        />
       )
     })
   }

@@ -198,7 +198,11 @@ describe('WorkspacePage image attachment gating', () => {
     root = createRoot(container)
     await act(async () => {
       root.render(
-        <WorkspacePage isSessionPersistenceHydrated={true} isSessionPersistenceReady={true} />
+        <WorkspacePage
+          isSessionPersistenceHydrated={true}
+          isSessionPersistenceReady={true}
+          canDeleteConversations={true}
+        />
       )
     })
   }

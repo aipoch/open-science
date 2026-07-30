@@ -363,13 +363,14 @@ const App = (): React.JSX.Element | null => {
       ) : null}
       {view === 'home' ? (
         <HomePage
-          canDeleteProjects={isSessionPersistenceHydrated}
+          canDeleteProjects={sessionPersistence.canDeleteSessionsAndProjects}
           hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
         />
       ) : (
         <WorkspacePage
           isSessionPersistenceHydrated={isSessionPersistenceHydrated}
           isSessionPersistenceReady={isSessionPersistenceReady}
+          canDeleteConversations={sessionPersistence.canDeleteSessionsAndProjects}
         />
       )}
       <SettingsPage open={isSettingsOpen} onClose={closeSettings} />

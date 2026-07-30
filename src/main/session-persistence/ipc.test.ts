@@ -73,8 +73,14 @@ describe('session persistence IPC handlers', () => {
       loadAllReadOnly: vi.fn().mockResolvedValue(degraded)
     }
 
-    await expect(loadSessionsAfterProjectRecovery(projectRecovery, sessionLoader)).resolves.toBe(
-      degraded
+    await expect(loadSessionsAfterProjectRecovery(projectRecovery, sessionLoader)).resolves.toEqual(
+      {
+        ...degraded,
+        diagnostics: {
+          ...degraded.diagnostics,
+          isProjectDeletionRecoveryComplete: false
+        }
+      }
     )
 
     expect(sessionLoader.loadAll).not.toHaveBeenCalled()
@@ -96,8 +102,15 @@ describe('session persistence IPC handlers', () => {
       loadAllReadOnly: vi.fn()
     }
 
-    await expect(loadSessionsAfterProjectRecovery(projectRecovery, sessionLoader)).resolves.toBe(
-      loaded
+    await expect(loadSessionsAfterProjectRecovery(projectRecovery, sessionLoader)).resolves.toEqual(
+      {
+        ...loaded,
+        diagnostics: {
+          isComplete: true,
+          warnings: [],
+          isProjectDeletionRecoveryComplete: true
+        }
+      }
     )
 
     expect(projectRecovery.recoverPendingDeletions).toHaveBeenCalledOnce()

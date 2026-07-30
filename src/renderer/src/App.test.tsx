@@ -58,6 +58,7 @@ const mocks = vi.hoisted(() => {
       isLoading: false,
       isReady: true,
       hasCompleteSessionCatalog: true,
+      canDeleteSessionsAndProjects: true,
       loadError: undefined as string | undefined,
       loadWarning: undefined as string | undefined,
       writeError: undefined as string | undefined,
@@ -192,11 +193,17 @@ vi.mock('@/pages/workspace/EnvStatusBanner', () => ({
 }))
 vi.mock('@/pages/workspace/WorkspacePage', () => ({
   WorkspacePage: ({
-    isSessionPersistenceReady
+    isSessionPersistenceReady,
+    canDeleteConversations
   }: {
     isSessionPersistenceReady: boolean
+    canDeleteConversations: boolean
   }): React.JSX.Element => (
-    <div data-testid="workspace-page">{String(isSessionPersistenceReady)}</div>
+    <div
+      data-testid="workspace-page"
+      data-ready={String(isSessionPersistenceReady)}
+      data-can-delete-conversations={String(canDeleteConversations)}
+    />
   )
 }))
 
@@ -224,6 +231,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.isHydrated = true
     mocks.sessionPersistence.isLoading = false
     mocks.sessionPersistence.hasCompleteSessionCatalog = true
+    mocks.sessionPersistence.canDeleteSessionsAndProjects = true
     mocks.sessionPersistence.loadError = undefined
     mocks.sessionPersistence.loadWarning = undefined
     mocks.sessionPersistence.writeError = undefined
@@ -328,6 +336,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.isHydrated = true
     mocks.sessionPersistence.isReady = false
     mocks.sessionPersistence.hasCompleteSessionCatalog = false
+    mocks.sessionPersistence.canDeleteSessionsAndProjects = true
 
     await render()
 
@@ -344,6 +353,19 @@ describe('App startup routing', () => {
     expect(
       container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset
         .hasCompleteSessionCatalog
+    ).toBe('false')
+  })
+
+  it('disables deletion when Project deletion recovery is incomplete', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = true
+    mocks.sessionPersistence.isReady = false
+    mocks.sessionPersistence.canDeleteSessionsAndProjects = false
+
+    await render()
+
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset.canDeleteProjects
     ).toBe('false')
   })
 
@@ -575,7 +597,13 @@ describe('App startup routing', () => {
 
     await render()
 
-    expect(container.querySelector('[data-testid="workspace-page"]')?.textContent).toBe('true')
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="workspace-page"]')?.dataset.ready
+    ).toBe('true')
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="workspace-page"]')?.dataset
+        .canDeleteConversations
+    ).toBe('true')
     expect(container.querySelector('[data-testid="missing-root"]')?.textContent).toBe(
       '/Volumes/Science/OpenScience'
     )

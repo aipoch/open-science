@@ -41,6 +41,19 @@ type SessionStartupLoader = {
   loadAllReadOnly: () => Promise<LoadAllSessionsResult>
 }
 
+const withProjectDeletionRecoveryStatus = (
+  result: LoadAllSessionsResult,
+  isProjectDeletionRecoveryComplete: boolean
+): LoadAllSessionsResult => ({
+  ...result,
+  diagnostics: {
+    isComplete: result.diagnostics?.isComplete ?? true,
+    warnings: result.diagnostics?.warnings ?? [],
+    ...result.diagnostics,
+    isProjectDeletionRecoveryComplete
+  }
+})
+
 // Project deletion recovery is a prerequisite for mutating startup reconciliation. If it fails,
 // expose only the coordinator's explicit read-only snapshot so healthy transcripts remain navigable
 // without allowing partially recovered Project authority to drive cleanup or derived-state writes.
@@ -52,10 +65,10 @@ const loadSessionsAfterProjectRecovery = async (
     await projectRecovery.recoverPendingDeletions()
   } catch (error) {
     console.error('[session-persistence] Project deletion recovery failed', error)
-    return sessionLoader.loadAllReadOnly()
+    return withProjectDeletionRecoveryStatus(await sessionLoader.loadAllReadOnly(), false)
   }
 
-  return sessionLoader.loadAll()
+  return withProjectDeletionRecoveryStatus(await sessionLoader.loadAll(), true)
 }
 
 // Adapts the coordinator into small handlers that are easy to unit test.
