@@ -653,6 +653,12 @@ const buildShellEnv = (
     const value = sourceEnv[key]
     if (value !== undefined) env[key] = value
   }
+  if (platform === 'win32') {
+    // Windows PowerShell 5.1 can keep a short-lived process alive for its fixed-delay module-analysis
+    // cache cleanup after the first cmdlet. Notebook shells are disposable, so skip that stale-entry
+    // cleanup while retaining the cache itself; this avoids adding roughly ten seconds per fresh shell.
+    env.PSDisableModuleAnalysisCacheCleanup = '1'
+  }
   env.OPEN_SCIENCE_HANDOFF_DIR = handoffDir
   return env
 }

@@ -186,7 +186,7 @@ describe('Windows shell support', () => {
     expect(normalizePowerShellStderr(errorClixml, 'win32')).toBe(errorClixml)
   })
 
-  it('keeps Windows shell location variables while excluding host secrets', () => {
+  it('keeps Windows shell runtime variables while excluding host secrets', () => {
     const env = buildShellEnv('/notebook/handoff', 'win32', {
       PATH: 'C:\\Windows\\System32',
       SystemRoot: 'C:\\Windows',
@@ -194,6 +194,7 @@ describe('Windows shell support', () => {
       ComSpec: 'C:\\Windows\\System32\\cmd.exe',
       PATHEXT: '.COM;.EXE;.BAT;.CMD',
       USERPROFILE: 'C:\\Users\\Ada',
+      PSDisableModuleAnalysisCacheCleanup: 'host-value-must-not-win',
       OPEN_SCIENCE_TEST_SECRET: 'must-not-leak'
     })
 
@@ -204,6 +205,7 @@ describe('Windows shell support', () => {
       ComSpec: 'C:\\Windows\\System32\\cmd.exe',
       PATHEXT: '.COM;.EXE;.BAT;.CMD',
       USERPROFILE: 'C:\\Users\\Ada',
+      PSDisableModuleAnalysisCacheCleanup: '1',
       OPEN_SCIENCE_HANDOFF_DIR: '/notebook/handoff'
     })
     expect(env.OPEN_SCIENCE_TEST_SECRET).toBeUndefined()
