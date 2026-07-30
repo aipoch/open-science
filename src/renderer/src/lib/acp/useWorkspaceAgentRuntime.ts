@@ -106,6 +106,13 @@ type ResendEditedWorkspaceMessageOptions = {
   drainRuntimeEvents?: RuntimeEventDrain
 }
 
+type ResumeInterruptedWorkspaceSessionOptions = {
+  supportsImageInput?: boolean
+  agentModel?: string
+  onSendPreparationStateChange?: SendPreparationStateChange
+  drainRuntimeEvents?: RuntimeEventDrain
+}
+
 type WorkspaceMessageRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'createSession' | 'resumeSession' | 'resetSessionContext' | 'sendPrompt'
@@ -903,8 +910,12 @@ const restoreRemovedTurnProjection = (
 const resumeInterruptedWorkspaceSession = async (
   runtime: WorkspaceMessageRuntime,
   sessionId: string,
-  supportsImageInput?: boolean,
-  agentModel?: string
+  {
+    supportsImageInput,
+    agentModel,
+    onSendPreparationStateChange,
+    drainRuntimeEvents
+  }: ResumeInterruptedWorkspaceSessionOptions = {}
 ): Promise<void> => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
 
@@ -962,21 +973,26 @@ const resumeInterruptedWorkspaceSession = async (
 
   useSessionStore.getState().removeMessage(sessionId, interruptedTurn.id)
 
-  const resent = await sendWorkspaceMessage(runtime, {
-    sessionId,
-    text: interruptedTurn.content,
-    attachments: (interruptedTurn.uploads ?? []).map((upload) =>
-      toRuntimeUploadedAttachment(upload, session.projectId)
-    ),
-    parts: interruptedTurn.parts,
-    cwd: resumeCwd,
-    projectId: session.projectId,
-    permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-    // Replay the prior conversation when this resume adopted a fresh agent session.
-    forceHistoryReplay: contextReset,
-    supportsImageInput,
-    agentModel
-  })
+  const resent = await sendWorkspaceMessage(
+    runtime,
+    {
+      sessionId,
+      text: interruptedTurn.content,
+      attachments: (interruptedTurn.uploads ?? []).map((upload) =>
+        toRuntimeUploadedAttachment(upload, session.projectId)
+      ),
+      parts: interruptedTurn.parts,
+      cwd: resumeCwd,
+      projectId: session.projectId,
+      permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+      // Replay the prior conversation when this resume adopted a fresh agent session.
+      forceHistoryReplay: contextReset,
+      supportsImageInput,
+      agentModel
+    },
+    onSendPreparationStateChange,
+    drainRuntimeEvents
+  )
 
   if (!resent) restoreRemovedTurnProjection(session, { interrupted: true })
 }
@@ -1547,8 +1563,13 @@ const useWorkspaceAgentRuntime = (): {
   // success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
   const resumeInterruptedSession = useCallback(
     (sessionId: string): Promise<void> =>
-      resumeInterruptedWorkspaceSession(runtime, sessionId, supportsImageInput, activeModel),
-    [runtime, supportsImageInput, activeModel]
+      resumeInterruptedWorkspaceSession(runtime, sessionId, {
+        supportsImageInput,
+        agentModel: activeModel,
+        onSendPreparationStateChange: handleSendPreparationStateChange,
+        drainRuntimeEvents
+      }),
+    [runtime, supportsImageInput, activeModel, handleSendPreparationStateChange, drainRuntimeEvents]
   )
 
   // Sends a cancellation request while the runtime waits for the eventual stop event.

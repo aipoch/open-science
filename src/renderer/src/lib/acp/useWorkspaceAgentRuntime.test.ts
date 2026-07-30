@@ -1937,11 +1937,24 @@ describe('resuming an interrupted session on demand', () => {
       resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
+    const preparationChanged = vi.fn()
+    const drainRuntimeEvents = vi.fn().mockResolvedValue(undefined)
 
-    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1', {
+      onSendPreparationStateChange: preparationChanged,
+      drainRuntimeEvents
+    })
     await flushRuntimeTasks()
 
     expect(runtime.resumeSession).toHaveBeenCalled()
+    expect(preparationChanged.mock.calls).toEqual([
+      ['session-1', true],
+      ['session-1', false]
+    ])
+    expect(drainRuntimeEvents).toHaveBeenCalledOnce()
+    expect(drainRuntimeEvents.mock.invocationCallOrder[0]).toBeLessThan(
+      runtime.sendPrompt.mock.invocationCallOrder[0]
+    )
     expect(runtime.sendPrompt).toHaveBeenCalledTimes(1)
     expect(runtime.sendPrompt).toHaveBeenCalledWith(
       'session-1',
