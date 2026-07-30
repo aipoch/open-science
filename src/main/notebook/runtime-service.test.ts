@@ -4742,10 +4742,14 @@ describe('v4 runtime bindings & agent tools', () => {
     const root = await createStorageRoot()
     const runtimeRoot = getRuntimeRoot(root)
     const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    const cachePath = join(runtimeRoot, 'pkgs')
     const provisioner = new DefaultRuntimeProvisioner({
       root: runtimeRoot,
       mm: '/mm',
       channel: 'conda-forge',
+      // Cache selection and Windows ACL hardening are covered separately. Keep this integration test
+      // focused on the provisioner-to-recovery journal boundary and independent of host ACL latency.
+      cache: { path: cachePath, lockKey: cachePath },
       fetchBundle: async (spec) => ({ lockPath: join(runtimeRoot, `${spec.name}.lock`) }),
       // Real runMicromamba calls onBeforeSpawn right before spawning; mimic that (write the intent) then
       // hang, modelling a crash after spawn but before the PID is recorded.
