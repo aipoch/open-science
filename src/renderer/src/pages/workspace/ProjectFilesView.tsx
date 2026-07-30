@@ -826,7 +826,11 @@ const ProjectFilesFilterMenu = ({
           />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="max-h-[360px] w-[320px] overflow-y-auto">
+      <DropdownMenuContent
+        align="start"
+        // The expanded files modal stacks at z-[56]; keep portaled popovers above it.
+        className="z-[70] max-h-[360px] w-[320px] overflow-y-auto"
+      >
         <DropdownMenuLabel>Artifacts</DropdownMenuLabel>
         <DropdownMenuGroup>
           {fixedOptions.map((option) => (
@@ -1495,7 +1499,7 @@ const ProjectFilesViewContent = ({
                     <LayoutGrid className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
                   </ToggleGroup.Item>
                 </TooltipTrigger>
-                <TooltipContent>Grid view</TooltipContent>
+                <TooltipContent className="z-[70]">Grid view</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -1507,7 +1511,7 @@ const ProjectFilesViewContent = ({
                     <List className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
                   </ToggleGroup.Item>
                 </TooltipTrigger>
-                <TooltipContent>List view</TooltipContent>
+                <TooltipContent className="z-[70]">List view</TooltipContent>
               </Tooltip>
             </ToggleGroup.Root>
             <Tooltip>
@@ -1568,7 +1572,7 @@ const ProjectFilesViewContent = ({
                     <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Clear search</TooltipContent>
+                <TooltipContent className="z-[70]">Clear search</TooltipContent>
               </Tooltip>
             </TooltipProvider>
           ) : null}
