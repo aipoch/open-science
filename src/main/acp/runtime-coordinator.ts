@@ -270,8 +270,13 @@ class AcpRuntimeCoordinator {
       this.sessionRuntimes.get(request.sessionId) === owner
     ) {
       this.sessionRuntimes.delete(request.sessionId)
+      this.sessionConnectionStatuses.delete(request.sessionId)
     }
     this.sessionRuntimes.set(response.sessionId, runtime)
+    // The incoming runtime's attached snapshot is deliberately ignored while adoption is pending.
+    // Commit its current connection status together with ownership so a stale status from the
+    // draining owner cannot classify later prompt failures as disconnects.
+    this.sessionConnectionStatuses.set(response.sessionId, runtime.getSnapshot().status)
     this.lastRuntime = runtime
     if (transfersOwnership) this.callbacks.onStateChanged?.(this.getSnapshot())
     return response

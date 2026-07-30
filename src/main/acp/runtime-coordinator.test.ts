@@ -654,6 +654,8 @@ describe('AcpRuntimeCoordinator', () => {
 
     const session = await coordinator.createSession()
     created[0].emitState({
+      status: 'error',
+      error: 'draining runtime disconnected',
       promptInFlight: true,
       promptInFlightSessionIds: [session.sessionId]
     })
@@ -740,6 +742,10 @@ describe('AcpRuntimeCoordinator', () => {
 
     adoption.resolve()
     await resumeRequest
+
+    expect(coordinator.getSnapshot().sessionConnectionStatuses).toEqual({
+      [session.sessionId]: 'connected'
+    })
 
     created[0].emitEvent(toolEvent('post-adoption-codex-tool', 'shell'))
     created[1].emitEvent(
