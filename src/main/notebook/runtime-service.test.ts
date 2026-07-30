@@ -2709,6 +2709,61 @@ describe('notebook runtime service', () => {
       expect(result.repairRequired).toBe(true)
     })
 
+    it('keeps the in-process repair gate when the protected-identity journal update fails', async () => {
+      const root = await createStorageRoot()
+      const execute = vi.fn(async (): Promise<NotebookExecutionResult> => {
+        throw new Error('a repair-blocked kernel must not execute')
+      })
+      const terminate = vi.fn(async () => undefined)
+      const update = vi
+        .spyOn(RuntimeOperationJournal.prototype, 'update')
+        .mockRejectedValueOnce(new Error('journal update denied'))
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentStateTracker: verifiedPackageMutationTracker(),
+        executorFactory: () => ({
+          execute,
+          terminate,
+          shutdown: async () => ({ reaped: true })
+        }),
+        installPackagesImpl: vi.fn().mockResolvedValue({
+          ok: false,
+          needsRestart: false,
+          log: 'r-base changed',
+          repairRequired: true,
+          error: 'Protected r-base changed unexpectedly. Run Repair.'
+        })
+      })
+
+      try {
+        await service.state({ sessionId: 'session-1', workspaceCwd: root })
+        await expect(
+          service.managePackages({
+            sessionId: 'session-1',
+            workspaceCwd: root,
+            language: 'r',
+            packages: ['dplyr']
+          })
+        ).rejects.toThrow(/journal update denied/)
+
+        const run = await service.execute({
+          sessionId: 'session-1',
+          workspaceCwd: root,
+          code: 'R.version.string',
+          language: 'r'
+        })
+        expect(run.status).toBe('failed')
+        expect(run.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
+        expect(terminate).toHaveBeenCalledWith('r', DEFAULT_R_ENV)
+        expect(execute).not.toHaveBeenCalled()
+      } finally {
+        update.mockRestore()
+      }
+    })
+
     it('retains recovery evidence and blocks execution when the repair registry is unwritable', async () => {
       const root = await createStorageRoot()
       const runtimeRoot = getRuntimeRoot(root)

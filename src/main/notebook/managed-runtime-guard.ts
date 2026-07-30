@@ -912,18 +912,49 @@ const packageExecutionBridgeCandidates = (
     return bridgeUsesShellCommandString(call, surface) ? values.slice(0, 1) : []
   })
 
+const lastOpenCommandSubstitution = (source: string, before: number): number => {
+  let closedDepth = 0
+  for (let index = before - 1; index > 0; index -= 1) {
+    if (source[index] === ')') {
+      closedDepth += 1
+      continue
+    }
+    if (source[index] !== '(' || source[index - 1] !== '$') continue
+    if (closedDepth === 0) return index
+    closedDepth -= 1
+  }
+  return -1
+}
+
 const shellMatchIsExecutable = (source: string, matchIndex: number): boolean => {
+  const commandSubstitution = lastOpenCommandSubstitution(source, matchIndex)
   const boundary = Math.max(
     source.lastIndexOf('\n', matchIndex - 1),
     source.lastIndexOf(';', matchIndex - 1),
     source.lastIndexOf('|', matchIndex - 1),
-    source.lastIndexOf('&', matchIndex - 1)
+    source.lastIndexOf('&', matchIndex - 1),
+    commandSubstitution < 0 ? -1 : commandSubstitution + 1
   )
   const prefix = source
     .slice(boundary + 1, matchIndex)
     .trim()
     .replace(/["']/gu, '')
-  if (/^(?:(?:sudo|env|command|exec|if|then|while|until|!|&)\s+)*$/iu.test(prefix)) return true
+    // PACKAGE_MUTATION_RULES match the executable basename inside `/prefix/bin/pip`. Remove only
+    // the final path-bearing word; any earlier word (for example `echo /prefix/bin/pip install`)
+    // remains and correctly proves this is an argument rather than the command position.
+    .replace(/(?:^|\s)[^\s;|&()]*[\\/]$/u, '')
+    .trim()
+  const allowedPrefixTokens = /^(?:sudo|env|command|exec|if|then|while|until|!|&)$/iu
+  if (
+    !prefix ||
+    prefix
+      .split(/\s+/u)
+      .every(
+        (token) => allowedPrefixTokens.test(token) || /^[A-Za-z_][A-Za-z0-9_]*=[^\s]+$/u.test(token)
+      )
+  ) {
+    return true
+  }
   return /\b(?:Rscript|R|python|python3|py|bash|sh|zsh|powershell|pwsh|cmd)(?:\.exe)?\b[^\n]{0,80}(?:-e|-c|\/c)\s*["']?$/iu.test(
     prefix
   )

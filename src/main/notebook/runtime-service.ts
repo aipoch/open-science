@@ -2837,6 +2837,7 @@ class NotebookRuntimeService {
         // looking clean even though package state may have changed.
         await this.environmentStateTracker.markPackageMutationDirty(environmentTarget, mutation)
         let installResult: InstallResult | undefined
+        let deferredQuarantineError: Error | undefined
         try {
           installResult = await this.installPackagesImpl(pinnedRequest, {
             storageRoot: this.options.dataRoot,
@@ -2915,10 +2916,19 @@ class NotebookRuntimeService {
             // treating the changed interpreter as a repairable interrupted install. Keep the record on
             // either failure; only a fully durable quarantine lets the normal finally clear it.
             retainForRecovery = true
-            await journal.update(operationId, {
-              runtimeId: repairRuntimeId,
-              repairReason: 'protected-identity-change'
-            })
+            let journalUpdateError: unknown
+            try {
+              await journal.update(operationId, {
+                runtimeId: repairRuntimeId,
+                repairReason: 'protected-identity-change'
+              })
+            } catch (error) {
+              journalUpdateError = error
+            }
+            // Even when the journal cannot be upgraded (ENOSPC/EACCES/I/O), publish the in-process
+            // gate, terminate live kernels, and attempt the independent repair registry marker before
+            // the install lock is released. The registry then remains the durable strong reason; the
+            // retained journal is additional recovery evidence rather than the only active guard.
             await this.quarantineRuntimeForRepair(
               repairRuntimeId,
               request.language,
@@ -2926,9 +2936,22 @@ class NotebookRuntimeService {
               runtimeRoot,
               binding?.source !== 'external'
             )
-            retainForRecovery = false
+            if (journalUpdateError) {
+              deferredQuarantineError = new Error(
+                `${REPAIR_QUARANTINE_FAILED}: the runtime was quarantined, but its operation journal ` +
+                  `could not be upgraded to the protected-identity reason. ${
+                    journalUpdateError instanceof Error
+                      ? journalUpdateError.message
+                      : String(journalUpdateError)
+                  }`,
+                { cause: journalUpdateError }
+              )
+            } else {
+              retainForRecovery = false
+            }
           }
         }
+        if (deferredQuarantineError) throw deferredQuarantineError
         return installResult
       })
     } catch (error) {

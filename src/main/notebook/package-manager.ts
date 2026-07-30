@@ -304,6 +304,98 @@ const protectedRBasePlanError = (
   )
 }
 
+type ProtectedCondaExecution = {
+  conda?: SpawnResult
+  approvedPlan?: SpawnResult
+  failure?: InstallResult
+}
+
+// Extends the R transaction invariant to a Conda request that entered through the Python surface but
+// targets a shared named prefix. An absent identity means this is a Python-only prefix and keeps the
+// normal single-spawn path; a present identity requires a structured dry-run and a post-spawn full
+// identity check before the caller may accept or fall back from the result.
+const executeCondaWithRBaseProtection = async (options: {
+  command: string
+  preflightArgs: string[]
+  realArgs: string[]
+  packages: string[]
+  prefix: string
+  installedRBaseIdentity?: CondaPackageIdentity
+  readIdentity: () => CondaPackageIdentity | undefined
+  runCondaPreflight: InstallSpawn
+  runConda: (
+    command: string,
+    args: string[],
+    stopAfterSpawn?: (result: SpawnResult) => boolean | Promise<boolean>
+  ) => Promise<SpawnResult>
+}): Promise<ProtectedCondaExecution> => {
+  const installed = options.installedRBaseIdentity
+  if (!installed) {
+    return { conda: await options.runConda(options.command, options.realArgs) }
+  }
+
+  const preflight = await options.runCondaPreflight(options.command, options.preflightArgs)
+  // The caller owns solver-failure classification and any language-specific fallback. A failed
+  // preflight never wrote the prefix, so return it as the Conda result without an approved plan.
+  if (preflight.code !== 0) return { conda: preflight }
+
+  const planError = protectedRBasePlanError(preflight, installed.version)
+  if (planError) {
+    return {
+      failure: {
+        ok: false,
+        needsRestart: false,
+        log: [mergeLog(preflight), planError].filter(Boolean).join('\n'),
+        method: 'conda',
+        attempts: [
+          {
+            groupOrdinal: 0,
+            installer: 'conda',
+            packages: [...options.packages],
+            status: 'failed',
+            mutationRisk: 'none',
+            reason: 'validation'
+          }
+        ],
+        fallbackUsed: false,
+        prefix: options.prefix,
+        error: planError
+      }
+    }
+  }
+
+  let finalRBaseIdentity: CondaPackageIdentity | undefined
+  const conda = await options.runConda(options.command, options.realArgs, () => {
+    finalRBaseIdentity = options.readIdentity()
+    return (
+      !hasVerifiableCondaBuild(finalRBaseIdentity) ||
+      condaPackageIdentityKey(finalRBaseIdentity) !== condaPackageIdentityKey(installed)
+    )
+  })
+  if (
+    !hasVerifiableCondaBuild(finalRBaseIdentity) ||
+    condaPackageIdentityKey(finalRBaseIdentity) !== condaPackageIdentityKey(installed)
+  ) {
+    return {
+      failure: {
+        ok: false,
+        needsRestart: false,
+        log: [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n'),
+        method: 'conda',
+        attempts: [installerAttempt(0, 'conda', options.packages, conda)],
+        fallbackUsed: false,
+        prefix: options.prefix,
+        repairRequired: true,
+        error:
+          `Protected r-base changed unexpectedly from ${condaPackageIdentityLabel(installed)} to ` +
+          `${finalRBaseIdentity ? condaPackageIdentityLabel(finalRBaseIdentity) : 'an unknown identity'}. ` +
+          'Stop using this runtime and run Repair.'
+      }
+    }
+  }
+  return { conda, approvedPlan: preflight }
+}
+
 const stringValues = (value: unknown): string[] =>
   Array.isArray(value)
     ? value.flatMap(stringValues)
@@ -723,14 +815,51 @@ export async function installPackages(
 
     const mm = deps.micromamba ?? resolveMicromamba()
     if (!mm) return { ok: false, needsRestart: false, log: '', error: 'micromamba not found.' }
-    const argv = installArgv(mm, root, prefix, channels, req.packages, isDefaultEnv)
-    const condaArgs = [...argv.slice(1, 3), '--json', ...argv.slice(3)]
-    const result = await runConda(argv[0], condaArgs)
+    const readIdentity = deps.readCondaPackageIdentity ?? readCondaPackageIdentity
+    const installedRBaseIdentity = isDefaultEnv ? undefined : readIdentity(prefix, 'r-base')
+    if (installedRBaseIdentity && !hasVerifiableCondaBuild(installedRBaseIdentity)) {
+      return {
+        ok: false,
+        needsRestart: false,
+        log: '',
+        method: 'conda',
+        attempts: [],
+        fallbackUsed: false,
+        prefix,
+        error:
+          `Cannot verify the installed r-base version and build in ${prefix}; repair this shared ` +
+          'runtime before installing packages.'
+      }
+    }
+    const protectedRBaseIdentity = hasVerifiableCondaBuild(installedRBaseIdentity)
+      ? installedRBaseIdentity
+      : undefined
+    const solverPackages = protectedRBaseIdentity
+      ? [
+          `r-base=${protectedRBaseIdentity.version}=${protectedRBaseIdentity.build}`,
+          ...req.packages
+        ]
+      : req.packages
+    const argv = installArgv(mm, root, prefix, channels, solverPackages, isDefaultEnv)
+    const execution = await executeCondaWithRBaseProtection({
+      command: argv[0],
+      preflightArgs: [...argv.slice(1, 3), '--dry-run', '--json', ...argv.slice(3)],
+      realArgs: [...argv.slice(1, 3), '--json', ...argv.slice(3)],
+      packages: req.packages,
+      prefix,
+      installedRBaseIdentity: protectedRBaseIdentity,
+      readIdentity: () => readIdentity(prefix, 'r-base'),
+      runCondaPreflight,
+      runConda
+    })
+    if (execution.failure) return execution.failure
+    const result = execution.conda as SpawnResult
+    const preflight = execution.approvedPlan
     if (result.code === 0) {
       return {
         ok: true,
         needsRestart: false,
-        log: mergeLog(result),
+        log: [preflight ? mergeLog(preflight) : '', mergeLog(result)].filter(Boolean).join('\n'),
         method: 'conda',
         attempts: [installerAttempt(0, 'conda', req.packages, result)],
         fallbackUsed: false,
@@ -749,7 +878,9 @@ export async function installPackages(
       return {
         ok,
         needsRestart: false,
-        log: `${mergeLog(result)}\n${mergeLog(fallback)}`,
+        log: [preflight ? mergeLog(preflight) : '', mergeLog(result), mergeLog(fallback)]
+          .filter(Boolean)
+          .join('\n'),
         method: 'pip',
         attempts: [condaAttempt, installerAttempt(1, 'pip', req.packages, fallback)],
         fallbackUsed: true,
@@ -760,7 +891,7 @@ export async function installPackages(
     return {
       ok: false,
       needsRestart: false,
-      log: mergeLog(result),
+      log: [preflight ? mergeLog(preflight) : '', mergeLog(result)].filter(Boolean).join('\n'),
       method: 'conda',
       attempts: [condaAttempt],
       fallbackUsed: false,
@@ -1010,12 +1141,56 @@ async function uninstallPackages(
 
     const mm = deps.micromamba ?? resolveMicromamba()
     if (!mm) return { ok: false, needsRestart: false, log: '', error: 'micromamba not found.' }
+    if (req.packages.some((pkg) => condaMatchSpecName(pkg) === 'r-base')) {
+      return {
+        ok: false,
+        needsRestart: false,
+        log: '',
+        method: 'conda',
+        attempts: [],
+        fallbackUsed: false,
+        prefix,
+        error: 'r-base is part of the protected R kernel and cannot be uninstalled.'
+      }
+    }
+    const readIdentity = deps.readCondaPackageIdentity ?? readCondaPackageIdentity
+    const installedRBaseIdentity = readIdentity(prefix, 'r-base')
+    if (installedRBaseIdentity && !hasVerifiableCondaBuild(installedRBaseIdentity)) {
+      return {
+        ok: false,
+        needsRestart: false,
+        log: '',
+        method: 'conda',
+        attempts: [],
+        fallbackUsed: false,
+        prefix,
+        error:
+          `Cannot verify the installed r-base version and build in ${prefix}; repair this shared ` +
+          'runtime before removing packages.'
+      }
+    }
+    const protectedRBaseIdentity = hasVerifiableCondaBuild(installedRBaseIdentity)
+      ? installedRBaseIdentity
+      : undefined
     const argv = removeArgv(mm, root, prefix, req.packages)
-    const result = await runConda(argv[0], argv.slice(1))
+    const execution = await executeCondaWithRBaseProtection({
+      command: argv[0],
+      preflightArgs: [...argv.slice(1, 3), '--dry-run', '--json', ...argv.slice(3)],
+      realArgs: argv.slice(1),
+      packages: req.packages,
+      prefix,
+      installedRBaseIdentity: protectedRBaseIdentity,
+      readIdentity: () => readIdentity(prefix, 'r-base'),
+      runCondaPreflight,
+      runConda
+    })
+    if (execution.failure) return execution.failure
+    const result = execution.conda as SpawnResult
+    const preflight = execution.approvedPlan
     return {
       ok: result.code === 0,
       needsRestart: false,
-      log: mergeLog(result),
+      log: [preflight ? mergeLog(preflight) : '', mergeLog(result)].filter(Boolean).join('\n'),
       method: 'conda',
       attempts: [
         installerAttempt(

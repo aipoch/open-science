@@ -44,6 +44,13 @@ assert_no_package_mutation <- function(expr) {
     )
   }
   call_name <- package_mutation_call_name(expr)
+  if (identical(call_name, ".Internal") && length(expr) >= 2L &&
+      identical(package_mutation_call_name(expr[[2L]]), "system")) {
+    stop(
+      "Package/environment mutation is not allowed in an R cell; use manage_packages.",
+      call. = FALSE
+    )
+  }
   if (is_package_mutation_name(call_name)) {
     stop(
       "Package/environment mutation is not allowed in an R cell; use manage_packages.",

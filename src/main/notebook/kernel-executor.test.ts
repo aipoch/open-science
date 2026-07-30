@@ -850,6 +850,34 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
     }
   })
 
+  it('blocks the internal R system primitive from bypassing the persistent process guard', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-internal-system-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+    const blockedPath = join(request.runtimeRoot, 'blocked-internal-system.txt')
+    const executor = new NotebookKernelExecutor({
+      rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+      platform: 'linux'
+    })
+
+    try {
+      const result = await executor.execute({
+        ...request,
+        code:
+          `target <- ${JSON.stringify(blockedPath)}; ` +
+          'command <- paste("touch", shQuote(target)); ' +
+          '.Internal(system(command, FALSE, 0L, TRUE))',
+        language: 'r'
+      })
+
+      expect(result.status).toBe('failed')
+      expect(result.traceback).toMatch(/manage_packages/)
+      expect(existsSync(blockedPath)).toBe(false)
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
   it('blocks managed-runtime writes routed through a temporary R variable', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-runtime-guard-'))
     const request = baseRequest(cwdDir)

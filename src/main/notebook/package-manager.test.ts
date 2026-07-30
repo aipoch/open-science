@@ -727,6 +727,7 @@ describe('installPackages', () => {
       {
         spawn,
         ...base,
+        readCondaPackageIdentity: () => undefined,
         storageRoot,
         pathExists: () => true,
         micromambaEnv: {
@@ -782,6 +783,7 @@ describe('installPackages', () => {
       {
         spawn,
         ...base,
+        readCondaPackageIdentity: () => undefined,
         storageRoot,
         pathExists: () => true,
         onBeforeSpawn: () => order.push('intent'),
@@ -833,7 +835,7 @@ describe('installPackages', () => {
     const { spawn, calls } = scriptedSpawn([ok])
     const result = await installPackages(
       { language: 'python', packages: ['numpy'], environment: 'my-analysis' },
-      { spawn, ...base, pathExists: () => true }
+      { spawn, ...base, pathExists: () => true, readCondaPackageIdentity: () => undefined }
     )
     const prefix = envPrefix(runtimeRoot('/root'), 'my-analysis')
     expect(calls).toHaveLength(1)
@@ -841,6 +843,53 @@ describe('installPackages', () => {
     expect(command).toBe('/mm/bin/micromamba')
     expect(args).toEqual(expect.arrayContaining(['install', '--prefix', prefix]))
     expect(result.ok).toBe(true)
+  })
+
+  it('rejects a Python conda plan that would replace r-base in a shared named environment', async () => {
+    const protectedPlan: SpawnResult = {
+      code: 0,
+      stdout: JSON.stringify({
+        success: true,
+        actions: {
+          UNLINK: [{ name: 'r-base', version: '4.4.3' }],
+          LINK: [{ name: 'r-base', version: '4.5.3' }]
+        }
+      }),
+      stderr: ''
+    }
+    const { spawn, calls } = scriptedSpawn([protectedPlan, ok])
+
+    const result = await installPackages(
+      { language: 'python', packages: ['numpy'], environment: 'my-analysis' },
+      { spawn, ...base, pathExists: () => true }
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0][1]).toContain('--dry-run')
+    expect(calls[0][1]).toContain('--json')
+    expect(result).toMatchObject({ ok: false, fallbackUsed: false, needsRestart: false })
+    expect(result.error).toMatch(/proposed changing protected r-base/i)
+  })
+
+  it('quarantines a shared named environment when a Python conda install changes r-base', async () => {
+    const identities = [
+      { name: 'r-base', version: '4.4.3', build: 'h123_0', buildNumber: 0 },
+      { name: 'r-base', version: '4.5.3', build: 'h999_1', buildNumber: 1 }
+    ]
+    const { spawn } = scriptedSpawn([safeRPlan, ok])
+
+    const result = await installPackages(
+      { language: 'python', packages: ['numpy'], environment: 'my-analysis' },
+      {
+        spawn,
+        ...base,
+        pathExists: () => true,
+        readCondaPackageIdentity: () => identities.shift()
+      }
+    )
+
+    expect(result).toMatchObject({ ok: false, repairRequired: true, needsRestart: false })
+    expect(result.error).toMatch(/r-base changed unexpectedly.*Repair/i)
   })
 
   it('routes a python usePip install with environment set to the named env pip', async () => {
@@ -920,7 +969,7 @@ describe('installPackages uninstall', () => {
         operation: 'uninstall',
         environment: 'my-analysis'
       },
-      { spawn, ...named }
+      { spawn, ...named, readCondaPackageIdentity: () => undefined }
     )
     const prefix = envPrefix(runtimeRoot('/root'), 'my-analysis')
     const [command, args] = calls[0]
@@ -944,6 +993,58 @@ describe('installPackages uninstall', () => {
       method: 'conda',
       prefix
     })
+  })
+
+  it.each(['r-base', 'r-base=4.4.3', 'conda-forge::r-base=4.4.3=h123_0'])(
+    'refuses to uninstall protected r-base through the Python conda branch: %s',
+    async (packageName) => {
+      const spawn = vi.fn()
+
+      const result = await installPackages(
+        {
+          language: 'python',
+          packages: [packageName],
+          operation: 'uninstall',
+          environment: 'my-analysis'
+        },
+        { ...named, spawn: spawn as unknown as InstallSpawn }
+      )
+
+      expect(spawn).not.toHaveBeenCalled()
+      expect(result).toMatchObject({ ok: false, needsRestart: false })
+      expect(result.error).toMatch(/protected R kernel/i)
+    }
+  )
+
+  it('rejects a Python conda remove plan that would change r-base in a shared environment', async () => {
+    const protectedPlan: SpawnResult = {
+      code: 0,
+      stdout: JSON.stringify({
+        success: true,
+        actions: {
+          UNLINK: [{ name: 'r-base', version: '4.4.3' }],
+          LINK: [{ name: 'r-base', version: '4.5.3' }]
+        }
+      }),
+      stderr: ''
+    }
+    const { spawn, calls } = scriptedSpawn([protectedPlan, ok])
+
+    const result = await installPackages(
+      {
+        language: 'python',
+        packages: ['numpy'],
+        operation: 'uninstall',
+        environment: 'my-analysis'
+      },
+      { spawn, ...named }
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0][1]).toContain('--dry-run')
+    expect(calls[0][1]).toContain('--json')
+    expect(result).toMatchObject({ ok: false, fallbackUsed: false, needsRestart: false })
+    expect(result.error).toMatch(/proposed changing protected r-base/i)
   })
 
   it('routes a conda-managed R uninstall through micromamba remove with r-/bioconductor- names, needsRestart true', async () => {
@@ -1193,7 +1294,12 @@ describe('installPackages flag-injection guard (all envs)', () => {
         usePip: true,
         environment: 'my-analysis'
       },
-      { spawn, ...base, pathExists: () => true }
+      {
+        spawn,
+        ...base,
+        pathExists: () => true,
+        readCondaPackageIdentity: () => undefined
+      }
     )
     expect(result.ok).toBe(true)
   })
