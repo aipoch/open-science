@@ -258,7 +258,8 @@ describe('App startup routing', () => {
     expect(mocks.settings.checkEnvironment).toHaveBeenCalledOnce()
   })
 
-  it('passes session persistence readiness to deep-link navigation', async () => {
+  it('waits for session hydration before enabling deep-link navigation', async () => {
+    mocks.sessionPersistence.isHydrated = false
     mocks.sessionPersistence.isReady = false
 
     await render()
@@ -276,6 +277,7 @@ describe('App startup routing', () => {
     expect(mocks.lifecycleSync).toHaveBeenCalledWith({
       isSessionPersistenceHydrated: true
     })
+    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith(true)
     expect(
       container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset.canDeleteProjects
     ).toBe('false')
@@ -424,8 +426,10 @@ describe('App startup routing', () => {
     )
   })
 
-  it('opens the notification-target conversation once session persistence is ready', async () => {
+  it('opens the notification-target conversation once sessions hydrate read-only', async () => {
     mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = false
+    mocks.sessionPersistence.isLoading = true
     mocks.sessionPersistence.isReady = false
     mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-9' })
 
@@ -434,8 +438,9 @@ describe('App startup routing', () => {
     // Sessions still hydrating: the pending click target must not be consumed or dropped.
     expect(mocks.openSessionById).not.toHaveBeenCalled()
 
-    // Hydration completes: the target is pulled and the conversation opens.
-    mocks.sessionPersistence.isReady = true
+    // A partial hydration is enough for navigation even though durable writes remain blocked.
+    mocks.sessionPersistence.isHydrated = true
+    mocks.sessionPersistence.isLoading = false
     await act(async () => root.render(<App />))
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
@@ -446,6 +451,7 @@ describe('App startup routing', () => {
 
   it('opens the conversation immediately when a notification nudge arrives hydrated', async () => {
     mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isReady = false
     // The mount-time pull finds nothing; the nudge-triggered pull gets the click target.
     mocks.notifications.takePendingOpenSession
       .mockResolvedValueOnce(null)
