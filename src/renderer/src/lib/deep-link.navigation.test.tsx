@@ -81,6 +81,21 @@ const renderHook = async (
 }
 
 describe('deep-link navigation', () => {
+  it('preserves notification navigation when no deep-link target was supplied', async () => {
+    window.history.replaceState({}, '', '/')
+    useProjectStore.setState({ projects: [project], isLoaded: true })
+    useSessionStore.setState({ sessions: [session] })
+    act(() => useNavigationStore.getState().openSession(project.id, session.id, 'automatic'))
+
+    await renderHook({ isHydrated: true, isReady: true })
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: project.id
+    })
+    expect(useSessionStore.getState().selectedSessionId).toBe(session.id)
+  })
+
   it('opens an already-hydrated session during partial recovery', async () => {
     window.history.replaceState({}, '', '/?project=project-1&session=session-1')
     useSessionStore.setState({ sessions: [session] })

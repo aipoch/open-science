@@ -81,6 +81,15 @@ const useDeepLinkNavigation = ({ isHydrated, isReady }: DeepLinkNavigationReadin
     if (initialized.current || !isProjectsLoaded || !isHydrated) return
 
     const { projectId, sessionId } = initialParams.current ?? {}
+
+    // No launch target means this hook has nothing to resolve. Preserve navigation that may already
+    // have been applied by a desktop-notification click while projects were still loading.
+    if (!projectId && !sessionId) {
+      initialized.current = true
+      setIsInitialized(true)
+      return
+    }
+
     const projectExists = useProjectStore
       .getState()
       .projects.some((project) => project.id === projectId)
