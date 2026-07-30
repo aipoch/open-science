@@ -619,6 +619,11 @@ const sendWorkspaceMessage = async (
           parts,
           cwd: targetCwd,
           projectId: projectId ?? currentSession?.projectId,
+          // Bind the optimistic prompt to the selected Runtime Segment before async resume. Existing
+          // Session ownership fields are committed only by markResumed, while synchronizeSessionGraph
+          // can still attribute this turn and its Artifact provenance to the incoming framework/backend.
+          agentFrameworkId,
+          agentBackendId,
           agentModel
         })
 

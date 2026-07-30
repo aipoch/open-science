@@ -675,17 +675,13 @@ class AcpRuntimeCoordinator {
   }
 
   private shouldPublishEvent(runtime: AcpRuntime, event: AcpRuntimeEvent): boolean {
-    if (
-      !event.sessionId ||
-      (event.recoverable !== 'context-overflow' && event.kind !== 'compaction')
-    ) {
-      return true
-    }
+    if (!event.sessionId) return true
 
     const owner = this.sessionRuntimes.get(event.sessionId)
-    // A late overflow or compaction lifecycle transition from a draining generation must not mutate a
-    // newer owner's live turn. Preserve events while ownership is unknown so discovery and
-    // pre-adoption behavior stay intact.
+    // Every session-scoped event belongs to the runtime generation that emitted it. Once a fresh
+    // generation adopts the same logical session, late tool/message/stop events from the draining
+    // generation must not mutate the new Runtime Segment. Preserve events while ownership is unknown
+    // so discovery and pre-adoption behavior stay intact.
     return owner === undefined || owner === runtime
   }
 

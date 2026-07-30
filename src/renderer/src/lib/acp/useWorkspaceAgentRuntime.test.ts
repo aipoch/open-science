@@ -1897,6 +1897,20 @@ describe('resuming an interrupted session on demand', () => {
       agentFrameworkId: 'codex',
       agentBackendId: 'codex:builtin-codex-subscription'
     })
+    const switchedSession = useSessionStore.getState().sessions[0]
+    const promptContext = runtime.sendPrompt.mock.calls[0]?.[9]
+    const promptNode = switchedSession.conversationGraph?.messages.find(
+      (message) => message.id === promptContext?.promptMessageId
+    )
+    const promptSegment = switchedSession.conversationGraph?.runtimeSegments.find(
+      (segment) => segment.id === promptContext?.runtimeSegmentId
+    )
+
+    expect(promptSegment).toMatchObject({
+      frameworkId: 'codex',
+      backendId: 'codex:builtin-codex-subscription'
+    })
+    expect(promptNode?.runtimeSegmentId).toBe(promptContext?.runtimeSegmentId)
   })
 
   it('does not replay a history preamble when the resume kept agent context', async () => {

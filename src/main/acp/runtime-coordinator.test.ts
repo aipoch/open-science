@@ -629,6 +629,78 @@ describe('AcpRuntimeCoordinator', () => {
     await reloadRequest
   })
 
+  it('drops late Codex tool events after Claude Code adopts the switched session', async () => {
+    const retirement = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const forwardedEvents: AcpRuntimeEvent[] = []
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'codex' : 'claude-code',
+          sessionIds: [`agent-session-${created.length + 1}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      { onEvent: (event) => forwardedEvents.push(event) }
+    )
+
+    const session = await coordinator.createSession()
+    created[0].emitState({
+      promptInFlight: true,
+      promptInFlightSessionIds: [session.sessionId]
+    })
+    created[0].requestRetirement.mockReturnValue(retirement.promise)
+    const switchRequest = coordinator.requestAgentFrameworkSwitch()
+    const toolEvent = (id: string, providerToolName: string): AcpRuntimeEvent => ({
+      id,
+      timestamp: 1,
+      kind: 'tool',
+      level: 'info',
+      sessionId: session.sessionId,
+      toolCallId: id,
+      providerToolName,
+      title: providerToolName,
+      toolKind: providerToolName.startsWith('mcp.') ? 'execute' : 'other',
+      status: 'completed'
+    })
+
+    // The draining Codex turn still owns the session until Claude Code adopts it.
+    created[0].emitEvent(toolEvent('owner-tool', 'mcp.open-science-artifacts.write_artifact_file'))
+    expect(forwardedEvents.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(1, 'owner-tool'))
+    ])
+
+    await coordinator.resumeSession({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      previousFrameworkId: 'codex'
+    })
+
+    created[0].emitEvent(
+      toolEvent('late-codex-tool', 'mcp.open-science-artifacts.write_artifact_file')
+    )
+    expect(forwardedEvents.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(1, 'owner-tool'))
+    ])
+    expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([])
+
+    created[1].emitEvent(
+      toolEvent('fresh-claude-tool', 'mcp__open-science-artifacts__write_artifact_file')
+    )
+    expect(forwardedEvents.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(1, 'owner-tool')),
+      expect.stringMatching(runtimeEventId(2, 'fresh-claude-tool'))
+    ])
+    expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(2, 'fresh-claude-tool'))
+    ])
+
+    retirement.resolve()
+    await switchRequest
+  })
+
   it('drops late recoverable overflow events from a previous session owner', async () => {
     const retirement = createDeferred<void>()
     const created: ReturnType<typeof createFakeRuntime>[] = []
