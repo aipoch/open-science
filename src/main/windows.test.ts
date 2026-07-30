@@ -546,6 +546,45 @@ describe('close chord interception', () => {
     }
   })
 
+  it.each([
+    ['close listener', signalRendererReady],
+    ['find listener', signalWindowFindReady]
+  ])('clears stale hang context when the %s READY handshake arrives', (_label, signalReady) => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    try {
+      createMainWindow()
+      const window = currentWindow!
+
+      fireWebContentsEvent(window, 'unresponsive')
+      signalReady(window)
+      fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 1 })
+
+      expect(windowLogSpies.error).toHaveBeenCalledWith('renderer process gone', {
+        reason: 'crashed',
+        exitCode: 1,
+        wasUnresponsive: false
+      })
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it('does not carry unresponsive state into a replacement renderer process', () => {
+    createMainWindow()
+    const window = currentWindow!
+
+    fireWebContentsEvent(window, 'unresponsive')
+    fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 1 })
+    windowLogSpies.error.mockClear()
+    fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'killed', exitCode: 2 })
+
+    expect(windowLogSpies.error).toHaveBeenCalledWith('renderer process gone', {
+      reason: 'killed',
+      exitCode: 2,
+      wasUnresponsive: false
+    })
+  })
+
   it('closes the find overlay when the renderer process is gone', () => {
     createMainWindow()
     const window = currentWindow!

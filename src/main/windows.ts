@@ -115,6 +115,10 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
   let windowFindListenerReady = false
   let rendererResponsive = true
   let rendererUnresponsiveAt: number | undefined
+  const clearRendererHangState = (): void => {
+    rendererResponsive = true
+    rendererUnresponsiveAt = undefined
+  }
   const onListenerReady = (event: IpcMainEvent): void => {
     if (event.sender !== window.webContents) return
     rendererListenerReady = true
@@ -122,7 +126,7 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
     // unresponsive state here too: after unresponsive -> render-process-gone -> reload, the fresh
     // process never emits 'responsive' (that only fires as recovery on the *same* process), so READY
     // is the only signal that the new renderer can act on the chord.
-    rendererResponsive = true
+    clearRendererHangState()
   }
   const onListenerGone = (event: IpcMainEvent): void => {
     if (event.sender === window.webContents) rendererListenerReady = false
@@ -130,7 +134,7 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
   const onWindowFindReady = (event: IpcMainEvent): void => {
     if (event.sender !== window.webContents) return
     windowFindListenerReady = true
-    rendererResponsive = true
+    clearRendererHangState()
   }
   const onWindowFindGone = (event: IpcMainEvent): void => {
     if (event.sender !== window.webContents) return
@@ -171,7 +175,7 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
     })
     rendererListenerReady = false
     windowFindListenerReady = false
-    rendererUnresponsiveAt = undefined
+    clearRendererHangState()
     findOverlay.close()
   })
   window.webContents.on('unresponsive', () => {
@@ -188,8 +192,7 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
         unresponsiveDurationMs: Math.max(0, Date.now() - rendererUnresponsiveAt)
       })
     }
-    rendererResponsive = true
-    rendererUnresponsiveAt = undefined
+    clearRendererHangState()
   })
   window.on('closed', () => {
     ipcMain.removeListener(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)
