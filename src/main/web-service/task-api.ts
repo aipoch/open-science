@@ -7,7 +7,11 @@ import {
   type AcpPromptRequest,
   type AcpRuntimeEvent
 } from '../../shared/acp'
-import type { ArtifactFile, FinalizeRunArtifactsResult } from '../../shared/artifacts'
+import {
+  ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
+  type ArtifactFile,
+  type FinalizeRunArtifactsResult
+} from '../../shared/artifacts'
 import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import type { Project } from '../../shared/projects'
 import type {
@@ -475,18 +479,6 @@ class HeadlessTaskApi {
         return image ? ({ id: event.id, ...image } satisfies PersistedMessageImage) : undefined
       })
       .filter((image): image is PersistedMessageImage => Boolean(image))
-    const finalizedArtifacts: ArtifactFile[] = []
-    for (const event of events) {
-      if (event.kind !== 'artifact' || !event.artifactClaimId) continue
-      const result = (await this.invoke('artifacts:finalize-run', {
-        claimId: event.artifactClaimId,
-        messageId: assistantMessageId
-      })) as FinalizeRunArtifactsResult
-      if (!result.ok) {
-        throw new Error(result.message)
-      }
-      finalizedArtifacts.push(...result.artifacts)
-    }
     const assistantMessage: PersistedChatMessage = {
       id: assistantMessageId,
       role: 'agent',
@@ -494,14 +486,52 @@ class HeadlessTaskApi {
       status: 'complete',
       responseToMessageId: session.activeRun?.promptMessageId,
       eventIds: assistantEvents.map((event) => event.id),
-      artifactIds: finalizedArtifacts.length
-        ? finalizedArtifacts.map((artifact) => artifact.id)
-        : undefined,
       images: images.length ? images : undefined,
       createdAt: now,
       updatedAt: now
     }
     const activities = this.createActivities(events, now)
+    const finalizedArtifacts: ArtifactFile[] = []
+    let ownershipSessionPersisted = false
+    for (const event of events) {
+      if (event.kind !== 'artifact' || !event.artifactClaimId) continue
+      const request = {
+        claimId: event.artifactClaimId,
+        messageId: assistantMessageId
+      }
+      let result = (await this.invoke(
+        'artifacts:finalize-run',
+        request
+      )) as FinalizeRunArtifactsResult
+      if (!result.ok) {
+        if (result.code !== ARTIFACT_OWNERSHIP_PERSISTENCE_RACE) {
+          throw new Error(result.message)
+        }
+        if (!ownershipSessionPersisted) {
+          await this.invoke('sessions:save-session', {
+            ...session,
+            messages: [...session.messages, assistantMessage],
+            activities: [...(session.activities ?? []), ...activities],
+            updatedAt: now
+          })
+          ownershipSessionPersisted = true
+        }
+        result = (await this.invoke(
+          'artifacts:finalize-run',
+          request
+        )) as FinalizeRunArtifactsResult
+        if (!result.ok) {
+          throw new Error(result.message)
+        }
+      }
+      finalizedArtifacts.push(...result.artifacts)
+    }
+    const linkedAssistantMessage: PersistedChatMessage = {
+      ...assistantMessage,
+      artifactIds: finalizedArtifacts.length
+        ? finalizedArtifacts.map((artifact) => artifact.id)
+        : undefined
+    }
     const uniqueArtifacts = [
       ...new Map(finalizedArtifacts.map((artifact) => [artifact.id, artifact])).values()
     ]
@@ -515,7 +545,9 @@ class HeadlessTaskApi {
         ...session,
         status: 'idle',
         activeRun: undefined,
-        messages: hasAssistantMessage ? [...session.messages, assistantMessage] : session.messages,
+        messages: hasAssistantMessage
+          ? [...session.messages, linkedAssistantMessage]
+          : session.messages,
         activities: [...(session.activities ?? []), ...activities],
         artifacts: [...(session.artifacts ?? []), ...persistedArtifacts],
         filesRevision:
