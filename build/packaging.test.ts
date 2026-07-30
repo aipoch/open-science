@@ -208,6 +208,32 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(init).toContain('Deferring shared data-folder protection to the elevated installer.')
   })
 
+  it('normalizes registered Windows paths before testing whether they share a directory', () => {
+    // NSIS string equality is already case-insensitive, but registry values for the same Windows
+    // directory may differ by harmless trailing separators. Normalize both cached locations in
+    // place before any shared-path branch so the UAC probe, backup aliasing, and handoff restore
+    // all make the same decision.
+    const normalizer =
+      include.match(/Function normalizeRegisteredInstallPath([\s\S]*?)FunctionEnd/)?.[1] ?? ''
+    const init = include.match(/!macro customInit([\s\S]*?)!macroend/)?.[1] ?? ''
+    const normalizeMachineAt = init.indexOf(
+      'Push $perMachineInstallDirCache\n  Call normalizeRegisteredInstallPath'
+    )
+    const normalizeUserAt = init.indexOf(
+      'Push $perUserInstallDirCache\n  Call normalizeRegisteredInstallPath'
+    )
+    const firstSharedPathCheckAt = init.indexOf(
+      '$perMachineInstallDirCache == $perUserInstallDirCache'
+    )
+
+    expect(normalizer).toContain('StrCmp $R1 "\\"')
+    expect(normalizer).toContain('StrCmp $R1 "/"')
+    expect(normalizeMachineAt).toBeGreaterThan(-1)
+    expect(normalizeUserAt).toBeGreaterThan(-1)
+    expect(normalizeMachineAt).toBeLessThan(firstSharedPathCheckAt)
+    expect(normalizeUserAt).toBeLessThan(firstSharedPathCheckAt)
+  })
+
   it('accepts a non-zero retry after the old executable was removed', () => {
     // The old assisted uninstaller can finish removing the application and still leak exit code 2.
     // Recovery already recognizes that result before retrying; it must make the same filesystem

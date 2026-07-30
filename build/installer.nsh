@@ -12,6 +12,29 @@ Var perUserDataBackup
 Var dataProtectionFailed
 Var dataRestoreFailed
 
+# Registry values that identify the same Windows directory may differ only in letter case or a
+# trailing separator. LogicLib's == comparison is already case-insensitive; trim separators here
+# so every later shared-path decision uses one canonical form. Keep drive roots such as C:\ intact.
+Function normalizeRegisteredInstallPath
+  Exch $R0
+  Push $R1
+
+  normalizeRegisteredInstallPath_loop:
+    StrLen $R1 $R0
+    IntCmp $R1 3 normalizeRegisteredInstallPath_done normalizeRegisteredInstallPath_done
+    StrCpy $R1 $R0 1 -1
+    StrCmp $R1 "\" normalizeRegisteredInstallPath_trim
+    StrCmp $R1 "/" normalizeRegisteredInstallPath_trim normalizeRegisteredInstallPath_done
+
+  normalizeRegisteredInstallPath_trim:
+    StrCpy $R0 $R0 -1
+    Goto normalizeRegisteredInstallPath_loop
+
+  normalizeRegisteredInstallPath_done:
+    Pop $R1
+    Exch $R0
+FunctionEnd
+
 # Move a data root outside the installation before the OLD uninstaller sees it. A deterministic
 # sibling path lets an elevated inner installer or a later retry recover data left by an
 # interrupted outer installer without relying on process-local registers.
@@ -110,6 +133,12 @@ Var dataRestoreFailed
   StrCpy $dataRestoreFailed "0"
   ReadRegStr $perMachineInstallDirCache HKEY_LOCAL_MACHINE "${INSTALL_REGISTRY_KEY}" InstallLocation
   ReadRegStr $perUserInstallDirCache HKEY_CURRENT_USER "${INSTALL_REGISTRY_KEY}" InstallLocation
+  Push $perMachineInstallDirCache
+  Call normalizeRegisteredInstallPath
+  Pop $perMachineInstallDirCache
+  Push $perUserInstallDirCache
+  Call normalizeRegisteredInstallPath
+  Pop $perUserInstallDirCache
 
   # Protect HKCU independently of the mode selected during .onInit: the user can still switch to
   # all-users on the assisted install-mode page, so that early mode is not the uninstall verdict.
