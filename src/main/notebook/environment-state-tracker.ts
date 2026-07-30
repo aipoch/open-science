@@ -152,9 +152,21 @@ const environmentCaptureProcessEnv = (
   platform: NodeJS.Platform = process.platform
 ): NodeJS.ProcessEnv => {
   if (target.language !== 'r' || !target.condaPrefix) return inheritedEnv
+
+  const inheritedPath =
+    inheritedEnv.PATH ??
+    (platform === 'win32'
+      ? Object.entries(inheritedEnv).find(([key]) => key.toLowerCase() === 'path')?.[1]
+      : undefined)
+  const activatedEnv = { ...inheritedEnv }
+  if (platform === 'win32') {
+    for (const key of Object.keys(activatedEnv)) {
+      if (key.toLowerCase() === 'path') delete activatedEnv[key]
+    }
+  }
   return {
-    ...inheritedEnv,
-    PATH: condaActivatedPath(target.condaPrefix, inheritedEnv.PATH, platform)
+    ...activatedEnv,
+    PATH: condaActivatedPath(target.condaPrefix, inheritedPath, platform)
   }
 }
 

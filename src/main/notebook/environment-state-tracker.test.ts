@@ -39,7 +39,7 @@ const readBinding = async (
 
 describe('EnvironmentStateTracker', () => {
   it('activates the complete Windows Conda DLL path for managed R probes', () => {
-    const inherited = { PATH: 'C:\\Windows\\System32', KEEP_ME: 'yes' }
+    const inherited = { Path: 'C:\\Windows\\System32', KEEP_ME: 'yes' }
     const prefix = 'C:\\Users\\Helix\\OpenScience\\runtime\\envs\\.r'
 
     expect(
