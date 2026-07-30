@@ -613,14 +613,19 @@ describe('AcpRuntimeCoordinator', () => {
 
     expect(coordinator.getSnapshot().promptInFlightSessionIds).toEqual([session.sessionId])
 
-    await coordinator.resumeSession({
+    const resumeRequest = coordinator.resumeSession({
       sessionId: session.sessionId,
       cwd: '/workspace',
       previousFrameworkId: 'claude-code'
     })
+    await vi.waitFor(() => expect(created[1].resumeSession).toHaveBeenCalledOnce())
 
-    // The old generation is still draining the same logical session, but the fresh runtime now owns
-    // user actions for it, so retired ownership must not keep the new conversation locked.
+    // Adoption cannot publish the new owner until the prior turn clears its terminal state.
+    expect(coordinator.getSnapshot().promptInFlightSessionIds).toEqual([session.sessionId])
+    created[0].emitState({ promptInFlight: false, promptInFlightSessionIds: [] })
+    await resumeRequest
+
+    // Once the old turn settles, only the fresh runtime may publish prompt ownership.
     expect(coordinator.getSnapshot().promptInFlightSessionIds).toEqual([])
 
     created[1].emitState({
@@ -741,6 +746,7 @@ describe('AcpRuntimeCoordinator', () => {
     ])
 
     adoption.resolve()
+    created[0].emitState({ promptInFlight: false, promptInFlightSessionIds: [] })
     await resumeRequest
 
     expect(coordinator.getSnapshot().sessionConnectionStatuses).toEqual({
@@ -771,6 +777,85 @@ describe('AcpRuntimeCoordinator', () => {
     expect(adoptedSnapshotEventIds).not.toEqual(
       expect.arrayContaining([expect.stringMatching(runtimeEventId(1, 'post-adoption-codex-tool'))])
     )
+
+    retirement.resolve()
+    await switchRequest
+  })
+
+  it('waits for the prior turn terminal event after incoming resume succeeds', async () => {
+    const retirement = createDeferred<void>()
+    const adoption = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const forwardedEvents: AcpRuntimeEvent[] = []
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'codex' : 'claude-code',
+          sessionIds: [`agent-session-${created.length + 1}`],
+          callbacks,
+          ...(created.length === 0 ? {} : { afterResumeAttached: () => adoption.promise })
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      { onEvent: (event) => forwardedEvents.push(event) }
+    )
+
+    const session = await coordinator.createSession()
+    created[0].emitState({
+      promptInFlight: true,
+      promptInFlightSessionIds: [session.sessionId]
+    })
+    created[0].requestRetirement.mockReturnValue(retirement.promise)
+    const switchRequest = coordinator.requestAgentFrameworkSwitch()
+    await coordinator.connect()
+
+    let resumeSettled = false
+    const resumeRequest = coordinator
+      .resumeSession({
+        sessionId: session.sessionId,
+        cwd: '/workspace',
+        previousFrameworkId: 'codex'
+      })
+      .finally(() => {
+        resumeSettled = true
+      })
+    await vi.waitFor(() => expect(created[1].resumeSession).toHaveBeenCalledOnce())
+
+    adoption.resolve()
+    await expect(created[1].resumeSession.mock.results[0]?.value).resolves.toMatchObject({
+      sessionId: session.sessionId
+    })
+    expect(resumeSettled).toBe(false)
+
+    created[0].emitEvent({
+      id: 'post-resume-old-stop',
+      timestamp: 1,
+      kind: 'stop',
+      level: 'info',
+      sessionId: session.sessionId,
+      title: 'Prompt stopped',
+      text: 'end_turn'
+    })
+    expect(forwardedEvents.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(1, 'post-resume-old-stop'))
+    ])
+
+    created[0].emitState({ promptInFlight: false, promptInFlightSessionIds: [] })
+    await resumeRequest
+
+    created[0].emitEvent({
+      id: 'post-adoption-old-stop',
+      timestamp: 2,
+      kind: 'stop',
+      level: 'info',
+      sessionId: session.sessionId,
+      title: 'Prompt stopped',
+      text: 'end_turn'
+    })
+    expect(forwardedEvents.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(1, 'post-resume-old-stop'))
+    ])
 
     retirement.resolve()
     await switchRequest
@@ -859,11 +944,14 @@ describe('AcpRuntimeCoordinator', () => {
       expect.stringMatching(runtimeEventId(1, 'owner-overflow'))
     ])
 
-    await coordinator.resumeSession({
+    const resumeRequest = coordinator.resumeSession({
       sessionId: session.sessionId,
       cwd: '/workspace',
       previousFrameworkId: 'claude-code'
     })
+    await vi.waitFor(() => expect(created[1].resumeSession).toHaveBeenCalledOnce())
+    created[0].emitState({ promptInFlight: false, promptInFlightSessionIds: [] })
+    await resumeRequest
 
     created[0].emitEvent(overflowEvent('late-retired-overflow'))
     expect(forwardedEvents.map((event) => event.id)).toEqual([
@@ -926,11 +1014,14 @@ describe('AcpRuntimeCoordinator', () => {
       expect.stringMatching(runtimeEventId(1, 'owner-compaction'))
     ])
 
-    await coordinator.resumeSession({
+    const resumeRequest = coordinator.resumeSession({
       sessionId: session.sessionId,
       cwd: '/workspace',
       previousFrameworkId: 'claude-code'
     })
+    await vi.waitFor(() => expect(created[1].resumeSession).toHaveBeenCalledOnce())
+    created[0].emitState({ promptInFlight: false, promptInFlightSessionIds: [] })
+    await resumeRequest
 
     created[0].emitEvent(compactionEvent('late-retired-compaction', 'failed'))
     expect(forwardedEvents.map((event) => event.id)).toEqual([

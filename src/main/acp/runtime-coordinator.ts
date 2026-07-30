@@ -47,6 +47,12 @@ type PendingPromptStart = {
   globalCancellationGeneration: number
 }
 
+type PendingSessionDrain = {
+  runtime: AcpRuntime
+  promise: Promise<void>
+  resolve: () => void
+}
+
 // Keeps each framework generation in its own AcpRuntime. Framework changes preserve active turns, then
 // retire their runtime so every later turn resumes through the newly selected framework.
 class AcpRuntimeCoordinator {
@@ -69,6 +75,7 @@ class AcpRuntimeCoordinator {
   private readonly sessionCancellationGenerations = new Map<string, number>()
   private readonly pendingPromptStarts = new Map<string, PendingPromptStart[]>()
   private readonly pendingSessionAdoptions = new Map<string, AcpRuntime>()
+  private readonly pendingSessionDrains = new Map<string, PendingSessionDrain>()
   private activeRuntime: AcpRuntime | undefined
   private lastRuntime: AcpRuntime | undefined
 
@@ -259,6 +266,13 @@ class AcpRuntimeCoordinator {
         this.pendingSessionAdoptions.delete(request.sessionId)
       }
       throw error
+    }
+
+    if (transfersOwnership && owner) {
+      // The incoming provider can attach before the draining generation emits its terminal event.
+      // Keep the old owner authoritative until its active turn clears so stop/error settles the old
+      // Runtime Segment before the renderer is allowed to append a turn for the adopted runtime.
+      await this.waitForSessionDrain(owner, request.sessionId)
     }
 
     if (transfersOwnership && this.pendingSessionAdoptions.get(request.sessionId) === runtime) {
@@ -655,6 +669,7 @@ class AcpRuntimeCoordinator {
       }
     }
     this.callbacks.onStateChanged?.(this.getSnapshot())
+    this.resolveSessionDrain(runtime, snapshot)
   }
 
   private releaseMissingRuntimeSessions(
@@ -698,6 +713,11 @@ class AcpRuntimeCoordinator {
     for (const [sessionId, incoming] of this.pendingSessionAdoptions) {
       if (incoming === runtime) this.pendingSessionAdoptions.delete(sessionId)
     }
+    for (const [sessionId, pending] of this.pendingSessionDrains) {
+      if (pending.runtime !== runtime) continue
+      this.pendingSessionDrains.delete(sessionId)
+      pending.resolve()
+    }
     for (const [requestId, owner] of this.permissionRuntimes) {
       if (owner === runtime) this.permissionRuntimes.delete(requestId)
     }
@@ -722,6 +742,32 @@ class AcpRuntimeCoordinator {
       ...snapshot.pendingPermissions.map((request) => request.sessionId)
     ])
     return snapshot.sessionIds.filter((sessionId) => active.has(sessionId))
+  }
+
+  private waitForSessionDrain(runtime: AcpRuntime, sessionId: string): Promise<void> {
+    if (!runtime.getSnapshot().promptInFlightSessionIds.includes(sessionId)) {
+      return Promise.resolve()
+    }
+
+    const existing = this.pendingSessionDrains.get(sessionId)
+    if (existing?.runtime === runtime) return existing.promise
+    if (existing) existing.resolve()
+
+    let resolve!: () => void
+    const promise = new Promise<void>((promiseResolve) => {
+      resolve = promiseResolve
+    })
+    this.pendingSessionDrains.set(sessionId, { runtime, promise, resolve })
+    return promise
+  }
+
+  private resolveSessionDrain(runtime: AcpRuntime, snapshot: AcpStateSnapshot): void {
+    const inFlight = new Set(snapshot.promptInFlightSessionIds)
+    for (const [sessionId, pending] of this.pendingSessionDrains) {
+      if (pending.runtime !== runtime || inFlight.has(sessionId)) continue
+      this.pendingSessionDrains.delete(sessionId)
+      pending.resolve()
+    }
   }
 
   private shouldPublishEvent(runtime: AcpRuntime, event: AcpRuntimeEvent): boolean {
@@ -790,6 +836,8 @@ class AcpRuntimeCoordinator {
     this.retiredRuntimes.clear()
     this.sessionRuntimes.clear()
     this.pendingSessionAdoptions.clear()
+    for (const pending of this.pendingSessionDrains.values()) pending.resolve()
+    this.pendingSessionDrains.clear()
     this.sessionConnectionStatuses.clear()
     this.permissionRuntimes.clear()
     this.pendingPromptStarts.clear()
