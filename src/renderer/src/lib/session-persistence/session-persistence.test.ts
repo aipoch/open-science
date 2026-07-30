@@ -253,6 +253,37 @@ describe('renderer session persistence bridge', () => {
     )
   })
 
+  it('retains safe-field rebase intent for a forced retry after a failed write', async () => {
+    const persisted = createPersistedSession({ projectId: 'project-a', title: 'Original' })
+    useSessionStore.getState().hydrateSessions([persisted])
+    const saveSession = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('database busy'))
+      .mockImplementation(async (session: PersistedChatSession) => session)
+    const failedFields = new Map<string, readonly ['title']>()
+    const api = createApi({ saveSession })
+    const save = createStoreSaver(api, useSessionStore.getState(), {
+      onFailure: (target, _error, context) => {
+        if (context.conflictRebaseFields?.includes('title')) {
+          failedFields.set(target, ['title'])
+        }
+      }
+    })
+
+    useSessionStore.getState().renameSession('session-1', 'Local rename')
+    const state = useSessionStore.getState()
+    await expect(save(state)).rejects.toThrow('database busy')
+    await save(state, {
+      forceTargets: new Set(['session:session-1']),
+      conflictRebaseFieldsByTarget: failedFields
+    })
+
+    expect(saveSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: 'Local rename' }),
+      { conflictRebaseFields: ['title'] }
+    )
+  })
+
   it('does not persist unbound pending sessions', async () => {
     const api = createApi()
     const save = createStoreSaver(api)

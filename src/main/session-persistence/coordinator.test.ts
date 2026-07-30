@@ -182,7 +182,11 @@ describe('SessionPersistenceCoordinator', () => {
     const provenance = createProvenancePersistence({
       validateFinalizedMessageBindings: vi
         .fn()
-        .mockRejectedValue(new Error('Artifact-owning Message is outside its bound Branch.'))
+        .mockRejectedValue(
+          new FinalizedArtifactBindingConflictError(
+            'Artifact-owning Message is outside its bound Branch.'
+          )
+        )
     })
     const coordinator = new SessionPersistenceCoordinator(
       repository,
@@ -198,6 +202,32 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durableSession.title).toBe('Durable latest')
     expect(repository.saveSession).not.toHaveBeenCalled()
     expect(provenance.captureFinalizedMessages).not.toHaveBeenCalled()
+  })
+
+  it('keeps JSON-first durability when pre-save provenance lookup is unavailable', async () => {
+    const validationError = new Error('artifact database unavailable')
+    const repository = createSessionRepository()
+    const provenance = createProvenancePersistence({
+      validateFinalizedMessageBindings: vi.fn().mockRejectedValue(validationError)
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      provenance
+    )
+
+    try {
+      await expect(coordinator.saveSession(createSession())).resolves.toMatchObject({
+        id: 'session-1'
+      })
+    } finally {
+      warn.mockRestore()
+    }
+
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+    expect(provenance.captureFinalizedMessages).toHaveBeenCalledOnce()
   })
 
   it('rebases explicitly changed safe fields onto the latest durable graph after a conflict', async () => {

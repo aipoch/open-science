@@ -185,6 +185,24 @@ const rebaseSafeSessionFields = (
   return rebased
 }
 
+const findFinalizedArtifactBindingConflict = async (
+  provenance: SessionProvenancePersistence | undefined,
+  session: PersistedChatSession
+): Promise<FinalizedArtifactBindingConflictError | undefined> => {
+  if (!provenance) return undefined
+
+  try {
+    await provenance.validateFinalizedMessageBindings(session)
+    return undefined
+  } catch (error) {
+    if (error instanceof FinalizedArtifactBindingConflictError) return error
+    // Provenance is derived from authoritative Session JSON. A transient lookup failure must not
+    // regress the JSON-first durability guarantee; capture/indexing keep their post-save retry path.
+    console.warn('[session-persistence] pre-save provenance validation unavailable', error)
+    return undefined
+  }
+}
+
 // Reattach native Versions through the Session authority, preserving graph-only inactive Branches.
 const attachRecoveredMessageArtifacts = (
   session: PersistedChatSession,
@@ -459,22 +477,19 @@ class SessionPersistenceCoordinator {
         : materializedSession
       // Reject a stale graph before it can replace the authoritative Session JSON. Capture remains
       // after the durable write so immutable evidence never includes Message bytes that were not saved.
-      try {
-        await this.provenance?.validateFinalizedMessageBindings(durableSession)
-      } catch (error) {
+      const bindingConflict = await findFinalizedArtifactBindingConflict(
+        this.provenance,
+        durableSession
+      )
+      if (bindingConflict) {
         const conflictRebaseFields = options.conflictRebaseFields ?? []
-        if (
-          !(error instanceof FinalizedArtifactBindingConflictError) ||
-          conflictRebaseFields.length === 0
-        ) {
-          throw error
-        }
+        if (conflictRebaseFields.length === 0) throw bindingConflict
 
         const authoritative = await this.repository.loadSessionWithDiagnostics(
           session.projectId,
           session.id
         )
-        if (authoritative.status !== 'found') throw error
+        if (authoritative.status !== 'found') throw bindingConflict
 
         const rebasedSession = rebaseSafeSessionFields(
           authoritative.session,
@@ -484,7 +499,11 @@ class SessionPersistenceCoordinator {
         durableSession = this.uploads
           ? await this.uploads.upgradeLegacySessionUploads(rebasedSession, { mode: 'live-save' })
           : rebasedSession
-        await this.provenance?.validateFinalizedMessageBindings(durableSession)
+        const rebasedConflict = await findFinalizedArtifactBindingConflict(
+          this.provenance,
+          durableSession
+        )
+        if (rebasedConflict) throw rebasedConflict
       }
       await this.repository.saveSession(durableSession)
       await this.provenance?.captureFinalizedMessages(durableSession)

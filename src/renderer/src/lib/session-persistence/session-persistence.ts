@@ -163,10 +163,15 @@ type SessionPersistenceState = {
 
 type StoreSaverOptions = {
   forceTargets?: ReadonlySet<string>
+  conflictRebaseFieldsByTarget?: ReadonlyMap<string, readonly SessionConflictRebaseField[]>
+}
+
+type StoreSaverFailureContext = {
+  conflictRebaseFields?: readonly SessionConflictRebaseField[]
 }
 
 type StoreSaverObserver = {
-  onFailure?: (target: string, error: unknown) => void
+  onFailure?: (target: string, error: unknown, context: StoreSaverFailureContext) => void
   onSuccess?: (target: string) => void
 }
 
@@ -174,11 +179,15 @@ type StoreSaver = (state: SessionStoreSnapshot, options?: StoreSaverOptions) => 
 
 const pruneRemovedSessionWriteTargets = (
   targets: Set<string>,
-  sessions: readonly Pick<ChatSession, 'id'>[]
+  sessions: readonly Pick<ChatSession, 'id'>[],
+  conflictRebaseFields?: Map<string, SessionConflictRebaseField[]>
 ): void => {
   const activeSessionTargets = new Set(sessions.map((session) => `session:${session.id}`))
   for (const target of targets) {
-    if (target.startsWith('session:') && !activeSessionTargets.has(target)) targets.delete(target)
+    if (target.startsWith('session:') && !activeSessionTargets.has(target)) {
+      targets.delete(target)
+      conflictRebaseFields?.delete(target)
+    }
   }
 }
 
@@ -238,7 +247,11 @@ const createStoreSaver = (
     const nextSessions = state.sessions
     const previousById = indexById(previousSessions)
     const nextById = indexById(nextSessions)
-    const tasks: Array<{ target: string; run: () => Promise<unknown> }> = []
+    const tasks: Array<{
+      target: string
+      run: () => Promise<unknown>
+      failureContext: StoreSaverFailureContext
+    }> = []
 
     // Persist new or mutated sessions; pending sessions never touch disk until they bind a real id. A
     // session without a projectId cannot map to a sessions/<projectId>/ path (the main repository rejects
@@ -259,14 +272,21 @@ const createStoreSaver = (
       ) {
         const persisted = toPersistedSession(session)
         const previousSession = previousById.get(session.id)
-        const conflictRebaseFields = previousSession
+        const changedConflictRebaseFields = previousSession
           ? SESSION_CONFLICT_REBASE_FIELDS.filter((field) =>
               conflictRebaseFieldChanged(previousSession, session, field)
             )
           : []
+        const conflictRebaseFields = [
+          ...new Set([
+            ...changedConflictRebaseFields,
+            ...(options?.conflictRebaseFieldsByTarget?.get(target) ?? [])
+          ])
+        ]
 
         tasks.push({
           target,
+          failureContext: { conflictRebaseFields },
           run: async () => {
             const durableSession = await persistence.saveSession(
               persisted,
@@ -297,6 +317,7 @@ const createStoreSaver = (
       if (!selectedSession?.isPending) {
         tasks.push({
           target: 'manifest',
+          failureContext: {},
           run: () =>
             persistence.saveManifest({
               lastSessionId: state.selectedSessionId,
@@ -309,7 +330,7 @@ const createStoreSaver = (
     previousSessions = nextSessions
     previousSelection = state.selectedSessionId
 
-    const scheduledTasks = tasks.map(({ target, run }) => {
+    const scheduledTasks = tasks.map(({ target, run, failureContext }) => {
       // Invoke every task now so it takes its place in the shared persistence queue at snapshot time.
       return run().then(
         (result) => {
@@ -317,7 +338,7 @@ const createStoreSaver = (
           return result
         },
         (error: unknown) => {
-          observer.onFailure?.(target, error)
+          observer.onFailure?.(target, error, failureContext)
           throw error
         }
       )
@@ -340,6 +361,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const [loadAttempt, setLoadAttempt] = useState(0)
   const retrySelection = useRef<SessionHydrationSelection | undefined>(undefined)
   const failedWriteTargets = useRef(new Set<string>())
+  const failedConflictRebaseFields = useRef(new Map<string, SessionConflictRebaseField[]>())
   const retryManifestWritePending = useRef(false)
   const saverRef = useRef<StoreSaver | undefined>(undefined)
   const dismissLoadWarning = useCallback(() => setLoadWarning(undefined), [])
@@ -365,14 +387,19 @@ const useSessionPersistence = (): SessionPersistenceState => {
     if (!saver || failedWriteTargets.current.size === 0) return
 
     const state = useSessionStore.getState()
-    pruneRemovedSessionWriteTargets(failedWriteTargets.current, state.sessions)
+    pruneRemovedSessionWriteTargets(
+      failedWriteTargets.current,
+      state.sessions,
+      failedConflictRebaseFields.current
+    )
     if (failedWriteTargets.current.size === 0) {
       setWriteError(undefined)
       return
     }
 
     void saver(state, {
-      forceTargets: new Set(failedWriteTargets.current)
+      forceTargets: new Set(failedWriteTargets.current),
+      conflictRebaseFieldsByTarget: new Map(failedConflictRebaseFields.current)
     }).catch(reportPersistenceError)
   }, [])
 
@@ -382,6 +409,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     let activeSaver: StoreSaver | undefined
     saverRef.current = undefined
     failedWriteTargets.current.clear()
+    failedConflictRebaseFields.current.clear()
 
     // Loads before subscribing so the initial empty store cannot overwrite disk state.
     const startPersistence = async (): Promise<void> => {
@@ -467,12 +495,22 @@ const useSessionPersistence = (): SessionPersistenceState => {
         window.api.sessions,
         useSessionStore.getState(),
         {
-          onFailure: (target) => {
+          onFailure: (target, _error, context) => {
             if (!isMounted) return
             failedWriteTargets.current.add(target)
+            const conflictRebaseFields = context.conflictRebaseFields
+            if (conflictRebaseFields && conflictRebaseFields.length > 0) {
+              failedConflictRebaseFields.current.set(target, [
+                ...new Set([
+                  ...(failedConflictRebaseFields.current.get(target) ?? []),
+                  ...conflictRebaseFields
+                ])
+              ])
+            }
             pruneRemovedSessionWriteTargets(
               failedWriteTargets.current,
-              useSessionStore.getState().sessions
+              useSessionStore.getState().sessions,
+              failedConflictRebaseFields.current
             )
             // A queued save can lose a race with an authoritative deletion. Its tombstone rejection
             // must not resurrect a retry target for a Session that no longer exists in the store.
@@ -485,6 +523,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
           onSuccess: (target) => {
             if (!isMounted) return
             failedWriteTargets.current.delete(target)
+            failedConflictRebaseFields.current.delete(target)
             if (target === 'manifest' && retryManifestWritePending.current) {
               retryManifestWritePending.current = false
               setIsReady(true)
@@ -499,7 +538,11 @@ const useSessionPersistence = (): SessionPersistenceState => {
       saverRef.current = save
 
       unsubscribe = useSessionStore.subscribe((state) => {
-        pruneRemovedSessionWriteTargets(failedWriteTargets.current, state.sessions)
+        pruneRemovedSessionWriteTargets(
+          failedWriteTargets.current,
+          state.sessions,
+          failedConflictRebaseFields.current
+        )
         if (failedWriteTargets.current.size === 0) setWriteError(undefined)
         void save(state).catch(reportPersistenceError)
       })
