@@ -197,7 +197,9 @@ describe('WorkspacePage image attachment gating', () => {
   const renderPage = async (): Promise<void> => {
     root = createRoot(container)
     await act(async () => {
-      root.render(<WorkspacePage isSessionPersistenceReady={true} />)
+      root.render(
+        <WorkspacePage isSessionPersistenceHydrated={true} isSessionPersistenceReady={true} />
+      )
     })
   }
 

@@ -29,6 +29,7 @@ const renderSidebar = async (sessions: ChatSession[]): Promise<string> => {
       activeSessionId={sessions[0]?.id}
       canCreateConversation
       canMutateConversations
+      canDeleteConversations
       onGoHome={vi.fn()}
       onNewConversation={vi.fn()}
       isFilesOpen={false}
@@ -111,6 +112,7 @@ describe('WorkspaceSidebar accessible render', () => {
       activeSessionId: sessions[0].id,
       canCreateConversation: true,
       canMutateConversations: true,
+      canDeleteConversations: true,
       onGoHome: vi.fn(),
       onNewConversation: vi.fn(),
       isFilesOpen: false,
@@ -154,6 +156,7 @@ describe('WorkspaceSidebar accessible render', () => {
       activeSessionId: 'session-a',
       canCreateConversation: true,
       canMutateConversations: true,
+      canDeleteConversations: true,
       onGoHome: vi.fn(),
       onNewConversation: vi.fn(),
       isFilesOpen: true,
@@ -192,6 +195,7 @@ describe('WorkspaceSidebar accessible render', () => {
       activeSessionId: sessions[0].id,
       canCreateConversation: true,
       canMutateConversations: true,
+      canDeleteConversations: true,
       onGoHome: vi.fn(),
       onNewConversation: vi.fn(),
       isFilesOpen: false,
@@ -239,6 +243,7 @@ describe('WorkspaceSidebar accessible render', () => {
       activeSessionId: sessions[0].id,
       canCreateConversation: true,
       canMutateConversations: true,
+      canDeleteConversations: true,
       onGoHome: vi.fn(),
       onNewConversation: vi.fn(),
       isFilesOpen: false,
@@ -265,7 +270,7 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(onTogglePin).toHaveBeenCalledWith(sessions[1])
   })
 
-  it('disables durable session mutations while session persistence is recovering', async () => {
+  it('keeps target-validated deletion available while other mutations are recovering', async () => {
     const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
     const session = createSession({ id: 'session-a', title: 'Notebook review' })
     const tree = WorkspaceSidebar({
@@ -274,6 +279,7 @@ describe('WorkspaceSidebar accessible render', () => {
       activeSessionId: session.id,
       canCreateConversation: false,
       canMutateConversations: false,
+      canDeleteConversations: true,
       onGoHome: vi.fn(),
       onNewConversation: vi.fn(),
       isFilesOpen: false,
@@ -292,6 +298,6 @@ describe('WorkspaceSidebar accessible render', () => {
 
     expect(pinItem?.props.disabled).toBe(true)
     expect(renameItem?.props.disabled).toBe(true)
-    expect(deleteItem?.props.disabled).toBe(true)
+    expect(deleteItem?.props.disabled).toBe(false)
   })
 })

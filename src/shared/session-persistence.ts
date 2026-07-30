@@ -1194,12 +1194,12 @@ export type SessionLoadWarning =
       recovered: boolean
     }
   | {
-      kind: 'manifest-corrupt'
+      kind: 'manifest-corrupt' | 'manifest-unreadable'
       fileName: string
       recovered: boolean
     }
 
-export type SessionLoadFailure = 'manifest-unreadable' | 'startup-reconciliation-failed'
+export type SessionLoadFailure = 'startup-reconciliation-failed'
 
 export type SessionLoadDiagnostics = {
   isComplete: boolean

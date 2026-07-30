@@ -267,7 +267,7 @@ describe('App startup routing', () => {
     expect(mocks.deepLinkNavigation).toHaveBeenCalledWith(false)
   })
 
-  it('allows lifecycle sync after a partial session load enters read-only recovery', async () => {
+  it('allows navigation and target-validated deletion after a partial session load', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.isHydrated = true
     mocks.sessionPersistence.isReady = false
@@ -280,7 +280,7 @@ describe('App startup routing', () => {
     expect(mocks.deepLinkNavigation).toHaveBeenCalledWith(true)
     expect(
       container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset.canDeleteProjects
-    ).toBe('false')
+    ).toBe('true')
   })
 
   it('routes first-run users to onboarding after settings hydration', async () => {

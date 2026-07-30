@@ -297,4 +297,50 @@ describe('session persistence startup', () => {
       'Conversation selection data was damaged and moved aside'
     )
   })
+
+  it('keeps conversations writable when selection data is unreadable', async () => {
+    loadAll.mockReset().mockResolvedValue({
+      ...emptyLoadResult(),
+      diagnostics: {
+        isComplete: true,
+        warnings: [
+          {
+            kind: 'manifest-unreadable',
+            fileName: 'manifest.json',
+            recovered: false
+          }
+        ]
+      }
+    })
+
+    await act(async () => root.render(<Probe />))
+
+    expect(container.querySelector('div')?.dataset.ready).toBe('true')
+    expect(container.querySelector('[data-testid="load-warning"]')?.textContent).toContain(
+      'Conversation selection data could not be read, so no conversation was selected'
+    )
+  })
+
+  it('does not claim damaged selection data was moved when quarantine failed', async () => {
+    loadAll.mockReset().mockResolvedValue({
+      ...emptyLoadResult(),
+      diagnostics: {
+        isComplete: true,
+        warnings: [
+          {
+            kind: 'manifest-corrupt',
+            fileName: 'manifest.json',
+            recovered: false
+          }
+        ]
+      }
+    })
+
+    await act(async () => root.render(<Probe />))
+
+    expect(container.querySelector('div')?.dataset.ready).toBe('true')
+    expect(container.querySelector('[data-testid="load-warning"]')?.textContent).toContain(
+      'Conversation selection data was damaged and could not be moved aside'
+    )
+  })
 })

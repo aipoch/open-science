@@ -733,6 +733,31 @@ describe('session persistence repository (per-session files)', () => {
     })
   })
 
+  it('falls back to an empty selection without blocking a complete Session scan', async () => {
+    const root = await createStorageRoot()
+    const session = createSession()
+    await new SessionRepository(root).saveSession(session)
+    const readManifestFile = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }))
+    const repository = new SessionRepository(root, { readManifestFile })
+
+    await expect(repository.loadAllWithDiagnostics()).resolves.toMatchObject({
+      result: {
+        sessions: [expect.objectContaining({ id: session.id })],
+        manifest: { version: 1 }
+      },
+      isComplete: true,
+      warnings: [
+        {
+          kind: 'manifest-unreadable',
+          fileName: 'manifest.json',
+          recovered: false
+        }
+      ]
+    })
+  })
+
   it('ignores a legacy single-file sessions.json (migration was removed)', async () => {
     const root = await createStorageRoot()
     const repository = new SessionRepository(root)

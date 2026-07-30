@@ -207,7 +207,12 @@ describe('WorkspacePage draft preservation', () => {
   const renderPage = async (isSessionPersistenceReady = true): Promise<void> => {
     root = createRoot(container)
     await act(async () => {
-      root.render(<WorkspacePage isSessionPersistenceReady={isSessionPersistenceReady} />)
+      root.render(
+        <WorkspacePage
+          isSessionPersistenceHydrated={true}
+          isSessionPersistenceReady={isSessionPersistenceReady}
+        />
+      )
     })
   }
 
@@ -372,7 +377,7 @@ describe('WorkspacePage draft preservation', () => {
     expect(conversationProps.draftDoc).toEqual(emptyDoc)
   })
 
-  it('blocks session deletion while durable persistence is recovering', async () => {
+  it('allows target-validated session deletion while other persistence is recovering', async () => {
     await renderPage(false)
 
     const sessionB = useSessionStore.getState().sessions.find((session) => session.id === 'sess-b')!
@@ -383,8 +388,8 @@ describe('WorkspacePage draft preservation', () => {
       deleteDialogProps.onConfirmDelete()
     })
 
-    expect(runtime.deleteRuntimeSession).not.toHaveBeenCalled()
-    expect(useSessionStore.getState().sessions).toContainEqual(
+    expect(runtime.deleteRuntimeSession).toHaveBeenCalledWith('sess-b')
+    expect(useSessionStore.getState().sessions).not.toContainEqual(
       expect.objectContaining({ id: 'sess-b' })
     )
   })

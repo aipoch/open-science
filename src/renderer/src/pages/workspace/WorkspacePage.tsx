@@ -50,6 +50,7 @@ import { WorkspaceSidebar } from './WorkspaceSidebar'
 import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
 
 type WorkspacePageProps = {
+  isSessionPersistenceHydrated: boolean
   isSessionPersistenceReady: boolean
 }
 
@@ -84,7 +85,10 @@ const getUploadFilename = (file: File, index: number): string => {
 }
 
 // Renders the workspace shell and bridges the chat surface to the session store.
-const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React.JSX.Element => {
+const WorkspacePage = ({
+  isSessionPersistenceHydrated,
+  isSessionPersistenceReady
+}: WorkspacePageProps): React.JSX.Element => {
   // The page owns the imperative panel handle because open requests come from outside PreviewPanel.
   const previewPanelRef = useRef<PanelImperativeHandle | null>(null)
   const previewPanelAnimationRef = useRef<{ stop: () => void } | null>(null)
@@ -962,16 +966,17 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     closeRenameDialog()
   }
 
-  // Opens destructive Session actions only after startup has restored complete durable authority.
+  // Explicit deletion is target-validated and fail-closed in main, so unrelated recovery warnings
+  // need not block cleanup of a readable Session after hydration has identified its durable key.
   const openDeleteDialog = (session: ChatSession): void => {
-    if (!isSessionPersistenceReady) return
+    if (!isSessionPersistenceHydrated) return
 
     setSessionToDelete(session)
   }
 
   // Deletes the selected session and repairs the chat surface if it was showing that session.
   const confirmDeleteSession = (): void => {
-    if (!isSessionPersistenceReady || !sessionToDelete) return
+    if (!isSessionPersistenceHydrated || !sessionToDelete) return
 
     const deletedSessionId = sessionToDelete.id
     const isActiveSession = deletedSessionId === selectedSessionId
@@ -1148,6 +1153,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
           activeSessionId={selectedSessionId}
           canCreateConversation={isSessionPersistenceReady}
           canMutateConversations={isSessionPersistenceReady}
+          canDeleteConversations={isSessionPersistenceHydrated}
           onGoHome={goHome}
           onNewConversation={openNewConversation}
           isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}

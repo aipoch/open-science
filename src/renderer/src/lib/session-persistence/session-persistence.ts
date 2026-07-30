@@ -287,11 +287,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
 
         if (result.diagnostics?.isComplete === false) {
           setLoadError(
-            result.diagnostics.failure === 'manifest-unreadable'
-              ? 'Conversation selection data could not be read. Retry before creating or saving conversations.'
-              : result.diagnostics.failure === 'startup-reconciliation-failed'
-                ? 'Saved conversations loaded, but storage recovery could not finish. Retry before creating or saving conversations.'
-                : 'Some saved conversations could not be read. Retry before creating or saving conversations.'
+            result.diagnostics.failure === 'startup-reconciliation-failed'
+              ? 'Saved conversations loaded, but storage recovery could not finish. Retry before creating or saving conversations.'
+              : 'Some saved conversations could not be read. Retry before creating or saving conversations.'
           )
           setIsLoading(false)
           return
@@ -300,14 +298,27 @@ const useSessionPersistence = (): SessionPersistenceState => {
         const loadWarnings = result.diagnostics?.warnings ?? []
         if (loadWarnings.length > 0) {
           const manifestWasRecovered = loadWarnings.some(
-            (warning) => warning.kind === 'manifest-corrupt'
+            (warning) => warning.kind === 'manifest-corrupt' && warning.recovered
+          )
+          const manifestRecoveryFailed = loadWarnings.some(
+            (warning) => warning.kind === 'manifest-corrupt' && !warning.recovered
+          )
+          const manifestWasUnreadable = loadWarnings.some(
+            (warning) => warning.kind === 'manifest-unreadable'
           )
           const sessionWarningCount = loadWarnings.filter(
-            (warning) => warning.kind !== 'manifest-corrupt'
+            (warning) =>
+              warning.kind !== 'manifest-corrupt' && warning.kind !== 'manifest-unreadable'
           ).length
           const warningMessages = [
             manifestWasRecovered
               ? 'Conversation selection data was damaged and moved aside.'
+              : undefined,
+            manifestRecoveryFailed
+              ? 'Conversation selection data was damaged and could not be moved aside, so no conversation was selected.'
+              : undefined,
+            manifestWasUnreadable
+              ? 'Conversation selection data could not be read, so no conversation was selected.'
               : undefined,
             sessionWarningCount > 0
               ? `${sessionWarningCount} saved conversation file${sessionWarningCount === 1 ? ' was' : 's were'} damaged and moved aside.`

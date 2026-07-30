@@ -45,6 +45,7 @@ type ProjectSessionDeletionState = 'live' | 'legacy-committed' | 'prepared' | 'a
 
 type SessionRepositoryDependencies = {
   remove(path: string, options: { force: boolean; recursive: boolean }): Promise<void>
+  readManifestFile(path: string): Promise<string>
   readSessionFile(path: string): Promise<string>
   renameFile(source: string, destination: string): Promise<void>
   wait(delayMs: number): Promise<void>
@@ -52,6 +53,7 @@ type SessionRepositoryDependencies = {
 
 const DEFAULT_DEPENDENCIES: SessionRepositoryDependencies = {
   remove: (path, options) => rm(path, options),
+  readManifestFile: (path) => readFile(path, 'utf8'),
   readSessionFile: (path) => readFile(path, 'utf8'),
   renameFile: (source, destination) => rename(source, destination),
   wait: (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))
@@ -106,6 +108,7 @@ class SessionRepository {
   ) {
     this.dependencies = {
       remove: dependencies.remove ?? DEFAULT_DEPENDENCIES.remove,
+      readManifestFile: dependencies.readManifestFile ?? DEFAULT_DEPENDENCIES.readManifestFile,
       readSessionFile: dependencies.readSessionFile ?? DEFAULT_DEPENDENCIES.readSessionFile,
       renameFile: dependencies.renameFile ?? DEFAULT_DEPENDENCIES.renameFile,
       wait: dependencies.wait ?? DEFAULT_DEPENDENCIES.wait
@@ -185,9 +188,10 @@ class SessionRepository {
 
     return {
       result: { sessions, manifest: manifestRead.manifest },
-      isComplete: isComplete && manifestRead.isComplete,
-      warnings: manifestRead.warning ? [...warnings, manifestRead.warning] : warnings,
-      failure: manifestRead.isComplete ? undefined : 'manifest-unreadable'
+      // The manifest is only a last-open pointer. It must never make a complete Session authority
+      // scan read-only; a later selection write will retry persistence through the normal saver.
+      isComplete,
+      warnings: manifestRead.warning ? [...warnings, manifestRead.warning] : warnings
     }
   }
 
@@ -447,16 +451,24 @@ class SessionRepository {
 
   private async readManifest(): Promise<{
     manifest: PersistedSessionManifest
-    isComplete: boolean
     warning?: SessionLoadWarning
   }> {
     let raw: string
     try {
-      raw = await readFile(this.manifestPath, 'utf8')
+      raw = await this.dependencies.readManifestFile(this.manifestPath)
     } catch (error) {
+      if (!isMissingFileError(error)) {
+        return {
+          manifest: createEmptySessionManifest(),
+          warning: {
+            kind: 'manifest-unreadable',
+            fileName: MANIFEST_FILE,
+            recovered: false
+          }
+        }
+      }
       return {
-        manifest: createEmptySessionManifest(),
-        isComplete: isMissingFileError(error)
+        manifest: createEmptySessionManifest()
       }
     }
 
@@ -466,14 +478,12 @@ class SessionRepository {
         throw new Error('Invalid Session manifest')
       }
       return {
-        manifest: normalizeSessionManifest(parsed),
-        isComplete: true
+        manifest: normalizeSessionManifest(parsed)
       }
     } catch {
       const wasQuarantined = await this.tryBackupInvalidFile(this.manifestPath)
       return {
         manifest: createEmptySessionManifest(),
-        isComplete: wasQuarantined,
         warning: {
           kind: 'manifest-corrupt',
           fileName: MANIFEST_FILE,

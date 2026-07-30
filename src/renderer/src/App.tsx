@@ -271,9 +271,12 @@ const App = (): React.JSX.Element | null => {
         />
       ) : null}
       {view === 'home' ? (
-        <HomePage canDeleteProjects={isSessionPersistenceReady} />
+        <HomePage canDeleteProjects={isSessionPersistenceHydrated} />
       ) : (
-        <WorkspacePage isSessionPersistenceReady={isSessionPersistenceReady} />
+        <WorkspacePage
+          isSessionPersistenceHydrated={isSessionPersistenceHydrated}
+          isSessionPersistenceReady={isSessionPersistenceReady}
+        />
       )}
       <SettingsPage open={isSettingsOpen} onClose={closeSettings} />
       <ConnectorApprovalDialog />

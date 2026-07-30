@@ -28,6 +28,7 @@ type WorkspaceSidebarProps = {
   activeSessionId: string | undefined
   canCreateConversation: boolean
   canMutateConversations: boolean
+  canDeleteConversations: boolean
   onGoHome: () => void
   onNewConversation: () => void
   isFilesOpen: boolean
@@ -75,6 +76,7 @@ const WorkspaceSidebar = ({
   activeSessionId,
   canCreateConversation,
   canMutateConversations,
+  canDeleteConversations,
   onGoHome,
   onNewConversation,
   isFilesOpen,
@@ -264,7 +266,7 @@ const WorkspaceSidebar = ({
                             {/* Delete uses the project's danger token pair for light surfaces. */}
                             <DropdownMenuItem
                               className="gap-2 text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000"
-                              disabled={!canMutateConversations}
+                              disabled={!canDeleteConversations}
                               onSelect={() => onDeleteSession(session)}
                             >
                               <span className={sessionMenuIconClassName}>

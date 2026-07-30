@@ -140,7 +140,9 @@ describe('WorkspacePage notebook entry hydration', () => {
 
     root = createRoot(container)
     await act(async () => {
-      root.render(<WorkspacePage isSessionPersistenceReady={true} />)
+      root.render(
+        <WorkspacePage isSessionPersistenceHydrated={true} isSessionPersistenceReady={true} />
+      )
     })
 
     expect(getReference).toHaveBeenCalledWith({
