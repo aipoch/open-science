@@ -160,6 +160,7 @@ const WorkspacePage = ({
     permissionGrants,
     contextUsageBySession,
     promptInFlightSessionIds = [],
+    sendPreparationInFlightSessionIds = [],
     nativeContextCompactionSessionIds,
     compactContext,
     sendMessage,
@@ -235,6 +236,9 @@ const WorkspacePage = ({
       }
     >
   >({})
+  // Closes the synchronous gap before the hook's reactive preparation state re-renders this page.
+  // A second submit for the same draft key returns without clearing its possibly newer local draft.
+  const sendRequestsInFlightRef = useRef(new Set<string>())
   // Mutable cleanup ledgers bridge the async runtime-deletion window. Uploads that finish or queue
   // after confirmation are added here so a successful deletion cannot strand staged files.
   const sessionDeletionCleanupRef = useRef<
@@ -291,8 +295,11 @@ const WorkspacePage = ({
     () => sessions.find((session) => session.id === selectedSessionId),
     [selectedSessionId, sessions]
   )
+  const activeSessionHasSendPreparation = activeSession
+    ? sendPreparationInFlightSessionIds.includes(activeSession.id)
+    : false
   const activeSessionHasRuntimeInteraction = activeSession
-    ? promptInFlightSessionIds.includes(activeSession.id)
+    ? promptInFlightSessionIds.includes(activeSession.id) || activeSessionHasSendPreparation
     : false
   const visiblePermissionRequests = useMemo(
     () => getVisiblePermissionRequests(pendingPermissions, activeSession?.id),
@@ -360,7 +367,7 @@ const WorkspacePage = ({
   })
   const handleReviewUpdate = useReviewStore((state) => state.handleReviewUpdate)
   // Composer controls follow only the selected session and persistence readiness.
-  const canEditDraft = isSessionPersistenceReady
+  const canEditDraft = isSessionPersistenceReady && !activeSessionHasSendPreparation
   const isUploadingAttachments = attachmentTransfers.some(
     (transfer) =>
       transfer.status === 'queued' ||
@@ -973,6 +980,10 @@ const WorkspacePage = ({
       }
     }
 
+    const sendRequestKey = activeSession?.id ?? NEW_CONVERSATION_DRAFT_KEY
+    if (sendRequestsInFlightRef.current.has(sendRequestKey)) return
+    sendRequestsInFlightRef.current.add(sendRequestKey)
+
     const doc = draftDoc
     const attachmentsForSend = attachments
     // Capture new-conversation intent before send: auto-review defaults off, so only an explicit
@@ -1006,35 +1017,33 @@ const WorkspacePage = ({
         forcedSkillIds,
         // New-conversation only: the UUID is forwarded to createSession; main process reads latest Profile.
         specialistId: draftSpecialistId
-      }).then((result) => {
-        // Adoption-in-progress duplicate submits are deliberately suppressed. The original send owns
-        // this draft, so restoring it here would make the already-sent prompt appear unsent again.
-        if (result === null) return
-
-        if (!result) {
-          setDraftDoc(doc)
-          setAttachments(attachmentsForSend)
-          return
-        }
-
-        // Carry the composer's auto-review choice onto the freshly created session. bindPendingSession
-        // preserves the field, so stamping the (pending) session id here survives the durable-id swap.
-        if (wasNewConversation && draftAutoReviewEnabled) {
-          setAutoReviewEnabled(result.sessionId, true)
-        }
-        // Carry the draft compute host selection onto the newly created session.
-        if (wasNewConversation && draftEnabledComputeHosts.length > 0) {
-          setEnabledComputeHosts(result.sessionId, draftEnabledComputeHosts)
-          void window.api.compute
-            .enabledHostsSet(result.sessionId, draftEnabledComputeHosts)
-            .catch((err: unknown) => {
-              console.warn('Failed to sync draft compute hosts to registry for new session', err)
-            })
-        }
-        setNewConversationAutoReviewEnabled(false)
-        setNewConversationEnabledComputeHosts([])
-        setNewConversationSpecialistId(undefined)
       })
+        .then((result) => {
+          if (!result) {
+            setDraftDoc(doc)
+            setAttachments(attachmentsForSend)
+            return
+          }
+
+          // Carry the composer's auto-review choice onto the freshly created session. bindPendingSession
+          // preserves the field, so stamping the (pending) session id here survives the durable-id swap.
+          if (wasNewConversation && draftAutoReviewEnabled) {
+            setAutoReviewEnabled(result.sessionId, true)
+          }
+          // Carry the draft compute host selection onto the newly created session.
+          if (wasNewConversation && draftEnabledComputeHosts.length > 0) {
+            setEnabledComputeHosts(result.sessionId, draftEnabledComputeHosts)
+            void window.api.compute
+              .enabledHostsSet(result.sessionId, draftEnabledComputeHosts)
+              .catch((err: unknown) => {
+                console.warn('Failed to sync draft compute hosts to registry for new session', err)
+              })
+          }
+          setNewConversationAutoReviewEnabled(false)
+          setNewConversationEnabledComputeHosts([])
+          setNewConversationSpecialistId(undefined)
+        })
+        .finally(() => sendRequestsInFlightRef.current.delete(sendRequestKey))
     }
 
     // Runs the reconfigure barrier then dispatches the send on success. Extracted so that both the
@@ -1075,6 +1084,7 @@ const WorkspacePage = ({
           next.delete(sessionId)
           return next
         })
+        sendRequestsInFlightRef.current.delete(sendRequestKey)
         return
       }
 

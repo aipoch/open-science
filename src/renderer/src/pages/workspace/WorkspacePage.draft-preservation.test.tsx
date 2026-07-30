@@ -131,6 +131,17 @@ const createAttachment = (id: string): UploadedAttachment => ({
 // Deterministic doc containing a single text run.
 const textDoc = (text: string): ComposerDoc => ({ nodes: [{ type: 'text', text }] })
 
+const createDeferred = <Value,>(): {
+  promise: Promise<Value>
+  resolve: (value: Value) => void
+} => {
+  let resolve!: (value: Value) => void
+  const promise = new Promise<Value>((promiseResolve) => {
+    resolve = promiseResolve
+  })
+  return { promise, resolve }
+}
+
 const deleteUpload = vi.fn(() => Promise.resolve())
 const stageLocalFile = vi.fn()
 const claimLocalFile = vi.fn(() => Promise.resolve())
@@ -369,20 +380,36 @@ describe('WorkspacePage draft preservation', () => {
     expect(deleteUpload).not.toHaveBeenCalled()
   })
 
-  it('does not restore a duplicate draft suppressed during session adoption', async () => {
-    runtime.sendMessage.mockResolvedValueOnce(null)
+  it('preserves a different draft submitted while the first send is preparing', async () => {
+    const firstSend = createDeferred<{ sessionId: string; messageId: string }>()
+    runtime.sendMessage.mockReturnValueOnce(firstSend.promise)
     await renderPage()
 
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('send once'))
+      conversationProps.onDraftDocChange(textDoc('first prompt'))
+    })
+    await act(async () => {
+      conversationProps.onSendMessage([])
+    })
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('keep this second prompt'))
     })
     await act(async () => {
       conversationProps.onSendMessage([])
     })
 
-    expect(runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'send once' }))
-    expect(conversationProps.draftDoc).toEqual(emptyDoc)
+    expect(runtime.sendMessage).toHaveBeenCalledTimes(1)
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'first prompt' })
+    )
+    expect(conversationProps.draftDoc).toEqual(textDoc('keep this second prompt'))
     expect(conversationProps.attachments).toEqual([])
+
+    await act(async () => {
+      firstSend.resolve({ sessionId: 'sess-a', messageId: 'm1' })
+      await firstSend.promise
+    })
+    expect(conversationProps.draftDoc).toEqual(textDoc('keep this second prompt'))
   })
 
   it('drops a stored draft and deletes its staged files when the session is deleted', async () => {

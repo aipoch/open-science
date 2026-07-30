@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type {
   AcpConnectionStatus,
@@ -87,9 +87,7 @@ type SendWorkspaceMessageResult = {
   messageId: string
 }
 
-// `null` means a duplicate submit was intentionally suppressed while the selected runtime adopts
-// the session. Unlike `undefined` (a genuine send failure), this must not restore the cleared draft.
-type SendWorkspaceMessageOutcome = SendWorkspaceMessageResult | null
+type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
 
 // Payload of an inline edit resend: the adjusted prompt text plus the mentions it carries. The
 // session/message ids stay separate because they address the truncation point, not the prompt.
@@ -119,10 +117,10 @@ type WorkspaceRuntimeEventProcessor = {
   process: (events: AcpRuntimeEvent[]) => Promise<void>
 }
 
-// Adoption intentionally completes before appendUserMessage creates the next run. Keep duplicate
-// sends closed during that idle-looking interval without exposing a premature activeRun that a
-// draining runtime's terminal event could settle.
-const sessionSendAdoptionsInFlight = new Set<string>()
+// Runtime adoption and Branch reset intentionally complete before appendUserMessage creates the next
+// run. Keep duplicate preparations closed during that idle-looking interval without exposing a
+// premature activeRun that a draining runtime's terminal event could settle.
+const sessionSendPreparationsInFlight = new Set<string>()
 
 // Strips the Electron IPC wrapper ("Error invoking remote method '…': Error: <cause>") and any
 // leading "Error:" so the underlying agent message can be shown to the user on its own. Used by both
@@ -499,8 +497,9 @@ const sendWorkspaceMessage = async (
     allowCompactionRecovery,
     branchContextAlreadyReset,
     specialistId
-  }: SendWorkspaceMessageInput
-): Promise<SendWorkspaceMessageOutcome | undefined> => {
+  }: SendWorkspaceMessageInput,
+  onSendPreparationStateChange?: SendPreparationStateChange
+): Promise<SendWorkspaceMessageResult | undefined> => {
   const content = text.trim()
 
   // Empty drafts are allowed only when the user attached at least one file.
@@ -571,41 +570,28 @@ const sendWorkspaceMessage = async (
       currentSession?.agentBackendId &&
       agentBackendId !== currentSession.agentBackendId
     )
-    const runtimeMustAdoptSession =
-      frameworkChanged || backendChanged || !runtime.state.sessionIds.includes(targetSessionId)
+    const selectedRuntimeChanged = frameworkChanged || backendChanged
+    const runtimeDetached = !runtime.state.sessionIds.includes(targetSessionId)
+    const runtimeMustAdoptSession = selectedRuntimeChanged || runtimeDetached
+    const branchResetRequired = Boolean(
+      currentSession?.branchContextResetRequired && !branchContextAlreadyReset
+    )
+    const sendPreparationRequired = branchResetRequired || runtimeMustAdoptSession
 
-    // Branch activation changes only the durable projection. Before the first continuation on that
-    // path, drop both volatile contexts so neither the provider nor a live kernel can leak sibling-
-    // Branch state into the prompt. When another runtime must adopt the session, its resume creates the
-    // fresh Agent context; resetting the old runtime first would execute this turn under the wrong owner.
+    if (sendPreparationRequired) {
+      if (sessionSendPreparationsInFlight.has(targetSessionId)) return undefined
+      sessionSendPreparationsInFlight.add(targetSessionId)
+      onSendPreparationStateChange?.(targetSessionId, true)
+    }
+
+    // Branch activation changes only the durable projection. Before the first continuation, drop
+    // Notebook context and guarantee a fresh Agent context. A selected-runtime change must adopt first
+    // so any required reset executes on the new owner. Only an already-attached selected runtime can
+    // reset directly; detached sessions adopt first so a stale coordinator owner cannot receive it.
     let branchContextResetPerformed = Boolean(branchContextAlreadyReset)
     let agentContextResetPerformed = Boolean(branchContextAlreadyReset)
-    if (currentSession?.branchContextResetRequired && !branchContextAlreadyReset) {
-      const resetCwd = targetCwd || currentSession.cwd || runtime.state.cwd
-      if (!resetCwd) {
-        useSessionStore.getState().failRun(targetSessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
-        return undefined
-      }
-      try {
-        await shutdownNotebookForBranchChange(targetSessionId, resetCwd, sessionProjectName)
-        if (!runtimeMustAdoptSession) {
-          const reset = await runtime.resetSessionContext(
-            targetSessionId,
-            resetCwd,
-            sessionProjectName,
-            currentSession.permissionProfile ?? permissionProfile
-          )
-          useSessionStore
-            .getState()
-            .markResumed(targetSessionId, reset?.frameworkId, reset?.backendId)
-          agentContextResetPerformed = true
-        }
-        branchContextResetPerformed = true
-      } catch (error) {
-        useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
-        return undefined
-      }
-    }
+    let shouldResumeSession = false
+    let contextResetFromResume = false
 
     // A specialist switch on Claude replaced the agent session on the main side (identity is baked
     // into session _meta at creation). The runtime already adopted a fresh session, so here we only
@@ -615,19 +601,77 @@ const sendWorkspaceMessage = async (
       useSessionStore.getState().clearSpecialistSwitchResetRequired(targetSessionId)
     }
 
-    const shouldResumeSession = !agentContextResetPerformed && runtimeMustAdoptSession
-    let resumeCwd: string | undefined
+    try {
+      if (branchResetRequired) {
+        const resetCwd = targetCwd || currentSession?.cwd || runtime.state.cwd
+        if (!resetCwd) {
+          useSessionStore.getState().failRun(targetSessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
+          return undefined
+        }
 
-    if (shouldResumeSession) {
-      // Empty string is treated as missing; fall back to runtime cwd
-      const effectiveCwd = targetCwd || runtime.state.cwd
-
-      if (!effectiveCwd) {
-        useSessionStore.getState().failRun(targetSessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
-        return undefined
+        await shutdownNotebookForBranchChange(targetSessionId, resetCwd, sessionProjectName)
+        if (!selectedRuntimeChanged && !runtimeDetached) {
+          const reset = await runtime.resetSessionContext(
+            targetSessionId,
+            resetCwd,
+            sessionProjectName,
+            currentSession?.permissionProfile ?? permissionProfile
+          )
+          useSessionStore
+            .getState()
+            .markResumed(targetSessionId, reset?.frameworkId, reset?.backendId)
+          agentContextResetPerformed = true
+        }
+        branchContextResetPerformed = true
       }
 
-      resumeCwd = effectiveCwd
+      shouldResumeSession = !agentContextResetPerformed && runtimeMustAdoptSession
+      if (shouldResumeSession) {
+        // Empty string is treated as missing; fall back to runtime cwd.
+        const resumeCwd = targetCwd || runtime.state.cwd
+        if (!resumeCwd) {
+          useSessionStore.getState().failRun(targetSessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
+          return undefined
+        }
+
+        const resumeResult = await runtime.resumeSession(
+          targetSessionId,
+          resumeCwd,
+          sessionProjectName,
+          currentSession?.permissionProfile ?? permissionProfile,
+          currentSession?.agentFrameworkId,
+          currentSession?.agentBackendId,
+          currentSession?.specialistId
+        )
+
+        contextResetFromResume = Boolean(resumeResult?.contextReset)
+        useSessionStore
+          .getState()
+          .markResumed(targetSessionId, resumeResult?.frameworkId, resumeResult?.backendId)
+
+        // A provider may resume an existing selected-runtime session without resetting its hidden
+        // history. Branch isolation requires a fresh context even in that case, now on the adopted owner.
+        if (branchContextResetPerformed && !contextResetFromResume) {
+          const reset = await runtime.resetSessionContext(
+            targetSessionId,
+            resumeCwd,
+            sessionProjectName,
+            currentSession?.permissionProfile ?? permissionProfile
+          )
+          useSessionStore
+            .getState()
+            .markResumed(targetSessionId, reset?.frameworkId, reset?.backendId)
+          contextResetFromResume = true
+        }
+      }
+    } catch (error) {
+      useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
+      return undefined
+    } finally {
+      if (sendPreparationRequired) {
+        sessionSendPreparationsInFlight.delete(targetSessionId)
+        onSendPreparationStateChange?.(targetSessionId, false)
+      }
     }
 
     // A pre-appended prompt replays only the turns that precede it, so the resent turn is not
@@ -647,33 +691,6 @@ const sendWorkspaceMessage = async (
     let historyPreamble: string | undefined
     let historyAttachments: UploadedAttachment[] | undefined
     let historyImages: AcpMessageImage[] | undefined
-    let contextResetFromResume = false
-
-    if (resumeCwd) {
-      if (sessionSendAdoptionsInFlight.has(targetSessionId)) return null
-      sessionSendAdoptionsInFlight.add(targetSessionId)
-      try {
-        const resumeResult = await runtime.resumeSession(
-          targetSessionId,
-          resumeCwd,
-          sessionProjectName,
-          currentSession?.permissionProfile ?? permissionProfile,
-          currentSession?.agentFrameworkId,
-          currentSession?.agentBackendId,
-          currentSession?.specialistId
-        )
-
-        contextResetFromResume = Boolean(resumeResult?.contextReset)
-        useSessionStore
-          .getState()
-          .markResumed(targetSessionId, resumeResult?.frameworkId, resumeResult?.backendId)
-      } catch (error) {
-        useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
-        return undefined
-      } finally {
-        sessionSendAdoptionsInFlight.delete(targetSessionId)
-      }
-    }
 
     const appended = preAppendedMessageId
       ? { sessionId: targetSessionId, messageId: preAppendedMessageId }
@@ -1332,11 +1349,10 @@ const useWorkspaceAgentRuntime = (): {
   permissionGrants: Record<string, AcpPermissionGrant[]>
   contextUsageBySession: Record<string, AcpContextUsage>
   promptInFlightSessionIds: string[]
+  sendPreparationInFlightSessionIds: string[]
   nativeContextCompactionSessionIds: string[]
   compactContext: (sessionId: string) => Promise<boolean>
-  sendMessage: (
-    input: SendWorkspaceMessageInput
-  ) => Promise<SendWorkspaceMessageOutcome | undefined>
+  sendMessage: (input: SendWorkspaceMessageInput) => Promise<SendWorkspaceMessageResult | undefined>
   resendEditedMessage: (
     sessionId: string,
     messageId: string,
@@ -1357,6 +1373,19 @@ const useWorkspaceAgentRuntime = (): {
   const activeModel = useSettingsStore((state) => state.activeModel)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const [sendPreparationInFlightSessionIds, setSendPreparationInFlightSessionIds] = useState<
+    string[]
+  >([])
+  const handleSendPreparationStateChange = useCallback<SendPreparationStateChange>(
+    (sessionId, inFlight) => {
+      setSendPreparationInFlightSessionIds((current) => {
+        const containsSession = current.includes(sessionId)
+        if (inFlight === containsSession) return current
+        return inFlight ? [...current, sessionId] : current.filter((id) => id !== sessionId)
+      })
+    },
+    []
+  )
   const eventProcessor = useRef(createWorkspaceRuntimeEventProcessor())
   // Tracks the last connection status so the disconnect effect fires only on a transition, not on
   // every unrelated snapshot re-render.
@@ -1421,15 +1450,26 @@ const useWorkspaceAgentRuntime = (): {
 
   // Creates a session if needed, records the user message, then starts the prompt in the background.
   const sendMessage = useCallback(
-    (input: SendWorkspaceMessageInput): Promise<SendWorkspaceMessageOutcome | undefined> =>
-      sendWorkspaceMessage(runtime, {
-        ...input,
-        supportsImageInput,
-        agentFrameworkId,
-        agentBackendId: activeProviderId ? `${agentFrameworkId}:${activeProviderId}` : undefined,
-        agentModel: activeModel
-      }),
-    [runtime, supportsImageInput, agentFrameworkId, activeProviderId, activeModel]
+    (input: SendWorkspaceMessageInput): Promise<SendWorkspaceMessageResult | undefined> =>
+      sendWorkspaceMessage(
+        runtime,
+        {
+          ...input,
+          supportsImageInput,
+          agentFrameworkId,
+          agentBackendId: activeProviderId ? `${agentFrameworkId}:${activeProviderId}` : undefined,
+          agentModel: activeModel
+        },
+        handleSendPreparationStateChange
+      ),
+    [
+      runtime,
+      supportsImageInput,
+      agentFrameworkId,
+      activeProviderId,
+      activeModel,
+      handleSendPreparationStateChange
+    ]
   )
 
   // Truncates the conversation at the edited message, then resends the adjusted prompt with the
@@ -1528,6 +1568,7 @@ const useWorkspaceAgentRuntime = (): {
     permissionGrants: runtime.state.permissionGrants,
     contextUsageBySession: runtime.state.contextUsageBySession,
     promptInFlightSessionIds: runtime.state.promptInFlightSessionIds,
+    sendPreparationInFlightSessionIds,
     nativeContextCompactionSessionIds: runtime.state.nativeContextCompactionSessionIds ?? [],
     compactContext,
     sendMessage,

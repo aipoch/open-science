@@ -20,7 +20,7 @@ import { createJobAnalysisTrigger } from '../compute/job-analysis-trigger'
 type SendMessageFn = (input: {
   sessionId?: string
   text: string
-}) => Promise<{ sessionId: string; messageId: string } | null | undefined>
+}) => Promise<{ sessionId: string; messageId: string } | undefined>
 
 type UseJobAnalysisEffectOptions = {
   enabled: boolean
@@ -49,9 +49,7 @@ export const useJobAnalysisEffect = ({
       },
       sendPrompt: async (sessionId, text) => {
         if (!isActive) return undefined
-        // A composer duplicate suppressed during runtime adoption uses null; automatic analysis
-        // treats it like any other unsent prompt so the completion notification stays retryable.
-        return (await sendLatestMessage({ sessionId, text })) ?? undefined
+        return sendLatestMessage({ sessionId, text })
       },
       markConsumed: async (sessionId, jobIds) => {
         if (!isActive) return

@@ -347,6 +347,86 @@ describe('workspace agent message sending', () => {
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBeUndefined()
   })
 
+  it('resets a detached same-framework Branch after adoption before replay', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Original branch turn',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code',
+      agentBackendId: 'claude-code:anthropic'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        branchContextResetRequired: true
+      }))
+    }))
+    const shutdown = vi.fn().mockResolvedValue({
+      sessionId: 'transport-session-1',
+      status: 'shutdown'
+    })
+    vi.stubGlobal('window', { api: { notebook: { shutdown } } })
+    const resetSessionContext = vi.fn().mockResolvedValue({
+      sessionId: 'transport-session-1',
+      cwd: '/workspace/project',
+      contextReset: true,
+      frameworkId: 'claude-code',
+      backendId: 'claude-code:anthropic'
+    })
+    const resumeSession = vi.fn().mockResolvedValue({
+      sessionId: 'transport-session-1',
+      cwd: '/workspace/project',
+      contextReset: false,
+      frameworkId: 'claude-code',
+      backendId: 'claude-code:anthropic'
+    })
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession,
+      resetSessionContext,
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Continue detached branch',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code',
+      agentBackendId: 'claude-code:anthropic'
+    })
+
+    expect(shutdown).toHaveBeenCalledOnce()
+    expect(resetSessionContext).toHaveBeenCalledWith(
+      'transport-session-1',
+      '/workspace/project',
+      'project-1',
+      'ask'
+    )
+    expect(resumeSession).toHaveBeenCalledWith(
+      'transport-session-1',
+      '/workspace/project',
+      'project-1',
+      'ask',
+      'claude-code',
+      'claude-code:anthropic'
+    )
+    expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(
+      resumeSession.mock.invocationCallOrder[0]
+    )
+    expect(resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
+      resetSessionContext.mock.invocationCallOrder[0]
+    )
+    expect(resetSessionContext.mock.invocationCallOrder[0]).toBeLessThan(
+      runtime.sendPrompt.mock.invocationCallOrder[0]
+    )
+    expect(runtime.sendPrompt.mock.calls[0]?.[5]).toContain('Original branch turn')
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBeUndefined()
+  })
+
   it('adopts the selected framework when a Branch reset and framework switch share a turn', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -379,17 +459,21 @@ describe('workspace agent message sending', () => {
     const resumeResult = {
       sessionId: 'transport-session-1',
       cwd: '/workspace/project',
-      contextReset: true,
+      contextReset: false,
       frameworkId: 'codex',
       backendId: 'codex:builtin-codex-subscription'
     }
+    const resetSessionContext = vi.fn().mockResolvedValue({
+      ...resumeResult,
+      contextReset: true
+    })
     const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
     const runtime = {
       // A draining runtime may still expose the logical session while the selected runtime takes over.
       state: createSnapshot(['transport-session-1']),
       createSession: vi.fn(),
       resumeSession,
-      resetSessionContext: vi.fn(),
+      resetSessionContext,
       sendPrompt
     }
 
@@ -415,7 +499,12 @@ describe('workspace agent message sending', () => {
     await sendRequest
     await flushRuntimeTasks()
 
-    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(resetSessionContext).toHaveBeenCalledWith(
+      'transport-session-1',
+      '/workspace/project',
+      'project-1',
+      'ask'
+    )
     expect(resumeSession).toHaveBeenCalledWith(
       'transport-session-1',
       '/workspace/project',
@@ -428,6 +517,9 @@ describe('workspace agent message sending', () => {
       resumeSession.mock.invocationCallOrder[0]
     )
     expect(resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
+      resetSessionContext.mock.invocationCallOrder[0]
+    )
+    expect(resetSessionContext.mock.invocationCallOrder[0]).toBeLessThan(
       sendPrompt.mock.invocationCallOrder[0]
     )
     const switchedSession = useSessionStore.getState().sessions[0]
@@ -1321,27 +1413,35 @@ describe('workspace agent message sending', () => {
     })
     useSessionStore.getState().finishRun('session-1')
 
-    const first = sendWorkspaceMessage(runtime, {
-      sessionId: 'session-1',
-      text: 'Continue restored conversation',
-      cwd: '/workspace/project'
-    })
+    const preparationChanged = vi.fn()
+    const first = sendWorkspaceMessage(
+      runtime,
+      {
+        sessionId: 'session-1',
+        text: 'Continue restored conversation',
+        cwd: '/workspace/project'
+      },
+      preparationChanged
+    )
     const second = sendWorkspaceMessage(runtime, {
       sessionId: 'session-1',
       text: 'Duplicate submit',
       cwd: '/workspace/project'
     })
 
-    await expect(second).resolves.toBeNull()
+    await expect(second).resolves.toBeUndefined()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'idle',
       activeRun: undefined,
       messages: [expect.objectContaining({ content: 'Previous prompt' })]
     })
     expect(runtime.resumeSession).toHaveBeenCalledTimes(1)
+    expect(preparationChanged).toHaveBeenCalledWith('session-1', true)
 
     resumeCanFinish.resolve({ sessionId: 'session-1', cwd: '/workspace/project' })
-    await expect(first).resolves.toMatchObject({ sessionId: 'session-1' })
+    const firstResult = await first
+    expect(firstResult).toMatchObject({ sessionId: 'session-1' })
+    expect(preparationChanged).toHaveBeenLastCalledWith('session-1', false)
     expect(runtime.sendPrompt).toHaveBeenCalledTimes(1)
   })
 
