@@ -573,6 +573,18 @@ class SessionPersistenceCoordinator {
     })
   }
 
+  // Specialist switching reads the latest durable Session and changes only this safe binding. Keep
+  // that intent inside the persistence boundary so every caller receives graph-conflict recovery.
+  saveSessionSpecialistBinding(
+    session: PersistedChatSession,
+    specialistId: string | undefined
+  ): Promise<PersistedChatSession> {
+    return this.saveSession(
+      { ...session, specialistId },
+      { conflictRebaseFields: ['specialistId'] }
+    )
+  }
+
   // Joins late Session-owned side effects (for example Upload finalization) to the same ordering
   // boundary as JSON save and deletion. The mutation is rejected after a Session/Project tombstone.
   runSessionMutation<Result>(

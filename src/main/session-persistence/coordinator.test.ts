@@ -361,6 +361,64 @@ describe('SessionPersistenceCoordinator', () => {
     expect(provenance.captureFinalizedMessages).toHaveBeenCalledWith(result)
   })
 
+  it('rebases a specialist binding onto the latest durable graph after a conflict', async () => {
+    const authoritativeSession = createSession({
+      specialistId: 'specialist-old',
+      messages: [
+        {
+          id: 'durable-message',
+          role: 'agent',
+          content: 'Artifact finalized',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ],
+      updatedAt: 3
+    })
+    const submittedSession = createSession({
+      messages: [
+        {
+          id: 'stale-message',
+          role: 'user',
+          content: 'Stale graph',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      updatedAt: 4
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi
+        .fn()
+        .mockResolvedValue({ status: 'found', session: authoritativeSession })
+    })
+    const provenance = createProvenancePersistence({
+      validateFinalizedMessageBindings: vi
+        .fn()
+        .mockRejectedValueOnce(new FinalizedArtifactBindingConflictError('stale graph'))
+        .mockResolvedValue(undefined)
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      provenance
+    )
+
+    const result = await coordinator.saveSessionSpecialistBinding(
+      submittedSession,
+      'specialist-new'
+    )
+
+    expect(result.specialistId).toBe('specialist-new')
+    expect(result.messages).toEqual(authoritativeSession.messages)
+    expect(repository.saveSession).toHaveBeenCalledWith(result)
+  })
+
   it('restores DB visibility and clears the tombstone when JSON deletion fails', async () => {
     const repository = createSessionRepository({
       deleteSession: vi.fn().mockRejectedValueOnce(new Error('disk locked'))

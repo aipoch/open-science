@@ -692,7 +692,7 @@ const registerIpcHandlers = async ({
         )
         return
       }
-      await sessionPersistenceCoordinator.saveSession({ ...session, specialistId })
+      await sessionPersistenceCoordinator.saveSessionSpecialistBinding(session, specialistId)
     },
     // Apply the switch to the live agent runtime. `runtime` is assigned above (registerAcpIpcHandlers),
     // but the closure is invoked per-request so a late-bound reference is unnecessary.
