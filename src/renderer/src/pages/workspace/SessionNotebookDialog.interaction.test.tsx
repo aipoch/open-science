@@ -293,4 +293,43 @@ describe('SessionNotebookContent export', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('Invalid notebook')
     expect(button?.disabled).toBe(false)
   })
+
+  it('shows an import success status and ignores canceled imports', async () => {
+    const onImport = vi.fn().mockResolvedValueOnce('Imported 2 cells (skipped 1)')
+    await act(async () => {
+      root.render(
+        <SessionNotebookContent
+          sessionId="session-1"
+          runs={[]}
+          status="ready"
+          onClose={vi.fn()}
+          onExport={vi.fn()}
+          onExportAll={vi.fn()}
+          onImport={onImport}
+        />
+      )
+    })
+
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Import .ipynb"]')
+    await act(async () => {
+      button?.click()
+      await Promise.resolve()
+    })
+
+    expect(onImport).toHaveBeenCalledOnce()
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(
+      'Imported 2 cells (skipped 1)'
+    )
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+
+    onImport.mockResolvedValueOnce(undefined)
+    await act(async () => {
+      button?.click()
+      await Promise.resolve()
+    })
+
+    expect(onImport).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(container.querySelector('[role="status"]')?.textContent ?? '').toBe('')
+  })
 })

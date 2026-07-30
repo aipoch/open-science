@@ -2511,6 +2511,10 @@ class NotebookRuntimeService {
   }
 
   // Imports code cells as durable, not-yet-executed records and exposes data-kernel cells for rerun.
+  // Persisted `environment` is historical annotation only — runCell still resolves the session binding
+  // (v4). No artifact provenance / inputFiles are written here; the first real execution uses the
+  // existing capture path. executionCount advances by imported.runs.length so the session counter
+  // stays monotonic after a bulk append.
   async importIpynb(request: NotebookSessionRequest): Promise<ImportNotebookResult> {
     const filePath = await (this.options.pickIpynb ?? pickIpynbWithDialog)()
     if (!filePath) return { imported: false }

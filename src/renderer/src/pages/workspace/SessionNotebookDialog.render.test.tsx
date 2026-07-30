@@ -100,6 +100,18 @@ describe('SessionNotebookContent', () => {
     )
   })
 
+  it('renders an imported badge for not-yet-executed imported runs', () => {
+    const html = renderContent({
+      sessionId: 's1',
+      runs: [makeRun({ status: 'imported', source: 'user' })],
+      status: 'ready'
+    })
+
+    expect(html).toContain('data-testid="session-notebook-imported-badge"')
+    expect(html).toContain('imported')
+    expect(html).not.toContain('error (line')
+  })
+
   it('enables .ipynb export for a loaded notebook and disables it when empty', () => {
     const populated = renderContent({
       sessionId: 's1',

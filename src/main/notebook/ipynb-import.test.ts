@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import type { NotebookRunDocument } from '../../shared/notebook'
-import { runDocumentToIpynb } from './ipynb-export'
+import type { NotebookRunDocument, NotebookRunRecord } from '../../shared/notebook'
+import { runDocumentToIpynb, runDocumentToIpynbForKernel } from './ipynb-export'
 import { ipynbToRunRecords, type IpynbImportResult } from './ipynb-import'
 
 const context = {
@@ -203,5 +203,73 @@ describe('ipynbToRunRecords', () => {
         outputs
       }))
     )
+  })
+
+  it('imports a tab-scoped python export without pulling in sibling R cells', () => {
+    const makeRun = (overrides: Partial<NotebookRunRecord>): NotebookRunRecord => ({
+      runId: 'run',
+      cellId: 'cell',
+      source: 'user',
+      kernelKind: 'python',
+      script: 'print("py")',
+      status: 'completed',
+      startedAt: 1,
+      executionCount: 1,
+      text: { stdout: 'py\n', stderr: '', traceback: '', plain: ['py\n'] },
+      outputs: [{ type: 'stream', name: 'stdout', text: 'py\n' }],
+      artifacts: [],
+      workingFiles: [],
+      environment: 'default-python',
+      ...overrides
+    })
+    const document: NotebookRunDocument = {
+      version: 1,
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      notebookSessionRoot: '/storage/notebooks/default-project/session-1',
+      dataRoot: '/storage/notebooks/default-project/session-1/data',
+      kernel: {
+        language: 'python',
+        kernelName: 'python3',
+        runtimeRoot: '/storage/runtime',
+        lastKnownStatus: 'idle'
+      },
+      runs: [
+        makeRun({ runId: 'py-1', cellId: 'py-1', script: 'print("py")' }),
+        makeRun({
+          runId: 'bash-1',
+          cellId: 'bash-1',
+          kernelKind: 'bash',
+          script: 'pwd',
+          environment: undefined,
+          text: { stdout: '/tmp\n', stderr: '', traceback: '', plain: ['/tmp\n'] },
+          outputs: [{ type: 'stream', name: 'stdout', text: '/tmp\n' }]
+        }),
+        makeRun({
+          runId: 'r-1',
+          cellId: 'r-1',
+          kernelKind: 'r',
+          script: 'print("r")',
+          environment: 'default-r',
+          text: { stdout: 'r\n', stderr: '', traceback: '', plain: ['r\n'] },
+          outputs: [{ type: 'stream', name: 'stdout', text: 'r\n' }]
+        })
+      ],
+      updatedAt: 1_000
+    }
+
+    const pythonNotebook = runDocumentToIpynbForKernel(document, 'python')
+    const imported = importNotebook(pythonNotebook)
+
+    expect(pythonNotebook.metadata.kernelspec.name).toBe('python3')
+    expect(imported.runs.map((run) => ({ kernelKind: run.kernelKind, script: run.script }))).toEqual(
+      [
+        { kernelKind: 'python', script: 'print("py")' },
+        { kernelKind: 'bash', script: 'pwd' }
+      ]
+    )
+    expect(imported.runs.every((run) => run.status === 'imported')).toBe(true)
+    expect(imported.runs.some((run) => run.kernelKind === 'r')).toBe(false)
   })
 })

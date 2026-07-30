@@ -63,7 +63,7 @@ const createNotebookHandlers = (service: NotebookRuntimeService): NotebookHandle
     withDataRootWrite(() => service.execute(withoutTrustedTurnContext(request))),
   exportIpynb: (request) => service.exportIpynb(request),
   exportIpynbAll: (request) => service.exportIpynbAll(request),
-  importIpynb: (request) => service.importIpynb(request),
+  importIpynb: (request) => withDataRootWrite(() => service.importIpynb(request)),
   restart: (request) => withDataRootWrite(() => service.restart(request)),
   shutdown: (request) => withDataRootWrite(() => service.shutdown(request))
 })

@@ -65,6 +65,13 @@ const NotebookDialogCell = ({
             ) : (
               <span className="rounded bg-danger-900 px-1.5 py-0.5 text-danger-000">error</span>
             )
+          ) : run.status === 'imported' ? (
+            <span
+              className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200"
+              data-testid="session-notebook-imported-badge"
+            >
+              imported
+            </span>
           ) : null}
         </div>
         {originLabel ? (
@@ -94,7 +101,7 @@ type SessionNotebookContentProps = {
   onClose: () => void
   onExport: (kernel: NotebookKernelKind) => Promise<void>
   onExportAll: () => Promise<string | undefined>
-  onImport: () => Promise<void>
+  onImport: () => Promise<string | undefined>
 }
 
 // Pure presentational body of the dialog: header summary, empty/loading/error/populated states,
@@ -115,7 +122,7 @@ const SessionNotebookContent = ({
   const [exporting, setExporting] = useState(false)
   const [exportingAll, setExportingAll] = useState(false)
   const [exportError, setExportError] = useState<string>()
-  const [exportSuccess, setExportSuccess] = useState<string>()
+  const [footerSuccess, setFooterSuccess] = useState<string>()
   const [importing, setImporting] = useState(false)
   const [importError, setImportError] = useState<string>()
   const shortId = sessionId.slice(0, 8)
@@ -157,7 +164,8 @@ const SessionNotebookContent = ({
   const handleExport = async (): Promise<void> => {
     setExporting(true)
     setExportError(undefined)
-    setExportSuccess(undefined)
+    setImportError(undefined)
+    setFooterSuccess(undefined)
     try {
       await onExport(effectiveActiveKind)
     } catch (exportFailure) {
@@ -173,10 +181,11 @@ const SessionNotebookContent = ({
   const handleExportAll = async (): Promise<void> => {
     setExportingAll(true)
     setExportError(undefined)
-    setExportSuccess(undefined)
+    setImportError(undefined)
+    setFooterSuccess(undefined)
     try {
       const message = await onExportAll()
-      if (message) setExportSuccess(message)
+      if (message) setFooterSuccess(message)
     } catch (exportFailure) {
       console.error('Failed to export notebooks by kernel:', exportFailure)
       setExportError(getErrorMessage(exportFailure))
@@ -188,8 +197,11 @@ const SessionNotebookContent = ({
   const handleImport = async (): Promise<void> => {
     setImporting(true)
     setImportError(undefined)
+    setExportError(undefined)
+    setFooterSuccess(undefined)
     try {
-      await onImport()
+      const message = await onImport()
+      if (message) setFooterSuccess(message)
     } catch (importFailure) {
       setImportError(getErrorMessage(importFailure))
     } finally {
@@ -252,7 +264,7 @@ const SessionNotebookContent = ({
                   data-testid={`session-notebook-tab-${kind}`}
                   onClick={() => {
                     setActiveKind(kind)
-                    setExportSuccess(undefined)
+                    setFooterSuccess(undefined)
                   }}
                   className={cn(
                     'flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
@@ -295,7 +307,7 @@ const SessionNotebookContent = ({
           )}
           role={importError || exportError ? 'alert' : 'status'}
         >
-          {importError ?? exportError ?? exportSuccess}
+          {importError ?? exportError ?? footerSuccess}
         </p>
         <div className="flex shrink-0 items-center gap-2">
           <button
@@ -499,14 +511,18 @@ const SessionNotebookDialog = ({
               }}
               onImport={async () => {
                 const request = {
-                  sessionId: session.id,
-                  projectName: session.projectId,
-                  workspaceCwd: session.cwd ?? ''
+                  sessionId: dialogSession.id,
+                  projectName: dialogSession.projectId,
+                  workspaceCwd: dialogSession.cwd ?? ''
                 }
                 const result = await window.api.notebook.importIpynb(request)
-                if (!result.imported) return
+                if (!result.imported) return undefined
                 setRuns(await loadSessionNotebookRuns(window.api.notebook, request))
                 setStatus('ready')
+                const summary = `Imported ${pluralize(result.cellCount, 'cell')}`
+                return result.skippedCellCount > 0
+                  ? `${summary} (skipped ${result.skippedCellCount})`
+                  : summary
               }}
             />
           ) : null}
