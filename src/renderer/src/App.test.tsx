@@ -264,7 +264,10 @@ describe('App startup routing', () => {
 
     await render()
 
-    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith(false)
+    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith({
+      isHydrated: false,
+      isReady: false
+    })
   })
 
   it('allows navigation and target-validated deletion after a partial session load', async () => {
@@ -277,7 +280,10 @@ describe('App startup routing', () => {
     expect(mocks.lifecycleSync).toHaveBeenCalledWith({
       isSessionPersistenceHydrated: true
     })
-    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith(true)
+    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith({
+      isHydrated: true,
+      isReady: false
+    })
     expect(
       container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset.canDeleteProjects
     ).toBe('true')
@@ -426,7 +432,7 @@ describe('App startup routing', () => {
     )
   })
 
-  it('opens the notification-target conversation once sessions hydrate read-only', async () => {
+  it('retains a notification target until recovery completes', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.isHydrated = false
     mocks.sessionPersistence.isLoading = true
@@ -438,9 +444,19 @@ describe('App startup routing', () => {
     // Sessions still hydrating: the pending click target must not be consumed or dropped.
     expect(mocks.openSessionById).not.toHaveBeenCalled()
 
-    // A partial hydration is enough for navigation even though durable writes remain blocked.
+    // Partial hydration cannot prove an absent target was deleted, so the destructive take stays
+    // pending in main until a complete retry.
     mocks.sessionPersistence.isHydrated = true
     mocks.sessionPersistence.isLoading = false
+    await act(async () => root.render(<App />))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(mocks.notifications.takePendingOpenSession).not.toHaveBeenCalled()
+    expect(mocks.openSessionById).not.toHaveBeenCalled()
+
+    mocks.sessionPersistence.isReady = true
     await act(async () => root.render(<App />))
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
@@ -449,13 +465,10 @@ describe('App startup routing', () => {
     expect(mocks.openSessionById).toHaveBeenCalledWith('s-9')
   })
 
-  it('opens the conversation immediately when a notification nudge arrives hydrated', async () => {
+  it('does not consume a notification nudge during partial recovery', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.isReady = false
-    // The mount-time pull finds nothing; the nudge-triggered pull gets the click target.
-    mocks.notifications.takePendingOpenSession
-      .mockResolvedValueOnce(null)
-      .mockResolvedValue({ sessionId: 's-3' })
+    mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-3' })
 
     await render()
 
@@ -463,6 +476,15 @@ describe('App startup routing', () => {
     expect(nudge).toBeDefined()
     await act(async () => {
       nudge?.()
+    })
+
+    expect(mocks.notifications.takePendingOpenSession).not.toHaveBeenCalled()
+    expect(mocks.openSessionById).not.toHaveBeenCalled()
+
+    mocks.sessionPersistence.isReady = true
+    await act(async () => root.render(<App />))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
     expect(mocks.openSessionById).toHaveBeenCalledWith('s-3')

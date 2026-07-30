@@ -9,6 +9,11 @@ type DeepLinkParams = {
   sessionId: string | undefined
 }
 
+type DeepLinkNavigationReadiness = {
+  isHydrated: boolean
+  isReady: boolean
+}
+
 const isWebLocation = (): boolean =>
   typeof window !== 'undefined' &&
   (window.location.protocol === 'http:' || window.location.protocol === 'https:')
@@ -41,9 +46,9 @@ const replaceNavigationParams = (
   window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
 }
 
-// Applies the initial URL only after both persisted data sources are ready, then keeps navigation
-// reflected in the address bar without introducing a client-side router.
-const useDeepLinkNavigation = (isSessionPersistenceReady: boolean): void => {
+// Opens already-hydrated targets during recovery, but retains unresolved initial parameters until a
+// complete Session scan can distinguish a missing target from one that was temporarily omitted.
+const useDeepLinkNavigation = ({ isHydrated, isReady }: DeepLinkNavigationReadiness): void => {
   const isProjectsLoaded = useProjectStore((state) => state.isLoaded)
   const initialParams = useRef<DeepLinkParams | undefined>(
     isWebLocation() ? readDeepLinkParams() : undefined
@@ -52,9 +57,8 @@ const useDeepLinkNavigation = (isSessionPersistenceReady: boolean): void => {
   const [isInitialized, setIsInitialized] = useState(() => !isWebLocation())
 
   useEffect(() => {
-    if (initialized.current || !isProjectsLoaded || !isSessionPersistenceReady) return
+    if (initialized.current || !isProjectsLoaded || !isHydrated) return
 
-    initialized.current = true
     const { projectId, sessionId } = initialParams.current ?? {}
     const projectExists = useProjectStore
       .getState()
@@ -68,12 +72,15 @@ const useDeepLinkNavigation = (isSessionPersistenceReady: boolean): void => {
 
     if (projectId && sessionId && sessionExists) {
       useNavigationStore.getState().openSession(projectId, sessionId)
+    } else if (projectId && sessionId && projectExists && !isReady) {
+      return
     } else {
       useNavigationStore.getState().goHome()
     }
 
+    initialized.current = true
     setIsInitialized(true)
-  }, [isProjectsLoaded, isSessionPersistenceReady])
+  }, [isHydrated, isProjectsLoaded, isReady])
 
   useEffect(() => {
     if (!isInitialized) return
@@ -101,4 +108,4 @@ const useDeepLinkNavigation = (isSessionPersistenceReady: boolean): void => {
 }
 
 export { isWebLocation, readDeepLinkParams, replaceNavigationParams, useDeepLinkNavigation }
-export type { DeepLinkParams }
+export type { DeepLinkNavigationReadiness, DeepLinkParams }

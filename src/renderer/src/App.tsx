@@ -36,7 +36,10 @@ const App = (): React.JSX.Element | null => {
   const isSessionPersistenceLoading = sessionPersistence.isLoading
   const isSessionPersistenceReady = sessionPersistence.isReady
   const lifecycleSync = useLifecycleSync({ isSessionPersistenceHydrated })
-  useDeepLinkNavigation(isSessionPersistenceHydrated)
+  useDeepLinkNavigation({
+    isHydrated: isSessionPersistenceHydrated,
+    isReady: isSessionPersistenceReady
+  })
   const view = useNavigationStore((state) => state.view)
   // Cmd+W / Ctrl+W closes the open preview panel before it closes the window.
   useCloseActivePaneShortcut()
@@ -129,20 +132,21 @@ const App = (): React.JSX.Element | null => {
   }, [])
 
   // Fast path: a click while this renderer is alive arrives as a nudge; pull the target. A click
-  // mid-hydration is left pending and consumed by the effect below once sessions are hydrated.
+  // mid-recovery is left pending and consumed by the effect below once the full scan can distinguish
+  // an omitted target from one that no longer exists.
   useEffect(
     () =>
       window.api.notifications.onOpenSession(() => {
-        if (isSessionPersistenceHydrated) void openPendingNotificationSession()
+        if (isSessionPersistenceReady) void openPendingNotificationSession()
       }),
-    [isSessionPersistenceHydrated, openPendingNotificationSession]
+    [isSessionPersistenceReady, openPendingNotificationSession]
   )
 
   // Slow path: the click recreated the window before this listener existed. Consume the pending
-  // target as soon as session persistence has hydrated the store.
+  // target only after session persistence has a complete store snapshot.
   useEffect(() => {
-    if (isSessionPersistenceHydrated) void openPendingNotificationSession()
-  }, [isSessionPersistenceHydrated, openPendingNotificationSession])
+    if (isSessionPersistenceReady) void openPendingNotificationSession()
+  }, [isSessionPersistenceReady, openPendingNotificationSession])
 
   // Subscribe once to compute approval requests. The card must be answered before the SSH call runs.
   useEffect(

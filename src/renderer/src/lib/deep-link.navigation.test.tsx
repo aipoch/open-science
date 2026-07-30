@@ -35,8 +35,13 @@ const session: ChatSession = {
   updatedAt: 1
 }
 
-const HookHarness = ({ isReady }: { isReady: boolean }): null => {
-  useDeepLinkNavigation(isReady)
+type HookHarnessProps = {
+  isHydrated: boolean
+  isReady: boolean
+}
+
+const HookHarness = ({ isHydrated, isReady }: HookHarnessProps): null => {
+  useDeepLinkNavigation({ isHydrated, isReady })
 
   return null
 }
@@ -57,31 +62,31 @@ afterEach(async () => {
 })
 
 const renderHook = async (
-  isReady: boolean
-): Promise<{ rerender: (nextIsReady: boolean) => Promise<void> }> => {
+  readiness: HookHarnessProps
+): Promise<{ rerender: (nextReadiness: HookHarnessProps) => Promise<void> }> => {
   const container = document.createElement('div')
   root = createRoot(container)
 
-  await act(async () => root?.render(createElement(HookHarness, { isReady })))
+  await act(async () => root?.render(createElement(HookHarness, readiness)))
 
   return {
-    rerender: async (nextIsReady) => {
-      await act(async () => root?.render(createElement(HookHarness, { isReady: nextIsReady })))
+    rerender: async (nextReadiness) => {
+      await act(async () => root?.render(createElement(HookHarness, nextReadiness)))
     }
   }
 }
 
 describe('deep-link navigation', () => {
-  it('opens a valid session only after projects and sessions are ready', async () => {
+  it('opens an already-hydrated session during partial recovery', async () => {
     window.history.replaceState({}, '', '/?project=project-1&session=session-1')
     useSessionStore.setState({ sessions: [session] })
 
-    const hook = await renderHook(false)
+    const hook = await renderHook({ isHydrated: false, isReady: false })
 
     act(() => useProjectStore.setState({ projects: [project], isLoaded: true }))
     expect(useNavigationStore.getState().view).toBe('home')
 
-    await hook.rerender(true)
+    await hook.rerender({ isHydrated: true, isReady: false })
 
     expect(useNavigationStore.getState()).toMatchObject({
       view: 'workspace',
@@ -90,12 +95,31 @@ describe('deep-link navigation', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe(session.id)
   })
 
+  it('retains an unresolved target until a retry completes the Session scan', async () => {
+    window.history.replaceState({}, '', '/?project=project-1&session=session-1')
+    useProjectStore.setState({ projects: [project], isLoaded: true })
+
+    const hook = await renderHook({ isHydrated: true, isReady: false })
+
+    expect(useNavigationStore.getState().view).toBe('home')
+    expect(window.location.search).toBe('?project=project-1&session=session-1')
+
+    act(() => useSessionStore.setState({ sessions: [session] }))
+    await hook.rerender({ isHydrated: true, isReady: true })
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: project.id
+    })
+    expect(window.location.search).toBe('?project=project-1&session=session-1')
+  })
+
   it('returns Home when the session parameter is missing', async () => {
     window.history.replaceState({}, '', '/?project=project-1')
     useProjectStore.setState({ projects: [project], isLoaded: true })
     useSessionStore.setState({ sessions: [session] })
 
-    await renderHook(true)
+    await renderHook({ isHydrated: true, isReady: false })
 
     expect(useNavigationStore.getState().view).toBe('home')
     expect(window.location.search).toBe('')
@@ -106,7 +130,7 @@ describe('deep-link navigation', () => {
     useProjectStore.setState({ projects: [project], isLoaded: true })
     useSessionStore.setState({ sessions: [{ ...session, projectId: 'project-2' }] })
 
-    await renderHook(true)
+    await renderHook({ isHydrated: true, isReady: true })
 
     expect(useNavigationStore.getState().view).toBe('home')
     expect(window.location.search).toBe('')
@@ -118,7 +142,7 @@ describe('deep-link navigation', () => {
     useSessionStore.setState({ sessions: [session] })
     const replaceState = vi.spyOn(window.history, 'replaceState')
 
-    await renderHook(true)
+    await renderHook({ isHydrated: true, isReady: true })
     replaceState.mockClear()
 
     act(() => useSessionStore.setState({ sessions: [{ ...session, title: 'Updated' }] }))
@@ -132,7 +156,7 @@ describe('deep-link navigation', () => {
     useProjectStore.setState({ projects: [project], isLoaded: true })
     useSessionStore.setState({ sessions: [session, nextSession] })
 
-    await renderHook(true)
+    await renderHook({ isHydrated: true, isReady: true })
     act(() => useNavigationStore.getState().openSession(project.id, nextSession.id))
 
     expect(window.location.search).toBe('?project=project-1&session=session-2')
@@ -144,7 +168,7 @@ describe('deep-link navigation', () => {
     useSessionStore.setState({ sessions: [session] })
     const replaceState = vi.spyOn(window.history, 'replaceState')
 
-    await renderHook(true)
+    await renderHook({ isHydrated: true, isReady: true })
     replaceState.mockClear()
     await act(async () => root?.unmount())
     root = undefined
