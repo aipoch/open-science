@@ -57,6 +57,7 @@ class AcpRuntimeCoordinator {
   private readonly permissionRuntimes = new Map<string, AcpRuntime>()
   private readonly reviewerRuntimes = new WeakMap<ActiveSession, AcpRuntime>()
   private readonly runtimeIds = new WeakMap<AcpRuntime, string>()
+  private readonly publishedRuntimeEventIds = new WeakMap<AcpRuntime, Set<string>>()
   private readonly permissionGrantStore = new ConversationPermissionGrantStore()
   // Runtime events are persisted on Message nodes. A process-local sequence alone restarts at one
   // after every app launch and can collide with a historical Session's event ids.
@@ -625,6 +626,14 @@ class AcpRuntimeCoordinator {
   }
 
   private handleRuntimeState(runtime: AcpRuntime, snapshot: AcpStateSnapshot): void {
+    const retainedEventIds = new Set(snapshot.events.map((event) => event.id))
+    const publishedEventIds = this.publishedRuntimeEventIds.get(runtime)
+    if (publishedEventIds) {
+      for (const eventId of publishedEventIds) {
+        if (!retainedEventIds.has(eventId)) publishedEventIds.delete(eventId)
+      }
+    }
+
     const attached = this.releaseMissingRuntimeSessions(runtime, snapshot)
     for (const sessionId of attached) {
       // resumeSession owns the handoff commit. AcpRuntime emits its attached snapshot just before the
@@ -711,15 +720,28 @@ class AcpRuntimeCoordinator {
   }
 
   private shouldPublishEvent(runtime: AcpRuntime, event: AcpRuntimeEvent): boolean {
-    if (!event.sessionId || event.kind === 'artifact') return true
+    const publishedEventIds = this.publishedRuntimeEventIds.get(runtime)
+    if (publishedEventIds?.has(event.id)) return true
 
-    const owner = this.sessionRuntimes.get(event.sessionId)
+    const owner = event.sessionId ? this.sessionRuntimes.get(event.sessionId) : undefined
+    const shouldPublish =
+      !event.sessionId || event.kind === 'artifact' || owner === undefined || owner === runtime
+
+    if (shouldPublish) {
+      const remembered = publishedEventIds ?? new Set<string>()
+      remembered.add(event.id)
+      if (!publishedEventIds) this.publishedRuntimeEventIds.set(runtime, remembered)
+    }
+
     // Every session-scoped event belongs to the runtime generation that emitted it. Once a fresh
     // generation adopts the same logical session, late tool/message/stop events from the draining
     // generation must not mutate the new Runtime Segment. Artifact claims are the exception above:
     // providers may publish them after stop, and their explicit run/prompt ids finalize the prior turn.
-    // Preserve events while ownership is unknown so discovery and pre-adoption behavior stay intact.
-    return owner === undefined || owner === runtime
+    // Events already admitted while this runtime owned the session remain visible in later snapshots
+    // until the runtime's bounded event window drops them, so an ownership broadcast cannot erase a
+    // terminal event before the renderer consumes it. Preserve events while ownership is unknown so
+    // discovery and pre-adoption behavior stay intact.
+    return shouldPublish
   }
 
   private eventId(runtime: AcpRuntime, eventId: string): string {
