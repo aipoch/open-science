@@ -213,7 +213,7 @@ describe('buildScpArgs', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveSshTarget → buildScpArgs integration', () => {
-  it('passes the alias as the scp remote spec and preserves ControlMaster', async () => {
+  it('passes the alias as the scp remote spec and preserves supported SSH options', async () => {
     const { resolveSshTarget } = await import('./ssh-runner')
     const target = await resolveSshTarget('aliyun-xt-test', undefined, async () => ({
       user: 'ewen',
@@ -228,9 +228,14 @@ describe('resolveSshTarget → buildScpArgs integration', () => {
     expect(args).toContain('aliyun-xt-test:/remote/data.csv')
     expect(args).not.toContain('47.98.96.100:/remote/data.csv')
 
-    // ControlMaster args from resolveSshTarget must survive the -p → Port translation.
-    expect(args).toContain('ControlMaster=auto')
-    expect(args.some((a) => a.startsWith('ControlPath='))).toBe(true)
+    // ControlMaster is unavailable on Windows; on supported platforms its args must survive the
+    // -p → Port translation.
+    if (process.platform === 'win32') {
+      expect(args).not.toContain('ControlMaster=auto')
+    } else {
+      expect(args).toContain('ControlMaster=auto')
+      expect(args.some((a) => a.startsWith('ControlPath='))).toBe(true)
+    }
   })
 })
 

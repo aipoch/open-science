@@ -15,6 +15,8 @@ import { spawnSync } from 'node:child_process'
 import { load } from 'js-yaml'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const pit = it.skipIf(process.platform === 'win32')
+
 type WorkflowStep = {
   'continue-on-error'?: boolean
   id?: string
@@ -616,7 +618,7 @@ describe('single Codex workflow contract', () => {
     })
   })
 
-  it('bootstraps managed subscription auth on a GitHub-hosted runner', () => {
+  pit('bootstraps managed subscription auth on a GitHub-hosted runner', () => {
     const seed = JSON.stringify({
       auth_mode: 'chatgpt',
       tokens: { refresh_token: 'refresh-seed' },
@@ -719,7 +721,7 @@ describe('single Codex workflow contract', () => {
     )
   })
 
-  it('accepts subscription auth for automatic, manual, and fork reviews', () => {
+  pit('accepts subscription auth for automatic, manual, and fork reviews', () => {
     const seed = JSON.stringify({
       auth_mode: 'chatgpt',
       tokens: { refresh_token: 'refresh-seed' }
@@ -814,7 +816,7 @@ describe('single Codex workflow contract', () => {
     expect(syntax.status, syntax.stderr).toBe(0)
   })
 
-  it('combines correctness and architecture into one Codex review', () => {
+  pit('combines correctness and architecture into one Codex review', () => {
     const review = runReviewInputs()
     expect(review.outputs.review_header).toBe('## Codex Review')
     expect(review.instructions).toContain('Branch name valid: true')

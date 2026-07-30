@@ -72,17 +72,15 @@ describe('runtime-paths layout', () => {
     // assertions hold on Windows (Scripts\, python.exe, Lib\R\bin) as well as POSIX.
     const isWin = process.platform === 'win32'
     expect(runtimeRoot('/store')).toBe(join('/store', 'runtime'))
-    expect(envPrefix('/r', DEFAULT_PY_ENV)).toBe(join('/r', 'envs', 'default-python'))
+    const pythonPrefix = envPrefix('/r', DEFAULT_PY_ENV)
+    const rPrefix = envPrefix('/r', DEFAULT_R_ENV)
+    expect(pythonPrefix).toBe(join('/r', 'envs', envDirectoryName(DEFAULT_PY_ENV)))
     expect(pkgsCache('/r')).toBe(join('/r', 'pkgs'))
-    expect(pythonBin('/r/envs/default-python')).toBe(
-      isWin
-        ? join('/r/envs/default-python', 'python.exe')
-        : join('/r/envs/default-python', 'bin', 'python')
+    expect(pythonBin(pythonPrefix)).toBe(
+      isWin ? join(pythonPrefix, 'python.exe') : join(pythonPrefix, 'bin', 'python')
     )
-    expect(rBin('/r/envs/default-r')).toBe(
-      isWin
-        ? join('/r/envs/default-r', 'Lib', 'R', 'bin', 'R.exe')
-        : join('/r/envs/default-r', 'bin', 'R')
+    expect(rBin(rPrefix)).toBe(
+      isWin ? join(rPrefix, 'Lib', 'R', 'bin', 'R.exe') : join(rPrefix, 'bin', 'R')
     )
     expect(rScriptBin('/e')).toBe(
       isWin ? join('/e', 'Lib', 'R', 'bin', 'Rscript.exe') : join('/e', 'bin', 'Rscript')

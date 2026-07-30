@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 
@@ -2053,7 +2053,9 @@ describe('resolveInputs — workspace source', () => {
     )
     expect(entries).toHaveLength(1)
     expect(entries[0]).toMatchObject({ kind: 'upload', dstFilename: 'sample.fa' })
-    expect((entries[0] as { localPath: string }).localPath).toBe('/workspace/root/data/sample.fa')
+    expect((entries[0] as { localPath: string }).localPath).toBe(
+      resolve('/workspace/root', 'data/sample.fa')
+    )
     expect(inputsSummary).toBe('1 input: sample.fa')
   })
 
@@ -2414,12 +2416,8 @@ describe('ComputeService.getJobResult', () => {
     try {
       const service = makeServiceWithStorageRoot(baseJob({ harvested_at: Date.now() }), dataRoot)
       const result = await service.getJobResult('job-result-1')
-      expect(result.featured_files).toEqual([
-        join('hpc', 'job-result-1', 'featured', 'data-root.result')
-      ])
-      expect(result.output_files).toEqual([
-        join('hpc', 'job-result-1', 'featured', 'data-root.result')
-      ])
+      expect(result.featured_files).toEqual(['hpc/job-result-1/featured/data-root.result'])
+      expect(result.output_files).toEqual(['hpc/job-result-1/featured/data-root.result'])
     } finally {
       await rm(configRoot, { recursive: true, force: true })
       await rm(dataRoot, { recursive: true, force: true })

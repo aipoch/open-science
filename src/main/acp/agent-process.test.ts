@@ -174,7 +174,7 @@ describe('spawnClaudeAgentAcp', () => {
 
     const [runtime, args, options] = mocks.spawn.mock.calls[0]!
     expect(runtime).toBe(process.execPath)
-    expect(args).toEqual([expect.stringContaining('claude-agent-acp/dist/index.js')])
+    expect(args).toEqual([expect.stringMatching(/claude-agent-acp[\\/]dist[\\/]index\.js$/)])
     expect(options).toMatchObject({
       stdio: 'pipe',
       windowsHide: true,

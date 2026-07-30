@@ -91,7 +91,7 @@ describe('createLocalBundleAdapter', () => {
     )
 
     const dataRoot = join(root, 'data')
-    const adapter = createLocalBundleAdapter(dataRoot, bundleDir)
+    const adapter = createLocalBundleAdapter(dataRoot, bundleDir, { subdir: 'osx-arm64' })
     const bundle = (await adapter(PY_SPEC, 1, () => {})) as FetchedBundle
 
     expect(bundle.lockPath).toBe(
@@ -163,7 +163,9 @@ describe('createLocalBundleAdapter', () => {
       })
     )
 
-    const adapter = createLocalBundleAdapter(join(root, 'data'), bundleDir)
+    const adapter = createLocalBundleAdapter(join(root, 'data'), bundleDir, {
+      subdir: 'osx-arm64'
+    })
     const bundle = (await adapter(PY_SPEC, 1, () => {})) as FetchedBundle
 
     expect(bundle.lockPath).toBe(join(stalePackDir, `${packName}.lock`))

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join, resolve, win32 } from 'node:path'
+import { basename, dirname, join, posix, resolve, win32 } from 'node:path'
 
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import { DEFAULT_MAX_CACHE_RELATIVE_PATH as MANIFEST_DEFAULT_MAX_CACHE_RELATIVE_PATH } from './bundle-manifest'
@@ -353,7 +353,7 @@ export const selectMicromambaCache = (
 ): MicromambaCache => {
   const platform = deps.platform ?? process.platform
   if (platform !== 'win32') {
-    const path = join(root, 'pkgs')
+    const path = posix.join(root, 'pkgs')
     return { path, lockKey: path }
   }
   if (!Number.isSafeInteger(maxCacheRelativePath) || maxCacheRelativePath <= 0) {

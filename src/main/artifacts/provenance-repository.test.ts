@@ -2788,7 +2788,9 @@ describe('artifact provenance repository', () => {
         sessionId: common.artifactStorageSessionId,
         runId: common.artifactRunId,
         filename,
-        source: createPngInlineSource(filename)
+        // A case-insensitive filesystem exposes one compatibility path for this folded identity.
+        // Keep the bytes identical so this test isolates lineage serialization from routing conflict.
+        source: createPngInlineSource('shared-case-folded-content')
       })
     }
 

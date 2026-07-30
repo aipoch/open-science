@@ -22,6 +22,7 @@ const windowsDeps = (overrides: Partial<MicromambaCacheDeps> = {}): MicromambaCa
   env: { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\alice' },
   canonicalize: (path) => win32.normalize(path),
   prepare: (path) => win32.normalize(path),
+  verifyOwnership: () => true,
   ...overrides
 })
 

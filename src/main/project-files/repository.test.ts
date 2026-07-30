@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -17,6 +17,9 @@ import { createManagedFileIndexRepository, ManagedFileIndexRepository } from './
 
 const PROJECT_ID = 'project-a'
 const SESSION_ID = 'session-a'
+
+const storageKey = (storageRoot: string, path: string): string =>
+  relative(storageRoot, path).split(sep).join('/')
 
 const createSession = (overrides: Partial<PersistedChatSession> = {}): PersistedChatSession => ({
   id: SESSION_ID,
@@ -246,7 +249,7 @@ describe('ManagedFileIndexRepository', () => {
       promptMessageId: `prompt-${versionNumber}`,
       messageId,
       state: 'finalized',
-      contentStorageKey: relative(storageRoot, contentPath),
+      contentStorageKey: storageKey(storageRoot, contentPath),
       evidenceStorageKey: `artifacts/${PROJECT_ID}/${SESSION_ID}/.provenance/${lineageId}/versions/${id}/evidence.json`,
       contentType: 'image/png',
       sizeBytes: BigInt(versionNumber === 1 ? 9 : 12),
@@ -332,7 +335,7 @@ describe('ManagedFileIndexRepository', () => {
             id: 'upload-version-1',
             versionNumber: 1,
             state: 'ready',
-            contentStorageKey: relative(storageRoot, uploadPath).split('/').join('/'),
+            contentStorageKey: storageKey(storageRoot, uploadPath),
             filename: 'input.csv',
             originalFilename: 'samples.csv',
             contentType: 'text/csv',
@@ -415,7 +418,7 @@ describe('ManagedFileIndexRepository', () => {
             id: versionId,
             versionNumber: 1,
             state: 'ready',
-            contentStorageKey: relative(storageRoot, uploadPath),
+            contentStorageKey: storageKey(storageRoot, uploadPath),
             filename: 'source.csv',
             originalFilename: 'source.csv',
             contentType: 'text/csv',
@@ -434,7 +437,7 @@ describe('ManagedFileIndexRepository', () => {
         // This is the stale pre-repair state: the row copied the Session containing the @ reference.
         sessionId: SESSION_ID,
         displayName: 'source.csv',
-        storageKey: relative(storageRoot, uploadPath),
+        storageKey: storageKey(storageRoot, uploadPath),
         mimeType: 'text/csv',
         sizeBytes: BigInt(Buffer.byteLength(content)),
         sortAtMs: 1_710_000_000_200n
@@ -519,7 +522,7 @@ describe('ManagedFileIndexRepository', () => {
         // This is the stale pre-repair state: the row copied the Session containing the @ reference.
         sessionId: SESSION_ID,
         displayName: 'reference.pdf',
-        storageKey: relative(storageRoot, uploadPath),
+        storageKey: storageKey(storageRoot, uploadPath),
         mimeType: 'application/pdf',
         sizeBytes: BigInt(Buffer.byteLength(content)),
         sortAtMs: 1_710_000_000_200n
@@ -624,7 +627,7 @@ describe('ManagedFileIndexRepository', () => {
             id: 'upload-version-inactive',
             versionNumber: 1,
             state: 'ready',
-            contentStorageKey: relative(storageRoot, uploadPath).split('/').join('/'),
+            contentStorageKey: storageKey(storageRoot, uploadPath),
             filename: 'inactive.csv',
             originalFilename: 'inactive.csv',
             contentType: 'text/csv',
@@ -692,7 +695,7 @@ describe('ManagedFileIndexRepository', () => {
         promptMessageId: inactiveMessage.id,
         messageId: inactiveMessage.id,
         state: 'finalized',
-        contentStorageKey: relative(storageRoot, artifactPath),
+        contentStorageKey: storageKey(storageRoot, artifactPath),
         evidenceStorageKey:
           'artifacts/project-a/session-a/.provenance/artifact-lineage-inactive/versions/artifact-version-inactive/evidence.json',
         contentType: 'text/plain',
@@ -1855,7 +1858,7 @@ describe('ManagedFileIndexRepository', () => {
         promptMessageId: 'prompt-1',
         messageId: 'message-1',
         state: 'finalized',
-        contentStorageKey: relative(storageRoot, artifactPath),
+        contentStorageKey: storageKey(storageRoot, artifactPath),
         evidenceStorageKey:
           'artifacts/project-a/session-a/.provenance/artifact-lineage-1/versions/artifact-version-1/evidence.json',
         contentType: 'text/plain',

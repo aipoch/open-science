@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -175,9 +175,11 @@ describe('managed-file deletion integration', () => {
 
     await coordinator.deleteProjectSessions(PROJECT_ID)
 
-    const durableTombstone = await readFile(join(tombstoneDir, `${SESSION_ID}.json`), 'utf8')
-    expect(durableTombstone).toContain('upload-version-1')
-    expect(durableTombstone).not.toContain(legacyPath)
+    const durableTombstone = JSON.parse(
+      await readFile(join(tombstoneDir, `${SESSION_ID}.json`), 'utf8')
+    ) as { session: PersistedChatSession }
+    expect(JSON.stringify(durableTombstone)).toContain('upload-version-1')
+    expect(durableTombstone.session.messages[0].uploads?.[0]).not.toHaveProperty('path')
     await expect(sessions.getProjectSessionDeletionState(PROJECT_ID)).resolves.toBe('prepared')
     await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(files.getOverview(PROJECT_ID)).resolves.toMatchObject({ totalCount: 0 })
@@ -285,9 +287,10 @@ describe('managed-file deletion integration', () => {
       'legacy-committed'
     )
     await expect(readFile(legacyPath, 'utf8')).resolves.toBe('upload bytes')
-    await expect(readFile(join(tombstoneDir, `${SESSION_ID}.json`), 'utf8')).resolves.toContain(
-      legacyPath
-    )
+    const retainedTombstone = JSON.parse(
+      await readFile(join(tombstoneDir, `${SESSION_ID}.json`), 'utf8')
+    ) as { session: PersistedChatSession }
+    expect(retainedTombstone.session.messages[0].uploads?.[0]?.path).toBe(legacyPath)
     await expect(
       client.projectDeletionIntent.findUnique({ where: { projectId: PROJECT_ID } })
     ).resolves.toBeNull()
@@ -455,9 +458,10 @@ describe('managed-file deletion integration', () => {
       'legacy-committed'
     )
     await expect(readFile(legacyPath, 'utf8')).resolves.toBe('upload bytes')
-    await expect(readFile(join(tombstoneDir, `${SESSION_ID}.json`), 'utf8')).resolves.toContain(
-      legacyPath
-    )
+    const retainedTombstone = JSON.parse(
+      await readFile(join(tombstoneDir, `${SESSION_ID}.json`), 'utf8')
+    ) as { session: PersistedChatSession }
+    expect(retainedTombstone.session.messages[0].uploads?.[0]?.path).toBe(legacyPath)
     await expect(
       client.projectDeletionIntent.findUnique({ where: { projectId: PROJECT_ID } })
     ).resolves.toBeTruthy()
@@ -774,5 +778,5 @@ const writeManagedFile = async (path: string, content: string): Promise<void> =>
 const relativeStorageKey = (root: string, path: string): string =>
   path
     .slice(root.length + 1)
-    .split('/')
+    .split(sep)
     .join('/')

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -69,12 +69,12 @@ const makeDeps = (
     // Write a file of the manifest-declared size so the real statSync size pre-check passes.
     download: vi.fn(async (url: string, destPath: string) => {
       downloaded.push(url)
-      const file = destPath.split('/').pop() as string
+      const file = basename(destPath)
       writeFileSync(destPath, Buffer.alloc(sizeByFile[file] ?? 0))
     }),
     // Return the manifest's expected sha256 for whichever file was requested.
     sha256: async (path: string) => {
-      const file = path.split('/').pop() as string
+      const file = basename(path)
       return shaByFile[file] ?? 'deadbeef'
     },
     ...overrides

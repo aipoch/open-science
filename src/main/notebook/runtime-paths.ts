@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { delimiter, dirname, join, win32 } from 'node:path'
+import { dirname, join, posix, win32 } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 
@@ -237,9 +237,9 @@ export const condaActivatedPath = (
           win32.join(prefix, 'Scripts'),
           win32.join(prefix, 'bin')
         ]
-      : [join(prefix, 'bin')]
+      : [posix.join(prefix, 'bin')]
   if (inheritedPath) entries.push(inheritedPath)
-  return entries.join(platform === 'win32' ? ';' : delimiter)
+  return entries.join(platform === 'win32' ? ';' : ':')
 }
 
 // <root>/.env-ready — the JSON readiness marker written after a successful provision.

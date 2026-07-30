@@ -64,7 +64,7 @@ describe('writeAgentConfigFiles', () => {
         renameFile: async (source, destination) => {
           renameAttempts += 1
           if (renameAttempts === 1) {
-            setTimeout(() => void writeFile(destination, content), 1)
+            await writeFile(destination, content)
             throw Object.assign(new Error(`${errorCode}: transient rename race`), {
               code: errorCode
             })

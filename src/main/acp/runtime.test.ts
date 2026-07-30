@@ -2963,11 +2963,11 @@ describe('ACP runtime session management', () => {
     })
 
     const session = await runtime.createSession({ cwd: '/workspace' })
-    await expect(
-      uploadRepository.resolveSessionUploadPath(session.sessionId, {
-        path: currentSessionUpload.path
-      })
-    ).resolves.toMatch(/remote-session-1\/current\.skill$/)
+    const resolvedCurrentUpload = await uploadRepository.resolveSessionUploadPath(
+      session.sessionId,
+      { path: currentSessionUpload.path }
+    )
+    expect(resolvedCurrentUpload.endsWith(join('remote-session-1', 'current.skill'))).toBe(true)
     await expect(
       uploadRepository.resolveSessionUploadPath(session.sessionId, {
         path: otherSessionUpload.path

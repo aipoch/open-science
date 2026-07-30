@@ -11,6 +11,7 @@ import {
   discoverInterpreters,
   type DiscoveryDeps
 } from './environment-discovery'
+import { DEFAULT_R_ENV, envPrefix, rBin, rScriptBin } from './runtime-paths'
 
 describe('defaultDiscoveryDeps Windows conda R probes', () => {
   it('activates the interpreter own conda prefix for version and jsonlite probes', async () => {
@@ -277,10 +278,10 @@ describe('defaultCandidatePaths (targeted enumeration)', () => {
   it('includes manually-added interpreters and the app-managed default, and collapses R/Rscript', async () => {
     const root = mkdtempSync(join(tmpdir(), 'os-disc-'))
     // App-managed default-r on disk under runtime/envs.
-    const rPrefix = join(root, 'envs', 'default-r', 'bin')
-    mkdirSync(rPrefix, { recursive: true })
-    writeFileSync(join(rPrefix, 'R'), 'x')
-    writeFileSync(join(rPrefix, 'Rscript'), 'x') // sibling — must be collapsed away
+    const rPrefix = envPrefix(root, DEFAULT_R_ENV)
+    mkdirSync(join(rBin(rPrefix), '..'), { recursive: true })
+    writeFileSync(rBin(rPrefix), 'x')
+    writeFileSync(rScriptBin(rPrefix), 'x') // sibling — must be collapsed away
     // A manually-added R that is not on PATH.
     const manualR = join(root, 'custom', 'R')
     mkdirSync(join(root, 'custom'), { recursive: true })
@@ -288,10 +289,10 @@ describe('defaultCandidatePaths (targeted enumeration)', () => {
 
     const paths = await defaultCandidatePaths(root, () => [manualR])('r')
 
-    expect(paths).toContain(join(rPrefix, 'R'))
+    expect(paths).toContain(rBin(rPrefix))
     expect(paths).toContain(manualR)
     // The app default's Rscript sibling is collapsed (only its R remains).
-    expect(paths).not.toContain(join(rPrefix, 'Rscript'))
+    expect(paths).not.toContain(rScriptBin(rPrefix))
     rmSync(root, { recursive: true, force: true })
   })
 })

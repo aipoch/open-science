@@ -39,6 +39,7 @@ import type { StagedInputEntry } from './job-dispatcher'
 import { getJobHarvestDir } from './harvest-engine'
 import { getNotebookSessionRoot } from '../notebook/repository'
 import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
+import { workspaceRelativePath } from './workspace-path'
 
 // Probe timeout for the full bundle — individual commands share one connection but each gets this
 // budget. Set generously so slow clusters don't abort, but short enough for a responsive UI (30s).
@@ -1512,7 +1513,7 @@ async function collectFiles(
       await collectFiles(baseDir, fullPath, workspaceCwd, results)
     } else if (entry.isFile()) {
       // Use workspace-relative path so agent can open() directly (design §4).
-      results.push(relative(workspaceCwd, fullPath))
+      results.push(workspaceRelativePath(workspaceCwd, fullPath))
     }
   }
 }

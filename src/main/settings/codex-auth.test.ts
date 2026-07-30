@@ -178,7 +178,9 @@ describe('importCodexAuthentication', () => {
       expect(await readFile(join(destination, 'auth.json'), 'utf8')).toBe(
         '{"tokens":{"access_token":"secret"}}'
       )
-      expect((await stat(join(destination, 'auth.json'))).mode & 0o777).toBe(0o600)
+      if (process.platform !== 'win32') {
+        expect((await stat(join(destination, 'auth.json'))).mode & 0o777).toBe(0o600)
+      }
       expect(await readFile(join(destination, 'config.toml'), 'utf8')).toBe(
         'model = "app-default"\n'
       )
@@ -236,7 +238,9 @@ describe('importCodexAuthentication', () => {
           ''
         ].join('\n')
       )
-      expect((await stat(join(destination, 'config.toml'))).mode & 0o777).toBe(0o600)
+      if (process.platform !== 'win32') {
+        expect((await stat(join(destination, 'config.toml'))).mode & 0o777).toBe(0o600)
+      }
 
       await writeFile(join(source, 'config.toml'), 'model = "private-model"\n')
       await importCodexAuthentication(source, destination)

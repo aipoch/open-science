@@ -103,7 +103,11 @@ describe('copyAndVerify', () => {
       dirs: ['artifacts', 'uploads'],
       signal: new AbortController().signal,
       onProgress: (progress) => {
-        if (!corrupted && progress.phase === 'copy' && progress.currentPath === 'artifacts/a.txt') {
+        if (
+          !corrupted &&
+          progress.phase === 'copy' &&
+          progress.currentPath === join('artifacts', 'a.txt')
+        ) {
           corrupted = true
           writeFileSync(join(to, 'artifacts', 'a.txt'), 'jello artifacts')
         }
@@ -111,7 +115,7 @@ describe('copyAndVerify', () => {
     })
 
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error).toMatch(/verification failed.*artifacts\/a\.txt/i)
+    if (!result.ok) expect(result.error).toMatch(/verification failed.*a\.txt/i)
     expect(await readFile(join(from, 'artifacts', 'a.txt'), 'utf8')).toBe('hello artifacts')
     expect(await exists(join(to, 'artifacts'))).toBe(false)
   })

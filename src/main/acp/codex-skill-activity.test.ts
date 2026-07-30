@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -17,7 +17,7 @@ const toolEvent = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent => ({
 
 describe('CodexSkillActivityProjector', () => {
   it('projects an exact Codex Skill read lifecycle to name-only activity', () => {
-    const codexHome = join('/data', 'codex-subscription')
+    const codexHome = resolve('/data', 'codex-subscription')
     const skillPath = join(codexHome, 'skills', 'mcp-pubmed', 'SKILL.md')
     const projector = new CodexSkillActivityProjector(join(codexHome, 'skills'))
 

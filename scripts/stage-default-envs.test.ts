@@ -1,3 +1,5 @@
+import { basename } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import { BASE_PYTHON_PACKAGES, BASE_R_PACKAGES } from '../src/main/notebook/provisioner'
@@ -166,7 +168,7 @@ describe('verifyBundleComplete', () => {
     expect(() =>
       verifyBundleComplete(lock, '/pkgs', {
         exists: () => true,
-        md5: (p: string) => md5s[p.split('/').pop() as string]
+        md5: (p: string) => md5s[basename(p)]
       })
     ).not.toThrow()
   })

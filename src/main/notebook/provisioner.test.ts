@@ -8,8 +8,10 @@ import {
   DEFAULT_ENV_VERSION,
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
+  envDirectoryName,
   envPrefix,
   legacyDefaultEnvPrefix,
+  logicalEnvNameFromDirectory,
   pkgsCache,
   pythonBin,
   rBin,
@@ -44,6 +46,13 @@ import {
 } from './operation-journal'
 
 const makeRoot = (): string => mkdtempSync(join(tmpdir(), 'os-prov-'))
+const logicalNameForPrefix = (prefix: string): string =>
+  logicalEnvNameFromDirectory(basename(prefix))
+const expectedMarker = (name: string, preparedAt: string): Record<string, string | number> => ({
+  defaultEnvVersion: DEFAULT_ENV_VERSION,
+  preparedAt,
+  ...(process.platform === 'win32' ? { prefixDirectory: envDirectoryName(name) } : {})
+})
 
 // Builds injected deps whose create "materializes" the interpreter file so verify passes.
 const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): ProvisionerDeps => {
@@ -80,7 +89,7 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     await provisioner.provisionPython((p) => events.push(p))
 
     const marker = readReadyMarker(root)
-    expect(marker).toEqual({ defaultEnvVersion: DEFAULT_ENV_VERSION, preparedAt: 't-now' })
+    expect(marker).toEqual(expectedMarker(DEFAULT_PY_ENV, 't-now'))
     expect(events.at(-1)).toMatchObject({ phase: 'done', progress: 1 })
     const progresses = events.map((e) => e.progress)
     for (let i = 1; i < progresses.length; i++)
@@ -113,7 +122,8 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
         new Promise<void>((resolve) => {
           // Materialize the interpreter now so verify passes once we let the create resolve.
           const prefix = argv[argv.findIndex((a) => a === '-p' || a === '--prefix') + 1]
-          const bin = prefix.endsWith(DEFAULT_PY_ENV) ? pythonBin(prefix) : rBin(prefix)
+          const bin =
+            logicalNameForPrefix(prefix) === DEFAULT_PY_ENV ? pythonBin(prefix) : rBin(prefix)
           mkdirSync(join(bin, '..'), { recursive: true })
           writeFileSync(bin, 'x')
           resolveCreate = resolve
@@ -873,7 +883,7 @@ describe('serializeProvisioner cancel over a real queue', () => {
     const deps = makeDeps(root, {
       runArgv: (argv: string[]) => {
         const prefix = argv[argv.findIndex((a) => a === '-p' || a === '--prefix') + 1]
-        if (prefix.endsWith(DEFAULT_R_ENV)) {
+        if (logicalNameForPrefix(prefix) === DEFAULT_R_ENV) {
           rRunArgv()
           const bin = rBin(prefix)
           mkdirSync(join(bin, '..'), { recursive: true })
@@ -909,8 +919,9 @@ describe('serializeProvisioner cancel over a real queue', () => {
     const deps = makeDeps(root, {
       runArgv: async (argv: string[]) => {
         const prefix = argv[argv.findIndex((a) => a === '-p' || a === '--prefix') + 1]
-        if (prefix.endsWith(DEFAULT_R_ENV)) rRunArgv()
-        const bin = prefix.endsWith(DEFAULT_R_ENV) ? rBin(prefix) : pythonBin(prefix)
+        if (logicalNameForPrefix(prefix) === DEFAULT_R_ENV) rRunArgv()
+        const bin =
+          logicalNameForPrefix(prefix) === DEFAULT_R_ENV ? rBin(prefix) : pythonBin(prefix)
         mkdirSync(join(bin, '..'), { recursive: true })
         writeFileSync(bin, 'x')
       }
@@ -1246,8 +1257,9 @@ describe('DefaultRuntimeProvisioner.upgradeIfNeeded (shared pkgs cache lock)', (
     const deps = makeDeps(root, {
       runArgv: async (argv) => {
         const prefix = argv[argv.findIndex((a) => a === '-p' || a === '--prefix') + 1]
-        upgraded.push(basename(prefix))
-        const bin = prefix.endsWith(DEFAULT_PY_ENV) ? pythonBin(prefix) : rBin(prefix)
+        upgraded.push(logicalNameForPrefix(prefix))
+        const bin =
+          logicalNameForPrefix(prefix) === DEFAULT_PY_ENV ? pythonBin(prefix) : rBin(prefix)
         mkdirSync(join(bin, '..'), { recursive: true })
         writeFileSync(bin, 'x')
       },
@@ -1280,7 +1292,7 @@ describe('DefaultRuntimeProvisioner journals every prefix write', () => {
         expect(found?.childPid).toBe(pid)
         capture(found as RuntimeOperationRecord)
       })
-      const bin = prefix.endsWith(DEFAULT_R_ENV) ? rBin(prefix) : pythonBin(prefix)
+      const bin = logicalNameForPrefix(prefix) === DEFAULT_R_ENV ? rBin(prefix) : pythonBin(prefix)
       mkdirSync(join(bin, '..'), { recursive: true })
       writeFileSync(bin, 'x')
     }
@@ -1512,7 +1524,8 @@ describe('DefaultRuntimeProvisioner.restoreRelocatedEnvs', () => {
         argvs.push(argv)
         const pIdx = argv.findIndex((a) => a === '-p' || a === '--prefix')
         const prefix = argv[pIdx + 1]
-        const bin = prefix.endsWith(DEFAULT_PY_ENV) ? pythonBin(prefix) : rBin(prefix)
+        const bin =
+          logicalNameForPrefix(prefix) === DEFAULT_PY_ENV ? pythonBin(prefix) : rBin(prefix)
         mkdirSync(join(bin, '..'), { recursive: true })
         writeFileSync(bin, 'x')
       }
@@ -1542,8 +1555,9 @@ describe('DefaultRuntimeProvisioner.restoreRelocatedEnvs', () => {
     const deps = makeDeps(root, {
       runArgv: async (argv) => {
         const prefix = argv[argv.findIndex((a) => a === '-p' || a === '--prefix') + 1]
-        order.push(basename(prefix))
-        const bin = prefix.endsWith(DEFAULT_PY_ENV) ? pythonBin(prefix) : rBin(prefix)
+        order.push(logicalNameForPrefix(prefix))
+        const bin =
+          logicalNameForPrefix(prefix) === DEFAULT_PY_ENV ? pythonBin(prefix) : rBin(prefix)
         mkdirSync(join(bin, '..'), { recursive: true })
         writeFileSync(bin, 'x')
       }
@@ -2396,8 +2410,9 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     const deps = blocking(root, envPrefix(root, 'my-analysis'), {
       runArgv: async (argv) => {
         const prefix = argv[argv.findIndex((a) => a === '-p' || a === '--prefix') + 1]
-        restored.push(basename(prefix))
-        const bin = prefix.endsWith(DEFAULT_PY_ENV) ? pythonBin(prefix) : rBin(prefix)
+        restored.push(logicalNameForPrefix(prefix))
+        const bin =
+          logicalNameForPrefix(prefix) === DEFAULT_PY_ENV ? pythonBin(prefix) : rBin(prefix)
         mkdirSync(join(bin, '..'), { recursive: true })
         writeFileSync(bin, 'x')
       }

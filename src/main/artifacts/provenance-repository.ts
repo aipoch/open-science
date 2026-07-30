@@ -1309,7 +1309,9 @@ class ArtifactProvenanceRepository {
   private readonly createId: () => string
   private readonly now: () => Date
   private readonly durability: ArtifactDurability
-  private readonly lineageWrites = new Map<string, Promise<void>>()
+  // Repository instances can coexist over separate Prisma clients for the same database. Serialize
+  // lineage identity allocation process-wide so those clients cannot race a case-folded filename.
+  private static readonly lineageWrites = new Map<string, Promise<void>>()
 
   constructor(private readonly options: ArtifactProvenanceRepositoryOptions) {
     this.compatibilityRepository =
@@ -1443,21 +1445,23 @@ class ArtifactProvenanceRepository {
     request: CreateArtifactVersionRequest,
     publishCompatibilityRouting: PublishCompatibilityRouting
   ): Promise<ArtifactVersionFile> {
-    const lineageKey = `${request.projectId}\0${request.appSessionId}\0${normalizeFilename(request.filename)}`
-    const previous = this.lineageWrites.get(lineageKey) ?? Promise.resolve()
+    const lineageKey = `${this.options.storageRoot}\0${request.projectId}\0${request.appSessionId}\0${normalizeFilename(request.filename)}`
+    const previous = ArtifactProvenanceRepository.lineageWrites.get(lineageKey) ?? Promise.resolve()
     let release = (): void => undefined
     const current = new Promise<void>((resolveCurrent) => {
       release = resolveCurrent
     })
     const tail = previous.then(() => current)
-    this.lineageWrites.set(lineageKey, tail)
+    ArtifactProvenanceRepository.lineageWrites.set(lineageKey, tail)
     await previous
 
     try {
       return await this.createVersionSerialized(request, publishCompatibilityRouting)
     } finally {
       release()
-      if (this.lineageWrites.get(lineageKey) === tail) this.lineageWrites.delete(lineageKey)
+      if (ArtifactProvenanceRepository.lineageWrites.get(lineageKey) === tail) {
+        ArtifactProvenanceRepository.lineageWrites.delete(lineageKey)
+      }
     }
   }
 

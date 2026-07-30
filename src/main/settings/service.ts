@@ -1443,10 +1443,14 @@ class SettingsService {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Could not preview the installed skill.'
-      const redacted = [sourcePath, requestedSourcePath].reduce(
-        (value, hostPath) => (hostPath ? value.split(hostPath).join(sourceLabel) : value),
-        message
-      )
+      const redacted = [sourcePath, requestedSourcePath].reduce((value, hostPath) => {
+        if (!hostPath) return value
+        return value
+          .split(`${hostPath}${sep}`)
+          .join(`${sourceLabel}/`)
+          .split(hostPath)
+          .join(sourceLabel)
+      }, message)
       throw new Error(redacted)
     }
   }

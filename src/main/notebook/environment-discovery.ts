@@ -339,11 +339,15 @@ export const collapseRscript = (paths: string[]): string[] => {
 // Classifies an interpreter by whether it lives under runtime/envs (app-owned) and, if so, whether it
 // is a default (app-managed) or a named env (agent-created); anything else is the user's own.
 const classify = (interpreterPath: string, runtimeRoot: string): EnvProvenance => {
-  const envsRoot = safeRealpath(join(runtimeRoot, 'envs'))
-  const real = safeRealpath(interpreterPath)
-  if (!real.startsWith(envsRoot + '/') && !real.startsWith(envsRoot + '\\')) return 'user-own'
+  const comparisonKey = (path: string): string => {
+    const normalized = safeRealpath(path).replaceAll('\\', '/').replace(/\/+$/, '')
+    return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+  }
+  const envsRoot = comparisonKey(join(runtimeRoot, 'envs'))
+  const real = comparisonKey(interpreterPath)
+  if (!real.startsWith(`${envsRoot}/`)) return 'user-own'
   const rest = real.slice(envsRoot.length + 1)
-  const envName = logicalEnvNameFromDirectory(rest.split(/[/\\]/)[0])
+  const envName = logicalEnvNameFromDirectory(rest.split('/')[0])
   return envName === DEFAULT_PY_ENV ||
     envName === DEFAULT_R_ENV ||
     envName.startsWith(`${DEFAULT_PY_ENV}-`) ||

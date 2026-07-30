@@ -1,8 +1,10 @@
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+const pdescribe = describe.skipIf(process.platform === 'win32')
 
 import {
   buildWindowsPathCommand,
@@ -88,13 +90,11 @@ describe('planCliLauncher', () => {
   it('reports onPath only when the bin dir is on PATH', () => {
     const binDir = join(home, '.local', 'bin')
     expect(planCliLauncher(posixEnv()).onPath).toBe(false)
-    expect(planCliLauncher(posixEnv({ pathVar: `/usr/bin${delimiter}${binDir}` })).onPath).toBe(
-      true
-    )
+    expect(planCliLauncher(posixEnv({ pathVar: `/usr/bin:${binDir}` })).onPath).toBe(true)
   })
 })
 
-describe('installCliLauncher / status / uninstall (POSIX)', () => {
+pdescribe('installCliLauncher / status / uninstall (POSIX)', () => {
   it('writes an executable shim and reports a PATH hint when not on PATH', async () => {
     const status = await installCliLauncher(posixEnv())
     expect(status.installed).toBe(true)

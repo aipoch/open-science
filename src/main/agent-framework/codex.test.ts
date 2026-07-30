@@ -403,7 +403,7 @@ describe('codexFramework', () => {
   })
 
   it('maps the legacy shared subscription to the app-owned subscription home', () => {
-    const framework = createCodexFramework()
+    const framework = createCodexFramework({ platform: 'darwin' })
     const config = framework.prepareModelConfig(
       { type: 'codex-shared', apiEndpoints: ['responses'] },
       { storageRoot: '/data', executablePath: '/runtime/codex-acp' }
@@ -418,7 +418,7 @@ describe('codexFramework', () => {
   })
 
   it('uses persistent app-owned storage for an isolated Codex subscription', () => {
-    const framework = createCodexFramework()
+    const framework = createCodexFramework({ platform: 'darwin' })
     const config = framework.prepareModelConfig(
       { type: 'codex-isolated', apiEndpoints: ['responses'] },
       { storageRoot: '/data', executablePath: '/runtime/codex-acp' }

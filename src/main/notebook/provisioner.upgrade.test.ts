@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -8,7 +8,9 @@ import {
   DEFAULT_ENV_VERSION,
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
+  envDirectoryName,
   envPrefix,
+  logicalEnvNameFromDirectory,
   pythonBin,
   rBin,
   readRReadyMarker,
@@ -18,6 +20,13 @@ import {
 import { DefaultRuntimeProvisioner, type FetchedBundle, type ProvisionerDeps } from './provisioner'
 
 const makeRoot = (): string => mkdtempSync(join(tmpdir(), 'os-upg-'))
+const logicalNameForPrefix = (prefix: string): string =>
+  logicalEnvNameFromDirectory(basename(prefix))
+const expectedPythonMarker = (preparedAt: string): Record<string, string | number> => ({
+  defaultEnvVersion: DEFAULT_ENV_VERSION,
+  preparedAt,
+  ...(process.platform === 'win32' ? { prefixDirectory: envDirectoryName(DEFAULT_PY_ENV) } : {})
+})
 const touchBin = (path: string): void => {
   mkdirSync(join(path, '..'), { recursive: true })
   writeFileSync(path, 'x')
@@ -33,7 +42,7 @@ const baseDeps = (root: string, over: Partial<ProvisionerDeps> = {}): Provisione
   runArgv: async (argv) => {
     const pIdx = argv.findIndex((a) => a === '--prefix' || a === '-p')
     const prefix = argv[pIdx + 1]
-    touchBin(prefix.endsWith(DEFAULT_PY_ENV) ? pythonBin(prefix) : rBin(prefix))
+    touchBin(logicalNameForPrefix(prefix) === DEFAULT_PY_ENV ? pythonBin(prefix) : rBin(prefix))
   },
   verify: async () => undefined,
   now: () => 't2',
@@ -66,10 +75,7 @@ describe('upgradeIfNeeded', () => {
     expect(argvs[0]).toContain('--offline')
     expect(argvs[0]).toContain(join(root, `${DEFAULT_PY_ENV}.lock`))
     expect(argvs[0]).not.toContain('mirror-forge')
-    expect(readReadyMarker(root)).toEqual({
-      defaultEnvVersion: DEFAULT_ENV_VERSION,
-      preparedAt: 't2'
-    })
+    expect(readReadyMarker(root)).toEqual(expectedPythonMarker('t2'))
   })
 
   it('also upgrades R additively only when R is already materialized', async () => {
@@ -202,10 +208,7 @@ describe('repair', () => {
     // The stale file is gone (dir was removed), a fresh python bin exists, marker re-stamped.
     expect(existsSync(join(stale, 'stale-file'))).toBe(false)
     expect(existsSync(pythonBin(stale))).toBe(true)
-    expect(readReadyMarker(root)).toEqual({
-      defaultEnvVersion: DEFAULT_ENV_VERSION,
-      preparedAt: 't2'
-    })
+    expect(readReadyMarker(root)).toEqual(expectedPythonMarker('t2'))
   })
 
   it('repairs R without stamping the python marker', async () => {

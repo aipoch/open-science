@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const pit = it.skipIf(process.platform === 'win32')
+
 import type { ComputeJob } from '../../shared/compute'
 import type { ComputeHostRepository } from './repository'
 import type { ComputeJobRepository } from './job-repository'
@@ -184,7 +186,7 @@ describe('buildLauncherScript', () => {
     expect(script).toContain('if [ -r ~/.bashrc ]; then . ~/.bashrc || exit $?; fi')
   })
 
-  it('sources a readable .bashrc before the user command runs', () => {
+  pit('sources a readable .bashrc before the user command runs', () => {
     const { exitCode, stdout, stderr } = runLauncher(
       'printf %s "$COMPUTE_BASHRC_MARKER"',
       'export COMPUTE_BASHRC_MARKER=from-bashrc\n'
@@ -195,7 +197,7 @@ describe('buildLauncherScript', () => {
     expect(stderr).toBe('')
   })
 
-  it('treats a missing .bashrc as a no-op', () => {
+  pit('treats a missing .bashrc as a no-op', () => {
     const { exitCode, stdout, stderr } = runLauncher("printf '%s' no-bashrc")
 
     expect(exitCode).toBe('0\n')
@@ -203,7 +205,7 @@ describe('buildLauncherScript', () => {
     expect(stderr).toBe('')
   })
 
-  it('continues when .bashrc returns early for a non-interactive shell', () => {
+  pit('continues when .bashrc returns early for a non-interactive shell', () => {
     const { exitCode, stdout, stderr } = runLauncher(
       'printf %s "${COMPUTE_BASHRC_MARKER-unset}"',
       'case $- in *i*) ;; *) return ;; esac\nexport COMPUTE_BASHRC_MARKER=from-bashrc\n'
@@ -214,20 +216,23 @@ describe('buildLauncherScript', () => {
     expect(stderr).toBe('')
   })
 
-  it('persists a .bashrc initialization failure as the job exit code', () => {
+  pit('persists a .bashrc initialization failure as the job exit code', () => {
     const { exitCode, stdout } = runLauncher("printf '%s' must-not-run", 'return 23\n')
 
     expect(exitCode).toBe('23\n')
     expect(stdout).toBe('')
   })
 
-  it('keeps literal command content intact until the initialized shell evaluates command.sh', () => {
-    const command = "printf '%s' 'literal $HOME $(printf altered) `uname` \"quotes\"'"
-    const { exitCode, stdout } = runLauncher(command, 'export UNUSED_MARKER=initialized\n')
+  pit(
+    'keeps literal command content intact until the initialized shell evaluates command.sh',
+    () => {
+      const command = "printf '%s' 'literal $HOME $(printf altered) `uname` \"quotes\"'"
+      const { exitCode, stdout } = runLauncher(command, 'export UNUSED_MARKER=initialized\n')
 
-    expect(exitCode).toBe('0\n')
-    expect(stdout).toBe('literal $HOME $(printf altered) `uname` "quotes"')
-  })
+      expect(exitCode).toBe('0\n')
+      expect(stdout).toBe('literal $HOME $(printf altered) `uname` "quotes"')
+    }
+  )
 })
 
 describe('toBase64', () => {

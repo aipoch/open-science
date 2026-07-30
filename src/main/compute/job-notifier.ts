@@ -23,12 +23,13 @@
  */
 
 import { readdir } from 'node:fs/promises'
-import { join, relative } from 'node:path'
+import { join } from 'node:path'
 
 import type { ComputeJob, JobSummary } from '../../shared/compute'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import { getJobHarvestDir } from './harvest-engine'
+import { workspaceRelativePath } from './workspace-path'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,7 +79,7 @@ export const buildComputeDonePayload = async (
   let featuredFiles: string[] = []
   try {
     const entries = await readdirRecursive(featuredDir)
-    featuredFiles = entries.map((abs) => relative(workspaceCwd, abs))
+    featuredFiles = entries.map((abs) => workspaceRelativePath(workspaceCwd, abs))
   } catch {
     // Directory does not exist or is unreadable — emit empty list (execution-error / harvest_failed
     // before any files were pulled). This is correct per design §8 and the acceptance criteria.

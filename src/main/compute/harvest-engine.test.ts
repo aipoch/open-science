@@ -155,7 +155,7 @@ const findOutput = (entries: { path: string; size_bytes: number }[]): string =>
 describe('getJobHarvestDir', () => {
   it('returns <storageRoot>/notebooks/<project>/<sessionId>/hpc/<jobId>', () => {
     const dir = getJobHarvestDir('/storage', 'myproject', 'sess-abc', 'job-xyz')
-    expect(dir).toBe('/storage/notebooks/myproject/sess-abc/hpc/job-xyz')
+    expect(dir).toBe(join('/storage', 'notebooks', 'myproject', 'sess-abc', 'hpc', 'job-xyz'))
   })
 
   it('rejects path-traversal in project segment', () => {

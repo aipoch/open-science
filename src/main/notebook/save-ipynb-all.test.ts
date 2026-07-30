@@ -87,7 +87,10 @@ describe('resolveTargets', () => {
       { kernel: 'python', name: 'a.ipynb', data: 'py' },
       { kernel: 'r', name: 'b.ipynb', data: 'r' }
     ])
-    expect(targets.map((t) => t.filePath)).toEqual(['/tmp/out/a.ipynb', '/tmp/out/b.ipynb'])
+    expect(targets.map((t) => t.filePath)).toEqual([
+      join('/tmp/out', 'a.ipynb'),
+      join('/tmp/out', 'b.ipynb')
+    ])
   })
 })
 
@@ -151,7 +154,12 @@ describe('writeNotebooksWithCleanup', () => {
 
   it('reports the correct failedTarget when staging write fails on the second file', async () => {
     const targets: SaveIpynbAllTarget[] = [
-      { kernel: 'python', name: 'first.ipynb', data: 'one', filePath: join(directory, 'first.ipynb') },
+      {
+        kernel: 'python',
+        name: 'first.ipynb',
+        data: 'one',
+        filePath: join(directory, 'first.ipynb')
+      },
       { kernel: 'r', name: 'second.ipynb', data: 'two', filePath: join(directory, 'second.ipynb') }
     ]
     let call = 0
