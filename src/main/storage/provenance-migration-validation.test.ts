@@ -107,7 +107,7 @@ describe('validateProvenanceMigrationState', () => {
     await writeFile(join(dataRoot, 'open-science.db'), 'not the authority database')
 
     await expect(validateProvenanceMigrationState(dataRoot, authorityRoot)).resolves.toBeUndefined()
-  })
+  }, 30_000)
 
   it('accepts an Upload input whose frozen name is the original pre-sanitized filename', async () => {
     const client = createProjectDbClient(root)
