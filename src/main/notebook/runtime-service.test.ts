@@ -2767,7 +2767,6 @@ describe('notebook runtime service', () => {
     it('retains recovery evidence and blocks execution when the repair registry is unwritable', async () => {
       const root = await createStorageRoot()
       const runtimeRoot = getRuntimeRoot(root)
-      await mkdir(repairRegistryPath(runtimeRoot), { recursive: true })
       const execute = vi.fn(async (): Promise<NotebookExecutionResult> => {
         throw new Error('a repair-blocked kernel must not execute')
       })
@@ -2789,12 +2788,17 @@ describe('notebook runtime service', () => {
           terminate,
           shutdown: async () => ({ reaped: true })
         }),
-        installPackagesImpl: vi.fn().mockResolvedValue({
-          ok: false,
-          needsRestart: false,
-          log: 'r-base changed',
-          repairRequired: true,
-          error: 'Protected r-base changed unexpectedly. Run Repair.'
+        installPackagesImpl: vi.fn().mockImplementation(async () => {
+          // The pre-install gate must see a healthy, missing registry. Make the target unwritable only
+          // after the simulated installer reports an identity change, so this test reaches quarantine.
+          await mkdir(repairRegistryPath(runtimeRoot), { recursive: true })
+          return {
+            ok: false,
+            needsRestart: false,
+            log: 'r-base changed',
+            repairRequired: true,
+            error: 'Protected r-base changed unexpectedly. Run Repair.'
+          }
         })
       })
 
@@ -2885,12 +2889,15 @@ describe('notebook runtime service', () => {
           terminate,
           shutdown: async () => ({ reaped: true })
         }),
-        installPackagesImpl: vi.fn().mockResolvedValue({
-          ok: false,
-          needsRestart: false,
-          log: 'r-base changed',
-          repairRequired: true,
-          error: 'Protected r-base changed unexpectedly. Run Repair.'
+        installPackagesImpl: vi.fn().mockImplementation(async () => {
+          await mkdir(repairRegistryPath(runtimeRoot), { recursive: true })
+          return {
+            ok: false,
+            needsRestart: false,
+            log: 'r-base changed',
+            repairRequired: true,
+            error: 'Protected r-base changed unexpectedly. Run Repair.'
+          }
         })
       })
 
@@ -2906,8 +2913,6 @@ describe('notebook runtime service', () => {
         language: 'r',
         runtimeId: namedR
       })
-      await mkdir(repairRegistryPath(runtimeRoot), { recursive: true })
-
       await expect(
         service.managePackages({
           sessionId: 'shared',
@@ -4764,34 +4769,41 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(service.isPrefixRecoveryBlocked(prefix)).toBe(true)
   })
 
-  it('refuses an install when the journal cannot record it (begin fails closed, no spawn)', async () => {
-    // If the install can't be journaled for crash recovery, spawning the installer could strand a
-    // worker. managePackages must refuse with a structured error instead of installing.
-    const root = await createStorageRoot()
-    const runtimeRoot = getRuntimeRoot(root)
-    // Make the journal path unwritable: a FILE where the journal file's directory must be, so begin()'s
-    // mkdir/rename fails. operationJournalPath = <runtimeRoot>/operation-journal.json; block its parent.
-    await rm(runtimeRoot, { recursive: true, force: true })
-    // Replace the runtime root with a file so mkdir(dirname(journalPath)) fails on begin().
-    await writeFile(runtimeRoot, 'not-a-dir')
+  it.skipIf(process.platform === 'win32')(
+    'refuses an install when the journal cannot record it (begin fails closed, no spawn)',
+    async () => {
+      // If the install can't be journaled for crash recovery, spawning the installer could strand a
+      // worker. managePackages must refuse with a structured error instead of installing.
+      const root = await createStorageRoot()
+      const runtimeRoot = getRuntimeRoot(root)
+      await mkdir(runtimeRoot, { recursive: true })
 
-    let installRan = false
-    const service = bindingService(root, {
-      installPackagesImpl: async () => {
-        installRan = true
-        return { ok: true, needsRestart: false, log: '' }
+      let installRan = false
+      const service = bindingService(root, {
+        installPackagesImpl: async () => {
+          installRan = true
+          return { ok: true, needsRestart: false, log: '' }
+        }
+      })
+      await service.ensureRecovered()
+      // Keep the runtime readable so the repair-registry gate remains healthy, but deny the journal's
+      // atomic temp-file write. chmod semantics are not portable to Windows, hence the explicit skip.
+      await chmod(runtimeRoot, 0o555)
+      try {
+        const result = await service.managePackages({
+          sessionId: 's',
+          workspaceCwd: root,
+          language: 'python',
+          packages: ['numpy']
+        })
+        expect(result.ok).toBe(false)
+        expect(result.error).toMatch(/RUNTIME_JOURNAL_UNWRITABLE/)
+        expect(installRan).toBe(false)
+      } finally {
+        await chmod(runtimeRoot, 0o755)
       }
-    })
-    const result = await service.managePackages({
-      sessionId: 's',
-      workspaceCwd: root,
-      language: 'python',
-      packages: ['numpy']
-    })
-    expect(result.ok).toBe(false)
-    expect(result.error).toMatch(/RUNTIME_JOURNAL_UNWRITABLE/)
-    expect(installRan).toBe(false)
-  })
+    }
+  )
 
   it('blocks a named-env REMOVE on a prefix an unknown-liveness orphan may still hold', async () => {
     // After a restart there is no in-memory kernel state, so isEnvironmentLive() can't see a surviving
