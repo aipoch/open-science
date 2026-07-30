@@ -86,6 +86,8 @@ export type RestoredPreviewSlice = {
 type PreviewWorkbenchStoreData = PreviewSlice & {
   activeProjectId: string | undefined
   byProject: Record<string, PreviewSlice>
+  // Tool tab currently shown as a large modal instead of inline panel content (files tab only).
+  expandedToolItemId: string | null
 }
 
 type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
@@ -96,6 +98,7 @@ type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
   activateItem: (itemId: string) => void
   removeItem: (itemId: string) => void
   removeSessionItems: (sessionId: string) => void
+  setToolItemExpanded: (itemId: string | null) => void
   openPanel: () => void
   collapsePanel: () => void
   togglePanel: () => void
@@ -109,7 +112,8 @@ export const createInitialPreviewWorkbenchState = (): PreviewWorkbenchStoreData 
   panelState: 'collapsed',
   openRequestVersion: 0,
   activeProjectId: undefined,
-  byProject: {}
+  byProject: {},
+  expandedToolItemId: null
 })
 
 // The empty slice a project starts from before any preview tabs are opened.
@@ -256,7 +260,8 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
       // The active slice lives at top level, never duplicated in the stash.
       delete byProject[projectId]
 
-      return { ...targetSlice, activeProjectId: projectId, byProject }
+      // The expanded files surface is tied to the outgoing project's workbench layout.
+      return { ...targetSlice, activeProjectId: projectId, byProject, expandedToolItemId: null }
     })
   },
 
@@ -344,7 +349,8 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 
       return {
         items,
-        activeItemId
+        activeItemId,
+        expandedToolItemId: state.expandedToolItemId === itemId ? null : state.expandedToolItemId
       }
     })
   },
@@ -363,9 +369,18 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 
       return {
         items,
-        activeItemId
+        activeItemId,
+        // A session-scoped tool tab could own the expanded surface; clear it when its tab is gone.
+        expandedToolItemId: items.some((item) => item.id === state.expandedToolItemId)
+          ? state.expandedToolItemId
+          : null
       }
     })
+  },
+
+  // Expands a tool tab (files) into a large modal surface, or restores the inline panel layout.
+  setToolItemExpanded: (itemId) => {
+    set({ expandedToolItemId: itemId })
   },
 
   // Records an explicit open request so the resizable panel can expand even if it is already open.

@@ -6,6 +6,8 @@ import {
   Folder,
   LayoutGrid,
   List,
+  Maximize2,
+  Minimize2,
   Paperclip,
   Plus,
   Search,
@@ -30,6 +32,10 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import {
+  PROJECT_FILES_PREVIEW_ID,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useComputeStore } from '@/stores/compute-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -1010,6 +1016,10 @@ const ProjectFilesViewContent = ({
   previewReader: ProjectFilePreviewReader
 }): React.JSX.Element => {
   const allSessions = useSessionStore((state) => state.sessions)
+  const isFilesExpanded = usePreviewWorkbenchStore(
+    (state) => state.expandedToolItemId === PROJECT_FILES_PREVIEW_ID
+  )
+  const setToolItemExpanded = usePreviewWorkbenchStore((state) => state.setToolItemExpanded)
   const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(() => new Set())
   const [selectedFilterId, setSelectedFilterId] = useState('all')
   const [selectedSessionFallback, setSelectedSessionFallback] = useState<ProjectFilesFilterOption>()
@@ -1459,40 +1469,65 @@ const ProjectFilesViewContent = ({
           onBrowseRemoteHost={(providerId) => setBrowseProviderId(providerId)}
         />
         <TooltipProvider delayDuration={200}>
-          <ToggleGroup.Root
-            type="single"
-            value={viewMode}
-            aria-label="File view"
-            className="flex h-8 shrink-0 items-center rounded-lg border border-border bg-card p-0.5"
-            onValueChange={(value) => {
-              if (value === 'grid' || value === 'list') setViewMode(value)
-            }}
-          >
+          <div className="flex shrink-0 items-center gap-1.5">
+            <ToggleGroup.Root
+              type="single"
+              value={viewMode}
+              aria-label="File view"
+              className="flex h-8 shrink-0 items-center rounded-lg border border-border bg-card p-0.5"
+              onValueChange={(value) => {
+                if (value === 'grid' || value === 'list') setViewMode(value)
+              }}
+            >
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <ToggleGroup.Item
+                    value="grid"
+                    aria-label="Grid view"
+                    className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
+                  >
+                    <LayoutGrid className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+                  </ToggleGroup.Item>
+                </TooltipTrigger>
+                <TooltipContent>Grid view</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <ToggleGroup.Item
+                    value="list"
+                    aria-label="List view"
+                    className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
+                  >
+                    <List className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+                  </ToggleGroup.Item>
+                </TooltipTrigger>
+                <TooltipContent>List view</TooltipContent>
+              </Tooltip>
+            </ToggleGroup.Root>
             <Tooltip>
               <TooltipTrigger asChild>
-                <ToggleGroup.Item
-                  value="grid"
-                  aria-label="Grid view"
-                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="text-text-100 hover:text-text-000"
+                  aria-label={isFilesExpanded ? 'Exit full screen files' : 'Expand files'}
+                  onClick={() =>
+                    setToolItemExpanded(isFilesExpanded ? null : PROJECT_FILES_PREVIEW_ID)
+                  }
                 >
-                  <LayoutGrid className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
-                </ToggleGroup.Item>
+                  {isFilesExpanded ? (
+                    <Minimize2 className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+                  ) : (
+                    <Maximize2 className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+                  )}
+                </Button>
               </TooltipTrigger>
-              <TooltipContent>Grid view</TooltipContent>
+              <TooltipContent className="z-[70]">
+                {isFilesExpanded ? 'Exit full screen' : 'Expand files'}
+              </TooltipContent>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <ToggleGroup.Item
-                  value="list"
-                  aria-label="List view"
-                  className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
-                >
-                  <List className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
-                </ToggleGroup.Item>
-              </TooltipTrigger>
-              <TooltipContent>List view</TooltipContent>
-            </Tooltip>
-          </ToggleGroup.Root>
+          </div>
         </TooltipProvider>
       </div>
       <div className="flex shrink-0 items-center gap-3 border-y border-border-300/60 px-4 py-2">

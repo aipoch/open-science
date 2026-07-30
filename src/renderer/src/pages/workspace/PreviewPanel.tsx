@@ -5,7 +5,11 @@ import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { ResizablePanel } from '@/components/ui/resizable'
 import { cn } from '@/lib/utils'
-import type { PreviewFileItem, PreviewItem } from '@/stores/preview-workbench-store'
+import type {
+  PreviewFileItem,
+  PreviewItem,
+  PreviewToolItem
+} from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
@@ -249,29 +253,23 @@ const PreviewTabBar = ({
   )
 }
 
-// The same surface switches between panel and modal layout so stateful renderers never remount.
-const PreviewFilePanel = ({
-  item,
-  contentKey,
-  onClose
+// Shared modal behavior for surfaces that switch between panel and modal layout without
+// remounting: Escape closes, Tab traps focus inside, body scroll locks, and closing returns
+// focus to the owning tab. Escape is ignored while focus lives outside the surface (e.g. a
+// portaled dialog above it) so nested overlays close one layer at a time.
+const usePreviewModalSurface = ({
+  isOpen,
+  onClose,
+  surfaceRef,
+  itemId
 }: {
-  item: PreviewFileItem
-  contentKey: string
-  onClose: (id: string) => void
-}): React.JSX.Element => {
-  const [isFullScreenOpen, setIsFullScreenOpen] = useState(false)
-  const surfaceRef = useRef<HTMLElement | null>(null)
-
-  const closeFullScreen = (): void => {
-    setIsFullScreenOpen(false)
-  }
-
-  const openFullScreen = (): void => {
-    setIsFullScreenOpen(true)
-  }
-
+  isOpen: boolean
+  onClose: () => void
+  surfaceRef: React.RefObject<HTMLElement | null>
+  itemId: string
+}): void => {
   useEffect(() => {
-    if (!isFullScreenOpen) return
+    if (!isOpen) return
 
     const surface = surfaceRef.current
     const previousOverflow = document.body.style.overflow
@@ -280,8 +278,15 @@ const PreviewFilePanel = ({
 
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
+        if (
+          surface &&
+          document.activeElement !== surface &&
+          !surface.contains(document.activeElement)
+        ) {
+          return
+        }
         event.preventDefault()
-        setIsFullScreenOpen(false)
+        onClose()
         return
       }
       if (event.key !== 'Tab' || !surface) return
@@ -310,9 +315,38 @@ const PreviewFilePanel = ({
     return () => {
       document.removeEventListener('keydown', handleKeyDown, true)
       document.body.style.overflow = previousOverflow
-      document.getElementById(getPreviewTabId(item.id))?.focus()
+      document.getElementById(getPreviewTabId(itemId))?.focus()
     }
-  }, [isFullScreenOpen, item.id])
+  }, [isOpen, onClose, surfaceRef, itemId])
+}
+
+// The same surface switches between panel and modal layout so stateful renderers never remount.
+const PreviewFilePanel = ({
+  item,
+  contentKey,
+  onClose
+}: {
+  item: PreviewFileItem
+  contentKey: string
+  onClose: (id: string) => void
+}): React.JSX.Element => {
+  const [isFullScreenOpen, setIsFullScreenOpen] = useState(false)
+  const surfaceRef = useRef<HTMLElement | null>(null)
+
+  const closeFullScreen = useCallback((): void => {
+    setIsFullScreenOpen(false)
+  }, [])
+
+  const openFullScreen = (): void => {
+    setIsFullScreenOpen(true)
+  }
+
+  usePreviewModalSurface({
+    isOpen: isFullScreenOpen,
+    onClose: closeFullScreen,
+    surfaceRef,
+    itemId: item.id
+  })
 
   return (
     <>
@@ -351,6 +385,59 @@ const PreviewFilePanel = ({
           onOpenFullScreen={isFullScreenOpen ? undefined : openFullScreen}
           provenanceEntry={isFullScreenOpen ? 'trailing' : 'menu'}
         />
+      </section>
+    </>
+  )
+}
+
+// Tool tabs (files/notebook/reviewer) reuse the same panel/modal layout switch as file previews.
+// The expanded state lives in the workbench store because the expand button is rendered by the
+// tool content itself (ProjectFilesView), not by this chrome. Overlay/panel stay below z-[60] so
+// dialogs opened from inside the tool content (FilePreviewDialog) stack above the modal.
+const PreviewToolPanel = ({ item }: { item: PreviewToolItem }): React.JSX.Element => {
+  const isExpanded = usePreviewWorkbenchStore((state) => state.expandedToolItemId === item.id)
+  const setToolItemExpanded = usePreviewWorkbenchStore((state) => state.setToolItemExpanded)
+  const surfaceRef = useRef<HTMLElement | null>(null)
+
+  const closeExpanded = useCallback((): void => {
+    setToolItemExpanded(null)
+  }, [setToolItemExpanded])
+
+  usePreviewModalSurface({
+    isOpen: isExpanded,
+    onClose: closeExpanded,
+    surfaceRef,
+    itemId: item.id
+  })
+
+  return (
+    <>
+      {isExpanded ? (
+        <div
+          aria-hidden="true"
+          data-state="open"
+          className={`${dialogOverlayClassName} z-[55] cursor-default`}
+          onClick={closeExpanded}
+        />
+      ) : null}
+      <section
+        ref={surfaceRef}
+        role={isExpanded ? 'dialog' : 'tabpanel'}
+        aria-modal={isExpanded || undefined}
+        aria-label={isExpanded ? item.title : undefined}
+        id={isExpanded ? undefined : getPreviewPanelId(item.id)}
+        aria-labelledby={isExpanded ? undefined : getPreviewTabId(item.id)}
+        tabIndex={isExpanded ? -1 : 0}
+        data-state={isExpanded ? 'open' : undefined}
+        className={
+          isExpanded
+            ? dialogPanelClassName(
+                'z-[56] flex h-[90vh] w-[90vw] max-w-none min-h-0 flex-col overflow-hidden overscroll-contain p-0'
+              )
+            : 'h-full min-h-0 w-full overflow-y-auto'
+        }
+      >
+        <PreviewActiveContent item={item} />
       </section>
     </>
   )
@@ -434,16 +521,7 @@ const PreviewPanel = ({
                 onClose={removeItem}
               />
             ) : (
-              <section
-                key={item.id}
-                role="tabpanel"
-                id={getPreviewPanelId(item.id)}
-                aria-labelledby={getPreviewTabId(item.id)}
-                tabIndex={0}
-                className="h-full min-h-0 w-full overflow-y-auto"
-              >
-                <PreviewActiveContent key={activeContentKey} item={item} />
-              </section>
+              <PreviewToolPanel key={item.id} item={item} />
             )
           })}
         </div>

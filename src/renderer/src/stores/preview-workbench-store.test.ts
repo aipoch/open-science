@@ -332,6 +332,49 @@ describe('preview workbench store', () => {
     })
   })
 
+  it('tracks the expanded tool item and clears it when the tab is removed', () => {
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
+
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectFilesPreviewItem())
+    usePreviewWorkbenchStore.getState().setToolItemExpanded(PROJECT_FILES_PREVIEW_ID)
+
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBe(PROJECT_FILES_PREVIEW_ID)
+
+    usePreviewWorkbenchStore.getState().setToolItemExpanded(null)
+
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
+
+    usePreviewWorkbenchStore.getState().setToolItemExpanded(PROJECT_FILES_PREVIEW_ID)
+    usePreviewWorkbenchStore.getState().removeItem(PROJECT_FILES_PREVIEW_ID)
+
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
+  })
+
+  it('clears the expanded tool item when its session is removed', () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem({
+      id: 'tool:session-1:notebook',
+      sessionId: 'session-1',
+      type: 'tool',
+      toolKind: 'notebook',
+      title: 'Notebook'
+    })
+    usePreviewWorkbenchStore.getState().setToolItemExpanded('tool:session-1:notebook')
+
+    usePreviewWorkbenchStore.getState().removeSessionItems('session-1')
+
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
+  })
+
+  it('clears the expanded tool item when switching projects', () => {
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectFilesPreviewItem())
+    usePreviewWorkbenchStore.getState().setToolItemExpanded(PROJECT_FILES_PREVIEW_ID)
+
+    usePreviewWorkbenchStore.getState().activateProject('project-2')
+
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
+  })
+
   it('removes all preview items for a deleted session', () => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem({
       id: 'file:session-1:/workspace/project/report.md',

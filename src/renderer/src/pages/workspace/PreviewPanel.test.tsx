@@ -513,6 +513,46 @@ describe('PreviewPanel', () => {
     expect(container.querySelector('[data-testid="preview-card"]')).toBeNull()
   })
 
+  it('expands a tool tab into a modal surface without remounting its content', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem({
+      id: 'tool:project:files',
+      sessionId: '__project_files__',
+      title: 'Files',
+      type: 'tool',
+      toolKind: 'files'
+    } as never)
+
+    await renderPanel()
+
+    const inlineContent = container.querySelector('[data-testid="tool-content"]')
+    expect(container.querySelector('[role="dialog"]')).toBeNull()
+    expect(container.querySelector('[role="tabpanel"]')?.className).toContain('overflow-y-auto')
+
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().setToolItemExpanded('tool:project:files')
+    })
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
+    const overlay = Array.from(document.body.querySelectorAll<HTMLElement>('div')).find((element) =>
+      element.className.includes('bg-black/50')
+    )
+    expect(dialog).not.toBeNull()
+    expect(overlay).not.toBeNull()
+    expect(dialog?.getAttribute('aria-modal')).toBe('true')
+    expect(dialog?.getAttribute('aria-label')).toBe('Files')
+    expect(dialog?.className).toContain('h-[90vh]')
+    expect(dialog?.className).toContain('w-[90vw]')
+    expect(dialog?.querySelector('[data-testid="tool-content"]')).toBe(inlineContent)
+
+    await act(async () => {
+      dialog?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(container.querySelector('[data-testid="tool-content"]')).toBe(inlineContent)
+  })
+
   it('activates a different tab on click and swaps the rendered content', async () => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
     usePreviewWorkbenchStore.getState().upsertItem(
