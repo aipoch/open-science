@@ -7,11 +7,13 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   assertUpgradeProfilePreserved,
   buildSmokePlan,
+  cleanupSmokeRoot,
   executeSmokePlan,
   fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
   packagedResourcePaths,
+  windowsProfileEnvironment,
   writeUpgradeSentinel
 } from './windows-installer-smoke.mjs'
 
@@ -90,5 +92,34 @@ describe('Windows installer smoke plan', () => {
         'query_engine-windows.dll.node'
       )
     ])
+  })
+
+  it('uses one isolated Windows profile for installers and the packaged app', () => {
+    const profileDirectory = join('smoke', 'profile')
+
+    expect(windowsProfileEnvironment(profileDirectory, { SystemRoot: 'C:\\Windows' })).toEqual({
+      SystemRoot: 'C:\\Windows',
+      HOME: profileDirectory,
+      USERPROFILE: profileDirectory,
+      APPDATA: join(profileDirectory, 'AppData', 'Roaming'),
+      LOCALAPPDATA: join(profileDirectory, 'AppData', 'Local'),
+      TEMP: join(profileDirectory, 'Temp'),
+      TMP: join(profileDirectory, 'Temp')
+    })
+  })
+
+  it('preserves the primary smoke failure when cleanup also fails', async () => {
+    const remove = vi.fn().mockRejectedValue(new Error('locked DLL'))
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    await expect(
+      cleanupSmokeRoot('safe-smoke-root', new Error('startup failed'), remove)
+    ).resolves.toBeUndefined()
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('locked DLL'))
+    await expect(cleanupSmokeRoot('safe-smoke-root', undefined, remove)).rejects.toThrow(
+      'locked DLL'
+    )
+
+    warning.mockRestore()
   })
 })

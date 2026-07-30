@@ -176,6 +176,19 @@ const packagedResourcePaths = (installDirectory) => [
   )
 ]
 
+const windowsProfileEnvironment = (profileDirectory, baseEnvironment = process.env) => {
+  const temporaryDirectory = join(profileDirectory, 'Temp')
+  return {
+    ...baseEnvironment,
+    HOME: profileDirectory,
+    USERPROFILE: profileDirectory,
+    APPDATA: join(profileDirectory, 'AppData', 'Roaming'),
+    LOCALAPPDATA: join(profileDirectory, 'AppData', 'Local'),
+    TEMP: temporaryDirectory,
+    TMP: temporaryDirectory
+  }
+}
+
 const assertPackagedResources = async (installDirectory) => {
   for (const path of packagedResourcePaths(installDirectory)) {
     if (!(await pathExists(path))) throw new Error(`Packaged Windows resource is missing: ${path}`)
@@ -203,31 +216,15 @@ const assertUpgradeProfilePreserved = async (profileDirectory) => {
   }
 }
 
-const launchAndProbe = async ({ installDirectory, profileDirectory, expectedVersion }) => {
+const launchAndProbe = async ({ installDirectory, profileDirectory, expectedVersion, env }) => {
   const executable = join(installDirectory, APP_EXECUTABLE)
   const configRoot = join(profileDirectory, CONFIG_DIRECTORY)
   const statePath = join(configRoot, 'web-service.json')
   const tokenPath = join(configRoot, 'web-token')
-  const appData = join(profileDirectory, 'AppData', 'Roaming')
-  const localAppData = join(profileDirectory, 'AppData', 'Local')
-  const temporaryDirectory = join(profileDirectory, 'Temp')
-  await Promise.all([
-    mkdir(appData, { recursive: true }),
-    mkdir(localAppData, { recursive: true }),
-    mkdir(temporaryDirectory, { recursive: true }),
-    rm(statePath, { force: true })
-  ])
+  await rm(statePath, { force: true })
 
   const child = spawn(executable, ['--open-science-headless', '--serve=0'], {
-    env: {
-      ...process.env,
-      HOME: profileDirectory,
-      USERPROFILE: profileDirectory,
-      APPDATA: appData,
-      LOCALAPPDATA: localAppData,
-      TEMP: temporaryDirectory,
-      TMP: temporaryDirectory
-    },
+    env,
     windowsHide: true
   })
   let stdout = ''
@@ -278,19 +275,24 @@ const launchAndProbe = async ({ installDirectory, profileDirectory, expectedVers
     if (exitCode !== 0) throw new Error(`Installed app exited with ${exitCode}.\n${output()}`)
   } catch (error) {
     await terminateProcessTree(child)
+    const processOutput = output().trim()
+    if (error instanceof Error && processOutput && !error.message.includes(processOutput)) {
+      error.message += `\n${processOutput}`
+    }
     throw error
   }
 }
 
-const installAndProbe = async ({ installer, installDirectory, profileDirectory, phase }) => {
+const installAndProbe = async ({ installer, installDirectory, profileDirectory, phase, env }) => {
   console.log(`Smoke testing ${phase} installer: ${basename(installer)}`)
-  await runProcess(installer, ['/S', `/D=${installDirectory}`])
+  await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
   await assertPackagedResources(installDirectory)
-  await runProcess(join(installDirectory, 'resources', 'micromamba.exe'), ['--version'])
+  await runProcess(join(installDirectory, 'resources', 'micromamba.exe'), ['--version'], { env })
   await launchAndProbe({
     installDirectory,
     profileDirectory,
-    expectedVersion: installerVersion(installer)
+    expectedVersion: installerVersion(installer),
+    env
   })
 }
 
@@ -303,10 +305,13 @@ const findUninstaller = async (installDirectory) => {
   return join(installDirectory, uninstallers[0])
 }
 
-const uninstallAndVerify = async (installDirectory) => {
+const uninstallAndVerify = async (installDirectory, env) => {
   const uninstaller = await findUninstaller(installDirectory)
   const installedPaths = [...packagedResourcePaths(installDirectory), uninstaller]
-  const result = await runProcess(uninstaller, ['/S', '/KEEP_APP_DATA'], { allowNonZero: true })
+  const result = await runProcess(uninstaller, ['/S', '/KEEP_APP_DATA'], {
+    allowNonZero: true,
+    env
+  })
   await waitFor('the installed application files to be removed', async () => {
     const pathsRemain = (await Promise.all(installedPaths.map(pathExists))).some(Boolean)
     if (pathsRemain) return undefined
@@ -338,7 +343,17 @@ const removeSmokeRoot = async (root) => {
   if (!basename(root).startsWith(SMOKE_ROOT_PREFIX)) {
     throw new Error(`Refusing to remove unexpected smoke root: ${root}`)
   }
-  await rm(root, { force: true, recursive: true })
+  await rm(root, { force: true, maxRetries: 10, recursive: true, retryDelay: 500 })
+}
+
+const cleanupSmokeRoot = async (root, primaryError, remove = removeSmokeRoot) => {
+  try {
+    await remove(root)
+  } catch (cleanupError) {
+    if (!primaryError) throw cleanupError
+    const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+    console.warn(`Windows installer smoke cleanup also failed: ${message}`)
+  }
 }
 
 const main = async () => {
@@ -351,12 +366,19 @@ const main = async () => {
   const root = await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), SMOKE_ROOT_PREFIX))
   const installDirectory = join(root, 'app')
   const profileDirectory = join(root, 'profile')
+  const env = windowsProfileEnvironment(profileDirectory)
+  await Promise.all([
+    mkdir(env.APPDATA, { recursive: true }),
+    mkdir(env.LOCALAPPDATA, { recursive: true }),
+    mkdir(env.TEMP, { recursive: true })
+  ])
 
+  let primaryError
   try {
     await executeSmokePlan(
       buildSmokePlan({ currentInstaller, previousInstaller }),
       async (cycle) => {
-        await installAndProbe({ ...cycle, installDirectory, profileDirectory })
+        await installAndProbe({ ...cycle, installDirectory, profileDirectory, env })
         if (previousInstaller && cycle.phase === 'previous') {
           await writeUpgradeSentinel(profileDirectory)
         } else if (previousInstaller && cycle.phase === 'current') {
@@ -364,10 +386,13 @@ const main = async () => {
         }
       }
     )
-    await uninstallAndVerify(installDirectory)
+    await uninstallAndVerify(installDirectory, env)
     console.log('Windows installer smoke completed successfully.')
+  } catch (error) {
+    primaryError = error
+    throw error
   } finally {
-    await removeSmokeRoot(root)
+    await cleanupSmokeRoot(root, primaryError)
   }
 }
 
@@ -383,10 +408,12 @@ if (invokedAsScript) {
 export {
   assertUpgradeProfilePreserved,
   buildSmokePlan,
+  cleanupSmokeRoot,
   executeSmokePlan,
   fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
   packagedResourcePaths,
+  windowsProfileEnvironment,
   writeUpgradeSentinel
 }
