@@ -43,6 +43,11 @@ const renderClaudeMcpToolNames = (append: string): string =>
     append
   )
 
+// Select Claude Code's complete built-in tool set explicitly instead of relying on
+// claude-agent-acp's current fallback. This keeps WebFetch/WebSearch available if the adapter's
+// default changes, while reviewer sessions can still replace this with `tools: []` at their boundary.
+const CLAUDE_CODE_BUILTIN_TOOLS = { type: 'preset', preset: 'claude_code' } as const
+
 // Claude Code adapter. A faithful extraction of behavior currently inline in AcpRuntime /
 // agent-process / provider-env — moving the runtime onto AgentFramework must not change it.
 export const claudeCodeFramework: AgentFramework = {
@@ -86,7 +91,11 @@ export const claudeCodeFramework: AgentFramework = {
     // Shared mode adds app-owned settings/plugins at the SDK flag layer via sessionOptions.
     const meta: Record<string, unknown> = {
       claudeCode: {
-        options: { ...ctx.sessionOptions, settingSources: ['user'] }
+        options: {
+          tools: CLAUDE_CODE_BUILTIN_TOOLS,
+          ...ctx.sessionOptions,
+          settingSources: ['user']
+        }
       }
     }
 

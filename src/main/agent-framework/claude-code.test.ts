@@ -19,7 +19,23 @@ describe('claudeCodeFramework', () => {
 
     expect(setup.meta).toMatchObject({
       claudeCode: {
-        options: { ...sessionOptions, settingSources: ['user'] }
+        options: {
+          ...sessionOptions,
+          settingSources: ['user'],
+          tools: { type: 'preset', preset: 'claude_code' }
+        }
+      }
+    })
+  })
+
+  it('keeps Claude web tools available through the complete built-in tool preset', () => {
+    const setup = claudeCodeFramework.buildSessionSetup({ systemPromptAppends: [] })
+
+    expect(setup.meta).toMatchObject({
+      claudeCode: {
+        options: {
+          tools: { type: 'preset', preset: 'claude_code' }
+        }
       }
     })
   })

@@ -980,6 +980,9 @@ describe('ACP runtime session management', () => {
     expect(JSON.stringify(fakeAgent.newSessions[1]._meta)).not.toContain(
       BEGIN_ACTIVITY_GROUP_TOOL_NAME
     )
+    expect(fakeAgent.newSessions[1]._meta).toMatchObject({
+      claudeCode: { options: { tools: [] } }
+    })
     expect(fakeAgent.prompts[1].text).toBe('Review this turn')
   })
 
@@ -6120,7 +6123,12 @@ describe('ACP runtime session management', () => {
         mcpServers: [],
         // Every session (new or resumed) is restricted to the app-owned "user" settings scope.
         _meta: {
-          claudeCode: { options: { settingSources: ['user'] } },
+          claudeCode: {
+            options: {
+              settingSources: ['user'],
+              tools: { type: 'preset', preset: 'claude_code' }
+            }
+          },
           systemPrompt: {
             type: 'preset',
             preset: 'claude_code',
