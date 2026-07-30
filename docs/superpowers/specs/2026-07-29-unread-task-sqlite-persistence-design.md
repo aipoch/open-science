@@ -283,6 +283,6 @@ The user will perform virtual-machine and physical-platform validation. Since th
 - Database failures never block agent completion, committed session deletion, application startup, or current-process native feedback.
 - A failed initial read cannot erase previously stored unread rows.
 - Headless mode performs no unread database or native badge work.
-- Terminal task results update the unread badge without native attention; blocking approval requests retain the transient three-second bounce or flash.
+- Terminal task results update the unread badge without native attention; blocking approval requests retain the transient five-second macOS bounce or three-second Windows/Linux flash.
 - The old JSON file is ignored without migration or cleanup logic.
 - No other process-local notification state is persisted.

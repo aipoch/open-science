@@ -117,13 +117,13 @@ describe('DesktopAttentionController', () => {
     }
   )
 
-  it('stops a macOS bounce after three seconds', () => {
+  it('stops a macOS bounce after five seconds', () => {
     vi.useFakeTimers()
     const dock = makeDock(52)
     const controller = makeController({ dock })
 
     controller.request()
-    vi.advanceTimersByTime(2_999)
+    vi.advanceTimersByTime(4_999)
 
     expect(dock.bounce).toHaveBeenCalledWith('critical')
     expect(dock.cancelBounce).not.toHaveBeenCalled()
@@ -150,7 +150,7 @@ describe('DesktopAttentionController', () => {
     }
   )
 
-  it('restarts the three-second window when another approval arrives', () => {
+  it('restarts the five-second macOS window when another approval arrives', () => {
     vi.useFakeTimers()
     const dock = makeDock(53)
     const controller = makeController({ dock })
@@ -162,7 +162,7 @@ describe('DesktopAttentionController', () => {
     expect(dock.bounce).toHaveBeenCalledTimes(2)
     expect(dock.cancelBounce).toHaveBeenCalledTimes(1)
 
-    vi.advanceTimersByTime(2_999)
+    vi.advanceTimersByTime(4_999)
     expect(dock.cancelBounce).toHaveBeenCalledTimes(1)
 
     vi.advanceTimersByTime(1)

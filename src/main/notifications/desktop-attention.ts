@@ -1,4 +1,5 @@
-const ATTENTION_DURATION_MS = 3_000
+const MACOS_ATTENTION_DURATION_MS = 5_000
+const TASKBAR_ATTENTION_DURATION_MS = 3_000
 
 export type DesktopAttentionWindow = {
   flashFrame(flag: boolean): void
@@ -37,8 +38,8 @@ export type WireDesktopAttentionDeps = {
   controller: DesktopAttentionController
 }
 
-// Owns one bounded native attention request across platforms. Every request gets a fresh
-// three-second lease, while unsupported/headless environments are no-ops.
+// Owns one bounded native attention request across platforms. macOS gets a longer lease because
+// Dock animation cadence is system-controlled; taskbar flashing remains bounded to three seconds.
 export const createDesktopAttentionController = (
   deps: DesktopAttentionControllerDeps
 ): DesktopAttentionController => {
@@ -74,7 +75,7 @@ export const createDesktopAttentionController = (
     flashingWindow = undefined
   }
 
-  // Replaces any active request so a later approval receives its own complete three-second signal
+  // Replaces any active request so a later approval receives its own complete platform lease
   // without stacking macOS bounce ids or letting an older timer clear the replacement.
   const request = (): void => {
     if (deps.headless) return
@@ -111,7 +112,9 @@ export const createDesktopAttentionController = (
       return
     }
 
-    clearTimer = setTimeout(clear, ATTENTION_DURATION_MS)
+    const durationMs =
+      deps.platform === 'darwin' ? MACOS_ATTENTION_DURATION_MS : TASKBAR_ATTENTION_DURATION_MS
+    clearTimer = setTimeout(clear, durationMs)
   }
 
   return { request, clear }
@@ -122,6 +125,6 @@ export const wireDesktopAttention = (deps: WireDesktopAttentionDeps): void => {
   deps.taskNotifications.setAttentionHandlers(deps.controller)
   deps.app.on('browser-window-focus', deps.controller.clear)
   // `before-quit` can be cancelled by migration or close guards. Clear only when Electron commits
-  // the quit so a cancelled attempt does not shorten an active three-second request.
+  // the quit so a cancelled attempt does not shorten an active attention request.
   deps.app.on('will-quit', deps.controller.clear)
 }
